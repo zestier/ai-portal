@@ -112,6 +112,112 @@ interface OpenAICompatibleExtractorOptions {
 	completeJson?: (prompt: string) => Promise<unknown>;
 }
 
+// JSON Schema mirroring the model envelope ({ patch, summary, confidence,
+// diagnostics }) and MemoryPatchProposalSchema. Sent via
+// `response_format: { type: 'json_schema' }` so backends like LM Studio that
+// reject the legacy `json_object` type still emit structured output. Kept
+// non-strict (no `additionalProperties: false` / all-required) so the model
+// can omit optional sections; the Zod parse afterward remains the source of
+// truth.
+const MEMORY_EXTRACTOR_JSON_SCHEMA = {
+	name: 'memory_patch',
+	strict: false,
+	schema: {
+		type: 'object',
+		properties: {
+			summary: { type: 'string' },
+			confidence: { type: 'number', minimum: 0, maximum: 1 },
+			diagnostics: {
+				type: 'array',
+				items: {
+					type: 'object',
+					properties: {
+						severity: { type: 'string', enum: ['info', 'warning', 'error'] },
+						code: { type: 'string' },
+						message: { type: 'string' }
+					},
+					required: ['code', 'message']
+				}
+			},
+			patch: {
+				type: 'object',
+				properties: {
+					entities: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								entityKey: { type: 'string' },
+								entityType: { type: 'string' },
+								displayName: { type: 'string' },
+								summary: { type: 'string' },
+								metadata: {}
+							},
+							required: ['entityKey', 'entityType', 'displayName']
+						}
+					},
+					events: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								eventType: { type: 'string' },
+								summary: { type: 'string' },
+								payload: {},
+								visibility: { type: 'string' },
+								confidence: { type: 'number', minimum: 0, maximum: 1 },
+								entityKey: { type: 'string' }
+							},
+							required: ['eventType', 'summary']
+						}
+					},
+					facts: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								entityKey: { type: 'string' },
+								predicate: { type: 'string' },
+								value: {},
+								visibility: { type: 'string' },
+								confidence: { type: 'number', minimum: 0, maximum: 1 }
+							},
+							required: ['predicate', 'value']
+						}
+					},
+					decisions: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								subject: { type: 'string' },
+								decision: { type: 'string' },
+								rationale: { type: 'string' }
+							},
+							required: ['subject', 'decision']
+						}
+					},
+					openLoops: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								loopType: { type: 'string' },
+								title: { type: 'string' },
+								description: { type: 'string' },
+								priority: { type: 'integer' },
+								relatedEntityKeys: { type: 'array', items: { type: 'string' } }
+							},
+							required: ['loopType', 'title']
+						}
+					}
+				}
+			}
+		},
+		required: ['patch']
+	}
+} as const;
+
 export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 	readonly kind = 'openai-compatible';
 	readonly model: string;
@@ -324,7 +430,7 @@ async function requestOpenAICompatibleJson(
 					},
 					{ role: 'user', content: prompt }
 				],
-				response_format: { type: 'json_object' },
+				response_format: { type: 'json_schema', json_schema: MEMORY_EXTRACTOR_JSON_SCHEMA },
 				temperature: 0,
 				stream: false
 			})
