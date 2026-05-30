@@ -19,6 +19,8 @@
 				return 'General';
 			case 'prompts':
 				return 'Prompts';
+			case 'memory':
+				return 'Memory';
 			case 'permissions':
 				return `Permissions (${grantCount})`;
 			case 'activity':

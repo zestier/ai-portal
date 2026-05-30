@@ -22,6 +22,9 @@ import { PORTAL_PRELUDE } from './portal-prelude';
 import { isStubMode } from './bridge-stub';
 import { AsyncQueue } from '../runtime/async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
+import { isEnabled } from '../memory/engine';
+import { extractAndCommitMemory } from '../memory/extractor';
+import type { MemoryMode } from '$lib/types';
 import type { ProviderOpenOptions } from '../providers';
 import type { PortalEvent } from '$lib/types';
 
@@ -114,6 +117,12 @@ export interface StartTurnOptions {
 	conversationId: string;
 	beforeSend?: () => Promise<void>;
 	initialEvents?: PortalEvent[];
+	memory?: {
+		mode: MemoryMode;
+		userMessageId: string;
+		userContent: string;
+		extractorModel?: string | null;
+	};
 }
 
 export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
@@ -386,6 +395,92 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						conversationId: opts.conversationId,
 						messageId: persistedAssistantId,
 						err: String(snapErr)
+					});
+				}
+			}
+
+			if (
+				persistedAssistantId &&
+				status === 'complete' &&
+				opts.memory &&
+				isEnabled(opts.memory.mode)
+			) {
+				try {
+					const modelProposedMemory = [...pendingTools.values()].some(
+						(tool) => tool.tool === 'memory_propose_patch' && tool.status === 'ok'
+					);
+					if (modelProposedMemory) {
+						emit({
+							type: 'memory.status',
+							conversationId: opts.conversationId,
+							phase: 'skipped',
+							summary: 'Heuristic extraction skipped because the model proposed a memory patch.'
+						});
+					} else {
+						emit({
+							type: 'memory.status',
+							conversationId: opts.conversationId,
+							phase: 'extracting',
+							summary: 'Extracting durable memory updates.'
+						});
+						const userMessage = {
+							id: opts.memory.userMessageId,
+							conversationId: opts.conversationId,
+							role: 'user',
+							content: opts.memory.userContent,
+							status: 'complete',
+							errorCode: null,
+							createdAt: Date.now()
+						} as const;
+						const assistantMessage = {
+							id: persistedAssistantId,
+							conversationId: opts.conversationId,
+							role: 'assistant',
+							content: assistantBuf,
+							status: 'complete',
+							errorCode: null,
+							createdAt: Date.now()
+						} as const;
+						emit({
+							type: 'memory.status',
+							conversationId: opts.conversationId,
+							phase: 'validating',
+							summary: 'Validating durable memory patch.'
+						});
+						const committed = await extractAndCommitMemory({
+							conversationId: opts.conversationId,
+							userId: opts.bridge.userId,
+							mode: opts.memory.mode,
+							extractorModel: opts.memory.extractorModel,
+							turnId: turn.id,
+							userMessage,
+							assistantMessage
+						});
+						emit({
+							type: 'memory.status',
+							conversationId: opts.conversationId,
+							phase: committed.patch.status === 'needs_review' ? 'needs_review' : 'committed',
+							summary: committed.patch.summary || 'Memory patch processed.',
+							patchId: committed.patch.id,
+							counts: {
+								events: committed.counts.events,
+								facts: committed.counts.facts,
+								decisions: committed.counts.decisions,
+								openLoops: committed.counts.openLoops,
+								issues: committed.counts.issues
+							}
+						});
+					}
+				} catch (memoryErr) {
+					log.warn('turn.memory.failed', {
+						conversationId: opts.conversationId,
+						err: String(memoryErr)
+					});
+					emit({
+						type: 'memory.status',
+						conversationId: opts.conversationId,
+						phase: 'needs_review',
+						summary: 'Memory extraction failed; response was preserved.'
 					});
 				}
 			}

@@ -4,6 +4,7 @@
 	import type {
 		Conversation,
 		ConversationUsage,
+		MemoryMode,
 		Message,
 		PortalEvent,
 		InteractiveRequestView,
@@ -35,6 +36,7 @@
 		initialActiveTurnId = null,
 		initialPendingInteractive = [],
 		initialComposer = '',
+		initialMemorySnapshot = null,
 		providerCapabilities,
 		providerDisplayName,
 		providerModels,
@@ -62,13 +64,84 @@
 		initialActiveTurnId?: string | null;
 		initialPendingInteractive?: InteractiveRequestView[];
 		initialComposer?: string;
+		initialMemorySnapshot?: unknown;
 	} = $props();
 
 	let messages = $state<Message[]>([]);
 	let title = $state<string>(untrack(() => conversation.title));
 	let sessionModel = $state<string>(untrack(() => conversation.model ?? effectiveModel));
 	let sessionMode = $state<Conversation['mode']>(untrack(() => conversation.mode));
+	let memoryMode = $state<MemoryMode>(untrack(() => conversation.memoryMode));
+	let memoryExtractorModel = $state<string | null>(
+		untrack(() => conversation.memoryExtractorModel)
+	);
+	let globalMemoryEnabled = $state<boolean>(untrack(() => conversation.globalMemoryEnabled));
 	let approveAllTools = $state<boolean>(untrack(() => conversation.approveAllTools));
+	let memorySnapshot = $state<unknown>(untrack(() => initialMemorySnapshot));
+	let memoryStatus = $state<{
+		phase: 'checking' | 'extracting' | 'validating' | 'committed' | 'needs_review' | 'skipped';
+		summary?: string;
+		patchId?: string;
+		counts?: {
+			events?: number;
+			facts?: number;
+			decisions?: number;
+			openLoops?: number;
+			issues?: number;
+		};
+	} | null>(null);
+	type MemoryDiffRow = {
+		id: string;
+		action: string;
+		itemType: string;
+		label: string;
+	};
+	const memoryRecordCount = $derived.by(() => {
+		const snapshot = memorySnapshot;
+		if (!snapshot || typeof snapshot !== 'object') return 0;
+		return Object.values(snapshot as Record<string, unknown>).reduce<number>(
+			(total, value) => total + (Array.isArray(value) ? value.length : 0),
+			0
+		);
+	});
+	const memoryDiffRows = $derived.by<MemoryDiffRow[]>(() => {
+		const patchId = memoryStatus?.patchId;
+		if (!patchId || !memorySnapshot || typeof memorySnapshot !== 'object') return [];
+		const snapshot = memorySnapshot as Record<string, unknown>;
+		const patchItems = Array.isArray(snapshot.patchItems) ? snapshot.patchItems : [];
+		return patchItems
+			.filter((item): item is Record<string, unknown> => {
+				return (
+					item !== null &&
+					typeof item === 'object' &&
+					(item as { patchId?: unknown }).patchId === patchId &&
+					typeof (item as { id?: unknown }).id === 'string'
+				);
+			})
+			.map((item) => {
+				const itemType = typeof item.itemType === 'string' ? item.itemType : 'memory';
+				const itemId = typeof item.itemId === 'string' ? item.itemId : '';
+				const action = typeof item.action === 'string' ? item.action : 'update';
+				return {
+					id: item.id as string,
+					action,
+					itemType,
+					label: memoryItemLabel(snapshot, itemType, itemId)
+				};
+			});
+	});
+	const memoryDiffSummary = $derived.by(() => {
+		const counts = memoryStatus?.counts;
+		if (!counts) return '';
+		const parts = [
+			countLabel('event', counts.events),
+			countLabel('fact', counts.facts),
+			countLabel('decision', counts.decisions),
+			countLabel('open loop', counts.openLoops),
+			countLabel('issue', counts.issues)
+		].filter(Boolean);
+		return parts.join(', ');
+	});
 	let usage = $state<ConversationUsage | null>(untrack(() => initialUsage));
 	let recentCompaction = $state<{ tokensRemoved?: number; messagesRemoved?: number } | null>(null);
 	let compactionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -129,7 +202,12 @@
 			title = conversation.title;
 			sessionModel = conversation.model ?? effectiveModel;
 			sessionMode = conversation.mode;
+			memoryMode = conversation.memoryMode;
+			memoryExtractorModel = conversation.memoryExtractorModel;
+			globalMemoryEnabled = conversation.globalMemoryEnabled;
 			approveAllTools = conversation.approveAllTools;
+			memorySnapshot = initialMemorySnapshot;
+			memoryStatus = null;
 			usage = initialUsage;
 			composer = initialComposer;
 			recentCompaction = null;
@@ -578,7 +656,20 @@
 				// our local state so the header reflects reality without a
 				// page refresh.
 				if (ev.mode !== undefined) sessionMode = ev.mode;
+				if (ev.memoryMode !== undefined) memoryMode = ev.memoryMode;
 				if (ev.approveAllTools !== undefined) approveAllTools = ev.approveAllTools;
+				break;
+			}
+			case 'memory.status': {
+				memoryStatus = {
+					phase: ev.phase,
+					summary: ev.summary,
+					patchId: ev.patchId,
+					counts: ev.counts
+				};
+				if (ev.phase === 'committed' || ev.phase === 'needs_review') {
+					void refreshMemory();
+				}
 				break;
 			}
 			case 'context.usage': {
@@ -612,12 +703,92 @@
 		scrollToBottom();
 	}
 
+	async function refreshMemory() {
+		try {
+			const r = await fetch(`/api/conversations/${conversation.id}/memory`);
+			if (!r.ok) return;
+			const data = (await r.json()) as { memory: unknown };
+			memorySnapshot = data.memory;
+		} catch {
+			/* non-fatal */
+		}
+	}
+
 	function safeJson(v: unknown): string {
 		try {
 			return typeof v === 'string' ? v : JSON.stringify(v, null, 2);
 		} catch {
 			return String(v);
 		}
+	}
+
+	function countLabel(label: string, count: number | undefined): string {
+		if (!count) return '';
+		return `${count} ${label}${count === 1 ? '' : 's'}`;
+	}
+
+	function memoryItemLabel(
+		snapshot: Record<string, unknown>,
+		itemType: string,
+		itemId: string
+	): string {
+		const rows = memoryCollection(snapshot, itemType);
+		const row = rows.find((candidate) => candidate.id === itemId);
+		if (!row) return itemId || itemType;
+		if (itemType === 'entity') {
+			return [row.displayName, row.entityKey].filter(isNonEmptyString).join(' · ') || itemId;
+		}
+		if (itemType === 'fact') {
+			return [row.predicate, stringifyMemoryValue(row.value)].filter(isNonEmptyString).join(': ');
+		}
+		if (itemType === 'decision') {
+			return [row.subject, row.decision].filter(isNonEmptyString).join(': ');
+		}
+		if (itemType === 'open_loop') {
+			return [row.title, row.description].filter(isNonEmptyString).join(' · ');
+		}
+		if (itemType === 'event') {
+			return [row.eventType, row.summary].filter(isNonEmptyString).join(': ');
+		}
+		return itemId || itemType;
+	}
+
+	function memoryCollection(
+		snapshot: Record<string, unknown>,
+		itemType: string
+	): Array<Record<string, unknown>> {
+		const key =
+			itemType === 'open_loop'
+				? 'openLoops'
+				: itemType === 'entity'
+					? 'entities'
+					: itemType === 'fact'
+						? 'facts'
+						: itemType === 'decision'
+							? 'decisions'
+							: itemType === 'event'
+								? 'events'
+								: '';
+		const value = key ? snapshot[key] : null;
+		return Array.isArray(value)
+			? value.filter(
+					(item): item is Record<string, unknown> => item !== null && typeof item === 'object'
+				)
+			: [];
+	}
+
+	function stringifyMemoryValue(value: unknown): string {
+		if (typeof value === 'string') return value;
+		if (value === null || value === undefined) return '';
+		try {
+			return JSON.stringify(value);
+		} catch {
+			return String(value);
+		}
+	}
+
+	function isNonEmptyString(value: unknown): value is string {
+		return typeof value === 'string' && value.trim().length > 0;
 	}
 
 	function addPendingInteractive(
@@ -790,14 +961,53 @@
 		{usage}
 		{recentCompaction}
 		mode={sessionMode}
+		{memoryMode}
+		{memoryExtractorModel}
+		{globalMemoryEnabled}
 		{approveAllTools}
 		modelChangeDisabled={streaming}
 		onSettingsChange={(patch) => {
 			if (patch.model !== undefined) sessionModel = patch.model;
 			if (patch.mode !== undefined) sessionMode = patch.mode;
+			if (patch.memoryMode !== undefined) memoryMode = patch.memoryMode;
+			if (patch.memoryExtractorModel !== undefined)
+				memoryExtractorModel = patch.memoryExtractorModel;
+			if (patch.globalMemoryEnabled !== undefined) globalMemoryEnabled = patch.globalMemoryEnabled;
 			if (patch.approveAllTools !== undefined) approveAllTools = patch.approveAllTools;
 		}}
 	/>
+
+	{#if memoryMode !== 'off'}
+		<div class="memory-strip" data-phase={memoryStatus?.phase ?? 'idle'}>
+			<div class="memory-main">
+				<span>
+					Memory: {memoryMode}
+					{#if memoryStatus?.summary}
+						· {memoryStatus.summary}
+					{:else}
+						· fresh context + mandatory recall tools · {memoryRecordCount} records
+					{/if}
+				</span>
+				{#if memoryDiffRows.length > 0}
+					<details class="memory-diff">
+						<summary>
+							Memory updated{memoryDiffSummary ? `: ${memoryDiffSummary}` : ''}
+						</summary>
+						<ul>
+							{#each memoryDiffRows as row (row.id)}
+								<li>
+									<span class="diff-action">{row.action}</span>
+									<span class="diff-type">{row.itemType.replace('_', ' ')}</span>
+									<span>{row.label}</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
+			</div>
+			<button type="button" onclick={refreshMemory}>Refresh inspector</button>
+		</div>
+	{/if}
 
 	<div class="messages-wrap">
 		<div class="messages" bind:this={scrollEl} onscroll={onMessagesScroll}>
@@ -870,6 +1080,59 @@
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
+	}
+	.memory-strip {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: var(--space-2);
+		padding: var(--space-1) var(--space-5);
+		border-bottom: 1px solid var(--border);
+		background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+		font-size: var(--fs-xs);
+		color: var(--text-muted);
+	}
+	.memory-strip[data-phase='needs_review'] {
+		background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+		color: var(--text);
+	}
+	.memory-strip button {
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		color: inherit;
+		font: inherit;
+		padding: 1px 6px;
+		cursor: pointer;
+	}
+	.memory-main {
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.memory-diff summary {
+		cursor: pointer;
+		color: var(--text);
+	}
+	.memory-diff ul {
+		margin: var(--space-1) 0 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.memory-diff li {
+		display: flex;
+		gap: var(--space-1);
+		min-width: 0;
+	}
+	.diff-action,
+	.diff-type {
+		flex: 0 0 auto;
+		font-family: var(--mono);
+		color: var(--text-muted);
 	}
 	.messages {
 		flex: 1;

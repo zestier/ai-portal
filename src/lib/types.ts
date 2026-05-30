@@ -36,6 +36,22 @@ export interface Conversation {
 	 */
 	mode: SessionMode;
 	/**
+	 * Optional portal-managed durable memory profile. When enabled, the
+	 * server starts each request from a fresh provider context assembled
+	 * from typed memory plus memory tools.
+	 */
+	memoryMode: MemoryMode;
+	/**
+	 * Optional per-conversation override for the model-backed memory harvester.
+	 * Null means "use the server default extractor model/config".
+	 */
+	memoryExtractorModel: string | null;
+	/**
+	 * Explicit opt-in for user-scoped global memory tools in this conversation.
+	 * Session memory remains per-conversation even when this is false.
+	 */
+	globalMemoryEnabled: boolean;
+	/**
 	 * Per-conversation bypass: when true, every tool-permission request is
 	 * auto-approved (an `auto-allow` audit row is still written). The flag
 	 * is also mirrored to the SDK via `permissions.setApproveAll` so the
@@ -93,6 +109,14 @@ export type SessionMode = 'interactive' | 'plan' | 'autopilot' | 'best-effort';
 
 export function normalizeSessionMode(raw: string | null | undefined): SessionMode {
 	return raw === 'plan' || raw === 'autopilot' || raw === 'best-effort' ? raw : 'interactive';
+}
+
+export type MemoryMode = 'off' | 'lightweight' | 'project' | 'story' | 'strict';
+
+export function normalizeMemoryMode(raw: string | null | undefined): MemoryMode {
+	return raw === 'lightweight' || raw === 'project' || raw === 'story' || raw === 'strict'
+		? raw
+		: 'off';
 }
 
 export const BACKEND_PROVIDER_IDS = ['copilot', 'openai-compatible', 'lm-studio'] as const;
@@ -583,12 +607,27 @@ export type PortalEvent =
 			type: 'session.settings';
 			conversationId: string;
 			mode?: SessionMode;
+			memoryMode?: MemoryMode;
 			approveAllTools?: boolean;
 			// Free-form source label so the UI can show "Agent switched to
 			// plan mode" vs "You enabled autopilot" in a future iteration.
 			source?: 'user' | 'agent' | 'system';
 	  }
 	| { type: 'reasoning.summary'; text: string }
+	| {
+			type: 'memory.status';
+			conversationId: string;
+			phase: 'checking' | 'extracting' | 'validating' | 'committed' | 'needs_review' | 'skipped';
+			summary?: string;
+			patchId?: string;
+			counts?: {
+				events?: number;
+				facts?: number;
+				decisions?: number;
+				openLoops?: number;
+				issues?: number;
+			};
+	  }
 	| {
 			type: 'context.usage';
 			currentTokens: number;

@@ -1,6 +1,7 @@
 // SQLite singleton + migrations.
 
 import Database from 'better-sqlite3';
+import { getLoadablePath, load as loadSqliteVec } from 'sqlite-vec';
 import { mkdirSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,7 @@ export function getDb(): Database.Database {
 	mkdirSync(dataDir, { recursive: true });
 	const path = join(dataDir, 'portal.db');
 	const db = new Database(path);
+	loadVectorExtension(db);
 	db.pragma('journal_mode = WAL');
 	db.pragma('synchronous = NORMAL');
 	db.pragma('foreign_keys = ON');
@@ -40,6 +42,15 @@ export function getDb(): Database.Database {
 	setCached(db);
 	log.info('db.open', { path });
 	return db;
+}
+
+function loadVectorExtension(db: Database.Database) {
+	try {
+		loadSqliteVec(db);
+		log.info('db.sqlite_vec.loaded', { path: getLoadablePath() });
+	} catch (e) {
+		log.warn('db.sqlite_vec.load_failed', { err: String(e) });
+	}
 }
 
 function migrationsDir(): string {

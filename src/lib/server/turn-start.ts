@@ -1,6 +1,7 @@
 import * as convs from '$lib/server/db/repos/conversations';
 import * as messages from '$lib/server/db/repos/messages';
 import * as settings from '$lib/server/db/repos/settings';
+import * as pool from '$lib/server/runtime/pool';
 import { loadConfig } from '$lib/server/config';
 import { startTurn } from '$lib/server/runtime/turn-runner';
 import { getProvider } from '$lib/server/providers';
@@ -8,6 +9,7 @@ import { providerAuthToken } from '$lib/server/providers/auth';
 import { snapshot as takeSnapshot } from '$lib/server/snapshots';
 import { effectiveWorkdir } from '$lib/server/workdir';
 import { log } from '$lib/server/log';
+import { buildPromptWithMemory, isEnabled } from '$lib/server/memory/engine';
 import type { Conversation, Message, PortalEvent } from '$lib/types';
 import type { ProviderConversationMessage } from '$lib/server/providers/provider';
 
@@ -26,17 +28,32 @@ export async function startTurnFromUserMessage(
 	const cfg = loadConfig();
 	const userSettings = settings.get(conv.userId) ?? settings.defaults();
 	const provider = getProvider(conv.provider);
+	const memoryEnabled = isEnabled(conv.memoryMode);
+	let providerSessionId = conv.providerSessionId;
+	if (memoryEnabled) {
+		await pool.release(conv.id);
+		providerSessionId = convs.rotateProviderSession(conv.id, conv.userId) ?? providerSessionId;
+	}
 	const promptIncludesPriorMessages =
-		opts.includePriorMessages ||
-		provider.shouldEmbedPriorMessages?.(conv.providerSessionId) === true;
+		!memoryEnabled &&
+		(opts.includePriorMessages || provider.shouldEmbedPriorMessages?.(providerSessionId) === true);
+	const prompt = memoryEnabled
+		? buildPromptWithMemory({
+				conversationId: conv.id,
+				mode: conv.memoryMode,
+				userMsg,
+				globalMemoryEnabled: conv.globalMemoryEnabled,
+				includeRecentTranscript: true
+			})
+		: promptIncludesPriorMessages
+			? buildPromptWithPriorMessages(conv.id, userMsg)
+			: userMsg.content;
 	const turn = await startTurn({
 		conversationId: conv.id,
-		prompt: promptIncludesPriorMessages
-			? buildPromptWithPriorMessages(conv.id, userMsg)
-			: userMsg.content,
+		prompt,
 		bridge: {
 			conversationId: conv.id,
-			providerSessionId: conv.providerSessionId,
+			providerSessionId,
 			userId: conv.userId,
 			workingDirectory: workdir,
 			provider: conv.provider,
@@ -44,9 +61,11 @@ export async function startTurnFromUserMessage(
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
 			approveAllTools: conv.approveAllTools,
+			memoryMode: conv.memoryMode,
+			globalMemoryEnabled: conv.globalMemoryEnabled,
 			providerAuthToken: providerAuthToken(conv.provider, conv.userId),
 			initialMessages:
-				!promptIncludesPriorMessages && !provider.capabilities.session.resume
+				!memoryEnabled && !promptIncludesPriorMessages && !provider.capabilities.session.resume
 					? buildProviderInitialMessages(conv.id, userMsg)
 					: undefined,
 			onProviderSessionIdChange: (providerSessionId) => {
@@ -59,6 +78,14 @@ export async function startTurnFromUserMessage(
 			}
 		},
 		initialEvents: opts.initialEvents,
+		memory: memoryEnabled
+			? {
+					mode: conv.memoryMode,
+					userMessageId: userMsg.id,
+					userContent: userMsg.content,
+					extractorModel: conv.memoryExtractorModel
+				}
+			: undefined,
 		beforeSend: async () => {
 			try {
 				await takeSnapshot(workdir, userMsg.id, 'pre');

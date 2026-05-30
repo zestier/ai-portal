@@ -20,6 +20,7 @@ import { log } from '$lib/server/log';
 import { canRedeployUser } from '$lib/server/redeploy';
 import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
+import * as memoryProfiles from '$lib/server/memory/profiles';
 import {
 	normalizeBackendProvider,
 	BACKEND_PROVIDER_IDS,
@@ -80,6 +81,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		grants: markSeedGrants(settings.listGrantsForUser(userId)),
 		builtInPromptTemplates: listBuiltInPromptTemplates(),
 		promptTemplates: promptTemplates.list(userId, { status: 'all' }),
+		customMemoryProfiles: memoryProfiles.listCustomProfiles(userId, { status: 'all' }),
 		enableRedeploy: cfg.ENABLE_REDEPLOY && canRedeployUser(locals.user, cfg),
 		deploy: getDeployMetadata()
 	};
@@ -103,6 +105,17 @@ const PromptTemplateSchema = z.object({
 });
 
 const UpdatePromptTemplateSchema = PromptTemplateSchema.extend({
+	id: z.string().min(1)
+});
+
+const MemoryProfileSchema = z.object({
+	name: z.string().trim().min(1).max(120),
+	description: z.string().trim().max(500).optional(),
+	instructions: z.string().trim().min(1).max(8000),
+	schemaJson: z.string().trim().min(2).max(20_000)
+});
+
+const UpdateMemoryProfileSchema = MemoryProfileSchema.extend({
 	id: z.string().min(1)
 });
 
@@ -206,6 +219,90 @@ export const actions: Actions = {
 				formId: 'archivePromptTemplate'
 			});
 		return { ok: true, formId: 'archivePromptTemplate' };
+	},
+	createMemoryProfile: async ({ request, locals }) => {
+		if (!locals.userId)
+			return fail(401, { ok: false, error: 'Not authenticated', formId: 'createMemoryProfile' });
+		const data = await request.formData();
+		const parsed = MemoryProfileSchema.safeParse({
+			name: data.get('name'),
+			description: (data.get('description') as string) || undefined,
+			instructions: data.get('instructions'),
+			schemaJson: data.get('schemaJson')
+		});
+		if (!parsed.success) {
+			return fail(400, {
+				ok: false,
+				error: parsed.error.issues[0]?.message ?? 'Invalid memory profile',
+				formId: 'createMemoryProfile'
+			});
+		}
+		const schema = parseProfileSchema(parsed.data.schemaJson);
+		if (!schema.ok)
+			return fail(400, { ok: false, error: schema.error, formId: 'createMemoryProfile' });
+		memoryProfiles.createCustomProfile(locals.userId, {
+			name: parsed.data.name,
+			description: parsed.data.description,
+			instructions: parsed.data.instructions,
+			schema: schema.value
+		});
+		return { ok: true, formId: 'createMemoryProfile' };
+	},
+	updateMemoryProfile: async ({ request, locals }) => {
+		if (!locals.userId)
+			return fail(401, { ok: false, error: 'Not authenticated', formId: 'updateMemoryProfile' });
+		const data = await request.formData();
+		const parsed = UpdateMemoryProfileSchema.safeParse({
+			id: data.get('id'),
+			name: data.get('name'),
+			description: (data.get('description') as string) || undefined,
+			instructions: data.get('instructions'),
+			schemaJson: data.get('schemaJson')
+		});
+		if (!parsed.success) {
+			return fail(400, {
+				ok: false,
+				error: parsed.error.issues[0]?.message ?? 'Invalid memory profile',
+				formId: 'updateMemoryProfile'
+			});
+		}
+		const schema = parseProfileSchema(parsed.data.schemaJson);
+		if (!schema.ok)
+			return fail(400, { ok: false, error: schema.error, formId: 'updateMemoryProfile' });
+		const updated = memoryProfiles.updateCustomProfile(parsed.data.id, locals.userId, {
+			name: parsed.data.name,
+			description: parsed.data.description,
+			instructions: parsed.data.instructions,
+			schema: schema.value
+		});
+		if (!updated)
+			return fail(404, {
+				ok: false,
+				error: 'Memory profile not found',
+				formId: 'updateMemoryProfile'
+			});
+		return { ok: true, formId: 'updateMemoryProfile' };
+	},
+	archiveMemoryProfile: async ({ request, locals }) => {
+		if (!locals.userId)
+			return fail(401, { ok: false, error: 'Not authenticated', formId: 'archiveMemoryProfile' });
+		const data = await request.formData();
+		const id = data.get('id');
+		if (typeof id !== 'string' || id.length === 0) {
+			return fail(400, {
+				ok: false,
+				error: 'Invalid memory profile id',
+				formId: 'archiveMemoryProfile'
+			});
+		}
+		const archived = memoryProfiles.archiveCustomProfile(id, locals.userId);
+		if (!archived)
+			return fail(404, {
+				ok: false,
+				error: 'Memory profile not found',
+				formId: 'archiveMemoryProfile'
+			});
+		return { ok: true, formId: 'archiveMemoryProfile' };
 	},
 	revokeGrant: async ({ request, locals }) => {
 		if (!locals.userId)
@@ -393,6 +490,23 @@ function parseGrantFormData(data: FormData, formId: string): ParseGrantResult {
 		};
 	}
 	return { ok: true, input: parsed.data };
+}
+
+function parseProfileSchema(
+	raw: string
+): { ok: true; value: unknown } | { ok: false; error: string } {
+	try {
+		const parsed = JSON.parse(raw);
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return { ok: false, error: 'Profile schema must be a JSON object.' };
+		}
+		return { ok: true, value: parsed };
+	} catch (e) {
+		return {
+			ok: false,
+			error: `Profile schema must be valid JSON: ${e instanceof Error ? e.message : String(e)}`
+		};
+	}
 }
 
 function markSeedGrants(grants: settings.GrantSummary[]) {

@@ -89,6 +89,8 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
 			approveAllTools: conv.approveAllTools,
+			memoryMode: conv.memoryMode,
+			globalMemoryEnabled: conv.globalMemoryEnabled,
 			providerAuthToken: providerAuthToken(conv.provider, conv.userId)
 		}
 	});

@@ -4,6 +4,7 @@
 		ConversationUsage,
 		ProviderRuntimeFeatureStatus,
 		ProviderCapabilities,
+		MemoryMode,
 		SessionMode
 	} from '$lib/types';
 	import ContextMeter from './ContextMeter.svelte';
@@ -21,6 +22,9 @@
 		usage = null,
 		recentCompaction = null,
 		mode,
+		memoryMode,
+		memoryExtractorModel,
+		globalMemoryEnabled,
 		approveAllTools,
 		modelChangeDisabled = false,
 		onSettingsChange
@@ -42,6 +46,9 @@
 		usage?: ConversationUsage | null;
 		recentCompaction?: { tokensRemoved?: number; messagesRemoved?: number } | null;
 		mode: SessionMode;
+		memoryMode: MemoryMode;
+		memoryExtractorModel: string | null;
+		globalMemoryEnabled: boolean;
 		approveAllTools: boolean;
 		modelChangeDisabled?: boolean;
 		// Fires with the optimistic patch right before the PATCH request,
@@ -49,6 +56,9 @@
 		onSettingsChange?: (patch: {
 			model?: string;
 			mode?: SessionMode;
+			memoryMode?: MemoryMode;
+			memoryExtractorModel?: string | null;
+			globalMemoryEnabled?: boolean;
 			approveAllTools?: boolean;
 		}) => void;
 	} = $props();
@@ -56,13 +66,19 @@
 	let expanded = $state(false);
 	let savingModel = $state(false);
 	let savingMode = $state(false);
+	let savingMemory = $state(false);
+	let savingHarvester = $state(false);
+	let savingGlobalMemory = $state(false);
 	let savingApprove = $state(false);
 	let resetting = $state(false);
 	let resetFlash = $state<'ok' | 'err' | null>(null);
 	let resetTimer: ReturnType<typeof setTimeout> | null = null;
 	let selectedModelChoice = $state('');
 	let customModel = $state('');
+	let selectedHarvesterChoice = $state('');
+	let customHarvesterModel = $state('');
 	const CUSTOM_MODEL_OPTION = '__custom__';
+	const DEFAULT_HARVESTER_OPTION = '__default__';
 
 	const MODES: { value: SessionMode; label: string; hint: string }[] = [
 		{
@@ -86,6 +102,29 @@
 			hint: 'Autopilot-style execution, but permission prompts auto-reject with feedback.'
 		}
 	];
+	const MEMORY_MODES: { value: MemoryMode; label: string; hint: string }[] = [
+		{ value: 'off', label: 'Off', hint: 'Use the provider context normally.' },
+		{
+			value: 'lightweight',
+			label: 'Lightweight',
+			hint: 'Fresh context with durable decisions, facts, preferences, and open loops.'
+		},
+		{
+			value: 'project',
+			label: 'Project',
+			hint: 'Coding-aware memory; repository claims remain historical until rechecked.'
+		},
+		{
+			value: 'story',
+			label: 'Story',
+			hint: 'Track characters, objects, locations, and plot state.'
+		},
+		{
+			value: 'strict',
+			label: 'Strict',
+			hint: 'Aggressive recall and validation for timelines, secrets, clues, and tiny details.'
+		}
+	];
 
 	const modeFeature = $derived(providerCapabilities.features.modes);
 	const approveAllFeature = $derived(providerCapabilities.features.approveAll);
@@ -105,6 +144,12 @@
 	const selectedCustomModel = $derived(customModel.trim());
 	const customModelUnchanged = $derived(selectedCustomModel === model);
 	const customModelInvalid = $derived(selectedCustomModel.length === 0 || customModelUnchanged);
+	const currentHarvesterModel = $derived(memoryExtractorModel ?? '');
+	const selectedCustomHarvester = $derived(customHarvesterModel.trim());
+	const customHarvesterUnchanged = $derived(selectedCustomHarvester === currentHarvesterModel);
+	const customHarvesterInvalid = $derived(
+		selectedCustomHarvester.length === 0 || customHarvesterUnchanged
+	);
 
 	$effect(() => {
 		const modelIds = new Set(providerModels.map((providerModel) => providerModel.id));
@@ -114,6 +159,16 @@
 		} else {
 			selectedModelChoice = CUSTOM_MODEL_OPTION;
 			customModel = model;
+		}
+		if (!memoryExtractorModel) {
+			selectedHarvesterChoice = DEFAULT_HARVESTER_OPTION;
+			customHarvesterModel = '';
+		} else if (modelIds.has(memoryExtractorModel)) {
+			selectedHarvesterChoice = memoryExtractorModel;
+			customHarvesterModel = '';
+		} else {
+			selectedHarvesterChoice = CUSTOM_MODEL_OPTION;
+			customHarvesterModel = memoryExtractorModel;
 		}
 	});
 
@@ -131,6 +186,9 @@
 	async function patchSession(body: {
 		model?: string;
 		mode?: SessionMode;
+		memoryMode?: MemoryMode;
+		memoryExtractorModel?: string | null;
+		globalMemoryEnabled?: boolean;
 		approveAllTools?: boolean;
 	}) {
 		const res = await fetch(`/api/conversations/${conversation.id}/session`, {
@@ -175,6 +233,60 @@
 			onSettingsChange?.({ mode: prev });
 		} finally {
 			savingMode = false;
+		}
+	}
+
+	async function chooseMemoryMode(next: MemoryMode) {
+		if (next === memoryMode || savingMemory || modelChangeDisabled) return;
+		savingMemory = true;
+		const prev = memoryMode;
+		onSettingsChange?.({ memoryMode: next });
+		try {
+			await patchSession({ memoryMode: next });
+		} catch {
+			onSettingsChange?.({ memoryMode: prev });
+		} finally {
+			savingMemory = false;
+		}
+	}
+
+	async function chooseHarvesterModel(next: string | null) {
+		const normalized = next?.trim() || null;
+		if (normalized === memoryExtractorModel || savingHarvester || modelChangeDisabled) return;
+		savingHarvester = true;
+		const prev = memoryExtractorModel;
+		onSettingsChange?.({ memoryExtractorModel: normalized });
+		try {
+			await patchSession({ memoryExtractorModel: normalized });
+		} catch {
+			onSettingsChange?.({ memoryExtractorModel: prev });
+		} finally {
+			savingHarvester = false;
+		}
+	}
+
+	function selectHarvesterModel(e: Event) {
+		const next = (e.currentTarget as HTMLSelectElement).value;
+		selectedHarvesterChoice = next;
+		if (next === DEFAULT_HARVESTER_OPTION) {
+			void chooseHarvesterModel(null);
+		} else if (next !== CUSTOM_MODEL_OPTION) {
+			void chooseHarvesterModel(next);
+		}
+	}
+
+	async function toggleGlobalMemory(e: Event) {
+		const next = (e.currentTarget as HTMLInputElement).checked;
+		if (savingGlobalMemory || modelChangeDisabled) return;
+		savingGlobalMemory = true;
+		const prev = globalMemoryEnabled;
+		onSettingsChange?.({ globalMemoryEnabled: next });
+		try {
+			await patchSession({ globalMemoryEnabled: next });
+		} catch {
+			onSettingsChange?.({ globalMemoryEnabled: prev });
+		} finally {
+			savingGlobalMemory = false;
 		}
 	}
 
@@ -398,6 +510,106 @@
 							</span>
 						{/if}
 					</div>
+					<div class="setting-row">
+						<span class="setting-label">Memory</span>
+						<div
+							class="seg memory-seg"
+							role="radiogroup"
+							aria-label="Memory mode"
+							aria-busy={savingMemory}
+						>
+							{#each MEMORY_MODES as opt (opt.value)}
+								<button
+									type="button"
+									role="radio"
+									aria-checked={memoryMode === opt.value}
+									class="seg-btn"
+									class:active={memoryMode === opt.value}
+									title={opt.hint}
+									disabled={savingMemory || modelChangeDisabled}
+									onclick={() => chooseMemoryMode(opt.value)}
+								>
+									{opt.label}
+								</button>
+							{/each}
+						</div>
+						{#if modelChangeDisabled}
+							<span class="unsupported-chip">memory locked during turn</span>
+						{:else if memoryMode !== 'off'}
+							<span
+								class="unsupported-chip"
+								title="Fresh-context turns include mandatory memory tools."
+							>
+								fresh context + tools
+							</span>
+						{/if}
+					</div>
+					{#if memoryMode !== 'off'}
+						<div class="setting-row model-row">
+							<span class="setting-label">Harvester</span>
+							<select
+								class="model-select"
+								aria-label="Memory harvester model"
+								bind:value={selectedHarvesterChoice}
+								disabled={savingHarvester || modelChangeDisabled}
+								onchange={selectHarvesterModel}
+							>
+								<option value={DEFAULT_HARVESTER_OPTION}>Server default harvester</option>
+								{#each providerModels as providerModel (providerModel.id)}
+									<option value={providerModel.id}>
+										{providerModel.name} — {providerModel.id}
+									</option>
+								{/each}
+								<option value={CUSTOM_MODEL_OPTION}>Enter a custom harvester model id…</option>
+							</select>
+							{#if selectedHarvesterChoice === CUSTOM_MODEL_OPTION}
+								<div class="model-custom">
+									<input
+										class="model-input"
+										bind:value={customHarvesterModel}
+										placeholder="harvester-model-id"
+										disabled={savingHarvester || modelChangeDisabled}
+										aria-label="Custom memory harvester model id"
+										onkeydown={(e) => {
+											if (e.key === 'Enter' && !customHarvesterInvalid)
+												void chooseHarvesterModel(selectedCustomHarvester);
+										}}
+									/>
+									<button
+										type="button"
+										class="save-model-btn"
+										disabled={savingHarvester || modelChangeDisabled || customHarvesterInvalid}
+										onclick={() => chooseHarvesterModel(selectedCustomHarvester)}
+									>
+										{savingHarvester ? 'Saving…' : 'Save harvester'}
+									</button>
+								</div>
+							{/if}
+							<span
+								class="unsupported-chip"
+								title="Overrides the model-backed memory extractor when one is configured. Leave default to use server settings."
+							>
+								{memoryExtractorModel ?? 'server default'}
+							</span>
+						</div>
+						<div class="setting-row">
+							<label class="approve-toggle">
+								<input
+									type="checkbox"
+									checked={globalMemoryEnabled}
+									disabled={savingGlobalMemory || modelChangeDisabled}
+									onchange={toggleGlobalMemory}
+								/>
+								<span>Enable cross-session global memory tools</span>
+							</label>
+							<span
+								class="unsupported-chip"
+								title="When enabled, this conversation may read and write explicit user-scoped global memories through memory_global_* tools."
+							>
+								{globalMemoryEnabled ? 'global memory on' : 'session-only'}
+							</span>
+						</div>
+					{/if}
 					<div class="setting-row">
 						<label class="approve-toggle">
 							<input

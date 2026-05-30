@@ -1,6 +1,8 @@
 import type { RequestHandler } from './$types';
 import * as messages from '$lib/server/db/repos/messages';
+import * as memory from '$lib/server/db/repos/memory';
 import { authorizeConversation } from '$lib/server/conversation-auth';
+import { isHiddenVisibility } from '$lib/server/memory/engine';
 
 // GET /api/conversations/:id/export — emits a single markdown file
 // summarizing the conversation.
@@ -15,6 +17,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 	lines.push(`- Workdir: \`${conv.workdir}\``);
 	lines.push(`- Provider: ${conv.provider}`);
 	if (conv.model) lines.push(`- Model: ${conv.model}`);
+	lines.push(`- Memory mode: ${conv.memoryMode}`);
 	lines.push('');
 
 	for (const m of msgs) {
@@ -89,6 +92,22 @@ export const GET: RequestHandler = ({ params, locals }) => {
 		for (const fe of trailingEdits) emitEdit(fe);
 	}
 
+	const snapshot = memory.listSnapshot(conv.id);
+	if (conv.memoryMode !== 'off' || hasMemoryRecords(snapshot)) {
+		const exportable: memory.MemorySnapshot = {
+			...snapshot,
+			facts: snapshot.facts.filter((f) => !isHiddenVisibility(f.visibility)),
+			events: snapshot.events.filter((e) => !isHiddenVisibility(e.visibility))
+		};
+		lines.push('---');
+		lines.push('## Session memory');
+		lines.push('');
+		lines.push('```json');
+		lines.push(JSON.stringify(exportable, null, 2));
+		lines.push('```');
+		lines.push('');
+	}
+
 	const body = lines.join('\n');
 	return new Response(body, {
 		headers: {
@@ -97,3 +116,19 @@ export const GET: RequestHandler = ({ params, locals }) => {
 		}
 	});
 };
+
+function hasMemoryRecords(snapshot: memory.MemorySnapshot): boolean {
+	return (
+		snapshot.entities.length +
+			snapshot.facts.length +
+			snapshot.decisions.length +
+			snapshot.openLoops.length +
+			snapshot.events.length +
+			snapshot.patches.length +
+			snapshot.issues.length +
+			snapshot.toolCalls.length +
+			snapshot.patchItems.length +
+			(snapshot.globalMemories?.length ?? 0) >
+		0
+	);
+}

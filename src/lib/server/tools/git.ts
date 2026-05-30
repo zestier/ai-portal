@@ -21,7 +21,7 @@ export interface PortalTool {
 	description: string;
 	parameters: Record<string, unknown>;
 	argsSchema?: z.ZodTypeAny;
-	permissionBehavior?: 'normal' | 'always-prompt';
+	permissionBehavior?: 'normal' | 'always-prompt' | 'never-prompt';
 	handler(args: unknown): Promise<string>;
 }
 

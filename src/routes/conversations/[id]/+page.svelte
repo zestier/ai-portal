@@ -4,11 +4,12 @@
 	import Chat from '$lib/components/Chat.svelte';
 	import ChangesTabIndicator from '$lib/components/ChangesTabIndicator.svelte';
 	import FileBrowser from '$lib/components/FileBrowser.svelte';
+	import MemoryInspector from '$lib/components/MemoryInspector.svelte';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
 
-	type Tab = 'chat' | 'changes' | 'files' | 'commits';
-	const tabs: Tab[] = ['chat', 'changes', 'files', 'commits'];
+	type Tab = 'chat' | 'memory' | 'changes' | 'files' | 'commits';
+	const tabs: Tab[] = ['chat', 'memory', 'changes', 'files', 'commits'];
 
 	function readTab(value: string | null): Tab {
 		return value && tabs.includes(value as Tab) ? (value as Tab) : 'chat';
@@ -38,6 +39,14 @@
 			onclick={() => selectTab('chat')}
 		>
 			Chat
+		</button>
+		<button
+			role="tab"
+			aria-selected={tab === 'memory'}
+			class:active={tab === 'memory'}
+			onclick={() => selectTab('memory')}
+		>
+			Memory
 		</button>
 		<button
 			role="tab"
@@ -83,9 +92,14 @@
 			initialActiveTurnId={data.activeTurnId}
 			initialPendingInteractive={data.pendingInteractive}
 			initialComposer={data.initialComposer}
+			initialMemorySnapshot={data.memorySnapshot}
 		/>
 	</div>
-	{#if tab !== 'chat'}
+	{#if tab === 'memory'}
+		<div class="tab-body">
+			<MemoryInspector conversationId={data.conversation.id} initialMemory={data.memorySnapshot} />
+		</div>
+	{:else if tab !== 'chat'}
 		<div class="tab-body">
 			<FileBrowser conversationId={data.conversation.id} pane={tab} />
 		</div>

@@ -133,6 +133,10 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		workdir: source.workdir,
 		provider: source.provider,
 		model: source.model,
+		mode: source.mode,
+		memoryMode: source.memoryMode,
+		memoryExtractorModel: source.memoryExtractorModel,
+		globalMemoryEnabled: source.globalMemoryEnabled,
 		forkedFromConversationId: source.id,
 		forkedFromMessageId: target.id
 	});

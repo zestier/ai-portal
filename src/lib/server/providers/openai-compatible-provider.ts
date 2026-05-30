@@ -6,6 +6,7 @@ import { buildGitTools, type PortalTool } from '../tools/git';
 import { buildPermissionTools } from '../tools/permissions';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
+import { buildMemoryTools } from '../tools/memory';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type { BackendProviderId, PortalEvent, SessionMode, ToolCallRecord } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
@@ -406,7 +407,7 @@ export function openOpenAICompatibleSession(
 		getMode: () => currentMode
 	});
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-	const toolPermissionBehavior = new Map(
+	const toolPermissionBehavior = new Map<string, 'normal' | 'always-prompt' | 'never-prompt'>(
 		tools.map((tool) => [tool.name, tool.permissionBehavior ?? 'normal'] as const)
 	);
 	const { onPermissionRequest } = createInteractiveCallbacks({
@@ -540,6 +541,26 @@ export function openOpenAICompatibleSession(
 				output: summary
 			});
 			return result;
+		}
+		if (tool.permissionBehavior === 'never-prompt') {
+			try {
+				const output = await tool.handler(parsedArgs.args);
+				const summary = outputSummary(output);
+				const result = { ok: true, summary, output };
+				q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: true, summary, output });
+				return result;
+			} catch (e) {
+				const summary = e instanceof Error ? e.message : String(e);
+				const result = { ok: false, summary, output: summary };
+				q.push({
+					type: 'tool.result',
+					toolCallId: toolCall.id,
+					ok: false,
+					summary,
+					output: summary
+				});
+				return result;
+			}
 		}
 		const permission = await onPermissionRequest({
 			kind: 'custom-tool',
@@ -826,6 +847,12 @@ function buildOpenAITools(opts: {
 			conversationId: opts.opts.conversationId,
 			policy: opts.opts.policy,
 			getMode: opts.getMode
+		}),
+		...buildMemoryTools({
+			userId: opts.opts.userId,
+			conversationId: opts.opts.conversationId,
+			mode: opts.opts.memoryMode ?? 'off',
+			globalMemoryEnabled: opts.opts.globalMemoryEnabled === true
 		})
 	];
 }

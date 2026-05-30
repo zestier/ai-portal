@@ -5,6 +5,7 @@
 	import type { PageData } from './$types';
 	import ActivityPanel from './ActivityPanel.svelte';
 	import GeneralSettings from './GeneralSettings.svelte';
+	import MemoryProfilesSettings from './MemoryProfilesSettings.svelte';
 	import PermissionGrants from './PermissionGrants.svelte';
 	import PromptsSettings from './PromptsSettings.svelte';
 	import SettingsTabs from './SettingsTabs.svelte';
@@ -14,8 +15,8 @@
 
 	const visibleTabs = $derived<SettingsTab[]>(
 		data.enableRedeploy
-			? ['general', 'prompts', 'permissions', 'activity', 'update']
-			: ['general', 'prompts', 'permissions', 'activity']
+			? ['general', 'prompts', 'memory', 'permissions', 'activity', 'update']
+			: ['general', 'prompts', 'memory', 'permissions', 'activity']
 	);
 
 	function readTab(value: string | null, allowedTabs: SettingsTab[]): SettingsTab {
@@ -25,6 +26,7 @@
 	function fallbackTab(form: FormResult | null): SettingsTab {
 		if (form?.formId === 'save') return 'general';
 		if (form?.formId?.includes('PromptTemplate')) return 'prompts';
+		if (form?.formId?.includes('MemoryProfile')) return 'memory';
 		if (
 			form?.formId === 'createGrant' ||
 			form?.formId === 'updateGrant' ||
@@ -86,6 +88,8 @@
 			promptTemplates={data.promptTemplates}
 			{form}
 		/>
+	{:else if activeTab === 'memory'}
+		<MemoryProfilesSettings profiles={data.customMemoryProfiles} {form} />
 	{:else if activeTab === 'permissions'}
 		<PermissionGrants grants={data.grants} {form} />
 	{:else if activeTab === 'activity'}

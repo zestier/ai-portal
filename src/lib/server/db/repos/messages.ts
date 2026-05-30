@@ -183,6 +183,25 @@ export function listByConversation(conversationId: string): Message[] {
 	return msgs;
 }
 
+export function searchConversation(
+	conversationId: string,
+	query: string,
+	opts: { limit?: number } = {}
+): Message[] {
+	const term = query.trim();
+	if (!term) return [];
+	const rows = getDb()
+		.prepare(
+			`SELECT * FROM messages
+			  WHERE conversation_id = ?
+			    AND instr(lower(content), lower(?)) > 0
+			  ORDER BY created_at DESC, id DESC
+			  LIMIT ?`
+		)
+		.all(conversationId, term, opts.limit ?? 20) as MsgRow[];
+	return rows.map(rowToMessage).reverse();
+}
+
 export interface AppendInput {
 	role: Role;
 	content: string;

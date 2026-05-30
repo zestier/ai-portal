@@ -3,9 +3,11 @@ import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import {
 	normalizeBackendProvider,
+	normalizeMemoryMode,
 	normalizeSessionMode,
 	type BackendProviderId,
 	type Conversation,
+	type MemoryMode,
 	type SessionMode
 } from '$lib/types';
 
@@ -23,6 +25,9 @@ interface ConvRow {
 	forked_from_message_id: string | null;
 	provider_session_id: string | null;
 	mode: string | null;
+	memory_mode: string | null;
+	memory_extractor_model: string | null;
+	global_memory_enabled: number | null;
 	approve_all_tools: number | null;
 }
 
@@ -36,6 +41,9 @@ function rowToConv(r: ConvRow): Conversation {
 		provider: normalizeBackendProvider(r.provider),
 		model: r.model,
 		mode,
+		memoryMode: normalizeMemoryMode(r.memory_mode),
+		memoryExtractorModel: r.memory_extractor_model ?? null,
+		globalMemoryEnabled: r.global_memory_enabled === 1,
 		approveAllTools: r.approve_all_tools === 1,
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
@@ -89,6 +97,9 @@ export interface CreateInput {
 	provider?: BackendProviderId;
 	model: string | null;
 	mode?: SessionMode;
+	memoryMode?: MemoryMode;
+	memoryExtractorModel?: string | null;
+	globalMemoryEnabled?: boolean;
 	id?: string;
 	forkedFromConversationId?: string | null;
 	forkedFromMessageId?: string | null;
@@ -111,14 +122,18 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const forkMsg = input.forkedFromMessageId ?? null;
 	const providerSessionId = input.providerSessionId ?? id;
 	const mode = input.mode ?? 'interactive';
+	const memoryMode = input.memoryMode ?? 'off';
+	const memoryExtractorModel = normalizeOptionalModel(input.memoryExtractorModel);
+	const globalMemoryEnabled = input.globalMemoryEnabled === true;
 	const provider =
 		input.provider ?? normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
 	getDb()
 		.prepare(
 			`INSERT INTO conversations(
-			   id, user_id, title, workdir, provider, model, mode, created_at, updated_at,
+			   id, user_id, title, workdir, provider, model, mode, memory_mode, memory_extractor_model,
+			   global_memory_enabled, created_at, updated_at,
 			   forked_from_conversation_id, forked_from_message_id, provider_session_id
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			id,
@@ -128,6 +143,9 @@ export function create(userId: string, input: CreateInput): Conversation {
 			provider,
 			input.model,
 			mode,
+			memoryMode,
+			memoryExtractorModel,
+			globalMemoryEnabled ? 1 : 0,
 			now,
 			now,
 			forkConv,
@@ -142,6 +160,9 @@ export function create(userId: string, input: CreateInput): Conversation {
 		provider,
 		model: input.model,
 		mode,
+		memoryMode,
+		memoryExtractorModel,
+		globalMemoryEnabled,
 		approveAllTools: false,
 		createdAt: now,
 		updatedAt: now,
@@ -207,10 +228,17 @@ export function renameIfDefault(id: string, userId: string, title: string): bool
 export function updateSessionSettings(
 	id: string,
 	userId: string,
-	patch: { model?: string; mode?: SessionMode; approveAllTools?: boolean }
+	patch: {
+		model?: string;
+		mode?: SessionMode;
+		memoryMode?: MemoryMode;
+		memoryExtractorModel?: string | null;
+		globalMemoryEnabled?: boolean;
+		approveAllTools?: boolean;
+	}
 ): boolean {
 	const sets: string[] = [];
-	const args: Array<string | number> = [];
+	const args: Array<string | number | null> = [];
 	if (patch.model !== undefined) {
 		sets.push('model = ?');
 		args.push(patch.model);
@@ -218,6 +246,18 @@ export function updateSessionSettings(
 	if (patch.mode !== undefined) {
 		sets.push('mode = ?');
 		args.push(patch.mode);
+	}
+	if (patch.memoryMode !== undefined) {
+		sets.push('memory_mode = ?');
+		args.push(patch.memoryMode);
+	}
+	if (patch.memoryExtractorModel !== undefined) {
+		sets.push('memory_extractor_model = ?');
+		args.push(normalizeOptionalModel(patch.memoryExtractorModel));
+	}
+	if (patch.globalMemoryEnabled !== undefined) {
+		sets.push('global_memory_enabled = ?');
+		args.push(patch.globalMemoryEnabled ? 1 : 0);
 	}
 	if (patch.approveAllTools !== undefined) {
 		sets.push('approve_all_tools = ?');
@@ -231,6 +271,11 @@ export function updateSessionSettings(
 		.prepare(`UPDATE conversations SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
 		.run(...args);
 	return r.changes > 0;
+}
+
+function normalizeOptionalModel(value: string | null | undefined): string | null {
+	const trimmed = value?.trim();
+	return trimmed ? trimmed : null;
 }
 
 export function touch(id: string) {

@@ -5,6 +5,7 @@ import * as messages from '$lib/server/db/repos/messages';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as usage from '$lib/server/db/repos/usage';
+import * as memory from '$lib/server/db/repos/memory';
 import { getBuiltInPromptTemplate } from '$lib/prompt-templates';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
@@ -21,6 +22,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (!conv) throw error(404);
 	const msgs = messages.listByConversation(conv.id);
 	const contextUsage = usage.get(conv.id);
+	const memorySnapshot = memory.listSnapshot(conv.id, { userId: conv.userId });
 	let initialComposer = '';
 	const draftTicketId = url.searchParams.get('draftTicketId');
 	if (draftTicketId && msgs.length === 0) {
@@ -117,6 +119,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		chatPlaceholder: provider.ui.chatPlaceholder,
 		messages: msgs,
 		contextUsage,
+		memorySnapshot,
 		parent,
 		activeTurnId,
 		pendingInteractive,

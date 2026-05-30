@@ -25,6 +25,7 @@ import { StubCopilotClient, isStubMode } from './bridge-stub';
 import { buildGitTools } from '../tools/git';
 import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
+import { buildMemoryTools } from '../tools/memory';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 
@@ -153,7 +154,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	let approveAllTools = opts.approveAllTools === true;
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
 	let sessionWorkspacePath: string | null = null;
-	const toolPermissionBehavior = new Map<string, 'normal' | 'always-prompt'>();
+	const toolPermissionBehavior = new Map<string, 'normal' | 'always-prompt' | 'never-prompt'>();
 
 	const eventAdapter = new SdkEventAdapter({
 		conversationId: opts.conversationId,
@@ -181,6 +182,12 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			conversationId: opts.conversationId,
 			policy: opts.policy,
 			getMode: () => currentMode
+		}),
+		...buildMemoryTools({
+			userId: opts.userId,
+			conversationId: opts.conversationId,
+			mode: opts.memoryMode ?? 'off',
+			globalMemoryEnabled: opts.globalMemoryEnabled === true
 		})
 	];
 	const validateCustomToolArgs = buildToolArgsValidator(portalTools);
@@ -226,7 +233,11 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		onAutoModeSwitch
 	};
 	for (const tool of sessionConfig.tools) {
-		if (tool.permissionBehavior === 'always-prompt' || tool.permissionBehavior === 'normal') {
+		if (
+			tool.permissionBehavior === 'always-prompt' ||
+			tool.permissionBehavior === 'normal' ||
+			tool.permissionBehavior === 'never-prompt'
+		) {
 			toolPermissionBehavior.set(tool.name, tool.permissionBehavior);
 		}
 	}

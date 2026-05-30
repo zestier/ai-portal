@@ -3,6 +3,7 @@ import type {
 	PortalEvent,
 	PermissionPolicy,
 	ProviderCapabilities,
+	MemoryMode,
 	SessionMode,
 	MessageStatus,
 	Role,
@@ -52,6 +53,10 @@ export interface ProviderOpenOptions {
 	mode?: SessionMode;
 	/** Initial approve-all setting. Providers without approve-all support may ignore it. */
 	approveAllTools?: boolean;
+	/** Portal-managed memory mode. Providers use it to expose memory tools. */
+	memoryMode?: MemoryMode;
+	/** Explicit opt-in for user-scoped global memory tools. */
+	globalMemoryEnabled?: boolean;
 	/** Provider-specific bearer credential resolved by the route layer, if needed. */
 	providerAuthToken?: string;
 	/**

@@ -22,28 +22,60 @@ const PatchBody = z
 	.object({
 		model: z.string().trim().min(1).optional(),
 		mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		memoryMode: z.enum(['off', 'lightweight', 'project', 'story', 'strict']).optional(),
+		memoryExtractorModel: z
+			.string()
+			.trim()
+			.transform((value) => (value ? value : null))
+			.nullable()
+			.optional(),
+		globalMemoryEnabled: z.boolean().optional(),
 		approveAllTools: z.boolean().optional()
 	})
-	.refine((b) => b.model !== undefined || b.mode !== undefined || b.approveAllTools !== undefined, {
-		message: 'No fields to update'
-	});
+	.refine(
+		(b) =>
+			b.model !== undefined ||
+			b.mode !== undefined ||
+			b.memoryMode !== undefined ||
+			b.memoryExtractorModel !== undefined ||
+			b.globalMemoryEnabled !== undefined ||
+			b.approveAllTools !== undefined,
+		{
+			message: 'No fields to update'
+		}
+	);
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	const body = await parseBody(request, PatchBody);
 	const provider = getProvider(conv.provider);
 	const modelChanged = body.model !== undefined && body.model !== conv.model;
+	const memoryChanged = body.memoryMode !== undefined && body.memoryMode !== conv.memoryMode;
+	const extractorModelChanged =
+		body.memoryExtractorModel !== undefined &&
+		body.memoryExtractorModel !== conv.memoryExtractorModel;
+	const globalMemoryChanged =
+		body.globalMemoryEnabled !== undefined && body.globalMemoryEnabled !== conv.globalMemoryEnabled;
 	const turn = getTurn(conv.id);
-	if (modelChanged && turn?.status === 'running') {
-		throw error(409, 'Cannot change model while a turn is running.');
+	if (
+		(modelChanged || memoryChanged || extractorModelChanged || globalMemoryChanged) &&
+		turn?.status === 'running'
+	) {
+		throw error(
+			409,
+			'Cannot change model, memory mode, harvester model, or global memory while a turn is running.'
+		);
 	}
 
 	const persistedPatch = { ...body };
 	convs.updateSessionSettings(conv.id, conv.userId, body);
-	if (modelChanged) {
+	if (modelChanged || memoryChanged || extractorModelChanged || globalMemoryChanged) {
 		await pool.release(conv.id);
 	}
-	const live = modelChanged ? null : pool.getActive(conv.id);
+	const live =
+		modelChanged || memoryChanged || extractorModelChanged || globalMemoryChanged
+			? null
+			: pool.getActive(conv.id);
 	if (live) {
 		// Best-effort: the bridge already logs detailed RPC failures, and
 		// the DB row is the source of truth for the next open(). Don't fail

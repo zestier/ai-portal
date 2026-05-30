@@ -57,7 +57,7 @@ interface InteractiveAdapterOptions {
 	getApproveAll(): boolean;
 	getMode(): SessionMode;
 	getSessionWorkspacePath(): string | null;
-	getPermissionBehavior(tool: string): 'normal' | 'always-prompt';
+	getPermissionBehavior(tool: string): 'normal' | 'always-prompt' | 'never-prompt';
 	validateCustomToolArgs?(toolName: string, args: unknown): { feedback: string } | null;
 }
 
@@ -89,6 +89,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		const scopeKey = deriveScopeKey(permissionKind, req);
 		const hash = hashPermissionArgs(req);
 		const alwaysPrompt = opts.getPermissionBehavior(tool) === 'always-prompt';
+		const neverPrompt = opts.getPermissionBehavior(tool) === 'never-prompt';
 
 		const audit = (decision: 'auto-allow' | 'auto-deny' | 'auto-prompt-required') => {
 			try {
@@ -117,6 +118,10 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				audit('auto-deny');
 				return { kind: 'reject', feedback: invalid.feedback } as const;
 			}
+		}
+		if (neverPrompt) {
+			audit('auto-allow');
+			return { kind: 'approve-once' } as const;
 		}
 		const forceEscalationReason =
 			forcePermissionPrompt.kind === 'valid' ? forcePermissionPrompt.reason : null;

@@ -22,6 +22,25 @@ The important design principle is that memory should be explicit, typed,
 inspectable, reversible, and scoped. The model remains the language and reasoning
 engine; the portal becomes the continuity and state-management layer.
 
+## Implementation status
+
+The portal now includes the full production-oriented foundation described here:
+
+- opt-in memory-backed turns with fresh context, initial packets, and mandatory
+  memory tools
+- typed session memory tables, patch audit trails, validation issues, global
+  memory, FTS search, local vector fallback, and optional OpenAI-compatible
+  embedding provider support
+- memory inspector workflows for edit, delete, wipe, patch revert, and individual
+  patch-item approve/reject review
+- per-conversation controls for memory mode, harvester model override, and
+  explicit global-memory tool opt-in
+- model-backed extraction metadata, strict-mode validators, and timeline/alibi
+  conflict checks
+- custom memory profile persistence and settings UI groundwork for user-authored
+  schemas/instructions
+- sqlite-vec availability detection hooks while preserving JSON-vector fallback
+
 ## Non-goals
 
 - Do not replace the existing default chat flow. Memory-backed sessions should be
@@ -579,6 +598,180 @@ Commit rules:
 - low-confidence items are either discarded or marked `needs_review`
 - strict-mode conflicts block commit unless explicitly resolved
 
+## Model-backed extraction design
+
+The heuristic extractor is useful as a fallback, but the full design should add
+a model-backed extraction backend behind the existing patch lifecycle. The
+extractor must never write directly to canonical memory. It proposes a
+`MemoryPatchProposal`; the existing validator, patch log, patch item tracker,
+and committer remain the only mutation path.
+
+### Extractor interface
+
+```ts
+export interface MemoryExtractor {
+  extractPatch(input: ExtractPatchInput): Promise<ExtractPatchResult>;
+}
+
+export interface ExtractPatchInput {
+  conversationId: string;
+  userId: string;
+  mode: MemoryMode;
+  turnId: string;
+  userMessage: {
+    id: string;
+    content: string;
+    createdAt: number;
+  };
+  assistantMessage: {
+    id: string;
+    content: string;
+    createdAt: number;
+  };
+  initialPacket: TurnMemoryPacket;
+  memoryToolCalls: MemoryToolCall[];
+  regularToolCalls: ToolCallRecord[];
+  recentTranscript: Array<{
+    id: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    createdAt: number;
+  }>;
+}
+
+export interface ExtractPatchResult {
+  patch: MemoryPatchProposal;
+  confidence: number;
+  summary: string;
+  diagnostics: Array<{
+    severity: "info" | "warning" | "error";
+    code: string;
+    message: string;
+  }>;
+  rawModelOutput?: unknown;
+}
+```
+
+The first implementation can use the same configured provider/model used for the
+conversation. Longer term, extraction should have a separate configurable model
+so users can choose a cheaper or more deterministic backend.
+
+### Extractor prompt contract
+
+The extractor prompt should be boring and schema-first:
+
+```text
+You extract durable memory changes from one completed assistant turn.
+
+Return only JSON matching MemoryPatchProposal.
+Do not summarize the whole conversation.
+Do not create facts for transient wording, speculation, or rejected ideas.
+Do not store secrets, credentials, raw tool output, or private tokens.
+Mark uncertain items with low confidence or omit them.
+For coding/project mode, mark repository and test observations as historical.
+For story/strict mode, preserve entity state, knowledge, timeline, clues,
+objects, locations, and unresolved plot threads.
+
+Input:
+- memory profile
+- initial memory packet
+- recent transcript
+- user message
+- assistant message
+- memory tool calls
+- regular tool calls summarized
+```
+
+The model response is parsed with the existing `MemoryPatchProposalSchema`.
+Invalid JSON or schema errors create a `memory_validation_issues` row and fall
+back to heuristic extraction only when the profile allows fallback.
+
+### Execution modes
+
+| Profile | Extraction timing | Failure behavior |
+| --- | --- | --- |
+| Lightweight | Async after stream | Log issue, skip patch or heuristic fallback |
+| Project | Async after stream | Log issue, preserve historical command/tool summaries |
+| Story | Async after stream, quick | Log issue; user can correct in inspector |
+| Strict | Synchronous before final `done` or review-gated | Block commit on conflicts; surface `needs_review` |
+
+For responsive streaming, the assistant answer should stream first in most
+modes. Extraction status is then emitted as memory events:
+
+```text
+memory.status extracting
+memory.status validating
+memory.status committed | needs_review | skipped
+```
+
+Strict mode is the exception. If the assistant makes continuity-sensitive claims
+and did not call `memory_check_claims`, the turn runner may run extraction and
+validation before emitting final completion.
+
+### Provider abstraction
+
+Add a small server-side provider-independent service:
+
+```ts
+interface MemoryExtractionProvider {
+  completeJson(input: {
+    model: string;
+    system: string;
+    prompt: string;
+    schemaName: "MemoryPatchProposal";
+    signal?: AbortSignal;
+  }): Promise<unknown>;
+}
+```
+
+Initial provider options:
+
+1. Reuse the active backend provider when it supports non-streaming JSON calls.
+2. Fall back to the existing chat provider with a synthetic internal prompt.
+3. Fall back to heuristic extraction when no extraction backend is available.
+
+The provider must run without exposing extraction prompts in the user transcript.
+It should still write audit rows to `memory_patches` and
+`memory_validation_issues`.
+
+### Storage additions
+
+The current `memory_patches.raw_patch_json` can store the proposed patch, but
+model extraction needs auditable metadata:
+
+```sql
+ALTER TABLE memory_patches ADD COLUMN extractor_kind TEXT;
+ALTER TABLE memory_patches ADD COLUMN extractor_model TEXT;
+ALTER TABLE memory_patches ADD COLUMN extractor_confidence REAL;
+ALTER TABLE memory_patches ADD COLUMN extractor_diagnostics_json TEXT NOT NULL DEFAULT '[]';
+```
+
+If avoiding another migration at first, this metadata can live in
+`validation_result_json`. A dedicated migration is cleaner once the extractor is
+productionized.
+
+### Safety rules
+
+- Never persist raw tool output wholesale.
+- Never persist values that match secret/token patterns.
+- Never promote a permission decision into a broad global preference unless the
+  user explicitly asks.
+- Never treat project/repository facts as current truth without revalidation.
+- Never commit model output without schema validation.
+- Never delete or supersede memory directly from extractor output without a
+  patch item trail.
+
+### Implementation steps
+
+1. Add `src/lib/server/memory/extractor.ts` with `MemoryExtractor` and a
+   heuristic fallback implementation.
+2. Add a provider-backed implementation that calls a JSON completion helper.
+3. Replace direct `extractHeuristicPatch` usage in the turn runner with
+   `extractor.extractPatch`.
+4. Store extractor diagnostics in the patch validation result.
+5. Add profile-specific tests with transcript fixtures.
+6. Add a settings flag for extractor backend/model once multiple choices exist.
+
 ## Validation
 
 Validation must be profile-specific.
@@ -774,6 +967,215 @@ Later options:
 Avoid starting with an external vector database unless deployment requirements
 change. It adds operational and privacy complexity before the product value is
 proven.
+
+## Hybrid vector retrieval design
+
+The current memory search stack should evolve into hybrid retrieval:
+
+```text
+symbolic entity lookup
+  -> active facts / open loops
+  -> SQLite FTS lexical recall
+  -> vector similarity recall
+  -> profile-specific reranking
+  -> compact provenance bundle
+```
+
+Vector retrieval should not replace structured lookup. It is an additional
+recall path for fuzzy references like "that candle detail", "the auth decision",
+or "the thing we tried before the database migration".
+
+### Embedding provider interface
+
+```ts
+export interface MemoryEmbeddingProvider {
+  embed(input: {
+    texts: string[];
+    purpose: "index" | "query";
+    signal?: AbortSignal;
+  }): Promise<EmbeddingResult>;
+}
+
+export interface EmbeddingResult {
+  model: string;
+  dimensions: number;
+  vectors: number[][];
+}
+```
+
+Provider choices should be explicit:
+
+| Provider | Use case |
+| --- | --- |
+| `none` | Default; structured + FTS only |
+| local OpenAI-compatible embeddings | Local/private deployments |
+| hosted provider embeddings | Higher quality, explicit opt-in |
+| future SQLite extension model | Fully local vector generation |
+
+The embedding provider must be independent from chat model providers. A user may
+use Copilot for chat and a local embedding model for memory.
+
+### Storage schema
+
+Use a base table plus either a vector extension table or a JSON fallback.
+
+```sql
+CREATE TABLE memory_embeddings (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         TEXT REFERENCES users(id) ON DELETE CASCADE,
+  scope           TEXT NOT NULL, -- session | global
+  item_type       TEXT NOT NULL,
+  item_id         TEXT NOT NULL,
+  embedding_model TEXT NOT NULL,
+  dimensions      INTEGER NOT NULL,
+  text_hash       TEXT NOT NULL,
+  text            TEXT NOT NULL,
+  vector_json     TEXT NOT NULL,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL,
+  UNIQUE(scope, item_type, item_id, embedding_model)
+);
+CREATE INDEX idx_memory_embeddings_session
+  ON memory_embeddings(conversation_id, item_type);
+CREATE INDEX idx_memory_embeddings_global
+  ON memory_embeddings(user_id, item_type);
+```
+
+If `sqlite-vec` or another vector extension is available, add a parallel virtual
+table keyed by `memory_embeddings.id`. Keep the base table regardless so export,
+debugging, and fallback search remain simple.
+
+### Indexable text
+
+Every memory record needs a deterministic text representation:
+
+| Item type | Text representation |
+| --- | --- |
+| Entity | key, type, display name, summary, metadata |
+| Event | type, summary, payload, actor/target display names |
+| Fact | entity display name, predicate, value, visibility |
+| Decision | subject, decision, rationale |
+| Open loop | type, title, description, status |
+| Patch | summary, validation issues |
+| Global memory | kind, key, value |
+
+The text hash prevents unnecessary re-embedding when records are unchanged.
+
+### Indexing flow
+
+```text
+memory record committed/updated
+  -> enqueue embedding job
+  -> compute index text + hash
+  -> skip if same hash/model already indexed
+  -> call embedding provider
+  -> upsert memory_embeddings
+  -> upsert vector-extension row when available
+```
+
+Indexing should be asynchronous. Retrieval must still work with structured/FTS
+when embeddings lag or fail.
+
+### Query flow
+
+```ts
+interface HybridMemorySearchInput {
+  conversationId: string;
+  userId: string;
+  query: string;
+  mode: MemoryMode;
+  includeGlobal: boolean;
+  types?: string[];
+  limit: number;
+}
+```
+
+Search steps:
+
+1. Extract symbolic handles from the query (`character.elias`, file paths,
+   clue IDs, explicit entity keys).
+2. Fetch exact entity/fact/open-loop matches.
+3. Run existing FTS search.
+4. If embeddings are enabled, embed the query and run nearest-neighbor search.
+5. Merge by item ID.
+6. Score with weighted features:
+
+```text
+score =
+  symbolicMatch * 10
+  + activeStatus * 3
+  + openLoopPriority * 2
+  + ftsRank
+  + vectorSimilarity * 5
+  + recencyBoost
+  + profileBoost
+```
+
+7. Return compact results with provenance, source event/message IDs, confidence,
+   and retrieval reasons.
+
+### Profile-specific reranking
+
+| Profile | Boost |
+| --- | --- |
+| Project | decisions, failed attempts, current open loops, file/topic entities |
+| Story | current scene, present characters, world rules, object locations |
+| Strict | timeline, clue ledger, visibility/knowledge facts, contradictions |
+| Lightweight | preferences, decisions, unresolved questions |
+
+Strict mode should prefer exact symbolic and timeline results over pure vector
+similarity. Vector-only matches in strict mode should be labeled as fuzzy recall,
+not canonical truth.
+
+### Tool changes
+
+`memory_search` should become hybrid transparently:
+
+```json
+{
+  "query": "blue candle",
+  "types": ["fact", "event", "open_loop"],
+  "includeGlobal": false,
+  "limit": 20
+}
+```
+
+Add optional diagnostics in tool output:
+
+```json
+{
+  "results": [],
+  "retrieval": {
+    "fts": 4,
+    "vector": 6,
+    "symbolic": 1,
+    "embeddingModel": "text-embedding-3-small",
+    "vectorIndexAvailable": true
+  }
+}
+```
+
+### Privacy and control
+
+- Embeddings are disabled by default.
+- Hosted embeddings require explicit configuration.
+- Global memory embeddings are separate from session embeddings.
+- Deleting memory deletes embedding rows.
+- Export includes embedding metadata, not necessarily vector values unless a
+  debug/export option asks for them.
+- Secret-filtering runs before indexing text is embedded.
+
+### Implementation steps
+
+1. Add `memory_embeddings` migration.
+2. Add `src/lib/server/memory/embeddings.ts` provider interface.
+3. Add deterministic `indexTextForMemoryItem` helpers.
+4. Enqueue embedding updates from commit/update/delete paths.
+5. Implement JSON-vector cosine fallback for small local datasets.
+6. Optionally enable `sqlite-vec` acceleration when present.
+7. Upgrade `memory.search` repository method into hybrid search.
+8. Add recall-quality golden tests.
 
 ## Security, privacy, and isolation
 
@@ -976,4 +1378,3 @@ The feature is working when:
 - strict sessions can detect at least basic contradictions before committing
   memory
 - ordinary chats remain fast when memory is off
-
