@@ -7,11 +7,7 @@ import {
 	type TurnMemoryPacket
 } from './engine';
 import { loadConfig } from '$lib/server/config';
-import {
-	fetchWithTimeout,
-	jsonRequestHeaders,
-	parseJson
-} from '$lib/server/providers/provider-utils';
+import { fetchWithTimeout, jsonRequestHeaders } from '$lib/server/providers/provider-utils';
 import type { MemoryMode, Message, ToolCallRecord } from '$lib/types';
 import type { MemoryToolCall } from '$lib/server/db/repos/memory';
 
@@ -73,6 +69,39 @@ export class HeuristicMemoryExtractor implements MemoryExtractor {
 }
 
 type Diagnostic = ExtractPatchResult['diagnostics'][number];
+
+export class MemoryExtractorHttpError extends Error {
+	readonly status: number;
+	readonly statusText: string;
+	readonly endpoint: string;
+	readonly model: string;
+	readonly providerMessage: string | null;
+	readonly responseBodyExcerpt: string | null;
+
+	constructor(input: {
+		status: number;
+		statusText: string;
+		endpoint: string;
+		model: string;
+		providerMessage?: string | null;
+		responseBodyExcerpt?: string | null;
+	}) {
+		const statusText = input.statusText || 'Unknown status';
+		const providerSuffix = input.providerMessage ? `: ${input.providerMessage}` : '';
+		const bodySuffix =
+			!input.providerMessage && input.responseBodyExcerpt ? `: ${input.responseBodyExcerpt}` : '';
+		super(
+			`Memory extractor request failed with HTTP ${input.status} ${statusText} for model "${input.model}" at ${input.endpoint}${providerSuffix}${bodySuffix}`
+		);
+		this.name = 'MemoryExtractorHttpError';
+		this.status = input.status;
+		this.statusText = statusText;
+		this.endpoint = input.endpoint;
+		this.model = input.model;
+		this.providerMessage = input.providerMessage ?? null;
+		this.responseBodyExcerpt = input.responseBodyExcerpt ?? null;
+	}
+}
 
 interface OpenAICompatibleExtractorOptions {
 	baseUrl: string;
@@ -278,8 +307,10 @@ async function requestOpenAICompatibleJson(
 	opts: OpenAICompatibleExtractorOptions,
 	prompt: string
 ): Promise<unknown> {
+	const endpoint = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+	const diagnosticEndpoint = redactEndpoint(endpoint);
 	const res = await fetchWithTimeout(
-		`${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+		endpoint,
 		{
 			method: 'POST',
 			headers: jsonRequestHeaders(opts.apiKey),
@@ -300,13 +331,74 @@ async function requestOpenAICompatibleJson(
 		},
 		opts.timeoutMs
 	);
-	const body = (await parseJson(res)) as {
+	const { body, rawText } = await readJsonResponse(res);
+	const typedBody = body as {
 		choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
 		error?: { message?: string };
 	};
-	if (!res.ok) throw new Error(body.error?.message ?? `Memory extractor failed: ${res.status}`);
-	const content = body.choices?.[0]?.message?.content ?? body.choices?.[0]?.text;
+	if (!res.ok) {
+		throw new MemoryExtractorHttpError({
+			status: res.status,
+			statusText: res.statusText,
+			endpoint: diagnosticEndpoint,
+			model: opts.model,
+			providerMessage: extractProviderErrorMessage(body),
+			responseBodyExcerpt: excerptResponseBody(rawText || stringifyUnknown(body))
+		});
+	}
+	const content = typedBody.choices?.[0]?.message?.content ?? typedBody.choices?.[0]?.text;
 	return typeof content === 'string' ? content : (content ?? {});
+}
+
+async function readJsonResponse(res: Response): Promise<{ body: unknown; rawText: string }> {
+	const rawText = await res.text().catch(() => '');
+	if (!rawText) return { body: {}, rawText };
+	try {
+		return { body: JSON.parse(rawText), rawText };
+	} catch {
+		return { body: {}, rawText };
+	}
+}
+
+function extractProviderErrorMessage(body: unknown): string | null {
+	if (!body || typeof body !== 'object') return null;
+	const record = body as Record<string, unknown>;
+	const error = record.error;
+	if (error && typeof error === 'object') {
+		const message = (error as Record<string, unknown>).message;
+		if (typeof message === 'string' && message.trim()) return message.trim();
+	}
+	for (const key of ['message', 'detail', 'error_description']) {
+		const value = record[key];
+		if (typeof value === 'string' && value.trim()) return value.trim();
+	}
+	return null;
+}
+
+function excerptResponseBody(text: string): string | null {
+	const normalized = redactSensitiveText(text).replace(/\s+/g, ' ').trim();
+	if (!normalized) return null;
+	return normalized.length > 500 ? `${normalized.slice(0, 500)}...` : normalized;
+}
+
+function redactEndpoint(raw: string): string {
+	try {
+		const url = new URL(raw);
+		if (url.username) url.username = '[redacted]';
+		if (url.password) url.password = '[redacted]';
+		url.search = '';
+		return url.toString();
+	} catch {
+		return redactSensitiveText(raw);
+	}
+}
+
+function stringifyUnknown(value: unknown): string {
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
 }
 
 function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): string {

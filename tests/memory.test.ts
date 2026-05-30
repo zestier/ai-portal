@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
@@ -44,6 +44,11 @@ function routeEvent(
 describe('memory-backed sessions', () => {
 	beforeEach(async () => {
 		await setupLocalEnv();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 	});
 
 	it('round-trips memory mode on conversations', () => {
@@ -591,6 +596,55 @@ describe('memory-backed sessions', () => {
 		expect(committed.patch.extractorModel).toBe('test-extractor');
 		expect(memory.listDecisions(conv.id)).toHaveLength(1);
 		expect(memory.listDecisions(conv.id)[0]?.decision).toContain('append-only');
+	});
+
+	it('includes provider response details when model-backed extraction fails', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Remember that Mara found the attic key.'
+		});
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'I will remember the key discovery.'
+		});
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				return new Response(
+					JSON.stringify({
+						error: {
+							message: 'response_format json_object is not supported by this model'
+						}
+					}),
+					{
+						status: 400,
+						statusText: 'Bad Request',
+						headers: { 'content-type': 'application/json' }
+					}
+				);
+			})
+		);
+		const extractor = new OpenAICompatibleMemoryExtractor({
+			baseUrl: 'http://extractor.test/v1',
+			model: 'story-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 4_000
+		});
+
+		await expect(
+			extractor.extractPatch({
+				conversationId: conv.id,
+				userId: user.id,
+				mode: 'story',
+				turnId: 'turn-test',
+				userMessage,
+				assistantMessage
+			})
+		).rejects.toThrow(
+			'Memory extractor request failed with HTTP 400 Bad Request for model "story-extractor" at http://extractor.test/v1/chat/completions: response_format json_object is not supported by this model'
+		);
 	});
 
 	it('indexes committed memory for hybrid vector search', () => {

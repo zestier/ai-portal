@@ -18,7 +18,7 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
  * 410 (Gone) is preferred over 404 because the grace expiry is a hard
  * permanent end-of-stream — `EventSource` won't auto-retry it.
  */
-export const GET: RequestHandler = ({ params, locals, request }) => {
+export const GET: RequestHandler = ({ params, locals, request, url }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 
 	const turn = getTurnById(conv.id, params.turnId);
@@ -32,11 +32,18 @@ export const GET: RequestHandler = ({ params, locals, request }) => {
 		if (Number.isFinite(n) && n >= 0) sinceId = Math.floor(n);
 	}
 
-	return sseResponse(turn.subscribe({ signal: request.signal, sinceId }), {
-		// Negative ids are sentinels for ephemeral events that aren't part
-		// of the replay buffer — omit the `id:` line entirely so the
-		// browser's Last-Event-ID stays pointed at the latest persisted id.
-		extractId: (item) => (item.id < 0 ? undefined : item.id),
-		extractData: (item) => item.event
-	});
+	return sseResponse(
+		turn.subscribe({
+			signal: request.signal,
+			sinceId,
+			skipReplay: url.searchParams.get('replay') === '0'
+		}),
+		{
+			// Negative ids are sentinels for ephemeral events that aren't part
+			// of the replay buffer — omit the `id:` line entirely so the
+			// browser's Last-Event-ID stays pointed at the latest persisted id.
+			extractId: (item) => (item.id < 0 ? undefined : item.id),
+			extractData: (item) => item.event
+		}
+	);
 };

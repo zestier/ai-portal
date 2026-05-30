@@ -23,7 +23,7 @@ import { isStubMode } from './bridge-stub';
 import { AsyncQueue } from '../runtime/async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
 import { isEnabled } from '../memory/engine';
-import { extractAndCommitMemory } from '../memory/extractor';
+import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
 import type { MemoryMode } from '$lib/types';
 import type { ProviderOpenOptions } from '../providers';
 import type { PortalEvent } from '$lib/types';
@@ -64,6 +64,10 @@ export interface SubscribeOptions {
 	// If provided, replay only events strictly after this id. Used by SSE
 	// reconnects to skip what the client already received.
 	sinceId?: number;
+	// Used by fresh page loads that already rendered the persisted in-flight
+	// message state from the DB. They only need future live events; replaying
+	// buffered deltas would duplicate the already-rendered assistant content.
+	skipReplay?: boolean;
 }
 
 export interface Turn {
@@ -213,14 +217,14 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 		// `done` in the finally block after persistence work completes.
 		if (ev.type === 'done') return;
 
-		emit(ev);
-
 		if (ev.type === 'message.start') {
 			assistantId = ev.messageId;
-			ensurePersistedAssistant();
+			emit({ ...ev, messageId: ensurePersistedAssistant() });
 		} else if (ev.type === 'message.delta') {
+			const persistedId = ensurePersistedAssistant();
 			assistantBuf += ev.text;
-			messages.updateContentOnly(ensurePersistedAssistant(), assistantBuf);
+			messages.updateContentOnly(persistedId, assistantBuf);
+			emit({ ...ev, messageId: persistedId });
 		} else if (ev.type === 'message.reasoning') {
 			const persistedId = ensurePersistedAssistant();
 			let seg = pendingReasoning.get(ev.segmentId);
@@ -241,13 +245,19 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			}
 			seg.text += ev.text;
 			messages.upsertReasoningBlock(persistedId, seg);
+			emit({ ...ev, messageId: persistedId });
 		} else if (ev.type === 'message.reasoning.end') {
 			const seg = pendingReasoning.get(ev.segmentId);
+			const persistedId = ensurePersistedAssistant();
 			if (seg) {
 				seg.durationMs = ev.durationMs;
-				messages.upsertReasoningBlock(ensurePersistedAssistant(), seg);
+				messages.upsertReasoningBlock(persistedId, seg);
 			}
+			emit({ ...ev, messageId: persistedId });
+		} else if (ev.type === 'message.end') {
+			emit({ ...ev, messageId: ensurePersistedAssistant() });
 		} else if (ev.type === 'tool.call') {
+			emit(ev);
 			const isChild = !!ev.parentToolCallId;
 			const persistedId = ensurePersistedAssistant();
 			const tool: PendingTool = {
@@ -274,6 +284,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				parentToolCallId: tool.parentToolCallId
 			});
 		} else if (ev.type === 'tool.result') {
+			emit(ev);
 			const tc = pendingTools.get(ev.toolCallId);
 			if (tc) {
 				tc.status = ev.ok ? 'ok' : 'error';
@@ -286,8 +297,10 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				});
 			}
 		} else if (ev.type === 'subagent.lifecycle') {
+			emit(ev);
 			messages.updateBackgroundAgentLifecycle(ev.toolCallId, ev.agentId, ev.status);
 		} else if (ev.type === 'file.edit') {
+			emit(ev);
 			const isChild = !!ev.parentToolCallId;
 			const textOffset = isChild ? null : assistantBuf.length;
 			const parentToolCallId = ev.parentToolCallId ?? null;
@@ -303,6 +316,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				);
 			}
 		} else if (ev.type === 'context.usage') {
+			emit(ev);
 			try {
 				usageRepo.upsert(opts.conversationId, {
 					currentTokens: ev.currentTokens,
@@ -318,6 +332,8 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					err: String(usageErr)
 				});
 			}
+		} else {
+			emit(ev);
 		}
 	}
 
@@ -474,13 +490,14 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				} catch (memoryErr) {
 					log.warn('turn.memory.failed', {
 						conversationId: opts.conversationId,
-						err: String(memoryErr)
+						err: memoryFailureMessage(memoryErr),
+						...memoryFailureLogFields(memoryErr)
 					});
 					emit({
 						type: 'memory.status',
 						conversationId: opts.conversationId,
 						phase: 'needs_review',
-						summary: 'Memory extraction failed; response was preserved.'
+						summary: memoryFailureSummary(memoryErr)
 					});
 				}
 			}
@@ -522,7 +539,7 @@ async function* subscribe(
 	// Note: the for-loop reads turn.eventLog.length each iteration, so any
 	// events appended by dispatch between yields are picked up before we
 	// fall through to the live subscription. No gap, no duplicates.
-	const startIdx = sinceId === undefined ? 0 : sinceId + 1;
+	const startIdx = opts.skipReplay ? turn.eventLog.length : sinceId === undefined ? 0 : sinceId + 1;
 	for (let i = startIdx; i < turn.eventLog.length; i++) {
 		if (signal?.aborted) return;
 		yield { id: i, event: turn.eventLog[i] };
@@ -566,4 +583,27 @@ function safeJson(v: unknown): string {
 	} catch {
 		return String(v);
 	}
+}
+
+function memoryFailureMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+function memoryFailureSummary(err: unknown): string {
+	const message = memoryFailureMessage(err);
+	return message
+		? `Memory extraction failed; response was preserved. ${message}`
+		: 'Memory extraction failed; response was preserved.';
+}
+
+function memoryFailureLogFields(err: unknown): Record<string, unknown> {
+	if (!(err instanceof MemoryExtractorHttpError)) return {};
+	return {
+		extractorStatus: err.status,
+		extractorStatusText: err.statusText,
+		extractorEndpoint: err.endpoint,
+		extractorModel: err.model,
+		extractorProviderMessage: err.providerMessage,
+		extractorResponseBodyExcerpt: err.responseBodyExcerpt
+	};
 }

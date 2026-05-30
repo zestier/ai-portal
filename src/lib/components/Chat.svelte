@@ -221,7 +221,7 @@
 			// Reattach the EventSource to any in-progress turn so a
 			// refresh-mid-stream resumes seamlessly.
 			if (initialActiveTurnId) {
-				attachStream(initialActiveTurnId);
+				attachStream(initialActiveTurnId, { replay: false });
 			}
 			void refreshForks();
 		});
@@ -312,12 +312,15 @@
 	//   2. Network error with `readyState === CLOSED` → server refused
 	//      reconnect (typically 410 Gone: turn no longer in registry).
 	//      Refetch persisted messages so the UI catches up, then stop.
-	function attachStream(turnId: string) {
+	function attachStream(turnId: string, opts: { replay?: boolean } = {}) {
 		closeStream();
 		activeTurnId = turnId;
 		streaming = true;
 
-		const es = new EventSource(`/api/conversations/${conversation.id}/turns/${turnId}/stream`);
+		const replayParam = opts.replay === false ? '?replay=0' : '';
+		const es = new EventSource(
+			`/api/conversations/${conversation.id}/turns/${turnId}/stream${replayParam}`
+		);
 		eventSource = es;
 
 		es.onopen = () => {
@@ -427,7 +430,7 @@
 				// If a new turn became active between events (unlikely but
 				// possible from another tab), attach to it. This also repairs
 				// a locally closed stream when the server still has work.
-				attachStream(data.activeTurnId);
+				attachStream(data.activeTurnId, { replay: false });
 			} else {
 				scheduleStreamStallTimeout();
 			}
@@ -439,7 +442,7 @@
 	async function handleToolRerunStarted(turnId: string) {
 		streaming = true;
 		await refreshMessages();
-		if (!eventSource) attachStream(turnId);
+		if (!eventSource) attachStream(turnId, { replay: false });
 	}
 
 	function handleInlineEdited(messageId: string, content: string, turnId: string) {

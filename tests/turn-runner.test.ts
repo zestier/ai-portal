@@ -229,6 +229,128 @@ describe('turn-runner', () => {
 		expect(replayed.map((x) => x.id)).toEqual(all.slice(secondDeltaId + 1).map((x) => x.id));
 	});
 
+	it('emits persisted assistant message ids for streamed assistant events', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'stable ids',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+
+		acquireMock.mockResolvedValue(
+			makeFakeSession([
+				{ type: 'message.start', messageId: 'provider-message-id', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'provider-message-id', text: 'hi' },
+				{
+					type: 'message.reasoning',
+					messageId: 'provider-message-id',
+					segmentId: 'r1',
+					text: 'think'
+				},
+				{
+					type: 'message.reasoning.end',
+					messageId: 'provider-message-id',
+					segmentId: 'r1',
+					durationMs: 10
+				},
+				{ type: 'message.end', messageId: 'provider-message-id' },
+				{ type: 'done' }
+			])
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		const received: PortalEvent[] = [];
+		for await (const { event } of turn.subscribe()) {
+			received.push(event);
+			if (event.type === 'done') break;
+		}
+
+		const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
+		expect(assistant).toBeTruthy();
+		const assistantEvents = received.filter((event) => event.type.startsWith('message.'));
+		expect(assistantEvents.length).toBeGreaterThan(0);
+		for (const event of assistantEvents) {
+			if ('messageId' in event) expect(event.messageId).toBe(assistant?.id);
+		}
+		expect(assistant?.id).not.toBe('provider-message-id');
+	});
+
+	it('can subscribe only to live future events after persisted state is rendered', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'skip replay',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		acquireMock.mockResolvedValue({
+			conversationId: conv.id,
+			workingDirectory: wd,
+			async *send(): AsyncIterable<PortalEvent> {
+				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+				yield { type: 'message.delta', messageId: 'm1', text: 'a' };
+				await gate;
+				yield { type: 'message.delta', messageId: 'm1', text: 'b' };
+				yield { type: 'done' };
+			},
+			async abort() {},
+			async dispose() {},
+			async setMode() {},
+			async setApproveAll() {},
+			async resetSessionApprovals() {},
+			lastUsed: Date.now()
+		});
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'message.delta' && event.text === 'a') break;
+		}
+
+		const futureEventsPromise = (async () => {
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe({ skipReplay: true })) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+			return events;
+		})();
+
+		release();
+		const futureEvents = await futureEventsPromise;
+		expect(futureEvents.map((event) => event.type)).toEqual(['message.delta', 'done']);
+		expect(futureEvents[0]).toMatchObject({ type: 'message.delta', text: 'b' });
+	});
+
 	it('getTurnById returns null when the turn id does not match', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const user = users.ensureLocalUser();
