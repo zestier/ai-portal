@@ -892,6 +892,7 @@
 	.form-actions {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 0.75rem;
 		margin-top: 0.25rem;
 	}
@@ -931,11 +932,13 @@
 		gap: 0.75rem;
 		align-items: start;
 		margin-bottom: 1rem;
+		min-width: 0;
 	}
 	.add-grant {
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		padding: 0.5rem 0.75rem;
+		min-width: 0;
 	}
 	.add-grant > summary {
 		cursor: pointer;
@@ -946,11 +949,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		min-width: 0;
 	}
 	.add-grant-form .grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
 		gap: 0.75rem;
+		min-width: 0;
 	}
 	.scope-preview pre {
 		background: var(--code-bg, #1118);
@@ -1191,6 +1196,12 @@
 		.grant-toolbar,
 		.grant-row {
 			grid-template-columns: 1fr;
+		}
+		.add-grant,
+		.add-grant-form,
+		.add-grant-form .grid {
+			width: 100%;
+			box-sizing: border-box;
 		}
 		.grant-bulk-actions,
 		.grant-row-actions {

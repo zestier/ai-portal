@@ -240,24 +240,39 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		min-width: 0;
 	}
 	.scope-fields legend {
 		padding: 0 0.25rem;
 		font-size: 0.85em;
 		color: var(--muted, #888);
 	}
+	.scope-fields label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+	.scope-fields input,
+	.scope-fields select {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+	}
 	.step-options {
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+		min-width: 0;
 	}
 	.step-option-fields {
 		border: 1px dashed var(--border);
 		border-radius: 6px;
 		padding: 0.5rem 0.75rem;
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 		gap: 0.75rem;
+		min-width: 0;
 	}
 	.step-option-fields legend {
 		grid-column: 1 / -1;
