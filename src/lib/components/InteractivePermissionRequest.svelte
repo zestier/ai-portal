@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type {
 		InteractivePermissionView,
 		InteractiveResponse,
@@ -28,7 +29,8 @@
 	let scopeChoice = $state<ScopeChoice>('this-exact');
 	let expiryChoice = $state<'forever' | '1h' | '1d'>('forever');
 	let appliesTo = $state<'this-conversation' | 'all-conversations'>('this-conversation');
-	let denialFeedback = $state('');
+	let denialFeedback = $state(untrack(() => request.defaultDenyFeedback ?? ''));
+	let lastFeedbackRequestId = $state<string | null>(null);
 	let shellChecked = $state<Record<string, boolean>>({});
 
 	const HOUR_MS = 60 * 60 * 1000;
@@ -83,8 +85,11 @@
 	);
 
 	$effect(() => {
-		void request.requestId;
-		denialFeedback = '';
+		const requestId = request.requestId;
+		if (lastFeedbackRequestId !== requestId) {
+			lastFeedbackRequestId = requestId;
+			denialFeedback = request.defaultDenyFeedback ?? '';
+		}
 	});
 
 	$effect(() => {

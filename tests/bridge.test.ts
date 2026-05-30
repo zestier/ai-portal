@@ -502,6 +502,36 @@ describe('bridge.open() session mode and permissions', () => {
 		}
 	});
 
+	it('uses prompt grant feedback when prompt-required matches auto-deny in best-effort mode', async () => {
+		const { open } = await importBridge();
+		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
+		const settings = await import('../src/lib/server/db/repos/settings');
+		const user = ensureLocalUser();
+		const feedback = 'Node scripts require a human reviewer; use package scripts if available.';
+		settings.addGrant({
+			userId: user.id,
+			conversationId: null,
+			tool: 'shell',
+			permissionKind: 'shell',
+			scope: { kind: 'shell', rule: { command: [{ token: 'node' }] } },
+			decision: 'prompt',
+			denyReason: feedback
+		});
+		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+
+		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
+			req: unknown
+		) => Promise<unknown>;
+		const result = await onPermissionRequest({
+			kind: 'shell',
+			toolName: 'shell',
+			fullCommandText: 'node scripts/check.js',
+			args: { command: 'node scripts/check.js' }
+		});
+
+		expect(result).toEqual({ kind: 'reject', feedback });
+	});
+
 	it('auto-rejects shell git commands with concise structured-tool feedback', async () => {
 		const { open } = await importBridge();
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
@@ -621,7 +651,8 @@ describe('bridge.open() session mode and permissions', () => {
 				tool: 'shell',
 				permissionKind: 'shell',
 				canPersistDecision: false,
-				escalationReason: reason
+				escalationReason: reason,
+				defaultDenyFeedback: expect.stringContaining('structured Git tool')
 			}
 		});
 		ac.abort();

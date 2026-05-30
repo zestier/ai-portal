@@ -153,6 +153,26 @@ describe('Svelte component regression coverage', () => {
 		expect(body).toContain('Allow always');
 	});
 
+	test('InteractiveRequestDialog renders default deny feedback for prompt-required grants', () => {
+		const request: InteractiveRequestView = {
+			requestId: 'perm-default-feedback',
+			kind: 'permission',
+			tool: 'bash',
+			permissionKind: 'shell',
+			summary: 'node scripts/check.js',
+			args: { command: 'node scripts/check.js' },
+			userPolicy: 'prompt',
+			canPersistDecision: false,
+			defaultDenyFeedback: 'Node scripts require human approval.'
+		};
+		const body = render(InteractiveRequestDialog, {
+			props: { request, onRespond: () => undefined }
+		}).body;
+
+		expect(body).toContain('Node scripts require human approval.');
+		expect(body).toContain('36/500 characters');
+	});
+
 	test('InteractiveRequestDialog requires explicit shell scopes before persistent allow', () => {
 		const request: InteractiveRequestView = {
 			requestId: 'perm-2',

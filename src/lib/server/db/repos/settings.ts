@@ -288,7 +288,7 @@ export function addGrant(opts: AddGrantOptions) {
 			opts.decision ?? 'allow',
 			opts.expiresAt ?? null,
 			Date.now(),
-			opts.denyReason ?? null,
+			normalizeGrantDenyReason(opts.decision ?? 'allow', opts.denyReason),
 			opts.argsHash ?? null,
 			opts.source ?? (opts.conversationId === null ? 'settings' : 'prompt')
 		);
@@ -325,7 +325,7 @@ export function updateGrant(userId: string, id: number, opts: UpdateGrantOptions
 			opts.scope ? encodeScope(opts.scope) : null,
 			opts.decision,
 			opts.expiresAt ?? null,
-			opts.denyReason ?? null,
+			normalizeGrantDenyReason(opts.decision, opts.denyReason),
 			opts.source ?? 'settings',
 			id,
 			userId
@@ -406,6 +406,15 @@ function normalizeGrantSource(source: string | null): GrantSource {
 		return source;
 	}
 	return 'legacy';
+}
+
+function normalizeGrantDenyReason(
+	decision: GrantDecision,
+	denyReason: string | null | undefined
+): string | null {
+	if (decision !== 'deny' && decision !== 'prompt') return null;
+	const trimmed = denyReason?.trim();
+	return trimmed ? trimmed.slice(0, 500) : null;
 }
 
 /**

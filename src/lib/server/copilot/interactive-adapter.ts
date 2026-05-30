@@ -150,7 +150,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 
 		const maybePromptForEscalation = async (
-			fallbackFeedback = 'Escalation denied. Use an allowed alternative or stop and explain what capability is missing.'
+			fallbackFeedback = 'Escalation denied. Use an allowed alternative or stop and explain what capability is missing.',
+			defaultDenyFeedback?: string
 		) => {
 			if (!forceEscalationReason) return null;
 			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
@@ -164,6 +165,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					userPolicy: opts.policy,
 					canPersistDecision: false,
 					escalationReason: forceEscalationReason,
+					defaultDenyFeedback,
 					shellAnalysis
 				}
 			);
@@ -222,11 +224,16 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			if (grant.feedback) return { kind: 'reject', feedback: grant.feedback } as const;
 			return { kind: 'reject' } as const;
 		}
-		let promptRequest: { canPersistDecision: boolean; bestEffortFeedback: string };
+		let promptRequest: {
+			canPersistDecision: boolean;
+			bestEffortFeedback: string;
+			defaultDenyFeedback?: string;
+		};
 		if (grant.outcome === 'prompt') {
 			promptRequest = {
 				canPersistDecision: false,
-				bestEffortFeedback: grant.feedback ?? bestEffortPromptGrantFeedback({ permissionKind })
+				bestEffortFeedback: grant.feedback ?? bestEffortPromptGrantFeedback({ permissionKind }),
+				defaultDenyFeedback: grant.feedback ?? undefined
 			};
 		} else {
 			if (opts.getApproveAll()) {
@@ -253,7 +260,10 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 
 		if (opts.getMode() === 'best-effort') {
-			const escalated = await maybePromptForEscalation();
+			const escalated = await maybePromptForEscalation(
+				promptRequest.bestEffortFeedback,
+				promptRequest.defaultDenyFeedback
+			);
 			if (escalated) return escalated;
 			audit('auto-prompt-required');
 			return {
@@ -272,6 +282,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				args: req.args ?? null,
 				userPolicy: opts.policy,
 				canPersistDecision: promptRequest.canPersistDecision,
+				defaultDenyFeedback: promptRequest.defaultDenyFeedback,
 				shellAnalysis
 			}
 		);

@@ -155,6 +155,17 @@ describe('GrantInputSchema — valid shapes', () => {
 		expect(parsed.decision).toBe('prompt');
 		expect(parsed.denyReason).toBeNull();
 	});
+
+	it('accepts prompt grants with a trimmed denyReason', () => {
+		const parsed = GrantInputSchema.parse({
+			tool: 'shell',
+			decision: 'prompt',
+			scope: { kind: 'shell', rule: shell('npm') },
+			denyReason: '  Human approval required for npm scripts.  '
+		});
+		expect(parsed.decision).toBe('prompt');
+		expect(parsed.denyReason).toBe('Human approval required for npm scripts.');
+	});
 });
 
 describe('GrantInputSchema — rejections', () => {
@@ -268,16 +279,6 @@ describe('GrantInputSchema — rejections', () => {
 		expect(r.success).toBe(false);
 	});
 
-	it('rejects denyReason on a prompt grant', () => {
-		const r = GrantInputSchema.safeParse({
-			tool: 'shell',
-			decision: 'prompt',
-			scope: { kind: 'shell', rule: shell('npm') },
-			denyReason: 'prompt grants should not reject directly'
-		});
-		expect(r.success).toBe(false);
-	});
-
 	it('rejects pipeline value that is not "must"/"forbid"', () => {
 		const r = GrantInputSchema.safeParse({
 			tool: 'shell',
@@ -303,25 +304,39 @@ describe('GrantInputSchema — denyReason + pipeline', () => {
 	});
 
 	it('normalizes empty / whitespace / undefined / null denyReason to null', () => {
-		for (const reason of [undefined, null, '', '   ']) {
-			const r = GrantInputSchema.parse({
-				tool: 'shell',
-				decision: 'deny',
-				scope: { kind: 'shell', rule: shell('rm') },
-				denyReason: reason
-			});
-			expect(r.denyReason).toBeNull();
+		for (const decision of ['deny', 'prompt'] as const) {
+			for (const reason of [undefined, null, '', '   ']) {
+				const r = GrantInputSchema.parse({
+					tool: 'shell',
+					decision,
+					scope: { kind: 'shell', rule: shell('rm') },
+					denyReason: reason
+				});
+				expect(r.denyReason).toBeNull();
+			}
 		}
 	});
 
-	it('rejects denyReason over 500 chars', () => {
-		const r = GrantInputSchema.safeParse({
-			tool: 'shell',
-			decision: 'deny',
-			scope: { kind: 'shell', rule: shell('rm') },
-			denyReason: 'x'.repeat(501)
-		});
-		expect(r.success).toBe(false);
+	it('rejects denyReason over 500 chars for deny and prompt grants', () => {
+		for (const decision of ['deny', 'prompt'] as const) {
+			const r = GrantInputSchema.parse({
+				tool: 'shell',
+				decision,
+				scope: { kind: 'shell', rule: shell('rm') },
+				denyReason: 'x'.repeat(500)
+			});
+			expect(r.denyReason).toBe('x'.repeat(500));
+		}
+
+		for (const decision of ['deny', 'prompt'] as const) {
+			const r = GrantInputSchema.safeParse({
+				tool: 'shell',
+				decision,
+				scope: { kind: 'shell', rule: shell('rm') },
+				denyReason: 'x'.repeat(501)
+			});
+			expect(r.success).toBe(false);
+		}
 	});
 
 	it('accepts pipeline=must', () => {

@@ -171,9 +171,8 @@ export const GrantInputSchema = z
 			.transform((v) => v ?? null),
 		/**
 		 * Optional human-readable feedback surfaced to the agent when this
-		 * grant denies a request. Only meaningful when `decision === 'deny'`.
-		 * Used by hard-deny grants to teach the
-		 * agent which structured tool to use instead.
+		 * grant denies a request or when a prompt-required grant has to
+		 * auto-deny because no human prompt can be shown.
 		 */
 		denyReason: z
 			.string()
@@ -217,13 +216,13 @@ export const GrantInputSchema = z
 			});
 		}
 
-		// denyReason only makes sense on deny grants. Don't silently drop
-		// it; better to flag the inconsistency.
-		if (val.denyReason !== null && val.decision !== 'deny') {
+		// denyReason only makes sense on deny/prompt grants. Don't silently
+		// drop it; better to flag the inconsistency.
+		if (val.denyReason !== null && val.decision !== 'deny' && val.decision !== 'prompt') {
 			ctx.addIssue({
 				code: 'custom',
 				path: ['denyReason'],
-				message: 'denyReason is only allowed on deny grants'
+				message: 'denyReason is only allowed on deny or prompt grants'
 			});
 		}
 	});

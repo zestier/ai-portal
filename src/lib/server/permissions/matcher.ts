@@ -38,9 +38,9 @@ export interface GrantRow {
 	decision: GrantDecision;
 	expiresAt: number | null;
 	argsHash: string | null;
-	/** Optional feedback for deny grants — surfaced to the agent via the
-	 * SDK's `PermissionDecisionReject.feedback` field. Ignored on allow
-	 * rows. NULL means no custom feedback. */
+	/** Optional feedback for deny grants and prompt-required auto-rejects —
+	 * surfaced to the agent via the SDK's `PermissionDecisionReject.feedback`
+	 * field. Ignored on allow rows. NULL means no custom feedback. */
 	denyReason: string | null;
 	/**
 	 * NULL = user-global grant. Used by callers that mix conversation-scoped

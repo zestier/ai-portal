@@ -226,7 +226,8 @@ describe('db migrations + repos', () => {
 			tool: 'shell',
 			permissionKind: 'shell',
 			scopePattern: 'npm *',
-			decision: 'prompt'
+			decision: 'prompt',
+			denyReason: 'npm scripts require review'
 		});
 		settings.addGrant({
 			userId: u.id,
@@ -253,7 +254,11 @@ describe('db migrations + repos', () => {
 			)
 			.run(u.id, Date.now());
 
-		expect(settings.matchGrant(u.id, c.id, 'shell', 'shell', 'npm install')).toBe('prompt');
+		expect(settings.matchGrantDetailed(u.id, c.id, 'shell', 'shell', 'npm install')).toMatchObject({
+			outcome: 'prompt',
+			denyReason: 'npm scripts require review',
+			feedback: 'npm scripts require review'
+		});
 		expect(settings.matchGrantDetailed(u.id, c.id, 'shell', 'shell', 'node test')).toMatchObject({
 			outcome: 'deny',
 			denyReason: 'node is blocked'
@@ -263,6 +268,9 @@ describe('db migrations + repos', () => {
 
 		const listed = settings.listGrantsForUser(u.id).filter((g) => g.scope === null);
 		expect(listed.find((g) => g.scopePattern === 'npm *')?.decision).toBe('prompt');
+		expect(listed.find((g) => g.scopePattern === 'npm *')?.denyReason).toBe(
+			'npm scripts require review'
+		);
 		expect(listed.find((g) => g.scopePattern === 'bogus *')?.decision).toBe('deny');
 	});
 

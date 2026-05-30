@@ -506,30 +506,34 @@
 					</label>
 				</div>
 
-				{#if newGrantDecision === 'deny'}
+				{#if newGrantDecision === 'deny' || newGrantDecision === 'prompt'}
 					<label class="deny-reason">
-						Deny reason / feedback (optional)
+						{newGrantDecision === 'prompt'
+							? 'Default deny / auto-deny feedback (optional)'
+							: 'Deny reason / feedback (optional)'}
 						<textarea
 							name="denyReason"
 							bind:value={newGrantDenyReason}
 							rows="2"
 							maxlength="500"
-							placeholder="e.g. Prefer the structured `view` tool instead of `cat`."
+							placeholder={newGrantDecision === 'prompt'
+								? 'e.g. This command requires human review; use a safer structured tool if possible.'
+								: 'e.g. Prefer the structured `view` tool instead of `cat`.'}
 						></textarea>
-						<span class="muted small"
-							>Surfaced to the agent as the SDK reject `feedback` string — explain *why* and what to
-							do instead. Max 500 chars.</span
-						>
+						{#if newGrantDecision === 'prompt'}
+							<span class="muted small"
+								>Prefills the permission dialog's deny feedback and is sent to the agent if the
+								prompt grant must auto-deny because no dialog can be shown. Max 500 chars.</span
+							>
+						{:else}
+							<span class="muted small"
+								>Surfaced to the agent as the SDK reject `feedback` string — explain *why* and what
+								to do instead. Max 500 chars.</span
+							>
+						{/if}
 					</label>
 				{:else}
 					<input type="hidden" name="denyReason" value="" />
-					{#if newGrantDecision === 'prompt'}
-						<p class="muted small">
-							Prompt grants block automated approval but allow a human permission dialog or
-							forcePermissionPrompt escalation. Persistent choices are disabled for those dialogs;
-							edit or remove the prompt grant here to change that behavior.
-						</p>
-					{/if}
 				{/if}
 
 				<PermissionGrantScopeFields

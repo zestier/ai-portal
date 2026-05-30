@@ -341,6 +341,11 @@ export interface InteractivePermissionView {
 	 */
 	escalationReason?: string;
 	/**
+	 * Initial text for the deny feedback field. Prompt-required grants use
+	 * this to suggest the same feedback that would be sent on auto-deny.
+	 */
+	defaultDenyFeedback?: string;
+	/**
 	 * For `shell` permissions: the server-side parser's verdict on the
 	 * command. `parsed` means we tokenized it into segments split on
 	 * `&&`/`||`/`;`/`|`; the dialog uses this to break the pipeline out
