@@ -31,6 +31,7 @@ import { ulid } from './db/ids';
 import { getDb } from './db';
 import * as convs from './db/repos/conversations';
 import * as messages from './db/repos/messages';
+import * as memoryRepo from './db/repos/memory';
 import { getTurn } from './runtime/turn-runner';
 import { log } from './log';
 import type { Conversation, Message } from '$lib/types';
@@ -147,7 +148,20 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// user picks up by typing the next prompt).
 	const prefixEnd = mode === 'edit' ? targetIdx : targetIdx + 1;
 	const prefix = all.slice(0, prefixEnd);
-	cloneMessagePrefix(newConv.id, prefix);
+	const messageIdMap = cloneMessagePrefix(newConv.id, prefix);
+
+	// Carry the source's durable session memory into the fork, scoped to the
+	// cloned prefix. The boundary is the first DISCARDED source message: memory
+	// created before it belongs to the kept prefix; memory from the rewound
+	// suffix is left behind. Without this, a fork/rewind starts with an empty
+	// memory packet even though its transcript shows prior turns, so the
+	// assistant "forgets" everything it had remembered.
+	const firstDiscarded = all[prefixEnd];
+	const memoryCounts = memoryRepo.cloneSessionMemoryForFork(source.id, newConv.id, {
+		messageIdMap,
+		createdBefore: firstDiscarded ? firstDiscarded.createdAt : Number.POSITIVE_INFINITY
+	});
+
 	let userMessage: Message | null = null;
 	if (mode === 'edit') {
 		userMessage = messages.append(newConv.id, { role: 'user', content: input.newContent! });
@@ -160,15 +174,17 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		source: source.id,
 		newId: newConv.id,
 		messageId: target.id,
-		prefix: prefix.length
+		prefix: prefix.length,
+		memory: memoryCounts
 	});
 	return { conversation: refreshed, userMessage };
 }
 
-function cloneMessagePrefix(targetConvId: string, prefix: Message[]) {
+function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string, string> {
 	const db = getDb();
 	messages.ensureBackgroundAgentLifecycleTable(db);
 	const baseTs = Date.now() - prefix.length - 1;
+	const messageIdMap = new Map<string, string>();
 	const insertMsg = db.prepare(
 		`INSERT INTO messages(id, conversation_id, role, content, status, error_code, created_at, reasoning, reasoning_duration_ms)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
@@ -192,6 +208,7 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]) {
 	const tx = db.transaction(() => {
 		prefix.forEach((m, i) => {
 			const newId = ulid();
+			messageIdMap.set(m.id, newId);
 			const ts = baseTs + i;
 			insertMsg.run(newId, targetConvId, m.role, m.content, m.status, m.errorCode, ts);
 			// Remap tool_call ids so parent_tool_call_id references stay
@@ -250,4 +267,5 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]) {
 		});
 	});
 	tx();
+	return messageIdMap;
 }

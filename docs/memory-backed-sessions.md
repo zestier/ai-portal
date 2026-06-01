@@ -1199,6 +1199,39 @@ Sensitive data rules:
 - mark permission-related facts narrowly; do not silently broaden them into
   future grants or preferences
 
+## Forking and rewinding sessions
+
+Editing an earlier user message or retrying an assistant message ("rewind")
+forks the conversation: a new conversation is seeded with the message-transcript
+prefix up to the rewind point (see `src/lib/server/fork.ts`). Because each
+session's memory is keyed by `conversation_id`, the fork must also inherit the
+durable memory the prefix produced — otherwise the fork would start with an
+empty memory packet even though its visible transcript shows prior turns, and
+the assistant would "forget" everything it had remembered.
+
+`cloneSessionMemoryForFork` (`src/lib/server/db/repos/memory.ts`) copies the
+source's live memory state into the fork with these rules:
+
+- **Scope by the rewind boundary.** Only memory whose `created_at` is strictly
+  before the first discarded source message is cloned. Prefix memory carries
+  over; memory extracted from the rewound-away suffix does not. This errs toward
+  dropping a late-extracted prefix item rather than ever leaking discarded
+  memory into the fork.
+- **Active state only.** Superseded/disputed/deleted entities and facts, and
+  closed open loops, are skipped. The fork inherits the current materialized
+  state, not historical churn.
+- **References are remapped.** Entity and event ids are reissued and rewired,
+  `source_message_id` is translated to the fork's freshly cloned message ids, and
+  open-loop related-entity links are pruned to entities that were cloned. Search
+  and embedding indexes are rebuilt for the new conversation.
+- **Fresh provenance.** Patches, patch items, validation issues, and tool-call
+  audit rows are intentionally not cloned. The fork inherits memory *state* as a
+  new baseline and starts its own patch/audit history. Ephemeral `turn_id`
+  values are dropped.
+
+The source conversation is never mutated, consistent with the non-destructive
+fork model (the workdir is shared, not rolled back).
+
 ## Migration and rollout
 
 ### Phase 0: design spike

@@ -7,9 +7,12 @@ async function freshImports() {
 	const users = await import('../src/lib/server/db/repos/users');
 	const convs = await import('../src/lib/server/db/repos/conversations');
 	const messages = await import('../src/lib/server/db/repos/messages');
+	const memory = await import('../src/lib/server/db/repos/memory');
+	const engine = await import('../src/lib/server/memory/engine');
+	const db = await import('../src/lib/server/db');
 	const snapshots = await import('../src/lib/server/snapshots');
 	const fork = await import('../src/lib/server/fork');
-	return { users, convs, messages, snapshots, fork };
+	return { users, convs, messages, memory, engine, db, snapshots, fork };
 }
 
 describe('fork.forkAtMessage', () => {
@@ -132,5 +135,121 @@ describe('fork.forkAtMessage', () => {
 		expect(cloned).toHaveLength(2);
 		expect(cloned[0]).toMatchObject({ role: 'user', content: 'first' });
 		expect(cloned[1]).toMatchObject({ role: 'assistant', content: 'reply 1' });
+	});
+
+	it('carries prefix session memory into the fork but leaves rewound-suffix memory behind', async () => {
+		const { users, convs, messages, memory, engine, db, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('shared-memory');
+		const sourceConv = convs.create(u.id, {
+			title: 'src',
+			workdir: wd,
+			model: null,
+			memoryMode: 'project'
+		});
+
+		// Turn 1: durable memory attributed to the assistant reply a1.
+		messages.append(sourceConv.id, { role: 'user', content: 'first' });
+		const a1 = messages.append(sourceConv.id, { role: 'assistant', content: 'reply 1' });
+		engine.commitPatch({
+			conversationId: sourceConv.id,
+			sourceMessageId: a1.id,
+			patch: {
+				entities: [{ entityKey: 'object.key', entityType: 'object', displayName: 'Brass key' }],
+				facts: [{ entityKey: 'object.key', predicate: 'location', value: 'study' }],
+				decisions: [{ subject: 'plan', decision: 'Search the study first.' }],
+				openLoops: [
+					{ loopType: 'task', title: 'Inspect the study', relatedEntityKeys: ['object.key'] }
+				]
+			}
+		});
+
+		// Turn 2: the turn that will be rewound away. Its memory must NOT survive.
+		const u2 = messages.append(sourceConv.id, { role: 'user', content: 'second' });
+		const a2 = messages.append(sourceConv.id, { role: 'assistant', content: 'reply 2' });
+		engine.commitPatch({
+			conversationId: sourceConv.id,
+			sourceMessageId: a2.id,
+			patch: {
+				entities: [{ entityKey: 'object.door', entityType: 'object', displayName: 'Locked door' }],
+				facts: [{ entityKey: 'object.door', predicate: 'state', value: 'locked' }],
+				decisions: [{ subject: 'plan', decision: 'Force the door open.' }]
+			}
+		});
+
+		// Pin memory timestamps around the fork boundary (u2's real created_at)
+		// without touching the messages table — message ordering is by
+		// created_at, so rewriting message timestamps would reorder history.
+		// Linked memory (facts/decisions/loops/events) is deliberately pinned
+		// AFTER the boundary to simulate late async extraction: it must still be
+		// carried over because it is linked to a kept prefix message, proving the
+		// clone classifies by source_message_id rather than the timestamp.
+		// Entities have no message link, so they are still split by the boundary.
+		const conn = db.getDb();
+		const boundary = u2.createdAt;
+		for (const table of [
+			'memory_facts',
+			'memory_decisions',
+			'memory_open_loops',
+			'memory_events'
+		]) {
+			conn
+				.prepare(`UPDATE ${table} SET created_at = ? WHERE source_message_id = ?`)
+				.run(boundary + 100, a1.id);
+			conn
+				.prepare(`UPDATE ${table} SET created_at = ? WHERE source_message_id = ?`)
+				.run(boundary + 100, a2.id);
+		}
+		// Entities have no source_message_id; pin them by key around the boundary.
+		conn
+			.prepare(`UPDATE memory_entities SET created_at = ? WHERE entity_key = 'object.key'`)
+			.run(boundary - 100);
+		conn
+			.prepare(`UPDATE memory_entities SET created_at = ? WHERE entity_key = 'object.door'`)
+			.run(boundary + 100);
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: sourceConv.id,
+			messageId: u2.id,
+			newContent: 'second (edited)'
+		});
+		const forkId = result.conversation.id;
+
+		// Prefix memory carried over.
+		expect(memory.listEntities(forkId).map((e) => e.entityKey)).toEqual(['object.key']);
+		const facts = memory.listFacts(forkId);
+		expect(facts.map((f) => f.predicate)).toEqual(['location']);
+		expect(memory.listDecisions(forkId).map((d) => d.decision)).toEqual([
+			'Search the study first.'
+		]);
+		const loops = memory.listOpenLoops(forkId);
+		expect(loops.map((l) => l.title)).toEqual(['Inspect the study']);
+
+		// Rewound-suffix memory left behind.
+		expect(memory.listEntities(forkId).map((e) => e.entityKey)).not.toContain('object.door');
+		expect(memory.listDecisions(forkId).map((d) => d.decision)).not.toContain(
+			'Force the door open.'
+		);
+
+		// Internal references are remapped to the clone's own rows/transcript.
+		const clonedAssistant = messages
+			.listByConversation(forkId)
+			.find((m) => m.role === 'assistant' && m.content === 'reply 1')!;
+		expect(facts[0].sourceMessageId).toBe(clonedAssistant.id);
+		const forkEntityId = memory.listEntities(forkId)[0].id;
+		expect(facts[0].entityId).toBe(forkEntityId);
+		expect(loops[0].relatedEntityIds).toEqual([forkEntityId]);
+
+		// Cloned memory is independently searchable in the fork.
+		expect(memory.search(forkId, { query: 'study key' }).length).toBeGreaterThan(0);
+
+		// The source conversation keeps everything (non-destructive fork).
+		expect(
+			memory
+				.listEntities(sourceConv.id)
+				.map((e) => e.entityKey)
+				.sort()
+		).toEqual(['object.door', 'object.key']);
 	});
 });

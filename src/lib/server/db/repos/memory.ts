@@ -1622,6 +1622,235 @@ export function wipe(conversationId: string): void {
 	tx();
 }
 
+/**
+ * Copy the live session-memory state of `sourceConversationId` into
+ * `targetConversationId` when a conversation is forked (edit/retry rewind).
+ *
+ * Memory is cloned by *prefix membership*: any item linked to a kept prefix
+ * message (via `source_message_id`, translated through `messageIdMap`) carries
+ * over, while items linked to discarded suffix messages do not. Items that have
+ * no message link (entities, and any orphaned rows) fall back to the
+ * `createdBefore` boundary — the `created_at` of the first DISCARDED source
+ * message. Membership is used in preference to the timestamp because extraction
+ * runs asynchronously after a turn, so a prefix item can legitimately be
+ * committed after the next message's timestamp; classifying by the message link
+ * avoids dropping such items while still never leaking discarded memory.
+ *
+ * Internal references are remapped to the clone: entity/event ids are reissued
+ * and rewired, and `source_message_id` is translated through `messageIdMap`
+ * (old prefix message id → freshly cloned message id) so memory stays linked to
+ * the fork's own transcript. Patches, patch items, validation issues, and tool
+ * calls are intentionally NOT copied — the fork inherits memory *state* as a
+ * fresh baseline and starts its own patch history.
+ */
+export function cloneSessionMemoryForFork(
+	sourceConversationId: string,
+	targetConversationId: string,
+	opts: { messageIdMap: Map<string, string>; createdBefore?: number }
+): { entities: number; events: number; facts: number; decisions: number; openLoops: number } {
+	const db = getDb();
+	const createdBefore = opts.createdBefore ?? Number.POSITIVE_INFINITY;
+	const counts = { entities: 0, events: 0, facts: 0, decisions: 0, openLoops: 0 };
+	const mapMessageId = (old: string | null): string | null =>
+		old ? (opts.messageIdMap.get(old) ?? null) : null;
+	// Decide whether a memory row belongs to the kept prefix. Rows that carry a
+	// source_message_id are classified *exactly* by prefix membership, which is
+	// robust to extraction timing (async post-turn extraction can commit a
+	// prefix item after the next user message's timestamp). Only rows with no
+	// message link fall back to the created_at boundary.
+	const keepLinked = (sourceMessageId: string | null, createdAt: number): boolean =>
+		sourceMessageId != null ? opts.messageIdMap.has(sourceMessageId) : createdAt < createdBefore;
+
+	const tx = db.transaction(() => {
+		// Entities (active state). No source_message_id column, so they're
+		// filtered purely by the created_at boundary.
+		const entityRows = db
+			.prepare(
+				`SELECT * FROM memory_entities
+				  WHERE conversation_id = ? AND status = 'active' AND created_at < ?`
+			)
+			.all(sourceConversationId, createdBefore) as EntityRow[];
+		const entityIdMap = new Map<string, string>();
+		const insertEntity = db.prepare(
+			`INSERT INTO memory_entities(
+			   id, conversation_id, entity_key, entity_type, display_name, summary, status,
+			   metadata_json, created_at, updated_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		);
+		for (const row of entityRows) {
+			const newId = ulid();
+			entityIdMap.set(row.id, newId);
+			insertEntity.run(
+				newId,
+				targetConversationId,
+				row.entity_key,
+				row.entity_type,
+				row.display_name,
+				row.summary,
+				row.status,
+				row.metadata_json,
+				row.created_at,
+				row.updated_at
+			);
+			const cloned: EntityRow = { ...row, id: newId, conversation_id: targetConversationId };
+			indexItem(db, targetConversationId, 'entity', newId, entityIndexText(cloned));
+			indexSessionMemoryItem(targetConversationId, 'entity', newId, entityIndexText(cloned));
+			counts.entities++;
+		}
+
+		// Events. turn_id is an ephemeral per-turn id with no meaning in the
+		// fork, so it's dropped; entity references are remapped (dangling refs
+		// to non-cloned entities become null). Classified by prefix membership
+		// of source_message_id (created_at boundary only for unlinked rows).
+		const eventRows = db
+			.prepare(`SELECT * FROM memory_events WHERE conversation_id = ?`)
+			.all(sourceConversationId) as EventRow[];
+		const eventIdMap = new Map<string, string>();
+		const insertEvent = db.prepare(
+			`INSERT INTO memory_events(
+			   id, conversation_id, turn_id, event_type, occurred_at, actor_entity_id,
+			   target_entity_id, summary, payload_json, visibility, confidence,
+			   source_message_id, source_tool_call_id, created_at
+			 ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+		);
+		for (const row of eventRows) {
+			if (!keepLinked(row.source_message_id, row.created_at)) continue;
+			const newId = ulid();
+			eventIdMap.set(row.id, newId);
+			insertEvent.run(
+				newId,
+				targetConversationId,
+				row.event_type,
+				row.occurred_at,
+				row.actor_entity_id ? (entityIdMap.get(row.actor_entity_id) ?? null) : null,
+				row.target_entity_id ? (entityIdMap.get(row.target_entity_id) ?? null) : null,
+				row.summary,
+				row.payload_json,
+				row.visibility,
+				row.confidence,
+				mapMessageId(row.source_message_id),
+				row.created_at
+			);
+			const cloned: EventRow = { ...row, id: newId, conversation_id: targetConversationId };
+			indexItem(db, targetConversationId, 'event', newId, eventIndexText(cloned));
+			indexSessionMemoryItem(targetConversationId, 'event', newId, eventIndexText(cloned));
+			counts.events++;
+		}
+
+		// Facts (active). supersedes_fact_id is dropped because superseded facts
+		// aren't cloned, so the chain pointer would dangle.
+		const factRows = db
+			.prepare(`SELECT * FROM memory_facts WHERE conversation_id = ? AND status = 'active'`)
+			.all(sourceConversationId) as FactRow[];
+		const insertFact = db.prepare(
+			`INSERT INTO memory_facts(
+			   id, conversation_id, entity_id, predicate, value_json, status, visibility,
+			   confidence, source_event_id, source_message_id, supersedes_fact_id, created_at,
+			   updated_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
+		);
+		for (const row of factRows) {
+			if (!keepLinked(row.source_message_id, row.created_at)) continue;
+			const newId = ulid();
+			insertFact.run(
+				newId,
+				targetConversationId,
+				row.entity_id ? (entityIdMap.get(row.entity_id) ?? null) : null,
+				row.predicate,
+				row.value_json,
+				row.status,
+				row.visibility,
+				row.confidence,
+				row.source_event_id ? (eventIdMap.get(row.source_event_id) ?? null) : null,
+				mapMessageId(row.source_message_id),
+				row.created_at,
+				row.updated_at
+			);
+			const cloned: FactRow = { ...row, id: newId, conversation_id: targetConversationId };
+			indexItem(db, targetConversationId, 'fact', newId, factIndexText(cloned));
+			indexSessionMemoryItem(targetConversationId, 'fact', newId, factIndexText(cloned));
+			counts.facts++;
+		}
+
+		// Decisions (active).
+		const decisionRows = db
+			.prepare(`SELECT * FROM memory_decisions WHERE conversation_id = ? AND status = 'active'`)
+			.all(sourceConversationId) as DecisionRow[];
+		const insertDecision = db.prepare(
+			`INSERT INTO memory_decisions(
+			   id, conversation_id, subject, decision, rationale, status, source_event_id,
+			   source_message_id, created_at, updated_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		);
+		for (const row of decisionRows) {
+			if (!keepLinked(row.source_message_id, row.created_at)) continue;
+			const newId = ulid();
+			insertDecision.run(
+				newId,
+				targetConversationId,
+				row.subject,
+				row.decision,
+				row.rationale,
+				row.status,
+				row.source_event_id ? (eventIdMap.get(row.source_event_id) ?? null) : null,
+				mapMessageId(row.source_message_id),
+				row.created_at,
+				row.updated_at
+			);
+			const cloned: DecisionRow = { ...row, id: newId, conversation_id: targetConversationId };
+			indexItem(db, targetConversationId, 'decision', newId, decisionIndexText(cloned));
+			indexSessionMemoryItem(targetConversationId, 'decision', newId, decisionIndexText(cloned));
+			counts.decisions++;
+		}
+
+		// Open loops (still open). Related entity refs are remapped and pruned
+		// to those that were cloned.
+		const openLoopRows = db
+			.prepare(`SELECT * FROM memory_open_loops WHERE conversation_id = ? AND status = 'open'`)
+			.all(sourceConversationId) as OpenLoopRow[];
+		const insertOpenLoop = db.prepare(
+			`INSERT INTO memory_open_loops(
+			   id, conversation_id, loop_type, title, description, status, priority,
+			   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		);
+		for (const row of openLoopRows) {
+			if (!keepLinked(row.source_message_id, row.created_at)) continue;
+			const newId = ulid();
+			const relatedJson = safeJson(
+				parseStringArray(row.related_entity_ids_json)
+					.map((id) => entityIdMap.get(id))
+					.filter((id): id is string => !!id)
+			);
+			insertOpenLoop.run(
+				newId,
+				targetConversationId,
+				row.loop_type,
+				row.title,
+				row.description,
+				row.status,
+				row.priority,
+				relatedJson,
+				row.source_event_id ? (eventIdMap.get(row.source_event_id) ?? null) : null,
+				mapMessageId(row.source_message_id),
+				row.created_at,
+				row.updated_at
+			);
+			const cloned: OpenLoopRow = {
+				...row,
+				id: newId,
+				conversation_id: targetConversationId,
+				related_entity_ids_json: relatedJson
+			};
+			indexItem(db, targetConversationId, 'open_loop', newId, openLoopIndexText(cloned));
+			indexSessionMemoryItem(targetConversationId, 'open_loop', newId, openLoopIndexText(cloned));
+			counts.openLoops++;
+		}
+	});
+	tx();
+	return counts;
+}
+
 function indexItem(
 	db: Database.Database,
 	conversationId: string,
