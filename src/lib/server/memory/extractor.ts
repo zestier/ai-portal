@@ -264,6 +264,16 @@ export function createMemoryExtractor(opts: { model?: string | null } = {}): Mem
 	return new HeuristicMemoryExtractor();
 }
 
+/**
+ * Returns true when a model-backed extractor is configured for the given
+ * options. When this is true the extractor — not the main model — owns writing
+ * durable memory for each turn, so the main-model prompt should discourage
+ * direct memory_propose_patch calls.
+ */
+export function isModelBackedExtractorConfigured(opts: { model?: string | null } = {}): boolean {
+	return createMemoryExtractor(opts).kind !== 'heuristic';
+}
+
 export async function extractAndCommitMemory(
 	input: ExtractPatchInput
 ): Promise<
@@ -646,8 +656,10 @@ function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): 
 		[
 			'Return JSON with this shape:',
 			'{"summary":"short summary","confidence":0.0,"diagnostics":[],"patch":{"entities":[],"events":[],"facts":[],"decisions":[],"openLoops":[]}}',
-			'Only extract durable facts, decisions, open loops, events, and entities that are useful after this turn.',
-			'Prefer granular fact collection: extract each stable attribute, relationship, state, preference, constraint, location, ownership, capability, and project decision as its own fact when it may matter later.',
+			'Extract durable facts, decisions, open loops, events, and entities that could be useful after this turn.',
+			'Be exhaustive. Your job is to capture an absolute ton of detail — err strongly toward over-capturing. It is far better to record a detail that is never needed than to lose one that is. When in doubt, include it.',
+			'Prefer granular fact collection: extract each stable attribute, relationship, state, preference, constraint, location, ownership, capability, role, intent, deadline, dependency, numeric value, identifier, and project decision as its own separate fact whenever it may matter later. Do not collapse multiple details into one fact; split them.',
+			'Mine every available source for detail — the user message, the assistant message, the recent transcript, and the tool calls — and record the specifics, not just summaries. Capture concrete particulars (names, exact values, conditions, qualifiers) rather than vague generalities.',
 			'Reuse entityKey values from the initial packet whenever a mentioned person, object, file, component, topic, or project concept refers to an existing entity. Do not create a new entity for aliases, casing changes, titles, or partial names of the same referent.',
 			'Create a new entity only for a durable referent that is not already represented. Use stable namespaced keys such as character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, or decision.append_only_migrations.',
 			'When adding facts/events/openLoops about an entity, use the canonical entityKey exactly. If unsure whether two names are the same referent, prefer reusing the existing key and mention uncertainty in diagnostics.',

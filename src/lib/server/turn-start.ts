@@ -10,6 +10,7 @@ import { snapshot as takeSnapshot } from '$lib/server/snapshots';
 import { effectiveWorkdir } from '$lib/server/workdir';
 import { log } from '$lib/server/log';
 import { buildPromptWithMemory, isEnabled } from '$lib/server/memory/engine';
+import { isModelBackedExtractorConfigured } from '$lib/server/memory/extractor';
 import type { Conversation, Message, PortalEvent } from '$lib/types';
 import type { ProviderConversationMessage } from '$lib/server/providers/provider';
 
@@ -43,7 +44,10 @@ export async function startTurnFromUserMessage(
 				mode: conv.memoryMode,
 				userMsg,
 				globalMemoryEnabled: conv.globalMemoryEnabled,
-				includeRecentTranscript: true
+				includeRecentTranscript: true,
+				extractorPresent: isModelBackedExtractorConfigured({
+					model: conv.memoryExtractorModel
+				})
 			})
 		: promptIncludesPriorMessages
 			? buildPromptWithPriorMessages(conv.id, userMsg)

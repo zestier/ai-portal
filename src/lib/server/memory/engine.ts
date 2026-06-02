@@ -126,6 +126,7 @@ export function buildPromptWithMemory(params: {
 	userMsg: Message;
 	includeRecentTranscript?: boolean;
 	globalMemoryEnabled?: boolean;
+	extractorPresent?: boolean;
 }): string {
 	const packet = buildInitialPacket(params.conversationId, params.mode, {
 		globalMemoryEnabled: params.globalMemoryEnabled
@@ -133,14 +134,19 @@ export function buildPromptWithMemory(params: {
 	const recent = params.includeRecentTranscript
 		? recentTranscript(params.conversationId, params.userMsg.id, 6)
 		: '';
+	const writeGuidance = params.extractorPresent
+		? 'A dedicated memory extractor reviews every turn after you respond and records durable memory on your behalf. Do not call memory_propose_patch yourself: writing patches directly duplicates the extractor, blurs responsibilities, and makes a mess of the memory store. Concentrate on answering well and let the extractor capture what to remember. Only use memory_propose_patch if you must correct a specific, concrete memory error.'
+		: 'If you make durable decisions, create tasks/open loops, establish story facts, or change important state, call memory_propose_patch with a structured patch before the final answer when practical.';
 	return [
 		'<portal_memory_mode>',
 		JSON.stringify(packet, null, 2),
 		'</portal_memory_mode>',
 		'',
 		'You are running in a fresh model context for this request. Durable session memory, not hidden chat context, is the source of continuity.',
-		'Use the memory tools whenever relevant prior state is missing from the packet. Do not invent older details when memory returns unknown.',
-		'If you make durable decisions, create tasks/open loops, establish story facts, or change important state, call memory_propose_patch with a structured patch before the final answer when practical.',
+		'The packet above is a deliberately small, high-level slice of durable memory — it is not the whole memory store. Treat it as a starting index, not the full picture.',
+		'Whenever the answer could depend on details that are missing from or only partially covered by the packet, proactively query the memory tools (memory_search, memory_get_entity, memory_get_open_loops, memory_get_recent_events, and the others) to pull in more before you respond. Prefer querying too often over assuming; querying is cheap, inventing details is not.',
+		'Do not invent older details when memory returns unknown.',
+		writeGuidance,
 		recent ? `\n<recent_transcript>\n${recent}\n</recent_transcript>\n` : '',
 		'Final user message:',
 		params.userMsg.content
