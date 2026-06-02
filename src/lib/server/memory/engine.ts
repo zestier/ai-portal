@@ -387,6 +387,7 @@ export function commitPatch(
 	const status = validation.ok ? 'committed' : 'needs_review';
 	const patchRecord = memoryRepo.createPatch(input.conversationId, {
 		turnId: input.turnId ?? null,
+		sourceMessageId: input.sourceMessageId ?? null,
 		status,
 		summary: input.summary ?? summarizePatch(input.patch),
 		rawPatch: input.patch,
@@ -419,7 +420,11 @@ export function commitPatch(
 
 	const entityIdsByKey = new Map<string, string>();
 	for (const entity of input.patch.entities ?? []) {
-		const row = memoryRepo.upsertEntity(input.conversationId, entity);
+		const row = memoryRepo.upsertEntity(input.conversationId, {
+			...entity,
+			sourceMessageId: input.sourceMessageId ?? null,
+			turnId: input.turnId ?? null
+		});
 		entityIdsByKey.set(entity.entityKey, row.id);
 		memoryRepo.recordPatchItem(input.conversationId, {
 			patchId: patchRecord.id,

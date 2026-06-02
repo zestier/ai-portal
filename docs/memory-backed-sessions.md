@@ -1209,28 +1209,71 @@ durable memory the prefix produced — otherwise the fork would start with an
 empty memory packet even though its visible transcript shows prior turns, and
 the assistant would "forget" everything it had remembered.
 
-`cloneSessionMemoryForFork` (`src/lib/server/db/repos/memory.ts`) copies the
-source's live memory state into the fork with these rules:
+Session memory is event-sourced: every mutation is appended to the
+`memory_event_log` table (migration `033`), and the live `memory_*` tables are a
+projection rebuilt from that log. `replaySessionMemoryLogForFork`
+(`src/lib/server/db/repos/memory.ts`) replays the source's log into the fork
+with these rules:
 
-- **Scope by the rewind boundary.** Only memory whose `created_at` is strictly
-  before the first discarded source message is cloned. Prefix memory carries
-  over; memory extracted from the rewound-away suffix does not. This errs toward
-  dropping a late-extracted prefix item rather than ever leaking discarded
-  memory into the fork.
-- **Active state only.** Superseded/disputed/deleted entities and facts, and
-  closed open loops, are skipped. The fork inherits the current materialized
-  state, not historical churn.
-- **References are remapped.** Entity and event ids are reissued and rewired,
-  `source_message_id` is translated to the fork's freshly cloned message ids, and
-  open-loop related-entity links are pruned to entities that were cloned. Search
+- **Scope by prefix membership.** A log entry is replayed when its
+  `source_message_id` belongs to the kept prefix (translated through the cloned
+  message-id map). Because extraction runs asynchronously after a turn, a prefix
+  item can be committed after the next message's timestamp, so the message link —
+  not `created_at` — is the primary classifier. Unlinked `*.create` entries fall
+  back to the `created_at` boundary (the first discarded source message), and
+  later unlinked mutations follow whichever item they target.
+- **Full history, materialized.** The kept entries are replayed in order, so the
+  fork's projection reflects the same superseded/deleted/closed transitions the
+  prefix produced. The live-state queries (`listEntities`, `listFacts`, …) still
+  surface only active/open rows.
+- **References are remapped.** Each replayed item's own id is reissued;
+  references to other items (`entity_id`, `actor`/`target_entity_id`,
+  `source_event_id`, `supersedes_fact_id`, open-loop related entities, patch
+  links) resolve to the fork's reissued id when the referenced item was also
+  copied, and to `null` otherwise — links to rows left behind never dangle.
+  `source_message_id` is translated to the fork's cloned message ids, and search
   and embedding indexes are rebuilt for the new conversation.
-- **Fresh provenance.** Patches, patch items, validation issues, and tool-call
-  audit rows are intentionally not cloned. The fork inherits memory *state* as a
-  new baseline and starts its own patch/audit history. Ephemeral `turn_id`
-  values are dropped.
+- **Fresh provenance.** Ephemeral `turn_id` values are dropped. Patch/issue/
+  tool-call audit rows are replayed only when they belong to the kept prefix, and
+  the fork continues appending to its own log thereafter.
 
 The source conversation is never mutated, consistent with the non-destructive
 fork model (the workdir is shared, not rolled back).
+
+### Append-only chain, turn heads, and reference-counted GC
+
+The `memory_event_log` is an **append-only parent chain**: every event stores a
+`parent_id` pointing at the event that was the head when it was appended. There
+is no mutable per-conversation head pointer. Instead, the head is derived from
+the transcript:
+
+- `memory_message_heads(conversation_id, message_id) -> head_event_id` records,
+  for each message, the memory head as of that transcript point. The conversation's
+  current memory state is simply the head of its most recent message (falling back
+  to the cached projection head for message-less memory used in unit tests).
+- `memory_heads(conversation_id) -> projection_event_id` caches which head the
+  live `memory_*` projection currently reflects, so appends can advance the
+  projection incrementally and detect when a full rebuild is required.
+
+Rewinding (inline edit / tool rerun) does not delete log rows to move the head —
+it drops the message heads for the truncated suffix and lets garbage collection
+reclaim whatever those heads pinned. Reachability is tracked in a single generic
+table:
+
+- `memory_refs(ref_kind, source_key) -> target_event_id` holds **every incoming
+  reference to an event**. `memory_parent` rows come from child events
+  (`source_key` = child id); `message_head` rows come from messages
+  (`source_key` = message id). The kind is intentionally open-ended for future
+  sources (shared fork heads, audit roots).
+
+GC is a backward walk: starting from the old tip, while an event has no row in
+`memory_refs` referencing it, delete it (dropping its own `memory_parent` row)
+and continue to its parent. The walk stops at the first event still referenced —
+i.e. the kept prefix head, which a surviving message still pins. Cycles are
+impossible by construction (a parent is always older than its child); a depth
+guard only protects against corrupt data. `memory_message_heads` is kept
+alongside `memory_refs` because it additionally answers the ordered "what did
+memory know at this transcript point?" query that a flat reference table cannot.
 
 ## Migration and rollout
 

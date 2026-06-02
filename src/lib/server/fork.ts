@@ -150,14 +150,12 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	const prefix = all.slice(0, prefixEnd);
 	const messageIdMap = cloneMessagePrefix(newConv.id, prefix);
 
-	// Carry the source's durable session memory into the fork, scoped to the
-	// cloned prefix. The boundary is the first DISCARDED source message: memory
-	// created before it belongs to the kept prefix; memory from the rewound
-	// suffix is left behind. Without this, a fork/rewind starts with an empty
-	// memory packet even though its transcript shows prior turns, so the
-	// assistant "forgets" everything it had remembered.
+	// Rebuild durable session memory from the append-only log, scoped to the
+	// cloned prefix. Log entries linked to kept source messages are replayed
+	// with message/item ids remapped to the fork, while rewound suffix entries
+	// are left behind.
 	const firstDiscarded = all[prefixEnd];
-	const memoryCounts = memoryRepo.cloneSessionMemoryForFork(source.id, newConv.id, {
+	const memoryCounts = memoryRepo.replaySessionMemoryLogForFork(source.id, newConv.id, {
 		messageIdMap,
 		createdBefore: firstDiscarded ? firstDiscarded.createdAt : Number.POSITIVE_INFINITY
 	});

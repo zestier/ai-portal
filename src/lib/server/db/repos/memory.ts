@@ -143,6 +143,31 @@ export interface MemoryPatchItem {
 	createdAt: number;
 }
 
+interface MemoryLogRow {
+	seq: number;
+	id: string;
+	parent_id: string | null;
+	conversation_id: string;
+	event_kind: string;
+	item_type: SessionMemoryLogItemType;
+	item_id: string;
+	source_message_id: string | null;
+	turn_id: string | null;
+	payload_json: string;
+	created_at: number;
+}
+
+type SessionMemoryLogItemType =
+	| 'entity'
+	| 'event'
+	| 'fact'
+	| 'decision'
+	| 'open_loop'
+	| 'patch'
+	| 'patch_item'
+	| 'issue'
+	| 'tool_call';
+
 export interface GlobalMemory {
 	id: string;
 	userId: string;
@@ -359,6 +384,8 @@ export interface UpsertEntityInput {
 	displayName: string;
 	summary?: string;
 	metadata?: unknown;
+	sourceMessageId?: string | null;
+	turnId?: string | null;
 }
 
 export interface AddEventInput {
@@ -404,6 +431,7 @@ export interface AddOpenLoopInput {
 
 export interface CreatePatchInput {
 	turnId?: string | null;
+	sourceMessageId?: string | null;
 	status: MemoryPatchStatus;
 	summary?: string;
 	rawPatch?: unknown;
@@ -466,6 +494,14 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 			.get(existing.id) as EntityRow;
 		indexItem(db, conversationId, 'entity', existing.id, entityIndexText(updated));
 		indexSessionMemoryItem(conversationId, 'entity', existing.id, entityIndexText(updated));
+		appendSessionMemoryLog(db, conversationId, {
+			eventKind: 'entity.update',
+			itemType: 'entity',
+			itemId: existing.id,
+			sourceMessageId: input.sourceMessageId ?? null,
+			turnId: input.turnId ?? null,
+			payload: { item: rowToEntity(updated) }
+		});
 		return rowToEntity(updated);
 	}
 	const id = ulid();
@@ -488,6 +524,14 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 	const row = db.prepare('SELECT * FROM memory_entities WHERE id = ?').get(id) as EntityRow;
 	indexItem(db, conversationId, 'entity', id, entityIndexText(row));
 	indexSessionMemoryItem(conversationId, 'entity', id, entityIndexText(row));
+	appendSessionMemoryLog(db, conversationId, {
+		eventKind: 'entity.create',
+		itemType: 'entity',
+		itemId: id,
+		sourceMessageId: input.sourceMessageId ?? null,
+		turnId: input.turnId ?? null,
+		payload: { item: rowToEntity(row) }
+	});
 	return rowToEntity(row);
 }
 
@@ -555,6 +599,14 @@ export function addEvent(conversationId: string, input: AddEventInput): MemoryEv
 	const row = getDb().prepare('SELECT * FROM memory_events WHERE id = ?').get(id) as EventRow;
 	indexItem(getDb(), conversationId, 'event', id, eventIndexText(row));
 	indexSessionMemoryItem(conversationId, 'event', id, eventIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'event.create',
+		itemType: 'event',
+		itemId: id,
+		sourceMessageId: input.sourceMessageId ?? null,
+		turnId: input.turnId ?? null,
+		payload: { item: rowToEvent(row) }
+	});
 	return rowToEvent(row);
 }
 
@@ -620,6 +672,13 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
 	const row = getDb().prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
 	indexItem(getDb(), conversationId, 'fact', id, factIndexText(row));
 	indexSessionMemoryItem(conversationId, 'fact', id, factIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'fact.create',
+		itemType: 'fact',
+		itemId: id,
+		sourceMessageId: input.sourceMessageId ?? null,
+		payload: { item: rowToFact(row) }
+	});
 	return rowToFact(row);
 }
 
@@ -674,6 +733,13 @@ export function addDecision(conversationId: string, input: AddDecisionInput): Me
 	const row = getDb().prepare('SELECT * FROM memory_decisions WHERE id = ?').get(id) as DecisionRow;
 	indexItem(getDb(), conversationId, 'decision', id, decisionIndexText(row));
 	indexSessionMemoryItem(conversationId, 'decision', id, decisionIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'decision.create',
+		itemType: 'decision',
+		itemId: id,
+		sourceMessageId: input.sourceMessageId ?? null,
+		payload: { item: rowToDecision(row) }
+	});
 	return rowToDecision(row);
 }
 
@@ -719,6 +785,13 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 		.get(id) as OpenLoopRow;
 	indexItem(getDb(), conversationId, 'open_loop', id, openLoopIndexText(row));
 	indexSessionMemoryItem(conversationId, 'open_loop', id, openLoopIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'open_loop.create',
+		itemType: 'open_loop',
+		itemId: id,
+		sourceMessageId: input.sourceMessageId ?? null,
+		payload: { item: rowToOpenLoop(row) }
+	});
 	return rowToOpenLoop(row);
 }
 
@@ -790,9 +863,16 @@ export function createPatch(conversationId: string, input: CreatePatchInput): Me
 			now,
 			input.committedAt ?? null
 		);
-	return rowToPatch(
-		getDb().prepare('SELECT * FROM memory_patches WHERE id = ?').get(id) as PatchRow
-	);
+	const row = getDb().prepare('SELECT * FROM memory_patches WHERE id = ?').get(id) as PatchRow;
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'patch.create',
+		itemType: 'patch',
+		itemId: id,
+		sourceMessageId: input.sourceMessageId ?? null,
+		turnId: input.turnId ?? null,
+		payload: { patch: rowToPatch(row) }
+	});
+	return rowToPatch(row);
 }
 
 export function listPatches(conversationId: string, opts: { limit?: number } = {}): MemoryPatch[] {
@@ -831,11 +911,16 @@ export function updatePatchStatus(
 			conversationId
 		);
 	if (result.changes === 0) return null;
-	return rowToPatch(
-		getDb()
-			.prepare('SELECT * FROM memory_patches WHERE id = ? AND conversation_id = ?')
-			.get(patchId, conversationId) as PatchRow
-	);
+	const row = getDb()
+		.prepare('SELECT * FROM memory_patches WHERE id = ? AND conversation_id = ?')
+		.get(patchId, conversationId) as PatchRow;
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: status === 'reverted' ? 'patch.revert' : 'patch.update',
+		itemType: 'patch',
+		itemId: patchId,
+		payload: { patch: rowToPatch(row) }
+	});
+	return rowToPatch(row);
 }
 
 export function recordPatchItem(
@@ -850,9 +935,16 @@ export function recordPatchItem(
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(id, input.patchId, conversationId, input.itemType, input.itemId, input.action, now);
-	return rowToPatchItem(
-		getDb().prepare('SELECT * FROM memory_patch_items WHERE id = ?').get(id) as PatchItemRow
-	);
+	const row = getDb()
+		.prepare('SELECT * FROM memory_patch_items WHERE id = ?')
+		.get(id) as PatchItemRow;
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'patch_item.create',
+		itemType: 'patch_item',
+		itemId: id,
+		payload: { item: rowToPatchItem(row) }
+	});
+	return rowToPatchItem(row);
 }
 
 export function listPatchItems(
@@ -905,6 +997,12 @@ export function reviewPatchItem(
 	const item = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ? AND conversation_id = ?')
 		.get(patchItemId, conversationId) as PatchItemRow;
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'patch_item.review',
+		itemType: 'patch_item',
+		itemId: patchItemId,
+		payload: { item: rowToPatchItem(item), decision, affected }
+	});
 	return { item: rowToPatchItem(item), affected };
 }
 
@@ -945,6 +1043,12 @@ export function updateEntity(
 		.prepare('SELECT * FROM memory_entities WHERE id = ? AND conversation_id = ?')
 		.get(id, conversationId) as EntityRow;
 	syncSessionIndex(getDb(), conversationId, 'entity', id, row.status, entityIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: row.status === 'deleted' ? 'entity.delete' : 'entity.update',
+		itemType: 'entity',
+		itemId: id,
+		payload: { item: rowToEntity(row) }
+	});
 	return rowToEntity(row);
 }
 
@@ -977,6 +1081,17 @@ export function updateFact(
 		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
 		.get(id, conversationId) as FactRow;
 	syncSessionIndex(getDb(), conversationId, 'fact', id, row.status, factIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind:
+			row.status === 'deleted'
+				? 'fact.delete'
+				: row.status === 'superseded'
+					? 'fact.supersede'
+					: 'fact.update',
+		itemType: 'fact',
+		itemId: id,
+		payload: { item: rowToFact(row) }
+	});
 	return rowToFact(row);
 }
 
@@ -1008,6 +1123,12 @@ export function updateDecision(
 		.prepare('SELECT * FROM memory_decisions WHERE id = ? AND conversation_id = ?')
 		.get(id, conversationId) as DecisionRow;
 	syncSessionIndex(getDb(), conversationId, 'decision', id, row.status, decisionIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: row.status === 'deleted' ? 'decision.delete' : 'decision.update',
+		itemType: 'decision',
+		itemId: id,
+		payload: { item: rowToDecision(row) }
+	});
 	return rowToDecision(row);
 }
 
@@ -1049,6 +1170,12 @@ export function updateOpenLoop(
 		.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
 		.get(id, conversationId) as OpenLoopRow;
 	syncSessionIndex(getDb(), conversationId, 'open_loop', id, row.status, openLoopIndexText(row));
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: row.status === 'deleted' ? 'open_loop.delete' : 'open_loop.update',
+		itemType: 'open_loop',
+		itemId: id,
+		payload: { item: rowToOpenLoop(row) }
+	});
 	return rowToOpenLoop(row);
 }
 
@@ -1489,9 +1616,16 @@ export function addIssue(
 			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, NULL)`
 		)
 		.run(id, conversationId, input.patchId ?? null, input.severity, input.code, input.message, now);
-	return rowToIssue(
-		getDb().prepare('SELECT * FROM memory_validation_issues WHERE id = ?').get(id) as IssueRow
-	);
+	const row = getDb()
+		.prepare('SELECT * FROM memory_validation_issues WHERE id = ?')
+		.get(id) as IssueRow;
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'issue.create',
+		itemType: 'issue',
+		itemId: id,
+		payload: { issue: rowToIssue(row) }
+	});
+	return rowToIssue(row);
 }
 
 export function listIssues(
@@ -1537,9 +1671,17 @@ export function recordToolCall(
 			safeJson(input.resultIds ?? []),
 			now
 		);
-	return rowToToolCall(
-		getDb().prepare('SELECT * FROM memory_tool_calls WHERE id = ?').get(id) as ToolCallRow
-	);
+	const row = getDb()
+		.prepare('SELECT * FROM memory_tool_calls WHERE id = ?')
+		.get(id) as ToolCallRow;
+	appendSessionMemoryLog(getDb(), conversationId, {
+		eventKind: 'tool_call.create',
+		itemType: 'tool_call',
+		itemId: id,
+		turnId: input.turnId ?? null,
+		payload: { toolCall: rowToToolCall(row) }
+	});
+	return rowToToolCall(row);
 }
 
 export function listToolCalls(
@@ -1595,260 +1737,914 @@ export function search(
 export function wipe(conversationId: string): void {
 	const db = getDb();
 	const tx = db.transaction(() => {
-		const embeddingIds = db
-			.prepare(
-				`SELECT id FROM memory_embeddings
-				  WHERE scope = 'session' AND conversation_id = ?`
-			)
-			.all(conversationId) as { id: string }[];
-		for (const row of embeddingIds) deleteVecIndex(db, row.id);
-		db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_patch_items WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_tool_calls WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_validation_issues WHERE conversation_id = ?').run(
-			conversationId
-		);
-		db.prepare('DELETE FROM memory_patches WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_decisions WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_open_loops WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_facts WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_events WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_entities WHERE conversation_id = ?').run(conversationId);
-		db.prepare(
-			`DELETE FROM memory_embeddings
-			  WHERE scope = 'session' AND conversation_id = ?`
-		).run(conversationId);
+		clearSessionMemoryProjection(db, conversationId);
+		db.prepare('DELETE FROM memory_event_log WHERE conversation_id = ?').run(conversationId);
+		db.prepare('DELETE FROM memory_refs WHERE conversation_id = ?').run(conversationId);
+		db.prepare('DELETE FROM memory_heads WHERE conversation_id = ?').run(conversationId);
+		db.prepare('DELETE FROM memory_message_heads WHERE conversation_id = ?').run(conversationId);
 	});
 	tx();
 }
 
-/**
- * Copy the live session-memory state of `sourceConversationId` into
- * `targetConversationId` when a conversation is forked (edit/retry rewind).
- *
- * Memory is cloned by *prefix membership*: any item linked to a kept prefix
- * message (via `source_message_id`, translated through `messageIdMap`) carries
- * over, while items linked to discarded suffix messages do not. Items that have
- * no message link (entities, and any orphaned rows) fall back to the
- * `createdBefore` boundary — the `created_at` of the first DISCARDED source
- * message. Membership is used in preference to the timestamp because extraction
- * runs asynchronously after a turn, so a prefix item can legitimately be
- * committed after the next message's timestamp; classifying by the message link
- * avoids dropping such items while still never leaking discarded memory.
- *
- * Internal references are remapped to the clone: entity/event ids are reissued
- * and rewired, and `source_message_id` is translated through `messageIdMap`
- * (old prefix message id → freshly cloned message id) so memory stays linked to
- * the fork's own transcript. Patches, patch items, validation issues, and tool
- * calls are intentionally NOT copied — the fork inherits memory *state* as a
- * fresh baseline and starts its own patch history.
- */
-export function cloneSessionMemoryForFork(
+export function replaySessionMemoryLogForFork(
 	sourceConversationId: string,
 	targetConversationId: string,
 	opts: { messageIdMap: Map<string, string>; createdBefore?: number }
 ): { entities: number; events: number; facts: number; decisions: number; openLoops: number } {
 	const db = getDb();
-	const createdBefore = opts.createdBefore ?? Number.POSITIVE_INFINITY;
+	const included = new Set<string>();
+	const isIncluded = (type: string, id: string) => included.has(`${type}:${id}`);
+	const markIncluded = (type: string, id: string) => included.add(`${type}:${id}`);
 	const counts = { entities: 0, events: 0, facts: 0, decisions: 0, openLoops: 0 };
-	const mapMessageId = (old: string | null): string | null =>
-		old ? (opts.messageIdMap.get(old) ?? null) : null;
-	// Decide whether a memory row belongs to the kept prefix. Rows that carry a
-	// source_message_id are classified *exactly* by prefix membership, which is
-	// robust to extraction timing (async post-turn extraction can commit a
-	// prefix item after the next user message's timestamp). Only rows with no
-	// message link fall back to the created_at boundary.
-	const keepLinked = (sourceMessageId: string | null, createdAt: number): boolean =>
-		sourceMessageId != null ? opts.messageIdMap.has(sourceMessageId) : createdAt < createdBefore;
-
 	const tx = db.transaction(() => {
-		// Entities (active state). No source_message_id column, so they're
-		// filtered purely by the created_at boundary.
-		const entityRows = db
-			.prepare(
-				`SELECT * FROM memory_entities
-				  WHERE conversation_id = ? AND status = 'active' AND created_at < ?`
-			)
-			.all(sourceConversationId, createdBefore) as EntityRow[];
-		const entityIdMap = new Map<string, string>();
-		const insertEntity = db.prepare(
-			`INSERT INTO memory_entities(
-			   id, conversation_id, entity_key, entity_type, display_name, summary, status,
-			   metadata_json, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		clearSessionMemoryProjection(db, targetConversationId);
+		db.prepare('DELETE FROM memory_event_log WHERE conversation_id = ?').run(targetConversationId);
+		db.prepare('DELETE FROM memory_refs WHERE conversation_id = ?').run(targetConversationId);
+		db.prepare('DELETE FROM memory_heads WHERE conversation_id = ?').run(targetConversationId);
+		db.prepare('DELETE FROM memory_message_heads WHERE conversation_id = ?').run(
+			targetConversationId
 		);
-		for (const row of entityRows) {
-			const newId = ulid();
-			entityIdMap.set(row.id, newId);
-			insertEntity.run(
-				newId,
-				targetConversationId,
-				row.entity_key,
-				row.entity_type,
-				row.display_name,
-				row.summary,
-				row.status,
-				row.metadata_json,
-				row.created_at,
-				row.updated_at
-			);
-			const cloned: EntityRow = { ...row, id: newId, conversation_id: targetConversationId };
-			indexItem(db, targetConversationId, 'entity', newId, entityIndexText(cloned));
-			indexSessionMemoryItem(targetConversationId, 'entity', newId, entityIndexText(cloned));
-			counts.entities++;
+		const sourceHead = headForMessagePrefix(db, sourceConversationId, opts.messageIdMap.keys(), {
+			createdBefore: opts.createdBefore
+		});
+		const copied = chainRowsForHead(db, sourceConversationId, sourceHead);
+		for (const row of copied) {
+			markIncluded(row.item_type, row.item_id);
 		}
-
-		// Events. turn_id is an ephemeral per-turn id with no meaning in the
-		// fork, so it's dropped; entity references are remapped (dangling refs
-		// to non-cloned entities become null). Classified by prefix membership
-		// of source_message_id (created_at boundary only for unlinked rows).
-		const eventRows = db
-			.prepare(`SELECT * FROM memory_events WHERE conversation_id = ?`)
-			.all(sourceConversationId) as EventRow[];
-		const eventIdMap = new Map<string, string>();
-		const insertEvent = db.prepare(
-			`INSERT INTO memory_events(
-			   id, conversation_id, turn_id, event_type, occurred_at, actor_entity_id,
-			   target_entity_id, summary, payload_json, visibility, confidence,
-			   source_message_id, source_tool_call_id, created_at
-			 ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+		const remap = createForkMemoryRemapper(targetConversationId, opts.messageIdMap, isIncluded);
+		for (const row of copied) {
+			const payload = parseJson(row.payload_json, {});
+			const transformed = remap(row.item_type, payload);
+			const targetItemId = remapIdForPayload(row.item_type, row.item_id, transformed);
+			appendSessionMemoryLog(db, targetConversationId, {
+				eventKind: row.event_kind,
+				itemType: row.item_type,
+				itemId: targetItemId,
+				sourceMessageId: row.source_message_id
+					? (opts.messageIdMap.get(row.source_message_id) ?? null)
+					: null,
+				turnId: null,
+				payload: transformed,
+				createdAt: row.created_at
+			});
+		}
+		rebuildSessionMemoryProjectionInTransaction(db, targetConversationId);
+		counts.entities = countSessionProjectionRows(
+			db,
+			'memory_entities',
+			targetConversationId,
+			'active'
 		);
-		for (const row of eventRows) {
-			if (!keepLinked(row.source_message_id, row.created_at)) continue;
-			const newId = ulid();
-			eventIdMap.set(row.id, newId);
-			insertEvent.run(
-				newId,
-				targetConversationId,
-				row.event_type,
-				row.occurred_at,
-				row.actor_entity_id ? (entityIdMap.get(row.actor_entity_id) ?? null) : null,
-				row.target_entity_id ? (entityIdMap.get(row.target_entity_id) ?? null) : null,
-				row.summary,
-				row.payload_json,
-				row.visibility,
-				row.confidence,
-				mapMessageId(row.source_message_id),
-				row.created_at
-			);
-			const cloned: EventRow = { ...row, id: newId, conversation_id: targetConversationId };
-			indexItem(db, targetConversationId, 'event', newId, eventIndexText(cloned));
-			indexSessionMemoryItem(targetConversationId, 'event', newId, eventIndexText(cloned));
-			counts.events++;
-		}
-
-		// Facts (active). supersedes_fact_id is dropped because superseded facts
-		// aren't cloned, so the chain pointer would dangle.
-		const factRows = db
-			.prepare(`SELECT * FROM memory_facts WHERE conversation_id = ? AND status = 'active'`)
-			.all(sourceConversationId) as FactRow[];
-		const insertFact = db.prepare(
-			`INSERT INTO memory_facts(
-			   id, conversation_id, entity_id, predicate, value_json, status, visibility,
-			   confidence, source_event_id, source_message_id, supersedes_fact_id, created_at,
-			   updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
+		counts.events = countSessionProjectionRows(db, 'memory_events', targetConversationId, null);
+		counts.facts = countSessionProjectionRows(db, 'memory_facts', targetConversationId, 'active');
+		counts.decisions = countSessionProjectionRows(
+			db,
+			'memory_decisions',
+			targetConversationId,
+			'active'
 		);
-		for (const row of factRows) {
-			if (!keepLinked(row.source_message_id, row.created_at)) continue;
-			const newId = ulid();
-			insertFact.run(
-				newId,
-				targetConversationId,
-				row.entity_id ? (entityIdMap.get(row.entity_id) ?? null) : null,
-				row.predicate,
-				row.value_json,
-				row.status,
-				row.visibility,
-				row.confidence,
-				row.source_event_id ? (eventIdMap.get(row.source_event_id) ?? null) : null,
-				mapMessageId(row.source_message_id),
-				row.created_at,
-				row.updated_at
-			);
-			const cloned: FactRow = { ...row, id: newId, conversation_id: targetConversationId };
-			indexItem(db, targetConversationId, 'fact', newId, factIndexText(cloned));
-			indexSessionMemoryItem(targetConversationId, 'fact', newId, factIndexText(cloned));
-			counts.facts++;
-		}
-
-		// Decisions (active).
-		const decisionRows = db
-			.prepare(`SELECT * FROM memory_decisions WHERE conversation_id = ? AND status = 'active'`)
-			.all(sourceConversationId) as DecisionRow[];
-		const insertDecision = db.prepare(
-			`INSERT INTO memory_decisions(
-			   id, conversation_id, subject, decision, rationale, status, source_event_id,
-			   source_message_id, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		counts.openLoops = countSessionProjectionRows(
+			db,
+			'memory_open_loops',
+			targetConversationId,
+			'open'
 		);
-		for (const row of decisionRows) {
-			if (!keepLinked(row.source_message_id, row.created_at)) continue;
-			const newId = ulid();
-			insertDecision.run(
-				newId,
-				targetConversationId,
-				row.subject,
-				row.decision,
-				row.rationale,
-				row.status,
-				row.source_event_id ? (eventIdMap.get(row.source_event_id) ?? null) : null,
-				mapMessageId(row.source_message_id),
-				row.created_at,
-				row.updated_at
-			);
-			const cloned: DecisionRow = { ...row, id: newId, conversation_id: targetConversationId };
-			indexItem(db, targetConversationId, 'decision', newId, decisionIndexText(cloned));
-			indexSessionMemoryItem(targetConversationId, 'decision', newId, decisionIndexText(cloned));
-			counts.decisions++;
-		}
-
-		// Open loops (still open). Related entity refs are remapped and pruned
-		// to those that were cloned.
-		const openLoopRows = db
-			.prepare(`SELECT * FROM memory_open_loops WHERE conversation_id = ? AND status = 'open'`)
-			.all(sourceConversationId) as OpenLoopRow[];
-		const insertOpenLoop = db.prepare(
-			`INSERT INTO memory_open_loops(
-			   id, conversation_id, loop_type, title, description, status, priority,
-			   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		);
-		for (const row of openLoopRows) {
-			if (!keepLinked(row.source_message_id, row.created_at)) continue;
-			const newId = ulid();
-			const relatedJson = safeJson(
-				parseStringArray(row.related_entity_ids_json)
-					.map((id) => entityIdMap.get(id))
-					.filter((id): id is string => !!id)
-			);
-			insertOpenLoop.run(
-				newId,
-				targetConversationId,
-				row.loop_type,
-				row.title,
-				row.description,
-				row.status,
-				row.priority,
-				relatedJson,
-				row.source_event_id ? (eventIdMap.get(row.source_event_id) ?? null) : null,
-				mapMessageId(row.source_message_id),
-				row.created_at,
-				row.updated_at
-			);
-			const cloned: OpenLoopRow = {
-				...row,
-				id: newId,
-				conversation_id: targetConversationId,
-				related_entity_ids_json: relatedJson
-			};
-			indexItem(db, targetConversationId, 'open_loop', newId, openLoopIndexText(cloned));
-			indexSessionMemoryItem(targetConversationId, 'open_loop', newId, openLoopIndexText(cloned));
-			counts.openLoops++;
-		}
 	});
 	tx();
 	return counts;
+}
+
+export function rewindSessionMemoryLogToMessagePrefix(
+	conversationId: string,
+	opts: { messageIds: Set<string>; createdBefore?: number }
+): { kept: number; removed: number } {
+	const db = getDb();
+	let kept = 0;
+	let removed = 0;
+	const tx = db.transaction(() => {
+		const currentHead = getCurrentMemoryHead(db, conversationId);
+		const nextHead = headForMessagePrefix(db, conversationId, opts.messageIds, {
+			createdBefore: opts.createdBefore
+		});
+		kept = chainRowsForHead(db, conversationId, nextHead).length;
+		removed = Math.max(0, chainRowsForHead(db, conversationId, currentHead).length - kept);
+		// Drop memory heads for the messages that are about to be truncated away.
+		// The suffix events they pinned then become unreferenced and are GC'd by
+		// walking back from the old tip until we reach the kept prefix head.
+		const keptMessageIds = new Set(opts.messageIds);
+		const headRows = db
+			.prepare('SELECT message_id FROM memory_message_heads WHERE conversation_id = ?')
+			.all(conversationId) as { message_id: string }[];
+		for (const row of headRows) {
+			if (!keptMessageIds.has(row.message_id)) {
+				dropMemoryMessageHead(db, conversationId, row.message_id);
+			}
+		}
+		gcMemoryEventChain(db, conversationId, currentHead);
+		rebuildSessionMemoryProjectionInTransaction(db, conversationId, nextHead);
+	});
+	tx();
+	return { kept, removed };
+}
+
+function countSessionProjectionRows(
+	db: Database.Database,
+	table: string,
+	conversationId: string,
+	status: string | null
+): number {
+	// `table` is an internal constant, never user input.
+	const row = (
+		status
+			? db
+					.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE conversation_id = ? AND status = ?`)
+					.get(conversationId, status)
+			: db
+					.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE conversation_id = ?`)
+					.get(conversationId)
+	) as { n: number };
+	return row.n;
+}
+
+function getCurrentMemoryHead(db: Database.Database, conversationId: string): string | null {
+	const row = db
+		.prepare(
+			`SELECT h.head_event_id
+			   FROM messages m
+			   JOIN memory_message_heads h
+			     ON h.conversation_id = m.conversation_id AND h.message_id = m.id
+			  WHERE m.conversation_id = ?
+			  ORDER BY m.created_at DESC, m.id DESC
+			  LIMIT 1`
+		)
+		.get(conversationId) as { head_event_id: string | null } | undefined;
+	if (row) return row.head_event_id;
+	const messageCount = db
+		.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?')
+		.get(conversationId) as { n: number };
+	if (messageCount.n > 0) return null;
+	return getProjectionMemoryHead(db, conversationId);
+}
+
+function getProjectionMemoryHead(db: Database.Database, conversationId: string): string | null {
+	const row = db
+		.prepare('SELECT projection_event_id FROM memory_heads WHERE conversation_id = ?')
+		.get(conversationId) as { projection_event_id: string | null } | undefined;
+	return row?.projection_event_id ?? null;
+}
+
+function getLatestMessageId(db: Database.Database, conversationId: string): string | null {
+	const row = db
+		.prepare(
+			`SELECT id
+			   FROM messages
+			  WHERE conversation_id = ?
+			  ORDER BY created_at DESC, id DESC
+			  LIMIT 1`
+		)
+		.get(conversationId) as { id: string } | undefined;
+	return row?.id ?? null;
+}
+
+function getAppendParentMemoryHead(
+	db: Database.Database,
+	conversationId: string,
+	sourceMessageId: string | null | undefined
+): string | null {
+	if (sourceMessageId) {
+		const row = db
+			.prepare(
+				`SELECT h.head_event_id
+				   FROM messages source
+				   JOIN messages m
+				     ON m.conversation_id = source.conversation_id
+				    AND (m.created_at < source.created_at OR (m.created_at = source.created_at AND m.id <= source.id))
+				   JOIN memory_message_heads h
+				     ON h.conversation_id = m.conversation_id AND h.message_id = m.id
+				  WHERE source.conversation_id = ? AND source.id = ?
+				  ORDER BY m.created_at DESC, m.id DESC
+				  LIMIT 1`
+			)
+			.get(conversationId, sourceMessageId) as { head_event_id: string | null } | undefined;
+		if (row) return row.head_event_id;
+	}
+	return getCurrentMemoryHead(db, conversationId);
+}
+
+function setProjectionMemoryHead(
+	db: Database.Database,
+	conversationId: string,
+	headEventId: string | null
+): void {
+	db.prepare(
+		`INSERT INTO memory_heads(conversation_id, projection_event_id, updated_at)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(conversation_id) DO UPDATE SET
+		   projection_event_id = excluded.projection_event_id,
+		   updated_at = excluded.updated_at`
+	).run(conversationId, headEventId, Date.now());
+}
+
+type MemoryRefKind = 'memory_parent' | 'message_head';
+
+// Upsert an incoming reference (source_key -> target_event_id). Returns the
+// previously referenced event id when the target moved, so the caller can GC
+// the event that just lost this reference. Returns null when unchanged.
+function setMemoryRef(
+	db: Database.Database,
+	conversationId: string,
+	kind: MemoryRefKind,
+	sourceKey: string,
+	targetEventId: string
+): string | null {
+	const prev = db
+		.prepare('SELECT target_event_id FROM memory_refs WHERE ref_kind = ? AND source_key = ?')
+		.get(kind, sourceKey) as { target_event_id: string } | undefined;
+	db.prepare(
+		`INSERT INTO memory_refs(conversation_id, ref_kind, source_key, target_event_id, created_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(ref_kind, source_key) DO UPDATE SET
+		   conversation_id = excluded.conversation_id,
+		   target_event_id = excluded.target_event_id,
+		   created_at = excluded.created_at`
+	).run(conversationId, kind, sourceKey, targetEventId, Date.now());
+	return prev && prev.target_event_id !== targetEventId ? prev.target_event_id : null;
+}
+
+// Remove an incoming reference. Returns the event id it pointed at (if any) so
+// the caller can GC it.
+function dropMemoryRef(
+	db: Database.Database,
+	kind: MemoryRefKind,
+	sourceKey: string
+): string | null {
+	const prev = db
+		.prepare('SELECT target_event_id FROM memory_refs WHERE ref_kind = ? AND source_key = ?')
+		.get(kind, sourceKey) as { target_event_id: string } | undefined;
+	db.prepare('DELETE FROM memory_refs WHERE ref_kind = ? AND source_key = ?').run(kind, sourceKey);
+	return prev?.target_event_id ?? null;
+}
+
+function memoryEventIsReferenced(db: Database.Database, eventId: string): boolean {
+	const row = db
+		.prepare('SELECT 1 AS ok FROM memory_refs WHERE target_event_id = ? LIMIT 1')
+		.get(eventId) as { ok: number } | undefined;
+	return row !== undefined;
+}
+
+// Backward garbage-collect from `startEventId`: while the event has no incoming
+// references, delete it (dropping its own outgoing parent reference) and walk
+// to its parent, which may in turn become unreferenced. Cycles are impossible
+// by construction (parents are always older), but a depth guard keeps a buggy
+// chain from looping forever.
+function gcMemoryEventChain(
+	db: Database.Database,
+	conversationId: string,
+	startEventId: string | null
+): void {
+	let id: string | null = startEventId;
+	let guard = 0;
+	while (id && guard++ < 1_000_000) {
+		if (memoryEventIsReferenced(db, id)) break;
+		const row = db
+			.prepare('SELECT parent_id FROM memory_event_log WHERE conversation_id = ? AND id = ?')
+			.get(conversationId, id) as { parent_id: string | null } | undefined;
+		if (!row) break;
+		dropMemoryRef(db, 'memory_parent', id);
+		db.prepare('DELETE FROM memory_event_log WHERE conversation_id = ? AND id = ?').run(
+			conversationId,
+			id
+		);
+		id = row.parent_id;
+	}
+}
+
+function recordMemoryMessageHead(
+	db: Database.Database,
+	conversationId: string,
+	messageId: string,
+	headEventId: string
+): void {
+	db.prepare(
+		`INSERT INTO memory_message_heads(conversation_id, message_id, head_event_id, updated_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(conversation_id, message_id) DO UPDATE SET
+		   head_event_id = excluded.head_event_id,
+		   updated_at = excluded.updated_at`
+	).run(conversationId, messageId, headEventId, Date.now());
+	// Mirror the move into the generic reference table for GC reachability and
+	// reclaim the event this message previously pinned if nothing else holds it.
+	const orphaned = setMemoryRef(db, conversationId, 'message_head', messageId, headEventId);
+	if (orphaned) gcMemoryEventChain(db, conversationId, orphaned);
+}
+
+// Drop the memory head for a message that is being removed (inline edit /
+// rerun truncation), then GC whatever its reference was pinning.
+function dropMemoryMessageHead(
+	db: Database.Database,
+	conversationId: string,
+	messageId: string
+): void {
+	db.prepare('DELETE FROM memory_message_heads WHERE conversation_id = ? AND message_id = ?').run(
+		conversationId,
+		messageId
+	);
+	const orphaned = dropMemoryRef(db, 'message_head', messageId);
+	if (orphaned) gcMemoryEventChain(db, conversationId, orphaned);
+}
+
+function headForMessagePrefix(
+	db: Database.Database,
+	conversationId: string,
+	messageIds: Iterable<string>,
+	opts: { createdBefore?: number } = {}
+): string | null {
+	const ids = new Set(messageIds);
+	let head: string | null = null;
+	for (const messageId of ids) {
+		const row = db
+			.prepare(
+				`SELECT h.head_event_id
+				   FROM messages m
+				   JOIN memory_message_heads h
+				     ON h.conversation_id = m.conversation_id AND h.message_id = m.id
+				  WHERE m.conversation_id = ? AND m.id = ?`
+			)
+			.get(conversationId, messageId) as { head_event_id: string | null } | undefined;
+		if (row) head = row.head_event_id;
+	}
+	if (!head && opts.createdBefore !== undefined) {
+		const row = db
+			.prepare(
+				`SELECT id
+				   FROM memory_event_log
+				  WHERE conversation_id = ? AND created_at <= ?
+				  ORDER BY seq DESC
+				  LIMIT 1`
+			)
+			.get(conversationId, opts.createdBefore) as { id: string } | undefined;
+		head = row?.id ?? null;
+	}
+	return head;
+}
+
+function chainRowsForHead(
+	db: Database.Database,
+	conversationId: string,
+	headId: string | null
+): MemoryLogRow[] {
+	const rows: MemoryLogRow[] = [];
+	let id = headId;
+	while (id) {
+		const row = db
+			.prepare('SELECT * FROM memory_event_log WHERE conversation_id = ? AND id = ?')
+			.get(conversationId, id) as MemoryLogRow | undefined;
+		if (!row) break;
+		rows.push(row);
+		id = row.parent_id;
+	}
+	return rows.reverse();
+}
+
+function appendSessionMemoryLog(
+	db: Database.Database,
+	conversationId: string,
+	input: {
+		eventKind: string;
+		itemType: SessionMemoryLogItemType;
+		itemId: string;
+		sourceMessageId?: string | null;
+		turnId?: string | null;
+		payload: unknown;
+		createdAt?: number;
+	}
+): void {
+	const now = input.createdAt ?? Date.now();
+	const id = ulid();
+	const parentId = getAppendParentMemoryHead(db, conversationId, input.sourceMessageId);
+	db.prepare(
+		`INSERT INTO memory_event_log(
+		   id, parent_id, conversation_id, event_kind, item_type, item_id, source_message_id,
+		   turn_id, payload_json, created_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		id,
+		parentId,
+		conversationId,
+		input.eventKind,
+		input.itemType,
+		input.itemId,
+		input.sourceMessageId ?? null,
+		input.turnId ?? null,
+		safeJson(input.payload),
+		now
+	);
+	if (parentId) {
+		setMemoryRef(db, conversationId, 'memory_parent', id, parentId);
+	}
+	const projectionHead = getProjectionMemoryHead(db, conversationId);
+	if (projectionHead !== parentId) {
+		rebuildSessionMemoryProjectionInTransaction(db, conversationId, parentId);
+		applySessionMemoryLogProjection(
+			db,
+			{
+				seq: 0,
+				id,
+				parent_id: parentId,
+				conversation_id: conversationId,
+				event_kind: input.eventKind,
+				item_type: input.itemType,
+				item_id: input.itemId,
+				source_message_id: input.sourceMessageId ?? null,
+				turn_id: input.turnId ?? null,
+				payload_json: safeJson(input.payload),
+				created_at: now
+			},
+			input.payload
+		);
+		rebuildSessionMemoryIndexes(db, conversationId);
+	}
+	const headMessageId =
+		input.sourceMessageId && messageBelongsToConversation(db, conversationId, input.sourceMessageId)
+			? input.sourceMessageId
+			: getLatestMessageId(db, conversationId);
+	if (headMessageId) {
+		recordMemoryMessageHead(db, conversationId, headMessageId, id);
+	}
+	const currentHead = headMessageId ? getCurrentMemoryHead(db, conversationId) : id;
+	if (currentHead === id) {
+		setProjectionMemoryHead(db, conversationId, id);
+	} else {
+		rebuildSessionMemoryProjectionInTransaction(db, conversationId, currentHead);
+	}
+}
+
+function messageBelongsToConversation(
+	db: Database.Database,
+	conversationId: string,
+	messageId: string
+): boolean {
+	const row = db
+		.prepare('SELECT 1 AS ok FROM messages WHERE conversation_id = ? AND id = ?')
+		.get(conversationId, messageId) as { ok: number } | undefined;
+	return row !== undefined;
+}
+
+function clearSessionMemoryProjection(db: Database.Database, conversationId: string): void {
+	const embeddingIds = db
+		.prepare(
+			`SELECT id FROM memory_embeddings
+			  WHERE scope = 'session' AND conversation_id = ?`
+		)
+		.all(conversationId) as { id: string }[];
+	for (const row of embeddingIds) deleteVecIndex(db, row.id);
+	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_patch_items WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_tool_calls WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_validation_issues WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_patches WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_decisions WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_open_loops WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_facts WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_events WHERE conversation_id = ?').run(conversationId);
+	db.prepare('DELETE FROM memory_entities WHERE conversation_id = ?').run(conversationId);
+	db.prepare(
+		`DELETE FROM memory_embeddings
+		  WHERE scope = 'session' AND conversation_id = ?`
+	).run(conversationId);
+}
+
+export function rebuildSessionMemoryProjection(conversationId: string): void {
+	const db = getDb();
+	const tx = db.transaction(() => rebuildSessionMemoryProjectionInTransaction(db, conversationId));
+	tx();
+}
+
+function rebuildSessionMemoryProjectionInTransaction(
+	db: Database.Database,
+	conversationId: string,
+	headId: string | null = getCurrentMemoryHead(db, conversationId)
+): void {
+	clearSessionMemoryProjection(db, conversationId);
+	const rows = chainRowsForHead(db, conversationId, headId);
+	for (const row of rows) {
+		applySessionMemoryLogProjection(db, row, parseJson(row.payload_json, {}));
+	}
+	rebuildSessionMemoryIndexes(db, conversationId);
+	setProjectionMemoryHead(db, conversationId, headId);
+}
+
+function applySessionMemoryLogProjection(
+	db: Database.Database,
+	row: MemoryLogRow,
+	payload: unknown
+): void {
+	const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+	if (row.item_type === 'entity') {
+		const item = record.item as MemoryEntity | undefined;
+		if (item) upsertEntityProjection(db, item);
+	} else if (row.item_type === 'event') {
+		const item = record.item as MemoryEvent | undefined;
+		if (item) upsertEventProjection(db, item);
+	} else if (row.item_type === 'fact') {
+		const item = record.item as MemoryFact | undefined;
+		if (item) upsertFactProjection(db, item);
+	} else if (row.item_type === 'decision') {
+		const item = record.item as MemoryDecision | undefined;
+		if (item) upsertDecisionProjection(db, item);
+	} else if (row.item_type === 'open_loop') {
+		const item = record.item as MemoryOpenLoop | undefined;
+		if (item) upsertOpenLoopProjection(db, item);
+	} else if (row.item_type === 'patch') {
+		const patch = record.patch as MemoryPatch | undefined;
+		if (patch) upsertPatchProjection(db, patch);
+	} else if (row.item_type === 'patch_item') {
+		const item = record.item as MemoryPatchItem | undefined;
+		if (item) upsertPatchItemProjection(db, item);
+	} else if (row.item_type === 'issue') {
+		const issue = record.issue as MemoryValidationIssue | undefined;
+		if (issue) upsertIssueProjection(db, issue);
+	} else if (row.item_type === 'tool_call') {
+		const toolCall = record.toolCall as MemoryToolCall | undefined;
+		if (toolCall) upsertToolCallProjection(db, toolCall);
+	}
+}
+
+function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: string): void {
+	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
+	const embeddingIds = db
+		.prepare(
+			`SELECT id FROM memory_embeddings
+			  WHERE scope = 'session' AND conversation_id = ?`
+		)
+		.all(conversationId) as { id: string }[];
+	for (const row of embeddingIds) deleteVecIndex(db, row.id);
+	db.prepare(
+		`DELETE FROM memory_embeddings
+		  WHERE scope = 'session' AND conversation_id = ?`
+	).run(conversationId);
+	for (const row of db
+		.prepare(`SELECT * FROM memory_entities WHERE conversation_id = ?`)
+		.all(conversationId) as EntityRow[]) {
+		syncSessionIndex(db, conversationId, 'entity', row.id, row.status, entityIndexText(row));
+	}
+	for (const row of db
+		.prepare(`SELECT * FROM memory_events WHERE conversation_id = ?`)
+		.all(conversationId) as EventRow[]) {
+		indexItem(db, conversationId, 'event', row.id, eventIndexText(row));
+		indexSessionMemoryItem(conversationId, 'event', row.id, eventIndexText(row));
+	}
+	for (const row of db
+		.prepare(`SELECT * FROM memory_facts WHERE conversation_id = ?`)
+		.all(conversationId) as FactRow[]) {
+		syncSessionIndex(db, conversationId, 'fact', row.id, row.status, factIndexText(row));
+	}
+	for (const row of db
+		.prepare(`SELECT * FROM memory_decisions WHERE conversation_id = ?`)
+		.all(conversationId) as DecisionRow[]) {
+		syncSessionIndex(db, conversationId, 'decision', row.id, row.status, decisionIndexText(row));
+	}
+	for (const row of db
+		.prepare(`SELECT * FROM memory_open_loops WHERE conversation_id = ?`)
+		.all(conversationId) as OpenLoopRow[]) {
+		syncSessionIndex(db, conversationId, 'open_loop', row.id, row.status, openLoopIndexText(row));
+	}
+}
+
+function upsertEntityProjection(db: Database.Database, item: MemoryEntity): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_entities(
+		   id, conversation_id, entity_key, entity_type, display_name, summary, status,
+		   metadata_json, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		item.id,
+		item.conversationId,
+		item.entityKey,
+		item.entityType,
+		item.displayName,
+		item.summary,
+		item.status,
+		safeJson(item.metadata ?? {}),
+		item.createdAt,
+		item.updatedAt
+	);
+}
+
+function upsertEventProjection(db: Database.Database, item: MemoryEvent): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_events(
+		   id, conversation_id, turn_id, event_type, occurred_at, actor_entity_id,
+		   target_entity_id, summary, payload_json, visibility, confidence,
+		   source_message_id, source_tool_call_id, created_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		item.id,
+		item.conversationId,
+		item.turnId,
+		item.eventType,
+		item.occurredAt,
+		item.actorEntityId,
+		item.targetEntityId,
+		item.summary,
+		safeJson(item.payload ?? {}),
+		item.visibility,
+		item.confidence,
+		item.sourceMessageId,
+		item.sourceToolCallId,
+		item.createdAt
+	);
+}
+
+function upsertFactProjection(db: Database.Database, item: MemoryFact): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_facts(
+		   id, conversation_id, entity_id, predicate, value_json, status, visibility,
+		   confidence, source_event_id, source_message_id, supersedes_fact_id, created_at,
+		   updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		item.id,
+		item.conversationId,
+		item.entityId,
+		item.predicate,
+		safeJson(item.value),
+		item.status,
+		item.visibility,
+		item.confidence,
+		item.sourceEventId,
+		item.sourceMessageId,
+		item.supersedesFactId,
+		item.createdAt,
+		item.updatedAt
+	);
+}
+
+function upsertDecisionProjection(db: Database.Database, item: MemoryDecision): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_decisions(
+		   id, conversation_id, subject, decision, rationale, status, source_event_id,
+		   source_message_id, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		item.id,
+		item.conversationId,
+		item.subject,
+		item.decision,
+		item.rationale,
+		item.status,
+		item.sourceEventId,
+		item.sourceMessageId,
+		item.createdAt,
+		item.updatedAt
+	);
+}
+
+function upsertOpenLoopProjection(db: Database.Database, item: MemoryOpenLoop): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_open_loops(
+		   id, conversation_id, loop_type, title, description, status, priority,
+		   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		item.id,
+		item.conversationId,
+		item.loopType,
+		item.title,
+		item.description,
+		item.status,
+		item.priority,
+		safeJson(item.relatedEntityIds ?? []),
+		item.sourceEventId,
+		item.sourceMessageId,
+		item.createdAt,
+		item.updatedAt
+	);
+}
+
+function upsertPatchProjection(db: Database.Database, patch: MemoryPatch): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_patches(
+		   id, conversation_id, turn_id, status, summary, raw_patch_json,
+		   validation_result_json, extractor_kind, extractor_model, extractor_confidence,
+		   extractor_diagnostics_json, created_at, committed_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		patch.id,
+		patch.conversationId,
+		patch.turnId,
+		patch.status,
+		patch.summary,
+		safeJson(patch.rawPatch ?? {}),
+		safeJson(patch.validationResult ?? {}),
+		patch.extractorKind,
+		patch.extractorModel,
+		patch.extractorConfidence,
+		safeJson(patch.extractorDiagnostics ?? []),
+		patch.createdAt,
+		patch.committedAt
+	);
+}
+
+function upsertPatchItemProjection(db: Database.Database, item: MemoryPatchItem): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_patch_items(
+		   id, patch_id, conversation_id, item_type, item_id, action, review_status,
+		   reviewed_at, created_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		item.id,
+		item.patchId,
+		item.conversationId,
+		item.itemType,
+		item.itemId,
+		item.action,
+		item.reviewStatus,
+		item.reviewedAt,
+		item.createdAt
+	);
+}
+
+function upsertIssueProjection(db: Database.Database, issue: MemoryValidationIssue): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_validation_issues(
+		   id, conversation_id, patch_id, severity, code, message, status, created_at, resolved_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		issue.id,
+		issue.conversationId,
+		issue.patchId,
+		issue.severity,
+		issue.code,
+		issue.message,
+		issue.status,
+		issue.createdAt,
+		issue.resolvedAt
+	);
+}
+
+function upsertToolCallProjection(db: Database.Database, toolCall: MemoryToolCall): void {
+	db.prepare(
+		`INSERT OR REPLACE INTO memory_tool_calls(
+		   id, conversation_id, turn_id, tool_name, arguments_json, result_summary,
+		   result_ids_json, created_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		toolCall.id,
+		toolCall.conversationId,
+		toolCall.turnId,
+		toolCall.toolName,
+		safeJson(toolCall.arguments ?? {}),
+		toolCall.resultSummary,
+		safeJson(toolCall.resultIds ?? []),
+		toolCall.createdAt
+	);
+}
+
+function payloadObject(payload: unknown): Record<string, unknown> {
+	return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+}
+
+function createForkMemoryRemapper(
+	targetConversationId: string,
+	messageIdMap: Map<string, string>,
+	isCopied: (type: string, id: string) => boolean
+): (itemType: SessionMemoryLogItemType, payload: unknown) => unknown {
+	const idMaps = new Map<string, Map<string, string>>();
+	// Mint (or reuse) the fork-local id for an item that IS being copied. Used
+	// for each row's own primary id.
+	const mintId = (type: string, id: string | null | undefined): string | null => {
+		if (!id) return null;
+		let typeMap = idMaps.get(type);
+		if (!typeMap) {
+			typeMap = new Map();
+			idMaps.set(type, typeMap);
+		}
+		let next = typeMap.get(id);
+		if (!next) {
+			next = ulid();
+			typeMap.set(id, next);
+		}
+		return next;
+	};
+	// Resolve a reference to another item. Returns the fork-local id only when
+	// the referenced item was itself copied; otherwise null, so links to rows
+	// left behind by the fork never dangle at a non-existent id.
+	const refId = (type: string, id: string | null | undefined): string | null =>
+		id && isCopied(type, id) ? mintId(type, id) : null;
+	const mapMessage = (id: string | null | undefined): string | null =>
+		id ? (messageIdMap.get(id) ?? null) : null;
+	const remapItem = (itemType: SessionMemoryLogItemType, value: unknown): unknown => {
+		if (!value || typeof value !== 'object') return value;
+		if (itemType === 'entity') {
+			const item = value as MemoryEntity;
+			return { ...item, id: mintId('entity', item.id), conversationId: targetConversationId };
+		}
+		if (itemType === 'event') {
+			const item = value as MemoryEvent;
+			return {
+				...item,
+				id: mintId('event', item.id),
+				conversationId: targetConversationId,
+				turnId: null,
+				actorEntityId: refId('entity', item.actorEntityId),
+				targetEntityId: refId('entity', item.targetEntityId),
+				sourceMessageId: mapMessage(item.sourceMessageId),
+				sourceToolCallId: null
+			};
+		}
+		if (itemType === 'fact') {
+			const item = value as MemoryFact;
+			return {
+				...item,
+				id: mintId('fact', item.id),
+				conversationId: targetConversationId,
+				entityId: refId('entity', item.entityId),
+				sourceEventId: refId('event', item.sourceEventId),
+				sourceMessageId: mapMessage(item.sourceMessageId),
+				supersedesFactId: refId('fact', item.supersedesFactId)
+			};
+		}
+		if (itemType === 'decision') {
+			const item = value as MemoryDecision;
+			return {
+				...item,
+				id: mintId('decision', item.id),
+				conversationId: targetConversationId,
+				sourceEventId: refId('event', item.sourceEventId),
+				sourceMessageId: mapMessage(item.sourceMessageId)
+			};
+		}
+		if (itemType === 'open_loop') {
+			const item = value as MemoryOpenLoop;
+			return {
+				...item,
+				id: mintId('open_loop', item.id),
+				conversationId: targetConversationId,
+				relatedEntityIds: item.relatedEntityIds
+					.map((id) => refId('entity', id))
+					.filter((id): id is string => !!id),
+				sourceEventId: refId('event', item.sourceEventId),
+				sourceMessageId: mapMessage(item.sourceMessageId)
+			};
+		}
+		if (itemType === 'patch') {
+			const patch = value as MemoryPatch;
+			return {
+				...patch,
+				id: mintId('patch', patch.id),
+				conversationId: targetConversationId,
+				turnId: null
+			};
+		}
+		if (itemType === 'patch_item') {
+			const item = value as MemoryPatchItem;
+			return {
+				...item,
+				id: mintId('patch_item', item.id),
+				patchId: refId('patch', item.patchId),
+				conversationId: targetConversationId,
+				itemId: refId(item.itemType, item.itemId) ?? item.itemId
+			};
+		}
+		if (itemType === 'issue') {
+			const issue = value as MemoryValidationIssue;
+			return {
+				...issue,
+				id: mintId('issue', issue.id),
+				conversationId: targetConversationId,
+				patchId: refId('patch', issue.patchId)
+			};
+		}
+		const toolCall = value as MemoryToolCall;
+		return {
+			...toolCall,
+			id: mintId('tool_call', toolCall.id),
+			conversationId: targetConversationId,
+			turnId: null
+		};
+	};
+	return (itemType, payload) => {
+		const record = payloadObject(payload);
+		const result: Record<string, unknown> = { ...record };
+		if ('item' in result) result.item = remapItem(itemType, result.item);
+		if ('patch' in result) result.patch = remapItem('patch', result.patch);
+		if ('issue' in result) result.issue = remapItem('issue', result.issue);
+		if ('toolCall' in result) result.toolCall = remapItem('tool_call', result.toolCall);
+		return result;
+	};
+}
+
+function remapIdForPayload(
+	itemType: SessionMemoryLogItemType,
+	sourceItemId: string,
+	payload: unknown
+): string {
+	const record = payloadObject(payload);
+	const value = (record.item ?? record.patch ?? record.issue ?? record.toolCall) as
+		| { id?: unknown }
+		| undefined;
+	return typeof value?.id === 'string' ? value.id : sourceItemId;
 }
 
 function indexItem(

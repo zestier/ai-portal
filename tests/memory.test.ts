@@ -21,6 +21,7 @@ import { getMemoryProfile, listMemoryProfiles } from '../src/lib/server/memory/p
 import * as memoryProfiles from '../src/lib/server/memory/profiles';
 import { buildMemoryTools } from '../src/lib/server/tools/memory';
 import { PATCH as patchMemoryItem } from '../src/routes/api/conversations/[id]/memory/[kind]/[itemId]/+server';
+import { getDb } from '../src/lib/server/db';
 import { setupLocalEnv } from './helpers/env';
 
 function routeEvent(
@@ -598,6 +599,89 @@ describe('memory-backed sessions', () => {
 		expect(memory.listDecisions(conv.id)[0]?.decision).toContain('append-only');
 	});
 
+	it('canonicalizes model-backed entity aliases while preserving granular facts', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		memory.upsertEntity(conv.id, {
+			entityKey: 'character.mara',
+			entityType: 'character',
+			displayName: 'Mara'
+		});
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content:
+				'Mara, also called the Raven, is in the study, owns the brass key, and distrusts Elias.'
+		});
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'I will remember those separate details about Mara.'
+		});
+		let prompt = '';
+		const extractor = new OpenAICompatibleMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'test-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			completeJson: async (inputPrompt) => {
+				prompt = inputPrompt;
+				return {
+					summary: 'Alias extraction test.',
+					confidence: 0.9,
+					patch: {
+						entities: [
+							{ entityKey: 'person.raven', entityType: 'character', displayName: 'Mara' },
+							{ entityKey: 'character.the_raven', entityType: 'character', displayName: 'Mara' }
+						],
+						facts: [
+							{ entityKey: 'person.raven', predicate: 'alias', value: 'the Raven' },
+							{ entityKey: 'character.the_raven', predicate: 'location', value: 'study' },
+							{ entityKey: 'Mara', predicate: 'owns', value: 'brass key' },
+							{ entityKey: 'person.raven', predicate: 'distrusts', value: 'Elias' }
+						]
+					}
+				};
+			}
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'story',
+			turnId: 'turn-test',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'story')
+		});
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'story',
+			turnId: 'turn-test',
+			sourceMessageId: assistantMessage.id,
+			patch: extraction.patch,
+			summary: extraction.summary
+		});
+
+		expect(prompt).toContain('Prefer granular fact collection');
+		expect(prompt).toContain('Reuse entityKey values from the initial packet');
+		expect(extraction.patch.entities).toEqual([
+			expect.objectContaining({ entityKey: 'character.mara' })
+		]);
+		expect(extraction.patch.facts?.map((fact) => fact.entityKey)).toEqual([
+			'character.mara',
+			'character.mara',
+			'character.mara',
+			'character.mara'
+		]);
+		expect(extraction.patch.facts).toHaveLength(4);
+		expect(extraction.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+			expect.arrayContaining(['entity_keys_canonicalized', 'duplicate_entities_merged'])
+		);
+		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual([
+			'character.mara'
+		]);
+		expect(memory.listFacts(conv.id, { limit: 10 })).toHaveLength(4);
+	});
+
 	it('includes provider response details when model-backed extraction fails', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
@@ -744,5 +828,48 @@ describe('memory-backed sessions', () => {
 
 		expect(memory.search(conv.id, { query: 'stale indexes' })).toHaveLength(0);
 		expect(memory.searchGlobalMemories(user.id, { query: 'global stale indexes' })).toHaveLength(0);
+	});
+
+	it('records parent and message-head references for appended memory events', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'refs',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply' });
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			sourceMessageId: a1.id,
+			patch: {
+				entities: [{ entityKey: 'topic.keep', entityType: 'topic', displayName: 'Keep' }],
+				facts: [{ entityKey: 'topic.keep', predicate: 'state', value: 'kept' }]
+			}
+		});
+
+		const db = getDb();
+		const events = db
+			.prepare('SELECT id, parent_id FROM memory_event_log WHERE conversation_id = ? ORDER BY seq')
+			.all(conv.id) as { id: string; parent_id: string | null }[];
+		expect(events.length).toBeGreaterThan(1);
+
+		// Every non-root event contributes a memory_parent ref to its parent.
+		const parentRefs = db
+			.prepare(`SELECT count(*) AS n FROM memory_refs WHERE conversation_id = ? AND ref_kind = ?`)
+			.get(conv.id, 'memory_parent') as { n: number };
+		expect(parentRefs.n).toBe(events.filter((e) => e.parent_id !== null).length);
+
+		// The latest message pins the chain tip via exactly one message_head ref.
+		const headRefs = db
+			.prepare(
+				`SELECT source_key, target_event_id FROM memory_refs
+				  WHERE conversation_id = ? AND ref_kind = ?`
+			)
+			.all(conv.id, 'message_head') as { source_key: string; target_event_id: string }[];
+		expect(headRefs).toHaveLength(1);
+		expect(headRefs[0].source_key).toBe(a1.id);
+		expect(headRefs[0].target_event_id).toBe(events[events.length - 1].id);
 	});
 });

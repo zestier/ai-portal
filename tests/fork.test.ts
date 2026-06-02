@@ -151,18 +151,33 @@ describe('fork.forkAtMessage', () => {
 		// Turn 1: durable memory attributed to the assistant reply a1.
 		messages.append(sourceConv.id, { role: 'user', content: 'first' });
 		const a1 = messages.append(sourceConv.id, { role: 'assistant', content: 'reply 1' });
-		engine.commitPatch({
+		const prefixCommit = engine.commitPatch({
 			conversationId: sourceConv.id,
 			sourceMessageId: a1.id,
 			patch: {
 				entities: [{ entityKey: 'object.key', entityType: 'object', displayName: 'Brass key' }],
 				facts: [{ entityKey: 'object.key', predicate: 'location', value: 'study' }],
-				decisions: [{ subject: 'plan', decision: 'Search the study first.' }],
+				decisions: [
+					{ subject: 'plan', decision: 'Search the study first.' },
+					{ subject: 'stale-plan', decision: 'Use the discarded plan.' }
+				],
 				openLoops: [
 					{ loopType: 'task', title: 'Inspect the study', relatedEntityKeys: ['object.key'] }
 				]
 			}
 		});
+
+		const prefixDecisions = memory.listDecisions(sourceConv.id, { limit: 10 });
+		const keptDecision = prefixDecisions.find((d) => d.decision === 'Search the study first.')!;
+		const staleDecision = prefixDecisions.find((d) => d.subject === 'stale-plan')!;
+		memory.updateDecision(sourceConv.id, keptDecision.id, {
+			decision: 'Search the study cautiously.'
+		});
+		expect(memory.deleteItem(sourceConv.id, 'decisions', staleDecision.id)).toBe(true);
+		const entityPatchItem = memory
+			.listPatchItems(sourceConv.id, { patchId: prefixCommit.patch.id, limit: 20 })
+			.find((item) => item.itemType === 'entity')!;
+		memory.reviewPatchItem(sourceConv.id, entityPatchItem.id, 'approve');
 
 		// Turn 2: the turn that will be rewound away. Its memory must NOT survive.
 		const u2 = messages.append(sourceConv.id, { role: 'user', content: 'second' });
@@ -171,7 +186,15 @@ describe('fork.forkAtMessage', () => {
 			conversationId: sourceConv.id,
 			sourceMessageId: a2.id,
 			patch: {
-				entities: [{ entityKey: 'object.door', entityType: 'object', displayName: 'Locked door' }],
+				entities: [
+					{
+						entityKey: 'object.key',
+						entityType: 'object',
+						displayName: 'Brass key',
+						summary: 'Suffix-only update that must not survive.'
+					},
+					{ entityKey: 'object.door', entityType: 'object', displayName: 'Locked door' }
+				],
 				facts: [{ entityKey: 'object.door', predicate: 'state', value: 'locked' }],
 				decisions: [{ subject: 'plan', decision: 'Force the door open.' }]
 			}
@@ -218,10 +241,11 @@ describe('fork.forkAtMessage', () => {
 
 		// Prefix memory carried over.
 		expect(memory.listEntities(forkId).map((e) => e.entityKey)).toEqual(['object.key']);
+		expect(memory.listEntities(forkId)[0].summary).toBe('');
 		const facts = memory.listFacts(forkId);
 		expect(facts.map((f) => f.predicate)).toEqual(['location']);
 		expect(memory.listDecisions(forkId).map((d) => d.decision)).toEqual([
-			'Search the study first.'
+			'Search the study cautiously.'
 		]);
 		const loops = memory.listOpenLoops(forkId);
 		expect(loops.map((l) => l.title)).toEqual(['Inspect the study']);
@@ -230,6 +254,9 @@ describe('fork.forkAtMessage', () => {
 		expect(memory.listEntities(forkId).map((e) => e.entityKey)).not.toContain('object.door');
 		expect(memory.listDecisions(forkId).map((d) => d.decision)).not.toContain(
 			'Force the door open.'
+		);
+		expect(memory.listDecisions(forkId).map((d) => d.decision)).not.toContain(
+			'Use the discarded plan.'
 		);
 
 		// Internal references are remapped to the clone's own rows/transcript.
@@ -243,6 +270,9 @@ describe('fork.forkAtMessage', () => {
 
 		// Cloned memory is independently searchable in the fork.
 		expect(memory.search(forkId, { query: 'study key' }).length).toBeGreaterThan(0);
+		expect(
+			memory.listPatchItems(forkId).find((item) => item.itemType === 'entity')?.reviewStatus
+		).toBe('approved');
 
 		// The source conversation keeps everything (non-destructive fork).
 		expect(

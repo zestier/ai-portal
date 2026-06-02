@@ -2,14 +2,18 @@ import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { authorizeConversation } from '$lib/server/conversation-auth';
+import * as convs from '$lib/server/db/repos/conversations';
+import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import * as settings from '$lib/server/db/repos/settings';
+import * as usage from '$lib/server/db/repos/usage';
 import { loadConfig } from '$lib/server/config';
 import { effectiveWorkdir } from '$lib/server/workdir';
 import { getTurn, startTurn } from '$lib/server/runtime/turn-runner';
 import { providerAuthToken } from '$lib/server/providers/auth';
 import { parseBody } from '$lib/server/validate';
 import { argsHash } from '$lib/server/tool-invocation';
+import { isEnabled } from '$lib/server/memory/engine';
 
 const Body = z
 	.object({
@@ -68,10 +72,22 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		'allow-once'
 	);
 
+	const allMessages = messages.listByConversation(conv.id);
+	const originalMessageIdx = allMessages.findIndex((message) => message.id === original.messageId);
+	if (originalMessageIdx < 0) throw error(404);
+	memoryRepo.rewindSessionMemoryLogToMessagePrefix(conv.id, {
+		messageIds: new Set(allMessages.slice(0, originalMessageIdx + 1).map((message) => message.id)),
+		createdBefore: allMessages[originalMessageIdx + 1]?.createdAt
+	});
+	messages.truncateAfterMessage(conv.id, original.messageId);
+	usage.remove(conv.id);
+	const providerSessionId =
+		convs.rotateProviderSession(conv.id, conv.userId) ?? conv.providerSessionId;
+
 	const cfg = loadConfig();
 	const userSettings = settings.get(conv.userId) ?? settings.defaults();
 	const prompt = buildRerunPrompt(original.tool, original.argsJson);
-	messages.append(conv.id, {
+	const userMessage = messages.append(conv.id, {
 		role: 'user',
 		content: `Manual tool rerun: rerun failed tool call ${original.id} (${original.tool}) with its exact stored arguments.`,
 		status: 'complete'
@@ -81,7 +97,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		prompt,
 		bridge: {
 			conversationId: conv.id,
-			providerSessionId: conv.providerSessionId,
+			providerSessionId,
 			userId: conv.userId,
 			workingDirectory: effectiveWorkdir(conv.workdir),
 			provider: conv.provider,
@@ -92,7 +108,15 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,
 			providerAuthToken: providerAuthToken(conv.provider, conv.userId)
-		}
+		},
+		memory: isEnabled(conv.memoryMode)
+			? {
+					mode: conv.memoryMode,
+					userMessageId: userMessage.id,
+					userContent: userMessage.content,
+					extractorModel: conv.memoryExtractorModel
+				}
+			: undefined
 	});
 
 	return json({ turnId: turn.id, grantExpiresAt: expiresAt });

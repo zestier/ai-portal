@@ -1,4 +1,5 @@
 import * as convs from '$lib/server/db/repos/conversations';
+import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import * as usage from '$lib/server/db/repos/usage';
 import { getTurn } from '$lib/server/runtime/turn-runner';
@@ -48,13 +49,18 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
 	}
 
 	const all = messages.listByConversation(conv.id);
-	const target = all.find((m) => m.id === input.messageId);
+	const targetIdx = all.findIndex((m) => m.id === input.messageId);
+	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
 	if (target.role !== 'user') {
 		throw new InlineEditRejected('not_user_message', 'Only user messages can be edited inline.');
 	}
 
 	cancelPendingInteractive(conv.id, 'message_inline_edit');
+	memoryRepo.rewindSessionMemoryLogToMessagePrefix(conv.id, {
+		messageIds: new Set(all.slice(0, targetIdx + 1).map((message) => message.id)),
+		createdBefore: all[targetIdx + 1]?.createdAt
+	});
 	const userMessage = messages.truncateAfterAndUpdateUserMessage(
 		conv.id,
 		target.id,

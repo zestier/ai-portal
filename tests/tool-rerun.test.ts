@@ -146,4 +146,78 @@ describe('tool-call rerun endpoint', () => {
 			resultJson: JSON.stringify('File not found')
 		});
 	});
+
+	it('rewinds messages and session memory to the rerun tool call message', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const memory = await import('../src/lib/server/db/repos/memory');
+		const { commitPatch } = await import('../src/lib/server/memory/engine');
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'rerun-memory',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		const originalAssistant = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'failed tool'
+		});
+		messages.insertToolCall(originalAssistant.id, {
+			id: 'tc-denied-memory',
+			tool: 'bash',
+			argsJson: JSON.stringify({ command: 'echo retry' }),
+			resultJson: JSON.stringify('Permission denied'),
+			status: 'denied',
+			startedAt: Date.now() - 100,
+			endedAt: Date.now(),
+			textOffset: 0,
+			parentToolCallId: null
+		});
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			sourceMessageId: originalAssistant.id,
+			patch: {
+				entities: [{ entityKey: 'topic.keep', entityType: 'topic', displayName: 'Keep' }],
+				facts: [{ entityKey: 'topic.keep', predicate: 'state', value: 'kept' }]
+			}
+		});
+		messages.append(conv.id, { role: 'user', content: 'later user' });
+		const laterAssistant = messages.append(conv.id, { role: 'assistant', content: 'later reply' });
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			sourceMessageId: laterAssistant.id,
+			patch: {
+				entities: [{ entityKey: 'topic.drop', entityType: 'topic', displayName: 'Drop' }],
+				facts: [{ entityKey: 'topic.drop', predicate: 'state', value: 'stale' }]
+			}
+		});
+		const { POST } =
+			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
+
+		const response = await POST({
+			params: { id: conv.id, toolCallId: 'tc-denied-memory' },
+			locals: { userId: user.id },
+			request: request({ confirmed: true })
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(messages.listByConversation(conv.id).map((message) => message.content)).toEqual([
+			'failed tool',
+			expect.stringContaining('Manual tool rerun')
+		]);
+		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual(['topic.keep']);
+		expect(memory.listFacts(conv.id).map((fact) => fact.value)).toEqual(['kept']);
+		expect(startTurnMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				memory: expect.objectContaining({
+					mode: 'project',
+					userContent: expect.stringContaining('Manual tool rerun')
+				})
+			})
+		);
+	});
 });

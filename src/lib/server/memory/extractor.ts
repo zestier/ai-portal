@@ -235,7 +235,7 @@ export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 			: await requestOpenAICompatibleJson(this.opts, prompt);
 		const parsed = parseModelPatch(raw);
 		const diagnostics: Diagnostic[] = [...parsed.diagnostics];
-		const sanitized = sanitizePatch(parsed.patch);
+		const sanitized = sanitizePatch(parsed.patch, input.initialPacket);
 		diagnostics.push(...sanitized.diagnostics);
 		return {
 			patch: sanitized.patch,
@@ -365,7 +365,10 @@ function extractJsonObject(text: string): string | null {
 	return candidate.slice(start, end + 1);
 }
 
-function sanitizePatch(patch: MemoryPatchProposal): {
+function sanitizePatch(
+	patch: MemoryPatchProposal,
+	initialPacket?: TurnMemoryPacket
+): {
 	patch: MemoryPatchProposal;
 	diagnostics: Diagnostic[];
 } {
@@ -380,12 +383,36 @@ function sanitizePatch(patch: MemoryPatchProposal): {
 		});
 		return filtered.length > 0 ? filtered : undefined;
 	};
-	const sanitized: MemoryPatchProposal = {
-		entities: keep(patch.entities),
-		events: keep(patch.events),
-		facts: keep(patch.facts),
-		decisions: keep(patch.decisions),
-		openLoops: keep(patch.openLoops)
+	const sanitized = canonicalizeEntityKeys(
+		{
+			entities: keep(patch.entities),
+			events: keep(patch.events),
+			facts: keep(patch.facts),
+			decisions: keep(patch.decisions),
+			openLoops: keep(patch.openLoops)
+		},
+		initialPacket
+	);
+	if (sanitized.remapped > 0) {
+		diagnostics.push({
+			severity: 'info',
+			code: 'entity_keys_canonicalized',
+			message: `${sanitized.remapped} proposed entity reference(s) were canonicalized to avoid duplicate entities.`
+		});
+	}
+	if (sanitized.merged > 0) {
+		diagnostics.push({
+			severity: 'info',
+			code: 'duplicate_entities_merged',
+			message: `${sanitized.merged} duplicate proposed entity/entities were merged by type and display name.`
+		});
+	}
+	const nextPatch: MemoryPatchProposal = {
+		entities: sanitized.patch.entities,
+		events: sanitized.patch.events,
+		facts: sanitized.patch.facts,
+		decisions: sanitized.patch.decisions,
+		openLoops: sanitized.patch.openLoops
 	};
 	if (removed > 0) {
 		diagnostics.push({
@@ -394,7 +421,114 @@ function sanitizePatch(patch: MemoryPatchProposal): {
 			message: `${removed} proposed memory item(s) were removed because they looked like secrets or credentials.`
 		});
 	}
-	return { patch: sanitized, diagnostics };
+	return { patch: nextPatch, diagnostics };
+}
+
+function canonicalizeEntityKeys(
+	patch: MemoryPatchProposal,
+	initialPacket?: TurnMemoryPacket
+): { patch: MemoryPatchProposal; remapped: number; merged: number } {
+	const aliases = new Map<string, string>();
+	const existingByTypedName = new Map<string, string>();
+	const existingByName = new Map<string, string | null>();
+	const existingByKeyTail = new Map<string, string | null>();
+	for (const entity of initialPacket?.entities ?? []) {
+		addAlias(aliases, entity.entityKey, entity.entityKey);
+		const typedName = typedNameKey(entity.entityType, entity.displayName);
+		if (typedName) existingByTypedName.set(typedName, entity.entityKey);
+		setUniqueAlias(existingByName, entity.displayName, entity.entityKey);
+		setUniqueAlias(
+			existingByKeyTail,
+			entity.entityKey.split(/[.:/_-]/).at(-1) ?? '',
+			entity.entityKey
+		);
+	}
+	for (const [alias, entityKey] of [...existingByName, ...existingByKeyTail]) {
+		if (entityKey) aliases.set(alias, entityKey);
+	}
+
+	const proposedByTypedName = new Map<string, string>();
+	const entityKeyMap = new Map<string, string>();
+	let remapped = 0;
+	let merged = 0;
+	const canonicalKeyForEntity = (entity: NonNullable<MemoryPatchProposal['entities']>[number]) => {
+		const existing =
+			aliases.get(normalizedName(entity.entityKey)) ??
+			existingByTypedName.get(typedNameKey(entity.entityType, entity.displayName)) ??
+			existingByName.get(normalizedName(entity.displayName)) ??
+			null;
+		if (existing) return existing;
+		const typedName = typedNameKey(entity.entityType, entity.displayName);
+		if (typedName) {
+			const proposed = proposedByTypedName.get(typedName);
+			if (proposed) return proposed;
+			proposedByTypedName.set(typedName, entity.entityKey);
+		}
+		return entity.entityKey;
+	};
+
+	const entities: NonNullable<MemoryPatchProposal['entities']> = [];
+	const seenEntities = new Set<string>();
+	for (const entity of patch.entities ?? []) {
+		const canonicalKey = canonicalKeyForEntity(entity);
+		entityKeyMap.set(entity.entityKey, canonicalKey);
+		if (canonicalKey !== entity.entityKey) remapped++;
+		if (seenEntities.has(canonicalKey)) {
+			merged++;
+			continue;
+		}
+		seenEntities.add(canonicalKey);
+		entities.push({ ...entity, entityKey: canonicalKey });
+	}
+
+	const rewriteKey = (key: string | undefined): string | undefined => {
+		if (!key) return undefined;
+		const canonical = entityKeyMap.get(key) ?? aliases.get(normalizedName(key));
+		if (canonical && canonical !== key) {
+			remapped++;
+			return canonical;
+		}
+		return canonical ?? key;
+	};
+
+	const next: MemoryPatchProposal = {
+		events: patch.events?.map((event) => ({ ...event, entityKey: rewriteKey(event.entityKey) })),
+		facts: patch.facts?.map((fact) => ({ ...fact, entityKey: rewriteKey(fact.entityKey) })),
+		decisions: patch.decisions,
+		openLoops: patch.openLoops?.map((loop) => ({
+			...loop,
+			relatedEntityKeys: loop.relatedEntityKeys?.map((key) => rewriteKey(key) ?? key)
+		}))
+	};
+	next.entities = entities.length > 0 ? entities : undefined;
+	return { patch: next, remapped, merged };
+}
+
+function addAlias(aliases: Map<string, string>, raw: string, entityKey: string): void {
+	const alias = normalizedName(raw);
+	if (alias) aliases.set(alias, entityKey);
+}
+
+function setUniqueAlias(aliases: Map<string, string | null>, raw: string, entityKey: string): void {
+	const alias = normalizedName(raw);
+	if (!alias) return;
+	const prior = aliases.get(alias);
+	aliases.set(alias, prior === undefined ? entityKey : prior === entityKey ? prior : null);
+}
+
+function typedNameKey(entityType: string, displayName: string): string {
+	const type = normalizedName(entityType);
+	const name = normalizedName(displayName);
+	return type && name ? `${type}:${name}` : '';
+}
+
+function normalizedName(raw: string): string {
+	return raw
+		.toLowerCase()
+		.replace(/['’]/g, '')
+		.replace(/[^a-z0-9]+/g, ' ')
+		.trim()
+		.replace(/\s+/g, ' ');
 }
 
 function containsSensitiveValue(value: unknown): boolean {
@@ -513,6 +647,10 @@ function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): 
 			'Return JSON with this shape:',
 			'{"summary":"short summary","confidence":0.0,"diagnostics":[],"patch":{"entities":[],"events":[],"facts":[],"decisions":[],"openLoops":[]}}',
 			'Only extract durable facts, decisions, open loops, events, and entities that are useful after this turn.',
+			'Prefer granular fact collection: extract each stable attribute, relationship, state, preference, constraint, location, ownership, capability, and project decision as its own fact when it may matter later.',
+			'Reuse entityKey values from the initial packet whenever a mentioned person, object, file, component, topic, or project concept refers to an existing entity. Do not create a new entity for aliases, casing changes, titles, or partial names of the same referent.',
+			'Create a new entity only for a durable referent that is not already represented. Use stable namespaced keys such as character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, or decision.append_only_migrations.',
+			'When adding facts/events/openLoops about an entity, use the canonical entityKey exactly. If unsure whether two names are the same referent, prefer reusing the existing key and mention uncertainty in diagnostics.',
 			'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
 			`Memory mode: ${input.mode}`,
 			'Initial packet:',
