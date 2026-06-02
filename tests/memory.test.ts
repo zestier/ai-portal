@@ -7,6 +7,7 @@ import {
 	buildInitialPacket,
 	buildPromptWithMemory,
 	commitPatch,
+	renderMemoryPacket,
 	validatePatch
 } from '../src/lib/server/memory/engine';
 import {
@@ -123,6 +124,56 @@ describe('memory-backed sessions', () => {
 		expect(memoryProfiles.listCustomProfiles(user.id, { status: 'archived' })[0]?.name).toBe(
 			'Canon keeper'
 		);
+	});
+
+	it('renders packets as compact text without raw JSON noise', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{
+						entityKey: 'character.mara',
+						entityType: 'character',
+						displayName: 'Mara',
+						summary: 'A wary scout.'
+					}
+				],
+				facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'the cellar' }],
+				decisions: [{ subject: 'lighting', decision: 'Keep the candle lit.' }],
+				openLoops: [
+					{
+						loopType: 'task',
+						title: 'Find the attic key',
+						relatedEntityKeys: ['character.mara']
+					}
+				]
+			}
+		});
+
+		const packet = buildInitialPacket(conv.id, 'story');
+		const rendered = renderMemoryPacket(packet);
+
+		// Compact, readable text rather than a pretty-printed JSON blob.
+		expect(rendered).not.toContain('"createdAt"');
+		expect(rendered).not.toContain('"conversationId"');
+		expect(rendered).not.toContain('{\n');
+		// Semantic content is preserved, including reusable entity keys.
+		expect(rendered).toContain('character.mara (character) "Mara" — A wary scout.');
+		expect(rendered).toContain('character.mara.location = the cellar');
+		expect(rendered).toContain('lighting: Keep the candle lit.');
+		expect(rendered).toContain('Find the attic key');
+		expect(rendered).toContain('[related: character.mara]');
+
+		const prompt = buildPromptWithMemory({
+			conversationId: conv.id,
+			mode: 'story',
+			userMsg: messages.append(conv.id, { role: 'user', content: 'Where is Mara?' })
+		});
+		expect(prompt).toContain('<portal_memory_mode>');
+		expect(prompt).not.toContain('"updatedAt"');
 	});
 
 	it('commits typed memory and retrieves it through packets and search', () => {

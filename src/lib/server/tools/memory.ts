@@ -5,6 +5,7 @@ import {
 	MemoryPatchProposalSchema,
 	buildInitialPacket,
 	commitPatch,
+	renderMemoryPacket,
 	validatePatch
 } from '../memory/engine';
 import type { MemoryMode } from '$lib/types';
@@ -531,7 +532,7 @@ export function buildMemoryTools(opts: {
 					arguments: {},
 					resultSummary: packet.summary
 				});
-				return JSON.stringify(packet, null, 2);
+				return renderMemoryPacket(packet);
 			}
 		}
 	];

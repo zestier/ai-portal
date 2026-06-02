@@ -139,7 +139,7 @@ export function buildPromptWithMemory(params: {
 		: 'If you make durable decisions, create tasks/open loops, establish story facts, or change important state, call memory_propose_patch with a structured patch before the final answer when practical.';
 	return [
 		'<portal_memory_mode>',
-		JSON.stringify(packet, null, 2),
+		renderMemoryPacket(packet),
 		'</portal_memory_mode>',
 		'',
 		'You are running in a fresh model context for this request. Durable session memory, not hidden chat context, is the source of continuity.',
@@ -672,6 +672,106 @@ function summarizePacket(packet: {
 		`${packet.openLoops.length} open loops`,
 		`${packet.recentEvents.length} recent events`
 	].join(', ');
+}
+
+function formatMemoryValue(value: unknown): string {
+	if (typeof value === 'string') return value;
+	if (value === null || value === undefined) return 'null';
+	return JSON.stringify(value);
+}
+
+/**
+ * Render a memory packet as compact, human-readable text instead of a raw
+ * pretty-printed JSON blob. This strips structural noise (internal ids,
+ * timestamps, null source pointers, indentation) that bloats the model context
+ * while preserving every semantically useful field — including the entityKey
+ * values downstream consumers must reuse.
+ */
+export function renderMemoryPacket(packet: TurnMemoryPacket): string {
+	const entityById = new Map<string, memoryRepo.MemoryEntity>();
+	for (const entity of packet.entities) entityById.set(entity.id, entity);
+	const keyOf = (id: string | null): string | null =>
+		id ? (entityById.get(id)?.entityKey ?? null) : null;
+
+	const lines: string[] = [];
+	lines.push(`mode: ${packet.mode}`);
+	lines.push(`summary: ${packet.summary}`);
+	if (packet.instructions) {
+		lines.push('', 'instructions:', packet.instructions.trim());
+	}
+
+	if (packet.entities.length) {
+		lines.push('', `entities (${packet.entities.length}):`);
+		for (const entity of packet.entities) {
+			const status = entity.status && entity.status !== 'active' ? ` [${entity.status}]` : '';
+			const summary = entity.summary ? ` — ${cleanSentence(entity.summary)}` : '';
+			lines.push(
+				`- ${entity.entityKey} (${entity.entityType}) "${entity.displayName}"${status}${summary}`
+			);
+		}
+	}
+
+	if (packet.facts.length) {
+		lines.push('', `facts (${packet.facts.length}):`);
+		for (const fact of packet.facts) {
+			const key = keyOf(fact.entityId);
+			const subject = key ? `${key}.` : '';
+			const meta: string[] = [];
+			if (fact.visibility && fact.visibility !== 'session') meta.push(fact.visibility);
+			if (fact.confidence < 1) meta.push(`conf ${fact.confidence}`);
+			if (fact.status && fact.status !== 'active') meta.push(fact.status);
+			const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
+			lines.push(`- ${subject}${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}`);
+		}
+	}
+
+	if (packet.decisions.length) {
+		lines.push('', `decisions (${packet.decisions.length}):`);
+		for (const decision of packet.decisions) {
+			const status = decision.status && decision.status !== 'active' ? ` [${decision.status}]` : '';
+			const rationale = decision.rationale ? ` — ${cleanSentence(decision.rationale)}` : '';
+			lines.push(`- ${decision.subject}: ${decision.decision}${status}${rationale}`);
+		}
+	}
+
+	if (packet.openLoops.length) {
+		lines.push('', `open loops (${packet.openLoops.length}):`);
+		for (const loop of packet.openLoops) {
+			const related = loop.relatedEntityIds
+				.map((id) => keyOf(id))
+				.filter((key): key is string => Boolean(key));
+			const relatedStr = related.length ? ` [related: ${related.join(', ')}]` : '';
+			const status = loop.status && loop.status !== 'open' ? ` [${loop.status}]` : '';
+			const desc = loop.description ? ` — ${cleanSentence(loop.description)}` : '';
+			lines.push(
+				`- (${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`
+			);
+		}
+	}
+
+	if (packet.recentEvents.length) {
+		lines.push('', `recent events (${packet.recentEvents.length}):`);
+		for (const event of packet.recentEvents) {
+			const actor = keyOf(event.actorEntityId);
+			const target = keyOf(event.targetEntityId);
+			const who = [actor, target].filter(Boolean).join(' -> ');
+			const whoStr = who ? ` [${who}]` : '';
+			const meta: string[] = [];
+			if (event.visibility && event.visibility !== 'session') meta.push(event.visibility);
+			if (event.confidence < 1) meta.push(`conf ${event.confidence}`);
+			const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
+			lines.push(`- ${event.eventType}: ${cleanSentence(event.summary)}${whoStr}${metaStr}`);
+		}
+	}
+
+	const guidance = packet.toolGuidance;
+	lines.push('', 'memory tools:');
+	lines.push(
+		`- ${guidance.mandatory ? 'mandatory' : 'optional'} recall via: ${guidance.availableTools.join(', ')}`
+	);
+	lines.push(`- recall when: ${guidance.recallTriggers.join('; ')}`);
+
+	return lines.join('\n');
 }
 
 function summarizePatch(patch: MemoryPatchProposal): string {

@@ -1,6 +1,7 @@
 import {
 	commitPatch,
 	extractHeuristicPatch,
+	renderMemoryPacket,
 	type CommitMemoryPatchInput,
 	MemoryPatchProposalSchema,
 	type MemoryPatchProposal,
@@ -666,7 +667,7 @@ function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): 
 			'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
 			`Memory mode: ${input.mode}`,
 			'Initial packet:',
-			redactSensitiveText(JSON.stringify(input.initialPacket ?? {}, null, 2)),
+			redactSensitiveText(input.initialPacket ? renderMemoryPacket(input.initialPacket) : '(none)'),
 			'Memory tool calls this turn:',
 			redactSensitiveText(
 				JSON.stringify(
