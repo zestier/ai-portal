@@ -29,7 +29,7 @@ export function ticketChatPrompt(
 			: `Do this workspace ticket: ${ticket.title}`;
 	const instructions =
 		mode === 'refine'
-			? 'Clarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Update the ticket instead of implementing it unless explicitly asked.'
+			? 'Clarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket. Update the ticket instead of implementing it unless explicitly asked.'
 			: null;
 	const lines = [header, ''];
 	if (instructions) lines.push(instructions, '');
