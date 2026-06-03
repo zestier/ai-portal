@@ -1062,34 +1062,36 @@
 
 	<div class="messages-wrap">
 		<div class="messages" bind:this={scrollEl} onscroll={onMessagesScroll}>
-			{#if renderedMessages.length === 0 && visibleInteractive.length === 0}
-				<div class="empty-conversation">
-					<EmptyState
-						title="Start the conversation"
-						description="Send a message below to begin. Your replies, tool calls, and edits will appear here."
-						size="lg"
+			<div class="messages-inner">
+				{#if renderedMessages.length === 0 && visibleInteractive.length === 0}
+					<div class="empty-conversation">
+						<EmptyState
+							title="Start the conversation"
+							description="Send a message below to begin. Your replies, tool calls, and edits will appear here."
+							size="lg"
+						/>
+					</div>
+				{/if}
+				{#each renderedMessages as m, i (m.id)}
+					<Message_
+						message={m}
+						conversationId={conversation.id}
+						inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
+						forks={forksByMessage[m.id] ?? []}
+						conversationIdle={!streaming}
+						thinking={thinking && i === renderedMessages.length - 1}
+						onForked={refreshForks}
+						onInlineEdited={handleInlineEdited}
+						onToolRerunStarted={handleToolRerunStarted}
 					/>
-				</div>
-			{/if}
-			{#each renderedMessages as m, i (m.id)}
-				<Message_
-					message={m}
-					conversationId={conversation.id}
-					inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
-					forks={forksByMessage[m.id] ?? []}
-					conversationIdle={!streaming}
-					thinking={thinking && i === renderedMessages.length - 1}
-					onForked={refreshForks}
-					onInlineEdited={handleInlineEdited}
-					onToolRerunStarted={handleToolRerunStarted}
-				/>
-			{/each}
-			{#each visibleInteractive as p (p.requestId)}
-				<InteractiveRequestDialog
-					request={p}
-					onRespond={(r) => respondInteractive(p.requestId, r)}
-				/>
-			{/each}
+				{/each}
+				{#each visibleInteractive as p (p.requestId)}
+					<InteractiveRequestDialog
+						request={p}
+						onRespond={(r) => respondInteractive(p.requestId, r)}
+					/>
+				{/each}
+			</div>
 		</div>
 		{#if hasNewBelow && !pinnedToBottom}
 			<button
@@ -1196,6 +1198,15 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--space-4) var(--space-5);
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+	.messages-inner {
+		width: 100%;
+		max-width: 52rem;
+		margin: 0 auto;
+		flex: 1;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
