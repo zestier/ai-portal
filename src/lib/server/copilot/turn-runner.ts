@@ -16,6 +16,7 @@ import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleto
 import * as messages from '../db/repos/messages';
 import * as convs from '../db/repos/conversations';
 import * as usageRepo from '../db/repos/usage';
+import * as turnInputs from '../db/repos/turn-inputs';
 import * as pool from './pool';
 import * as interactiveRequests from './interactive-requests';
 import { PORTAL_PRELUDE } from './portal-prelude';
@@ -119,6 +120,10 @@ export interface StartTurnOptions {
 	bridge: ProviderOpenOptions;
 	prompt: string;
 	conversationId: string;
+	// The user message that triggered this turn. When provided, the full
+	// assembled provider input (prelude + prompt) is captured against it so the
+	// UI can inspect "the guts" of the turn later.
+	userMessageId?: string;
 	beforeSend?: () => Promise<void>;
 	initialEvents?: PortalEvent[];
 	memory?: {
@@ -350,6 +355,36 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	// fixed-string responder that wouldn't act on the guidance anyway.
 	const prelude = isStubMode() ? '' : PORTAL_PRELUDE;
 	const promptToSend = prelude ? `${prelude}\n\n${opts.prompt}` : opts.prompt;
+
+	// Capture the exact provider input for this turn so the UI can surface it
+	// read-only (portal prelude + memory/prior-message context + user content).
+	// Best-effort: never let an observability write break the turn.
+	if (opts.userMessageId) {
+		try {
+			turnInputs.record({
+				messageId: opts.userMessageId,
+				conversationId: opts.conversationId,
+				turnId: turn.id,
+				fullInput: promptToSend,
+				promptBody: opts.prompt,
+				prelude,
+				provider: opts.bridge.provider ?? null,
+				model: opts.bridge.model ?? null,
+				mode: opts.bridge.mode ?? null,
+				memoryMode: opts.bridge.memoryMode ?? null,
+				initialMessages:
+					opts.bridge.initialMessages?.map((m) => ({
+						role: m.role,
+						content: m.content
+					})) ?? null
+			});
+		} catch (recordErr) {
+			log.warn('turn.input.record_failed', {
+				conversationId: opts.conversationId,
+				err: String(recordErr)
+			});
+		}
+	}
 
 	turn.finishedPromise = (async () => {
 		try {

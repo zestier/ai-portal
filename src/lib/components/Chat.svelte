@@ -850,6 +850,10 @@
 
 	async function send() {
 		const text = composer.trim();
+		// Rejection point for the composer: a send is a no-op when the draft
+		// is empty or a turn is already streaming. This lets the composer stay
+		// editable mid-turn (so the user can draft a follow-up) while Enter
+		// simply does nothing until the current turn finishes.
 		if (!text || streaming) return;
 		composer = '';
 		const localMessageId = `local-${Date.now()}`;
@@ -1063,7 +1067,6 @@
 	<Composer
 		bind:value={composer}
 		{streaming}
-		inputDisabled={streaming && pendingInteractive.length === 0}
 		placeholder={chatPlaceholder}
 		onSend={send}
 		onStop={stop}

@@ -55,6 +55,7 @@ export async function startTurnFromUserMessage(
 	const turn = await startTurn({
 		conversationId: conv.id,
 		prompt,
+		userMessageId: userMsg.id,
 		bridge: {
 			conversationId: conv.id,
 			providerSessionId,

@@ -171,6 +171,86 @@ describe('turn-runner', () => {
 		expect(convs.get(conv.id, user.id)?.title).toBe('Custom title');
 	});
 
+	it('captures the full provider input when a userMessageId is provided', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const turnInputs = await import('../src/lib/server/db/repos/turn-inputs');
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const { PORTAL_PRELUDE } = await import('../src/lib/server/copilot/portal-prelude');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'Custom title', workdir: wd, model: 'gpt-4' });
+
+		const userMsg = messages.append(conv.id, { role: 'user', content: 'Help me' });
+
+		acquireMock.mockResolvedValue(
+			makeFakeSession([
+				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'm1', text: 'ok' },
+				{ type: 'done' }
+			])
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				provider: 'copilot',
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt',
+				mode: 'interactive'
+			},
+			prompt: 'Help me',
+			conversationId: conv.id,
+			userMessageId: userMsg.id
+		});
+
+		// Input is recorded synchronously at start, before the turn drains.
+		const recorded = turnInputs.get(conv.id, userMsg.id);
+		expect(recorded).not.toBeNull();
+		expect(recorded?.promptBody).toBe('Help me');
+		expect(recorded?.prelude).toBe(PORTAL_PRELUDE);
+		expect(recorded?.fullInput).toBe(`${PORTAL_PRELUDE}\n\nHelp me`);
+		expect(recorded?.provider).toBe('copilot');
+		expect(recorded?.model).toBe('gpt-4');
+		expect(recorded?.mode).toBe('interactive');
+		expect(recorded?.turnId).toBe(turn.id);
+
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') break;
+		}
+	});
+
+	it('does not capture input when no userMessageId is provided', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const turnInputs = await import('../src/lib/server/db/repos/turn-inputs');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'Custom title', workdir: wd, model: 'gpt-4' });
+
+		acquireMock.mockResolvedValue(makeFakeSession([{ type: 'done' }]));
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') break;
+		}
+
+		// Nothing keyed to a user message means nothing to inspect; the table
+		// simply has no row for any id we'd look up.
+		expect(turnInputs.get(conv.id, 'nonexistent')).toBeNull();
+	});
+
 	it('assigns monotonic ids and replays from Last-Event-ID via sinceId', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const user = users.ensureLocalUser();

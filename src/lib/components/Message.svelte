@@ -6,6 +6,7 @@
 	import DiffView from './DiffView.svelte';
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import RawInputDialog from './RawInputDialog.svelte';
 	import { goto } from '$app/navigation';
 
 	let {
@@ -30,6 +31,17 @@
 	let editText = $state('');
 	let submitting = $state(false);
 	let errorMsg = $state<string | null>(null);
+	let showRawInput = $state(false);
+
+	// The full provider input is captured per turn and keyed to the user
+	// message that triggered it. Offer the inspector on any persisted user
+	// message (optimistic `local-` / `err-` ids never have a stored input).
+	const canInspectInput = $derived(
+		message.role === 'user' &&
+			!!conversationId &&
+			!message.id.startsWith('local-') &&
+			!message.id.startsWith('err-')
+	);
 
 	// Editing is only possible for persisted user messages (a temporary
 	// id like `local-1234` is created optimistically before the server
@@ -333,6 +345,32 @@
 				{/each}
 			</span>
 		{/if}
+		{#if canInspectInput}
+			<button
+				type="button"
+				class="action-btn input-btn"
+				onclick={() => (showRawInput = true)}
+				title="Inspect the full input sent to the provider for this turn (portal prelude, memory/context, and your message)"
+				aria-label="View raw turn input"
+			>
+				<svg
+					width="12"
+					height="12"
+					viewBox="0 0 16 16"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M2.5 4.5h11" />
+					<path d="M2.5 8h11" />
+					<path d="M2.5 11.5h7" />
+				</svg>
+				Input
+			</button>
+		{/if}
 		{#if canEdit && !editing}
 			<button
 				type="button"
@@ -459,6 +497,10 @@
 		{/if}
 	</div>
 </article>
+
+{#if showRawInput && conversationId}
+	<RawInputDialog {conversationId} messageId={message.id} onClose={() => (showRawInput = false)} />
+{/if}
 
 <style>
 	.msg {

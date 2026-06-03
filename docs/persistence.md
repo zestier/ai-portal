@@ -177,6 +177,39 @@ Limitations (v1):
 - Submodule/LFS state is out of scope.
 
 
+## Turn input capture (observability)
+
+Added in migration `034_turn_inputs.sql`. Records the **full input** the portal
+handed to the provider for the turn triggered by a given user message — the
+auto-injected portal prelude, any memory / prior-message context, and the raw
+user content, exactly as the SDK saw it. Purely an observability artifact; it is
+never read back into a turn.
+
+```sql
+CREATE TABLE turn_inputs (
+  message_id       TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  turn_id          TEXT,
+  full_input       TEXT NOT NULL,   -- prelude + body, exactly as sent
+  prompt_body      TEXT NOT NULL,   -- body without the portal prelude
+  prelude          TEXT NOT NULL DEFAULT '',
+  provider         TEXT,
+  model            TEXT,
+  mode             TEXT,
+  memory_mode      TEXT,
+  initial_messages TEXT,            -- JSON array of embedded prior messages, or NULL
+  created_at       INTEGER NOT NULL
+);
+```
+
+Written by `turn-runner` the moment a turn starts (best-effort; a failed write
+never breaks the turn), keyed by the triggering user message. Inline-edit
+re-runs reuse that message id, so the row is upserted to reflect the latest
+turn. Surfaced read-only in the chat UI via the "Input" affordance on user
+messages, which lazily fetches
+`GET /api/conversations/{id}/messages/{messageId}`.
+
+
 ## Conventions
 
 - IDs are ULIDs (lexically sortable; safe in URLs).

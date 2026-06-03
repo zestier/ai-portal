@@ -4,14 +4,12 @@
 	let {
 		value = $bindable(''),
 		streaming = false,
-		inputDisabled = false,
 		placeholder = 'Message...',
 		onSend,
 		onStop
 	}: {
 		value?: string;
 		streaming?: boolean;
-		inputDisabled?: boolean;
 		placeholder?: string;
 		onSend: () => void;
 		onStop: () => void;
@@ -55,6 +53,9 @@
 				window.matchMedia('(pointer: coarse)').matches;
 			if (coarse) return;
 			e.preventDefault();
+			// `onSend` is responsible for deciding whether a send is allowed
+			// (e.g. it no-ops while streaming or when the draft is empty), so
+			// the composer doesn't need to know why a send might be rejected.
 			onSend();
 		}
 	}
@@ -75,7 +76,6 @@
 			oninput={autoGrow}
 			{placeholder}
 			rows="1"
-			disabled={inputDisabled}
 		></textarea>
 		<div class="composer-actions">
 			<span class="kbd-hint muted" aria-hidden="true">
@@ -166,10 +166,6 @@
 		   could render unusually tall. The JS autoGrow above remains the
 		   fallback for browsers without support. */
 		field-sizing: content;
-	}
-	.composer-shell textarea:disabled {
-		opacity: 0.7;
-		cursor: progress;
 	}
 	.composer-actions {
 		display: flex;

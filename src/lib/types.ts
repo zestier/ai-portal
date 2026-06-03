@@ -279,6 +279,34 @@ export interface FileEditRecord {
 	parentToolCallId: string | null;
 }
 
+// Observability record of the *full input* the portal handed to the provider
+// for the turn triggered by a given user message. Surfaced read-only in the UI
+// so the user can inspect the portal prelude + any memory / prior-message
+// context injected on top of their raw message — "the guts" of the turn.
+export interface TurnInput {
+	messageId: string;
+	conversationId: string;
+	turnId: string | null;
+	// Exact string sent to the provider (prelude + body).
+	fullInput: string;
+	// Body without the auto-injected portal prelude.
+	promptBody: string;
+	// The portal prelude actually prepended (empty when none was applied).
+	prelude: string;
+	provider: string | null;
+	model: string | null;
+	mode: string | null;
+	memoryMode: string | null;
+	// Prior messages embedded for providers that can't resume a session.
+	initialMessages: ProviderInitialMessagePreview[] | null;
+	createdAt: number;
+}
+
+export interface ProviderInitialMessagePreview {
+	role: string;
+	content: string;
+}
+
 export interface UserSettings {
 	defaultProvider: BackendProviderId;
 	defaultModel: string | null;
