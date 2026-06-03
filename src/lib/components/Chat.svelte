@@ -68,6 +68,24 @@
 	} = $props();
 
 	let messages = $state<Message[]>([]);
+
+	// The full provider input is captured per turn and keyed to the user
+	// message that triggered it, but the inspector affordance reads more
+	// naturally on the assistant turn that input produced. Map each assistant
+	// message to its triggering user message (the nearest preceding persisted
+	// user message) so the assistant header can offer the "Input" button.
+	const inputMessageIdByAssistant = $derived.by(() => {
+		const map: Record<string, string> = {};
+		let lastUserId: string | null = null;
+		for (const m of messages) {
+			if (m.role === 'user') {
+				lastUserId = !m.id.startsWith('local-') && !m.id.startsWith('err-') ? m.id : null;
+			} else if (m.role === 'assistant' && lastUserId) {
+				map[m.id] = lastUserId;
+			}
+		}
+		return map;
+	});
 	let title = $state<string>(untrack(() => conversation.title));
 	let sessionModel = $state<string>(untrack(() => conversation.model ?? effectiveModel));
 	let sessionMode = $state<Conversation['mode']>(untrack(() => conversation.mode));
@@ -1022,6 +1040,7 @@
 				<Message_
 					message={m}
 					conversationId={conversation.id}
+					inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
 					forks={forksByMessage[m.id] ?? []}
 					conversationIdle={!streaming}
 					onForked={refreshForks}

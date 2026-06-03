@@ -12,6 +12,7 @@
 	let {
 		message,
 		conversationId,
+		inputMessageId = null,
 		forks = [],
 		conversationIdle = true,
 		onForked,
@@ -20,6 +21,7 @@
 	}: {
 		message: Message;
 		conversationId?: string;
+		inputMessageId?: string | null;
 		forks?: Array<{ id: string; title: string; archivedAt: number | null }>;
 		conversationIdle?: boolean;
 		onForked?: () => void;
@@ -34,13 +36,13 @@
 	let showRawInput = $state(false);
 
 	// The full provider input is captured per turn and keyed to the user
-	// message that triggered it. Offer the inspector on any persisted user
-	// message (optimistic `local-` / `err-` ids never have a stored input).
+	// message that triggered it, but it reads more naturally on the assistant
+	// turn it produced. The parent passes `inputMessageId` (the triggering
+	// user message) for assistant messages whose input was captured; optimistic
+	// (`local-` / `err-`) user messages never have a stored input and are
+	// excluded upstream.
 	const canInspectInput = $derived(
-		message.role === 'user' &&
-			!!conversationId &&
-			!message.id.startsWith('local-') &&
-			!message.id.startsWith('err-')
+		message.role === 'assistant' && !!conversationId && !!inputMessageId
 	);
 
 	// Editing is only possible for persisted user messages (a temporary
@@ -498,8 +500,12 @@
 	</div>
 </article>
 
-{#if showRawInput && conversationId}
-	<RawInputDialog {conversationId} messageId={message.id} onClose={() => (showRawInput = false)} />
+{#if showRawInput && conversationId && inputMessageId}
+	<RawInputDialog
+		{conversationId}
+		messageId={inputMessageId}
+		onClose={() => (showRawInput = false)}
+	/>
 {/if}
 
 <style>
