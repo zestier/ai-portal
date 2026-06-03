@@ -15,6 +15,7 @@
 	import InteractiveRequestDialog from './InteractiveRequestDialog.svelte';
 	import ChatHeader from './ChatHeader.svelte';
 	import Composer from './Composer.svelte';
+	import EmptyState from './ui/EmptyState.svelte';
 	import { addInteractive, removeInteractive } from '$lib/client/interactive-queue';
 	import {
 		findToolCallRecord,
@@ -1061,6 +1062,15 @@
 
 	<div class="messages-wrap">
 		<div class="messages" bind:this={scrollEl} onscroll={onMessagesScroll}>
+			{#if renderedMessages.length === 0 && visibleInteractive.length === 0}
+				<div class="empty-conversation">
+					<EmptyState
+						title="Start the conversation"
+						description="Send a message below to begin. Your replies, tool calls, and edits will appear here."
+						size="lg"
+					/>
+				</div>
+			{/if}
 			{#each renderedMessages as m, i (m.id)}
 				<Message_
 					message={m}
@@ -1190,6 +1200,13 @@
 		flex-direction: column;
 		gap: var(--space-3);
 		min-height: 0;
+	}
+	.empty-conversation {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
 	}
 	.jump-latest {
 		position: absolute;
