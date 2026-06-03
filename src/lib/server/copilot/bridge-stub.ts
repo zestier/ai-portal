@@ -15,6 +15,8 @@
 //   @trigger-sampling           -> emits sampling.requested + .completed
 //   @trigger-mcp-oauth          -> emits mcp.oauth_required + _completed
 //   @trigger-external-tool      -> emits external_tool.requested + .completed
+//   @trigger-slow-start         -> delays the first delta so the pre-message
+//                                  "thinking" state is observable by tests
 
 import { ulid } from 'ulid';
 import { loadConfig } from '../config';
@@ -173,6 +175,12 @@ class StubSession {
 			// triggers are best-effort
 		}
 		if (this.aborted) return;
+		// Hold before the first delta so tests can observe the assistant turn
+		// while it's still "thinking" (no content/tools/reasoning yet).
+		if (prompt.includes('@trigger-slow-start')) {
+			await new Promise((r) => setTimeout(r, 800));
+			if (this.aborted) return;
+		}
 		const chunks = reply.match(/.{1,16}/g) ?? [reply];
 		for (const chunk of chunks) {
 			if (this.aborted) return;

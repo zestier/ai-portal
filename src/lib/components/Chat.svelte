@@ -15,7 +15,6 @@
 	import InteractiveRequestDialog from './InteractiveRequestDialog.svelte';
 	import ChatHeader from './ChatHeader.svelte';
 	import Composer from './Composer.svelte';
-	import ThinkingIndicator from './ThinkingIndicator.svelte';
 	import { addInteractive, removeInteractive } from '$lib/client/interactive-queue';
 	import {
 		findToolCallRecord,
@@ -77,7 +76,7 @@
 	const inputMessageIdByAssistant = $derived.by(() => {
 		const map: Record<string, string> = {};
 		let lastUserId: string | null = null;
-		for (const m of messages) {
+		for (const m of renderedMessages) {
 			if (m.role === 'user') {
 				lastUserId = !m.id.startsWith('local-') && !m.id.startsWith('err-') ? m.id : null;
 			} else if (m.role === 'assistant' && lastUserId) {
@@ -970,6 +969,32 @@
 		void thinking;
 		scrollToBottom();
 	});
+
+	// While streaming, the in-progress assistant turn may not have produced a
+	// message bubble yet (the first `message.start` event hasn't arrived). In
+	// that window we append a synthetic placeholder assistant turn so the
+	// thinking indicator (and the rest of the assistant-turn affordances)
+	// render inside a normal bubble. Once a real assistant message exists it
+	// takes over and the placeholder is dropped. Keeping the placeholder in
+	// the same list the template iterates means it flows through the identical
+	// <Message_> wiring (input inspector, forks, idle state) as a real turn —
+	// no second rendering path to keep in sync.
+	const lastIsAssistant = $derived(messages[messages.length - 1]?.role === 'assistant');
+	const thinkingPlaceholder = $derived<Message>({
+		id: 'thinking-placeholder',
+		conversationId: conversation.id,
+		role: 'assistant',
+		content: '',
+		status: 'streaming',
+		errorCode: null,
+		createdAt: Date.now(),
+		toolCalls: [],
+		fileEdits: [],
+		reasoningBlocks: []
+	});
+	const renderedMessages = $derived(
+		thinking && !lastIsAssistant ? [...messages, thinkingPlaceholder] : messages
+	);
 </script>
 
 <div class="chat">
@@ -1036,13 +1061,14 @@
 
 	<div class="messages-wrap">
 		<div class="messages" bind:this={scrollEl} onscroll={onMessagesScroll}>
-			{#each messages as m (m.id)}
+			{#each renderedMessages as m, i (m.id)}
 				<Message_
 					message={m}
 					conversationId={conversation.id}
 					inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
 					forks={forksByMessage[m.id] ?? []}
 					conversationIdle={!streaming}
+					thinking={thinking && i === renderedMessages.length - 1}
 					onForked={refreshForks}
 					onInlineEdited={handleInlineEdited}
 					onToolRerunStarted={handleToolRerunStarted}
@@ -1054,9 +1080,6 @@
 					onRespond={(r) => respondInteractive(p.requestId, r)}
 				/>
 			{/each}
-			{#if thinking}
-				<ThinkingIndicator />
-			{/if}
 		</div>
 		{#if hasNewBelow && !pinnedToBottom}
 			<button

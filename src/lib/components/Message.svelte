@@ -5,6 +5,7 @@
 	import SubagentCall from './SubagentCall.svelte';
 	import DiffView from './DiffView.svelte';
 	import ReasoningBlock from './ReasoningBlock.svelte';
+	import ThinkingIndicator from './ThinkingIndicator.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import RawInputDialog from './RawInputDialog.svelte';
 	import { goto } from '$app/navigation';
@@ -15,6 +16,7 @@
 		inputMessageId = null,
 		forks = [],
 		conversationIdle = true,
+		thinking = false,
 		onForked,
 		onInlineEdited,
 		onToolRerunStarted
@@ -24,6 +26,7 @@
 		inputMessageId?: string | null;
 		forks?: Array<{ id: string; title: string; archivedAt: number | null }>;
 		conversationIdle?: boolean;
+		thinking?: boolean;
 		onForked?: () => void;
 		onInlineEdited?: (messageId: string, content: string, turnId: string) => void;
 		onToolRerunStarted?: (turnId: string) => void;
@@ -455,6 +458,9 @@
 					<DiffView path={p.edit.path} diff={p.edit.diff} />
 				{/if}
 			{/each}
+			{#if thinking}
+				<ThinkingIndicator />
+			{/if}
 		{:else if editing}
 			<form
 				class="edit-form"
