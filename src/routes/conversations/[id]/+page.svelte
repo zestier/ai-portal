@@ -118,6 +118,7 @@
 		border-bottom: 1px solid var(--border);
 		background: var(--surface);
 		flex: 0 0 auto;
+		overflow-x: auto;
 	}
 	/* On mobile the sidebar toggle is a fixed-position hamburger at top-left;
 	   inset the tab strip so it doesn't sit underneath. */
@@ -134,6 +135,7 @@
 		padding: var(--space-2) var(--space-4);
 		cursor: pointer;
 		font: inherit;
+		white-space: nowrap;
 	}
 	.tab-label {
 		display: inline-flex;
