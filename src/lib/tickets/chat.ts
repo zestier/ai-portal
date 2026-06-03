@@ -1,6 +1,15 @@
-import type { WorkspaceTicket } from '$lib/types';
+import type { SessionMode, WorkspaceTicket } from '$lib/types';
 
 export type TicketChatMode = 'do' | 'refine';
+
+/**
+ * Refine chats are exploratory by nature — they research and update the ticket
+ * rather than implement it — so they always run interactively regardless of the
+ * user's default conversation mode.
+ */
+export function ticketChatConversationMode(mode: TicketChatMode): SessionMode | undefined {
+	return mode === 'refine' ? 'interactive' : undefined;
+}
 
 export function ticketChatTitle(
 	ticket: Pick<WorkspaceTicket, 'title'>,

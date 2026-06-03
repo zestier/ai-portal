@@ -44,4 +44,30 @@ describe('createTicketDraftChat', () => {
 			workdir: '/workspace'
 		});
 	});
+
+	it('forces interactive mode when refining a ticket', async () => {
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			void url;
+			void init;
+			return Response.json({ conversation: { id: 'conv-2' } }, { status: 201 });
+		});
+
+		const result = await createTicketDraftChat({
+			ticket,
+			mode: 'refine',
+			workdir: '/workspace',
+			fetcher
+		});
+
+		expect(result).toEqual({
+			ok: true,
+			href: '/conversations/conv-2?draftTicketId=ticket-1&ticketMode=refine'
+		});
+		const [, init] = fetcher.mock.calls[0];
+		expect(JSON.parse(init?.body as string)).toEqual({
+			title: 'Refine ticket: Fix sidebar actions',
+			workdir: '/workspace',
+			mode: 'interactive'
+		});
+	});
 });

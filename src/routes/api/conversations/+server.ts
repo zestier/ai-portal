@@ -20,7 +20,8 @@ const CreateBody = z.object({
 	title: z.string().min(1).max(200).default('New chat'),
 	provider: z.enum(BACKEND_PROVIDER_IDS).optional(),
 	model: z.string().min(1).optional(),
-	workdir: z.string().min(1).optional()
+	workdir: z.string().min(1).optional(),
+	mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional()
 });
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -49,7 +50,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		workdir,
 		provider: normalizeBackendProvider(provider),
 		model,
-		mode: userSettings.defaultConversationMode
+		mode: body.mode ?? userSettings.defaultConversationMode
 	});
 	return json({ ok: true, conversation: conv }, { status: 201 });
 };

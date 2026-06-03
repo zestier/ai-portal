@@ -1,5 +1,6 @@
 export {
 	isTicketChatMode,
+	ticketChatConversationMode,
 	ticketChatPrompt,
 	ticketChatTitle,
 	ticketDraftChatUrl,

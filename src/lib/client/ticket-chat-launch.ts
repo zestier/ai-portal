@@ -1,4 +1,9 @@
-import { ticketChatTitle, ticketDraftChatUrl, type TicketChatMode } from '$lib/tickets/chat';
+import {
+	ticketChatConversationMode,
+	ticketChatTitle,
+	ticketDraftChatUrl,
+	type TicketChatMode
+} from '$lib/tickets/chat';
 import type { WorkspaceTicket } from '$lib/types';
 
 type TicketDraftFetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -19,7 +24,8 @@ export async function createTicketDraftChat({
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({
 			title: ticketChatTitle(ticket, mode),
-			workdir: workdir ?? undefined
+			workdir: workdir ?? undefined,
+			mode: ticketChatConversationMode(mode)
 		})
 	});
 	if (!convRes.ok) return { ok: false, status: convRes.status };

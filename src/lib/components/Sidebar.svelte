@@ -5,7 +5,11 @@
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import PromptTemplateLauncher from '$lib/components/PromptTemplateLauncher.svelte';
 	import type { TicketChatMode } from '$lib/client/tickets';
-	import { ticketChatPrompt, ticketChatTitle } from '$lib/client/tickets';
+	import {
+		ticketChatConversationMode,
+		ticketChatPrompt,
+		ticketChatTitle
+	} from '$lib/client/tickets';
 	import { createTicketDraftChat } from '$lib/client/ticket-chat-launch';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
 
@@ -138,7 +142,8 @@
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
 					title: ticketChatTitle(ticket, mode),
-					workdir: ticketWorkspace ?? undefined
+					workdir: ticketWorkspace ?? undefined,
+					mode: ticketChatConversationMode(mode)
 				})
 			});
 			if (!convRes.ok) {
