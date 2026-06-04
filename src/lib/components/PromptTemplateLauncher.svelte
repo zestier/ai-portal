@@ -325,7 +325,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--surface);
-		box-shadow: var(--shadow-lg);
+		box-shadow: var(--shadow-2);
 		padding: var(--space-4);
 	}
 	header,

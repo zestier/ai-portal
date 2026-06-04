@@ -117,7 +117,7 @@
 		font-style: italic;
 	}
 	.decision-tag.auto-prompt-required {
-		color: var(--warning, var(--muted));
+		color: var(--warning, var(--text-muted));
 		border-color: var(--border);
 		font-style: italic;
 	}
