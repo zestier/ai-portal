@@ -60,6 +60,7 @@ export interface MemoryFact {
 	sourceEventId: string | null;
 	sourceMessageId: string | null;
 	supersedesFactId: string | null;
+	pinned: boolean;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -251,6 +252,7 @@ interface FactRow {
 	source_event_id: string | null;
 	source_message_id: string | null;
 	supersedes_fact_id: string | null;
+	pinned: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -409,6 +411,19 @@ export interface AddFactInput {
 	sourceEventId?: string | null;
 	sourceMessageId?: string | null;
 	supersedesFactId?: string | null;
+	pinned?: boolean;
+}
+
+/**
+ * Predicates that hold a single current value per entity. When a new fact for
+ * one of these is committed, prior active facts with the same entity+predicate
+ * are superseded instead of accumulating — this bounds memory growth at the
+ * source for state-like facts (location, status, ...).
+ */
+const SINGLE_VALUED_PREDICATES = new Set(['location', 'status', 'state', 'place', 'position']);
+
+function isSingleValuedPredicate(predicate: string): boolean {
+	return SINGLE_VALUED_PREDICATES.has(predicate.toLowerCase());
 }
 
 export interface AddDecisionInput {
@@ -645,17 +660,22 @@ export function listEvents(
 }
 
 export function addFact(conversationId: string, input: AddFactInput): MemoryFact {
-	const id = ulid();
-	const now = Date.now();
-	getDb()
-		.prepare(
+	const db = getDb();
+	const tx = db.transaction(() => {
+		const now = Date.now();
+		const id = ulid();
+		// Append the raw observation as a `fact.create` event + projection row.
+		// Supersession and dedupe are NOT decided here; they are derived from the
+		// event stream by consolidateFactGroup (below), which is replayed on every
+		// projection rebuild. That keeps revert correct "for free": rebuilding from
+		// the surviving observations re-derives the active set.
+		db.prepare(
 			`INSERT INTO memory_facts(
 			   id, conversation_id, entity_id, predicate, value_json, status, visibility,
-			   confidence, source_event_id, source_message_id, supersedes_fact_id, created_at,
-			   updated_at
-			 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
-		)
-		.run(
+			   confidence, source_event_id, source_message_id, supersedes_fact_id,
+			   pinned, created_at, updated_at
+			 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
 			id,
 			conversationId,
 			input.entityId ?? null,
@@ -666,20 +686,79 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
 			input.sourceEventId ?? null,
 			input.sourceMessageId ?? null,
 			input.supersedesFactId ?? null,
+			input.pinned ? 1 : 0,
 			now,
 			now
 		);
-	const row = getDb().prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
-	indexItem(getDb(), conversationId, 'fact', id, factIndexText(row));
-	indexSessionMemoryItem(conversationId, 'fact', id, factIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind: 'fact.create',
-		itemType: 'fact',
-		itemId: id,
-		sourceMessageId: input.sourceMessageId ?? null,
-		payload: { item: rowToFact(row) }
+		const row = db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
+		indexItem(db, conversationId, 'fact', id, factIndexText(row));
+		indexSessionMemoryItem(conversationId, 'fact', id, factIndexText(row));
+		appendSessionMemoryLog(db, conversationId, {
+			eventKind: 'fact.create',
+			itemType: 'fact',
+			itemId: id,
+			sourceMessageId: input.sourceMessageId ?? null,
+			payload: { item: rowToFact(row) }
+		});
+		consolidateFactGroup(db, conversationId, row.entity_id, row.predicate);
+		return db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
 	});
-	return rowToFact(row);
+	return rowToFact(tx());
+}
+
+/**
+ * Derive the active set for one (entity, predicate) group in the projection.
+ * This is the single home of consolidation, called from every path that mutates
+ * a fact (imperative writes, edits/deletes, and event-stream replay) so the same
+ * rule is applied whether facts arrive live or are rebuilt from the log:
+ *
+ *   - single-valued predicates (location, status, ...): only the newest
+ *     observation in the group stays active; older ones become `superseded`.
+ *   - other predicates: the newest observation of each distinct value stays
+ *     active; older identical observations become `superseded` (dedupe).
+ *
+ * Because it operates purely on the projected rows (never emitting events), a
+ * projection rebuilt from a stream that omits some observations — e.g. after a
+ * patch revert deletes the facts it created — re-derives the correct active set
+ * without any reference counting or supersede bookkeeping.
+ */
+function consolidateFactGroup(
+	db: Database.Database,
+	conversationId: string,
+	entityId: string | null,
+	predicate: string
+): void {
+	const rows = db
+		.prepare(
+			`SELECT * FROM memory_facts
+			  WHERE conversation_id = ? AND predicate = ? AND status != 'deleted'
+			    AND ((entity_id IS NULL AND ? IS NULL) OR entity_id = ?)
+			  ORDER BY created_at ASC, id ASC`
+		)
+		.all(conversationId, predicate, entityId, entityId) as FactRow[];
+	if (rows.length === 0) return;
+
+	const activeIds = new Set<string>();
+	if (isSingleValuedPredicate(predicate)) {
+		activeIds.add(rows[rows.length - 1].id);
+	} else {
+		// Newest row wins per distinct value (later rows overwrite the map entry).
+		const newestByValue = new Map<string, string>();
+		for (const row of rows) newestByValue.set(row.value_json, row.id);
+		for (const id of newestByValue.values()) activeIds.add(id);
+	}
+
+	const now = Date.now();
+	for (const row of rows) {
+		const desired = activeIds.has(row.id) ? 'active' : 'superseded';
+		if (row.status === desired) continue;
+		db.prepare('UPDATE memory_facts SET status = ?, updated_at = ? WHERE id = ?').run(
+			desired,
+			now,
+			row.id
+		);
+		syncSessionIndex(db, conversationId, 'fact', row.id, desired, factIndexText(row));
+	}
 }
 
 export function listFacts(
@@ -707,6 +786,25 @@ export function listFacts(
 		)
 		.all(...params) as FactRow[];
 	return rows.map(rowToFact);
+}
+
+/**
+ * Count active facts per entity for a conversation. Powers the always-present
+ * entity-key index in the turn packet (so the model knows how much is queryable
+ * by name even when individual fact bodies are dropped from the packet).
+ */
+export function entityFactCounts(conversationId: string): Map<string, number> {
+	const rows = getDb()
+		.prepare(
+			`SELECT entity_id AS entityId, COUNT(*) AS count
+			   FROM memory_facts
+			  WHERE conversation_id = ? AND status = 'active' AND entity_id IS NOT NULL
+			  GROUP BY entity_id`
+		)
+		.all(conversationId) as Array<{ entityId: string; count: number }>;
+	const counts = new Map<string, number>();
+	for (const row of rows) counts.set(row.entityId, row.count);
+	return counts;
 }
 
 export function addDecision(conversationId: string, input: AddDecisionInput): MemoryDecision {
@@ -1057,17 +1155,17 @@ export function updateFact(
 	id: string,
 	patch: Partial<Pick<MemoryFact, 'predicate' | 'value' | 'status' | 'visibility' | 'confidence'>>
 ): MemoryFact | null {
-	const current = getDb()
-		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as FactRow | undefined;
-	if (!current) return null;
-	getDb()
-		.prepare(
+	const db = getDb();
+	const tx = db.transaction(() => {
+		const current = db
+			.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
+			.get(id, conversationId) as FactRow | undefined;
+		if (!current) return null;
+		db.prepare(
 			`UPDATE memory_facts
 			    SET predicate = ?, value_json = ?, status = ?, visibility = ?, confidence = ?, updated_at = ?
 			  WHERE id = ? AND conversation_id = ?`
-		)
-		.run(
+		).run(
 			patch.predicate ?? current.predicate,
 			patch.value === undefined ? current.value_json : safeJson(patch.value),
 			patch.status ?? current.status,
@@ -1077,22 +1175,27 @@ export function updateFact(
 			id,
 			conversationId
 		);
-	const row = getDb()
-		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as FactRow;
-	syncSessionIndex(getDb(), conversationId, 'fact', id, row.status, factIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind:
-			row.status === 'deleted'
-				? 'fact.delete'
-				: row.status === 'superseded'
-					? 'fact.supersede'
-					: 'fact.update',
-		itemType: 'fact',
-		itemId: id,
-		payload: { item: rowToFact(row) }
+		const row = db
+			.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
+			.get(id, conversationId) as FactRow;
+		syncSessionIndex(db, conversationId, 'fact', id, row.status, factIndexText(row));
+		appendSessionMemoryLog(db, conversationId, {
+			eventKind:
+				row.status === 'deleted'
+					? 'fact.delete'
+					: row.status === 'superseded'
+						? 'fact.supersede'
+						: 'fact.update',
+			itemType: 'fact',
+			itemId: id,
+			payload: { item: rowToFact(row) }
+		});
+		// Re-derive the active set: deleting/editing a fact can promote a previously
+		// superseded sibling (e.g. reverting the observation that overrode it).
+		consolidateFactGroup(db, conversationId, row.entity_id, row.predicate);
+		return rowToFact(db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow);
 	});
-	return rowToFact(row);
+	return tx();
 }
 
 export function updateDecision(
@@ -1212,6 +1315,10 @@ export function revertPatch(
 			skipped++;
 			continue;
 		}
+		// Reverting deletes the rows this patch created (appending delete events).
+		// Consolidation re-derives the active set from the surviving observations,
+		// so a fact another patch also observed simply stays — no reference
+		// counting needed here.
 		const ok = deleteItem(conversationId, item.itemType, item.itemId);
 		if (ok) reverted++;
 		else skipped++;
@@ -2248,7 +2355,13 @@ function applySessionMemoryLogProjection(
 		if (item) upsertEventProjection(db, item);
 	} else if (row.item_type === 'fact') {
 		const item = record.item as MemoryFact | undefined;
-		if (item) upsertFactProjection(db, item);
+		if (item) {
+			upsertFactProjection(db, item);
+			// Re-derive the active set from the stream as it replays. Supersede /
+			// dedupe is not stored on events, so a rebuild from the surviving
+			// observations always yields the correct active facts.
+			consolidateFactGroup(db, item.conversationId, item.entityId, item.predicate);
+		}
 	} else if (row.item_type === 'decision') {
 		const item = record.item as MemoryDecision | undefined;
 		if (item) upsertDecisionProjection(db, item);
@@ -2360,9 +2473,9 @@ function upsertFactProjection(db: Database.Database, item: MemoryFact): void {
 	db.prepare(
 		`INSERT OR REPLACE INTO memory_facts(
 		   id, conversation_id, entity_id, predicate, value_json, status, visibility,
-		   confidence, source_event_id, source_message_id, supersedes_fact_id, created_at,
-		   updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		   confidence, source_event_id, source_message_id, supersedes_fact_id,
+		   pinned, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		item.id,
 		item.conversationId,
@@ -2375,6 +2488,7 @@ function upsertFactProjection(db: Database.Database, item: MemoryFact): void {
 		item.sourceEventId,
 		item.sourceMessageId,
 		item.supersedesFactId,
+		item.pinned ? 1 : 0,
 		item.createdAt,
 		item.updatedAt
 	);
@@ -2860,6 +2974,7 @@ function rowToFact(row: FactRow): MemoryFact {
 		sourceEventId: row.source_event_id,
 		sourceMessageId: row.source_message_id,
 		supersedesFactId: row.supersedes_fact_id,
+		pinned: Boolean(row.pinned),
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};

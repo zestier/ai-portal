@@ -40,6 +40,16 @@ The portal now includes the full production-oriented foundation described here:
 - custom memory profile persistence and settings UI groundwork for user-authored
   schemas/instructions
 - sqlite-vec availability detection hooks while preserving JSON-vector fallback
+- relevance-conditioned packet injection: facts/entities/events are ranked
+  against the current turn (user message + recent transcript) using the hybrid
+  FTS + vector ranking that powers `memory_search`, with a token-budgeted body,
+  an always-present entity-key index, and a server-side auto-search prestep
+- source-side consolidation as a projection derivation: each observation is one
+  `fact.create` event, and a consolidation pass (run live and on every rebuild)
+  derives the active set — deduping re-observations and superseding single-valued
+  predicates. Supersession is never stored, so revert/rebuild re-derive the
+  correct active facts for free. A `pinned` flag plus confidence/recency form the
+  salience used to rank by durable importance instead of bare `updated_at`
 
 ## Non-goals
 
@@ -329,8 +339,16 @@ Important fields:
 - `confidence`
 - `source_event_id`
 - `supersedes_fact_id`
+- `pinned` — facts that must always survive packet ranking
 - `created_at`
 - `updated_at`
+
+`status` (active vs `superseded`) is **derived**, not authored. Each `addFact`
+appends one `fact.create` event recording a raw observation; supersession and
+dedupe are computed by the projection's consolidation pass (see below), which is
+re-run on every rebuild. Nothing stores "this fact superseded that one", so a
+projection rebuilt from a stream that omits some observations re-derives the
+correct active set on its own.
 
 Status values:
 
@@ -486,6 +504,60 @@ Retrieval should combine:
 - text search
 - eventual vector search
 - explicit visibility constraints
+
+### Relevance-conditioned, token-budgeted assembly
+
+`buildInitialPacket(conversationId, mode, opts)` selects the packet for the
+current turn rather than emitting a flat, recency-ordered dump of every memory
+type. The selection pipeline is:
+
+1. **Relevance ranking.** When `opts.query` is provided (the prompt builder
+   passes the user message plus recent transcript), facts, entities, and events
+   are ranked against a single per-turn `memory_search` call (the same hybrid
+   FTS + vector ranking the tool exposes); its top hits also feed the
+   auto-search section below, so only one search runs per turn. Relevance
+   dominates; salience (for facts) and recency (for events/entities) break ties
+   and order anything the query did not match.
+2. **Salience.** Facts carry a salience derived from `pinned`, confidence, and
+   recency, so important facts outrank merely recent ones even without a query.
+3. **Always-present entity-key index.** Every queryable entity is listed
+   compactly (`entityKey (type) [status] (N facts)`), bounded by a count cap and
+   independent of the body budget. This guarantees the model knows what is
+   queryable by name even when a fact's body is dropped. `entityKey` values are
+   preserved verbatim for downstream consumers.
+4. **Token budget.** Decisions and open loops are pinned as cheap, high-value
+   continuity. The remaining token budget (per-mode, overridable via
+   `opts.tokenBudget`) is spent on relevance-ranked facts, then events, then
+   entity summaries, so total packet size stays bounded regardless of how much
+   total memory exists.
+5. **Auto-search prestep.** The top hits of the per-turn search are injected as
+   an `auto-retrieved for this turn` section (retrieval-augmented), so the "query
+   as needed" goal is met without relying on weak models to self-initiate tool
+   calls.
+
+### Source-side consolidation (event-derived)
+
+The event log is the source of truth; `memory_facts` is a projection rebuilt by
+replaying the log. Consolidation is therefore a **projection derivation**, not a
+stored mutation. `addFact` appends a single `fact.create` event per observation
+and then runs `consolidateFactGroup`, which is also invoked on edits/deletes and
+during replay so the same rule applies live and on rebuild:
+
+- **Single-valued predicates** (`location`, `status`, `state`, `place`,
+  `position`): only the newest observation in the `(entity, predicate)` group
+  stays `active`; older ones become `superseded`.
+- **Other predicates:** the newest observation of each distinct value stays
+  active; older identical observations become `superseded` (dedupe).
+
+Because supersession is never written to the event stream, **revert needs no
+special handling**: `revertPatch` just deletes the rows its patch created
+(appending delete events), and consolidation re-derives the active set from the
+surviving observations — promoting a previously superseded sibling back to active
+where appropriate. A full `rebuildSessionMemoryProjection` yields the identical
+result, since the projection is purely a function of the event stream.
+
+`pinned` (migration `035_memory_fact_salience.sql`) feeds the injector's salience
+score.
 
 ## Tool behavior
 

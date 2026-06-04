@@ -4,6 +4,22 @@ import * as messages from '$lib/server/db/repos/messages';
 import { getMemoryProfile } from './profiles';
 import type { MemoryMode, Message } from '$lib/types';
 
+export interface MemoryEntityIndexEntry {
+	entityId: string;
+	entityKey: string;
+	entityType: string;
+	displayName: string;
+	status: string;
+	factCount: number;
+}
+
+export interface MemoryAutoSearchHit {
+	itemType: string;
+	itemId: string;
+	text: string;
+	score: number;
+}
+
 export interface TurnMemoryPacket {
 	mode: MemoryMode;
 	instructions: string;
@@ -13,6 +29,15 @@ export interface TurnMemoryPacket {
 	facts: memoryRepo.MemoryFact[];
 	entities: memoryRepo.MemoryEntity[];
 	recentEvents: memoryRepo.MemoryEvent[];
+	/** Compact, always-present index of every queryable entity key. */
+	entityIndex: MemoryEntityIndexEntry[];
+	/** Server-side memory_search hits for the current turn (retrieval-augmented). */
+	autoSearchHits: MemoryAutoSearchHit[];
+	/** The turn query used to relevance-rank this packet, when conditioned. */
+	relevanceQuery: string | null;
+	/** id -> entityKey for every entity, so rendering preserves keys even when
+	 *  an entity's full summary is dropped from the budgeted packet. */
+	entityKeyById: Record<string, string>;
 	toolGuidance: {
 		mandatory: boolean;
 		availableTools: string[];
@@ -70,20 +95,155 @@ export function isEnabled(mode: MemoryMode): boolean {
 	return mode !== 'off';
 }
 
+export interface BuildInitialPacketOptions {
+	globalMemoryEnabled?: boolean;
+	/** Current turn text (user message + recent transcript) used to relevance-rank. */
+	query?: string;
+	/** Token budget for the variable portion of the packet. */
+	tokenBudget?: number;
+}
+
+const PACKET_TOKEN_BUDGETS: Record<MemoryMode, number> = {
+	off: 0,
+	lightweight: 900,
+	project: 1200,
+	story: 1400,
+	strict: 2000
+};
+
+const AUTO_SEARCH_LIMIT = 8;
+
+function packetTokenBudget(mode: MemoryMode): number {
+	return PACKET_TOKEN_BUDGETS[mode] ?? 1200;
+}
+
+function estimateTokens(text: string): number {
+	return Math.ceil(text.length / 4);
+}
+
+/**
+ * Salience for facts: pinned facts dominate, then confidence and recency. Lets
+ * the injector rank by durable importance instead of bare updated_at.
+ */
+function factSalience(fact: memoryRepo.MemoryFact): number {
+	const pinned = fact.pinned ? 1_000_000 : 0;
+	const recency = fact.updatedAt / 1e13;
+	return pinned + fact.confidence + recency;
+}
+
+function relevanceRank(score: number | undefined, salience: number): number {
+	// Relevance dominates when present; salience breaks ties / orders unmatched.
+	return (score ?? 0) * 1000 + salience;
+}
+
 export function buildInitialPacket(
 	conversationId: string,
 	mode: MemoryMode,
-	opts: { globalMemoryEnabled?: boolean } = {}
+	opts: BuildInitialPacketOptions = {}
 ): TurnMemoryPacket {
-	const entities = memoryRepo.listEntities(conversationId, { limit: mode === 'strict' ? 80 : 40 });
-	const facts = memoryRepo.listFacts(conversationId, { limit: mode === 'strict' ? 120 : 60 });
+	const strict = mode === 'strict';
+	const query = (opts.query ?? '').trim();
+	const budget = opts.tokenBudget ?? packetTokenBudget(mode);
+
+	const entityPool = memoryRepo.listEntities(conversationId, { limit: 500 });
+	const factPool = memoryRepo.listFacts(conversationId, { limit: strict ? 400 : 200 });
+	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
 	const decisions = memoryRepo.listDecisions(conversationId, { limit: 40 });
-	const openLoops = memoryRepo.listOpenLoops(conversationId, {
-		limit: mode === 'strict' ? 80 : 40
-	});
-	const recentEvents = memoryRepo.listEvents(conversationId, {
-		limit: mode === 'strict' ? 50 : 20
-	});
+	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
+
+	const entityKeyById: Record<string, string> = {};
+	for (const entity of entityPool) entityKeyById[entity.id] = entity.entityKey;
+	const keyOf = (id: string | null): string | null => (id ? (entityKeyById[id] ?? null) : null);
+	const factCounts = memoryRepo.entityFactCounts(conversationId);
+
+	// One search per turn powers both relevance ranking and the auto-search
+	// section: scores rank the pools, the top hits are injected verbatim.
+	const searchHits = query
+		? memoryRepo.search(conversationId, { query, limit: Math.max(AUTO_SEARCH_LIMIT, 300) })
+		: [];
+	const scores = new Map<string, number>();
+	for (const hit of searchHits) {
+		scores.set(hit.itemId, Math.max(scores.get(hit.itemId) ?? 0, hit.score ?? 0));
+	}
+
+	const rankedFacts = [...factPool].sort(
+		(a, b) =>
+			relevanceRank(scores.get(b.id), factSalience(b)) -
+			relevanceRank(scores.get(a.id), factSalience(a))
+	);
+	const rankedEvents = [...eventPool].sort(
+		(a, b) =>
+			relevanceRank(scores.get(b.id), b.createdAt / 1e13) -
+			relevanceRank(scores.get(a.id), a.createdAt / 1e13)
+	);
+	const rankedEntities = [...entityPool].sort(
+		(a, b) =>
+			relevanceRank(scores.get(b.id), b.updatedAt / 1e13) -
+			relevanceRank(scores.get(a.id), a.updatedAt / 1e13)
+	);
+
+	// Always-present, compact entity-key index. Bounded by its own count cap
+	// (not the body token budget) so agent-driven recall can always target every
+	// entity by name even when individual fact bodies are dropped from the packet.
+	const entityIndex: MemoryEntityIndexEntry[] = rankedEntities
+		.slice(0, strict ? 200 : 120)
+		.map((entity) => ({
+			entityId: entity.id,
+			entityKey: entity.entityKey,
+			entityType: entity.entityType,
+			displayName: entity.displayName,
+			status: entity.status,
+			factCount: factCounts.get(entity.id) ?? 0
+		}));
+
+	// Decisions and open loops are cheap, high-value continuity: always pinned.
+	// The token budget is spent on the growing body content — relevance-ranked
+	// facts and events plus entity summaries — so the packet stays bounded
+	// regardless of how much total memory exists.
+	let spent = 0;
+
+	const factCap = strict ? 120 : 60;
+	const facts: memoryRepo.MemoryFact[] = [];
+	for (const fact of rankedFacts) {
+		if (facts.length >= factCap) break;
+		const cost = estimateTokens(factLine(fact, keyOf));
+		if (fact.pinned || spent + cost <= budget) {
+			facts.push(fact);
+			spent += cost;
+		}
+	}
+
+	const eventCap = strict ? 50 : 20;
+	const recentEvents: memoryRepo.MemoryEvent[] = [];
+	for (const event of rankedEvents) {
+		if (recentEvents.length >= eventCap) break;
+		const cost = estimateTokens(eventLine(event, keyOf));
+		if (spent + cost <= budget) {
+			recentEvents.push(event);
+			spent += cost;
+		}
+	}
+
+	const entityCap = strict ? 80 : 40;
+	const entities: memoryRepo.MemoryEntity[] = [];
+	for (const entity of rankedEntities) {
+		if (entities.length >= entityCap) break;
+		const cost = estimateTokens(entityLine(entity));
+		if (spent + cost <= budget) {
+			entities.push(entity);
+			spent += cost;
+		}
+	}
+
+	const autoSearchHits: MemoryAutoSearchHit[] = searchHits
+		.slice(0, AUTO_SEARCH_LIMIT)
+		.map((hit) => ({
+			itemType: hit.itemType,
+			itemId: hit.itemId,
+			text: hit.text,
+			score: hit.score ?? 0
+		}));
+
 	return {
 		mode,
 		instructions: memoryInstructions(mode),
@@ -93,6 +253,10 @@ export function buildInitialPacket(
 		decisions,
 		openLoops,
 		recentEvents,
+		entityIndex,
+		autoSearchHits,
+		relevanceQuery: query || null,
+		entityKeyById,
 		toolGuidance: {
 			mandatory: true,
 			availableTools: [
@@ -128,12 +292,15 @@ export function buildPromptWithMemory(params: {
 	globalMemoryEnabled?: boolean;
 	extractorPresent?: boolean;
 }): string {
-	const packet = buildInitialPacket(params.conversationId, params.mode, {
-		globalMemoryEnabled: params.globalMemoryEnabled
-	});
 	const recent = params.includeRecentTranscript
 		? recentTranscript(params.conversationId, params.userMsg.id, 6)
 		: '';
+	// Condition selection (and the auto-search prestep) on the current turn.
+	const query = [params.userMsg.content, recent].filter(Boolean).join('\n').trim();
+	const packet = buildInitialPacket(params.conversationId, params.mode, {
+		globalMemoryEnabled: params.globalMemoryEnabled,
+		query
+	});
 	const writeGuidance = params.extractorPresent
 		? 'A dedicated memory extractor reviews every turn after you respond and records durable memory on your behalf. Do not call memory_propose_patch yourself: writing patches directly duplicates the extractor, blurs responsibilities, and makes a mess of the memory store. Concentrate on answering well and let the extractor capture what to remember. Only use memory_propose_patch if you must correct a specific, concrete memory error.'
 		: 'If you make durable decisions, create tasks/open loops, establish story facts, or change important state, call memory_propose_patch with a structured patch before the final answer when practical.';
@@ -143,7 +310,8 @@ export function buildPromptWithMemory(params: {
 		'</portal_memory_mode>',
 		'',
 		'You are running in a fresh model context for this request. Durable session memory, not hidden chat context, is the source of continuity.',
-		'The packet above is a deliberately small, high-level slice of durable memory — it is not the whole memory store. Treat it as a starting index, not the full picture.',
+		'The packet above is a deliberately small, turn-relevant slice of durable memory selected for your current question — it is not the whole memory store. Treat it as a starting index, not the full picture.',
+		'The entity index lists every entity you can query by name even when its details were not injected. Auto-retrieved memory below was pulled by searching your current message.',
 		'Whenever the answer could depend on details that are missing from or only partially covered by the packet, proactively query the memory tools (memory_search, memory_get_entity, memory_get_open_loops, memory_get_recent_events, and the others) to pull in more before you respond. Prefer querying too often over assuming; querying is cheap, inventing details is not.',
 		'Do not invent older details when memory returns unknown.',
 		writeGuidance,
@@ -680,6 +848,67 @@ function formatMemoryValue(value: unknown): string {
 	return JSON.stringify(value);
 }
 
+function entityLine(entity: memoryRepo.MemoryEntity): string {
+	const status = entity.status && entity.status !== 'active' ? ` [${entity.status}]` : '';
+	const summary = entity.summary ? ` — ${cleanSentence(entity.summary)}` : '';
+	return `- ${entity.entityKey} (${entity.entityType}) "${entity.displayName}"${status}${summary}`;
+}
+
+function entityIndexLine(entry: MemoryEntityIndexEntry): string {
+	const status = entry.status && entry.status !== 'active' ? ` [${entry.status}]` : '';
+	const facts = entry.factCount ? ` (${entry.factCount} facts)` : '';
+	return `- ${entry.entityKey} (${entry.entityType})${status}${facts}`;
+}
+
+function factLine(
+	fact: memoryRepo.MemoryFact,
+	keyOf: (id: string | null) => string | null
+): string {
+	const key = keyOf(fact.entityId);
+	const subject = key ? `${key}.` : '';
+	const meta: string[] = [];
+	if (fact.pinned) meta.push('pinned');
+	if (fact.visibility && fact.visibility !== 'session') meta.push(fact.visibility);
+	if (fact.confidence < 1) meta.push(`conf ${fact.confidence}`);
+	if (fact.status && fact.status !== 'active') meta.push(fact.status);
+	const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
+	return `- ${subject}${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}`;
+}
+
+function decisionLine(decision: memoryRepo.MemoryDecision): string {
+	const status = decision.status && decision.status !== 'active' ? ` [${decision.status}]` : '';
+	const rationale = decision.rationale ? ` — ${cleanSentence(decision.rationale)}` : '';
+	return `- ${decision.subject}: ${decision.decision}${status}${rationale}`;
+}
+
+function loopLine(
+	loop: memoryRepo.MemoryOpenLoop,
+	keyOf: (id: string | null) => string | null
+): string {
+	const related = loop.relatedEntityIds
+		.map((id) => keyOf(id))
+		.filter((key): key is string => Boolean(key));
+	const relatedStr = related.length ? ` [related: ${related.join(', ')}]` : '';
+	const status = loop.status && loop.status !== 'open' ? ` [${loop.status}]` : '';
+	const desc = loop.description ? ` — ${cleanSentence(loop.description)}` : '';
+	return `- (${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`;
+}
+
+function eventLine(
+	event: memoryRepo.MemoryEvent,
+	keyOf: (id: string | null) => string | null
+): string {
+	const actor = keyOf(event.actorEntityId);
+	const target = keyOf(event.targetEntityId);
+	const who = [actor, target].filter(Boolean).join(' -> ');
+	const whoStr = who ? ` [${who}]` : '';
+	const meta: string[] = [];
+	if (event.visibility && event.visibility !== 'session') meta.push(event.visibility);
+	if (event.confidence < 1) meta.push(`conf ${event.confidence}`);
+	const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
+	return `- ${event.eventType}: ${cleanSentence(event.summary)}${whoStr}${metaStr}`;
+}
+
 /**
  * Render a memory packet as compact, human-readable text instead of a raw
  * pretty-printed JSON blob. This strips structural noise (internal ids,
@@ -688,79 +917,53 @@ function formatMemoryValue(value: unknown): string {
  * values downstream consumers must reuse.
  */
 export function renderMemoryPacket(packet: TurnMemoryPacket): string {
-	const entityById = new Map<string, memoryRepo.MemoryEntity>();
-	for (const entity of packet.entities) entityById.set(entity.id, entity);
 	const keyOf = (id: string | null): string | null =>
-		id ? (entityById.get(id)?.entityKey ?? null) : null;
+		id ? (packet.entityKeyById[id] ?? null) : null;
 
 	const lines: string[] = [];
 	lines.push(`mode: ${packet.mode}`);
 	lines.push(`summary: ${packet.summary}`);
+	if (packet.relevanceQuery) {
+		lines.push('selection: relevance-ranked for the current turn');
+	}
 	if (packet.instructions) {
 		lines.push('', 'instructions:', packet.instructions.trim());
 	}
 
 	if (packet.entities.length) {
 		lines.push('', `entities (${packet.entities.length}):`);
-		for (const entity of packet.entities) {
-			const status = entity.status && entity.status !== 'active' ? ` [${entity.status}]` : '';
-			const summary = entity.summary ? ` — ${cleanSentence(entity.summary)}` : '';
-			lines.push(
-				`- ${entity.entityKey} (${entity.entityType}) "${entity.displayName}"${status}${summary}`
-			);
-		}
+		for (const entity of packet.entities) lines.push(entityLine(entity));
+	}
+
+	if (packet.entityIndex.length) {
+		lines.push('', `entity index (${packet.entityIndex.length}) — queryable by name:`);
+		for (const entry of packet.entityIndex) lines.push(entityIndexLine(entry));
 	}
 
 	if (packet.facts.length) {
 		lines.push('', `facts (${packet.facts.length}):`);
-		for (const fact of packet.facts) {
-			const key = keyOf(fact.entityId);
-			const subject = key ? `${key}.` : '';
-			const meta: string[] = [];
-			if (fact.visibility && fact.visibility !== 'session') meta.push(fact.visibility);
-			if (fact.confidence < 1) meta.push(`conf ${fact.confidence}`);
-			if (fact.status && fact.status !== 'active') meta.push(fact.status);
-			const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
-			lines.push(`- ${subject}${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}`);
-		}
+		for (const fact of packet.facts) lines.push(factLine(fact, keyOf));
 	}
 
 	if (packet.decisions.length) {
 		lines.push('', `decisions (${packet.decisions.length}):`);
-		for (const decision of packet.decisions) {
-			const status = decision.status && decision.status !== 'active' ? ` [${decision.status}]` : '';
-			const rationale = decision.rationale ? ` — ${cleanSentence(decision.rationale)}` : '';
-			lines.push(`- ${decision.subject}: ${decision.decision}${status}${rationale}`);
-		}
+		for (const decision of packet.decisions) lines.push(decisionLine(decision));
 	}
 
 	if (packet.openLoops.length) {
 		lines.push('', `open loops (${packet.openLoops.length}):`);
-		for (const loop of packet.openLoops) {
-			const related = loop.relatedEntityIds
-				.map((id) => keyOf(id))
-				.filter((key): key is string => Boolean(key));
-			const relatedStr = related.length ? ` [related: ${related.join(', ')}]` : '';
-			const status = loop.status && loop.status !== 'open' ? ` [${loop.status}]` : '';
-			const desc = loop.description ? ` — ${cleanSentence(loop.description)}` : '';
-			lines.push(
-				`- (${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`
-			);
-		}
+		for (const loop of packet.openLoops) lines.push(loopLine(loop, keyOf));
 	}
 
 	if (packet.recentEvents.length) {
 		lines.push('', `recent events (${packet.recentEvents.length}):`);
-		for (const event of packet.recentEvents) {
-			const actor = keyOf(event.actorEntityId);
-			const target = keyOf(event.targetEntityId);
-			const who = [actor, target].filter(Boolean).join(' -> ');
-			const whoStr = who ? ` [${who}]` : '';
-			const meta: string[] = [];
-			if (event.visibility && event.visibility !== 'session') meta.push(event.visibility);
-			if (event.confidence < 1) meta.push(`conf ${event.confidence}`);
-			const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
-			lines.push(`- ${event.eventType}: ${cleanSentence(event.summary)}${whoStr}${metaStr}`);
+		for (const event of packet.recentEvents) lines.push(eventLine(event, keyOf));
+	}
+
+	if (packet.autoSearchHits.length) {
+		lines.push('', `auto-retrieved for this turn (${packet.autoSearchHits.length}):`);
+		for (const hit of packet.autoSearchHits) {
+			lines.push(`- [${hit.itemType}] ${cleanSentence(hit.text)}`);
 		}
 	}
 

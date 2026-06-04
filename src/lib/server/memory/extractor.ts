@@ -443,7 +443,19 @@ function canonicalizeEntityKeys(
 	const existingByTypedName = new Map<string, string>();
 	const existingByName = new Map<string, string | null>();
 	const existingByKeyTail = new Map<string, string | null>();
-	for (const entity of initialPacket?.entities ?? []) {
+	const knownEntities = [
+		...(initialPacket?.entities ?? []).map((entity) => ({
+			entityKey: entity.entityKey,
+			entityType: entity.entityType,
+			displayName: entity.displayName
+		})),
+		...(initialPacket?.entityIndex ?? []).map((entry) => ({
+			entityKey: entry.entityKey,
+			entityType: entry.entityType,
+			displayName: entry.displayName
+		}))
+	];
+	for (const entity of knownEntities) {
 		addAlias(aliases, entity.entityKey, entity.entityKey);
 		const typedName = typedNameKey(entity.entityType, entity.displayName);
 		if (typedName) existingByTypedName.set(typedName, entity.entityKey);

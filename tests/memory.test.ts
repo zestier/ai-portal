@@ -923,4 +923,633 @@ describe('memory-backed sessions', () => {
 		expect(headRefs[0].source_key).toBe(a1.id);
 		expect(headRefs[0].target_event_id).toBe(events[events.length - 1].id);
 	});
+
+	it('conditions packet selection on the current turn and bounds it by a token budget', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'budget', workdir: '/tmp', model: null });
+
+		const facts = [];
+		for (let i = 0; i < 40; i++) {
+			facts.push({
+				entityKey: 'topic.alpha',
+				predicate: `note_${i}`,
+				value: `routine filler logistics detail number ${i} about supply scheduling`
+			});
+		}
+		facts.push({
+			entityKey: 'topic.alpha',
+			predicate: 'secret',
+			value: 'the frostfang relic is hidden in the northern vault'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'topic.alpha', entityType: 'topic', displayName: 'Alpha' }],
+				facts
+			}
+		});
+
+		const recencyPacket = buildInitialPacket(conv.id, 'project', { tokenBudget: 200 });
+		expect(recencyPacket.relevanceQuery).toBeNull();
+
+		// Relevance-conditioned selection pulls the matching fact into the bounded packet.
+		const relevantPacket = buildInitialPacket(conv.id, 'project', {
+			query: 'frostfang relic northern vault',
+			tokenBudget: 200
+		});
+		expect(relevantPacket.relevanceQuery).toContain('frostfang');
+		expect(relevantPacket.facts.map((fact) => String(fact.value)).join(' ')).toContain('frostfang');
+
+		// The packet stays bounded: a tiny budget yields fewer facts than a large one,
+		// and never the entire fact set regardless of how much memory exists.
+		const largePacket = buildInitialPacket(conv.id, 'project', { tokenBudget: 6000 });
+		expect(relevantPacket.facts.length).toBeLessThan(41);
+		expect(largePacket.facts.length).toBeGreaterThan(relevantPacket.facts.length);
+		expect(renderMemoryPacket(relevantPacket).length).toBeLessThan(
+			renderMemoryPacket(largePacket).length
+		);
+	});
+
+	it('always renders an entity-key index so agent-driven recall can target by name', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'index', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' },
+					{ entityKey: 'object.lantern', entityType: 'object', displayName: 'Lantern' }
+				],
+				facts: [
+					{ entityKey: 'character.mara', predicate: 'mood', value: 'wary' },
+					{ entityKey: 'object.lantern', predicate: 'fuel', value: 'half' }
+				]
+			}
+		});
+
+		// Even with a budget so small that no fact bodies survive, the entity index
+		// must still name every queryable entity by key.
+		const packet = buildInitialPacket(conv.id, 'story', { tokenBudget: 1 });
+		expect(packet.facts).toHaveLength(0);
+		expect(packet.entityIndex.map((entry) => entry.entityKey)).toEqual(
+			expect.arrayContaining(['character.mara', 'object.lantern'])
+		);
+		const rendered = renderMemoryPacket(packet);
+		expect(rendered).toContain('entity index');
+		expect(rendered).toContain('character.mara');
+		expect(rendered).toContain('object.lantern');
+		expect(
+			packet.entityIndex.find((entry) => entry.entityKey === 'character.mara')?.factCount
+		).toBe(1);
+	});
+
+	it('injects auto-search hits for the user message without a model tool call', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'autosearch', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				decisions: [
+					{
+						subject: 'caching',
+						decision: 'Adopt a write-through redis cache for hot lookups.'
+					}
+				]
+			}
+		});
+
+		const userMsg = messages.append(conv.id, {
+			role: 'user',
+			content: 'What did we decide about the redis cache?'
+		});
+		const prompt = buildPromptWithMemory({ conversationId: conv.id, mode: 'project', userMsg });
+		expect(prompt).toContain('auto-retrieved for this turn');
+		expect(prompt).toContain('redis cache');
+
+		const packet = buildInitialPacket(conv.id, 'project', { query: 'redis cache' });
+		expect(packet.autoSearchHits.length).toBeGreaterThan(0);
+		expect(packet.autoSearchHits.map((hit) => hit.text).join('\n')).toContain('redis cache');
+	});
+
+	it('consolidates re-observed facts down to a single active row', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'dedupe', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+
+		// The same fact observed across three separate commits leaves one active
+		// row; the duplicates are superseded by the projection's consolidation
+		// pass (not stored as events), so the injected packet never repeats it.
+		for (let i = 0; i < 3; i++) {
+			commitPatch({
+				conversationId: conv.id,
+				patch: { facts: [{ entityKey: 'character.mara', predicate: 'trait', value: 'loyal' }] }
+			});
+		}
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'superseded' })).toHaveLength(2);
+
+		// Consolidation is a pure projection derivation: a full rebuild from the
+		// event stream yields the same single active fact.
+		memory.rebuildSessionMemoryProjection(conv.id);
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
+	});
+
+	it('revert re-derives the active set from the surviving observations', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'revert-support', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+
+		const first = commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'trait', value: 'loyal' }] }
+		});
+		const second = commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'trait', value: 'loyal' }] }
+		});
+
+		// Two observations of the same fact: one active, one superseded.
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
+
+		// Reverting one observing patch must not lose the fact — the other
+		// observation is promoted back to active by consolidation.
+		memory.revertPatch(conv.id, second.patch.id);
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
+
+		// Reverting the last observation finally removes it.
+		memory.revertPatch(conv.id, first.patch.id);
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(0);
+	});
+
+	it('un-supersedes a single-valued fact when the overriding patch is reverted', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'revert-supersede', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'the cellar' }]
+			}
+		});
+		const moved = commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'the attic' }] }
+		});
+
+		let active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('the attic');
+
+		// Reverting the move restores the prior location as active — the supersede
+		// was never stored, so rebuilding from the surviving observation re-derives
+		// 'the cellar' as the current value.
+		memory.revertPatch(conv.id, moved.patch.id);
+		active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('the cellar');
+	});
+
+	it('supersedes single-valued facts so state does not accumulate', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'supersede', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		memory.addFact(conv.id, { entityId, predicate: 'location', value: 'the cellar' });
+		memory.addFact(conv.id, { entityId, predicate: 'location', value: 'the attic' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('the attic');
+		expect(memory.listFacts(conv.id, { predicate: 'location', status: 'superseded' })).toHaveLength(
+			1
+		);
+	});
+
+	// ---- Fact consolidation: single-valued predicates ----
+
+	it('keeps only the newest value active across a long single-valued chain', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'chain', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		for (const place of ['cellar', 'attic', 'garden', 'tower']) {
+			memory.addFact(conv.id, { entityId, predicate: 'location', value: place });
+		}
+
+		const active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('tower');
+		expect(memory.listFacts(conv.id, { predicate: 'location', status: 'superseded' })).toHaveLength(
+			3
+		);
+	});
+
+	it('treats single-valued predicates case-insensitively', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'case', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		memory.addFact(conv.id, { entityId, predicate: 'Status', value: 'asleep' });
+		memory.addFact(conv.id, { entityId, predicate: 'Status', value: 'awake' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'Status', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('awake');
+	});
+
+	it('consolidates single-valued facts per entity without cross-entity interference', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'per-entity', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' },
+					{ entityKey: 'character.elias', entityType: 'character', displayName: 'Elias' }
+				]
+			}
+		});
+		const mara = memory.getEntity(conv.id, 'character.mara')!.id;
+		const elias = memory.getEntity(conv.id, 'character.elias')!.id;
+
+		memory.addFact(conv.id, { entityId: mara, predicate: 'location', value: 'cellar' });
+		memory.addFact(conv.id, { entityId: elias, predicate: 'location', value: 'study' });
+		memory.addFact(conv.id, { entityId: mara, predicate: 'location', value: 'attic' });
+
+		const maraLoc = memory.listFacts(conv.id, { entityId: mara, predicate: 'location' });
+		const eliasLoc = memory.listFacts(conv.id, { entityId: elias, predicate: 'location' });
+		expect(maraLoc).toHaveLength(1);
+		expect(maraLoc[0].value).toBe('attic');
+		expect(eliasLoc).toHaveLength(1);
+		expect(eliasLoc[0].value).toBe('study');
+	});
+
+	it('consolidates session-scoped single-valued facts among themselves', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'session-scope', workdir: '/tmp', model: null });
+		// entity_id null (session-scoped). 'state' is single-valued.
+		memory.addFact(conv.id, { predicate: 'state', value: 'draft' });
+		memory.addFact(conv.id, { predicate: 'state', value: 'final' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'state', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('final');
+		expect(active[0].entityId).toBeNull();
+	});
+
+	it('removes superseded facts from the search index', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'index-evict', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		const cellar = memory.addFact(conv.id, {
+			entityId,
+			predicate: 'location',
+			value: 'moonlit_cellar'
+		});
+		expect(
+			memory.search(conv.id, { query: 'moonlit_cellar' }).some((r) => r.itemId === cellar.id)
+		).toBe(true);
+
+		const attic = memory.addFact(conv.id, {
+			entityId,
+			predicate: 'location',
+			value: 'sunny_attic'
+		});
+		// The now-superseded fact id is evicted from the index; the active one remains.
+		expect(
+			memory.search(conv.id, { query: 'moonlit_cellar' }).some((r) => r.itemId === cellar.id)
+		).toBe(false);
+		expect(
+			memory.search(conv.id, { query: 'sunny_attic' }).some((r) => r.itemId === attic.id)
+		).toBe(true);
+	});
+
+	// ---- Fact consolidation: multi-valued predicates (dedupe) ----
+
+	it('keeps distinct values of a multi-valued predicate all active', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'multi', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		memory.addFact(conv.id, { entityId, predicate: 'trait', value: 'loyal' });
+		memory.addFact(conv.id, { entityId, predicate: 'trait', value: 'brave' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'trait', status: 'active' });
+		expect(active.map((f) => f.value).sort()).toEqual(['brave', 'loyal']);
+		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'superseded' })).toHaveLength(0);
+	});
+
+	it('dedupes repeated values but preserves other distinct values', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'multi-mixed', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		memory.addFact(conv.id, { entityId, predicate: 'trait', value: 'loyal' });
+		memory.addFact(conv.id, { entityId, predicate: 'trait', value: 'brave' });
+		memory.addFact(conv.id, { entityId, predicate: 'trait', value: 'loyal' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'trait', status: 'active' });
+		expect(active.map((f) => f.value).sort()).toEqual(['brave', 'loyal']);
+		// Exactly one duplicate 'loyal' observation was superseded.
+		const superseded = memory.listFacts(conv.id, { predicate: 'trait', status: 'superseded' });
+		expect(superseded).toHaveLength(1);
+		expect(superseded[0].value).toBe('loyal');
+	});
+
+	// ---- Event-sourced revert / rebuild ----
+
+	it('rebuilds the identical active set from the event stream for a single-valued chain', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'rebuild-sv', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+		for (const place of ['cellar', 'attic', 'garden']) {
+			memory.addFact(conv.id, { entityId, predicate: 'location', value: place });
+		}
+
+		const before = memory
+			.listFacts(conv.id, { predicate: 'location', status: 'active' })
+			.map((f) => f.value);
+		memory.rebuildSessionMemoryProjection(conv.id);
+		const after = memory
+			.listFacts(conv.id, { predicate: 'location', status: 'active' })
+			.map((f) => f.value);
+		expect(after).toEqual(before);
+		expect(after).toEqual(['garden']);
+	});
+
+	it('rebuilds the identical active set for distinct multi-valued facts', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'rebuild-mv', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [
+					{ entityKey: 'character.mara', predicate: 'trait', value: 'loyal' },
+					{ entityKey: 'character.mara', predicate: 'trait', value: 'brave' }
+				]
+			}
+		});
+
+		memory.rebuildSessionMemoryProjection(conv.id);
+		const active = memory.listFacts(conv.id, { predicate: 'trait', status: 'active' });
+		expect(active.map((f) => f.value).sort()).toEqual(['brave', 'loyal']);
+	});
+
+	it('reverting a middle patch of a single-valued chain re-derives the newest survivor', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'revert-middle', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'cellar' }]
+			}
+		});
+		const middle = commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'attic' }] }
+		});
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'garden' }] }
+		});
+
+		// Reverting the middle observation leaves cellar + garden; garden is newest.
+		memory.revertPatch(conv.id, middle.patch.id);
+		const active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('garden');
+	});
+
+	it('reverting the newest single-valued observation restores the prior value', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'revert-newest', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'cellar' }]
+			}
+		});
+		const newest = commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'attic' }] }
+		});
+
+		memory.revertPatch(conv.id, newest.patch.id);
+		const active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('cellar');
+	});
+
+	// ---- Packet injection: budget, pinning, salience ----
+
+	it('never injects superseded facts into the packet', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'no-superseded', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'cellar' }]
+			}
+		});
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'attic' }] }
+		});
+
+		const packet = buildInitialPacket(conv.id, 'story', { tokenBudget: 6000 });
+		const locations = packet.facts.filter((f) => f.predicate === 'location');
+		expect(locations).toHaveLength(1);
+		expect(locations[0].value).toBe('attic');
+		expect(packet.facts.every((f) => f.status === 'active')).toBe(true);
+	});
+
+	it('always injects pinned facts even under a tiny budget, and renders them', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'pinned', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+		memory.addFact(conv.id, {
+			entityId,
+			predicate: 'oath',
+			value: 'never to betray the guild',
+			pinned: true
+		});
+		// A non-pinned filler fact that the budget should exclude.
+		memory.addFact(conv.id, { entityId, predicate: 'note', value: 'idle background detail' });
+
+		const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 1 });
+		expect(packet.facts.some((f) => f.predicate === 'oath' && f.pinned)).toBe(true);
+		expect(packet.facts.some((f) => f.predicate === 'note')).toBe(false);
+		expect(renderMemoryPacket(packet)).toContain('oath = never to betray the guild (pinned)');
+	});
+
+	it('ranks pinned facts ahead of merely recent ones without a query', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'pin-rank', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+		memory.addFact(conv.id, { entityId, predicate: 'oath', value: 'guild loyalty', pinned: true });
+		// Newer, unpinned fact added afterwards.
+		memory.addFact(conv.id, { entityId, predicate: 'mood', value: 'restless' });
+
+		const packet = buildInitialPacket(conv.id, 'project');
+		expect(packet.relevanceQuery).toBeNull();
+		expect(packet.facts[0].predicate).toBe('oath');
+	});
+
+	it('always includes decisions and open loops regardless of token budget', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'continuity', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				decisions: [{ subject: 'engine', decision: 'Use a fresh context per request.' }],
+				openLoops: [{ loopType: 'task', title: 'Wire up the salience ranker' }]
+			}
+		});
+
+		const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 1 });
+		expect(packet.decisions).toHaveLength(1);
+		expect(packet.openLoops).toHaveLength(1);
+		const rendered = renderMemoryPacket(packet);
+		expect(rendered).toContain('Use a fresh context per request.');
+		expect(rendered).toContain('Wire up the salience ranker');
+	});
+
+	it('preserves entityKey prefixes in rendered facts even when the entity summary is dropped', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'key-preserve', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{
+						entityKey: 'character.mara',
+						entityType: 'character',
+						displayName: 'Mara',
+						summary: 'A wary scout with a very long descriptive summary that costs tokens.'
+					}
+				]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+		memory.addFact(conv.id, { entityId, predicate: 'oath', value: 'guild loyalty', pinned: true });
+
+		// Budget 1: the entity summary block is dropped, but the pinned fact stays
+		// and must still render with its reusable entityKey prefix.
+		const packet = buildInitialPacket(conv.id, 'story', { tokenBudget: 1 });
+		expect(packet.entities).toHaveLength(0);
+		const rendered = renderMemoryPacket(packet);
+		expect(rendered).toContain('character.mara.oath = guild loyalty');
+	});
+
+	it('reflects only active facts in the entity-index fact counts', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'index-count', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+		memory.addFact(conv.id, { entityId, predicate: 'location', value: 'cellar' });
+		memory.addFact(conv.id, { entityId, predicate: 'location', value: 'attic' });
+		memory.addFact(conv.id, { entityId, predicate: 'trait', value: 'brave' });
+
+		const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 1 });
+		const entry = packet.entityIndex.find((e) => e.entityKey === 'character.mara');
+		// One active location (attic) + one trait = 2 active facts.
+		expect(entry?.factCount).toBe(2);
+	});
+
+	it('uses a single memory_search call to drive both ranking and auto-search', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'one-search', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				decisions: [{ subject: 'cache', decision: 'Adopt a redis write-through cache.' }]
+			}
+		});
+		const userMsg = messages.append(conv.id, {
+			role: 'user',
+			content: 'remind me about the redis cache decision'
+		});
+
+		const searchSpy = vi.spyOn(memory, 'search');
+		try {
+			buildPromptWithMemory({ conversationId: conv.id, mode: 'project', userMsg });
+			expect(searchSpy).toHaveBeenCalledTimes(1);
+		} finally {
+			searchSpy.mockRestore();
+		}
+	});
 });
