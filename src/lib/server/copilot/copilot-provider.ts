@@ -6,7 +6,6 @@
 // upgrading, audit this file plus sdk-events.ts / interactive-adapter.ts.
 
 import { CopilotClient } from '@github/copilot-sdk';
-import type { Tool as SdkTool } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { createInteractiveCallbacks } from './interactive-adapter';
@@ -28,6 +27,7 @@ import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
 import { buildToolArgsValidator } from '../tools/schema-error';
+import { wrapToolsForStreaming } from './tool-streaming';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 
 // One CopilotClient per portal user. Sharing a single process-wide
@@ -155,6 +155,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	let approveAllTools = opts.approveAllTools === true;
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
 	let sessionWorkspacePath: string | null = null;
+	// Abort signal for the in-flight turn, set at the start of each `send` and
+	// cleared when it ends. Custom tool handlers' streaming context mirrors this
+	// so a cancelled turn stops their incremental emission.
+	let currentTurnSignal: AbortSignal | null = null;
 	const toolPermissionBehavior = new Map<string, 'normal' | 'always-prompt' | 'never-prompt'>();
 
 	const eventAdapter = new SdkEventAdapter({
@@ -222,15 +226,15 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		});
 	}
 
+	// Wrap each portal tool's handler so the SDK runtime — which invokes handlers
+	// with its own `ToolInvocation` (no streaming channel) — still lets custom
+	// tools stream. See `tool-streaming.ts`. `portalTools` is still used directly
+	// below for permission registration and arg validation.
 	const sessionConfig = {
 		model: opts.model,
 		workingDirectory: opts.workingDirectory,
 		streaming: true,
-		// PortalTool carries an optional `ToolStreamContext` 2nd handler arg that
-		// is structurally incompatible with the SDK's `ToolInvocation`; the SDK
-		// path never uses streaming, so cast at this boundary. The portal-typed
-		// `portalTools` is still used directly below for permission/validation.
-		tools: portalTools as unknown as SdkTool[],
+		tools: wrapToolsForStreaming(portalTools, emit, () => currentTurnSignal),
 		onPermissionRequest,
 		onUserInputRequest,
 		onElicitationRequest,
@@ -324,6 +328,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			if (activeQueue) throw new Error('session busy: a turn is already in progress');
 			const q = new AsyncQueue<PortalEvent>();
 			activeQueue = q;
+			currentTurnSignal = signal;
 			eventAdapter.resetTurn();
 			const onAbort = () => {
 				q.push({ type: 'error', code: 'aborted', message: 'Aborted by client.' });
@@ -350,6 +355,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			} finally {
 				signal.removeEventListener('abort', onAbort);
 				if (activeQueue === q) activeQueue = null;
+				if (currentTurnSignal === signal) currentTurnSignal = null;
 				this.lastUsed = Date.now();
 			}
 		},
