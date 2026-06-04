@@ -501,7 +501,8 @@
 				{/if}
 			</form>
 		{:else}
-			<pre class="user-text">{message.content}</pre>
+			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+			<div class="text-part">{@html renderMarkdown(message.content)}</div>
 		{/if}
 	</div>
 </article>
@@ -624,15 +625,6 @@
 	}
 	.body :global(p:last-child) {
 		margin-bottom: 0;
-	}
-	.user-text {
-		background: transparent;
-		border: 0;
-		padding: 0;
-		font-family: var(--font);
-		white-space: pre-wrap;
-		word-break: break-word;
-		font-size: 1em;
 	}
 	.edit-form {
 		display: flex;
