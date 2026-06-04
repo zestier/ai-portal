@@ -519,10 +519,18 @@
 		padding: var(--space-3) var(--space-4);
 		border-radius: var(--radius-lg);
 		border: 1px solid var(--border);
+		border-left-width: 3px;
 		background: var(--surface);
 	}
 	.msg[data-role='user'] {
 		background: var(--surface-2);
+		border-left-color: var(--border);
+	}
+	.msg[data-role='assistant'] {
+		border-left-color: var(--accent);
+	}
+	.msg[data-role='assistant'] .role {
+		color: var(--accent);
 	}
 	.msg[data-role='system'] {
 		background: transparent;
