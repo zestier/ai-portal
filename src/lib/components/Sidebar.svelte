@@ -400,7 +400,7 @@
 			onError={(message) => flashError(message)}
 		/>
 		<div class="top-meta">
-			<span class="count muted">
+			<span class="count muted eyebrow">
 				{active.length} chat{active.length === 1 ? '' : 's'}
 			</span>
 			<button
@@ -417,7 +417,7 @@
 	<section class="tickets" aria-label="Workspace tickets">
 		<div class="tickets-head">
 			<button
-				class="section-toggle tickets-toggle"
+				class="section-toggle tickets-toggle eyebrow"
 				aria-expanded={ticketsOpen}
 				aria-controls="workspace-ticket-list"
 				onclick={toggleTickets}
@@ -628,7 +628,7 @@
 
 		{#if archived.length > 0}
 			<button
-				class="section-toggle"
+				class="section-toggle eyebrow"
 				aria-expanded={archivedOpen}
 				onclick={() => (archivedOpen = !archivedOpen)}
 			>
@@ -930,8 +930,6 @@
 	}
 	.count {
 		font-size: var(--fs-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 	}
 	.select-toggle.active {
 		color: var(--accent);
@@ -954,9 +952,6 @@
 		background: transparent;
 		border: 0;
 		color: var(--text-muted);
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		padding: 0.75rem 0.5rem 0.25rem;
 		cursor: pointer;
 		text-align: left;

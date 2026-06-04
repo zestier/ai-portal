@@ -345,13 +345,6 @@
 		margin-bottom: var(--space-2);
 		font-size: var(--fs-md);
 	}
-	.eyebrow {
-		color: var(--text-muted);
-		font-size: var(--fs-xs);
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
 	.template-list {
 		display: grid;
 		gap: var(--space-2);

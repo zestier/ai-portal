@@ -749,7 +749,9 @@
 							<li class="grant-row">
 								<div class="grant-row-main">
 									<div class="grant-row-title">
-										<span class="decision-tag {g.decision}">{decisionLabel(g.decision)}</span>
+										<span class="decision-tag eyebrow {g.decision}"
+											>{decisionLabel(g.decision)}</span
+										>
 										<code class="tool">{g.tool}</code>
 										<span class="kind">{g.permissionKind ?? 'any kind'}</span>
 										<span class="source-tag" class:seed={g.source === 'seed'}
@@ -1069,9 +1071,6 @@
 		margin-bottom: 0.45rem;
 	}
 	.decision-tag {
-		font-size: 0.75em;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 		padding: 0.1rem 0.4rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--border);

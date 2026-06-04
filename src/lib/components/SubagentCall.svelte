@@ -337,9 +337,10 @@
 		border-color: var(--accent, #7c5cff);
 	}
 	.status {
-		font-size: var(--fs-xs);
+		font-size: var(--eyebrow-fs);
+		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--eyebrow-ls);
 		color: var(--text-muted);
 	}
 	.status-ok {
@@ -374,9 +375,10 @@
 		padding-top: 0;
 	}
 	.label {
-		font-size: 0.7em;
+		font-size: var(--eyebrow-fs);
+		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--eyebrow-ls);
 		color: var(--text-muted);
 		margin-bottom: 0.3rem;
 	}

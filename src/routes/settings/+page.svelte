@@ -121,11 +121,6 @@
 	}
 	.eyebrow {
 		margin: 0 0 0.25rem;
-		color: var(--text-muted);
-		font-size: 0.75rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 	}
 	.auth-pill {
 		border: 1px solid var(--border);

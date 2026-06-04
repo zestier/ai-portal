@@ -102,30 +102,30 @@
 			<dl class="meta">
 				{#if input.provider}
 					<div>
-						<dt>Provider</dt>
+						<dt class="eyebrow">Provider</dt>
 						<dd>{input.provider}</dd>
 					</div>
 				{/if}
 				{#if input.model}
 					<div>
-						<dt>Model</dt>
+						<dt class="eyebrow">Model</dt>
 						<dd>{input.model}</dd>
 					</div>
 				{/if}
 				{#if input.mode}
 					<div>
-						<dt>Mode</dt>
+						<dt class="eyebrow">Mode</dt>
 						<dd>{input.mode}</dd>
 					</div>
 				{/if}
 				{#if input.memoryMode}
 					<div>
-						<dt>Memory</dt>
+						<dt class="eyebrow">Memory</dt>
 						<dd>{input.memoryMode}</dd>
 					</div>
 				{/if}
 				<div>
-					<dt>Prelude</dt>
+					<dt class="eyebrow">Prelude</dt>
 					<dd>{hasPrelude ? 'applied' : 'none'}</dd>
 				</div>
 			</dl>
@@ -146,7 +146,7 @@
 				<div class="prior">
 					{#each input.initialMessages as m, i (i)}
 						<div class="prior-msg">
-							<span class="prior-role">{m.role}</span>
+							<span class="prior-role eyebrow">{m.role}</span>
 							<pre class="dump">{m.content}</pre>
 						</div>
 					{/each}
@@ -192,11 +192,6 @@
 	}
 	.eyebrow {
 		margin: 0;
-		color: var(--text-muted);
-		font-size: var(--fs-xs);
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 	}
 	.small {
 		font-size: var(--fs-sm);
@@ -214,10 +209,6 @@
 	}
 	.meta dt {
 		margin: 0;
-		font-size: var(--fs-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-muted);
 	}
 	.meta dd {
 		margin: 0;
@@ -245,13 +236,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-1);
-	}
-	.prior-role {
-		font-size: var(--fs-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-muted);
-		font-weight: 600;
 	}
 	.err {
 		margin: var(--space-2) 0 0;

@@ -140,16 +140,16 @@
 					</div>
 					<dl>
 						<div>
-							<dt>Auth</dt>
+							<dt class="eyebrow">Auth</dt>
 							<dd>{authLabel(provider.auth)}</dd>
 						</div>
 						<div>
-							<dt>Models</dt>
+							<dt class="eyebrow">Models</dt>
 							<dd>{modelAvailability(provider)}</dd>
 						</div>
 						{#if provider.auth.statusMessage}
 							<div>
-								<dt>Status</dt>
+								<dt class="eyebrow">Status</dt>
 								<dd>{provider.auth.statusMessage}</dd>
 							</div>
 						{/if}
@@ -400,12 +400,6 @@
 	dl > div {
 		display: grid;
 		gap: 0.15rem;
-	}
-	dt {
-		color: var(--text-muted);
-		font-size: 0.75em;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 	dd {
 		margin: 0;

@@ -317,7 +317,7 @@
 </script>
 
 <article class="msg" data-role={message.role}>
-	<header>
+	<header class="eyebrow">
 		<span class="role">{message.role}</span>
 		{#if message.status !== 'complete' && message.status !== 'streaming'}
 			<span class="status muted">({message.status})</span>
@@ -539,10 +539,6 @@
 		opacity: 0.85;
 	}
 	header {
-		font-size: var(--fs-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-muted);
 		margin-bottom: var(--space-2);
 		display: flex;
 		align-items: center;

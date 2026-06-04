@@ -10,6 +10,7 @@
      - elevation:          --shadow-1/2
      - focus:              --focus-ring
      - code surface:       --code-bg, --code-border, --code-fs
+     - eyebrow label:      --eyebrow-fs, --eyebrow-ls (see .eyebrow utility)
    Breakpoints (canonical, document only — CSS vars don't work in @media):
      --bp-sm: 480px, --bp-md: 768px, --bp-lg: 1100px
 */
@@ -76,6 +77,10 @@
 	--code-bg: var(--surface-2);
 	--code-border: var(--border);
 	--code-fs: 0.8125rem;
+
+	/* eyebrow / section label (uppercase small-caps) */
+	--eyebrow-fs: var(--fs-xs);
+	--eyebrow-ls: 0.06em;
 
 	/* fonts */
 	--font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -254,6 +259,16 @@ textarea {
 }
 
 .muted {
+	color: var(--text-muted);
+}
+
+/* Uppercase small-caps section label ("eyebrow"). Pair with utility/element
+   selectors for spacing, layout, or color-variant overrides. */
+.eyebrow {
+	font-size: var(--eyebrow-fs);
+	font-weight: 700;
+	letter-spacing: var(--eyebrow-ls);
+	text-transform: uppercase;
 	color: var(--text-muted);
 }
 .error-text {

@@ -115,7 +115,7 @@
 			Rebuild & restart
 		</button>
 		{#if deployStatus !== 'idle'}
-			<span class="status {deployStatus}">{deployStatus}</span>
+			<span class="status eyebrow {deployStatus}">{deployStatus}</span>
 		{/if}
 	</div>
 	{#if deployLog}
@@ -166,9 +166,6 @@
 	}
 	.status {
 		margin-left: 0.75rem;
-		font-size: 0.85em;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 	.status.restarting,
 	.status.running {

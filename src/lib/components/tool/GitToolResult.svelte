@@ -245,10 +245,10 @@
 	}
 	th {
 		color: var(--text-muted);
-		font-size: var(--fs-xs);
-		font-weight: 600;
+		font-size: var(--eyebrow-fs);
+		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--eyebrow-ls);
 	}
 	.num {
 		width: 5rem;
@@ -293,13 +293,6 @@
 		border-bottom: 1px solid var(--border);
 		text-align: left;
 		vertical-align: top;
-	}
-	.trailers th {
-		color: var(--text-muted);
-		font-size: var(--fs-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 	.body {
 		width: 100%;

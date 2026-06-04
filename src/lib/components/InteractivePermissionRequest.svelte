@@ -299,7 +299,7 @@
 				{#if gitCommit.trailers.length > 0}
 					<table class="trailers">
 						<thead>
-							<tr><th>Trailer</th><th>Value</th></tr>
+							<tr><th class="eyebrow">Trailer</th><th class="eyebrow">Value</th></tr>
 						</thead>
 						<tbody>
 							{#each gitCommit.trailers as trailer}
@@ -656,12 +656,6 @@
 		border-top: 1px solid var(--border);
 		text-align: left;
 		vertical-align: top;
-	}
-	.trailers th {
-		color: var(--text-muted);
-		font-size: var(--fs-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 	.expiry {
 		display: flex;

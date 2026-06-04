@@ -162,7 +162,7 @@
 	</summary>
 	<div class="content">
 		<details class="args">
-			<summary class="disclosure">Arguments</summary>
+			<summary class="disclosure eyebrow">Arguments</summary>
 			<pre><code>{toolCall.argsJson}</code></pre>
 		</details>
 
@@ -225,7 +225,7 @@
 				{/each}
 			{/if}
 			<details class="raw">
-				<summary class="disclosure">Raw output</summary>
+				<summary class="disclosure eyebrow">Raw output</summary>
 				<pre><code>{toolCall.resultJson}</code></pre>
 			</details>
 		{/if}
@@ -318,9 +318,6 @@
 	.disclosure {
 		cursor: pointer;
 		list-style: none;
-		font-size: 0.7em;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 		color: var(--text-muted);
 		user-select: none;
 	}

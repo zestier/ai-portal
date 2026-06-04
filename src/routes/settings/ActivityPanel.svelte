@@ -26,7 +26,7 @@
 		<ul class="decision-list">
 			{#each decisions as d (d.id)}
 				<li class="decision-row">
-					<span class="decision-tag {d.decision}">{decisionLabel(d.decision)}</span>
+					<span class="decision-tag eyebrow {d.decision}">{decisionLabel(d.decision)}</span>
 					<code class="tool">{d.tool}</code>
 					{#if d.argsSummary}<span class="args" title={d.argsSummary}>{d.argsSummary}</span>{/if}
 					<span class="meta">
@@ -86,9 +86,6 @@
 		font-size: 0.9em;
 	}
 	.decision-tag {
-		font-size: 0.75em;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 		padding: 0.1rem 0.4rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--border);
