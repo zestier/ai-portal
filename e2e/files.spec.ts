@@ -68,7 +68,7 @@ test('Files tab lists workspace contents and reads a file', async ({ page, reque
 	await expect(page).toHaveURL(`/conversations/${id}?tab=files`);
 	await expect(page.getByRole('button', { name: /hello\.txt/ })).toBeVisible();
 	await page.getByRole('button', { name: /hello\.txt/ }).click();
-	await expect(page.locator('pre.file-view')).toContainText('greetings');
+	await expect(page.locator('.file-view')).toContainText('greetings');
 	await page.reload();
 	await expect(page).toHaveURL(`/conversations/${id}?tab=files`);
 	await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
@@ -124,11 +124,11 @@ test('Files tab ignores stale content responses after rapid selection changes', 
 	await page.getByRole('button', { name: /slow\.txt/ }).click();
 	await slowStarted.promise;
 	await page.getByRole('button', { name: /fresh\.txt/ }).click();
-	await expect(page.locator('pre.file-view')).toContainText('current fresh');
+	await expect(page.locator('.file-view')).toContainText('current fresh');
 
 	releaseSlow.resolve();
-	await expect(page.locator('pre.file-view')).toContainText('current fresh');
-	await expect(page.locator('pre.file-view')).not.toContainText('stale slow');
+	await expect(page.locator('.file-view')).toContainText('current fresh');
+	await expect(page.locator('.file-view')).not.toContainText('stale slow');
 });
 
 test('Files tab reports git status when workspace is a repo', async ({ request }) => {
@@ -312,4 +312,38 @@ test('Changes tab ignores stale diff responses after rapid selection changes', a
 	await expect(page.locator('.header code.path')).toHaveText('pkg/mod.txt');
 	await expect(page.locator('.diff')).toContainText('gamma');
 	await expect(page.locator('.diff')).not.toContainText('STALE');
+});
+
+test('Review comments on file lines can be sent to the chat composer', async ({
+	page,
+	request
+}) => {
+	const workdir = createWorkdir();
+	const { id } = await createConversation(request, workdir);
+	writeFileSync(join(workdir, 'review.txt'), 'first line\nsecond line\n');
+
+	await page.goto(`/conversations/${id}`);
+	await page.getByRole('tab', { name: 'Files' }).click();
+	await page.getByRole('button', { name: /review\.txt/ }).click();
+	await expect(page.locator('.file-view')).toContainText('first line');
+
+	// Attach a comment to the first line via its per-line affordance.
+	const firstLine = page.locator('.file-line').first();
+	await firstLine.locator('.comment-add').click();
+	const draft = page.locator('.review-draft');
+	await expect(draft).toBeVisible();
+	await expect(draft.locator('.loc')).toContainText('review.txt:1');
+	await draft.locator('textarea.review-input').fill('Please rename this variable.');
+	await draft.getByRole('button', { name: 'Add comment' }).click();
+
+	// The review drawer summarises the pending comment.
+	const bar = page.locator('.review-bar');
+	await expect(bar).toContainText('1 review comment');
+
+	// Send the assembled review to the chat composer.
+	await bar.getByRole('button', { name: 'Send to chat' }).click();
+	await expect(page).toHaveURL(`/conversations/${id}`);
+	const composer = page.locator('.composer textarea');
+	await expect(composer).toHaveValue(/Please rename this variable\./);
+	await expect(composer).toHaveValue(/review\.txt/);
 });

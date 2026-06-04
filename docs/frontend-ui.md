@@ -109,6 +109,26 @@ All paths are constrained to the workspace root realpath; symlinks that
 escape are rejected. `git` is spawned with `shell: false`, hard timeouts,
 and output size caps.
 
+#### Code review comments
+
+The right pane is _commentable_: hovering any line in the file content view,
+a change diff, or a commit diff reveals a `+` affordance that opens an inline
+feedback box for that exact line. Saved comments accumulate in a review drawer
+at the bottom of the pane (grouped, removable, with a count). **Send to chat**
+assembles them into a Markdown review message, drops it into the chat
+composer, and switches back to the Chat tab so the user can edit and send it
+to the agent — the human-review counterpart to the agent's own edits.
+
+The draft review lives in a conversation-scoped module store
+(`src/lib/client/review.svelte.ts`) rather than component state, because the
+`FileBrowser` and `Chat` components mount/unmount as the user switches tabs;
+the store survives the switch and is the hand-off channel to the composer.
+The Markdown assembly is a pure, unit-tested helper
+(`src/lib/client/review-format.ts`). `DiffView.svelte` exposes opt-in
+`commentable` / `onLineClick` / `commentedKeys` props; its other call sites
+(chat messages, tool results) leave them off and are unchanged.
+
+
 ### `InteractiveRequestDialog.svelte`
 
 Modal-ish inline card that handles every interactive-request kind the

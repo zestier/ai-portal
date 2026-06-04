@@ -25,6 +25,7 @@
 		CHAT_STREAM_STALL_TIMEOUT_MS,
 		streamRefreshAction
 	} from '$lib/client/chat-stream-recovery';
+	import { reviewStore } from '$lib/client/review.svelte';
 
 	const INTERACTIVE_REVEAL_DELAY_MS = 150;
 
@@ -251,6 +252,20 @@
 	});
 
 	let composer = $state(untrack(() => initialComposer));
+
+	// Pull in a code review assembled in the file browser. The review store is
+	// the hand-off channel between the (sibling) FileBrowser and this composer,
+	// which can't share component state because they mount/unmount per tab.
+	$effect(() => {
+		const pending = reviewStore.composerInsert;
+		if (pending == null) return;
+		untrack(() => {
+			reviewStore.takeComposerInsert();
+			const existing = composer.replace(/\s+$/u, '');
+			composer = existing ? `${existing}\n\n${pending}` : pending;
+		});
+	});
+
 	let streaming = $state(false);
 	// Queue of outstanding permission requests. The SDK can fire multiple
 	// `onPermissionRequest` callbacks concurrently (parallel tool calls),

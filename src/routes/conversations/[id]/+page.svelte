@@ -101,7 +101,11 @@
 		</div>
 	{:else if tab !== 'chat'}
 		<div class="tab-body">
-			<FileBrowser conversationId={data.conversation.id} pane={tab} />
+			<FileBrowser
+				conversationId={data.conversation.id}
+				pane={tab}
+				onSendToChat={() => selectTab('chat')}
+			/>
 		</div>
 	{/if}
 </div>

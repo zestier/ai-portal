@@ -4,15 +4,43 @@
 		MAX_RENDERABLE_DIFF_CHARS,
 		isRenderableDiff,
 		parseUnifiedDiff,
-		diffStats
+		diffStats,
+		type DiffLine
 	} from '$lib/client/diff-parser';
+	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
 
 	let {
 		path = 'diff',
 		diff,
 		showLineNumbers = true,
-		collapsible = false
-	}: { path?: string; diff: string; showLineNumbers?: boolean; collapsible?: boolean } = $props();
+		collapsible = false,
+		commentable = false,
+		commentSha = null,
+		commentedKeys,
+		onLineClick
+	}: {
+		path?: string;
+		diff: string;
+		showLineNumbers?: boolean;
+		collapsible?: boolean;
+		/** When true, each code line gets an affordance to attach a review comment. */
+		commentable?: boolean;
+		/** Commit SHA, when the diff is for a specific commit. */
+		commentSha?: string | null;
+		/** Keys (see review-format `lineKey`) of lines that already have a comment. */
+		commentedKeys?: Set<string>;
+		onLineClick?: (location: ReviewLocation) => void;
+	} = $props();
+
+	function lineLocation(chunkPath: string, l: DiffLine): ReviewLocation | null {
+		if (l.kind === 'add' || l.kind === 'context') {
+			return { path: chunkPath, side: 'new', lineNo: l.newNo, lineText: l.text, sha: commentSha };
+		}
+		if (l.kind === 'del') {
+			return { path: chunkPath, side: 'old', lineNo: l.oldNo, lineText: l.text, sha: commentSha };
+		}
+		return null;
+	}
 
 	const chunks = $derived.by(() => {
 		if (!isRenderableDiff(diff)) return [];
@@ -74,6 +102,7 @@
 					<div
 						class="lines"
 						class:no-gutter={!showLineNumbers}
+						class:commentable
 						role="table"
 						aria-label="diff lines"
 					>
@@ -84,7 +113,27 @@
 									     line ranges (e.g. for diffs synthesized from edit args
 									     without full-file context). -->
 								{:else}
-									<div class={'line ' + l.kind} role="row">
+									{@const loc = commentable ? lineLocation(chunk.path, l) : null}
+									{@const commented =
+										loc != null && commentedKeys ? commentedKeys.has(lineKey(loc)) : false}
+									<div class={'line ' + l.kind} class:commented role="row">
+										{#if commentable}
+											{#if loc && loc.lineNo != null}
+												<button
+													type="button"
+													class="comment-add"
+													title={commented ? 'Line has a review comment' : 'Add review comment'}
+													aria-label={commented
+														? 'Line has a review comment'
+														: 'Add review comment'}
+													onclick={() => onLineClick?.(loc)}
+												>
+													{commented ? '●' : '+'}
+												</button>
+											{:else}
+												<span class="comment-add placeholder" aria-hidden="true"></span>
+											{/if}
+										{/if}
 										{#if showLineNumbers}
 											<span class="gutter" role="cell" aria-label="line number"
 												>{fmtNo(l.newNo ?? l.oldNo)}</span
@@ -219,6 +268,46 @@
 	}
 	.no-gutter .line {
 		grid-template-columns: 1em max-content;
+	}
+	.commentable .line {
+		grid-template-columns: 1.5em 3.5em 1em max-content;
+	}
+	.commentable.no-gutter .line {
+		grid-template-columns: 1.5em 1em max-content;
+	}
+	.comment-add {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5em;
+		align-self: stretch;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--accent);
+		font: inherit;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0;
+		user-select: none;
+		transition: opacity 0.1s ease;
+	}
+	.comment-add.placeholder {
+		cursor: default;
+	}
+	.line:hover .comment-add {
+		opacity: 0.7;
+	}
+	.comment-add:hover {
+		opacity: 1;
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	}
+	.line.commented .comment-add {
+		opacity: 1;
+		color: var(--accent);
+	}
+	.line.commented .gutter {
+		box-shadow: inset 2px 0 0 var(--accent);
 	}
 	.gutter {
 		text-align: right;

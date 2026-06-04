@@ -13,9 +13,15 @@
 		ChangeStatus
 	} from '$lib/client/file-browser';
 	import { STATUS_LABEL, STATUS_COLOR } from '$lib/client/file-browser';
+	import { reviewStore } from '$lib/client/review.svelte';
+	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
 
 	type Pane = 'changes' | 'files' | 'commits';
-	let { conversationId, pane = 'changes' }: { conversationId: string; pane?: Pane } = $props();
+	let {
+		conversationId,
+		pane = 'changes',
+		onSendToChat
+	}: { conversationId: string; pane?: Pane; onSendToChat?: () => void } = $props();
 
 	type ViewMode = 'content' | 'diff';
 
@@ -241,6 +247,54 @@
 		if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
 		return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
 	}
+
+	// --- Code review feedback ----------------------------------------------
+	$effect(() => {
+		reviewStore.setConversation(conversationId);
+	});
+
+	let draft = $state<ReviewLocation | null>(null);
+	let draftBody = $state('');
+	let reviewListOpen = $state(false);
+
+	const reviewComments = $derived(reviewStore.comments);
+	const commentedKeys = $derived(reviewStore.commentedKeys);
+
+	const contentLines = $derived(
+		fileData && !fileData.binary && typeof fileData.content === 'string'
+			? fileData.content.replace(/\n$/u, '').split('\n')
+			: []
+	);
+
+	function startComment(location: ReviewLocation) {
+		draft = location;
+		draftBody = '';
+	}
+
+	function cancelComment() {
+		draft = null;
+		draftBody = '';
+	}
+
+	function saveComment() {
+		if (!draft) return;
+		if (reviewStore.add(draft, draftBody)) {
+			draft = null;
+			draftBody = '';
+		}
+	}
+
+	function sendReview() {
+		if (reviewStore.sendToComposer()) {
+			reviewListOpen = false;
+			onSendToChat?.();
+		}
+	}
+
+	function locationSummary(loc: ReviewLocation): string {
+		const where = loc.lineNo == null ? '' : `:${loc.lineNo}`;
+		return `${loc.path}${where}`;
+	}
 </script>
 
 <div class="browser">
@@ -315,7 +369,14 @@
 						</div>
 						<div class="commit-diff">
 							{#if commitFilePath}
-								<DiffView path={commitFilePath} diff={commitFileDiff || 'Loading…'} />
+								<DiffView
+									path={commitFilePath}
+									diff={commitFileDiff || 'Loading…'}
+									commentable
+									commentSha={selectedSha}
+									{commentedKeys}
+									onLineClick={startComment}
+								/>
 							{:else}
 								<div class="placeholder">Select a file to see its diff.</div>
 							{/if}
@@ -376,7 +437,36 @@
 							Binary file ({fmtSize((fileData as { size?: number }).size ?? null)}).
 						</div>
 					{:else if fileData}
-						<pre class="file-view">{fileData.content}</pre>
+						{#if contentLines.length > 0}
+							<div class="file-view commentable" role="table" aria-label="file lines">
+								{#each contentLines as text, idx (idx)}
+									{@const lineNo = idx + 1}
+									{@const loc = {
+										path: selectedPath,
+										side: 'file' as const,
+										lineNo,
+										lineText: text,
+										sha: null
+									}}
+									{@const commented = commentedKeys.has(lineKey(loc))}
+									<div class="file-line" class:commented role="row">
+										<button
+											type="button"
+											class="comment-add"
+											title={commented ? 'Line has a review comment' : 'Add review comment'}
+											aria-label={commented ? 'Line has a review comment' : 'Add review comment'}
+											onclick={() => startComment(loc)}
+										>
+											{commented ? '●' : '+'}
+										</button>
+										<span class="gutter" role="cell" aria-label="line number">{lineNo}</span>
+										<span class="text" role="cell">{text}</span>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<pre class="file-view">{fileData.content}</pre>
+						{/if}
 						{#if fileData.truncated}
 							<div class="muted small truncated-note">
 								File truncated at 1 MiB (real size: {fmtSize(fileData.size)}).
@@ -388,13 +478,95 @@
 				{:else if diffError}
 					<div class="error">{diffError}</div>
 				{:else if diffText}
-					<DiffView path={selectedPath} diff={diffText} />
+					<DiffView
+						path={selectedPath}
+						diff={diffText}
+						commentable
+						{commentedKeys}
+						onLineClick={startComment}
+					/>
 				{:else}
 					<div class="placeholder">No changes for this file.</div>
 				{/if}
 			</div>
 		{:else}
 			<div class="placeholder">Select a file or commit to view it.</div>
+		{/if}
+
+		{#if draft}
+			<div class="review-draft">
+				<div class="review-draft-head">
+					<span class="muted small">Review comment on</span>
+					<code class="loc">{locationSummary(draft)}</code>
+				</div>
+				{#if draft.lineText.trim()}
+					<pre class="review-line">{draft.lineText}</pre>
+				{/if}
+				<textarea
+					class="review-input"
+					bind:value={draftBody}
+					rows="3"
+					placeholder="Leave feedback for this line…"
+					onkeydown={(e) => {
+						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+							e.preventDefault();
+							saveComment();
+						} else if (e.key === 'Escape') {
+							e.preventDefault();
+							cancelComment();
+						}
+					}}
+				></textarea>
+				<div class="review-draft-actions">
+					<span class="kbd-hint muted small">⌘/Ctrl+Enter to add</span>
+					<button class="btn ghost" type="button" onclick={cancelComment}>Cancel</button>
+					<button
+						class="btn primary"
+						type="button"
+						disabled={!draftBody.trim()}
+						onclick={saveComment}
+					>
+						Add comment
+					</button>
+				</div>
+			</div>
+		{/if}
+
+		{#if reviewComments.length > 0}
+			<div class="review-bar">
+				<button
+					class="review-summary"
+					type="button"
+					aria-expanded={reviewListOpen}
+					onclick={() => (reviewListOpen = !reviewListOpen)}
+				>
+					<span class="chevron" class:open={reviewListOpen} aria-hidden="true">▸</span>
+					{reviewComments.length} review comment{reviewComments.length === 1 ? '' : 's'}
+				</button>
+				<div class="review-bar-actions">
+					<button class="btn ghost" type="button" onclick={() => reviewStore.clear()}>Clear</button>
+					<button class="btn primary" type="button" onclick={sendReview}>Send to chat</button>
+				</div>
+			</div>
+			{#if reviewListOpen}
+				<div class="review-list">
+					{#each reviewComments as c (c.id)}
+						<div class="review-item">
+							<div class="review-item-head">
+								<code class="loc">{locationSummary(c)}</code>
+								<button
+									class="review-remove"
+									type="button"
+									aria-label="Remove comment"
+									title="Remove comment"
+									onclick={() => reviewStore.remove(c.id)}>×</button
+								>
+							</div>
+							<div class="review-item-body">{c.body}</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 	</div>
 </div>
@@ -558,6 +730,202 @@
 		padding: var(--space-2) var(--space-3);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
+	}
+	.file-view.commentable {
+		padding: var(--space-2) 0;
+		white-space: normal;
+		line-height: 1.45;
+	}
+	.file-line {
+		display: grid;
+		grid-template-columns: 1.5em 3.5em max-content;
+		align-items: baseline;
+		white-space: pre;
+		min-width: 100%;
+		width: max-content;
+	}
+	.file-line .comment-add {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5em;
+		align-self: stretch;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--accent);
+		font: inherit;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0;
+		user-select: none;
+	}
+	.file-line:hover .comment-add {
+		opacity: 0.7;
+	}
+	.file-line .comment-add:hover {
+		opacity: 1;
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	}
+	.file-line.commented .comment-add {
+		opacity: 1;
+	}
+	.file-line .gutter {
+		text-align: right;
+		padding: 0 0.45rem;
+		color: var(--text-muted);
+		user-select: none;
+		font-variant-numeric: tabular-nums;
+	}
+	.file-line.commented .gutter {
+		box-shadow: inset 2px 0 0 var(--accent);
+	}
+	.file-line .text {
+		padding: 0 0.4rem;
+		white-space: pre;
+	}
+	.review-draft {
+		border-top: 1px solid var(--border);
+		background: var(--surface);
+		padding: var(--space-2) var(--space-3);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.review-draft-head {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		flex-wrap: wrap;
+	}
+	.review-draft .loc,
+	.review-item .loc {
+		font-family: var(--mono);
+		font-size: var(--fs-sm);
+		color: var(--accent);
+	}
+	.review-line {
+		margin: 0;
+		padding: var(--space-1) var(--space-2);
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		font-family: var(--mono);
+		font-size: var(--fs-sm);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		max-height: 6em;
+		overflow: auto;
+	}
+	.review-input {
+		width: 100%;
+		resize: vertical;
+		font: inherit;
+		padding: var(--space-2);
+		background: var(--bg);
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+	}
+	.review-input:focus {
+		outline: none;
+		border-color: var(--accent);
+		box-shadow: var(--focus-ring);
+	}
+	.review-draft-actions,
+	.review-bar-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		justify-content: flex-end;
+	}
+	.review-draft-actions .kbd-hint {
+		margin-right: auto;
+	}
+	.btn {
+		font: inherit;
+		padding: var(--space-1) var(--space-3);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border);
+		cursor: pointer;
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.btn.primary {
+		background: var(--accent);
+		color: var(--accent-text);
+		border-color: transparent;
+	}
+	.btn.primary:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+	.btn.ghost {
+		background: transparent;
+	}
+	.btn:hover:not(:disabled) {
+		filter: brightness(1.05);
+	}
+	.review-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+		border-top: 1px solid var(--border);
+		background: var(--surface-2);
+		padding: var(--space-2) var(--space-3);
+	}
+	.review-summary {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+		background: transparent;
+		border: 0;
+		color: var(--text);
+		font: inherit;
+		cursor: pointer;
+	}
+	.review-summary .chevron {
+		transition: transform 0.12s ease;
+	}
+	.review-summary .chevron.open {
+		transform: rotate(90deg);
+	}
+	.review-list {
+		max-height: 14rem;
+		overflow: auto;
+		border-top: 1px solid var(--border);
+		background: var(--surface);
+	}
+	.review-item {
+		padding: var(--space-2) var(--space-3);
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+	.review-item-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+	}
+	.review-remove {
+		background: transparent;
+		border: 0;
+		color: var(--text-muted);
+		cursor: pointer;
+		font-size: 1.1rem;
+		line-height: 1;
+		padding: 0 var(--space-1);
+	}
+	.review-remove:hover {
+		color: var(--danger);
+	}
+	.review-item-body {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font-size: var(--fs-sm);
 	}
 	.placeholder {
 		color: var(--text-muted);
