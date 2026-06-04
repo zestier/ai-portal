@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	writeFileSync,
+	rmSync,
+	mkdirSync,
+	chmodSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -458,6 +466,107 @@ describe('commitChanges', () => {
 					trailers: [{ token: 'Bad Token', value: 'x' }]
 				})
 			).toThrow('invalid trailer token');
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('commitChanges streaming context', () => {
+	function installHook(tmp: string, name: string, body: string) {
+		const hooksDir = join(tmp, '.git', 'hooks');
+		mkdirSync(hooksDir, { recursive: true });
+		const p = join(hooksDir, name);
+		writeFileSync(p, body, { mode: 0o755 });
+		chmodSync(p, 0o755);
+	}
+
+	it('emits coarse progress around staging, commit, and finalize', async () => {
+		const { tmp } = initRepo();
+		try {
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			const progress: string[] = [];
+			const result = await git.commitChanges(
+				tmp,
+				{ paths: 'all', subject: 'progress test' },
+				{ progress: (m) => progress.push(m) }
+			);
+			expect(result.sha).toMatch(/^[0-9a-f]{40}$/);
+			expect(progress).toEqual([
+				'staging changes…',
+				'running git commit (pre-commit / commit-msg hooks)…',
+				'finalizing commit…'
+			]);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it('streams cumulative (replace-not-append) hook output via partial snapshots', async () => {
+		const { tmp } = initRepo();
+		try {
+			installHook(tmp, 'pre-commit', '#!/bin/sh\necho "hook line 1"\necho "hook line 2"\nexit 0\n');
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			const snaps: string[] = [];
+			const result = await git.commitChanges(
+				tmp,
+				{ paths: 'all', subject: 'hook stream' },
+				{ partial: (s) => snaps.push(s) }
+			);
+			expect(result.sha).toMatch(/^[0-9a-f]{40}$/);
+			expect(snaps.length).toBeGreaterThan(0);
+			// Each snapshot is a prefix of the next: the client replaces, never appends.
+			for (let i = 1; i < snaps.length; i++) {
+				expect(snaps[i].startsWith(snaps[i - 1])).toBe(true);
+			}
+			const final = snaps[snaps.length - 1];
+			expect(final).toContain('hook line 1');
+			expect(final).toContain('hook line 2');
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it('SIGKILLs the commit child on abort and rejects without committing', async () => {
+		const { tmp } = initRepo();
+		try {
+			installHook(tmp, 'pre-commit', '#!/bin/sh\nsleep 5\nexit 0\n');
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: tmp }).toString().trim();
+			const snaps: string[] = [];
+			const ac = new AbortController();
+			const start = Date.now();
+			setTimeout(() => ac.abort(), 200);
+			await expect(
+				git.commitChanges(
+					tmp,
+					{ paths: 'all', subject: 'aborted' },
+					{ signal: ac.signal, partial: (s) => snaps.push(s) }
+				)
+			).rejects.toThrow();
+			const elapsed = Date.now() - start;
+			// The 5s hook sleep would otherwise dominate; a kill returns promptly.
+			expect(elapsed).toBeLessThan(4000);
+			// No commit landed and the index was restored (a.txt is dirty again).
+			expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: tmp }).toString().trim()).toBe(
+				before
+			);
+			expect(execFileSync('git', ['status', '--porcelain'], { cwd: tmp }).toString()).toContain(
+				'a.txt'
+			);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it('leaves non-streaming git calls unaffected (no onData/signal)', async () => {
+		const { tmp } = initRepo();
+		try {
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			// No ctx at all: behaves exactly like before, fully buffered.
+			const result = await git.commitChanges(tmp, { paths: 'all', subject: 'no ctx' });
+			expect(result.sha).toMatch(/^[0-9a-f]{40}$/);
+			expect(result.subject).toBe('no ctx');
 		} finally {
 			rmSync(tmp, { recursive: true, force: true });
 		}

@@ -2,7 +2,7 @@ import { ulid } from 'ulid';
 import { loadConfig } from '../config';
 import { log } from '../log';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
-import { buildGitTools, type PortalTool } from '../tools/git';
+import { buildGitTools, type PortalTool, type ToolStreamContext } from '../tools/git';
 import { buildPermissionTools } from '../tools/permissions';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
@@ -542,9 +542,23 @@ export function openOpenAICompatibleSession(
 			});
 			return result;
 		}
+		// Per-call streaming channel bound to this tool call's id. Emits onto the
+		// owned, single-consumer FIFO queue `q`; `tool.call` was already pushed
+		// above and `tool.result` is pushed synchronously after the handler's
+		// `await` returns, so partials always interleave between them. Gated on
+		// `aborted` so a cancelled turn stops fanning out stale chunks.
+		const ctx: ToolStreamContext = {
+			partial(output) {
+				if (!aborted) q.push({ type: 'tool.partial_output', toolCallId: toolCall.id, output });
+			},
+			progress(message) {
+				if (!aborted) q.push({ type: 'tool.progress', toolCallId: toolCall.id, message });
+			},
+			signal: activeAbortController?.signal ?? new AbortController().signal
+		};
 		if (tool.permissionBehavior === 'never-prompt') {
 			try {
-				const output = await tool.handler(parsedArgs.args);
+				const output = await tool.handler(parsedArgs.args, ctx);
 				const summary = outputSummary(output);
 				const result = { ok: true, summary, output };
 				q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: true, summary, output });
@@ -588,7 +602,7 @@ export function openOpenAICompatibleSession(
 			return result;
 		}
 		try {
-			const output = await tool.handler(parsedArgs.args);
+			const output = await tool.handler(parsedArgs.args, ctx);
 			const summary = outputSummary(output);
 			const result = { ok: true, summary, output };
 			q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: true, summary, output });

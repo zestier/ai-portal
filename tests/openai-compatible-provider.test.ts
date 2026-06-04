@@ -1,10 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resetConfigForTests } from '../src/lib/server/config';
 import { openAICompatibleProvider } from '../src/lib/server/providers/openai-compatible-provider';
 import type { ProviderOpenOptions } from '../src/lib/server/providers/provider';
 import type { PortalEvent } from '../src/lib/types';
+import { resolve as resolveInteractive } from '../src/lib/server/runtime/interactive-requests';
 import { setupLocalEnv } from './helpers/env';
 
 const baseOpts: ProviderOpenOptions = {
@@ -627,6 +632,96 @@ describe('openAICompatibleProvider', () => {
 			type: 'message.delta',
 			text: 'after permission'
 		});
+	});
+
+	it('streams progress and partial output from a custom tool via the handler context', async () => {
+		const repo = mkdtempSync(join(tmpdir(), 'portal-commit-stream-'));
+		const g = (args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+		g(['init', '-q', '-b', 'main']);
+		g(['config', 'user.email', 't@example.com']);
+		g(['config', 'user.name', 'T']);
+		g(['config', 'commit.gpgsign', 'false']);
+		writeFileSync(join(repo, 'a.txt'), 'one\n');
+		g(['add', '.']);
+		g(['commit', '-q', '-m', 'init']);
+		// A pre-commit hook that prints incremental output → partial snapshots.
+		const hooksDir = join(repo, '.git', 'hooks');
+		mkdirSync(hooksDir, { recursive: true });
+		const hookPath = join(hooksDir, 'pre-commit');
+		writeFileSync(hookPath, '#!/bin/sh\necho "hook running"\nexit 0\n', { mode: 0o755 });
+		chmodSync(hookPath, 0o755);
+		writeFileSync(join(repo, 'a.txt'), 'one\nchanged\n');
+
+		const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+			void _url;
+			void _init;
+			if (fetchMock.mock.calls.length === 1) {
+				return sseResponse([
+					'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_commit","type":"function","function":{"name":"git_commit","arguments":"{\\"paths\\":\\"all\\",\\"subject\\":\\"streamed commit\\"}"}}]}}]}\n\n',
+					'data: [DONE]\n\n'
+				]);
+			}
+			return sseResponse([
+				'data: {"choices":[{"delta":{"content":"committed"}}]}\n\n',
+				'data: [DONE]\n\n'
+			]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		try {
+			const opts = await persistedOpts({ policy: 'prompt', workingDirectory: repo });
+			const session = await openAICompatibleProvider.openSession(opts);
+
+			// Drive the iterator manually so we can approve the always-prompt
+			// git_commit permission request inline (it blocks the handler).
+			const iter = session
+				.send('commit please', new AbortController().signal)
+				[Symbol.asyncIterator]();
+			const events: PortalEvent[] = [];
+			for (;;) {
+				const { value, done } = await iter.next();
+				if (done) break;
+				events.push(value);
+				if (value.type === 'interactive.request') {
+					resolveInteractive(value.request.requestId, opts.userId, {
+						kind: 'permission',
+						decision: 'allow-once'
+					});
+				}
+			}
+
+			const types = events.map((e) => e.type);
+			const callIdx = types.indexOf('tool.call');
+			const resultIdx = types.indexOf('tool.result');
+			expect(callIdx).toBeGreaterThanOrEqual(0);
+			expect(resultIdx).toBeGreaterThan(callIdx);
+
+			const progress = events.filter((e) => e.type === 'tool.progress');
+			const partials = events.filter((e) => e.type === 'tool.partial_output');
+			expect(progress.length).toBeGreaterThan(0);
+			expect(partials.length).toBeGreaterThan(0);
+			// Streamed events are bound to the originating tool call and interleave
+			// strictly between tool.call and tool.result.
+			for (const ev of [...progress, ...partials]) {
+				expect((ev as { toolCallId: string }).toolCallId).toBe('call_commit');
+				const idx = events.indexOf(ev);
+				expect(idx).toBeGreaterThan(callIdx);
+				expect(idx).toBeLessThan(resultIdx);
+			}
+			expect(progress.map((e) => (e as { message: string }).message)).toContain(
+				'running git commit (pre-commit / commit-msg hooks)…'
+			);
+			expect(partials.some((e) => (e as { output: string }).output.includes('hook running'))).toBe(
+				true
+			);
+			expect(events[resultIdx]).toMatchObject({
+				type: 'tool.result',
+				toolCallId: 'call_commit',
+				ok: true
+			});
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
 	});
 
 	it('keeps mode no-op at the provider API while approve-all remains portal-enforced', async () => {

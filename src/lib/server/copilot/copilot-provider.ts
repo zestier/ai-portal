@@ -6,6 +6,7 @@
 // upgrading, audit this file plus sdk-events.ts / interactive-adapter.ts.
 
 import { CopilotClient } from '@github/copilot-sdk';
+import type { Tool as SdkTool } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { createInteractiveCallbacks } from './interactive-adapter';
@@ -225,14 +226,18 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		model: opts.model,
 		workingDirectory: opts.workingDirectory,
 		streaming: true,
-		tools: portalTools,
+		// PortalTool carries an optional `ToolStreamContext` 2nd handler arg that
+		// is structurally incompatible with the SDK's `ToolInvocation`; the SDK
+		// path never uses streaming, so cast at this boundary. The portal-typed
+		// `portalTools` is still used directly below for permission/validation.
+		tools: portalTools as unknown as SdkTool[],
 		onPermissionRequest,
 		onUserInputRequest,
 		onElicitationRequest,
 		onExitPlanMode,
 		onAutoModeSwitch
 	};
-	for (const tool of sessionConfig.tools) {
+	for (const tool of portalTools) {
 		if (
 			tool.permissionBehavior === 'always-prompt' ||
 			tool.permissionBehavior === 'normal' ||

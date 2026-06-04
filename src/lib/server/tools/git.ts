@@ -16,13 +16,28 @@ import {
 	type DiffTarget
 } from '../git';
 
+// Optional, opt-in streaming channel handed to a PortalTool handler so it can
+// surface incremental feedback while it runs. Both methods reuse the existing
+// ephemeral streaming events (`tool.partial_output` / `tool.progress`) and are
+// no-ops once the turn is aborted. Handlers that don't need streaming simply
+// ignore `ctx` and keep returning `Promise<string>`.
+export interface ToolStreamContext {
+	// Cumulative stdout/stderr snapshot. The client REPLACES (not appends) on each
+	// call, mirroring `tool.partial_output` semantics.
+	partial(output: string): void;
+	// Short human-readable status line.
+	progress(message: string): void;
+	// Mirrors the turn's abort signal.
+	readonly signal: AbortSignal;
+}
+
 export interface PortalTool {
 	name: string;
 	description: string;
 	parameters: Record<string, unknown>;
 	argsSchema?: z.ZodTypeAny;
 	permissionBehavior?: 'normal' | 'always-prompt' | 'never-prompt';
-	handler(args: unknown): Promise<string>;
+	handler(args: unknown, ctx?: ToolStreamContext): Promise<string>;
 }
 
 const TargetKind = z.enum([
@@ -337,9 +352,9 @@ export function buildGitTools(cwd: string): PortalTool[] {
 				required: ['paths', 'subject'],
 				additionalProperties: false
 			},
-			async handler(args) {
+			async handler(args, ctx) {
 				const parsed = GitCommitArgs.parse(args);
-				return JSON.stringify(await commitChanges(cwd, parsed), null, 2);
+				return JSON.stringify(await commitChanges(cwd, parsed, ctx), null, 2);
 			}
 		}
 	];

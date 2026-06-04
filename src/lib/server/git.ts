@@ -38,6 +38,23 @@ interface RunOptions {
 	cwd: string;
 	timeoutMs?: number;
 	maxBytes?: number;
+	// Optional streaming hook. When provided, invoked with the full cumulative
+	// combined (stdout+stderr, in arrival order) snapshot each time child output
+	// arrives. The snapshot is bounded by `maxBytes`, so emission size stays
+	// capped. Callers that omit this stay fully buffered/silent (unchanged).
+	onData?: (snapshot: string) => void;
+	// Optional abort signal. When it fires, the child is SIGKILLed and no further
+	// `onData` snapshots are emitted (mirrors the existing timeout kill path).
+	signal?: AbortSignal;
+}
+
+// Streaming context for `commitChanges`. Structurally satisfied by the tool
+// layer's `ToolStreamContext`, but kept independent here to avoid a server→tools
+// import cycle. All fields optional so non-streaming callers pass nothing.
+export interface CommitProgress {
+	progress?(message: string): void;
+	partial?(snapshot: string): void;
+	readonly signal?: AbortSignal;
 }
 
 function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
@@ -61,10 +78,59 @@ function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
 		let stderr = Buffer.alloc(0);
 		let truncated = false;
 		let timedOut = false;
+		let settled = false;
+		const settle = (result: GitRunResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			cleanupSignal();
+			resolve(result);
+		};
 		const timer = setTimeout(() => {
 			timedOut = true;
 			child.kill('SIGKILL');
 		}, timeoutMs);
+
+		// Combined stdout+stderr buffer in arrival order, only maintained when a
+		// streaming consumer is attached. Emitting the full current string each
+		// time matches `tool.partial_output` replace-not-append semantics. Bounded
+		// by `maxBytes` so snapshot (and downstream queue) growth stays capped.
+		const onData = opts.onData;
+		let combined = onData ? Buffer.alloc(0) : null;
+		const emitSnapshot = (chunk: Buffer) => {
+			if (!onData || combined === null || aborted) return;
+			if (combined.length >= maxBytes) return;
+			const room = maxBytes - combined.length;
+			combined = Buffer.concat([combined, chunk.subarray(0, room)]);
+			onData(combined.toString('utf-8'));
+		};
+
+		let aborted = false;
+		const signal = opts.signal;
+		const killForAbort = () => {
+			aborted = true;
+			child.kill('SIGKILL');
+			// Resolve promptly rather than waiting for `close`: an orphaned hook
+			// process can keep the stdio pipes open after the git child is killed,
+			// which would otherwise stall `close` until the hook itself exits.
+			settle({
+				stdout: stdout.toString('utf-8'),
+				stderr: stderr.toString('utf-8'),
+				code: -1,
+				timedOut,
+				truncated
+			});
+		};
+		const cleanupSignal = () => {
+			if (signal) signal.removeEventListener('abort', killForAbort);
+		};
+		if (signal) {
+			if (signal.aborted) {
+				killForAbort();
+			} else {
+				signal.addEventListener('abort', killForAbort, { once: true });
+			}
+		}
 
 		child.stdout.on('data', (chunk: Buffer) => {
 			if (stdout.length >= maxBytes) {
@@ -72,7 +138,9 @@ function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
 				return;
 			}
 			const room = maxBytes - stdout.length;
-			stdout = Buffer.concat([stdout, chunk.subarray(0, room)]);
+			const slice = chunk.subarray(0, room);
+			stdout = Buffer.concat([stdout, slice]);
+			emitSnapshot(slice);
 			if (chunk.length > room) {
 				truncated = true;
 				child.stdout.destroy();
@@ -81,12 +149,13 @@ function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
 		child.stderr.on('data', (chunk: Buffer) => {
 			// Cap stderr at 64 KiB to avoid runaway logs.
 			if (stderr.length < 65_536) {
-				stderr = Buffer.concat([stderr, chunk.subarray(0, 65_536 - stderr.length)]);
+				const slice = chunk.subarray(0, 65_536 - stderr.length);
+				stderr = Buffer.concat([stderr, slice]);
+				emitSnapshot(slice);
 			}
 		});
 		child.on('error', (err) => {
-			clearTimeout(timer);
-			resolve({
+			settle({
 				stdout: stdout.toString('utf-8'),
 				stderr: (stderr.toString('utf-8') + '\n' + err.message).trim(),
 				code: -1,
@@ -95,8 +164,7 @@ function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
 			});
 		});
 		child.on('close', (code) => {
-			clearTimeout(timer);
-			resolve({
+			settle({
 				stdout: stdout.toString('utf-8'),
 				stderr: stderr.toString('utf-8'),
 				code: code ?? -1,
@@ -581,7 +649,8 @@ export function formatCommitMessage(opts: {
 
 export async function commitChanges(
 	cwd: string,
-	opts: CommitChangesOptions
+	opts: CommitChangesOptions,
+	ctx?: CommitProgress
 ): Promise<CommitChangesResult> {
 	const repoRoot = await repositoryRoot(cwd);
 	const commitMessage = formatCommitMessage(opts);
@@ -622,6 +691,7 @@ export async function commitChanges(
 		messageDir = await mkdtemp(join(tmpdir(), 'portal-git-commit-'));
 		const messagePath = join(messageDir, 'message.txt');
 		writeFileSync(messagePath, commitMessage, 'utf8');
+		ctx?.progress?.('staging changes…');
 		if (selectedPaths === null) {
 			await runGitOk(['add', '-A', '--', '.'], { cwd: repoRoot });
 		} else {
@@ -633,7 +703,14 @@ export async function commitChanges(
 		if (stagedFiles.length === 0) {
 			throw new GitError('no selected changes to commit', emptyResult());
 		}
-		await runGitOk(['commit', '-F', messagePath], { cwd: repoRoot, timeoutMs: 60_000 });
+		ctx?.progress?.('running git commit (pre-commit / commit-msg hooks)…');
+		await runGitOk(['commit', '-F', messagePath], {
+			cwd: repoRoot,
+			timeoutMs: 60_000,
+			onData: ctx?.partial ? (snap) => ctx.partial?.(snap) : undefined,
+			signal: ctx?.signal
+		});
+		ctx?.progress?.('finalizing commit…');
 	} catch (err) {
 		try {
 			restoreIndex(snapshot);
