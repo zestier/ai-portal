@@ -86,6 +86,31 @@
 			></button>
 		{/if}
 		<aside class="sidebar" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
+			<div class="drawer-header">
+				<span class="drawer-brand">Zestier's AI Portal</span>
+				<button
+					type="button"
+					class="drawer-close btn icon ghost"
+					aria-label="Close menu"
+					title="Close menu"
+					onclick={() => (sidebarOpen = false)}
+				>
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.6"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M4 4l8 8" />
+						<path d="M12 4l-8 8" />
+					</svg>
+				</button>
+			</div>
 			<Sidebar
 				conversations={data.conversations}
 				tickets={data.tickets}
@@ -132,6 +157,9 @@
 	.scrim {
 		display: none;
 	}
+	.drawer-header {
+		display: none;
+	}
 	.mobile-menu {
 		display: none;
 	}
@@ -176,6 +204,19 @@
 		}
 		.sidebar.open {
 			transform: translateX(0);
+		}
+		.drawer-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: var(--space-2);
+			padding: var(--space-2) var(--space-3);
+			border-bottom: 1px solid var(--border);
+		}
+		.drawer-brand {
+			font-weight: 600;
+			font-size: 0.95rem;
+			color: var(--text);
 		}
 		.scrim {
 			display: block;
