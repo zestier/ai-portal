@@ -833,13 +833,32 @@
 	.model-input {
 		min-width: min(26rem, 100%);
 		max-width: 100%;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 4px;
+		background: var(--surface-2);
+		border: 1px solid var(--border-strong, var(--border));
+		border-radius: 6px;
 		color: inherit;
 		font: inherit;
 		font-size: var(--fs-xs);
-		padding: 2px 8px;
+		padding: 4px 10px;
+	}
+	.model-select {
+		appearance: none;
+		-webkit-appearance: none;
+		-moz-appearance: none;
+		cursor: pointer;
+		padding-right: 28px;
+		background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23808a99' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 8px center;
+		background-size: 14px;
+	}
+	.model-select:hover:not(:disabled),
+	.model-input:hover:not(:disabled) {
+		border-color: var(--accent);
+	}
+	.model-input::placeholder {
+		color: var(--text-muted, inherit);
+		opacity: 0.7;
 	}
 	.model-custom {
 		display: inline-flex;
