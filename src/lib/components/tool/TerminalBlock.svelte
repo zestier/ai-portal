@@ -43,7 +43,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 		overflow: hidden;
-		background: var(--bg, #0b0b0e);
+		background: var(--bg);
 	}
 	.header {
 		display: flex;
@@ -66,20 +66,20 @@
 	.exit-code {
 		padding: 0.05rem 0.4rem;
 		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger, #e5484d) 22%, transparent);
-		color: var(--danger, #e5484d);
+		background: color-mix(in srgb, var(--danger) 22%, transparent);
+		color: var(--danger);
 		font-family: var(--mono);
 	}
 	.exit-code[data-ok='true'] {
-		background: color-mix(in srgb, var(--success, #30a46c) 22%, transparent);
-		color: var(--success, #30a46c);
+		background: color-mix(in srgb, var(--success) 22%, transparent);
+		color: var(--success);
 	}
 	.body {
 		font-family: var(--mono);
 		font-size: var(--fs-md);
 		line-height: 1.45;
 		padding: 0.5rem 0.6rem;
-		background: var(--bg, #0b0b0e);
+		background: var(--bg);
 		color: var(--text);
 		overflow-x: auto;
 		overflow-y: auto;
@@ -90,11 +90,11 @@
 	}
 	.cursor {
 		display: inline-block;
-		color: var(--accent, #7c5cff);
+		color: var(--accent);
 		animation: cursor-blink 1s steps(2, start) infinite;
 	}
 	.prompt {
-		color: var(--accent, #7c5cff);
+		color: var(--accent);
 		user-select: none;
 	}
 	.command {

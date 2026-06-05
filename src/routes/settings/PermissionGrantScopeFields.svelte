@@ -245,7 +245,7 @@
 	.scope-fields legend {
 		padding: 0 0.25rem;
 		font-size: var(--fs-md);
-		color: var(--muted, #888);
+		color: var(--text-muted);
 	}
 	.scope-fields label {
 		display: flex;

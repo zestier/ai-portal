@@ -104,12 +104,12 @@
 		border-color: var(--danger);
 	}
 	.decision-tag.auto-allow {
-		color: var(--muted, var(--success));
+		color: var(--text-muted);
 		border-color: var(--border);
 		font-style: italic;
 	}
 	.decision-tag.auto-deny {
-		color: var(--muted, var(--danger));
+		color: var(--text-muted);
 		border-color: var(--border);
 		font-style: italic;
 	}

@@ -241,16 +241,16 @@
 		font-size: var(--fs-md);
 	}
 	.tool.is-pending {
-		border-left: 3px solid var(--accent, #7c5cff);
+		border-left: 3px solid var(--accent);
 		animation: tool-pulse 1.6s ease-in-out infinite;
 	}
 	@keyframes tool-pulse {
 		0%,
 		100% {
-			border-left-color: var(--accent, #7c5cff);
+			border-left-color: var(--accent);
 		}
 		50% {
-			border-left-color: color-mix(in srgb, var(--accent, #7c5cff) 35%, transparent);
+			border-left-color: color-mix(in srgb, var(--accent) 35%, transparent);
 		}
 	}
 	summary {
@@ -313,7 +313,7 @@
 		cursor: not-allowed;
 	}
 	.error {
-		color: var(--danger, #ff6b6b);
+		color: var(--danger);
 	}
 	.disclosure {
 		cursor: pointer;

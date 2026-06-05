@@ -256,10 +256,10 @@
 		font-family: var(--mono);
 	}
 	.added {
-		color: var(--success, #3fb950);
+		color: var(--success);
 	}
 	.removed {
-		color: var(--danger, #ff6b6b);
+		color: var(--danger);
 	}
 	.status {
 		font-family: var(--mono);

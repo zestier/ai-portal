@@ -337,7 +337,7 @@
 		margin-top: 0.25rem;
 	}
 	.err {
-		color: var(--danger, #d33);
+		color: var(--danger);
 	}
 	.ok {
 		color: var(--success);
@@ -425,7 +425,7 @@
 		border-left-color: var(--success);
 	}
 	.feature-note li[data-tone='warn'] {
-		border-left-color: var(--warning, #d29922);
+		border-left-color: var(--warning);
 	}
 	.feature-note li[data-tone='bad'] {
 		border-left-color: var(--danger);

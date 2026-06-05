@@ -262,16 +262,16 @@
 	.subagent {
 		background: var(--surface-2);
 		border: 1px solid var(--border);
-		border-left: 3px solid var(--accent, #7c5cff);
+		border-left: 3px solid var(--accent);
 		border-radius: var(--radius-md);
 		padding: var(--space-2) var(--space-3);
 		font-size: var(--fs-md);
 	}
 	.subagent[data-status='error'] {
-		border-left-color: var(--danger, #e5484d);
+		border-left-color: var(--danger);
 	}
 	.subagent[data-status='denied'] {
-		border-left-color: var(--warning, #f5a524);
+		border-left-color: var(--warning);
 	}
 	.subagent.is-pending {
 		animation: subagent-pulse 1.6s ease-in-out infinite;
@@ -279,10 +279,10 @@
 	@keyframes subagent-pulse {
 		0%,
 		100% {
-			border-left-color: var(--accent, #7c5cff);
+			border-left-color: var(--accent);
 		}
 		50% {
-			border-left-color: color-mix(in srgb, var(--accent, #7c5cff) 35%, transparent);
+			border-left-color: color-mix(in srgb, var(--accent) 35%, transparent);
 		}
 	}
 	.dot {
@@ -334,7 +334,7 @@
 	}
 	.badge.type {
 		color: var(--text);
-		border-color: var(--accent, #7c5cff);
+		border-color: var(--accent);
 	}
 	.status {
 		font-size: var(--eyebrow-fs);
@@ -344,16 +344,16 @@
 		color: var(--text-muted);
 	}
 	.status-ok {
-		color: var(--success, #30a46c);
+		color: var(--success);
 	}
 	.status-background {
-		color: var(--accent, #7c5cff);
+		color: var(--accent);
 	}
 	.status-error {
-		color: var(--danger, #e5484d);
+		color: var(--danger);
 	}
 	.status-denied {
-		color: var(--warning, #f5a524);
+		color: var(--warning);
 	}
 	.elapsed {
 		font-size: var(--fs-xs);

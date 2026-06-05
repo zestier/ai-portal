@@ -920,13 +920,13 @@
 		display: block;
 		margin-top: 0.25rem;
 		font-size: var(--fs-xs);
-		color: var(--muted, #888);
+		color: var(--text-muted);
 	}
 	.danger-card .summary-value {
 		color: var(--danger);
 	}
 	.warning-card .summary-value {
-		color: var(--warning, #d99000);
+		color: var(--warning);
 	}
 	.grant-toolbar {
 		display: grid;
@@ -960,14 +960,14 @@
 		min-width: 0;
 	}
 	.scope-preview pre {
-		background: var(--code-bg, #1118);
+		background: var(--code-bg);
 		padding: 0.5rem;
 		border-radius: 4px;
 		overflow-x: auto;
 		font-size: var(--fs-md);
 	}
 	.err {
-		color: var(--danger, #d33);
+		color: var(--danger);
 	}
 	.ok {
 		color: var(--success);
@@ -1028,7 +1028,7 @@
 		border-radius: 999px;
 		padding: 0.12rem 0.5rem;
 		font-size: var(--fs-xs);
-		color: var(--muted, #888);
+		color: var(--text-muted);
 	}
 	.grant-section {
 		border: 1px solid var(--border);
@@ -1081,8 +1081,8 @@
 		border-color: var(--success);
 	}
 	.decision-tag.prompt {
-		color: var(--warning, #d99000);
-		border-color: var(--warning, #d99000);
+		color: var(--warning);
+		border-color: var(--warning);
 	}
 	.decision-tag.deny {
 		color: var(--danger);
@@ -1093,8 +1093,8 @@
 		border-color: color-mix(in srgb, var(--success), var(--border) 35%);
 	}
 	.expiry-tag.warn {
-		color: var(--warning, #d99000);
-		border-color: var(--warning, #d99000);
+		color: var(--warning);
+		border-color: var(--warning);
 	}
 	.expiry-tag.danger {
 		color: var(--danger);
@@ -1158,7 +1158,7 @@
 	}
 	.grant-details dt {
 		font-weight: 600;
-		color: var(--muted, #888);
+		color: var(--text-muted);
 	}
 	.grant-details dd {
 		margin: 0;
