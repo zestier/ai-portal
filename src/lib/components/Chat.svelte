@@ -1106,6 +1106,9 @@
 						onRespond={(r) => respondInteractive(p.requestId, r)}
 					/>
 				{/each}
+				{#if renderedMessages.length > 0 || visibleInteractive.length > 0}
+					<div class="messages-bottom-spacer" aria-hidden="true"></div>
+				{/if}
 			</div>
 		</div>
 		{#if hasNewBelow && !pinnedToBottom}
@@ -1226,6 +1229,17 @@
 		flex-direction: column;
 		gap: var(--space-3);
 		min-height: 0;
+	}
+	/* Keeps a consistent gap between the last message and the composer when the
+	   conversation overflows and is scrolled to the bottom. A scroll
+	   container's own padding-bottom (and a trailing margin on this flex item)
+	   are dropped once content overflows, so the spacing must live inside the
+	   scrolled content. The negative margin cancels the inherited row gap so
+	   the net gap equals var(--space-4). */
+	.messages-bottom-spacer {
+		flex: none;
+		height: var(--space-4);
+		margin-top: calc(-1 * var(--space-3));
 	}
 	.empty-conversation {
 		flex: 1;
