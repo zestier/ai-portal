@@ -1056,7 +1056,7 @@
 		position: absolute;
 		right: 0.4rem;
 		top: 100%;
-		z-index: 30;
+		z-index: var(--z-overlay);
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);

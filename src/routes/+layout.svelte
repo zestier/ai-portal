@@ -187,7 +187,7 @@
 			position: fixed;
 			top: var(--space-2);
 			left: var(--space-2);
-			z-index: 20;
+			z-index: var(--z-overlay);
 		}
 		.mobile-menu.hidden {
 			display: none;
@@ -201,7 +201,7 @@
 			max-width: 320px;
 			transform: translateX(-100%);
 			transition: transform 150ms ease-out;
-			z-index: 16;
+			z-index: calc(var(--z-sidebar) + 1);
 		}
 		.sidebar.open {
 			transform: translateX(0);
@@ -223,11 +223,11 @@
 			display: block;
 			position: fixed;
 			inset: 0;
-			background: rgb(0 0 0 / 0.4);
+			background: var(--overlay);
 			border: 0;
 			padding: 0;
 			cursor: pointer;
-			z-index: 15;
+			z-index: var(--z-sidebar);
 		}
 		:global(html[data-sidebar='closed']) .layout.preload .sidebar {
 			transform: translateX(-100%);

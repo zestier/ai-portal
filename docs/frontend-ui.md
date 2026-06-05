@@ -129,9 +129,25 @@ The Markdown assembly is a pure, unit-tested helper
 (chat messages, tool results) leave them off and are unchanged.
 
 
+### `ui/Modal.svelte`
+
+The shared overlay primitive. Wraps a native `<dialog>` driven by an `open`
+prop, so the platform provides the focus trap, inert background, and Escape
+handling; the component adds backdrop-click dismissal (`onClose`), body
+scroll-lock while open, and the consistent panel chrome (surface, `--border`,
+`--radius-lg`, `--shadow-2`). The dim comes from `::backdrop` using the shared
+`--overlay` token, and the dialog sits on the `--z-modal` layer. `width` /
+`maxHeight` / `panelClass` tune the panel; `labelledby` / `ariaLabel` / `role`
+wire up accessibility. All true modal dialogs (`RawInputDialog`, the
+`PromptTemplateLauncher` picker) render through this — no component should
+hand-roll its own backdrop or pick a raw z-index.
+
+`InteractiveRequestDialog` is deliberately **not** a Modal: it is an inline
+transcript card (see below), not a page-blocking overlay.
+
 ### `InteractiveRequestDialog.svelte`
 
-Modal-ish inline card that handles every interactive-request kind the
+Inline transcript card (not a backdrop modal) that handles every interactive-request kind the
 Copilot SDK can ask for: tool permission (Allow once / Allow always /
 Deny), auto-mode-switch on rate limit, user_input (choices + freeform),
 elicitation (schema-driven form or url mode), exit_plan_mode (per-action
@@ -222,6 +238,15 @@ Data flow:
 - Dark mode by default. Light mode toggle in settings.
 - CSS variables for palette; no Tailwind required (keeps bundle small).
 - System font stack. Monospace via `ui-monospace, Menlo, …`.
+
+### Overlays & stacking
+
+- One overlay tint, `--overlay`, dims the page behind both modal dialogs
+  (`<dialog>::backdrop`) and the mobile sidebar scrim — they always match.
+- Stacking is a documented scale in `src/app.css`; components reference the
+  tokens instead of magic numbers: `--z-base` (sticky sub-headers, local
+  dropdowns), `--z-sidebar` (mobile drawer + scrim), `--z-overlay` (floating
+  menus / popovers), `--z-modal` (Modal dialogs), `--z-toast` (toasts).
 
 ## Accessibility
 

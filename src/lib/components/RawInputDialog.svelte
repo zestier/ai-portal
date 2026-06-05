@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { TurnInput } from '$lib/types';
+	import Modal from './ui/Modal.svelte';
 
 	let {
 		conversationId,
@@ -15,7 +16,6 @@
 	let errorMsg = $state<string | null>(null);
 	let input = $state<TurnInput | null>(null);
 	let copied = $state(false);
-	let dialogEl = $state<HTMLDivElement | null>(null);
 
 	async function load() {
 		loading = true;
@@ -46,136 +46,100 @@
 		}
 	}
 
-	function onKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') {
-			event.stopPropagation();
-			onClose();
-		}
-	}
-
 	$effect(() => {
 		void load();
-	});
-
-	$effect(() => {
-		dialogEl?.focus();
 	});
 
 	const hasPrelude = $derived(!!input && input.prelude.trim().length > 0);
 </script>
 
-<div class="raw-backdrop" role="presentation" onclick={onClose}>
-	<div
-		bind:this={dialogEl}
-		class="raw-dialog"
-		role="dialog"
-		aria-modal="true"
-		aria-labelledby="raw-input-title"
-		tabindex="-1"
-		onclick={(event) => event.stopPropagation()}
-		onkeydown={onKeydown}
-	>
-		<header>
-			<div>
-				<p class="eyebrow">Turn input</p>
-				<h2 id="raw-input-title">Full input sent to the provider</h2>
-			</div>
-			<button class="btn icon ghost sm" type="button" aria-label="Close" onclick={onClose}>×</button
-			>
-		</header>
+<Modal
+	open
+	{onClose}
+	labelledby="raw-input-title"
+	width="min(820px, 100%)"
+	maxHeight="min(820px, 90vh)"
+>
+	<header>
+		<div>
+			<p class="eyebrow">Turn input</p>
+			<h2 id="raw-input-title">Full input sent to the provider</h2>
+		</div>
+		<button class="btn icon ghost sm" type="button" aria-label="Close" onclick={onClose}>×</button>
+	</header>
 
-		<p class="muted small">
-			Exactly what the model received for this turn — the auto-injected portal prelude, any memory
-			or prior-message context, and your raw message.
+	<p class="muted small">
+		Exactly what the model received for this turn — the auto-injected portal prelude, any memory or
+		prior-message context, and your raw message.
+	</p>
+
+	{#if loading}
+		<p class="muted">Loading…</p>
+	{:else if errorMsg}
+		<p class="err" role="alert">{errorMsg}</p>
+	{:else if !input}
+		<p class="muted">
+			No captured input for this message. Inputs are recorded for turns started after this feature
+			shipped.
 		</p>
-
-		{#if loading}
-			<p class="muted">Loading…</p>
-		{:else if errorMsg}
-			<p class="err" role="alert">{errorMsg}</p>
-		{:else if !input}
-			<p class="muted">
-				No captured input for this message. Inputs are recorded for turns started after this feature
-				shipped.
-			</p>
-		{:else}
-			<dl class="meta">
-				{#if input.provider}
-					<div>
-						<dt class="eyebrow">Provider</dt>
-						<dd>{input.provider}</dd>
-					</div>
-				{/if}
-				{#if input.model}
-					<div>
-						<dt class="eyebrow">Model</dt>
-						<dd>{input.model}</dd>
-					</div>
-				{/if}
-				{#if input.mode}
-					<div>
-						<dt class="eyebrow">Mode</dt>
-						<dd>{input.mode}</dd>
-					</div>
-				{/if}
-				{#if input.memoryMode}
-					<div>
-						<dt class="eyebrow">Memory</dt>
-						<dd>{input.memoryMode}</dd>
-					</div>
-				{/if}
+	{:else}
+		<dl class="meta">
+			{#if input.provider}
 				<div>
-					<dt class="eyebrow">Prelude</dt>
-					<dd>{hasPrelude ? 'applied' : 'none'}</dd>
-				</div>
-			</dl>
-
-			<div class="section-row">
-				<h3>Full input</h3>
-				<button class="btn sm ghost" type="button" onclick={copyFull}>
-					{copied ? 'Copied' : 'Copy'}
-				</button>
-			</div>
-			<pre class="dump">{input.fullInput}</pre>
-
-			{#if input.initialMessages && input.initialMessages.length > 0}
-				<h3>Embedded prior messages ({input.initialMessages.length})</h3>
-				<p class="muted small">
-					Sent as conversation history for providers that can't resume a server session.
-				</p>
-				<div class="prior">
-					{#each input.initialMessages as m, i (i)}
-						<div class="prior-msg">
-							<span class="prior-role eyebrow">{m.role}</span>
-							<pre class="dump">{m.content}</pre>
-						</div>
-					{/each}
+					<dt class="eyebrow">Provider</dt>
+					<dd>{input.provider}</dd>
 				</div>
 			{/if}
+			{#if input.model}
+				<div>
+					<dt class="eyebrow">Model</dt>
+					<dd>{input.model}</dd>
+				</div>
+			{/if}
+			{#if input.mode}
+				<div>
+					<dt class="eyebrow">Mode</dt>
+					<dd>{input.mode}</dd>
+				</div>
+			{/if}
+			{#if input.memoryMode}
+				<div>
+					<dt class="eyebrow">Memory</dt>
+					<dd>{input.memoryMode}</dd>
+				</div>
+			{/if}
+			<div>
+				<dt class="eyebrow">Prelude</dt>
+				<dd>{hasPrelude ? 'applied' : 'none'}</dd>
+			</div>
+		</dl>
+
+		<div class="section-row">
+			<h3>Full input</h3>
+			<button class="btn sm ghost" type="button" onclick={copyFull}>
+				{copied ? 'Copied' : 'Copy'}
+			</button>
+		</div>
+		<pre class="dump">{input.fullInput}</pre>
+
+		{#if input.initialMessages && input.initialMessages.length > 0}
+			<h3>Embedded prior messages ({input.initialMessages.length})</h3>
+			<p class="muted small">
+				Sent as conversation history for providers that can't resume a server session.
+			</p>
+			<div class="prior">
+				{#each input.initialMessages as m, i (i)}
+					<div class="prior-msg">
+						<span class="prior-role eyebrow">{m.role}</span>
+						<pre class="dump">{m.content}</pre>
+					</div>
+				{/each}
+			</div>
 		{/if}
-	</div>
-</div>
+	{/if}
+</Modal>
 
 <style>
-	.raw-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 90;
-		display: grid;
-		place-items: center;
-		padding: var(--space-4);
-		background: rgb(0 0 0 / 0.45);
-	}
-	.raw-dialog {
-		width: min(820px, 100%);
-		max-height: min(820px, 90vh);
-		overflow: auto;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface);
-		box-shadow: var(--shadow-2);
-		padding: var(--space-4);
-	}
 	header,
 	.section-row {
 		display: flex;

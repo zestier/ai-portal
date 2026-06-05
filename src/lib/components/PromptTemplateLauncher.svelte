@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import { tick } from 'svelte';
 	import { createPromptTemplateDraftChat } from '$lib/client/prompt-template-launch';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
+	import Modal from './ui/Modal.svelte';
 
 	type Variant = 'home' | 'sidebar' | 'rail';
 
@@ -22,7 +22,6 @@
 	let launchingTemplateId = $state<string | null>(null);
 	let templates = $state<PromptTemplateListItem[] | null>(null);
 	let localError = $state<string | null>(null);
-	let dialogEl: HTMLDivElement | null = $state(null);
 
 	const builtIns = $derived(templates?.filter((template) => template.source === 'builtin') ?? []);
 	const customTemplates = $derived(
@@ -81,8 +80,6 @@
 	async function openPicker() {
 		pickerOpen = true;
 		await loadTemplates();
-		await tick();
-		dialogEl?.focus();
 	}
 
 	function closePicker() {
@@ -107,13 +104,6 @@
 			reportError('Could not open prompt template');
 		} finally {
 			launchingTemplateId = null;
-		}
-	}
-
-	function onDialogKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') {
-			closePicker();
-			event.stopPropagation();
 		}
 	}
 </script>
@@ -184,37 +174,48 @@
 {/if}
 
 {#if pickerOpen}
-	<div class="template-backdrop" role="presentation" onclick={closePicker}>
-		<div
-			bind:this={dialogEl}
-			class="template-dialog"
-			role="dialog"
-			aria-modal="true"
-			aria-labelledby="template-dialog-title"
-			tabindex="-1"
-			onclick={(event) => event.stopPropagation()}
-			onkeydown={onDialogKeydown}
-		>
-			<header>
-				<div>
-					<p class="eyebrow">New chat</p>
-					<h2 id="template-dialog-title">Start from a prompt template</h2>
-				</div>
-				<button class="btn icon ghost sm" type="button" aria-label="Close" onclick={closePicker}
-					>×</button
-				>
-			</header>
-			<p class="muted small">
-				Pick a reusable prompt to prefill the composer. You can edit it before sending.
-			</p>
+	<Modal open onClose={closePicker} labelledby="template-dialog-title">
+		<header>
+			<div>
+				<p class="eyebrow">New chat</p>
+				<h2 id="template-dialog-title">Start from a prompt template</h2>
+			</div>
+			<button class="btn icon ghost sm" type="button" aria-label="Close" onclick={closePicker}
+				>×</button
+			>
+		</header>
+		<p class="muted small">
+			Pick a reusable prompt to prefill the composer. You can edit it before sending.
+		</p>
 
-			{#if loadingTemplates}
-				<p class="muted">Loading templates...</p>
-			{:else if templates}
-				<section aria-labelledby="built-in-template-heading">
-					<h3 id="built-in-template-heading">Built-in templates</h3>
+		{#if loadingTemplates}
+			<p class="muted">Loading templates...</p>
+		{:else if templates}
+			<section aria-labelledby="built-in-template-heading">
+				<h3 id="built-in-template-heading">Built-in templates</h3>
+				<div class="template-list">
+					{#each builtIns as template (template.id)}
+						<button
+							type="button"
+							class="template-card"
+							onclick={() => launchTemplate(template)}
+							disabled={launchingTemplateId !== null}
+						>
+							<strong>{template.title}</strong>
+							<span>{template.description}</span>
+						</button>
+					{/each}
+				</div>
+			</section>
+
+			<section aria-labelledby="custom-template-heading">
+				<div class="section-row">
+					<h3 id="custom-template-heading">Your templates</h3>
+					<a href="/settings?tab=prompts">Manage</a>
+				</div>
+				{#if customTemplates.length > 0}
 					<div class="template-list">
-						{#each builtIns as template (template.id)}
+						{#each customTemplates as template (template.id)}
 							<button
 								type="button"
 								class="template-card"
@@ -222,40 +223,18 @@
 								disabled={launchingTemplateId !== null}
 							>
 								<strong>{template.title}</strong>
-								<span>{template.description}</span>
+								<span>{template.description || 'Custom prompt template'}</span>
 							</button>
 						{/each}
 					</div>
-				</section>
-
-				<section aria-labelledby="custom-template-heading">
-					<div class="section-row">
-						<h3 id="custom-template-heading">Your templates</h3>
-						<a href="/settings?tab=prompts">Manage</a>
-					</div>
-					{#if customTemplates.length > 0}
-						<div class="template-list">
-							{#each customTemplates as template (template.id)}
-								<button
-									type="button"
-									class="template-card"
-									onclick={() => launchTemplate(template)}
-									disabled={launchingTemplateId !== null}
-								>
-									<strong>{template.title}</strong>
-									<span>{template.description || 'Custom prompt template'}</span>
-								</button>
-							{/each}
-						</div>
-					{:else}
-						<p class="empty muted">
-							No custom templates yet. Built-in templates are always available.
-						</p>
-					{/if}
-				</section>
-			{/if}
-		</div>
-	</div>
+				{:else}
+					<p class="empty muted">
+						No custom templates yet. Built-in templates are always available.
+					</p>
+				{/if}
+			</section>
+		{/if}
+	</Modal>
 {/if}
 
 <style>
@@ -308,25 +287,6 @@
 		margin: var(--space-2) 0 0;
 		color: var(--danger);
 		font-size: var(--fs-sm);
-	}
-	.template-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 80;
-		display: grid;
-		place-items: center;
-		padding: var(--space-4);
-		background: rgb(0 0 0 / 0.45);
-	}
-	.template-dialog {
-		width: min(680px, 100%);
-		max-height: min(760px, 90vh);
-		overflow: auto;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--surface);
-		box-shadow: var(--shadow-2);
-		padding: var(--space-4);
 	}
 	header,
 	.section-row {

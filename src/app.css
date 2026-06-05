@@ -9,6 +9,8 @@
      - radii:              --radius-sm/md/lg/pill
      - elevation:          --shadow-1/2
      - focus:              --focus-ring
+     - overlay/scrim:       --overlay (modal & sidebar backdrop tint)
+     - stacking:            --z-base/sidebar/overlay/modal/toast (z-index scale)
      - code surface:       --code-bg, --code-border, --code-fs
      - eyebrow label:      --eyebrow-fs, --eyebrow-ls (see .eyebrow utility)
    Breakpoints (canonical, document only — CSS vars don't work in @media):
@@ -74,6 +76,24 @@
 
 	/* focus ring (use as box-shadow on inputs / interactive surfaces) */
 	--focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+
+	/* overlay / scrim tint — shared dim behind modals and the mobile sidebar.
+	   Used for <dialog>::backdrop and the layout scrim so every overlay dims
+	   the page identically. */
+	--overlay: rgb(0 0 0 / 0.45);
+
+	/* z-index scale — the single source of truth for stacking. Higher layers
+	   sit above lower ones; never hard-code raw z-index numbers in components.
+	     base    in-flow stacking (sticky sub-headers, local dropdowns)
+	     sidebar mobile sidebar drawer + its scrim
+	     overlay floating menus / popovers above page content
+	     modal   modal dialogs (backdrop + panel)
+	     toast   transient toasts / notifications (top of the stack) */
+	--z-base: 1;
+	--z-sidebar: 100;
+	--z-overlay: 200;
+	--z-modal: 300;
+	--z-toast: 400;
 
 	/* code surface */
 	--code-bg: var(--surface-2);
