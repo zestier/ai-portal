@@ -76,7 +76,7 @@
 	}
 	.body {
 		font-family: var(--mono);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 		line-height: 1.45;
 		padding: 0.5rem 0.6rem;
 		background: var(--bg, #0b0b0e);

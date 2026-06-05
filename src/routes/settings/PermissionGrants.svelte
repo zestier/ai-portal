@@ -866,7 +866,7 @@
 	}
 	.section-heading h2 {
 		margin: 0 0 0.25rem;
-		font-size: 1.15rem;
+		font-size: var(--fs-2xl);
 	}
 	.section-heading p {
 		margin: 0;
@@ -912,14 +912,14 @@
 	}
 	.summary-value {
 		display: block;
-		font-size: 1.35rem;
+		font-size: var(--fs-3xl);
 		font-weight: 700;
 		line-height: 1;
 	}
 	.summary-label {
 		display: block;
 		margin-top: 0.25rem;
-		font-size: 0.78rem;
+		font-size: var(--fs-xs);
 		color: var(--muted, #888);
 	}
 	.danger-card .summary-value {
@@ -964,7 +964,7 @@
 		padding: 0.5rem;
 		border-radius: 4px;
 		overflow-x: auto;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.err {
 		color: var(--danger, #d33);
@@ -974,7 +974,7 @@
 		margin-left: 0.5rem;
 	}
 	.small {
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.empty-state {
 		border: 1px dashed var(--border);
@@ -986,7 +986,7 @@
 	.filter-header h3,
 	.grant-section-heading h3 {
 		margin: 0 0 0.2rem;
-		font-size: 1rem;
+		font-size: var(--fs-lg);
 	}
 	.empty-state p,
 	.filter-header p,
@@ -1027,7 +1027,7 @@
 		border: 1px solid var(--border);
 		border-radius: 999px;
 		padding: 0.12rem 0.5rem;
-		font-size: 0.75rem;
+		font-size: var(--fs-xs);
 		color: var(--muted, #888);
 	}
 	.grant-section {
@@ -1058,7 +1058,7 @@
 		padding: 0.75rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--surface);
-		font-size: 0.9em;
+		font-size: var(--fs-md);
 	}
 	.grant-row:last-child {
 		border-bottom: 0;
@@ -1104,13 +1104,13 @@
 		font-weight: 600;
 	}
 	.grant-row .kind {
-		font-size: 0.8em;
+		font-size: var(--fs-sm);
 		opacity: 0.75;
 	}
 	.grant-row .pattern {
 		display: block;
 		font-family: var(--font-mono, monospace);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 		opacity: 0.85;
 		overflow-wrap: anywhere;
 		white-space: normal;
@@ -1122,7 +1122,7 @@
 		flex-wrap: wrap;
 		gap: 0.35rem 0.75rem;
 		margin-top: 0.45rem;
-		font-size: 0.8em;
+		font-size: var(--fs-sm);
 		opacity: 0.75;
 	}
 	.deny-reason-row {
@@ -1168,7 +1168,7 @@
 		margin: 0;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		font-size: 0.8rem;
+		font-size: var(--fs-sm);
 	}
 	.grant-row .revoke {
 		flex-direction: row;
@@ -1189,7 +1189,7 @@
 	}
 	.btn.small {
 		padding: 0.2rem 0.55rem;
-		font-size: 0.8em;
+		font-size: var(--fs-sm);
 	}
 	@media (max-width: 720px) {
 		.grant-toolbar,

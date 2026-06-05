@@ -135,7 +135,7 @@
 	}
 	.section-heading h2 {
 		margin: 0 0 0.25rem;
-		font-size: 1.15rem;
+		font-size: var(--fs-2xl);
 	}
 	.section-heading p {
 		margin: 0;
@@ -152,7 +152,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 		background: var(--surface-2);
-		font-size: 0.9em;
+		font-size: var(--fs-md);
 	}
 	.deploy-time-label {
 		color: var(--text-muted);
@@ -178,7 +178,7 @@
 		color: var(--danger);
 	}
 	.small {
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	code {
 		background: var(--code-bg);

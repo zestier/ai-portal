@@ -53,13 +53,13 @@
 	}
 	.section-heading h2 {
 		margin: 0 0 0.25rem;
-		font-size: 1.15rem;
+		font-size: var(--fs-2xl);
 	}
 	.section-heading p {
 		margin: 0;
 	}
 	.small {
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	code {
 		background: var(--code-bg);
@@ -83,7 +83,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 		background: var(--surface);
-		font-size: 0.9em;
+		font-size: var(--fs-md);
 	}
 	.decision-tag {
 		padding: 0.1rem 0.4rem;
@@ -123,7 +123,7 @@
 	}
 	.decision-row .args {
 		font-family: var(--font-mono, monospace);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -132,7 +132,7 @@
 	}
 	.decision-row .meta {
 		margin-left: auto;
-		font-size: 0.8em;
+		font-size: var(--fs-sm);
 		opacity: 0.75;
 	}
 </style>

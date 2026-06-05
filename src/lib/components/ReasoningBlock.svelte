@@ -84,7 +84,7 @@
 		border-left: 2px solid var(--border);
 		padding-left: 0.6rem;
 		margin: 0.15rem 0 0.35rem;
-		font-size: 0.88em;
+		font-size: var(--fs-md);
 		color: var(--text-muted);
 	}
 	.reasoning.is-streaming {

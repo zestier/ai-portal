@@ -191,7 +191,7 @@
 		padding: 0.3rem 0.6rem;
 		background: var(--surface-2);
 		border-bottom: 1px solid var(--border);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 		position: sticky;
 		top: 0;
 		z-index: 1;
@@ -235,7 +235,7 @@
 		display: inline-flex;
 		gap: 0.4rem;
 		font-family: var(--mono);
-		font-size: 0.95em;
+		font-size: var(--fs-lg);
 	}
 	.added {
 		color: var(--success);
@@ -253,7 +253,7 @@
 		min-height: 0;
 		overflow: auto;
 		font-family: var(--mono);
-		font-size: 0.82em;
+		font-size: var(--fs-sm);
 		line-height: 1.45;
 	}
 	.rows {

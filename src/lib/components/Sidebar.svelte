@@ -961,7 +961,7 @@
 	}
 	.empty {
 		padding: 0 0.5rem;
-		font-size: 0.9em;
+		font-size: var(--fs-md);
 	}
 	.conv {
 		position: relative;
@@ -998,20 +998,20 @@
 		text-decoration: none;
 	}
 	.title {
-		font-size: 0.95em;
+		font-size: var(--fs-lg);
 		font-weight: 500;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.meta {
-		font-size: 0.75em;
+		font-size: var(--fs-xs);
 	}
 	.rename-input {
 		flex: 1;
 		min-width: 0;
 		padding: 0.25rem 0.4rem;
-		font-size: 0.95em;
+		font-size: var(--fs-lg);
 	}
 	.menu-btn {
 		align-self: center;
@@ -1118,6 +1118,6 @@
 		color: var(--text);
 	}
 	.user {
-		font-size: 0.8em;
+		font-size: var(--fs-sm);
 	}
 </style>

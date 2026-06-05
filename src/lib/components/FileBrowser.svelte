@@ -915,7 +915,7 @@
 		border: 0;
 		color: var(--text-muted);
 		cursor: pointer;
-		font-size: 1.1rem;
+		font-size: var(--fs-xl);
 		line-height: 1;
 		padding: 0 var(--space-1);
 	}

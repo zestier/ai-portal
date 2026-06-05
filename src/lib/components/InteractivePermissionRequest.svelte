@@ -513,11 +513,11 @@
 		max-height: 200px;
 		overflow: auto;
 		margin-top: 0.4rem;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.body details.args {
 		margin-top: 0.4rem;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.body details.args > summary {
 		cursor: pointer;
@@ -532,7 +532,7 @@
 		padding: 0.4rem 0.5rem;
 		border: 1px dashed var(--border);
 		border-radius: var(--radius-sm);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.body details.grant-scope > summary {
 		cursor: pointer;
@@ -573,7 +573,7 @@
 	.git-commit-preview {
 		margin-top: 0.5rem;
 		border-radius: var(--radius-sm);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.shell-breakdown,
 	.git-commit-preview {
@@ -595,12 +595,12 @@
 		line-height: 1.4;
 	}
 	.shell-segments code {
-		font-size: 0.95em;
+		font-size: var(--fs-lg);
 	}
 	.shell-segments .op {
 		margin-left: 0.4rem;
 		opacity: 0.75;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.shell-unsafe strong {
 		display: block;
@@ -675,7 +675,7 @@
 		flex-direction: column;
 		gap: 0.25rem;
 		margin-top: 0.6rem;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	.deny-feedback span:first-child {
 		font-weight: 600;
@@ -701,7 +701,7 @@
 	.preview {
 		margin-top: 0.4rem;
 		gap: 0.15rem;
-		font-size: 0.8em;
+		font-size: var(--fs-sm);
 		line-height: 1.35;
 	}
 	.preview .warning {

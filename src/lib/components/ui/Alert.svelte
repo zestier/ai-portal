@@ -61,7 +61,7 @@
 	}
 	.dismiss {
 		margin: -0.15rem -0.25rem -0.15rem 0;
-		font-size: 1.1rem;
+		font-size: var(--fs-xl);
 		line-height: 1;
 	}
 </style>

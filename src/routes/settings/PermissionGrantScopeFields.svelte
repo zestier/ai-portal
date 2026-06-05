@@ -244,7 +244,7 @@
 	}
 	.scope-fields legend {
 		padding: 0 0.25rem;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 		color: var(--muted, #888);
 	}
 	.scope-fields label {
@@ -278,6 +278,6 @@
 		grid-column: 1 / -1;
 	}
 	.small {
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 </style>

@@ -26,7 +26,7 @@
 	}
 	.label {
 		margin-left: 0.35rem;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	@keyframes thinking-bounce {
 		0%,

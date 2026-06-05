@@ -5,7 +5,7 @@
      - palette / surfaces: --bg, --surface, --surface-2, --border, --text*
      - semantic colors:    --accent, --danger, --success, --warning (+ -text/-bg)
      - spacing:            --space-1..6 (4px base)
-     - type:               --fs-xs..xl (rem-based)
+     - type:               --fs-xs..3xl (rem-based)
      - radii:              --radius-sm/md/lg/pill
      - elevation:          --shadow-1/2
      - focus:              --focus-ring
@@ -59,6 +59,8 @@
 	--fs-md: 0.875rem;
 	--fs-lg: 1rem;
 	--fs-xl: 1.125rem;
+	--fs-2xl: 1.15rem; /* large panel/section headings */
+	--fs-3xl: 1.35rem; /* hero / dialog headings */
 
 	/* radii */
 	--radius-sm: 4px;

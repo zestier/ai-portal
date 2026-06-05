@@ -122,7 +122,7 @@
 		font-variant-numeric: tabular-nums;
 	}
 	.compaction {
-		font-size: 0.92em;
+		font-size: var(--fs-md);
 		opacity: 0.85;
 	}
 	.breakdown {

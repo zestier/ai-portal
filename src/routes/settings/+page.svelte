@@ -126,7 +126,7 @@
 		border: 1px solid var(--border);
 		border-radius: 999px;
 		color: var(--text-muted);
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 		padding: 0.3rem 0.7rem;
 		white-space: nowrap;
 	}

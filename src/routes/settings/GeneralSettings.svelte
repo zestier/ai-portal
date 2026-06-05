@@ -300,7 +300,7 @@
 	}
 	.section-heading h2 {
 		margin: 0 0 0.25rem;
-		font-size: 1.15rem;
+		font-size: var(--fs-2xl);
 	}
 	.section-heading p {
 		margin: 0;
@@ -310,7 +310,7 @@
 	}
 	.section-subheading h3 {
 		margin: 0 0 0.25rem;
-		font-size: 1rem;
+		font-size: var(--fs-lg);
 	}
 	.section-subheading p {
 		margin: 0;
@@ -384,7 +384,7 @@
 		border: 1px solid var(--border);
 		border-radius: 999px;
 		color: var(--text-muted);
-		font-size: 0.75em;
+		font-size: var(--fs-xs);
 		padding: 0.15rem 0.45rem;
 		white-space: nowrap;
 	}
@@ -431,6 +431,6 @@
 		border-left-color: var(--danger);
 	}
 	.small {
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 </style>

@@ -966,6 +966,6 @@
 	}
 	.approve-warning code {
 		font-family: var(--mono);
-		font-size: 0.95em;
+		font-size: var(--fs-lg);
 	}
 </style>

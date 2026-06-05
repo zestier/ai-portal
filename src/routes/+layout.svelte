@@ -216,7 +216,7 @@
 		}
 		.drawer-brand {
 			font-weight: 600;
-			font-size: 0.95rem;
+			font-size: var(--fs-lg);
 			color: var(--text);
 		}
 		.scrim {

@@ -296,7 +296,7 @@
 		color: var(--text-muted);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
-		font-size: 1rem;
+		font-size: var(--fs-lg);
 		line-height: 1;
 		padding: 0;
 	}

@@ -316,7 +316,7 @@
 		display: none;
 	}
 	.icon {
-		font-size: 1.05em;
+		font-size: var(--fs-lg);
 	}
 	.title {
 		font-weight: 600;

@@ -63,7 +63,7 @@
 		max-height: 200px;
 		overflow: auto;
 		margin-top: 0.4rem;
-		font-size: 0.85em;
+		font-size: var(--fs-md);
 	}
 	:global(.interactive .actions) {
 		display: flex;
@@ -86,7 +86,7 @@
 	}
 	:global(.interactive .field .label) {
 		font-weight: 500;
-		font-size: 0.9em;
+		font-size: var(--fs-md);
 	}
 	:global(.interactive form input[type='text']),
 	:global(.interactive form input[type='number']),

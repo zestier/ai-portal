@@ -187,7 +187,7 @@
 	}
 	.kbd-hint kbd {
 		font-family: var(--mono);
-		font-size: 0.68rem;
+		font-size: var(--fs-xs);
 		padding: 0.05rem 0.32rem;
 		border: 1px solid var(--border);
 		border-bottom-width: 2px;
