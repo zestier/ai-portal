@@ -162,7 +162,10 @@ describe('memory-backed sessions', () => {
 		expect(rendered).not.toContain('{\n');
 		// Semantic content is preserved, including reusable entity keys.
 		expect(rendered).toContain('character.mara (character) "Mara" — A wary scout.');
-		expect(rendered).toContain('character.mara.location = the cellar');
+		// Facts render grouped beneath their owning entity, not as flat
+		// "entityKey.predicate = value" lines.
+		expect(rendered).not.toContain('character.mara.location = the cellar');
+		expect(rendered).toMatch(/character\.mara[^\n]*\n {4}location = the cellar/);
 		expect(rendered).toContain('lighting: Keep the candle lit.');
 		expect(rendered).toContain('Find the attic key');
 		expect(rendered).toContain('[related: character.mara]');
@@ -1483,7 +1486,7 @@ describe('memory-backed sessions', () => {
 		expect(rendered).toContain('Wire up the salience ranker');
 	});
 
-	it('preserves entityKey prefixes in rendered facts even when the entity summary is dropped', () => {
+	it('keeps facts grouped under their entity key even when the entity summary is dropped', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'key-preserve', workdir: '/tmp', model: null });
 		commitPatch({
@@ -1503,11 +1506,82 @@ describe('memory-backed sessions', () => {
 		memory.addFact(conv.id, { entityId, predicate: 'oath', value: 'guild loyalty', pinned: true });
 
 		// Budget 1: the entity summary block is dropped, but the pinned fact stays
-		// and must still render with its reusable entityKey prefix.
+		// and must still render grouped under a header naming its entity key.
 		const packet = buildInitialPacket(conv.id, 'story', { tokenBudget: 1 });
 		expect(packet.entities).toHaveLength(0);
 		const rendered = renderMemoryPacket(packet);
-		expect(rendered).toContain('character.mara.oath = guild loyalty');
+		expect(rendered).toMatch(/character\.mara[^\n]*\n {4}oath = guild loyalty \(pinned\)/);
+	});
+
+	it('mints an entity from the key when a fact references an unknown entityKey', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'auto-entity', workdir: '/tmp', model: null });
+		// No entities[] entry — the fact references a brand-new key.
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				facts: [{ entityKey: 'object.brass_key', predicate: 'location', value: 'the study' }]
+			}
+		});
+
+		const entity = memory.getEntity(conv.id, 'object.brass_key');
+		expect(entity).not.toBeNull();
+		expect(entity?.entityType).toBe('object');
+		expect(entity?.displayName).toBe('Brass Key');
+		const facts = memory.listFacts(conv.id, { entityId: entity!.id });
+		expect(facts).toHaveLength(1);
+		expect(facts[0].entityId).toBe(entity!.id);
+	});
+
+	it('attaches keyless facts to a per-conversation session entity', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'session-anchor', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				facts: [{ predicate: 'tone', value: 'formal' }]
+			}
+		});
+
+		const session = memory.getEntity(conv.id, 'session.context');
+		expect(session).not.toBeNull();
+		expect(session?.entityType).toBe('session');
+		const facts = memory.listFacts(conv.id, { entityId: session!.id });
+		expect(facts.map((f) => f.predicate)).toContain('tone');
+		// And it injects grouped under the session entity rather than detached.
+		const rendered = renderMemoryPacket(buildInitialPacket(conv.id, 'project'));
+		expect(rendered).toMatch(/session\.context[^\n]*\n {4}tone = formal/);
+	});
+
+	it('records minted entities as patch items so revert removes them', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'mint-revert', workdir: '/tmp', model: null });
+		const { patch } = commitPatch({
+			conversationId: conv.id,
+			patch: {
+				facts: [{ entityKey: 'object.brass_key', predicate: 'location', value: 'the study' }]
+			}
+		});
+
+		const entity = memory.getEntity(conv.id, 'object.brass_key');
+		expect(entity).not.toBeNull();
+		const items = memory.listPatchItems(conv.id, { patchId: patch.id, limit: 100 });
+		expect(items.some((i) => i.itemType === 'entity' && i.itemId === entity!.id)).toBe(true);
+
+		memory.revertPatch(conv.id, patch.id);
+		// The auto-minted entity must be reverted (soft-deleted), not left active.
+		expect(memory.getEntity(conv.id, 'object.brass_key')?.status).toBe('deleted');
+	});
+
+	it('renders legacy detached facts even when no entity-anchored facts exist', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'detached-only', workdir: '/tmp', model: null });
+		// Simulate a legacy fact with no owning entity (null entityId).
+		memory.addFact(conv.id, { entityId: null, predicate: 'tone', value: 'wry' });
+
+		const rendered = renderMemoryPacket(buildInitialPacket(conv.id, 'project'));
+		expect(rendered).toContain('(session-scoped)');
+		expect(rendered).toMatch(/\(session-scoped\):\n {4}tone = wry/);
 	});
 
 	it('reflects only active facts in the entity-index fact counts', () => {

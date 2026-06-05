@@ -113,6 +113,32 @@ const PACKET_TOKEN_BUDGETS: Record<MemoryMode, number> = {
 
 const AUTO_SEARCH_LIMIT = 8;
 
+/**
+ * Entity key for the per-conversation catch-all that anchors facts which the
+ * extractor emitted without a specific referent. Keeping these on a real entity
+ * (instead of a NULL entity_id) means every fact groups under some entity when
+ * injected, which is far more coherent than a flat detached blob.
+ */
+const SESSION_ENTITY_KEY = 'session.context';
+
+/**
+ * Derive a sensible entityType and human display name from a namespaced entity
+ * key like `character.mara` or `object.attic_key`. Used when a fact references
+ * a key that has no entity yet, so we can mint one rather than drop the link.
+ */
+function deriveEntityFromKey(key: string): { entityType: string; displayName: string } {
+	const segments = key.split(/[.:/]/).filter(Boolean);
+	const entityType = segments.length > 1 ? segments[0] : 'concept';
+	const tail = segments.at(-1) ?? key;
+	const displayName =
+		tail
+			.split(/[_\-\s]+/)
+			.filter(Boolean)
+			.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+			.join(' ') || key;
+	return { entityType, displayName };
+}
+
 function packetTokenBudget(mode: MemoryMode): number {
 	return PACKET_TOKEN_BUDGETS[mode] ?? 1200;
 }
@@ -336,13 +362,6 @@ export function validatePatch(
 				severity: 'error',
 				code: 'fact_value_missing',
 				message: `Fact "${fact.predicate}" is missing a value.`
-			});
-		}
-		if (!fact.entityKey && fact.predicate !== 'session_note') {
-			issues.push({
-				severity: 'warning',
-				code: 'fact_without_entity',
-				message: `Fact "${fact.predicate}" has no entity key; it will be stored as session-scoped.`
 			});
 		}
 	}
@@ -635,10 +654,73 @@ export function commitPatch(
 		eventCount++;
 	}
 
+	// Facts are always anchored to an entity so memory stays organized and
+	// injects coherently. A referenced-but-unknown key mints a minimal entity
+	// from the key itself; a fact with no key at all is attached to the
+	// per-conversation session entity (created lazily, only when needed).
+	// Record a freshly minted entity as a patch item so it participates in
+	// revert/review just like an explicitly-declared entity. Pre-existing
+	// entities are reused silently and must NOT be recorded, or reverting this
+	// patch would delete an entity that other patches rely on.
+	const recordMintedEntity = (entityId: string) => {
+		memoryRepo.recordPatchItem(input.conversationId, {
+			patchId: patchRecord.id,
+			itemType: 'entity',
+			itemId: entityId,
+			action: 'create'
+		});
+	};
+	let sessionEntityId: string | null = null;
+	const ensureSessionEntity = (): string => {
+		if (sessionEntityId) return sessionEntityId;
+		const cached = entityIdsByKey.get(SESSION_ENTITY_KEY);
+		if (cached) {
+			sessionEntityId = cached;
+			return cached;
+		}
+		const existing = memoryRepo.getEntity(input.conversationId, SESSION_ENTITY_KEY);
+		if (existing) {
+			entityIdsByKey.set(SESSION_ENTITY_KEY, existing.id);
+			sessionEntityId = existing.id;
+			return existing.id;
+		}
+		const row = memoryRepo.upsertEntity(input.conversationId, {
+			entityKey: SESSION_ENTITY_KEY,
+			entityType: 'session',
+			displayName: 'Session',
+			summary: 'Catch-all for session-scoped facts not tied to a specific entity.',
+			sourceMessageId: input.sourceMessageId ?? null,
+			turnId: input.turnId ?? null
+		});
+		entityIdsByKey.set(SESSION_ENTITY_KEY, row.id);
+		sessionEntityId = row.id;
+		recordMintedEntity(row.id);
+		return row.id;
+	};
+	const ensureEntityForKey = (key: string): string => {
+		const known = entityIdsByKey.get(key);
+		if (known) return known;
+		// Reaching here means the key was absent from input.patch.entities and
+		// from the DB (collectEntityKeys already resolved existing keys above),
+		// so this is a genuinely new entity.
+		const { entityType, displayName } = deriveEntityFromKey(key);
+		const row = memoryRepo.upsertEntity(input.conversationId, {
+			entityKey: key,
+			entityType,
+			displayName,
+			sourceMessageId: input.sourceMessageId ?? null,
+			turnId: input.turnId ?? null
+		});
+		entityIdsByKey.set(key, row.id);
+		recordMintedEntity(row.id);
+		return row.id;
+	};
+
 	let factCount = 0;
 	for (const fact of input.patch.facts ?? []) {
+		const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
 		const row = memoryRepo.addFact(input.conversationId, {
-			entityId: fact.entityKey ? (entityIdsByKey.get(fact.entityKey) ?? null) : null,
+			entityId,
 			predicate: fact.predicate,
 			value: fact.value,
 			visibility: fact.visibility,
@@ -866,13 +948,22 @@ function factLine(
 ): string {
 	const key = keyOf(fact.entityId);
 	const subject = key ? `${key}.` : '';
+	return `- ${subject}${factDetail(fact)}`;
+}
+
+/**
+ * The `predicate = value (meta)` body of a fact, without any entity prefix or
+ * list bullet. Used when rendering facts grouped beneath their owning entity,
+ * where the entity is already named by the surrounding block header.
+ */
+function factDetail(fact: memoryRepo.MemoryFact): string {
 	const meta: string[] = [];
 	if (fact.pinned) meta.push('pinned');
 	if (fact.visibility && fact.visibility !== 'session') meta.push(fact.visibility);
 	if (fact.confidence < 1) meta.push(`conf ${fact.confidence}`);
 	if (fact.status && fact.status !== 'active') meta.push(fact.status);
 	const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
-	return `- ${subject}${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}`;
+	return `${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}`;
 }
 
 function decisionLine(decision: memoryRepo.MemoryDecision): string {
@@ -930,19 +1021,61 @@ export function renderMemoryPacket(packet: TurnMemoryPacket): string {
 		lines.push('', 'instructions:', packet.instructions.trim());
 	}
 
-	if (packet.entities.length) {
-		lines.push('', `entities (${packet.entities.length}):`);
-		for (const entity of packet.entities) lines.push(entityLine(entity));
+	// Group facts beneath their owning entity so memory injects as coherent
+	// per-entity blocks ("character.mara: { location = ..., mood = ... }")
+	// rather than a flat list of "entityKey.predicate = value" lines.
+	const entityById = new Map(packet.entities.map((entity) => [entity.id, entity]));
+	const indexById = new Map(packet.entityIndex.map((entry) => [entry.entityId, entry]));
+	const factsByEntity = new Map<string, memoryRepo.MemoryFact[]>();
+	const detachedFacts: memoryRepo.MemoryFact[] = [];
+	const blockOrder: string[] = [];
+	for (const fact of packet.facts) {
+		if (!fact.entityId) {
+			detachedFacts.push(fact);
+			continue;
+		}
+		let group = factsByEntity.get(fact.entityId);
+		if (!group) {
+			group = [];
+			factsByEntity.set(fact.entityId, group);
+			blockOrder.push(fact.entityId);
+		}
+		group.push(fact);
+	}
+	// Entities that earned a summary slot but have no facts in this packet still
+	// get a header so their description is not lost.
+	for (const entity of packet.entities) {
+		if (!factsByEntity.has(entity.id)) blockOrder.push(entity.id);
+	}
+
+	const entityHeader = (id: string): string => {
+		const entity = entityById.get(id);
+		if (entity) return entityLine(entity);
+		const entry = indexById.get(id);
+		if (entry) {
+			const status = entry.status && entry.status !== 'active' ? ` [${entry.status}]` : '';
+			return `- ${entry.entityKey} (${entry.entityType}) "${entry.displayName}"${status}`;
+		}
+		const key = keyOf(id);
+		return `- ${key ?? id}`;
+	};
+
+	if (blockOrder.length || detachedFacts.length) {
+		const total = blockOrder.length + (detachedFacts.length ? 1 : 0);
+		lines.push('', `entities & facts (${total}):`);
+		for (const id of blockOrder) {
+			lines.push(entityHeader(id));
+			for (const fact of factsByEntity.get(id) ?? []) lines.push(`    ${factDetail(fact)}`);
+		}
+		if (detachedFacts.length) {
+			lines.push('- (session-scoped):');
+			for (const fact of detachedFacts) lines.push(`    ${factDetail(fact)}`);
+		}
 	}
 
 	if (packet.entityIndex.length) {
 		lines.push('', `entity index (${packet.entityIndex.length}) — queryable by name:`);
 		for (const entry of packet.entityIndex) lines.push(entityIndexLine(entry));
-	}
-
-	if (packet.facts.length) {
-		lines.push('', `facts (${packet.facts.length}):`);
-		for (const fact of packet.facts) lines.push(factLine(fact, keyOf));
 	}
 
 	if (packet.decisions.length) {
