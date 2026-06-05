@@ -3,6 +3,7 @@
 	import type { FsEntry, TreeResponse } from '$lib/client/file-browser';
 	import { STATUS_LABEL, STATUS_COLOR } from '$lib/client/file-browser';
 	import DiffStat from './DiffStat.svelte';
+	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
@@ -183,7 +184,9 @@
 		{#if loaded?.loading && loaded.entries.length === 0}
 			<div class="muted indented" style:--depth={depth}>Loading…</div>
 		{:else if loaded?.error}
-			<div class="error indented" style:--depth={depth}>{loaded.error}</div>
+			<div class="error-indent indented" style:--depth={depth}>
+				<Alert kind="error">{loaded.error}</Alert>
+			</div>
 		{:else if loaded}
 			{#each loaded.entries.filter((e) => matchesFilter(e.name)) as entry (entry.relPath)}
 				{#if entry.type === 'directory'}
@@ -416,9 +419,8 @@
 		font-style: italic;
 		padding: 0.15rem 0.5rem 0.15rem calc(0.5rem + var(--depth, 0) * 0.9rem);
 	}
-	.error {
-		color: var(--danger);
-		padding: 0.15rem 0.5rem 0.15rem calc(0.5rem + var(--depth, 0) * 0.9rem);
+	.error-indent {
+		padding: 0.15rem 0.5rem;
 	}
 	.indented {
 		padding-left: calc(0.5rem + var(--depth, 0) * 0.9rem);

@@ -16,6 +16,7 @@
 		scopeOptionLabel,
 		type ScopeChoice
 	} from './interactive-permission';
+	import Alert from './ui/Alert.svelte';
 
 	let {
 		request,
@@ -488,10 +489,10 @@
 					: previewAlways('deny-always')}</span
 			>
 			{#if denyAllPolicy}
-				<span class="warning"
-					>Default policy is <strong>Deny all</strong>; "Allow always" is disabled so it doesn't get
-					silently dropped.</span
-				>
+				<Alert kind="warning">
+					Default policy is <strong>Deny all</strong>; "Allow always" is disabled so it doesn't get
+					silently dropped.
+				</Alert>
 			{/if}
 		</div>
 	{/if}
@@ -703,8 +704,5 @@
 		gap: 0.15rem;
 		font-size: var(--fs-sm);
 		line-height: 1.35;
-	}
-	.preview .warning {
-		color: var(--danger);
 	}
 </style>

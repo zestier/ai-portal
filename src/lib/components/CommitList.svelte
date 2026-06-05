@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { LogEntry } from '$lib/client/file-browser';
+	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
@@ -62,7 +63,7 @@
 
 <div class="commit-list">
 	{#if error}
-		<div class="error">{error}</div>
+		<div class="error-wrap"><Alert kind="error">{error}</Alert></div>
 	{/if}
 	<div class="commits">
 		{#each commits as c (c.sha)}
@@ -169,8 +170,7 @@
 		border-radius: var(--radius-sm);
 		cursor: pointer;
 	}
-	.error {
-		color: var(--danger);
+	.error-wrap {
 		padding: var(--space-2) var(--space-3);
 	}
 	.empty {

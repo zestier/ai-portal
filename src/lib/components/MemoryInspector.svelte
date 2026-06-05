@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import EmptyState from './ui/EmptyState.svelte';
+	import Alert from './ui/Alert.svelte';
+	import PanelHeader from './ui/PanelHeader.svelte';
 
 	let {
 		conversationId,
@@ -183,46 +186,47 @@
 </script>
 
 <section class="memory-inspector">
-	<header>
-		<div>
-			<h2>Session memory</h2>
-			<p>Inspect durable memory for this conversation. Memory is scoped to this session.</p>
-		</div>
-		<div class="actions">
+	<PanelHeader title="Session memory">
+		{#snippet meta()}
+			Inspect durable memory for this conversation. Memory is scoped to this session.
+		{/snippet}
+		{#snippet actions()}
 			<button type="button" onclick={refresh} disabled={loading}
 				>{loading ? 'Refreshing…' : 'Refresh'}</button
 			>
 			<button type="button" class="danger" onclick={wipe} disabled={wiping}>
 				{wiping ? 'Wiping…' : 'Wipe memory'}
 			</button>
+		{/snippet}
+	</PanelHeader>
+	<div class="body">
+		{#if error}
+			<div class="error-wrap"><Alert kind="error">Memory inspector failed: {error}</Alert></div>
+		{/if}
+		<div class="mode">Mode: <strong>{String(snapshot.mode ?? 'off')}</strong></div>
+		{#if snapshot.vectorAcceleration && typeof snapshot.vectorAcceleration === 'object'}
+			<div class="mode">
+				Vector search:
+				<strong
+					>{String(
+						(snapshot.vectorAcceleration as { provider?: unknown }).provider ?? 'unknown'
+					)}</strong
+				>
+				<span>{String((snapshot.vectorAcceleration as { message?: unknown }).message ?? '')}</span>
+			</div>
+		{/if}
+		<div class="grid">
+			{@render MemoryList('Entities', 'entities', items('entities'), true)}
+			{@render MemoryList('Facts', 'facts', items('facts'), true)}
+			{@render MemoryList('Decisions', 'decisions', items('decisions'), true)}
+			{@render MemoryList('Open loops', 'openLoops', items('openLoops'), true)}
+			{@render MemoryList('Events', 'events', items('events'), false)}
+			{@render MemoryList('Patches', 'patches', items('patches'), false)}
+			{@render MemoryList('Patch items', 'patchItems', items('patchItems'), false)}
+			{@render MemoryList('Global memories', 'globalMemories', items('globalMemories'), true)}
+			{@render MemoryList('Validation issues', 'issues', items('issues'), false)}
+			{@render MemoryList('Tool calls', 'toolCalls', items('toolCalls'), false)}
 		</div>
-	</header>
-	{#if error}
-		<p class="error">Memory inspector failed: {error}</p>
-	{/if}
-	<div class="mode">Mode: <strong>{String(snapshot.mode ?? 'off')}</strong></div>
-	{#if snapshot.vectorAcceleration && typeof snapshot.vectorAcceleration === 'object'}
-		<div class="mode">
-			Vector search:
-			<strong
-				>{String(
-					(snapshot.vectorAcceleration as { provider?: unknown }).provider ?? 'unknown'
-				)}</strong
-			>
-			<span>{String((snapshot.vectorAcceleration as { message?: unknown }).message ?? '')}</span>
-		</div>
-	{/if}
-	<div class="grid">
-		{@render MemoryList('Entities', 'entities', items('entities'), true)}
-		{@render MemoryList('Facts', 'facts', items('facts'), true)}
-		{@render MemoryList('Decisions', 'decisions', items('decisions'), true)}
-		{@render MemoryList('Open loops', 'openLoops', items('openLoops'), true)}
-		{@render MemoryList('Events', 'events', items('events'), false)}
-		{@render MemoryList('Patches', 'patches', items('patches'), false)}
-		{@render MemoryList('Patch items', 'patchItems', items('patchItems'), false)}
-		{@render MemoryList('Global memories', 'globalMemories', items('globalMemories'), true)}
-		{@render MemoryList('Validation issues', 'issues', items('issues'), false)}
-		{@render MemoryList('Tool calls', 'toolCalls', items('toolCalls'), false)}
 	</div>
 </section>
 
@@ -230,7 +234,7 @@
 	<section class="panel">
 		<h3>{title} <span>{rows.length}</span></h3>
 		{#if rows.length === 0}
-			<p class="empty">No records.</p>
+			<EmptyState size="sm" description="No records." />
 		{:else}
 			<div class="rows">
 				{#each rows as row}
@@ -283,28 +287,12 @@
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
+	}
+	.body {
 		padding: var(--space-4) var(--space-5);
 	}
-	header {
-		display: flex;
-		justify-content: space-between;
-		gap: var(--space-3);
-		align-items: flex-start;
-		margin-bottom: var(--space-3);
-	}
-	h2,
-	h3,
-	p {
+	h3 {
 		margin: 0;
-	}
-	header p,
-	.empty {
-		color: var(--text-muted);
-		font-size: var(--fs-sm);
-	}
-	.actions {
-		display: flex;
-		gap: var(--space-2);
 	}
 	button {
 		background: var(--surface-2);
@@ -326,9 +314,8 @@
 		margin-bottom: var(--space-3);
 		font-size: var(--fs-sm);
 	}
-	.error {
+	.error-wrap {
 		margin-bottom: var(--space-3);
-		color: var(--danger);
 	}
 	.grid {
 		display: grid;

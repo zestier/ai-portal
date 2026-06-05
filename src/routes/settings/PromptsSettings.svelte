@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Alert from '$lib/components/ui/Alert.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 	import type { FormResult, PromptTemplate } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
 	import { placeholdersForType } from '$lib/prompt-templates';
@@ -121,7 +122,7 @@
 								<strong>{template.title}</strong>
 								<small>{template.description || 'Custom prompt template'}</small>
 							</span>
-							{#if template.pinned}<span class="pill">Pinned</span>{/if}
+							{#if template.pinned}<Pill tone="accent">Pinned</Pill>{/if}
 						</summary>
 						<form method="POST" action="?/updatePromptTemplate" class="settings-form compact">
 							<input type="hidden" name="id" value={template.id} />
@@ -202,7 +203,7 @@
 									· {action.conversationMode ?? 'default mode'}
 								</small>
 							</span>
-							{#if action.pinned}<span class="pill">Pinned</span>{/if}
+							{#if action.pinned}<Pill tone="accent">Pinned</Pill>{/if}
 						</summary>
 						<form method="POST" action="?/updatePromptTemplate" class="settings-form compact">
 							<input type="hidden" name="id" value={action.id} />
@@ -439,13 +440,6 @@
 		display: block;
 		color: var(--text-muted);
 		margin-top: 0.15rem;
-	}
-	.pill {
-		border: 1px solid var(--accent);
-		border-radius: 999px;
-		color: var(--accent);
-		font-size: var(--fs-xs);
-		padding: 0.1rem 0.45rem;
 	}
 	.empty {
 		border: 1px dashed var(--border);

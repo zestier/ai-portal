@@ -7,6 +7,7 @@
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import ThinkingIndicator from './ThinkingIndicator.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import Alert from '$lib/components/ui/Alert.svelte';
 	import RawInputDialog from './RawInputDialog.svelte';
 	import { goto } from '$app/navigation';
 
@@ -497,7 +498,7 @@
 					</button>
 				</div>
 				{#if errorMsg}
-					<p class="err" role="alert">{errorMsg}</p>
+					<Alert kind="error">{errorMsg}</Alert>
 				{/if}
 			</form>
 		{:else}
@@ -653,10 +654,5 @@
 		flex: 1;
 		font-size: var(--fs-xs);
 		min-width: 12em;
-	}
-	.err {
-		margin: 0;
-		color: var(--danger);
-		font-size: var(--fs-sm);
 	}
 </style>

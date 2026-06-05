@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { fetchHeadStatus, type HeadStatus } from '$lib/client/file-browser';
+	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
@@ -64,7 +65,7 @@
 
 <div class="git-status" aria-label="Git status">
 	{#if error}
-		<span class="error small">{error}</span>
+		<Alert kind="error">{error}</Alert>
 	{:else if head === null}
 		<span class="muted small">{loading ? 'Loading…' : ''}</span>
 	{:else if head.initialized === false}
@@ -185,9 +186,6 @@
 	}
 	.clean {
 		color: var(--success);
-	}
-	.error {
-		color: var(--danger);
 	}
 	.revert-btn {
 		position: absolute;

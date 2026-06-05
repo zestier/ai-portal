@@ -5,6 +5,7 @@
 	import ToolCall from './ToolCall.svelte';
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import DiffView from './DiffView.svelte';
+	import Pill from './ui/Pill.svelte';
 
 	let {
 		toolCall,
@@ -123,13 +124,13 @@
 		<span class="icon" aria-hidden="true">🤖</span>
 		<span class="title">{headline}</span>
 		{#if args.agent_type}
-			<span class="badge type">{args.agent_type}</span>
+			<Pill tone="accent">{args.agent_type}</Pill>
 		{/if}
 		{#if args.model}
-			<span class="badge model">{args.model}</span>
+			<Pill>{args.model}</Pill>
 		{/if}
 		{#if args.mode === 'background'}
-			<span class="badge mode">background</span>
+			<Pill>background</Pill>
 		{/if}
 		<span class="status status-{displayState.statusClass}">
 			{#if pending}<span class="dot" aria-hidden="true"></span>{/if}
@@ -320,21 +321,6 @@
 	}
 	.title {
 		font-weight: 600;
-	}
-	.badge {
-		display: inline-block;
-		font-size: var(--fs-xs);
-		padding: 0.05rem 0.4rem;
-		border-radius: var(--radius-sm);
-		background: var(--surface);
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		font-family: var(--mono);
-		text-transform: lowercase;
-	}
-	.badge.type {
-		color: var(--text);
-		border-color: var(--accent);
 	}
 	.status {
 		font-size: var(--eyebrow-fs);

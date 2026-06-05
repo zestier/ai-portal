@@ -3,6 +3,7 @@
 	import type { ChangeEntry, ChangesResponse } from '$lib/client/file-browser';
 	import { STATUS_LABEL, STATUS_COLOR } from '$lib/client/file-browser';
 	import DiffStat from './DiffStat.svelte';
+	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
@@ -130,7 +131,7 @@
 		</button>
 	</div>
 	{#if error}
-		<div class="error">{error}</div>
+		<div class="error-wrap"><Alert kind="error">{error}</Alert></div>
 	{:else if !initialized}
 		<div class="muted empty">Not a git repository.</div>
 	{:else if loading && entries.length === 0}
@@ -318,8 +319,7 @@
 		padding: var(--space-3);
 		font-style: italic;
 	}
-	.error {
-		color: var(--danger);
+	.error-wrap {
 		padding: var(--space-2) var(--space-3);
 	}
 </style>

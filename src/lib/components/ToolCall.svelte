@@ -4,6 +4,7 @@
 	import TerminalBlock from './tool/TerminalBlock.svelte';
 	import ResultBlock from './tool/ResultBlock.svelte';
 	import GitToolResult from './tool/GitToolResult.svelte';
+	import Alert from './ui/Alert.svelte';
 	import { synthesizeDiffs } from '$lib/client/diff-synth';
 	import { parseGitToolResult } from '$lib/client/git-tool-result';
 	import { summarizeToolCall } from '$lib/client/tool-summary';
@@ -181,7 +182,7 @@
 					<span class="muted small">{rerunDisabledReason}</span>
 				{/if}
 				{#if rerunError}
-					<span class="error small">{rerunError}</span>
+					<Alert kind="error">{rerunError}</Alert>
 				{/if}
 			</div>
 		{/if}
@@ -311,9 +312,6 @@
 	.rerun-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
-	}
-	.error {
-		color: var(--danger);
 	}
 	.disclosure {
 		cursor: pointer;

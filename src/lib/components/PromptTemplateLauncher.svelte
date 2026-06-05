@@ -3,6 +3,7 @@
 	import { createPromptTemplateDraftChat } from '$lib/client/prompt-template-launch';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
 	import Modal from './ui/Modal.svelte';
+	import EmptyState from './ui/EmptyState.svelte';
 
 	type Variant = 'home' | 'sidebar' | 'rail';
 
@@ -228,9 +229,10 @@
 						{/each}
 					</div>
 				{:else}
-					<p class="empty muted">
-						No custom templates yet. Built-in templates are always available.
-					</p>
+					<EmptyState
+						size="sm"
+						description="No custom templates yet. Built-in templates are always available."
+					/>
 				{/if}
 			</section>
 		{/if}
@@ -329,10 +331,5 @@
 	.template-card span {
 		color: var(--text-muted);
 		font-size: var(--fs-sm);
-	}
-	.empty {
-		border: 1px dashed var(--border);
-		border-radius: var(--radius-md);
-		padding: var(--space-3);
 	}
 </style>

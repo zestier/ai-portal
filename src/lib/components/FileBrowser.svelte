@@ -5,6 +5,8 @@
 	import ChangeList from './ChangeList.svelte';
 	import DiffView from './DiffView.svelte';
 	import GitStatusHeader from './GitStatusHeader.svelte';
+	import EmptyState from './ui/EmptyState.svelte';
+	import Alert from './ui/Alert.svelte';
 	import type {
 		FsEntry,
 		FileResponse,
@@ -347,7 +349,7 @@
 			</div>
 			<div class="commit-body">
 				{#if commitDetailError}
-					<div class="error">{commitDetailError}</div>
+					<div class="error-wrap"><Alert kind="error">{commitDetailError}</Alert></div>
 				{:else if commitDetail}
 					{#if commitDetail.body}
 						<pre class="commit-message">{commitDetail.body}</pre>
@@ -378,12 +380,12 @@
 									onLineClick={startComment}
 								/>
 							{:else}
-								<div class="placeholder">Select a file to see its diff.</div>
+								<EmptyState size="sm" description="Select a file to see its diff." />
 							{/if}
 						</div>
 					</div>
 				{:else}
-					<div class="placeholder">Loading commit…</div>
+					<EmptyState size="sm" description="Loading commit…" />
 				{/if}
 			</div>
 		{:else if selectedPath}
@@ -429,13 +431,14 @@
 			<div class="content-body">
 				{#if viewMode === 'content'}
 					{#if fileLoading}
-						<div class="placeholder">Loading…</div>
+						<EmptyState size="sm" description="Loading…" />
 					{:else if fileError}
-						<div class="error">{fileError}</div>
+						<div class="error-wrap"><Alert kind="error">{fileError}</Alert></div>
 					{:else if fileData?.binary}
-						<div class="placeholder">
-							Binary file ({fmtSize((fileData as { size?: number }).size ?? null)}).
-						</div>
+						<EmptyState
+							size="sm"
+							description={`Binary file (${fmtSize((fileData as { size?: number }).size ?? null)}).`}
+						/>
 					{:else if fileData}
 						{#if contentLines.length > 0}
 							<div class="file-view commentable" role="table" aria-label="file lines">
@@ -474,9 +477,9 @@
 						{/if}
 					{/if}
 				{:else if diffLoading}
-					<div class="placeholder">Loading diff…</div>
+					<EmptyState size="sm" description="Loading diff…" />
 				{:else if diffError}
-					<div class="error">{diffError}</div>
+					<div class="error-wrap"><Alert kind="error">{diffError}</Alert></div>
 				{:else if diffText}
 					<DiffView
 						path={selectedPath}
@@ -486,11 +489,11 @@
 						onLineClick={startComment}
 					/>
 				{:else}
-					<div class="placeholder">No changes for this file.</div>
+					<EmptyState size="sm" description="No changes for this file." />
 				{/if}
 			</div>
 		{:else}
-			<div class="placeholder">Select a file or commit to view it.</div>
+			<EmptyState size="sm" description="Select a file or commit to view it." />
 		{/if}
 
 		{#if draft}
@@ -927,13 +930,7 @@
 		overflow-wrap: anywhere;
 		font-size: var(--fs-sm);
 	}
-	.placeholder {
-		color: var(--text-muted);
-		font-style: italic;
-		padding: var(--space-4);
-	}
-	.error {
-		color: var(--danger);
+	.error-wrap {
 		padding: var(--space-2) var(--space-3);
 	}
 	.muted {

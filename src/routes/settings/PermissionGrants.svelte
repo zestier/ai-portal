@@ -28,6 +28,7 @@
 		type UrlRuleKind
 	} from '$lib/permissions/grant-form';
 	import PermissionGrantScopeFields from './PermissionGrantScopeFields.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 
 	let { grants, form }: { grants: PermissionGrant[]; form: FormResult | null } = $props();
 
@@ -623,16 +624,10 @@
 	</div>
 
 	{#if grants.length === 0}
-		<div class="empty-state">
-			<h3>No saved grants yet</h3>
-			<p class="muted small">
-				No saved grants. When you click "Allow always" or "Deny always" on a tool prompt, the
-				resulting approve or hard-deny rule shows up here so you can revoke it later. You can also
-				add prompt-required rules here to force interactive approval for matching requests. The
-				button above re-installs the built-in defaults (file/dir reads, structured tools, and safety
-				rules).
-			</p>
-		</div>
+		<EmptyState
+			title="No saved grants yet"
+			description={`No saved grants. When you click "Allow always" or "Deny always" on a tool prompt, the resulting approve or hard-deny rule shows up here so you can revoke it later. You can also add prompt-required rules here to force interactive approval for matching requests. The button above re-installs the built-in defaults (file/dir reads, structured tools, and safety rules).`}
+		/>
 	{:else}
 		<form class="grant-filters" role="search" onsubmit={(e) => e.preventDefault()}>
 			<div class="filter-header">
@@ -715,15 +710,15 @@
 		</form>
 
 		{#if filteredGrants.length === 0}
-			<div class="empty-state filtered-empty" aria-live="polite">
-				<h3>No grants match these filters</h3>
-				<p class="muted small">
-					Broaden the search or reset filters to see the hidden {stats.total} saved grant{stats.total ===
-					1
-						? ''
-						: 's'}.
-				</p>
-				<button class="btn small" type="button" onclick={resetFilters}>Reset filters</button>
+			<div aria-live="polite">
+				<EmptyState
+					title="No grants match these filters"
+					description={`Broaden the search or reset filters to see the hidden ${stats.total} saved grant${stats.total === 1 ? '' : 's'}.`}
+				>
+					{#snippet actions()}
+						<button class="btn small" type="button" onclick={resetFilters}>Reset filters</button>
+					{/snippet}
+				</EmptyState>
 			</div>
 		{:else}
 			<div class="filtered-summary" aria-live="polite">
@@ -976,19 +971,11 @@
 	.small {
 		font-size: var(--fs-md);
 	}
-	.empty-state {
-		border: 1px dashed var(--border);
-		border-radius: var(--radius-sm);
-		padding: 1rem;
-		background: color-mix(in srgb, var(--surface), var(--code-bg) 15%);
-	}
-	.empty-state h3,
 	.filter-header h3,
 	.grant-section-heading h3 {
 		margin: 0 0 0.2rem;
 		font-size: var(--fs-lg);
 	}
-	.empty-state p,
 	.filter-header p,
 	.grant-section-heading p,
 	.deny-reason-row {

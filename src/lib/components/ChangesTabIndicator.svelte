@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { fetchHeadStatus, type HeadStatus } from '$lib/client/file-browser';
+	import Pill from './ui/Pill.svelte';
 
 	let { conversationId }: { conversationId: string } = $props();
 
@@ -50,24 +51,17 @@
 </script>
 
 {#if !error && dirtyCount > 0}
-	<span class="badge" aria-label={label} title={label}>
-		<span class="dot" aria-hidden="true"></span>
-		{dirtyCount}
+	<span class="badge-wrap" aria-label={label} title={label}>
+		<Pill tone="warning">
+			<span class="dot" aria-hidden="true"></span>
+			{dirtyCount}
+		</Pill>
 	</span>
 {/if}
 
 <style>
-	.badge {
+	.badge-wrap {
 		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.1rem 0.45rem;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--warning) 14%, transparent);
-		color: var(--warning);
-		font-size: var(--fs-xs);
-		font-weight: 600;
-		line-height: 1.2;
 	}
 
 	.dot {

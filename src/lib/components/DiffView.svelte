@@ -8,6 +8,7 @@
 		type DiffLine
 	} from '$lib/client/diff-parser';
 	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
+	import EmptyState from './ui/EmptyState.svelte';
 
 	let {
 		path = 'diff',
@@ -97,7 +98,10 @@
 			</div>
 			{#if !collapsed}
 				{#if empty}
-					<div class="empty">No textual diff (file may be binary, empty, or unchanged).</div>
+					<EmptyState
+						size="sm"
+						description="No textual diff (file may be binary, empty, or unchanged)."
+					/>
 				{:else}
 					<div
 						class="lines"
@@ -242,11 +246,6 @@
 	}
 	.removed {
 		color: var(--danger);
-	}
-	.empty {
-		padding: 0.8rem;
-		color: var(--text-muted);
-		font-style: italic;
 	}
 	.lines {
 		flex: 1;
