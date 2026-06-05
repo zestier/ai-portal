@@ -87,13 +87,51 @@ export interface WorkspaceTicket {
 
 export type PromptTemplateStatus = 'open' | 'archived';
 
+/**
+ * Prompt templates are typed. The type governs which `{{placeholders}}` may be
+ * injected at launch and how/where the template surfaces in the UI:
+ * - `chat`: the original launcher templates, injected verbatim (no placeholders).
+ * - `ticket-action`: rendered as a button on each workspace ticket; may inject
+ *   `{{ticket.*}}` placeholders and carries ticket-action launch metadata.
+ */
+export type PromptTemplateType = 'chat' | 'ticket-action';
+
+export const PROMPT_TEMPLATE_TYPES: readonly PromptTemplateType[] = ['chat', 'ticket-action'];
+
+export function normalizePromptTemplateType(raw: string | null | undefined): PromptTemplateType {
+	return raw === 'ticket-action' ? 'ticket-action' : 'chat';
+}
+
+/**
+ * How a ticket-action template launches: `send` posts the interpolated prompt as
+ * a turn immediately; `draft` pre-fills the composer for the user to edit/send.
+ */
+export type TicketLaunchBehavior = 'send' | 'draft';
+
+export function normalizeTicketLaunchBehavior(
+	raw: string | null | undefined
+): TicketLaunchBehavior {
+	return raw === 'draft' ? 'draft' : 'send';
+}
+
 export interface ChatPromptTemplate {
 	id: string;
 	/** Built-in templates are static and not owned by a user. */
 	userId: string | null;
+	type: PromptTemplateType;
 	title: string;
 	description: string;
 	prompt: string;
+	/**
+	 * Ticket-action launch behavior (`send` | `draft`). `null` for `chat`
+	 * templates, which are always pre-filled into the composer.
+	 */
+	launchBehavior: TicketLaunchBehavior | null;
+	/**
+	 * Optional conversation-mode override applied when a ticket-action template
+	 * creates its conversation. `null` means use the user's default mode.
+	 */
+	conversationMode: SessionMode | null;
 	status: PromptTemplateStatus;
 	pinned: boolean;
 	orderIndex: number;

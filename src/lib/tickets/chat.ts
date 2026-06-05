@@ -1,56 +1,51 @@
-import type { SessionMode, WorkspaceTicket } from '$lib/types';
-
-export type TicketChatMode = 'do' | 'refine';
+import {
+	interpolatePrompt,
+	ticketPlaceholderValues,
+	type PromptTemplateListItem
+} from '$lib/prompt-templates';
+import type { ChatPromptTemplate, SessionMode, WorkspaceTicket } from '$lib/types';
 
 /**
- * Refine chats are exploratory by nature — they research and update the ticket
- * rather than implement it — so they always run interactively regardless of the
- * user's default conversation mode.
+ * Conversation title for a ticket-action chat. Data-driven actions keep the
+ * ticket's own title as the conversation name; the action label lives on the
+ * button, not the chat title.
  */
-export function ticketChatConversationMode(mode: TicketChatMode): SessionMode | undefined {
-	return mode === 'refine' ? 'interactive' : undefined;
-}
-
-export function ticketChatTitle(
-	ticket: Pick<WorkspaceTicket, 'title'>,
-	mode: TicketChatMode = 'do'
-): string {
-	if (mode === 'refine') return `Refine ticket: ${ticket.title}`;
+export function ticketActionChatTitle(ticket: Pick<WorkspaceTicket, 'title'>): string {
 	return ticket.title;
 }
 
-export function ticketChatPrompt(
-	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body'>,
-	mode: TicketChatMode = 'do'
+/**
+ * Conversation-mode override for a ticket-action template, or `undefined` to use
+ * the user's default mode (e.g. the seeded "Refine" action forces `interactive`).
+ */
+export function ticketActionConversationMode(
+	template: Pick<ChatPromptTemplate, 'conversationMode'>
+): SessionMode | undefined {
+	return template.conversationMode ?? undefined;
+}
+
+/** Interpolate a ticket-action template's prompt with a ticket's values. */
+export function interpolateTicketPrompt(
+	template: Pick<ChatPromptTemplate, 'prompt'>,
+	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body'>
 ): string {
-	const header =
-		mode === 'refine'
-			? `Refine this workspace ticket: ${ticket.title}`
-			: `Do this workspace ticket: ${ticket.title}`;
-	const instructions =
-		mode === 'refine'
-			? 'Clarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket. Update the ticket instead of implementing it unless explicitly asked.'
-			: null;
-	const lines = [header, ''];
-	if (instructions) lines.push(instructions, '');
-	lines.push(`Ticket ID: ${ticket.id}`);
-	const body = ticket.body.trim();
-	if (body) lines.push('', body);
-	return lines.join('\n');
+	return interpolatePrompt(template.prompt, ticketPlaceholderValues(ticket));
 }
 
-export function isTicketChatMode(value: string | null): value is TicketChatMode {
-	return value === 'do' || value === 'refine';
-}
-
-export function ticketDraftChatUrl(
+/**
+ * Draft URL for a ticket-action launch. The conversation load resolves the
+ * ticket + action template server-side and pre-fills the interpolated prompt.
+ */
+export function ticketActionDraftUrl(
 	conversationId: string,
 	ticketId: string,
-	mode: TicketChatMode
+	actionId: string
 ): string {
 	const params = new URLSearchParams({
 		draftTicketId: ticketId,
-		ticketMode: mode
+		ticketActionId: actionId
 	});
-	return `/conversations/${conversationId}?${params.toString()}`;
+	return `/conversations/${encodeURIComponent(conversationId)}?${params.toString()}`;
 }
+
+export type TicketActionListItem = PromptTemplateListItem;

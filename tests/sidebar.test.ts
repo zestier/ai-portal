@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { archiveWorkspaceTicket } from '../src/lib/client/ticket-archive';
 import { resolveInitialSidebarOpen } from '../src/lib/client/sidebar';
-import { ticketChatPrompt, ticketChatTitle, ticketDraftChatUrl } from '../src/lib/client/tickets';
+import {
+	interpolateTicketPrompt,
+	ticketActionChatTitle,
+	ticketActionConversationMode,
+	ticketActionDraftUrl
+} from '../src/lib/client/tickets';
 
 describe('resolveInitialSidebarOpen', () => {
 	it('honors a persisted "true" value regardless of viewport', () => {
@@ -34,53 +39,55 @@ describe('resolveInitialSidebarOpen', () => {
 	});
 });
 
-describe('ticket chat helpers', () => {
+describe('ticket action helpers', () => {
+	const doPrompt =
+		'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
+	const refinePrompt =
+		'Refine this workspace ticket: {{ticket.title}}\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
+
 	it('uses the ticket title as the chat title', () => {
-		expect(ticketChatTitle({ title: 'Fix sidebar actions' })).toBe('Fix sidebar actions');
+		expect(ticketActionChatTitle({ title: 'Fix sidebar actions' })).toBe('Fix sidebar actions');
 	});
 
-	it('labels refinement chats by mode', () => {
-		expect(ticketChatTitle({ title: 'Fix sidebar actions' }, 'refine')).toBe(
-			'Refine ticket: Fix sidebar actions'
-		);
+	it('returns the action conversation-mode override or undefined for default', () => {
+		expect(ticketActionConversationMode({ conversationMode: 'interactive' })).toBe('interactive');
+		expect(ticketActionConversationMode({ conversationMode: null })).toBeUndefined();
 	});
 
-	it('builds an actionable initial prompt for a ticket with details', () => {
+	it('interpolates a ticket-action prompt with ticket details', () => {
 		expect(
-			ticketChatPrompt({
-				id: 'ticket-1',
-				title: 'Fix sidebar actions',
-				body: 'Add a launch button.'
-			})
+			interpolateTicketPrompt(
+				{ prompt: doPrompt },
+				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.' }
+			)
 		).toBe(
 			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.'
 		);
 	});
 
-	it('builds a ticket refinement prompt that avoids implementation', () => {
+	it('interpolates the refine prompt that avoids implementation', () => {
 		expect(
-			ticketChatPrompt(
-				{
-					id: 'ticket-1',
-					title: 'Fix sidebar actions',
-					body: 'Add a launch button.'
-				},
-				'refine'
+			interpolateTicketPrompt(
+				{ prompt: refinePrompt },
+				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.' }
 			)
 		).toBe(
 			'Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: ticket-1\n\nAdd a launch button.'
 		);
 	});
 
-	it('omits empty ticket details from the initial prompt', () => {
-		expect(ticketChatPrompt({ id: 'ticket-1', title: 'Fix sidebar actions', body: '  ' })).toBe(
-			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1'
-		);
+	it('trims dangling blank lines when the ticket body is empty', () => {
+		expect(
+			interpolateTicketPrompt(
+				{ prompt: doPrompt },
+				{ id: 'ticket-1', title: 'Fix sidebar actions', body: '  ' }
+			)
+		).toBe('Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1');
 	});
 
-	it('builds draft chat URLs without embedding ticket details', () => {
-		expect(ticketDraftChatUrl('conv-1', 'ticket-1', 'do')).toBe(
-			'/conversations/conv-1?draftTicketId=ticket-1&ticketMode=do'
+	it('builds encoded draft chat URLs that carry the action id', () => {
+		expect(ticketActionDraftUrl('conv-1', 'ticket-1', 'action-1')).toBe(
+			'/conversations/conv-1?draftTicketId=ticket-1&ticketActionId=action-1'
 		);
 	});
 });

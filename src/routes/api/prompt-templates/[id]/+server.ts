@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
@@ -17,6 +18,11 @@ const PatchBody = z
 		title: z.string().trim().min(1).max(120).optional(),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000).optional(),
+		launchBehavior: z.enum(['send', 'draft']).optional(),
+		conversationMode: z
+			.enum(['interactive', 'plan', 'autopilot', 'best-effort'])
+			.nullable()
+			.optional(),
 		status: z.enum(['open', 'archived']).optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
@@ -26,6 +32,8 @@ const PatchBody = z
 			body.title !== undefined ||
 			body.description !== undefined ||
 			body.prompt !== undefined ||
+			body.launchBehavior !== undefined ||
+			body.conversationMode !== undefined ||
 			body.status !== undefined ||
 			body.pinned !== undefined ||
 			body.orderIndex !== undefined,
@@ -35,6 +43,14 @@ const PatchBody = z
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
 	const body = await parseBody(request, PatchBody);
+	const current = promptTemplates.get(params.id, userId);
+	if (!current) throw error(404);
+	if (body.prompt !== undefined) {
+		const unknown = findUnknownPlaceholders(body.prompt, current.type);
+		if (unknown.length > 0) {
+			throw error(400, unknownPlaceholderMessage(current.type, unknown));
+		}
+	}
 	const template = promptTemplates.update(params.id, userId, body);
 	if (!template) throw error(404);
 	return json({ ok: true, template: { ...template, source: 'custom' } });

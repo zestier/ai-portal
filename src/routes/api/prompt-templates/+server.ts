@@ -1,7 +1,12 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { listBuiltInPromptTemplates, type PromptTemplateListItem } from '$lib/prompt-templates';
+import {
+	findUnknownPlaceholders,
+	listBuiltInPromptTemplates,
+	unknownPlaceholderMessage,
+	type PromptTemplateListItem
+} from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
@@ -9,7 +14,9 @@ import { parseBody } from '$lib/server/validate';
 export const GET: RequestHandler = ({ locals }) => {
 	const userId = requireUserId(locals);
 	const builtInTemplates = listBuiltInPromptTemplates();
-	const customTemplates = promptTemplates.list(userId).map(
+	// The launcher only deals with chat templates; ticket-action templates are
+	// surfaced as ticket buttons, not in the chat-template picker.
+	const customTemplates = promptTemplates.list(userId, { type: 'chat' }).map(
 		(template): PromptTemplateListItem => ({
 			...template,
 			source: 'custom'
@@ -22,13 +29,27 @@ export const GET: RequestHandler = ({ locals }) => {
 	});
 };
 
-const CreateBody = z.object({
-	title: z.string().trim().min(1).max(120),
-	description: z.string().trim().max(500).optional(),
-	prompt: z.string().trim().min(1).max(20_000),
-	pinned: z.boolean().optional(),
-	orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
-});
+const CreateBody = z
+	.object({
+		type: z.enum(['chat', 'ticket-action']).optional().default('chat'),
+		title: z.string().trim().min(1).max(120),
+		description: z.string().trim().max(500).optional(),
+		prompt: z.string().trim().min(1).max(20_000),
+		launchBehavior: z.enum(['send', 'draft']).optional(),
+		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		pinned: z.boolean().optional(),
+		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
+	})
+	.superRefine((body, ctx) => {
+		const unknown = findUnknownPlaceholders(body.prompt, body.type);
+		if (unknown.length > 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['prompt'],
+				message: unknownPlaceholderMessage(body.type, unknown)
+			});
+		}
+	});
 
 export const POST: RequestHandler = async ({ locals, request }) => {
 	const userId = requireUserId(locals);

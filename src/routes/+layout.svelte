@@ -116,6 +116,7 @@
 				tickets={data.tickets}
 				ticketCount={data.ticketCount}
 				ticketWorkspace={data.ticketWorkspace}
+				ticketActions={data.ticketActions}
 				user={data.user}
 				onnavigate={closeOnMobileNavigate}
 			/>

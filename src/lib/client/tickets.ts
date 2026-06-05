@@ -1,8 +1,7 @@
 export {
-	isTicketChatMode,
-	ticketChatConversationMode,
-	ticketChatPrompt,
-	ticketChatTitle,
-	ticketDraftChatUrl,
-	type TicketChatMode
+	interpolateTicketPrompt,
+	ticketActionChatTitle,
+	ticketActionConversationMode,
+	ticketActionDraftUrl,
+	type TicketActionListItem
 } from '$lib/tickets/chat';

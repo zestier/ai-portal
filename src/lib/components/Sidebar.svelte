@@ -1,14 +1,13 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { tick } from 'svelte';
-	import type { Conversation, User, WorkspaceTicket } from '$lib/types';
+	import type { ChatPromptTemplate, Conversation, User, WorkspaceTicket } from '$lib/types';
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import PromptTemplateLauncher from '$lib/components/PromptTemplateLauncher.svelte';
-	import type { TicketChatMode } from '$lib/client/tickets';
 	import {
-		ticketChatConversationMode,
-		ticketChatPrompt,
-		ticketChatTitle
+		interpolateTicketPrompt,
+		ticketActionChatTitle,
+		ticketActionConversationMode
 	} from '$lib/client/tickets';
 	import { createTicketDraftChat } from '$lib/client/ticket-chat-launch';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
@@ -18,6 +17,7 @@
 		tickets,
 		ticketCount,
 		ticketWorkspace,
+		ticketActions,
 		user,
 		onnavigate
 	}: {
@@ -25,6 +25,7 @@
 		tickets: WorkspaceTicket[];
 		ticketCount: number;
 		ticketWorkspace: string | null;
+		ticketActions: ChatPromptTemplate[];
 		user: User | null;
 		onnavigate?: () => void;
 	} = $props();
@@ -132,7 +133,7 @@
 		expandedTicketIds = next;
 	}
 
-	async function launchTicketChat(ticket: WorkspaceTicket, mode: TicketChatMode) {
+	async function launchTicketChat(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
 		if (ticketLaunchId || ticketArchiveId === ticket.id) return;
 		ticketLaunchId = ticket.id;
 		let conversationId: string | null = null;
@@ -141,9 +142,9 @@
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
-					title: ticketChatTitle(ticket, mode),
+					title: ticketActionChatTitle(ticket),
 					workdir: ticketWorkspace ?? undefined,
-					mode: ticketChatConversationMode(mode)
+					mode: ticketActionConversationMode(action)
 				})
 			});
 			if (!convRes.ok) {
@@ -155,7 +156,7 @@
 			const turnRes = await fetch(`/api/conversations/${conversationId}/turns`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ content: ticketChatPrompt(ticket, mode) })
+				body: JSON.stringify({ content: interpolateTicketPrompt(action, ticket) })
 			});
 			if (!turnRes.ok) {
 				await api(
@@ -183,13 +184,13 @@
 		}
 	}
 
-	async function openTicketDraft(ticket: WorkspaceTicket, mode: TicketChatMode = 'do') {
+	async function openTicketDraft(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
 		if (ticketLaunchId || ticketArchiveId === ticket.id) return;
 		ticketLaunchId = ticket.id;
 		try {
 			const result = await createTicketDraftChat({
 				ticket,
-				mode,
+				template: action,
 				workdir: ticketWorkspace,
 				fetcher: fetch
 			});
@@ -204,6 +205,14 @@
 			flashError('Could not open ticket draft');
 		} finally {
 			ticketLaunchId = null;
+		}
+	}
+
+	function runTicketAction(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
+		if (action.launchBehavior === 'draft') {
+			void openTicketDraft(ticket, action);
+		} else {
+			void launchTicketChat(ticket, action);
 		}
 	}
 
@@ -482,33 +491,17 @@
 											role="group"
 											aria-label={`Actions for ${ticket.title}`}
 										>
-											<button
-												class="ticket-action"
-												title="Start implementation chat"
-												aria-label={`Do ticket: ${ticket.title}`}
-												disabled={ticketLaunchId !== null || ticketArchiveId === ticket.id}
-												onclick={() => launchTicketChat(ticket, 'do')}
-											>
-												Do
-											</button>
-											<button
-												class="ticket-action"
-												title="Open editable draft chat"
-												aria-label={`Open draft for ticket: ${ticket.title}`}
-												disabled={ticketLaunchId !== null || ticketArchiveId === ticket.id}
-												onclick={() => openTicketDraft(ticket)}
-											>
-												Draft
-											</button>
-											<button
-												class="ticket-action"
-												title="Start ticket refinement chat"
-												aria-label={`Refine ticket: ${ticket.title}`}
-												disabled={ticketLaunchId !== null || ticketArchiveId === ticket.id}
-												onclick={() => launchTicketChat(ticket, 'refine')}
-											>
-												Refine
-											</button>
+											{#each ticketActions as action (action.id)}
+												<button
+													class="ticket-action"
+													title={action.description || action.title}
+													aria-label={`${action.title} ticket: ${ticket.title}`}
+													disabled={ticketLaunchId !== null || ticketArchiveId === ticket.id}
+													onclick={() => runTicketAction(ticket, action)}
+												>
+													{action.title}
+												</button>
+											{/each}
 											<button
 												class="ticket-action danger"
 												title="Remove ticket from open list"

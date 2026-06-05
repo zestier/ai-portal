@@ -1,0 +1,98 @@
+import { describe, expect, it } from 'vitest';
+import {
+	extractPlaceholders,
+	findUnknownPlaceholders,
+	interpolatePrompt,
+	placeholdersForType,
+	ticketActionDefaultId,
+	ticketPlaceholderValues,
+	unknownPlaceholderMessage,
+	TICKET_ACTION_DEFAULTS
+} from '../src/lib/prompt-templates';
+
+describe('placeholder registry', () => {
+	it('exposes no placeholders for chat templates', () => {
+		expect(placeholdersForType('chat')).toEqual([]);
+	});
+
+	it('exposes ticket.* placeholders for ticket-action templates', () => {
+		expect(placeholdersForType('ticket-action')).toEqual([
+			'ticket.title',
+			'ticket.id',
+			'ticket.body'
+		]);
+	});
+
+	it('extracts distinct placeholder names in first-seen order', () => {
+		expect(extractPlaceholders('{{ticket.title}} {{ ticket.id }} {{ticket.title}}')).toEqual([
+			'ticket.title',
+			'ticket.id'
+		]);
+	});
+
+	it('flags unknown placeholders per type', () => {
+		expect(findUnknownPlaceholders('{{ticket.body}}', 'ticket-action')).toEqual([]);
+		expect(findUnknownPlaceholders('{{ticket.body}}', 'chat')).toEqual(['ticket.body']);
+		expect(findUnknownPlaceholders('{{ticket.nope}}', 'ticket-action')).toEqual(['ticket.nope']);
+	});
+
+	it('builds type-aware unknown-placeholder messages', () => {
+		expect(unknownPlaceholderMessage('chat', ['ticket.title'])).toMatch(
+			/chat templates don't support placeholders/i
+		);
+		const ticketMsg = unknownPlaceholderMessage('ticket-action', ['ticket.nope']);
+		expect(ticketMsg).toMatch(/unknown placeholder/i);
+		expect(ticketMsg).toContain('{{ticket.title}}');
+	});
+});
+
+describe('interpolatePrompt', () => {
+	const values = ticketPlaceholderValues({
+		id: 'ticket-1',
+		title: 'Fix it',
+		body: 'Some details.'
+	});
+
+	it('substitutes known placeholders', () => {
+		expect(
+			interpolatePrompt('Do this: {{ticket.title}} ({{ticket.id}})\n\n{{ticket.body}}', values)
+		).toBe('Do this: Fix it (ticket-1)\n\nSome details.');
+	});
+
+	it('drops unknown placeholders and trims dangling blanks for an empty body', () => {
+		const empty = ticketPlaceholderValues({ id: 'ticket-1', title: 'Fix it', body: '   ' });
+		expect(
+			interpolatePrompt(
+				'Do this: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
+				empty
+			)
+		).toBe('Do this: Fix it\n\nTicket ID: ticket-1');
+	});
+
+	it('collapses runs of blank lines created by empty substitutions', () => {
+		expect(interpolatePrompt('a\n\n{{ticket.body}}\n\nb', { 'ticket.body': '' })).toBe('a\n\nb');
+	});
+});
+
+describe('ticket action defaults', () => {
+	it('seeds Do, Draft, and Refine', () => {
+		expect(TICKET_ACTION_DEFAULTS.map((d) => d.key)).toEqual(['do', 'draft', 'refine']);
+	});
+
+	it('forces interactive mode only for refine', () => {
+		const byKey = Object.fromEntries(TICKET_ACTION_DEFAULTS.map((d) => [d.key, d]));
+		expect(byKey.do.conversationMode).toBeNull();
+		expect(byKey.draft.launchBehavior).toBe('draft');
+		expect(byKey.refine.conversationMode).toBe('interactive');
+	});
+
+	it('uses only allowed placeholders in default prompts', () => {
+		for (const def of TICKET_ACTION_DEFAULTS) {
+			expect(findUnknownPlaceholders(def.prompt, 'ticket-action')).toEqual([]);
+		}
+	});
+
+	it('builds deterministic per-user default ids', () => {
+		expect(ticketActionDefaultId('user-1', 'do')).toBe('user-1__tia_do');
+	});
+});

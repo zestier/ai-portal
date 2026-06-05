@@ -65,6 +65,47 @@ describe('prompt templates', () => {
 		]);
 	});
 
+	it('seeds, restores, and validates placeholders for ticket-action templates', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const promptTemplates = await import('../src/lib/server/db/repos/prompt-templates');
+		const user = users.ensureLocalUser();
+
+		// Lazy seed inserts Do/Draft/Refine on first zero-state.
+		promptTemplates.ensureTicketActionDefaults(user.id);
+		const seeded = promptTemplates.list(user.id, { type: 'ticket-action' });
+		expect(seeded.map((t) => t.title)).toEqual(['Do', 'Draft', 'Refine']);
+		const refine = seeded.find((t) => t.title === 'Refine');
+		expect(refine?.conversationMode).toBe('interactive');
+		expect(seeded.find((t) => t.title === 'Draft')?.launchBehavior).toBe('draft');
+
+		// Chat-type listing excludes ticket actions.
+		expect(promptTemplates.list(user.id, { type: 'chat' })).toEqual([]);
+
+		// Re-seeding is idempotent: still three actions.
+		promptTemplates.ensureTicketActionDefaults(user.id);
+		expect(promptTemplates.list(user.id, { type: 'ticket-action' })).toHaveLength(3);
+
+		// Archiving every action does not re-seed; restore re-adds them.
+		for (const action of seeded) promptTemplates.archive(action.id, user.id);
+		promptTemplates.ensureTicketActionDefaults(user.id);
+		expect(promptTemplates.list(user.id, { type: 'ticket-action' })).toEqual([]);
+		const restored = promptTemplates.restoreTicketActionDefaults(user.id);
+		expect(restored).toBe(3);
+		expect(promptTemplates.list(user.id, { type: 'ticket-action' })).toHaveLength(3);
+
+		// Placeholder validation rejects unknown names per type.
+		expect(() =>
+			promptTemplates.create(user.id, {
+				type: 'ticket-action',
+				title: 'Bad',
+				prompt: 'Use {{ticket.bogus}}'
+			})
+		).toThrow(/unknown placeholder/i);
+		expect(() =>
+			promptTemplates.create(user.id, { title: 'Chat bad', prompt: 'Has {{ticket.title}}' })
+		).toThrow(/don't support placeholders/i);
+	});
+
 	it('API lists built-ins and performs user-scoped custom CRUD', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const { GET, POST } = await import('../src/routes/api/prompt-templates/+server');
@@ -141,6 +182,59 @@ describe('prompt templates', () => {
 		expect(archived.template.status).toBe('archived');
 	});
 
+	it('API creates ticket-action templates and rejects unknown placeholders', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const { GET, POST } = await import('../src/routes/api/prompt-templates/+server');
+		const user = users.ensureLocalUser();
+
+		const created = await POST(
+			event({
+				userId: user.id,
+				body: {
+					type: 'ticket-action',
+					title: 'Investigate',
+					prompt: 'Investigate {{ticket.title}} ({{ticket.id}})',
+					launchBehavior: 'send',
+					conversationMode: 'interactive'
+				}
+			}) as never
+		);
+		expect(created.status).toBe(201);
+		const createdBody = await created.json();
+		expect(createdBody.template).toMatchObject({
+			type: 'ticket-action',
+			launchBehavior: 'send',
+			conversationMode: 'interactive'
+		});
+
+		// Ticket actions are excluded from the chat-template GET listing.
+		const listResponse = await GET(event({ userId: user.id }) as never);
+		const listed = await listResponse.json();
+		expect(
+			listed.customTemplates.some((t: { id: string }) => t.id === createdBody.template.id)
+		).toBe(false);
+
+		// Unknown placeholder is rejected with a 400.
+		await expect(
+			POST(
+				event({
+					userId: user.id,
+					body: { type: 'ticket-action', title: 'Bad', prompt: 'Use {{ticket.bogus}}' }
+				}) as never
+			)
+		).rejects.toMatchObject({ status: 400 });
+
+		// A chat template using a ticket placeholder is rejected.
+		await expect(
+			POST(
+				event({
+					userId: user.id,
+					body: { title: 'Chat bad', prompt: 'Has {{ticket.title}}' }
+				}) as never
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
 	it('conversation load prefills the composer from built-in and custom templates only for the owner', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const convs = await import('../src/lib/server/db/repos/conversations');
@@ -203,6 +297,53 @@ describe('prompt templates', () => {
 				locals: { userId: other.id },
 				url: new URL(
 					`http://localhost/conversations/${otherConv.id}?promptTemplateSource=custom&promptTemplateId=${custom.id}`
+				)
+			} as never)
+		).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('conversation load interpolates a ticket-action template into the composer', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const promptTemplates = await import('../src/lib/server/db/repos/prompt-templates');
+		const { ticketWorkspaceFromConversation } = await import('../src/lib/server/ticket-workspace');
+		const { load } = await import('../src/routes/conversations/[id]/+page.server');
+		const user = users.ensureLocalUser();
+
+		const conv = convs.create(user.id, { title: 'Ticket draft', workdir: '/tmp', model: null });
+		const ticket = tickets.create(user.id, {
+			workspaceKey: ticketWorkspaceFromConversation(conv.workdir),
+			title: 'Fix sidebar actions',
+			body: 'Add a launch button.'
+		});
+		const action = promptTemplates.create(user.id, {
+			type: 'ticket-action',
+			title: 'Do',
+			prompt:
+				'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
+			launchBehavior: 'draft'
+		});
+
+		const data = await load({
+			params: { id: conv.id },
+			locals: { userId: user.id },
+			url: new URL(
+				`http://localhost/conversations/${conv.id}?draftTicketId=${ticket.id}&ticketActionId=${action.id}`
+			)
+		} as never);
+		expect((data as { initialComposer: string }).initialComposer).toBe(
+			`Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ${ticket.id}\n\nAdd a launch button.`
+		);
+
+		// A chat template id is not a valid ticket action -> 404.
+		const chat = promptTemplates.create(user.id, { title: 'Chat', prompt: 'Plain prompt.' });
+		await expect(
+			load({
+				params: { id: conv.id },
+				locals: { userId: user.id },
+				url: new URL(
+					`http://localhost/conversations/${conv.id}?draftTicketId=${ticket.id}&ticketActionId=${chat.id}`
 				)
 			} as never)
 		).rejects.toMatchObject({ status: 404 });

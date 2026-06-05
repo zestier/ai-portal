@@ -346,12 +346,31 @@ describe('Svelte component regression coverage', () => {
 					{
 						id: 'tmpl-1',
 						userId: 'user-1',
+						type: 'chat',
 						title: 'Weekly review',
 						description: 'Summarize changes',
 						prompt: 'Review this week of work.',
+						launchBehavior: null,
+						conversationMode: null,
 						status: 'open',
 						pinned: true,
 						orderIndex: 1,
+						createdAt: 1,
+						updatedAt: 1,
+						archivedAt: null
+					},
+					{
+						id: 'tmpl-do',
+						userId: 'user-1',
+						type: 'ticket-action',
+						title: 'Do',
+						description: 'Implement the ticket',
+						prompt: 'Do this workspace ticket: {{ticket.title}}',
+						launchBehavior: 'send',
+						conversationMode: null,
+						status: 'open',
+						pinned: true,
+						orderIndex: 10,
 						createdAt: 1,
 						updatedAt: 1,
 						archivedAt: null
@@ -361,10 +380,12 @@ describe('Svelte component regression coverage', () => {
 			}
 		}).body;
 
-		expect(body).toContain('Create a custom template');
+		expect(body).toContain('Create a chat template');
 		expect(body).toContain('Built-in templates');
 		expect(body).toContain('Code review');
 		expect(body).toContain('Weekly review');
+		expect(body).toContain('Ticket actions');
+		expect(body).toContain('Restore default actions');
 		expect(body).toContain('Archive');
 	});
 });

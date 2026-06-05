@@ -14,7 +14,7 @@ import { providerAuthToken } from '$lib/server/providers/auth';
 import { loadConfig } from '$lib/server/config';
 import { log } from '$lib/server/log';
 import { ticketWorkspaceFromConversation } from '$lib/server/ticket-workspace';
-import { isTicketChatMode, ticketChatPrompt } from '$lib/tickets/chat';
+import { interpolateTicketPrompt } from '$lib/tickets/chat';
 
 export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (!locals.userId) throw error(401);
@@ -30,9 +30,12 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		if (!ticket || ticket.workspaceKey !== ticketWorkspaceFromConversation(conv.workdir)) {
 			throw error(404);
 		}
-		const requestedMode = url.searchParams.get('ticketMode');
-		const mode = isTicketChatMode(requestedMode) ? requestedMode : 'do';
-		initialComposer = ticketChatPrompt(ticket, mode);
+		const actionId = url.searchParams.get('ticketActionId');
+		const action = actionId ? promptTemplates.get(actionId, locals.userId) : null;
+		if (!action || action.type !== 'ticket-action' || action.status !== 'open') {
+			throw error(404);
+		}
+		initialComposer = interpolateTicketPrompt(action, ticket);
 	}
 	const promptTemplateId = url.searchParams.get('promptTemplateId');
 	if (!initialComposer && promptTemplateId && msgs.length === 0) {

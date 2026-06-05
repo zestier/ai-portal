@@ -19,6 +19,7 @@ import { getDeployMetadata } from '$lib/server/deploy';
 import { log } from '$lib/server/log';
 import { canRedeployUser } from '$lib/server/redeploy';
 import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
+import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
 import {
@@ -37,6 +38,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const cfg = loadConfig();
 	const currentSettings = settings.get(userId) ?? settings.defaults();
 	const defaultProvider = currentSettings.defaultProvider;
+
+	// Make sure the ticket-action defaults exist so the Prompts tab can manage
+	// them even before the user has visited a page that lazy-seeds them.
+	promptTemplates.ensureTicketActionDefaults(userId);
 
 	// Garbage-collect expired grants on load so the management table
 	// doesn't show TTL'd rows the matcher is already ignoring.
@@ -96,17 +101,50 @@ const SaveSchema = z.object({
 	theme: z.enum(['dark', 'light', 'system'])
 });
 
-const PromptTemplateSchema = z.object({
-	title: z.string().trim().min(1).max(120),
-	description: z.string().trim().max(500).optional(),
-	prompt: z.string().trim().min(1).max(20_000),
-	pinned: z.boolean().optional(),
-	orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
-});
+const PromptTemplateSchema = z
+	.object({
+		type: z.enum(['chat', 'ticket-action']).optional().default('chat'),
+		title: z.string().trim().min(1).max(120),
+		description: z.string().trim().max(500).optional(),
+		prompt: z.string().trim().min(1).max(20_000),
+		launchBehavior: z.enum(['send', 'draft']).optional(),
+		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		pinned: z.boolean().optional(),
+		orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
+	})
+	.superRefine((body, ctx) => {
+		const unknown = findUnknownPlaceholders(body.prompt, body.type);
+		if (unknown.length > 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['prompt'],
+				message: unknownPlaceholderMessage(body.type, unknown)
+			});
+		}
+	});
 
-const UpdatePromptTemplateSchema = PromptTemplateSchema.extend({
-	id: z.string().min(1)
-});
+const UpdatePromptTemplateSchema = z
+	.object({
+		id: z.string().min(1),
+		type: z.enum(['chat', 'ticket-action']).optional().default('chat'),
+		title: z.string().trim().min(1).max(120),
+		description: z.string().trim().max(500).optional(),
+		prompt: z.string().trim().min(1).max(20_000),
+		launchBehavior: z.enum(['send', 'draft']).optional(),
+		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		pinned: z.boolean().optional(),
+		orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
+	})
+	.superRefine((body, ctx) => {
+		const unknown = findUnknownPlaceholders(body.prompt, body.type);
+		if (unknown.length > 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['prompt'],
+				message: unknownPlaceholderMessage(body.type, unknown)
+			});
+		}
+	});
 
 const MemoryProfileSchema = z.object({
 	name: z.string().trim().min(1).max(120),
@@ -153,10 +191,14 @@ export const actions: Actions = {
 		if (!locals.userId)
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'createPromptTemplate' });
 		const data = await request.formData();
+		const type = data.get('type') === 'ticket-action' ? 'ticket-action' : 'chat';
 		const parsed = PromptTemplateSchema.safeParse({
+			type,
 			title: data.get('title'),
 			description: (data.get('description') as string) || undefined,
 			prompt: data.get('prompt'),
+			launchBehavior: (data.get('launchBehavior') as string) || undefined,
+			conversationMode: (data.get('conversationMode') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
 		});
@@ -167,18 +209,26 @@ export const actions: Actions = {
 				formId: 'createPromptTemplate'
 			});
 		}
-		promptTemplates.create(locals.userId, parsed.data);
+		promptTemplates.create(locals.userId, {
+			...parsed.data,
+			conversationMode:
+				parsed.data.type === 'ticket-action' ? (parsed.data.conversationMode ?? null) : null
+		});
 		return { ok: true, formId: 'createPromptTemplate' };
 	},
 	updatePromptTemplate: async ({ request, locals }) => {
 		if (!locals.userId)
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'updatePromptTemplate' });
 		const data = await request.formData();
+		const type = data.get('type') === 'ticket-action' ? 'ticket-action' : 'chat';
 		const parsed = UpdatePromptTemplateSchema.safeParse({
 			id: data.get('id'),
+			type,
 			title: data.get('title'),
 			description: (data.get('description') as string) || undefined,
 			prompt: data.get('prompt'),
+			launchBehavior: (data.get('launchBehavior') as string) || undefined,
+			conversationMode: (data.get('conversationMode') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
 		});
@@ -189,8 +239,12 @@ export const actions: Actions = {
 				formId: 'updatePromptTemplate'
 			});
 		}
-		const { id, ...patch } = parsed.data;
-		const updated = promptTemplates.update(id, locals.userId, patch);
+		const { id, type: parsedType, ...patch } = parsed.data;
+		const updated = promptTemplates.update(id, locals.userId, {
+			...patch,
+			conversationMode:
+				parsedType === 'ticket-action' ? (patch.conversationMode ?? null) : undefined
+		});
 		if (!updated)
 			return fail(404, {
 				ok: false,
@@ -198,6 +252,16 @@ export const actions: Actions = {
 				formId: 'updatePromptTemplate'
 			});
 		return { ok: true, formId: 'updatePromptTemplate' };
+	},
+	restorePromptTicketActions: async ({ locals }) => {
+		if (!locals.userId)
+			return fail(401, {
+				ok: false,
+				error: 'Not authenticated',
+				formId: 'restorePromptTicketActions'
+			});
+		const restored = promptTemplates.restoreTicketActionDefaults(locals.userId);
+		return { ok: true, restored, formId: 'restorePromptTicketActions' };
 	},
 	archivePromptTemplate: async ({ request, locals }) => {
 		if (!locals.userId)
