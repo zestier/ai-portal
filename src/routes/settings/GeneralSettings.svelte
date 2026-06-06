@@ -12,6 +12,7 @@
 		type ProviderRuntimeFeatureStatus,
 		type SessionMode
 	} from '$lib/types';
+	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
 	const CUSTOM_MODEL_OPTION = '__custom__';
 
@@ -104,10 +105,9 @@
 	role="tabpanel"
 	aria-labelledby="settings-tab-general"
 >
-	<div class="section-heading">
-		<h2>General</h2>
-		<p class="muted small">Defaults for new conversations and your portal account.</p>
-	</div>
+	<PanelHeader title="General" fullBleed>
+		{#snippet meta()}Defaults for new conversations and your portal account.{/snippet}
+	</PanelHeader>
 
 	<section class="backend-status" aria-labelledby="backend-status-heading">
 		<div class="section-subheading">
@@ -294,16 +294,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		padding: 1rem;
-	}
-	.section-heading {
-		margin-bottom: 1rem;
-	}
-	.section-heading h2 {
-		margin: 0 0 0.25rem;
-		font-size: var(--fs-2xl);
-	}
-	.section-heading p {
-		margin: 0;
+		overflow: hidden;
 	}
 	.section-subheading {
 		margin-bottom: 0.75rem;

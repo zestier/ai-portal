@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { streamSse } from '$lib/client/sse';
+	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
 	type RedeployEvent =
 		| { type: 'step'; label: string; cmd: string }
@@ -94,10 +95,9 @@
 	role="tabpanel"
 	aria-labelledby="settings-tab-update"
 >
-	<div class="section-heading">
-		<h2>Update</h2>
-		<p class="muted small">Run maintenance actions for this portal instance.</p>
-	</div>
+	<PanelHeader title="Update" fullBleed>
+		{#snippet meta()}Run maintenance actions for this portal instance.{/snippet}
+	</PanelHeader>
 	<div class="deploy-time" aria-label="Server deploy time">
 		<span class="deploy-time-label">Server deployed:</span>
 		<span>{deployTimeLabel}</span>
@@ -129,16 +129,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		padding: 1rem;
-	}
-	.section-heading {
-		margin-bottom: 1rem;
-	}
-	.section-heading h2 {
-		margin: 0 0 0.25rem;
-		font-size: var(--fs-2xl);
-	}
-	.section-heading p {
-		margin: 0;
+		overflow: hidden;
 	}
 	.deploy p {
 		margin: 0 0 0.75rem;

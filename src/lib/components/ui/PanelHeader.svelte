@@ -3,15 +3,17 @@
 	let {
 		title,
 		meta,
-		actions
+		actions,
+		fullBleed = false
 	}: {
 		title?: string | Snippet;
 		meta?: Snippet;
 		actions?: Snippet;
+		fullBleed?: boolean;
 	} = $props();
 </script>
 
-<header class="panel-header">
+<header class="panel-header" class:full-bleed={fullBleed}>
 	<div class="row">
 		<div class="title">
 			{#if typeof title === 'string'}
@@ -32,6 +34,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-1);
+	}
+	/* Pulls the header to the edges of a panel that has 1rem padding and
+	   overflow: hidden, so the bottom border spans full width. */
+	.panel-header.full-bleed {
+		margin: -1rem -1rem 1rem;
 	}
 	.row {
 		display: flex;

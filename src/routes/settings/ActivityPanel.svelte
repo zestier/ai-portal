@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { decisionLabel, formatTime, type PermissionDecision } from './settings-types';
+	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
 	let { decisions }: { decisions: PermissionDecision[] } = $props();
 </script>
@@ -10,12 +11,9 @@
 	role="tabpanel"
 	aria-labelledby="settings-tab-activity"
 >
-	<div class="section-heading">
-		<h2>Recent permission decisions</h2>
-		<p class="muted small">
-			Audit what was allowed, hard-denied, prompt-denied, or auto-decided recently.
-		</p>
-	</div>
+	<PanelHeader title="Recent permission decisions" fullBleed>
+		{#snippet meta()}Audit what was allowed, hard-denied, prompt-denied, or auto-decided recently.{/snippet}
+	</PanelHeader>
 	{#if decisions.length === 0}
 		<p class="muted small">No permission requests have been answered yet.</p>
 	{:else}
@@ -47,16 +45,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		padding: 1rem;
-	}
-	.section-heading {
-		margin-bottom: 1rem;
-	}
-	.section-heading h2 {
-		margin: 0 0 0.25rem;
-		font-size: var(--fs-2xl);
-	}
-	.section-heading p {
-		margin: 0;
+		overflow: hidden;
 	}
 	.small {
 		font-size: var(--fs-md);

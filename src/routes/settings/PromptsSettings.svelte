@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 	import type { FormResult, PromptTemplate } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
 	import { placeholdersForType } from '$lib/prompt-templates';
@@ -40,13 +41,10 @@
 	role="tabpanel"
 	aria-labelledby="settings-tab-prompts"
 >
-	<div class="section-heading">
-		<h2>Prompts</h2>
-		<p class="muted small">
-			Save reusable prompt templates for recurring workflows. Built-in templates are always
-			available when starting a chat.
-		</p>
-	</div>
+	<PanelHeader title="Prompts">
+		{#snippet meta()}Save reusable prompt templates for recurring workflows. Built-in templates are
+			always available when starting a chat.{/snippet}
+	</PanelHeader>
 
 	{#if form?.formId?.includes('PromptTemplate') || form?.formId === 'restorePromptTicketActions'}
 		<Alert kind={form.ok ? 'success' : 'error'}>
@@ -348,7 +346,6 @@
 		display: grid;
 		gap: var(--space-4);
 	}
-	.section-heading h2,
 	h3 {
 		margin: 0;
 	}

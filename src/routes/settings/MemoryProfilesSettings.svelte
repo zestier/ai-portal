@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Alert from '$lib/components/ui/Alert.svelte';
+	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 	import type { CustomMemoryProfile, FormResult } from './settings-types';
 
 	let {
@@ -35,13 +36,10 @@
 	role="tabpanel"
 	aria-labelledby="settings-tab-memory"
 >
-	<div class="section-heading">
-		<h2>Memory profiles</h2>
-		<p class="muted small">
-			Author custom profile schemas and instructions. These are saved for inspection and future
-			activation; built-in modes remain the runtime-safe choices today.
-		</p>
-	</div>
+	<PanelHeader title="Memory profiles">
+		{#snippet meta()}Author custom profile schemas and instructions. These are saved for inspection
+			and future activation; built-in modes remain the runtime-safe choices today.{/snippet}
+	</PanelHeader>
 
 	{#if form?.formId?.includes('MemoryProfile')}
 		<Alert kind={form.ok ? 'success' : 'error'}>
@@ -155,7 +153,6 @@
 		display: grid;
 		gap: var(--space-4);
 	}
-	.section-heading h2,
 	h3 {
 		margin: 0;
 	}

@@ -29,6 +29,7 @@
 	} from '$lib/permissions/grant-form';
 	import PermissionGrantScopeFields from './PermissionGrantScopeFields.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
 	let { grants, form }: { grants: PermissionGrant[]; form: FormResult | null } = $props();
 
@@ -419,13 +420,10 @@
 	role="tabpanel"
 	aria-labelledby="settings-tab-permissions"
 >
-	<div class="section-heading">
-		<h2>Saved permission grants</h2>
-		<p class="muted small">
-			Review persistent approve, deny, and prompt rules; audit defaults; and find
-			conversation-scoped rules quickly.
-		</p>
-	</div>
+	<PanelHeader title="Saved permission grants" fullBleed>
+		{#snippet meta()}Review persistent approve, deny, and prompt rules; audit defaults; and find
+			conversation-scoped rules quickly.{/snippet}
+	</PanelHeader>
 
 	<div class="grant-summary" aria-label="Permission grant summary">
 		<div class="summary-card">
@@ -855,16 +853,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		padding: 1rem;
-	}
-	.section-heading {
-		margin-bottom: 1rem;
-	}
-	.section-heading h2 {
-		margin: 0 0 0.25rem;
-		font-size: var(--fs-2xl);
-	}
-	.section-heading p {
-		margin: 0;
+		overflow: hidden;
 	}
 	form {
 		display: flex;
