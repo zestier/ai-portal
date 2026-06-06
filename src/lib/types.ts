@@ -733,7 +733,7 @@ export type PortalEvent =
 	  }
 	| { type: 'error'; code: string; message: string }
 	| { type: 'heartbeat' }
-	| { type: 'done' };
+	| { type: 'done'; status?: 'complete' | 'interrupted' };
 
 // Latest context-window snapshot persisted per conversation. Mirrors the
 // shape of the `context.usage` PortalEvent (sans the `type` and `isInitial`

@@ -25,6 +25,7 @@
 		CHAT_STREAM_STALL_TIMEOUT_MS,
 		streamRefreshAction
 	} from '$lib/client/chat-stream-recovery';
+	import { decideArmedFlush, decideComposerAction } from '$lib/client/composer-arming';
 	import { reviewStore } from '$lib/client/review.svelte';
 
 	const INTERACTIVE_REVEAL_DELAY_MS = 150;
@@ -267,6 +268,14 @@
 	});
 
 	let streaming = $state(false);
+	// "Armed" composer: while a turn streams the user can press Send/Enter to
+	// hold the current buffer and auto-send it as a new turn the moment the
+	// active turn finishes successfully. Purely client-side; lost on reload.
+	let armed = $state(false);
+	// Set when an `error` event arrives during the active stream. The server
+	// always emits a terminal `done` even after an error/abort, so we use this
+	// flag to distinguish a clean success (auto-flush) from a failure (hold).
+	let turnErrored = false;
 	// Queue of outstanding permission requests. The SDK can fire multiple
 	// `onPermissionRequest` callbacks concurrently (parallel tool calls),
 	// so we must surface them all — a single slot would let later events
@@ -349,6 +358,7 @@
 		closeStream();
 		activeTurnId = turnId;
 		streaming = true;
+		turnErrored = false;
 
 		const replayParam = opts.replay === false ? '?replay=0' : '';
 		const es = new EventSource(
@@ -368,7 +378,16 @@
 			}
 			applyEvent(ev);
 			if (ev.type === 'done') {
+				// `done` is the only success signal. The server emits it even
+				// after errors/aborts, so consult `turnErrored` (an `error`
+				// event was seen) and the terminal `status` (set to
+				// 'interrupted' on a server-side abort that emits no `error`)
+				// before flushing an armed follow-up. `closeStream()` flips
+				// `streaming` to false first so the follow-up POST isn't
+				// rejected by the 409 guard.
+				const failed = turnErrored || ev.status === 'interrupted';
 				closeStream();
+				flushArmed(failed);
 			} else {
 				scheduleStreamStallTimeout();
 			}
@@ -382,6 +401,9 @@
 			// browser retries automatically; we leave those alone.
 			if (es.readyState === EventSource.CLOSED) {
 				closeStream();
+				// Interrupted, not a clean finish: hold any armed follow-up
+				// (disarm, keep the buffer for the user to review and send).
+				armed = false;
 				void refreshMessages();
 			} else {
 				scheduleStreamStallTimeout();
@@ -459,6 +481,9 @@
 			});
 			if (action === 'finish') {
 				closeStream();
+				// Recovery finish (e.g. 410 after grace expiry): treat like an
+				// interrupt — disarm without clearing the composer buffer.
+				armed = false;
 			} else if (action === 'reattach' && data.activeTurnId) {
 				// If a new turn became active between events (unlikely but
 				// possible from another tab), attach to it. This also repairs
@@ -685,6 +710,7 @@
 				break;
 			}
 			case 'error': {
+				turnErrored = true;
 				const m = messages[messages.length - 1];
 				if (m && m.role === 'assistant') {
 					m.status = 'error';
@@ -906,13 +932,47 @@
 		scheduleStreamStallTimeout();
 	}
 
+	// Called once the active turn reaches a terminal `done`. If the composer
+	// was armed and the turn succeeded with a non-empty composer buffer,
+	// auto-send that buffer as a new turn (reusing the normal send path).
+	// Otherwise disarm and leave the buffer untouched. Note "non-empty text"
+	// here refers to the composer draft, not the assistant's reply. Runs after
+	// `streaming === false`.
+	function flushArmed(failed: boolean) {
+		const decision = decideArmedFlush({
+			armed,
+			failed,
+			hasText: composer.trim().length > 0
+		});
+		if (decision === 'flush') {
+			void send();
+		} else if (decision === 'disarm') {
+			armed = false;
+		}
+	}
+
 	async function send() {
 		const text = composer.trim();
-		// Rejection point for the composer: a send is a no-op when the draft
-		// is empty or a turn is already streaming. This lets the composer stay
-		// editable mid-turn (so the user can draft a follow-up) while Enter
-		// simply does nothing until the current turn finishes.
-		if (!text || streaming) return;
+		const action = decideComposerAction({
+			streaming,
+			armed,
+			hasText: text.length > 0
+		});
+		// While a turn streams, Send/Enter toggles the armed flag instead of
+		// starting a concurrent turn (which the server would 409). When idle it
+		// behaves exactly as before: send when there's text, otherwise no-op.
+		if (action === 'noop') return;
+		if (action === 'arm') {
+			armed = true;
+			return;
+		}
+		if (action === 'disarm') {
+			armed = false;
+			return;
+		}
+		// action === 'send' — only reachable when not streaming, so the POST
+		// below won't hit the running-turn guard.
+		armed = false;
 		composer = '';
 		const localMessageId = `local-${Date.now()}`;
 		messages.push({
@@ -978,6 +1038,9 @@
 		// EventSource would only detach this client; the turn would keep
 		// running). Then close the stream locally.
 		clearStreamStallTimeout();
+		// A user-initiated stop is a "hold" path: disarm any armed follow-up
+		// but keep the composer text so they can review and send manually.
+		armed = false;
 		const turnId = activeTurnId;
 		if (turnId) {
 			try {
@@ -1164,6 +1227,7 @@
 	<Composer
 		bind:value={composer}
 		{streaming}
+		{armed}
 		placeholder={chatPlaceholder}
 		onSend={send}
 		onStop={stop}

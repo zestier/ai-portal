@@ -53,3 +53,41 @@ test('rejects empty messages on the server', async ({ request }) => {
 	});
 	expect(res.ok()).toBeFalsy();
 });
+
+test('an armed follow-up auto-sends after the active turn finishes', async ({ page, request }) => {
+	const id = await createConversation(request, uniqueTitle('E2E arm'));
+	await page.goto(`/conversations/${id}`);
+
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.click();
+	// @trigger-slow-start holds the stub before its first delta, giving us a
+	// window to arm a follow-up while the first turn is still streaming.
+	await composer.fill('first @trigger-slow-start');
+	await composer.press('Enter');
+
+	// Streaming has begun: Stop is the primary control and Send is still here.
+	await expect(page.getByRole('button', { name: 'Stop generating' })).toBeVisible();
+
+	// Arm a follow-up. Pressing Enter mid-turn must NOT start a turn now; it
+	// arms the buffer and switches the Send control to its armed state.
+	await composer.fill('second follow-up message');
+	await composer.press('Enter');
+
+	await expect(
+		page.getByRole('button', { name: 'Send when current response finishes' })
+	).toBeVisible();
+	// Armed buffer is retained (not cleared, not sent yet).
+	await expect(composer).toHaveValue('second follow-up message');
+
+	// First reply streams in...
+	await waitForAssistantMessage(request, id, /Stubbed reply to: first @trigger-slow-start/);
+	// ...and the armed follow-up is then auto-sent as a brand new turn.
+	await waitForAssistantMessage(request, id, /Stubbed reply to: second follow-up message/);
+	await expect(page.getByText('second follow-up message', { exact: true }).first()).toBeVisible();
+
+	// Composer cleared and disarmed once the flush turn started.
+	await expect(composer).toHaveValue('');
+	await expect(
+		page.getByRole('button', { name: 'Send when current response finishes' })
+	).toHaveCount(0);
+});

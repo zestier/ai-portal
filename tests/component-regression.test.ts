@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { render } from 'svelte/server';
 import Chat from '../src/lib/components/Chat.svelte';
+import Composer from '../src/lib/components/Composer.svelte';
 import DiffView from '../src/lib/components/DiffView.svelte';
 import FileBrowser from '../src/lib/components/FileBrowser.svelte';
 import InteractiveRequestDialog from '../src/lib/components/InteractiveRequestDialog.svelte';
@@ -312,6 +313,38 @@ describe('Svelte component regression coverage', () => {
 		expect(body).toContain('Permission required');
 		expect(body).not.toContain('Allow always');
 		expect(body).toContain('placeholder="Ask Copilot"');
+	});
+
+	test('Composer keeps Send visible while streaming and shows an armed state', () => {
+		const streamingBody = render(Composer, {
+			props: {
+				value: 'follow-up draft',
+				streaming: true,
+				armed: false,
+				onSend: () => undefined,
+				onStop: () => undefined
+			}
+		}).body;
+
+		// Send stays available mid-turn (no longer hidden) alongside Stop.
+		expect(streamingBody).toContain('aria-label="Send message"');
+		expect(streamingBody).toContain('aria-label="Stop generating"');
+
+		const armedBody = render(Composer, {
+			props: {
+				value: 'follow-up draft',
+				streaming: true,
+				armed: true,
+				onSend: () => undefined,
+				onStop: () => undefined
+			}
+		}).body;
+
+		expect(armedBody).toContain('aria-label="Send when current response finishes"');
+		expect(armedBody).toContain('aria-pressed="true"');
+		expect(armedBody).toMatch(/class="icon-btn send[^"]*\barmed\b/);
+		// Stop remains the primary mid-turn control even when armed.
+		expect(armedBody).toContain('aria-label="Stop generating"');
 	});
 
 	test('FileBrowser renders safe empty states without client fetch data', () => {

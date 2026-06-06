@@ -688,10 +688,14 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			turn.status = status === 'interrupted' ? 'interrupted' : 'complete';
 			turn.endedAt = Date.now();
 
-			// Make sure subscribers see a terminal event even if the SDK
-			// didn't emit `done` (e.g., on abort path).
+			// We always emit our own terminal `done` here: `dispatch` suppresses
+			// the SDK's `done` so this runs after persistence work completes. We
+			// carry the terminal status so clients can distinguish a clean finish
+			// from an interrupt/abort (the latter emits no `error` event). The
+			// `some` check is a defensive guard against a double terminal event in
+			// case a future change ever re-emits the SDK `done` into the log.
 			if (!eventLog.some((e) => e.type === 'done')) {
-				emit({ type: 'done' });
+				emit({ type: 'done', status: turn.status === 'interrupted' ? 'interrupted' : 'complete' });
 			}
 			for (const q of subscribers) q.end();
 			subscribers.clear();

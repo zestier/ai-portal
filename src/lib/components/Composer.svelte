@@ -4,12 +4,14 @@
 	let {
 		value = $bindable(''),
 		streaming = false,
+		armed = false,
 		placeholder = 'Message...',
 		onSend,
 		onStop
 	}: {
 		value?: string;
 		streaming?: boolean;
+		armed?: boolean;
 		placeholder?: string;
 		onSend: () => void;
 		onStop: () => void;
@@ -93,14 +95,36 @@
 						<rect x="3" y="3" width="10" height="10" rx="1.5" />
 					</svg>
 				</button>
-			{:else}
-				<button
-					class="icon-btn send"
-					type="submit"
-					disabled={!value.trim()}
-					title="Send (Enter)"
-					aria-label="Send message"
-				>
+			{/if}
+			<button
+				class="icon-btn send"
+				class:armed
+				type="submit"
+				aria-pressed={streaming ? armed : undefined}
+				disabled={!armed && !value.trim()}
+				title={armed
+					? 'Send when the current response finishes (click to cancel)'
+					: streaming
+						? 'Send when the current response finishes'
+						: 'Send (Enter)'}
+				aria-label={armed ? 'Send when current response finishes' : 'Send message'}
+			>
+				{#if armed}
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<circle cx="8" cy="8" r="6.25" />
+						<path d="M8 4.75V8L10.25 9.75" />
+					</svg>
+				{:else}
 					<svg
 						width="16"
 						height="16"
@@ -114,8 +138,8 @@
 					>
 						<path d="M2 8L14 2L9.5 14L8 9L2 8Z" />
 					</svg>
-				</button>
-			{/if}
+				{/if}
+			</button>
 		</div>
 	</div>
 </form>
@@ -227,6 +251,16 @@
 		color: var(--text-muted);
 		cursor: not-allowed;
 		opacity: 0.7;
+	}
+	.icon-btn.send.armed {
+		background: var(--surface);
+		color: var(--accent);
+		border-color: var(--accent);
+		box-shadow: 0 0 0 1px var(--accent) inset;
+	}
+	.icon-btn.send.armed:hover {
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		filter: none;
 	}
 	.icon-btn.stop {
 		background: transparent;

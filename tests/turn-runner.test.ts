@@ -309,6 +309,100 @@ describe('turn-runner', () => {
 		expect(replayed.map((x) => x.id)).toEqual(all.slice(secondDeltaId + 1).map((x) => x.id));
 	});
 
+	it('tags the terminal done with status complete on a clean finish', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'clean', workdir: wd, model: 'gpt-4' });
+
+		acquireMock.mockResolvedValue(
+			makeFakeSession([
+				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'm1', text: 'hi' },
+				{ type: 'done' }
+			])
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+		expect(done).toMatchObject({ type: 'done', status: 'complete' });
+	});
+
+	it('tags the terminal done with status interrupted when the turn is aborted', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'aborted', workdir: wd, model: 'gpt-4' });
+
+		// A session whose stream stays open until the turn's abort signal fires,
+		// then returns — exercising the server-side interrupt path that emits a
+		// bare terminal `done` (no preceding `error`).
+		acquireMock.mockResolvedValue({
+			conversationId: conv.id,
+			providerSessionId: conv.id,
+			workingDirectory: wd,
+			model: 'test-model',
+			async *send(_prompt: string, signal?: AbortSignal): AsyncIterable<PortalEvent> {
+				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+				await new Promise<void>((resolve) => {
+					if (signal?.aborted) return resolve();
+					signal?.addEventListener('abort', () => resolve(), { once: true });
+				});
+			},
+			async abort() {},
+			async dispose() {},
+			async setMode() {},
+			async setApproveAll() {},
+			async resetSessionApprovals() {},
+			lastUsed: Date.now()
+		});
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'message.start') {
+				void turn.abort();
+				break;
+			}
+		}
+
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+		expect(done).toMatchObject({ type: 'done', status: 'interrupted' });
+	});
+
 	it('emits persisted assistant message ids for streamed assistant events', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const messages = await import('../src/lib/server/db/repos/messages');
