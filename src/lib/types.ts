@@ -267,6 +267,10 @@ export interface ReasoningBlockRecord {
 	messageId: string;
 	segmentIndex: number;
 	text: string;
+	// 'reasoning' = model thinking ("Thinking…"); 'content' = a sub-agent's
+	// spoken output, threaded into its card so a nested agent renders its
+	// response interleaved with its tools/reasoning like a top-level agent.
+	kind: 'reasoning' | 'content';
 	// Where this segment appeared within the assistant's accumulated content
 	// (mirrors ToolCallRecord.textOffset). NULL = legacy / unknown / child
 	// of a sub-agent (not anchored to the outer assistant's text).
@@ -599,7 +603,19 @@ export type ElicitationSchemaField =
 
 export type PortalEvent =
 	| { type: 'message.start'; messageId: string; role: 'assistant' }
-	| { type: 'message.delta'; messageId: string; text: string }
+	| {
+			type: 'message.delta';
+			messageId: string;
+			text: string;
+			// When set, this content originated inside the sub-agent spawned by
+			// the outer `task` tool call with this id, and (with segmentId) is
+			// rendered as a threaded content block inside the SubagentCall card
+			// rather than appended to the outer assistant message body.
+			parentToolCallId?: string;
+			// Groups consecutive child content deltas into one block. Only set
+			// for sub-agent content (alongside parentToolCallId).
+			segmentId?: string;
+	  }
 	| {
 			type: 'message.reasoning';
 			messageId: string;

@@ -12,7 +12,12 @@ import {
 } from '../src/lib/server/memory/engine';
 import {
 	extractAndCommitMemory,
-	OpenAICompatibleMemoryExtractor
+	OpenAICompatibleMemoryExtractor,
+	ToolCallingMemoryExtractor,
+	type ExtractorActivity,
+	type ExtractorAssistantTurn,
+	type ExtractorChatMessage,
+	type ExtractorToolSpec
 } from '../src/lib/server/memory/extractor';
 import {
 	LocalHashEmbeddingProvider,
@@ -243,6 +248,114 @@ describe('memory-backed sessions', () => {
 		expect(searchAfterRevert.map((row) => row.itemType)).not.toEqual(
 			expect.arrayContaining(['entity', 'fact', 'open_loop'])
 		);
+	});
+
+	it('resolves superseded open loops via resolveOpenLoops', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		// Offer three options as open loops, as story mode does when asking the
+		// user what to do next.
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'choice', title: 'Option A: search the attic' },
+					{ loopType: 'choice', title: 'Option B: question the maid' },
+					{ loopType: 'choice', title: 'Option C: leave the manor' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		expect(loops).toHaveLength(3);
+		const chosen = loops.find((l) => l.title.includes('Option A'))!;
+		const dropped = loops.filter((l) => l.id !== chosen.id);
+
+		// The user picked A; the unchosen options should be dropped.
+		const committed = commitPatch({
+			conversationId: conv.id,
+			patch: {
+				resolveOpenLoops: [
+					{ id: chosen.id, status: 'resolved', reason: 'User chose to search the attic.' },
+					{ id: dropped[0].id, status: 'dropped' },
+					{ id: dropped[1].id, status: 'dropped' }
+				]
+			}
+		});
+
+		expect(committed.counts.resolvedOpenLoops).toBe(3);
+		// No loops remain in the default ('open') view.
+		expect(memory.listOpenLoops(conv.id)).toHaveLength(0);
+		const resolved = memory.getOpenLoop(conv.id, chosen.id);
+		expect(resolved?.status).toBe('resolved');
+		expect(resolved?.description).toContain('User chose to search the attic.');
+		expect(memory.getOpenLoop(conv.id, dropped[0].id)?.status).toBe('dropped');
+	});
+
+	it('warns but does not block when resolving an unknown open loop id', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const committed = commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [{ loopType: 'task', title: 'A real new loop' }],
+				resolveOpenLoops: [{ id: 'loop_does_not_exist', status: 'dropped' }]
+			}
+		});
+
+		// The unknown resolution is a no-op warning; the rest of the patch still commits.
+		expect(committed.patch.status).toBe('committed');
+		expect(committed.counts.openLoops).toBe(1);
+		expect(committed.counts.resolvedOpenLoops).toBe(0);
+		expect(memory.listOpenLoops(conv.id)).toHaveLength(1);
+	});
+
+	it('does not re-annotate or duplicate audit items when re-resolving a closed loop', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Investigate the noise' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+		const first = commitPatch({
+			conversationId: conv.id,
+			patch: { resolveOpenLoops: [{ id: loop.id, status: 'resolved', reason: 'Done.' }] }
+		});
+		expect(first.counts.resolvedOpenLoops).toBe(1);
+		const afterFirst = memory.getOpenLoop(conv.id, loop.id);
+		expect(afterFirst?.status).toBe('resolved');
+		expect(afterFirst?.description).toContain('Done.');
+
+		// Re-resolving the now-closed loop to the SAME status is a no-op: no
+		// duplicate audit item, and the description doesn't grow.
+		const again = commitPatch({
+			conversationId: conv.id,
+			patch: { resolveOpenLoops: [{ id: loop.id, status: 'resolved', reason: 'Done again.' }] }
+		});
+		expect(again.counts.resolvedOpenLoops).toBe(0);
+		const afterSecond = memory.getOpenLoop(conv.id, loop.id);
+		expect(afterSecond?.description).toBe(afterFirst?.description);
+		expect(afterSecond?.description).not.toContain('Done again.');
+	});
+
+	it('reopens a resolved loop when its resolving patch is reverted', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Investigate the noise' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+		const resolving = commitPatch({
+			conversationId: conv.id,
+			patch: { resolveOpenLoops: [{ id: loop.id, status: 'dropped' }] }
+		});
+		expect(memory.listOpenLoops(conv.id)).toHaveLength(0);
+
+		const result = memory.revertPatch(conv.id, resolving.patch.id);
+		expect(result.reverted).toBe(1);
+		expect(memory.getOpenLoop(conv.id, loop.id)?.status).toBe('open');
+		expect(memory.listOpenLoops(conv.id)).toHaveLength(1);
 	});
 
 	it('reviews individual memory patch items', () => {
@@ -734,6 +847,525 @@ describe('memory-backed sessions', () => {
 			'character.mara'
 		]);
 		expect(memory.listFacts(conv.id, { limit: 10 })).toHaveLength(4);
+	});
+
+	it('stores memory through the tool-calling extractor with per-call validation feedback', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Remember that we chose append-only migrations and that Mara owns the brass key.'
+		});
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'Noted both of those.'
+		});
+
+		const seenToolNames: string[] = [];
+		const feedback: unknown[] = [];
+		let step = 0;
+		const chatComplete = async (
+			msgs: ExtractorChatMessage[],
+			tools: ExtractorToolSpec[]
+		): Promise<ExtractorAssistantTurn> => {
+			for (const tool of tools) seenToolNames.push(tool.function.name);
+			// Capture the tool-result feedback the agent receives mid-loop.
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return {
+					reasoning: 'Mara owns the brass key; migrations are append-only.',
+					content: '<think>Let me record both facts.</think>Recording now.',
+					toolCalls: [
+						{
+							id: 'call-1',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({
+								summary: 'Recorded migration decision and Mara key ownership.',
+								patch: {
+									entities: [
+										{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }
+									],
+									facts: [{ entityKey: 'character.mara', predicate: 'owns', value: 'brass key' }],
+									decisions: [{ subject: 'migrations', decision: 'Use append-only migrations.' }]
+								}
+							})
+						}
+					]
+				};
+			}
+			return { content: 'Stored the migration decision and Mara key ownership.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 4,
+			chatComplete
+		});
+
+		const activity: ExtractorActivity[] = [];
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-tool',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project'),
+			onActivity: (event) => activity.push(event)
+		});
+
+		// The background agent is offered both read tools and the staging writer.
+		expect(seenToolNames).toContain('memory_search');
+		expect(seenToolNames).toContain('memory_propose_patch');
+		// Activity is surfaced so the extractor reads like a fully-featured
+		// nested agent: thoughts (reasoning + <think>) and spoken content are
+		// separate threaded streams, interleaved with the staging tool call.
+		expect(activity.map((event) => event.type)).toEqual([
+			'reasoning',
+			'content',
+			'reasoning.end',
+			'tool.call',
+			'tool.result',
+			'content'
+		]);
+		const reasoning = activity.find((event) => event.type === 'reasoning');
+		expect(reasoning).toMatchObject({ type: 'reasoning' });
+		if (reasoning?.type === 'reasoning') {
+			expect(reasoning.text).toContain('Mara owns the brass key');
+			expect(reasoning.text).toContain('Let me record both facts.');
+			// Visible (non-think) narration is NOT a thought — it streams as
+			// separate threaded content.
+			expect(reasoning.text).not.toContain('Recording now.');
+			// The think tag must not leak into the surfaced thought text.
+			expect(reasoning.text).not.toContain('<think>');
+		}
+		// Spoken content streams as threaded content blocks, interleaved with
+		// the model's thoughts and tools.
+		const contentText = activity
+			.filter((event) => event.type === 'content')
+			.map((event) => (event.type === 'content' ? event.text : ''))
+			.join(' ');
+		expect(contentText).toContain('Recording now.');
+		expect(contentText).not.toContain('<think>');
+		const activityCall = activity.find((event) => event.type === 'tool.call');
+		const activityResult = activity.find((event) => event.type === 'tool.result');
+		expect(activityCall).toMatchObject({ type: 'tool.call', tool: 'memory_propose_patch' });
+		expect(activityResult).toMatchObject({ type: 'tool.result', ok: true });
+		// The final spoken message is captured as the session response.
+		expect(extraction.response).toBe('Stored the migration decision and Mara key ownership.');
+		// It received validation feedback after staging.
+		expect(feedback.some((entry) => String(entry).includes('"staged":true'))).toBe(true);
+		expect(extraction.patch.facts).toEqual([
+			expect.objectContaining({ entityKey: 'character.mara', predicate: 'owns' })
+		]);
+		expect(extraction.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+			'tool_calling_extractor'
+		);
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-tool',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind, extractorModel: extractor.model }
+		);
+		expect(committed.patch.status).toBe('committed');
+		expect(committed.patch.extractorKind).toBe('openai-compatible-tools');
+		expect(memory.listFacts(conv.id, { limit: 10 })).toHaveLength(1);
+	});
+
+	it('does not stage rejected proposals, so a correction replaces rather than duplicates', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Track a follow-up to inspect the cellar.'
+		});
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'Noted.'
+		});
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// First attempt: an open loop with a too-short title -> error.
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c1',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({
+								patch: { openLoops: [{ loopType: 'task', title: 'go' }] }
+							})
+						}
+					]
+				};
+			}
+			if (step === 2) {
+				// Correction: a valid title for the same loop.
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c2',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({
+								patch: { openLoops: [{ loopType: 'task', title: 'Inspect the cellar' }] }
+							})
+						}
+					]
+				};
+			}
+			return { content: 'Stored one follow-up.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-correct',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// The first (invalid) proposal was rejected, not staged; only the
+		// corrected one survives, so there is exactly one open loop.
+		expect(feedback.some((entry) => entry.includes('"staged":false'))).toBe(true);
+		expect(extraction.patch.openLoops).toEqual([
+			expect.objectContaining({ title: 'Inspect the cellar' })
+		]);
+
+		commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-correct',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
+	});
+
+	it('stages open-loop resolutions through the tool extractor and prunes on commit', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		// Prior turn: the assistant offered two options, recorded as open loops
+		// linked to that turn's assistant message (mirroring production, where
+		// earlier-turn loops are ancestors of the current turn's memory head).
+		const priorUserMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'What should I do?'
+		});
+		const priorAssistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'You could open the door or stay hidden.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistantMessage.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'choice', title: 'Option A: open the door' },
+					{ loopType: 'choice', title: 'Option B: stay hidden' }
+				]
+			}
+		});
+		void priorUserMessage;
+		const seeded = memory.listOpenLoops(conv.id);
+		const keep = seeded.find((l) => l.title.includes('Option A'))!;
+		const drop = seeded.find((l) => l.title.includes('Option B'))!;
+
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'I open the door.' });
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'The door creaks open.'
+		});
+
+		let step = 0;
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			if (step === 1) {
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c1',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({
+								patch: {
+									resolveOpenLoops: [
+										{ id: keep.id, status: 'resolved', reason: 'Chosen.' },
+										{ id: drop.id, status: 'dropped' }
+									]
+								}
+							})
+						}
+					]
+				};
+			}
+			return { content: 'Pruned the unchosen option.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 4,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'story',
+			turnId: 'turn-prune',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'story')
+		});
+
+		expect(extraction.patch.resolveOpenLoops).toHaveLength(2);
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'story',
+				turnId: 'turn-prune',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+
+		expect(committed.counts.resolvedOpenLoops).toBe(2);
+		expect(memory.listOpenLoops(conv.id)).toHaveLength(0);
+		expect(memory.getOpenLoop(conv.id, keep.id)?.status).toBe('resolved');
+		expect(memory.getOpenLoop(conv.id, drop.id)?.status).toBe('dropped');
+	});
+
+	it('strips a secret-bearing resolution reason but still prunes the loop', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		// Seed the loop on a prior assistant-message branch so the resolution's
+		// projection (rebuilt from a descendant message head) still sees it,
+		// mirroring production where earlier-turn loops are ancestors.
+		const priorAssistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'I should rotate the API key.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistantMessage.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Rotate the API key' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Rotated it.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
+
+		let step = 0;
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			if (step === 1) {
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c1',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({
+								patch: {
+									resolveOpenLoops: [
+										{
+											id: loop.id,
+											status: 'resolved',
+											reason: 'Replaced key sk_live_0123456789abcdefghij in the vault.'
+										}
+									]
+								}
+							})
+						}
+					]
+				};
+			}
+			return { content: 'Pruned the loop.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 4,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-secret',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// The resolution survives (so the loop is still pruned) but the
+		// secret-bearing reason is stripped.
+		expect(extraction.patch.resolveOpenLoops).toHaveLength(1);
+		expect(extraction.patch.resolveOpenLoops?.[0]).toEqual({ id: loop.id, status: 'resolved' });
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-secret',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+		expect(committed.counts.resolvedOpenLoops).toBe(1);
+		const resolved = memory.getOpenLoop(conv.id, loop.id);
+		expect(resolved?.status).toBe('resolved');
+		expect(resolved?.description ?? '').not.toContain('sk_live_');
+	});
+
+	it('streams reasoning and content token-by-token over SSE, stripping split think tags', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Remember we chose append-only migrations.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const sse = (chunks: unknown[]): Response => {
+			const text =
+				chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
+			return new Response(text, {
+				status: 200,
+				headers: { 'content-type': 'text/event-stream' }
+			});
+		};
+
+		// Step 1: reasoning streamed in two deltas; a <think> tag split across
+		// two content deltas; tool-call arguments split across two deltas.
+		// Step 2: a final spoken message with no tool calls ends the loop.
+		const responses = [
+			sse([
+				{ choices: [{ delta: { reasoning: 'Mara owns ' } }] },
+				{ choices: [{ delta: { reasoning: 'the key.' } }] },
+				{ choices: [{ delta: { content: '<thi' } }] },
+				{ choices: [{ delta: { content: 'nk>internal plan</think>' } }] },
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: 'c1',
+										function: { name: 'memory_propose_patch', arguments: '{"patch":{"deci' }
+									}
+								]
+							}
+						}
+					]
+				},
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										function: {
+											arguments: 'sions":[{"subject":"migrations","decision":"append-only"}]}}'
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			]),
+			sse([{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }])
+		];
+		let call = 0;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => responses[Math.min(call++, responses.length - 1)])
+		);
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 2_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 4
+		});
+
+		const activity: ExtractorActivity[] = [];
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-stream',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project'),
+			onActivity: (event) => activity.push(event)
+		});
+
+		// Reasoning arrived as multiple live deltas (token streaming), not one block.
+		const reasoningDeltas = activity.filter((event) => event.type === 'reasoning');
+		expect(reasoningDeltas.length).toBeGreaterThan(1);
+		const reasoningText = reasoningDeltas
+			.map((event) => (event.type === 'reasoning' ? event.text : ''))
+			.join('');
+		expect(reasoningText).toContain('Mara owns the key.');
+		expect(reasoningText).toContain('internal plan');
+		// The split <think> tag markers must be stripped, never surfaced.
+		expect(reasoningText).not.toContain('<think>');
+		expect(reasoningText).not.toContain('<thi');
+
+		// Tool-call arguments split across SSE deltas were reassembled and staged.
+		expect(extraction.patch.decisions).toEqual([
+			expect.objectContaining({ subject: 'migrations', decision: 'append-only' })
+		]);
+		expect(activity.some((event) => event.type === 'tool.call')).toBe(true);
+		// The closing message became the session response.
+		expect(extraction.response).toBe('Stored the migration decision.');
 	});
 
 	it('includes provider response details when model-backed extraction fails', async () => {

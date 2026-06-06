@@ -25,6 +25,7 @@ import { AsyncQueue } from '../runtime/async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
 import { isEnabled } from '../memory/engine';
 import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
+import type { ExtractorActivity } from '../memory/extractor';
 import type { MemoryMode } from '$lib/types';
 import type { ProviderOpenOptions } from '../providers';
 import type { PortalEvent } from '$lib/types';
@@ -45,6 +46,7 @@ interface PendingReasoning {
 	id: string;
 	segmentIndex: number;
 	text: string;
+	kind: 'reasoning' | 'content';
 	textOffset: number | null;
 	startedAt: number;
 	durationMs: number | null;
@@ -227,9 +229,33 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			emit({ ...ev, messageId: ensurePersistedAssistant() });
 		} else if (ev.type === 'message.delta') {
 			const persistedId = ensurePersistedAssistant();
-			assistantBuf += ev.text;
-			messages.updateContentOnly(persistedId, assistantBuf);
-			emit({ ...ev, messageId: persistedId });
+			if (ev.parentToolCallId && ev.segmentId) {
+				// Sub-agent content: thread it into the spawning card as a
+				// 'content' block instead of appending to the outer message body,
+				// so a nested agent renders its response interleaved with its
+				// tools/reasoning. Accumulated by segmentId like reasoning.
+				let seg = pendingReasoning.get(ev.segmentId);
+				if (!seg) {
+					seg = {
+						id: ev.segmentId,
+						segmentIndex: nextReasoningIndex++,
+						text: '',
+						kind: 'content',
+						textOffset: null,
+						startedAt: Date.now(),
+						durationMs: null,
+						parentToolCallId: ev.parentToolCallId
+					};
+					pendingReasoning.set(ev.segmentId, seg);
+				}
+				seg.text += ev.text;
+				messages.upsertReasoningBlock(persistedId, seg);
+				emit({ ...ev, messageId: persistedId });
+			} else {
+				assistantBuf += ev.text;
+				messages.updateContentOnly(persistedId, assistantBuf);
+				emit({ ...ev, messageId: persistedId });
+			}
 		} else if (ev.type === 'message.reasoning') {
 			const persistedId = ensurePersistedAssistant();
 			let seg = pendingReasoning.get(ev.segmentId);
@@ -239,6 +265,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					id: ev.segmentId,
 					segmentIndex: nextReasoningIndex++,
 					text: '',
+					kind: 'reasoning',
 					// Child reasoning isn't anchored to the outer assistant text;
 					// it's rendered inside the SubagentCall card instead.
 					textOffset: isChild ? null : assistantBuf.length,
@@ -456,6 +483,104 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				opts.memory &&
 				isEnabled(opts.memory.mode)
 			) {
+				const assistantId = persistedAssistantId;
+				// Surface tool-calling extractor activity as a subagent-style
+				// card. The parent tool call is created lazily on the first
+				// activity event, so extractors that don't call tools
+				// (heuristic / single-shot JSON) never spawn an empty card.
+				// Routing through `dispatch` persists the parent + threaded
+				// children exactly like a real subagent, so the card survives
+				// reloads and appears in history. Declared out here so the
+				// catch below can close the card if extraction throws.
+				let extractorParentId: string | null = null;
+				let extractorAgentId: string | null = null;
+				const ensureExtractorParent = (): string => {
+					if (extractorParentId) return extractorParentId;
+					extractorParentId = `mem_parent_${ulid()}`;
+					extractorAgentId = `mem_agent_${ulid()}`;
+					// Emit the same event shape as a real subagent: a `task` tool
+					// call plus a `subagent.lifecycle` start. The `agent_type` arg
+					// lets the UI label it without any extractor-specific casing
+					// in the lower layers.
+					dispatch({
+						type: 'tool.call',
+						toolCallId: extractorParentId,
+						tool: 'task',
+						args: {
+							name: 'Memory extractor',
+							description: 'Memory extraction',
+							agent_type: 'memory-extractor'
+						}
+					});
+					dispatch({
+						type: 'subagent.lifecycle',
+						toolCallId: extractorParentId,
+						agentId: extractorAgentId,
+						status: 'running'
+					});
+					return extractorParentId;
+				};
+				const closeExtractorParent = (status: 'completed' | 'failed') => {
+					if (extractorParentId && extractorAgentId) {
+						dispatch({
+							type: 'subagent.lifecycle',
+							toolCallId: extractorParentId,
+							agentId: extractorAgentId,
+							status
+						});
+					}
+				};
+				const onActivity = (activity: ExtractorActivity) => {
+					const parentToolCallId = ensureExtractorParent();
+					switch (activity.type) {
+						case 'tool.call':
+							dispatch({
+								type: 'tool.call',
+								toolCallId: activity.toolCallId,
+								tool: activity.tool,
+								args: activity.args,
+								parentToolCallId
+							});
+							break;
+						case 'tool.result':
+							dispatch({
+								type: 'tool.result',
+								toolCallId: activity.toolCallId,
+								ok: activity.ok,
+								summary: activity.summary,
+								output: activity.output,
+								parentToolCallId
+							});
+							break;
+						case 'reasoning':
+							dispatch({
+								type: 'message.reasoning',
+								messageId: assistantId,
+								segmentId: activity.segmentId,
+								text: activity.text,
+								parentToolCallId
+							});
+							break;
+						case 'reasoning.end':
+							dispatch({
+								type: 'message.reasoning.end',
+								messageId: assistantId,
+								segmentId: activity.segmentId,
+								durationMs: activity.durationMs,
+								parentToolCallId
+							});
+							break;
+						case 'content':
+							dispatch({
+								type: 'message.delta',
+								messageId: assistantId,
+								text: activity.text,
+								parentToolCallId,
+								segmentId: activity.segmentId
+							});
+							break;
+					}
+				};
 				try {
 					emit({
 						type: 'memory.status',
@@ -487,6 +612,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						phase: 'validating',
 						summary: 'Validating durable memory patch.'
 					});
+
 					const committed = await extractAndCommitMemory({
 						conversationId: opts.conversationId,
 						userId: opts.bridge.userId,
@@ -494,8 +620,32 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						extractorModel: opts.memory.extractorModel,
 						turnId: turn.id,
 						userMessage,
-						assistantMessage
+						assistantMessage,
+						onActivity
 					});
+					if (extractorParentId) {
+						const spoken =
+							committed.extraction.response?.trim() ||
+							committed.patch.summary ||
+							'Memory extraction complete.';
+						dispatch({
+							type: 'tool.result',
+							toolCallId: extractorParentId,
+							ok: committed.patch.status !== 'needs_review',
+							summary: committed.patch.summary || 'Memory extraction complete.',
+							output: JSON.stringify({
+								response: spoken,
+								status: committed.patch.status,
+								counts: committed.counts
+							})
+						});
+						closeExtractorParent(
+							committed.patch.status === 'needs_review' ? 'failed' : 'completed'
+						);
+						// Closed on the success path; null it so the catch below
+						// doesn't double-close if a later statement throws.
+						extractorParentId = null;
+					}
 					emit({
 						type: 'memory.status',
 						conversationId: opts.conversationId,
@@ -511,6 +661,16 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						}
 					});
 				} catch (memoryErr) {
+					if (extractorParentId) {
+						dispatch({
+							type: 'tool.result',
+							toolCallId: extractorParentId,
+							ok: false,
+							summary: memoryFailureSummary(memoryErr),
+							output: memoryFailureMessage(memoryErr)
+						});
+						closeExtractorParent('failed');
+					}
 					log.warn('turn.memory.failed', {
 						conversationId: opts.conversationId,
 						err: memoryFailureMessage(memoryErr),

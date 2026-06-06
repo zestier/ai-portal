@@ -720,6 +720,143 @@ describe('turn-runner', () => {
 		});
 	});
 
+	it('surfaces tool-calling memory extraction as a persisted subagent card', async () => {
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		// SSE chunk streams (the extractor requests stream: true). First step
+		// streams reasoning + a staging tool call; second step streams the
+		// closing message with no tool calls.
+		const sseChunks = [
+			[
+				{
+					choices: [
+						{ delta: { reasoning: 'The user chose append-only migrations; store that decision.' } }
+					]
+				},
+				{ choices: [{ delta: { content: 'Recording the decision now.' } }] },
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: 'call-1',
+										function: {
+											name: 'memory_propose_patch',
+											arguments: JSON.stringify({
+												summary: 'Recorded the migration decision.',
+												patch: {
+													decisions: [
+														{ subject: 'migrations', decision: 'Use append-only migrations.' }
+													]
+												}
+											})
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			],
+			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+		];
+		let chatCall = 0;
+		const fetchMock = vi.fn(async () => {
+			const chunks = sseChunks[Math.min(chatCall, sseChunks.length - 1)];
+			chatCall += 1;
+			const text =
+				chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
+			return new Response(text, {
+				status: 200,
+				headers: { 'content-type': 'text/event-stream' }
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		try {
+			const { users, convs, turnRunner } = await freshImports();
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, { title: 'mem card', workdir: wd, model: 'gpt-4' });
+			const userMsg = messages.append(conv.id, {
+				role: 'user',
+				content: 'Remember we chose append-only migrations.'
+			});
+
+			acquireMock.mockResolvedValue(
+				makeFakeSession([
+					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'm1', text: 'Done.' },
+					{ type: 'done' }
+				])
+			);
+
+			const turn = await turnRunner.startTurn({
+				bridge: {
+					conversationId: conv.id,
+					userId: user.id,
+					workingDirectory: wd,
+					model: 'gpt-4',
+					policy: 'prompt'
+				},
+				prompt: 'hi',
+				conversationId: conv.id,
+				memory: {
+					mode: 'project',
+					userMessageId: userMsg.id,
+					userContent: 'Remember we chose append-only migrations.'
+				}
+			});
+
+			for await (const { event } of turn.subscribe()) {
+				if (event.type === 'done') break;
+			}
+
+			const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
+			// The extractor surfaces as a normal `task` subagent; only its
+			// agent_type arg marks it as the memory extractor.
+			const parent = assistant?.toolCalls?.find((t) => {
+				if (t.tool !== 'task') return false;
+				try {
+					return JSON.parse(t.argsJson).agent_type === 'memory-extractor';
+				} catch {
+					return false;
+				}
+			});
+			expect(parent).toBeTruthy();
+			expect(parent?.status).toBe('ok');
+			// Subagent lifecycle events flowed and persisted, exactly like a real
+			// subagent (running -> completed, with an agent id + timing).
+			expect(parent?.backgroundAgentStatus).toBe('completed');
+			expect(parent?.backgroundAgentId).toBeTruthy();
+			const child = assistant?.toolCalls?.find(
+				(t) => t.parentToolCallId === parent?.id && t.tool === 'memory_propose_patch'
+			);
+			expect(child).toBeTruthy();
+			expect(child?.status).toBe('ok');
+			// The extractor's thoughts are persisted as a child reasoning block
+			// threaded under the parent card, so the background session reads
+			// like a real sub-session.
+			const childReasoning = (assistant?.reasoningBlocks ?? []).filter(
+				(r) => r.parentToolCallId === parent?.id
+			);
+			expect(childReasoning.length).toBeGreaterThan(0);
+			expect(childReasoning.map((r) => r.text).join('\n')).toContain('append-only migrations');
+			// The model's closing message is surfaced as the card's response.
+			expect(child?.parentToolCallId).toBe(parent?.id);
+			expect(parent?.resultJson ?? '').toContain('Stored the migration decision.');
+		} finally {
+			delete process.env.MEMORY_EXTRACTOR_BACKEND;
+			delete process.env.MEMORY_EXTRACTOR_MODEL;
+			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it('persists manual rerun tool calls as separate attempts without overwriting the original', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const messages = await import('../src/lib/server/db/repos/messages');

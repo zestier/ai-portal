@@ -173,10 +173,12 @@ invalid config.
 | `OPENAI_COMPATIBLE_FREQUENCY_PENALTY` | — | Optional token repetition penalty for OpenAI-compatible and LM Studio chat completions. Leave unset to use backend/model defaults. |
 | `LMSTUDIO_BASE_URL`       | `http://127.0.0.1:1234`  | Base URL for LM Studio's local server. The portal uses `/v1` for chat and `/api/v1` for model metadata. |
 | `LMSTUDIO_API_KEY`        | —                        | Optional LM Studio API token when server authentication is enabled. |
-| `MEMORY_EXTRACTOR_BACKEND` | `heuristic`             | Backend for harvesting durable memories from conversations: `heuristic` (local, no network) \| `openai-compatible`. Falls back to heuristic if the openai-compatible base URL/model is missing. |
-| `MEMORY_EXTRACTOR_MODEL`  | —                        | Model id for the `openai-compatible` extractor. A per-conversation override takes precedence; without either, extraction stays heuristic. Uses `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`. |
-| `MEMORY_EXTRACTOR_TIMEOUT_MS` | `20000`              | Request timeout (ms) for the model-backed extraction call. |
+| `MEMORY_EXTRACTOR_BACKEND` | `heuristic`             | Backend for harvesting durable memories from conversations: `heuristic` (local, no network) \| `openai-compatible` (single-shot JSON patch) \| `openai-compatible-tools` (a dedicated background agent that stores memory by calling the memory tools, with per-call validation feedback). Falls back to heuristic if the openai-compatible base URL/model is missing. |
+| `MEMORY_EXTRACTOR_MODEL`  | —                        | Model id for the `openai-compatible`/`openai-compatible-tools` extractor. A per-conversation override takes precedence; without either, extraction stays heuristic. Uses `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`. |
+| `MEMORY_EXTRACTOR_TIMEOUT_MS` | `20000`              | Request timeout (ms) for each model-backed extraction request. |
 | `MEMORY_EXTRACTOR_MAX_INPUT_CHARS` | `12000`         | Cap on conversation text sent to the model extractor. |
+| `MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS` | `6`         | Max tool-calling iterations for the `openai-compatible-tools` extractor before it stops and commits whatever it staged. |
+| `MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS` | `60000`        | Overall wall-clock budget (ms) for the `openai-compatible-tools` extractor loop. Bounds the whole loop rather than a single request, so it can't hold the turn open for `MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS` × `MEMORY_EXTRACTOR_TIMEOUT_MS` in the worst case. |
 | `MEMORY_EMBEDDING_PROVIDER` | `local-hash`           | Provider for memory-search embeddings: `local-hash` (local, no network) \| `openai-compatible`. Falls back to local-hash unless the base URL and embedding model are both set. |
 | `MEMORY_EMBEDDING_MODEL`  | —                        | Embedding model id; required to activate the `openai-compatible` embedding provider. Uses `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`. |
 | `MEMORY_EMBEDDING_TIMEOUT_MS` | `20000`              | Request timeout (ms) for embedding calls. |

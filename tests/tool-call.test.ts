@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { parseGitToolResult } from '../src/lib/client/git-tool-result';
 import { summarizeToolCall } from '../src/lib/client/tool-summary';
 import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '../src/lib/client/tool-result';
-import { getBackgroundAgentId, getSubagentDisplayState } from '../src/lib/client/subagent-display';
+import {
+	getBackgroundAgentId,
+	getSubagentDisplayState,
+	getSubagentPresentation
+} from '../src/lib/client/subagent-display';
 import type { ToolCallRecord } from '../src/lib/types';
 
 function toolCall(overrides: Partial<ToolCallRecord>): ToolCallRecord {
@@ -371,5 +375,21 @@ describe('getSubagentDisplayState', () => {
 		expect(getBackgroundAgentId(JSON.stringify('Started. Use read_agent with agent-text.'))).toBe(
 			'agent-text'
 		);
+	});
+});
+
+describe('getSubagentPresentation', () => {
+	it('gives the memory extractor its own icon and keeps it collapsed by default', () => {
+		const p = getSubagentPresentation('memory-extractor');
+		expect(p.icon).toBe('🧠');
+		expect(p.autoExpandWhilePending).toBe(false);
+	});
+
+	it('falls back to default icon and auto-expand for other / unknown agent types', () => {
+		for (const type of ['general-purpose', undefined]) {
+			const p = getSubagentPresentation(type);
+			expect(p.icon).toBe('🤖');
+			expect(p.autoExpandWhilePending).toBe(true);
+		}
 	});
 });

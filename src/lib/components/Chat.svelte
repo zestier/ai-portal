@@ -516,7 +516,31 @@
 			}
 			case 'message.delta': {
 				const m = messages.find((x) => x.id === ev.messageId);
-				if (m) m.content += ev.text;
+				if (!m) break;
+				if (ev.parentToolCallId && ev.segmentId) {
+					// Sub-agent spoken content: accumulate into a threaded
+					// 'content' block (rendered inside the SubagentCall card),
+					// not the outer message body.
+					const blocks = (m.reasoningBlocks ??= []);
+					let seg = blocks.find((b) => b.id === ev.segmentId);
+					if (!seg) {
+						seg = {
+							id: ev.segmentId,
+							messageId: m.id,
+							segmentIndex: blocks.length,
+							text: '',
+							kind: 'content',
+							textOffset: null,
+							startedAt: Date.now(),
+							durationMs: null,
+							parentToolCallId: ev.parentToolCallId
+						};
+						blocks.push(seg);
+					}
+					seg.text += ev.text;
+				} else {
+					m.content += ev.text;
+				}
 				break;
 			}
 			case 'message.reasoning': {
@@ -548,6 +572,7 @@
 						messageId: m.id,
 						segmentIndex: blocks.length,
 						text: '',
+						kind: 'reasoning',
 						textOffset: isChild ? null : m.content.length,
 						startedAt: Date.now(),
 						durationMs: null,

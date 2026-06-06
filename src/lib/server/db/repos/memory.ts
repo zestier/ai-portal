@@ -893,6 +893,13 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 	return rowToOpenLoop(row);
 }
 
+export function getOpenLoop(conversationId: string, id: string): MemoryOpenLoop | null {
+	const row = getDb()
+		.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
+		.get(id, conversationId) as OpenLoopRow | undefined;
+	return row ? rowToOpenLoop(row) : null;
+}
+
 export function listOpenLoops(
 	conversationId: string,
 	opts: { limit?: number; status?: string; loopType?: string } = {}
@@ -1311,6 +1318,19 @@ export function revertPatch(
 	let reverted = 0;
 	let skipped = 0;
 	for (const item of items) {
+		if (item.action === 'resolve') {
+			// Reverting a resolution reopens the loop. We don't snapshot the
+			// prior status, but loops are 'open' until resolved, so restoring to
+			// 'open' is correct in practice.
+			if (item.itemType === 'open_loop') {
+				const ok = updateOpenLoop(conversationId, item.itemId, { status: 'open' }) !== null;
+				if (ok) reverted++;
+				else skipped++;
+			} else {
+				skipped++;
+			}
+			continue;
+		}
 		if (item.action !== 'create') {
 			skipped++;
 			continue;

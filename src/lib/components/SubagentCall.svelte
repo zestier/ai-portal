@@ -1,7 +1,11 @@
 <script lang="ts">
 	import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '$lib/types';
 	import { renderMarkdown } from '$lib/client/markdown';
-	import { getSubagentDisplayState, parseSubagentArgs } from '$lib/client/subagent-display';
+	import {
+		getSubagentDisplayState,
+		getSubagentPresentation,
+		parseSubagentArgs
+	} from '$lib/client/subagent-display';
 	import ToolCall from './ToolCall.svelte';
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import DiffView from './DiffView.svelte';
@@ -22,12 +26,24 @@
 	// Auto-expand while the subagent is running so the user sees activity,
 	// then auto-collapse once it completes (the parent assistant typically
 	// summarizes the result inline anyway). The user can override either
-	// direction by clicking; once they do, we stop auto-managing.
+	// direction by clicking; once they do, we stop auto-managing. Some agent
+	// types (e.g. the background memory extractor) opt out of auto-expand via
+	// their presentation entry and stay collapsed until the user opens them.
 	let userToggled = $state(false);
 	let manualOpen = $state(false);
 	const displayState = $derived(getSubagentDisplayState(toolCall));
 	const pending = $derived(displayState.pending);
-	const open = $derived(userToggled ? manualOpen : pending);
+
+	const args = $derived(parseSubagentArgs(toolCall.argsJson));
+
+	// Presentation (icon, auto-expand behavior) is data-driven off `agent_type`
+	// in subagent-display.ts, so adding or specializing an agent is a registry
+	// entry rather than another conditional here. The memory extractor reuses
+	// this card but is a distinct background actor, so it gets its own icon and
+	// stays collapsed by default.
+	const presentation = $derived(getSubagentPresentation(args.agent_type));
+
+	const open = $derived(userToggled ? manualOpen : pending && presentation.autoExpandWhilePending);
 
 	function onToggle(e: Event) {
 		const el = e.currentTarget as HTMLDetailsElement;
@@ -35,7 +51,6 @@
 		manualOpen = el.open;
 	}
 
-	const args = $derived(parseSubagentArgs(toolCall.argsJson));
 	const resultText = $derived(displayState.resultText);
 	const promptHtml = $derived(args.prompt ? renderMarkdown(args.prompt) : null);
 	const resultHtml = $derived(resultText ? renderMarkdown(resultText) : null);
@@ -53,19 +68,34 @@
 		args.description ?? args.name ?? (args.prompt ? firstLine(args.prompt) : 'subagent')
 	);
 
-	// Sub-agent activity timeline: child reasoning bursts and tool calls in
-	// the order they happened. There's no parent-text to anchor against
-	// (the sub-agent's only output is the final response, which we render
-	// separately), so we sort purely by start timestamp.
+	// Child reasoning blocks come in two kinds: 'reasoning' (thinking) and
+	// 'content' (the sub-agent's spoken response). Split them so each renders
+	// appropriately while still interleaving by timestamp in the timeline.
+	const childThinking = $derived(childReasoning.filter((r) => r.kind !== 'content'));
+	const childSpoken = $derived(childReasoning.filter((r) => r.kind === 'content'));
+
+	// The sub-agent's spoken response is rendered inline in the activity
+	// timeline as 'content' blocks. When it streamed that way, the final tool
+	// result is the same text — so suppress the separate "Response" section to
+	// avoid showing it twice. Background launches (no streamed content) and
+	// agents whose only output is the final result still show it.
+	const showResultSection = $derived(resultHtml && childSpoken.length === 0);
+
+	// Sub-agent activity timeline: child content, reasoning bursts, tool calls,
+	// and edits in the order they happened, sorted purely by start timestamp.
 	type ActivityItem =
 		| { kind: 'reasoning'; ts: number; block: ReasoningBlockRecord }
+		| { kind: 'content'; ts: number; block: ReasoningBlockRecord }
 		| { kind: 'tool'; ts: number; tool: ToolCallRecord }
 		| { kind: 'edit'; ts: number; edit: FileEditRecord };
 
 	const activity = $derived.by<ActivityItem[]>(() => {
 		const items: ActivityItem[] = [];
-		for (const r of childReasoning) {
+		for (const r of childThinking) {
 			items.push({ kind: 'reasoning', ts: r.startedAt, block: r });
+		}
+		for (const r of childSpoken) {
+			items.push({ kind: 'content', ts: r.startedAt, block: r });
 		}
 		for (const t of childTools) {
 			items.push({ kind: 'tool', ts: t.startedAt, tool: t });
@@ -82,7 +112,7 @@
 	const latestOpenChildReasoningIdx = $derived.by(() => {
 		if (!pending) return -1;
 		let max = -1;
-		for (const r of childReasoning) {
+		for (const r of childThinking) {
 			if (r.durationMs == null && r.segmentIndex > max) max = r.segmentIndex;
 		}
 		return max;
@@ -121,7 +151,7 @@
 	ontoggle={onToggle}
 >
 	<summary>
-		<span class="icon" aria-hidden="true">🤖</span>
+		<span class="icon" aria-hidden="true">{presentation.icon}</span>
 		<span class="title">{headline}</span>
 		{#if args.agent_type}
 			<Pill tone="accent">{args.agent_type}</Pill>
@@ -192,6 +222,9 @@
 								streaming={item.block.segmentIndex === latestOpenChildReasoningIdx}
 								durationMs={item.block.durationMs}
 							/>
+						{:else if item.kind === 'content'}
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+							<div class="markdown agent-content">{@html renderMarkdown(item.block.text)}</div>
 						{:else if item.kind === 'tool'}
 							<ToolCall toolCall={item.tool} />
 						{:else}
@@ -220,7 +253,7 @@
 				</div>
 			</div>
 		{/if}
-		{#if resultHtml}
+		{#if showResultSection}
 			<div class="section response">
 				<div class="label static">
 					{displayState.isBackgroundLaunch ? 'Launch result' : 'Response'}
@@ -370,6 +403,10 @@
 	}
 	.label.static {
 		cursor: default;
+	}
+	.agent-content {
+		font-size: var(--text-sm, 0.875rem);
+		padding: 0.1rem 0;
 	}
 	.disclosure {
 		display: inline-flex;

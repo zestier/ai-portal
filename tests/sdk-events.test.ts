@@ -90,6 +90,59 @@ describe('SdkEventAdapter subagent lifecycle', () => {
 			expected.map((e) => ({ type: 'subagent.lifecycle', ...e }))
 		);
 	});
+
+	it('threads a sub-agent spoken content as a child message.delta, interleaved with its reasoning', () => {
+		const h = makeHarness();
+
+		h.source.emit('subagent.started', { agentId: 'agent-1', data: { toolCallId: 'tool-1' } });
+		// The outer agent has already started its message before spawning the
+		// sub-agent (as it always has in practice).
+		h.source.emit('assistant.message_delta', { data: { deltaContent: 'outer text' } });
+		// Sub-agent thinks, then speaks: the spoken content must thread under the
+		// parent tool call (not the outer body) and close the open reasoning.
+		h.source.emit('assistant.reasoning_delta', {
+			agentId: 'agent-1',
+			data: { deltaContent: 'planning the work' }
+		});
+		h.source.emit('assistant.message_delta', {
+			agentId: 'agent-1',
+			data: { deltaContent: 'here is my answer' }
+		});
+		h.source.emit('subagent.completed', { agentId: 'agent-1' });
+
+		const childReasoning = h.events.find(
+			(e) => e.type === 'message.reasoning' && e.parentToolCallId === 'tool-1'
+		);
+		expect(childReasoning).toBeTruthy();
+
+		const childContent = h.events.find(
+			(e) => e.type === 'message.delta' && e.parentToolCallId === 'tool-1'
+		);
+		expect(childContent).toMatchObject({
+			type: 'message.delta',
+			parentToolCallId: 'tool-1',
+			text: 'here is my answer'
+		});
+		expect(childContent && 'segmentId' in childContent && childContent.segmentId).toBeTruthy();
+
+		// Opening content closed the child reasoning segment first (so they
+		// interleave), evidenced by a reasoning.end for the same parent emitted
+		// before the content delta.
+		const idxReasoningEnd = h.events.findIndex(
+			(e) => e.type === 'message.reasoning.end' && e.parentToolCallId === 'tool-1'
+		);
+		const idxContent = h.events.findIndex(
+			(e) => e.type === 'message.delta' && e.parentToolCallId === 'tool-1'
+		);
+		expect(idxReasoningEnd).toBeGreaterThanOrEqual(0);
+		expect(idxReasoningEnd).toBeLessThan(idxContent);
+
+		// The top-level delta is unthreaded (renders in the outer message body).
+		const outer = h.events.find((e) => e.type === 'message.delta' && e.text === 'outer text');
+		expect(
+			outer && 'parentToolCallId' in outer ? outer.parentToolCallId : undefined
+		).toBeUndefined();
+	});
 });
 
 describe('SdkEventAdapter zod event boundary', () => {

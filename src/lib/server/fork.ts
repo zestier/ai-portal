@@ -200,8 +200,8 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`
 	);
 	const insertReasoning = db.prepare(
-		`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, text_offset, started_at, duration_ms, parent_tool_call_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	);
 	const tx = db.transaction(() => {
 		prefix.forEach((m, i) => {
@@ -256,6 +256,7 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string
 					newId,
 					r.segmentIndex,
 					r.text,
+					r.kind ?? 'reasoning',
 					r.textOffset,
 					r.startedAt,
 					r.durationMs,

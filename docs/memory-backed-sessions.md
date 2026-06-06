@@ -376,6 +376,15 @@ Important fields:
 - `created_at`
 - `updated_at`
 
+Open loops are pruned, not just appended. A memory patch may carry a
+`resolveOpenLoops` array — `{ id, status: "resolved" | "dropped", reason? }` —
+that flips an existing loop's `status` so superseded threads stop crowding the
+packet. This is how the extractor closes the unchosen options when the user
+picks one of several offered choices (`resolved` = done/answered, `dropped` =
+abandoned/superseded; the optional `reason` is appended to the loop's
+description). Resolutions are recorded as `resolve` patch items, so reverting the
+patch reopens the loop.
+
 ### `memory_decisions`
 
 Durable decisions made during the session.
@@ -775,6 +784,59 @@ memory.status extracting
 memory.status validating
 memory.status committed | needs_review | skipped
 ```
+
+When the `openai-compatible-tools` extractor is active, its work is surfaced as
+a **subagent**, indistinguishable from a real one to the lower layers. The turn
+runner emits the same event vocabulary a Copilot `task` subagent produces — a
+parent `task` tool call, a `subagent.lifecycle` (running → completed/failed)
+with an agent id, and threaded children via `parentToolCallId` — all routed
+through the normal dispatch/persistence path. Only the parent's
+`agent_type: "memory-extractor"` arg distinguishes it, and that is used purely
+for presentation (the 🧠 icon); no lower-layer component special-cases it.
+Through the optional `onActivity` emitter on `ExtractPatchInput` the extractor
+surfaces:
+
+- its **thoughts** — provider reasoning fields (`reasoning` / `reasoning_content`)
+  and inline `<think>…</think>` — as threaded child reasoning blocks;
+- its **spoken content** — as threaded child content blocks, interleaved with
+  its thoughts and tools (see "Fully-featured nested agents" below);
+- each **retrieval** (`memory_search`, `memory_get_entity`, …) and **staging**
+  (`memory_propose_patch`) call, with its validation feedback, as a threaded
+  child tool call; and
+- its **closing message** as the parent tool result → the card's Response
+  (`ExtractPatchResult.response`).
+
+The extractor's chat requests use `stream: true`, so reasoning and content are
+surfaced **token-by-token** as they arrive (the `ExtractorChatComplete` seam
+takes an optional `onDelta`). Inline `<think>` markers are split from spoken
+text across chunk boundaries and tool-call argument fragments are reassembled
+from streamed deltas, so a turn can be watched live as it forms — making
+failures diagnosable instead of appearing only as a finished block.
+
+Extractors that don't call tools (heuristic / single-shot JSON) emit nothing and
+no card is created.
+
+### Fully-featured nested agents
+
+Sub-agents (real Copilot `task` agents *and* the memory extractor) render as
+fully-featured nested agents: their **spoken content interleaves** with their
+reasoning and tool calls inside the card, just like a top-level agent's body.
+
+This is carried by two additions to the existing threading model:
+
+- `message.delta` may carry an optional `parentToolCallId` + `segmentId`. When
+  set, the delta is a sub-agent's content and is threaded into its card instead
+  of appended to the outer assistant message body.
+- `reasoning_blocks` gained a `kind` column (`'reasoning'` | `'content'`).
+  Sub-agent content is stored as `kind = 'content'` rows (always with a
+  `parent_tool_call_id`); the `SubagentCall` activity timeline renders them as
+  prose, interleaved by timestamp with `'reasoning'` blocks and tool calls.
+
+The SDK adapter previously dropped a sub-agent's visible deltas
+(`if (ev.agentId) return`) and surfaced its answer only as the `task` tool
+result. It now threads those deltas as content segments (opening content closes
+any in-flight child reasoning so the two interleave in order). Top-level content
+is unchanged — it still streams into the message body.
 
 Strict mode is the exception. If the assistant makes continuity-sensitive claims
 and did not call `memory_check_claims`, the turn runner may run extraction and

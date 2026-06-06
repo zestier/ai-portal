@@ -58,6 +58,7 @@ interface ReasoningRow {
 	message_id: string;
 	segment_index: number;
 	text: string;
+	kind: string;
 	text_offset: number | null;
 	started_at: number;
 	duration_ms: number | null;
@@ -169,6 +170,7 @@ export function listByConversation(conversationId: string): Message[] {
 			messageId: r.message_id,
 			segmentIndex: r.segment_index,
 			text: r.text,
+			kind: r.kind === 'content' ? 'content' : 'reasoning',
 			textOffset: r.text_offset,
 			startedAt: r.started_at,
 			durationMs: r.duration_ms,
@@ -529,12 +531,13 @@ export function upsertReasoningBlock(
 ) {
 	getDb()
 		.prepare(
-			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, text_offset, started_at, duration_ms, parent_tool_call_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET
 			   message_id = excluded.message_id,
 			   segment_index = excluded.segment_index,
 			   text = excluded.text,
+			   kind = excluded.kind,
 			   text_offset = excluded.text_offset,
 			   started_at = excluded.started_at,
 			   duration_ms = excluded.duration_ms,
@@ -545,6 +548,7 @@ export function upsertReasoningBlock(
 			messageId,
 			r.segmentIndex,
 			r.text,
+			r.kind ?? 'reasoning',
 			r.textOffset,
 			r.startedAt,
 			r.durationMs ?? null,
@@ -558,14 +562,15 @@ export function insertReasoningBlock(
 ) {
 	getDb()
 		.prepare(
-			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, text_offset, started_at, duration_ms, parent_tool_call_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			r.id,
 			messageId,
 			r.segmentIndex,
 			r.text,
+			r.kind ?? 'reasoning',
 			r.textOffset,
 			r.startedAt,
 			r.durationMs ?? null,

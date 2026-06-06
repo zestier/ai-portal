@@ -61,10 +61,14 @@ const Schema = z
 		OPENAI_COMPATIBLE_FREQUENCY_PENALTY: z.coerce.number().min(-2).max(2).optional(),
 		LMSTUDIO_BASE_URL: z.string().trim().url().default('http://127.0.0.1:1234'),
 		LMSTUDIO_API_KEY: z.string().optional(),
-		MEMORY_EXTRACTOR_BACKEND: z.enum(['heuristic', 'openai-compatible']).default('heuristic'),
+		MEMORY_EXTRACTOR_BACKEND: z
+			.enum(['heuristic', 'openai-compatible', 'openai-compatible-tools'])
+			.default('heuristic'),
 		MEMORY_EXTRACTOR_MODEL: z.string().trim().optional(),
 		MEMORY_EXTRACTOR_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),
+		MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(6),
+		MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: z.coerce.number().int().positive().default(60_000),
 		MEMORY_EMBEDDING_PROVIDER: z.enum(['local-hash', 'openai-compatible']).default('local-hash'),
 		MEMORY_EMBEDDING_MODEL: z.string().trim().optional(),
 		MEMORY_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),

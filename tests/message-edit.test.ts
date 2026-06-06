@@ -43,6 +43,7 @@ describe('message-edit.inlineEditMessage', () => {
 			id: 'reason-later',
 			segmentIndex: 0,
 			text: 'thinking',
+			kind: 'reasoning',
 			textOffset: 0,
 			startedAt: Date.now(),
 			durationMs: 10,

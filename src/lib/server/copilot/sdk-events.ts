@@ -225,6 +225,7 @@ export class SdkEventAdapter {
 	private currentReasoningStartedAt = 0;
 	private readonly subagentParentByAgentId = new Map<string, string>();
 	private readonly childReasoning = new Map<string, ChildReasoningState>();
+	private readonly childContent = new Map<string, string>();
 	private readonly trackedInfoIds = new Map<string, string>();
 
 	constructor(private readonly ctx: EventAdapterContext) {}
@@ -300,9 +301,33 @@ export class SdkEventAdapter {
 	private readonly onDelta = (e: unknown) => {
 		const ev = parseSdkEvent('assistant.message_delta', AssistantDeltaEvent, e);
 		if (!ev) return;
-		if (ev.agentId) return;
 		const text = ev?.data?.deltaContent ?? '';
 		if (!text || !this.activeQueue) return;
+		if (ev.agentId) {
+			// Sub-agent spoken content: thread it into the spawning card as a
+			// content block (interleaved with the agent's reasoning/tools), so a
+			// nested agent renders its response like a top-level agent instead of
+			// only surfacing it as the final tool result.
+			const parent = this.parentToolCallId(ev);
+			const messageId = this.ensureMessageStarted();
+			if (!parent) return;
+			// Opening content closes any in-flight child reasoning so the two
+			// interleave in timestamp order.
+			this.closeChildReasoning(ev.agentId);
+			let segmentId = this.childContent.get(ev.agentId);
+			if (!segmentId) {
+				segmentId = ulid();
+				this.childContent.set(ev.agentId, segmentId);
+			}
+			this.emit({
+				type: 'message.delta',
+				messageId,
+				text,
+				parentToolCallId: parent,
+				segmentId
+			});
+			return;
+		}
 		const messageId = this.ensureMessageStarted();
 		this.closeReasoning();
 		this.emit({ type: 'message.delta', messageId, text });
@@ -316,6 +341,9 @@ export class SdkEventAdapter {
 		const parent = this.parentToolCallId(ev);
 		if (parent) {
 			if (!this.currentMessageId || !ev.agentId) return;
+			// Opening reasoning closes any in-flight child content block so the
+			// two interleave in order.
+			this.closeChildContent(ev.agentId);
 			let state = this.childReasoning.get(ev.agentId);
 			if (!state || !state.segmentId) {
 				state = { segmentId: ulid(), startedAt: Date.now() };
@@ -372,8 +400,10 @@ export class SdkEventAdapter {
 		if (!ev) return;
 		if (!this.activeQueue) return;
 		const parent = this.parentToolCallId(ev);
-		if (parent && ev.agentId) this.closeChildReasoning(ev.agentId);
-		else this.closeReasoning();
+		if (parent && ev.agentId) {
+			this.closeChildReasoning(ev.agentId);
+			this.closeChildContent(ev.agentId);
+		} else this.closeReasoning();
 		this.emit({
 			type: 'tool.call',
 			toolCallId: ev?.data?.toolCallId ?? ulid(),
@@ -452,6 +482,7 @@ export class SdkEventAdapter {
 		const toolCallId = this.subagentParentByAgentId.get(ev.agentId);
 		this.closeChildReasoning(ev.agentId);
 		this.childReasoning.delete(ev.agentId);
+		this.closeChildContent(ev.agentId);
 		if (toolCallId) this.emitSubagentLifecycle(toolCallId, ev.agentId, status);
 		this.subagentParentByAgentId.delete(ev.agentId);
 	}
@@ -482,6 +513,13 @@ export class SdkEventAdapter {
 			});
 			state.segmentId = null;
 		}
+	}
+
+	// Content blocks accumulate by segmentId and need no explicit end event;
+	// "closing" simply drops the active segment so the next content delta opens
+	// a fresh block, letting content interleave with reasoning/tools in order.
+	private closeChildContent(agentId: string) {
+		this.childContent.delete(agentId);
 	}
 
 	private readonly onSessionIdle = () => {

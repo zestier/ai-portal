@@ -20,6 +20,40 @@ export type SubagentDisplayState = {
 	elapsedMs: number | null;
 };
 
+/** Presentation metadata for a subagent card, keyed off its `agent_type`. */
+export type SubagentPresentation = {
+	/** Emoji shown in the card header. */
+	icon: string;
+	/**
+	 * Whether the card auto-expands while the agent is running. Most subagents
+	 * do (so the user sees live activity); background actors like the memory
+	 * extractor stay collapsed by default to avoid distracting from the main
+	 * reply. The user can always expand manually.
+	 */
+	autoExpandWhilePending: boolean;
+};
+
+const DEFAULT_PRESENTATION: SubagentPresentation = {
+	icon: '🤖',
+	autoExpandWhilePending: true
+};
+
+// Per-`agent_type` presentation overrides. Add an entry here to give a special
+// agent its own icon rather than threading another conditional through the
+// component. Anything not listed falls back to DEFAULT_PRESENTATION.
+const AGENT_PRESENTATION: Record<string, SubagentPresentation> = {
+	// Background memory extractor reuses the subagent card but is a distinct
+	// actor, so it gets its own icon and stays collapsed by default.
+	'memory-extractor': { icon: '🧠', autoExpandWhilePending: false }
+};
+
+export function getSubagentPresentation(agentType: string | undefined): SubagentPresentation {
+	if (agentType && Object.prototype.hasOwnProperty.call(AGENT_PRESENTATION, agentType)) {
+		return AGENT_PRESENTATION[agentType];
+	}
+	return DEFAULT_PRESENTATION;
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
 	return v != null && typeof v === 'object' && !Array.isArray(v);
 }

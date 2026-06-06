@@ -80,6 +80,20 @@ export interface MemoryPatchProposal {
 		priority?: number;
 		relatedEntityKeys?: string[];
 	}>;
+	/**
+	 * Resolutions for *existing* open loops the latest turn closed, answered, or
+	 * abandoned — e.g. the user picked one of several offered options, so the
+	 * unchosen ones should be dropped rather than left lingering. Without this
+	 * the extraction pipeline is append-only and superseded loops accumulate,
+	 * crowding the packet budget. `id` is an existing open-loop id (retrieve via
+	 * memory_get_open_loops); `resolved` = completed/answered, `dropped` =
+	 * abandoned/superseded.
+	 */
+	resolveOpenLoops?: Array<{
+		id: string;
+		status: 'resolved' | 'dropped';
+		reason?: string;
+	}>;
 }
 
 export interface CommitMemoryPatchInput {
@@ -374,6 +388,36 @@ export function validatePatch(
 			});
 		}
 	}
+	if (opts.conversationId) {
+		const seenResolutionIds = new Set<string>();
+		for (const resolution of patch.resolveOpenLoops ?? []) {
+			if (seenResolutionIds.has(resolution.id)) {
+				issues.push({
+					severity: 'warning',
+					code: 'open_loop_resolution_duplicate',
+					message: `Open loop ${resolution.id} is resolved more than once in this patch.`
+				});
+				continue;
+			}
+			seenResolutionIds.add(resolution.id);
+			const existing = memoryRepo.getOpenLoop(opts.conversationId, resolution.id);
+			if (!existing) {
+				// Likely a hallucinated or already-deleted id; the commit is a
+				// no-op, so warn rather than block the rest of the patch.
+				issues.push({
+					severity: 'warning',
+					code: 'open_loop_resolution_unknown_id',
+					message: `Open loop ${resolution.id} to resolve was not found; ignoring.`
+				});
+			} else if (existing.status !== 'open') {
+				issues.push({
+					severity: 'info',
+					code: 'open_loop_resolution_not_open',
+					message: `Open loop ${resolution.id} is already "${existing.status}"; re-resolving as "${resolution.status}".`
+				});
+			}
+		}
+	}
 	if (opts.mode === 'project') {
 		for (const fact of patch.facts ?? []) {
 			if (/^(file|repo|test|command)[._-]/i.test(fact.predicate)) {
@@ -570,6 +614,7 @@ export function commitPatch(
 		facts: number;
 		decisions: number;
 		openLoops: number;
+		resolvedOpenLoops: number;
 		issues: number;
 	};
 } {
@@ -606,6 +651,7 @@ export function commitPatch(
 				facts: 0,
 				decisions: 0,
 				openLoops: 0,
+				resolvedOpenLoops: 0,
 				issues: validation.issues.length
 			}
 		};
@@ -766,6 +812,36 @@ export function commitPatch(
 			action: 'create'
 		});
 	}
+	let resolvedOpenLoops = 0;
+	for (const resolution of input.patch.resolveOpenLoops ?? []) {
+		const existing = memoryRepo.getOpenLoop(input.conversationId, resolution.id);
+		// Skip unknown ids (already warned in validation) so a hallucinated id
+		// doesn't abort the rest of the commit.
+		if (!existing) continue;
+		// Re-resolving an already-closed loop to the same status is a no-op:
+		// skip it so we don't append the reason again (unbounded description
+		// growth) or record a duplicate 'resolve' audit item across turns.
+		if (existing.status !== 'open' && existing.status === resolution.status) continue;
+		// Only annotate the description on the first resolution (while the loop
+		// is still open). A later status change updates status only, again to
+		// avoid the description growing without bound.
+		const description =
+			existing.status === 'open' && resolution.reason?.trim()
+				? `${existing.description}${existing.description ? '\n' : ''}[${resolution.status}] ${resolution.reason.trim()}`
+				: existing.description;
+		const updated = memoryRepo.updateOpenLoop(input.conversationId, resolution.id, {
+			status: resolution.status,
+			description
+		});
+		if (!updated) continue;
+		resolvedOpenLoops += 1;
+		memoryRepo.recordPatchItem(input.conversationId, {
+			patchId: patchRecord.id,
+			itemType: 'open_loop',
+			itemId: resolution.id,
+			action: 'resolve'
+		});
+	}
 
 	return {
 		patch: patchRecord,
@@ -775,6 +851,7 @@ export function commitPatch(
 			facts: factCount,
 			decisions: input.patch.decisions?.length ?? 0,
 			openLoops: input.patch.openLoops?.length ?? 0,
+			resolvedOpenLoops,
 			issues: validation.issues.length
 		}
 	};
@@ -897,6 +974,16 @@ export const MemoryPatchProposalSchema: z.ZodType<MemoryPatchProposal> = z
 					description: z.string().max(8000).optional(),
 					priority: z.number().int().min(-100).max(100).optional(),
 					relatedEntityKeys: z.array(z.string().min(1).max(200)).max(50).optional()
+				})
+			)
+			.max(50)
+			.optional(),
+		resolveOpenLoops: z
+			.array(
+				z.object({
+					id: z.string().min(1).max(200),
+					status: z.enum(['resolved', 'dropped']),
+					reason: z.string().max(2000).optional()
 				})
 			)
 			.max(50)
@@ -1116,7 +1203,8 @@ function summarizePatch(patch: MemoryPatchProposal): string {
 		patch.events?.length ? `${patch.events.length} events` : '',
 		patch.facts?.length ? `${patch.facts.length} facts` : '',
 		patch.decisions?.length ? `${patch.decisions.length} decisions` : '',
-		patch.openLoops?.length ? `${patch.openLoops.length} open loops` : ''
+		patch.openLoops?.length ? `${patch.openLoops.length} open loops` : '',
+		patch.resolveOpenLoops?.length ? `${patch.resolveOpenLoops.length} resolved loops` : ''
 	]
 		.filter(Boolean)
 		.join(', ');
