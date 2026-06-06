@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGitTools } from '../src/lib/server/tools/git';
+import { buildMemoryTools } from '../src/lib/server/tools/memory';
 import {
 	buildToolArgsValidator,
 	validatePortalToolArgs
@@ -59,6 +60,27 @@ describe('validatePortalToolArgs', () => {
 				{ anything: 1 }
 			)
 		).toEqual({ ok: true });
+	});
+
+	it('returns the full patch shape when memory_propose_patch args are invalid', () => {
+		const proposePatch = buildMemoryTools({
+			userId: 'u1',
+			conversationId: 'c1',
+			mode: 'project'
+		}).find((t) => t.name === 'memory_propose_patch');
+		if (!proposePatch) throw new Error('memory_propose_patch tool not found');
+		// Missing required `value` on a fact — previously the feedback only
+		// surfaced an opaque `{ type: 'object' }`, leaving the agent unable to
+		// see the patch shape it needed to fix.
+		const result = validatePortalToolArgs(proposePatch, {
+			patch: { facts: [{ predicate: 'color' }] }
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) throw new Error('unreachable');
+		expect(result.feedback).toMatch(/Expected JSON Schema for "memory_propose_patch" parameters:/);
+		expect(result.feedback).toMatch(/resolveOpenLoops/);
+		expect(result.feedback).toMatch(/entityKey/);
+		expect(result.feedback).toMatch(/"predicate"/);
 	});
 });
 

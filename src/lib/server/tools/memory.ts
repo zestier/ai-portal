@@ -97,6 +97,116 @@ const ProposePatchArgs = z.object({
 	patch: MemoryPatchProposalSchema
 });
 
+// Full JSON Schema for the `patch` argument, mirroring MemoryPatchProposalSchema
+// in the memory engine. Kept inline (rather than the previous opaque
+// `{ type: 'object' }`) so the model sees the real shape up front, and so the
+// schema-validation failure feedback — which echoes a tool's `parameters` —
+// actually tells the agent how to fix a rejected patch.
+const MEMORY_PATCH_JSON_SCHEMA = {
+	type: 'object',
+	description: 'Structured memory patch. All top-level fields are optional arrays.',
+	additionalProperties: false,
+	properties: {
+		entities: {
+			type: 'array',
+			maxItems: 50,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['entityKey', 'entityType', 'displayName'],
+				properties: {
+					entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+					entityType: { type: 'string', minLength: 1, maxLength: 80 },
+					displayName: { type: 'string', minLength: 1, maxLength: 200 },
+					summary: { type: 'string', maxLength: 4000 },
+					metadata: { description: 'Arbitrary JSON metadata.' }
+				}
+			}
+		},
+		events: {
+			type: 'array',
+			maxItems: 100,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['eventType', 'summary'],
+				properties: {
+					eventType: { type: 'string', minLength: 1, maxLength: 100 },
+					summary: { type: 'string', minLength: 1, maxLength: 4000 },
+					payload: { description: 'Arbitrary JSON payload.' },
+					visibility: { type: 'string', minLength: 1, maxLength: 100 },
+					confidence: { type: 'number', minimum: 0, maximum: 1 },
+					entityKey: { type: 'string', minLength: 1, maxLength: 200 }
+				}
+			}
+		},
+		facts: {
+			type: 'array',
+			maxItems: 100,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['predicate', 'value'],
+				properties: {
+					entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+					predicate: { type: 'string', minLength: 1, maxLength: 100 },
+					value: { description: 'Required fact value (any JSON type except undefined).' },
+					visibility: { type: 'string', minLength: 1, maxLength: 100 },
+					confidence: { type: 'number', minimum: 0, maximum: 1 }
+				}
+			}
+		},
+		decisions: {
+			type: 'array',
+			maxItems: 50,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['subject', 'decision'],
+				properties: {
+					subject: { type: 'string', minLength: 1, maxLength: 200 },
+					decision: { type: 'string', minLength: 1, maxLength: 4000 },
+					rationale: { type: 'string', maxLength: 4000 }
+				}
+			}
+		},
+		openLoops: {
+			type: 'array',
+			maxItems: 50,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['loopType', 'title'],
+				properties: {
+					loopType: { type: 'string', minLength: 1, maxLength: 100 },
+					title: { type: 'string', minLength: 1, maxLength: 200 },
+					description: { type: 'string', maxLength: 8000 },
+					priority: { type: 'integer', minimum: -100, maximum: 100 },
+					relatedEntityKeys: {
+						type: 'array',
+						maxItems: 50,
+						items: { type: 'string', minLength: 1, maxLength: 200 }
+					}
+				}
+			}
+		},
+		resolveOpenLoops: {
+			type: 'array',
+			maxItems: 50,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['id', 'status'],
+				properties: {
+					id: { type: 'string', minLength: 1, maxLength: 200 },
+					status: { type: 'string', enum: ['resolved', 'dropped'] },
+					reason: { type: 'string', maxLength: 2000 }
+				}
+			}
+		}
+	}
+} as const;
+
 export function buildMemoryTools(opts: {
 	userId: string;
 	conversationId: string;
@@ -418,7 +528,7 @@ export function buildMemoryTools(opts: {
 				type: 'object',
 				properties: {
 					summary: { type: 'string', description: 'Short summary of the memory change.' },
-					patch: { type: 'object', description: 'Structured memory patch.' }
+					patch: MEMORY_PATCH_JSON_SCHEMA
 				},
 				required: ['patch'],
 				additionalProperties: false
