@@ -524,6 +524,11 @@
 		border-left-width: 3px;
 		background: var(--surface);
 	}
+	@media (max-width: 768px) {
+		.msg {
+			padding: var(--space-3) var(--space-3);
+		}
+	}
 	.msg[data-role='user'] {
 		background: var(--surface-2);
 		border-left-color: var(--border);

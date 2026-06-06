@@ -1073,6 +1073,11 @@
 		gap: var(--space-3);
 		min-height: 0;
 	}
+	@media (max-width: 768px) {
+		.messages {
+			padding: var(--space-4) var(--space-3);
+		}
+	}
 	/* Keeps a consistent gap between the last message and the composer when the
 	   conversation overflows and is scrolled to the bottom. A scroll
 	   container's own padding-bottom (and a trailing margin on this flex item)

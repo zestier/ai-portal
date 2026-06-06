@@ -270,6 +270,11 @@
 	.icon-btn.stop:hover {
 		background: color-mix(in srgb, var(--danger) 12%, transparent);
 	}
+	@media (max-width: 768px) {
+		.composer {
+			padding: var(--space-3) var(--space-3) var(--space-4);
+		}
+	}
 	@media (max-width: 480px) {
 		.kbd-hint {
 			display: none;
