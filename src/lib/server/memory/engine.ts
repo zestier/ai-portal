@@ -1061,7 +1061,8 @@ function decisionLine(decision: memoryRepo.MemoryDecision): string {
 
 function loopLine(
 	loop: memoryRepo.MemoryOpenLoop,
-	keyOf: (id: string | null) => string | null
+	keyOf: (id: string | null) => string | null,
+	includeId = false
 ): string {
 	const related = loop.relatedEntityIds
 		.map((id) => keyOf(id))
@@ -1069,7 +1070,10 @@ function loopLine(
 	const relatedStr = related.length ? ` [related: ${related.join(', ')}]` : '';
 	const status = loop.status && loop.status !== 'open' ? ` [${loop.status}]` : '';
 	const desc = loop.description ? ` — ${cleanSentence(loop.description)}` : '';
-	return `- (${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`;
+	// The extractor needs the loop id to populate resolveOpenLoops; the main-turn
+	// injection omits it as noise. Front-load it so it survives truncation.
+	const idStr = includeId ? `[id=${loop.id}] ` : '';
+	return `- ${idStr}(${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`;
 }
 
 function eventLine(
@@ -1094,7 +1098,10 @@ function eventLine(
  * while preserving every semantically useful field — including the entityKey
  * values downstream consumers must reuse.
  */
-export function renderMemoryPacket(packet: TurnMemoryPacket): string {
+export function renderMemoryPacket(
+	packet: TurnMemoryPacket,
+	options: { includeOpenLoopIds?: boolean } = {}
+): string {
 	const keyOf = (id: string | null): string | null =>
 		id ? (packet.entityKeyById[id] ?? null) : null;
 
@@ -1172,7 +1179,8 @@ export function renderMemoryPacket(packet: TurnMemoryPacket): string {
 
 	if (packet.openLoops.length) {
 		lines.push('', `open loops (${packet.openLoops.length}):`);
-		for (const loop of packet.openLoops) lines.push(loopLine(loop, keyOf));
+		for (const loop of packet.openLoops)
+			lines.push(loopLine(loop, keyOf, options.includeOpenLoopIds));
 	}
 
 	if (packet.recentEvents.length) {

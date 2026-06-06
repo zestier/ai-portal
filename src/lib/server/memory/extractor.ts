@@ -1547,11 +1547,15 @@ function extractorContextSections(input: ExtractPatchInput): string[] {
 		'Every fact must target an entity via entityKey — facts are always stored grouped under an entity. Reuse entityKey values from the initial packet whenever a mentioned person, object, file, component, topic, or project concept refers to an existing entity. Do not create a new entity for aliases, casing changes, titles, or partial names of the same referent.',
 		'Create a new entity (include it in entities) for any durable referent that is not already represented, then attach its facts to that key. Use stable namespaced keys such as character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, or decision.append_only_migrations. A fact with no natural entity is acceptable only as a last resort; prefer minting an entity for it.',
 		'When adding facts/events/openLoops about an entity, use the canonical entityKey exactly. If unsure whether two names are the same referent, prefer reusing the existing key and mention uncertainty in diagnostics.',
-		'Prune superseded open loops: when this turn resolves, answers, or abandons an existing open loop, close it via resolveOpenLoops (by its id from memory_get_open_loops) with status "resolved" (done/answered) or "dropped" (abandoned/superseded) — do not leave it lingering. In particular, when the user is offered several options and picks one, drop the unchosen options; recording new loops without resolving the dead ones makes them accumulate and crowd out useful memory.',
+		'Prune superseded open loops: when this turn resolves, answers, or abandons an existing open loop, close it via resolveOpenLoops (using the loop id shown as [id=...] in the initial packet\'s open loops list, or from memory_get_open_loops) with status "resolved" (done/answered) or "dropped" (abandoned/superseded) — do not leave it lingering. In particular, when the user is offered several options and picks one, drop the unchosen options; recording new loops without resolving the dead ones makes them accumulate and crowd out useful memory.',
 		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
 		`Memory mode: ${input.mode}`,
 		'Initial packet:',
-		redactSensitiveText(input.initialPacket ? renderMemoryPacket(input.initialPacket) : '(none)'),
+		redactSensitiveText(
+			input.initialPacket
+				? renderMemoryPacket(input.initialPacket, { includeOpenLoopIds: true })
+				: '(none)'
+		),
 		'Memory tool calls this turn:',
 		redactSensitiveText(
 			JSON.stringify(

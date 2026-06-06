@@ -174,6 +174,12 @@ describe('memory-backed sessions', () => {
 		expect(rendered).toContain('lighting: Keep the candle lit.');
 		expect(rendered).toContain('Find the attic key');
 		expect(rendered).toContain('[related: character.mara]');
+		// The default (main-turn) rendering omits internal loop ids as noise.
+		expect(rendered).not.toMatch(/\[id=/);
+		// The extractor view opts in to loop ids so it can populate
+		// resolveOpenLoops and actually close loops instead of only opening them.
+		const extractorRendered = renderMemoryPacket(packet, { includeOpenLoopIds: true });
+		expect(extractorRendered).toMatch(/\[id=[^\]]+\] \(task, p\d+\) Find the attic key/);
 
 		const prompt = buildPromptWithMemory({
 			conversationId: conv.id,
