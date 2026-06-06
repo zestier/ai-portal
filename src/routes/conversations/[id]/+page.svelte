@@ -92,7 +92,6 @@
 			initialActiveTurnId={data.activeTurnId}
 			initialPendingInteractive={data.pendingInteractive}
 			initialComposer={data.initialComposer}
-			initialMemorySnapshot={data.memorySnapshot}
 		/>
 	</div>
 	{#if tab === 'memory'}
