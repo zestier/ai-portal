@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { ChangeEntry, ChangesResponse } from '$lib/client/file-browser';
-	import { STATUS_LABEL, STATUS_COLOR } from '$lib/client/file-browser';
 	import DiffStat from './DiffStat.svelte';
+	import StatusBadge from './StatusBadge.svelte';
 	import Alert from './ui/Alert.svelte';
 
 	let {
@@ -153,9 +153,7 @@
 					onclick={() => onselect?.(e)}
 					title={e.origPath ? `${e.origPath} → ${e.path}` : e.path}
 				>
-					<span class="status-pill" style:color={STATUS_COLOR[e.status]}
-						>{STATUS_LABEL[e.status]}</span
-					>
+					<StatusBadge status={e.status} />
 					<span class="path">
 						{#if e.origPath}<span class="orig">{e.origPath} → </span>{/if}{e.path}
 					</span>
@@ -300,11 +298,6 @@
 	}
 	.orig {
 		color: var(--text-muted);
-	}
-	.status-pill {
-		font-family: var(--mono);
-		font-weight: 600;
-		flex: 0 0 auto;
 	}
 	.flags {
 		flex: 0 0 auto;

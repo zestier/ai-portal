@@ -5,6 +5,7 @@
 	import ChangeList from './ChangeList.svelte';
 	import DiffView from './DiffView.svelte';
 	import GitStatusHeader from './GitStatusHeader.svelte';
+	import StatusBadge from './StatusBadge.svelte';
 	import EmptyState from './ui/EmptyState.svelte';
 	import Alert from './ui/Alert.svelte';
 	import type {
@@ -14,7 +15,6 @@
 		ChangeEntry,
 		ChangeStatus
 	} from '$lib/client/file-browser';
-	import { STATUS_LABEL, STATUS_COLOR } from '$lib/client/file-browser';
 	import { reviewStore } from '$lib/client/review.svelte';
 	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
 
@@ -362,9 +362,7 @@
 									class:selected={commitFilePath === f.path}
 									onclick={() => loadCommitFileDiff(f.path)}
 								>
-									<span class="status-pill" style:color={STATUS_COLOR[f.status]}
-										>{STATUS_LABEL[f.status]}</span
-									>
+									<StatusBadge status={f.status} />
 									<span class="path">{f.path}</span>
 								</button>
 							{/each}
@@ -393,9 +391,7 @@
 				<div class="title">
 					<code class="path">{selectedPath}</code>
 					{#if selectedStatus}
-						<span class="status-pill" style:color={STATUS_COLOR[selectedStatus]}>
-							{STATUS_LABEL[selectedStatus]}
-						</span>
+						<StatusBadge status={selectedStatus} />
 					{/if}
 				</div>
 				<div class="view-tabs" role="tablist">
@@ -942,12 +938,6 @@
 	.truncated-note {
 		margin-top: 0.3rem;
 	}
-	.status-pill {
-		font-family: var(--mono);
-		font-weight: 600;
-		flex: 0 0 auto;
-	}
-
 	@media (max-width: 768px) {
 		.browser {
 			grid-template-columns: 1fr;

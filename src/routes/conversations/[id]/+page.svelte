@@ -31,7 +31,7 @@
 </svelte:head>
 
 <div class="conversation">
-	<div class="tabs" role="tablist">
+	<div class="tabs scroll-mask" role="tablist">
 		<button
 			role="tab"
 			aria-selected={tab === 'chat'}
@@ -119,29 +119,10 @@
 	.tabs {
 		display: flex;
 		border-bottom: 1px solid var(--border);
-		background: var(--surface);
+		background-color: var(--surface);
 		flex: 0 0 auto;
 		overflow-x: auto;
-		scroll-snap-type: x proximity;
-		/* Scroll affordance: edge fade "covers" (move with content, attachment:
-		   local) hide a dark shadow at whichever edge has more content to reveal. */
-		background-image:
-			linear-gradient(to right, var(--surface), transparent),
-			linear-gradient(to left, var(--surface), transparent),
-			radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.4), transparent),
-			radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.4), transparent);
-		background-position:
-			0 0,
-			100% 0,
-			0 0,
-			100% 0;
-		background-repeat: no-repeat;
-		background-size:
-			32px 100%,
-			32px 100%,
-			16px 100%,
-			16px 100%;
-		background-attachment: local, local, scroll, scroll;
+		--scroll-mask-cover: var(--surface);
 	}
 	/* On mobile the sidebar toggle is a fixed-position hamburger at top-left;
 	   inset the tab strip so it doesn't sit underneath. */

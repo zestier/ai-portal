@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { FsEntry, TreeResponse } from '$lib/client/file-browser';
-	import { STATUS_LABEL, STATUS_COLOR } from '$lib/client/file-browser';
 	import DiffStat from './DiffStat.svelte';
+	import StatusBadge from './StatusBadge.svelte';
 	import Alert from './ui/Alert.svelte';
 
 	let {
@@ -101,11 +101,6 @@
 		return name.toLowerCase().includes(filter.toLowerCase());
 	}
 
-	function statusBadge(s: FsEntry['status'] | FsEntry['containsChanges']) {
-		if (!s) return null;
-		return { label: STATUS_LABEL[s], color: STATUS_COLOR[s] };
-	}
-
 	const rootLoading = $derived(!!dirs['']?.loading);
 </script>
 
@@ -192,7 +187,6 @@
 				{#if entry.type === 'directory'}
 					{@const childLoaded = dirs[entry.relPath]}
 					{@const expanded = childLoaded?.expanded ?? false}
-					{@const badge = statusBadge(entry.containsChanges)}
 					<button
 						class="row dir"
 						style:--depth={depth}
@@ -203,15 +197,14 @@
 						<span class="icon">📁</span>
 						<span class="name">{entry.name}</span>
 						<DiffStat added={entry.added} removed={entry.removed} compact />
-						{#if badge}
-							<span class="status-pill" style:color={badge.color}>{badge.label}</span>
+						{#if entry.containsChanges}
+							<StatusBadge status={entry.containsChanges} />
 						{/if}
 					</button>
 					{#if expanded}
 						{@render renderEntries(entry.relPath, depth + 1)}
 					{/if}
 				{:else}
-					{@const badge = statusBadge(entry.status)}
 					{@const sel = selectedPath === entry.relPath}
 					<button
 						class="row file"
@@ -224,8 +217,8 @@
 						<span class="icon">{entry.type === 'symlink' ? '🔗' : '📄'}</span>
 						<span class="name">{entry.name}</span>
 						<DiffStat added={entry.added} removed={entry.removed} compact />
-						{#if badge}
-							<span class="status-pill" style:color={badge.color}>{badge.label}</span>
+						{#if entry.status}
+							<StatusBadge status={entry.status} />
 						{/if}
 					</button>
 				{/if}
@@ -406,13 +399,6 @@
 	}
 	.row.file.has-changes .name {
 		color: var(--warning);
-	}
-	.status-pill {
-		font-family: var(--mono);
-		font-weight: 600;
-		font-size: var(--fs-xs);
-		padding: 0 0.25rem;
-		flex: 0 0 auto;
 	}
 	.muted {
 		color: var(--text-muted);

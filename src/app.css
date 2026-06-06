@@ -296,3 +296,28 @@ textarea {
 .error-text {
 	color: var(--danger);
 }
+
+/* Horizontal scroll affordance for overflow-x containers (e.g. tab strips).
+   Edge "cover" fades (move with content via attachment: local) hide a dark
+   shadow at whichever edge still has scrollable content. Override the cover
+   color to match the container's background via --scroll-mask-cover. */
+.scroll-mask {
+	scroll-snap-type: x proximity;
+	background-image:
+		linear-gradient(to right, var(--scroll-mask-cover, var(--bg)), transparent),
+		linear-gradient(to left, var(--scroll-mask-cover, var(--bg)), transparent),
+		radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.4), transparent),
+		radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.4), transparent);
+	background-position:
+		0 0,
+		100% 0,
+		0 0,
+		100% 0;
+	background-repeat: no-repeat;
+	background-size:
+		32px 100%,
+		32px 100%,
+		16px 100%,
+		16px 100%;
+	background-attachment: local, local, scroll, scroll;
+}

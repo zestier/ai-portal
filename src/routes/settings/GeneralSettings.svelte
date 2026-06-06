@@ -13,6 +13,7 @@
 		type SessionMode
 	} from '$lib/types';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 
 	const CUSTOM_MODEL_OPTION = '__custom__';
 
@@ -127,16 +128,15 @@
 				>
 					<div class="provider-card-header">
 						<strong>{provider.displayName}</strong>
-						<span
-							class="status-pill"
-							class:ok={provider.statusChecked && provider.auth.isAuthenticated}
+						<Pill
+							tone={provider.statusChecked && provider.auth.isAuthenticated ? 'success' : 'neutral'}
 						>
 							{!provider.statusChecked
 								? 'Not selected'
 								: provider.auth.isAuthenticated
 									? 'Configured'
 									: 'Needs setup'}
-						</span>
+						</Pill>
 					</div>
 					<dl>
 						<div>
@@ -370,18 +370,6 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 		align-items: center;
-	}
-	.status-pill {
-		border: 1px solid var(--border);
-		border-radius: 999px;
-		color: var(--text-muted);
-		font-size: var(--fs-xs);
-		padding: 0.15rem 0.45rem;
-		white-space: nowrap;
-	}
-	.status-pill.ok {
-		border-color: var(--success);
-		color: var(--success);
 	}
 	dl {
 		display: grid;
