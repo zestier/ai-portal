@@ -130,7 +130,39 @@
 		activityManualOpen = el.open;
 	}
 
-	const elapsedMs = $derived(displayState.elapsedMs);
+	// Live-ticking elapsed timer. While the agent is running we tick a local
+	// clock off the agent's real start timestamp (copied from
+	// ReasoningBlock's approach) so the label counts up smoothly instead of
+	// sitting at ~0s. On completion we fall back to the settled duration.
+	const running = $derived(displayState.running);
+	const elapsedStartMs = $derived(displayState.elapsedStartMs);
+
+	let now = $state(Date.now());
+	$effect(() => {
+		if (!running) return;
+		now = Date.now();
+		const id = setInterval(() => (now = Date.now()), 250);
+		return () => clearInterval(id);
+	});
+
+	// Under reduced motion we suppress the in-progress timer entirely (no
+	// ticking, no frozen number); the final duration still shows on completion.
+	let reducedMotion = $state(false);
+	$effect(() => {
+		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+		reducedMotion = mq.matches;
+		const handler = (e: MediaQueryListEvent) => (reducedMotion = e.matches);
+		mq.addEventListener('change', handler);
+		return () => mq.removeEventListener('change', handler);
+	});
+
+	const elapsedMs = $derived.by(() => {
+		if (running && elapsedStartMs != null) {
+			if (reducedMotion) return null;
+			return Math.max(0, now - elapsedStartMs);
+		}
+		return displayState.elapsedMs;
+	});
 	const elapsedLabel = $derived.by(() => {
 		if (elapsedMs == null) return null;
 		const s = Math.round(elapsedMs / 1000);

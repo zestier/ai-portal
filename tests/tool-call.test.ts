@@ -296,6 +296,25 @@ describe('getSubagentDisplayState', () => {
 		});
 	});
 
+	it('exposes a live running start for pending synchronous subagents', () => {
+		const state = getSubagentDisplayState(
+			toolCall({
+				argsJson: JSON.stringify({ mode: 'sync' }),
+				status: 'pending',
+				startedAt: 1500,
+				endedAt: null
+			})
+		);
+
+		expect(state).toMatchObject({
+			pending: true,
+			isBackgroundLaunch: false,
+			running: true,
+			elapsedStartMs: 1500,
+			elapsedMs: null
+		});
+	});
+
 	it('renders successful background task calls as launched instead of completed', () => {
 		const state = getSubagentDisplayState(
 			toolCall({
@@ -338,7 +357,52 @@ describe('getSubagentDisplayState', () => {
 			statusLabel: 'completed',
 			lifecycleText: 'Background agent completed.',
 			backgroundAgentId: 'agent-123',
-			elapsedMs: 500
+			elapsedMs: 500,
+			running: false,
+			elapsedStartMs: null
+		});
+	});
+
+	it('exposes a live running start for in-progress background agents', () => {
+		const state = getSubagentDisplayState(
+			toolCall({
+				argsJson: JSON.stringify({ mode: 'background' }),
+				resultJson: JSON.stringify({ agent_id: 'agent-123', content: 'Started background agent' }),
+				status: 'ok',
+				endedAt: 2000,
+				backgroundAgentStatus: 'running',
+				backgroundAgentId: 'agent-123',
+				backgroundAgentStartedAt: 2500,
+				backgroundAgentEndedAt: null
+			})
+		);
+
+		expect(state).toMatchObject({
+			isBackgroundLaunch: true,
+			statusClass: 'background',
+			statusLabel: 'launched',
+			running: true,
+			elapsedStartMs: 2500
+		});
+	});
+
+	it('does not mark a background agent running while its start time is absent', () => {
+		const state = getSubagentDisplayState(
+			toolCall({
+				argsJson: JSON.stringify({ mode: 'background' }),
+				resultJson: JSON.stringify({ agent_id: 'agent-123', content: 'Started background agent' }),
+				status: 'ok',
+				endedAt: 2000,
+				backgroundAgentStatus: 'running',
+				backgroundAgentId: 'agent-123',
+				backgroundAgentStartedAt: null,
+				backgroundAgentEndedAt: null
+			})
+		);
+
+		expect(state).toMatchObject({
+			running: false,
+			elapsedStartMs: null
 		});
 	});
 

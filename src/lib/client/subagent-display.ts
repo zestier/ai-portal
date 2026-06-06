@@ -17,7 +17,25 @@ export type SubagentDisplayState = {
 	lifecycleText: string | null;
 	resultText: string | null;
 	backgroundAgentId: string | null;
+	/**
+	 * Final, settled duration of the run, available once the agent has
+	 * completed (`backgroundAgentEndedAt - backgroundAgentStartedAt`, or
+	 * `endedAt - startedAt`). `null` while still running.
+	 */
 	elapsedMs: number | null;
+	/**
+	 * Whether the agent is still in progress and the elapsed counter should
+	 * tick live. True only when a usable start timestamp (`elapsedStartMs`) is
+	 * available; if the start time is briefly absent we report `false` so the
+	 * UI shows no label rather than a misleading ~0s value.
+	 */
+	running: boolean;
+	/**
+	 * The agent's real start timestamp to tick a live elapsed counter from
+	 * while `running`. `backgroundAgentStartedAt` for background launches,
+	 * `startedAt` for pending synchronous subagents, else `null`.
+	 */
+	elapsedStartMs: number | null;
 };
 
 /** Presentation metadata for a subagent card, keyed off its `agent_type`. */
@@ -172,6 +190,12 @@ export function getSubagentDisplayState(toolCall: ToolCallRecord): SubagentDispl
 	if (isBackgroundLaunch) {
 		const completed = toolCall.backgroundAgentStatus === 'completed';
 		const failed = toolCall.backgroundAgentStatus === 'failed';
+		// In progress while the lifecycle is neither completed nor failed. Only
+		// treat it as "running" (i.e. eligible for a live counter) once a real
+		// start timestamp is present; otherwise fall back to no label rather
+		// than the launch tool-call's ~0s duration.
+		const inProgress = !completed && !failed;
+		const elapsedStartMs = inProgress ? (toolCall.backgroundAgentStartedAt ?? null) : null;
 		return {
 			pending,
 			isBackgroundLaunch,
@@ -184,7 +208,9 @@ export function getSubagentDisplayState(toolCall: ToolCallRecord): SubagentDispl
 					: 'Background agent launched.',
 			resultText: extractSubagentResultText(toolCall.resultJson),
 			backgroundAgentId,
-			elapsedMs: backgroundElapsedMs(toolCall) ?? toolElapsedMs(toolCall)
+			elapsedMs: backgroundElapsedMs(toolCall) ?? toolElapsedMs(toolCall),
+			running: elapsedStartMs != null,
+			elapsedStartMs
 		};
 	}
 
@@ -203,6 +229,9 @@ export function getSubagentDisplayState(toolCall: ToolCallRecord): SubagentDispl
 		lifecycleText: null,
 		resultText: extractSubagentResultText(toolCall.resultJson),
 		backgroundAgentId: null,
-		elapsedMs: toolElapsedMs(toolCall)
+		elapsedMs: toolElapsedMs(toolCall),
+		// A pending synchronous subagent ticks from its launch start time.
+		running: pending,
+		elapsedStartMs: pending ? toolCall.startedAt : null
 	};
 }
