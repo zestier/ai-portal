@@ -632,7 +632,8 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						turnId: turn.id,
 						userMessage,
 						assistantMessage,
-						onActivity
+						onActivity,
+						signal: turnAc.signal
 					});
 					if (extractorParentId) {
 						const spoken =
@@ -672,27 +673,42 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						}
 					});
 				} catch (memoryErr) {
+					const aborted = isAbortError(memoryErr) || turnAc.signal.aborted;
 					if (extractorParentId) {
 						dispatch({
 							type: 'tool.result',
 							toolCallId: extractorParentId,
 							ok: false,
-							summary: memoryFailureSummary(memoryErr),
-							output: memoryFailureMessage(memoryErr)
+							summary: aborted ? 'Memory extraction cancelled.' : memoryFailureSummary(memoryErr),
+							output: aborted ? 'Cancelled by user.' : memoryFailureMessage(memoryErr)
 						});
 						closeExtractorParent('failed');
 					}
-					log.warn('turn.memory.failed', {
-						conversationId: opts.conversationId,
-						err: memoryFailureMessage(memoryErr),
-						...memoryFailureLogFields(memoryErr)
-					});
-					emit({
-						type: 'memory.status',
-						conversationId: opts.conversationId,
-						phase: 'needs_review',
-						summary: memoryFailureSummary(memoryErr)
-					});
+					if (aborted) {
+						// User stopped the turn while the background extractor was
+						// still running; this is an intentional cancel, not a fault.
+						log.info('turn.memory.aborted', {
+							conversationId: opts.conversationId
+						});
+						emit({
+							type: 'memory.status',
+							conversationId: opts.conversationId,
+							phase: 'skipped',
+							summary: 'Memory extraction cancelled.'
+						});
+					} else {
+						log.warn('turn.memory.failed', {
+							conversationId: opts.conversationId,
+							err: memoryFailureMessage(memoryErr),
+							...memoryFailureLogFields(memoryErr)
+						});
+						emit({
+							type: 'memory.status',
+							conversationId: opts.conversationId,
+							phase: 'needs_review',
+							summary: memoryFailureSummary(memoryErr)
+						});
+					}
 				}
 			}
 
@@ -785,6 +801,10 @@ function safeJson(v: unknown): string {
 
 function memoryFailureMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+function isAbortError(err: unknown): boolean {
+	return err instanceof Error && err.name === 'AbortError';
 }
 
 function memoryFailureSummary(err: unknown): string {

@@ -1334,6 +1334,68 @@ describe('memory-backed sessions', () => {
 		expect(resolved?.description ?? '').not.toContain('sk_live_');
 	});
 
+	it('aborts the tool-calling extractor between iterations when its signal fires', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Open the door.' });
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'The door opens.'
+		});
+
+		const controller = new AbortController();
+		let calls = 0;
+		const chatComplete = async (
+			_messages: ExtractorChatMessage[],
+			_tools: ExtractorToolSpec[],
+			_onDelta?: unknown,
+			signal?: AbortSignal
+		): Promise<ExtractorAssistantTurn> => {
+			calls += 1;
+			// The signal must be threaded all the way down to the chat call.
+			expect(signal).toBe(controller.signal);
+			// First step stages a proposal and keeps the loop going; the user
+			// hits "stop" before the next round-trip starts.
+			controller.abort();
+			return {
+				content: '',
+				toolCalls: [
+					{
+						id: `c${calls}`,
+						name: 'memory_propose_patch',
+						arguments: JSON.stringify({ patch: { facts: [{ predicate: 'state', value: 'open' }] } })
+					}
+				]
+			};
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		await expect(
+			extractor.extractPatch({
+				conversationId: conv.id,
+				userId: user.id,
+				mode: 'project',
+				turnId: 'turn-abort',
+				userMessage,
+				assistantMessage,
+				initialPacket: buildInitialPacket(conv.id, 'project'),
+				signal: controller.signal
+			})
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		// The loop tore down at the post-tool-call abort check rather than
+		// running the full maxToolIterations rounds.
+		expect(calls).toBe(1);
+	});
+
 	it('streams reasoning and content token-by-token over SSE, stripping split think tags', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });

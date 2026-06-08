@@ -56,6 +56,14 @@ export interface ExtractPatchInput {
 	 * emits; other extractors ignore it.
 	 */
 	onActivity?: ExtractorActivityEmitter;
+	/**
+	 * Aborts the extraction. Wired to the owning turn's abort controller so a
+	 * user "stop" issued while the background extractor is still running tears
+	 * down its in-flight HTTP request(s) immediately instead of letting the
+	 * subagent run to completion. The tool-calling extractor also checks it
+	 * between iterations and tool calls.
+	 */
+	signal?: AbortSignal;
 }
 
 export interface ExtractPatchResult {
@@ -288,7 +296,7 @@ export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 		const prompt = buildExtractorPrompt(input, this.opts.maxInputChars);
 		const raw = this.opts.completeJson
 			? await this.opts.completeJson(prompt)
-			: await requestOpenAICompatibleJson(this.opts, prompt);
+			: await requestOpenAICompatibleJson(this.opts, prompt, input.signal);
 		const parsed = parseModelPatch(raw);
 		const diagnostics: Diagnostic[] = [...parsed.diagnostics];
 		const sanitized = sanitizePatch(parsed.patch, input.initialPacket);
@@ -355,7 +363,8 @@ export interface ExtractorStreamDelta {
 export type ExtractorChatComplete = (
 	messages: ExtractorChatMessage[],
 	tools: ExtractorToolSpec[],
-	onDelta?: (delta: ExtractorStreamDelta) => void
+	onDelta?: (delta: ExtractorStreamDelta) => void,
+	signal?: AbortSignal
 ) => Promise<ExtractorAssistantTurn>;
 
 const TOOL_RESULT_MAX_CHARS = 4_000;
@@ -512,6 +521,9 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		let totalToolCalls = 0;
 		const deadline = Date.now() + (this.opts.maxWallClockMs ?? Number.POSITIVE_INFINITY);
 		for (let iteration = 0; iteration < this.opts.maxToolIterations; iteration += 1) {
+			// A user "stop" during background extraction aborts the turn's
+			// signal; bail before starting another model round-trip.
+			input.signal?.throwIfAborted();
 			// Bound the whole loop, not just each request: maxToolIterations
 			// sequential calls (each up to timeoutMs) could otherwise hold the
 			// turn open for minutes. Stop before starting another step once the
@@ -551,7 +563,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 				}
 			};
 
-			const turn = await chat(messages, toolSpecs, onDelta);
+			const turn = await chat(messages, toolSpecs, onDelta, input.signal);
 			{
 				const { think, visible } = thinkStream.flush();
 				emitThought(think);
@@ -599,6 +611,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 				break;
 			}
 			for (const call of turn.toolCalls) {
+				input.signal?.throwIfAborted();
 				const activityId = `mem_${ulid()}`;
 				input.onActivity?.({
 					type: 'tool.call',
@@ -973,7 +986,8 @@ async function requestOpenAICompatibleChat(
 	opts: ToolCallingExtractorOptions,
 	messages: ExtractorChatMessage[],
 	tools: ExtractorToolSpec[],
-	onDelta?: (delta: ExtractorStreamDelta) => void
+	onDelta?: (delta: ExtractorStreamDelta) => void,
+	signal?: AbortSignal
 ): Promise<ExtractorAssistantTurn> {
 	const endpoint = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 	const res = await fetchWithTimeout(
@@ -988,7 +1002,8 @@ async function requestOpenAICompatibleChat(
 				tool_choice: 'auto',
 				temperature: 0,
 				stream: true
-			})
+			}),
+			signal
 		},
 		opts.timeoutMs
 	);
@@ -1454,7 +1469,8 @@ function containsSensitiveValue(value: unknown): boolean {
 
 async function requestOpenAICompatibleJson(
 	opts: OpenAICompatibleExtractorOptions,
-	prompt: string
+	prompt: string,
+	signal?: AbortSignal
 ): Promise<unknown> {
 	const endpoint = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 	const diagnosticEndpoint = redactEndpoint(endpoint);
@@ -1476,7 +1492,8 @@ async function requestOpenAICompatibleJson(
 				response_format: { type: 'json_schema', json_schema: MEMORY_EXTRACTOR_JSON_SCHEMA },
 				temperature: 0,
 				stream: false
-			})
+			}),
+			signal
 		},
 		opts.timeoutMs
 	);
