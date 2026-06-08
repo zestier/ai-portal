@@ -2235,4 +2235,137 @@ describe('memory-backed sessions', () => {
 			searchSpy.mockRestore();
 		}
 	});
+
+	it('captures a directive via commit as a pinned fact with provenance', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'directive', workdir: '/tmp', model: null });
+		const src = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'When creating new characters, give them names.'
+		});
+		const result = commitPatch({
+			conversationId: conv.id,
+			mode: 'story',
+			sourceMessageId: src.id,
+			patch: {
+				facts: [{ predicate: 'directive', value: 'When creating new characters, give them names.' }]
+			}
+		});
+		expect(result.patch.status).toBe('committed');
+
+		const directive = memory
+			.listFacts(conv.id, { predicate: 'directive', limit: 10 })
+			.find((f) => f.value === 'When creating new characters, give them names.');
+		expect(directive).toBeTruthy();
+		expect(directive!.pinned).toBe(true);
+		expect(directive!.status).toBe('active');
+		expect(directive!.sourceMessageId).toBe(src.id);
+
+		const packet = buildInitialPacket(conv.id, 'story');
+		expect(packet.directives.map((d) => d.value)).toContain(
+			'When creating new characters, give them names.'
+		);
+		// Directives must not also appear in the generic facts list.
+		expect(packet.facts.some((f) => f.predicate === 'directive')).toBe(false);
+	});
+
+	it('normalizes a non-canonically-cased directive predicate on commit', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'directive-case', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'Directive', value: 'Speak only in rhyming couplets.' }] }
+		});
+
+		// Stored under the canonical lowercase predicate, force-pinned.
+		const directive = memory
+			.listFacts(conv.id, { predicate: 'directive', limit: 10 })
+			.find((f) => f.value === 'Speak only in rhyming couplets.');
+		expect(directive).toBeTruthy();
+		expect(directive!.predicate).toBe('directive');
+		expect(directive!.pinned).toBe(true);
+
+		// And it surfaces in the always-on block, never silently dropped from both
+		// the directives block and the generic facts list.
+		const packet = buildInitialPacket(conv.id, 'story');
+		expect(packet.directives.map((d) => d.value)).toContain('Speak only in rhyming couplets.');
+		expect(renderMemoryPacket(packet)).toContain('Speak only in rhyming couplets.');
+	});
+
+	it('injects every directive verbatim and never drops them under budget pressure', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'directive-budget', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				facts: [
+					{ predicate: 'directive', value: 'Always address the user formally.' },
+					{ predicate: 'directive', value: 'Never reveal the villain before chapter three.' }
+				]
+			}
+		});
+		// Pile on many ordinary facts that the tiny budget should exclude.
+		const entityId = memory.upsertEntity(conv.id, {
+			entityKey: 'session.context',
+			entityType: 'session',
+			displayName: 'Session'
+		}).id;
+		for (let i = 0; i < 50; i++) {
+			memory.addFact(conv.id, { entityId, predicate: `note_${i}`, value: `filler detail ${i}` });
+		}
+
+		const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 1 });
+		expect(packet.directives).toHaveLength(2);
+		const rendered = renderMemoryPacket(packet);
+		expect(rendered).toContain('standing directives (2)');
+		expect(rendered).toContain('Always address the user formally.');
+		expect(rendered).toContain('Never reveal the villain before chapter three.');
+	});
+
+	it('stops injecting a directive once it is deactivated/superseded', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'directive-retire', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'directive', value: 'Give new characters names.' }] }
+		});
+		const directive = memory.listFacts(conv.id, { predicate: 'directive', limit: 10 })[0];
+		expect(directive).toBeTruthy();
+
+		// Deactivate it the way the inspector control does (tombstone the fact).
+		memory.updateFact(conv.id, directive.id, { status: 'deleted' });
+
+		const packet = buildInitialPacket(conv.id, 'story');
+		expect(packet.directives).toHaveLength(0);
+		expect(renderMemoryPacket(packet)).not.toContain('Give new characters names.');
+	});
+
+	it('deactivates a directive through the memory PATCH endpoint', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'directive-api', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'directive', value: 'Stay in character at all times.' }] }
+		});
+		const directive = memory.listFacts(conv.id, { predicate: 'directive', limit: 10 })[0];
+
+		const res = await patchMemoryItem(
+			routeEvent(conv.id, user.id, 'facts', directive.id, { status: 'deleted' })
+		);
+		expect(res.status).toBe(200);
+		expect(buildInitialPacket(conv.id, 'story').directives).toHaveLength(0);
+	});
+
+	it('rejects a directive without a usable instruction string', () => {
+		const result = validatePatch({ facts: [{ predicate: 'directive', value: '' }] });
+		expect(result.ok).toBe(false);
+		expect(result.issues.some((i) => i.code === 'directive_value_invalid')).toBe(true);
+	});
+
+	it('advertises the directive primitive in every mode except off', () => {
+		expect(getMemoryProfile('off').primitives).not.toContain('directive');
+		for (const mode of ['lightweight', 'project', 'story', 'strict'] as const) {
+			expect(getMemoryProfile(mode).primitives).toContain('directive');
+		}
+	});
 });

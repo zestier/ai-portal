@@ -51,28 +51,45 @@ const BUILT_IN_PROFILES: Record<MemoryMode, MemoryProfileDefinition> = {
 		mode: 'lightweight',
 		label: 'Lightweight',
 		instructions: baseInstructions,
-		primitives: ['decision', 'fact', 'open_loop', 'event', 'entity'],
+		primitives: ['directive', 'decision', 'fact', 'open_loop', 'event', 'entity'],
 		validationFocus: ['provenance', 'low_confidence', 'secret_filtering']
 	},
 	project: {
 		mode: 'project',
 		label: 'Project',
 		instructions: `${baseInstructions} Repository and command memories are historical until revalidated against current files or tool output.`,
-		primitives: ['decision', 'fact', 'open_loop', 'event', 'entity'],
+		primitives: ['directive', 'decision', 'fact', 'open_loop', 'event', 'entity'],
 		validationFocus: ['historical_repository_truth', 'secret_filtering', 'stale_observations']
 	},
 	story: {
 		mode: 'story',
 		label: 'Story',
 		instructions: `${baseInstructions} Preserve character, location, object, relationship, world-rule, and plot continuity.`,
-		primitives: ['character', 'location', 'object', 'world_rule', 'open_loop', 'event'],
+		primitives: [
+			'directive',
+			'character',
+			'location',
+			'object',
+			'world_rule',
+			'open_loop',
+			'event'
+		],
 		validationFocus: ['location_conflicts', 'object_continuity', 'relationship_continuity']
 	},
 	strict: {
 		mode: 'strict',
 		label: 'Strict',
 		instructions: `${baseInstructions} Strictly validate timeline, clues, visibility, secrets, and per-character knowledge before making continuity-sensitive claims.`,
-		primitives: ['timeline', 'clue', 'knowledge', 'secret', 'fact', 'event', 'open_loop'],
+		primitives: [
+			'directive',
+			'timeline',
+			'clue',
+			'knowledge',
+			'secret',
+			'fact',
+			'event',
+			'open_loop'
+		],
 		validationFocus: ['timeline', 'clues', 'visibility', 'secrets', 'character_knowledge']
 	}
 };

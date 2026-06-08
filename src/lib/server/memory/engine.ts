@@ -27,6 +27,12 @@ export interface TurnMemoryPacket {
 	decisions: memoryRepo.MemoryDecision[];
 	openLoops: memoryRepo.MemoryOpenLoop[];
 	facts: memoryRepo.MemoryFact[];
+	/**
+	 * Per-session directives (standing rules) — facts with predicate
+	 * `directive`. Held separately from `facts` so they can be rendered verbatim
+	 * in an always-on header block and are never elided by the token budget.
+	 */
+	directives: memoryRepo.MemoryFact[];
 	entities: memoryRepo.MemoryEntity[];
 	recentEvents: memoryRepo.MemoryEvent[];
 	/** Compact, always-present index of every queryable entity key. */
@@ -109,6 +115,31 @@ export function isEnabled(mode: MemoryMode): boolean {
 	return mode !== 'off';
 }
 
+/**
+ * Reserved fact predicate for per-session directives (standing rules): durable,
+ * forward-looking behavioral instructions the user gives mid-session ("always do
+ * X", "from now on Y", "never Z"). Stored as facts so they inherit pinning,
+ * search, supersede semantics, and the patch/commit pipeline — but they are
+ * forced pinned on commit and rendered verbatim in their own always-on packet
+ * block, exempt from the token budget. Distinct from the story `world_rule`
+ * primitive (in-fiction world state) and the permissions system's auto-allow
+ * "rules".
+ */
+export const DIRECTIVE_PREDICATE = 'directive';
+
+/**
+ * Safety cap on how many standing directives are loaded and rendered into the
+ * always-on, budget-exempt block. Directives bypass the token budget, so an
+ * unbounded set could crowd out the rest of the packet; if a conversation
+ * somehow exceeds this, the most recent directives win (newest are the ones the
+ * user most recently asserted) and a truncation note is emitted.
+ */
+export const MAX_DIRECTIVES = 50;
+
+export function isDirectivePredicate(predicate: string): boolean {
+	return predicate.trim().toLowerCase() === DIRECTIVE_PREDICATE;
+}
+
 export interface BuildInitialPacketOptions {
 	globalMemoryEnabled?: boolean;
 	/** Current turn text (user message + recent transcript) used to relevance-rank. */
@@ -186,7 +217,16 @@ export function buildInitialPacket(
 	const budget = opts.tokenBudget ?? packetTokenBudget(mode);
 
 	const entityPool = memoryRepo.listEntities(conversationId, { limit: 500 });
-	const factPool = memoryRepo.listFacts(conversationId, { limit: strict ? 400 : 200 });
+	const allFacts = memoryRepo.listFacts(conversationId, { limit: strict ? 400 : 200 });
+	// Directives are loaded in full (up to a safety cap) and held apart so every
+	// active standing rule is always injected, regardless of how many other facts
+	// exist or where they fall in the relevance-ranked fact pool. listFacts orders
+	// by updated_at DESC, so capping the load keeps the most recently asserted
+	// directives if a pathological conversation exceeds MAX_DIRECTIVES.
+	const directives = memoryRepo
+		.listFacts(conversationId, { predicate: DIRECTIVE_PREDICATE, limit: MAX_DIRECTIVES })
+		.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+	const factPool = allFacts.filter((fact) => !isDirectivePredicate(fact.predicate));
 	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
 	const decisions = memoryRepo.listDecisions(conversationId, { limit: 40 });
 	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
@@ -287,9 +327,10 @@ export function buildInitialPacket(
 	return {
 		mode,
 		instructions: memoryInstructions(mode),
-		summary: summarizePacket({ entities, facts, decisions, openLoops, recentEvents }),
+		summary: summarizePacket({ entities, facts, decisions, openLoops, recentEvents, directives }),
 		entities,
 		facts,
+		directives,
 		decisions,
 		openLoops,
 		recentEvents,
@@ -377,6 +418,17 @@ export function validatePatch(
 				code: 'fact_value_missing',
 				message: `Fact "${fact.predicate}" is missing a value.`
 			});
+		}
+		if (isDirectivePredicate(fact.predicate)) {
+			const text = typeof fact.value === 'string' ? fact.value.trim() : '';
+			if (!text || text.length < 3) {
+				issues.push({
+					severity: 'error',
+					code: 'directive_value_invalid',
+					message:
+						'Directive facts must store the standing instruction as a non-empty string (at least 3 characters).'
+				});
+			}
 		}
 	}
 	for (const loop of patch.openLoops ?? []) {
@@ -765,12 +817,23 @@ export function commitPatch(
 	let factCount = 0;
 	for (const fact of input.patch.facts ?? []) {
 		const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
+		// Directives are always-on standing rules: force them pinned so they
+		// inherit the never-dropped guarantee in the packet builder, and store the
+		// predicate in its canonical form so the (case-sensitive) directive load
+		// query, the case-insensitive fact-pool filter, and consolidation grouping
+		// all agree. Without normalizing, a "Directive"/" directive" predicate
+		// would be excluded from the generic facts list yet missed by the directive
+		// query — silently dropped from the packet.
+		const isDirective = isDirectivePredicate(fact.predicate);
+		const predicate = isDirective ? DIRECTIVE_PREDICATE : fact.predicate;
+		const pinned = isDirective ? true : undefined;
 		const row = memoryRepo.addFact(input.conversationId, {
 			entityId,
-			predicate: fact.predicate,
+			predicate,
 			value: fact.value,
 			visibility: fact.visibility,
 			confidence: fact.confidence,
+			pinned,
 			sourceMessageId: input.sourceMessageId ?? null
 		});
 		memoryRepo.recordPatchItem(input.conversationId, {
@@ -1001,14 +1064,18 @@ function summarizePacket(packet: {
 	decisions: memoryRepo.MemoryDecision[];
 	openLoops: memoryRepo.MemoryOpenLoop[];
 	recentEvents: memoryRepo.MemoryEvent[];
+	directives?: memoryRepo.MemoryFact[];
 }): string {
 	return [
+		packet.directives?.length ? `${packet.directives.length} directives` : '',
 		`${packet.entities.length} entities`,
 		`${packet.facts.length} active facts`,
 		`${packet.decisions.length} decisions`,
 		`${packet.openLoops.length} open loops`,
 		`${packet.recentEvents.length} recent events`
-	].join(', ');
+	]
+		.filter(Boolean)
+		.join(', ');
 }
 
 function formatMemoryValue(value: unknown): string {
@@ -1115,6 +1182,21 @@ export function renderMemoryPacket(
 		lines.push('', 'instructions:', packet.instructions.trim());
 	}
 
+	// Per-session directives (standing rules) render verbatim in their own
+	// always-on block ahead of the budgeted body, so the model reliably obeys
+	// every active standing instruction for the rest of the conversation.
+	if (packet.directives.length) {
+		lines.push('', `standing directives (${packet.directives.length}) — always in effect:`);
+		for (const directive of packet.directives) {
+			lines.push(`- ${cleanSentence(formatMemoryValue(directive.value))}`);
+		}
+		if (packet.directives.length >= MAX_DIRECTIVES) {
+			lines.push(
+				`(showing the ${MAX_DIRECTIVES} most recent standing directives; older ones may be omitted)`
+			);
+		}
+	}
+
 	// Group facts beneath their owning entity so memory injects as coherent
 	// per-entity blocks ("character.mara: { location = ..., mood = ... }")
 	// rather than a flat list of "entityKey.predicate = value" lines.
@@ -1124,6 +1206,9 @@ export function renderMemoryPacket(
 	const detachedFacts: memoryRepo.MemoryFact[] = [];
 	const blockOrder: string[] = [];
 	for (const fact of packet.facts) {
+		// Directives are rendered in their own always-on block above; never group
+		// them under an entity here even if one slipped into packet.facts.
+		if (isDirectivePredicate(fact.predicate)) continue;
 		if (!fact.entityId) {
 			detachedFacts.push(fact);
 			continue;

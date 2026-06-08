@@ -451,6 +451,7 @@ The common model should support these primitives across profiles:
 | Entity | Person, file, object, location, feature, bug, clue, concept, decision, task. |
 | Event | Something that happened or was observed. |
 | Fact | A durable assertion about an entity. |
+| Directive | A per-session standing rule: a durable, forward-looking instruction the user gives for how the agent should behave for the rest of the conversation ("always do X", "from now on Y", "never Z"). |
 | Decision | A choice made by user, assistant, or team. |
 | Observation | A fact-like note that may become stale. |
 | Open loop | Unresolved task, promise, question, clue, or plot thread. |
@@ -458,6 +459,40 @@ The common model should support these primitives across profiles:
 | Visibility | Who is allowed to know or receive the fact. |
 | Confidence | Extractor certainty. |
 | Status | Whether the item is active, superseded, disputed, deleted, or needs review. |
+
+### Per-session directives (standing rules)
+
+Directives are user-authored standing instructions that must flow into **every**
+future memory-backed turn for a conversation — for example, while telling a story
+the user says _"when creating new characters, give them names."_ Unlike facts,
+decisions, and open loops (which describe state/history and compete for the packet
+token budget), and unlike global memories (user-scoped, pulled in only on demand),
+a directive is an always-on behavioral instruction that is never dropped.
+
+- **Storage:** reuse the `memory_facts` table with the reserved predicate
+  `directive` and forced `pinned = true`. This inherits pinning, salience ranking,
+  the FTS search index, supersede semantics, and the patch/commit pipeline.
+- **Scope:** conversation-scoped (per session). Inherited by forks/rebuilds via the
+  existing per-conversation memory-copy path (pinned directive facts are carried
+  over). Not user-global in v1.
+- **Creation:** automatic — the extractor captures durable, forward-looking
+  instructions as `directive` facts on the normal `memory_propose_patch` / commit
+  flow. Extraction guidance stays conservative (only standing instructions, not
+  one-off asks).
+- **Injection:** every active directive is rendered verbatim in a dedicated
+  `standing directives` packet header block, exempt from the token budget — they are
+  never elided regardless of how many other facts exist.
+- **Modes:** available in all profiles except `off` (`lightweight`, `project`,
+  `story`, `strict`); the profile primitive lists advertise `directive`.
+- **Retire / countermand:** directives are **additive** — two directives with
+  different wording both stay active (only identical re-assertions are
+  de-duplicated), so replacing a rule does not auto-remove the prior one. A user
+  countermand deactivates a directive via the Memory Inspector "Directives"
+  section, which tombstones the fact (status `deleted`) so it stops being
+  injected.
+- **Distinct from `world_rule`:** a story `world_rule` describes in-fiction world
+  state; a `directive` is an agent-behavior instruction. They are kept separate, and
+  `directive` is also unrelated to the permissions system's auto-allow/deny "rules".
 
 ## Retrieval and packet assembly
 

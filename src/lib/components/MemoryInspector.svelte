@@ -55,6 +55,37 @@
 		return Array.isArray(value) ? value : [];
 	}
 
+	function factPredicate(row: unknown): string {
+		return row && typeof row === 'object'
+			? String((row as { predicate?: unknown }).predicate ?? '')
+			: '';
+	}
+
+	// Directives (per-session standing rules) are facts with predicate
+	// 'directive'. Surface them in their own section and exclude them from the
+	// generic Facts list so each is shown once with directive-specific controls.
+	const directiveRows = $derived(
+		items('facts').filter((row) => factPredicate(row).toLowerCase() === 'directive')
+	);
+	const factRows = $derived(
+		items('facts').filter((row) => factPredicate(row).toLowerCase() !== 'directive')
+	);
+
+	async function deactivateDirective(row: unknown) {
+		const id = rowId(row);
+		if (!id) return;
+		// Retiring a directive tombstones the fact (status 'deleted'); after this
+		// the packet builder no longer injects it. A bare 'superseded' status would
+		// be re-promoted by fact consolidation, so deletion is the durable retire.
+		await mutateItem('facts', id, 'PATCH', { status: 'deleted' });
+	}
+
+	function formatDirective(row: unknown): string {
+		if (!row || typeof row !== 'object') return '';
+		const value = (row as { value?: unknown }).value;
+		return typeof value === 'string' ? value : JSON.stringify(value);
+	}
+
 	async function editItem(kind: string, row: unknown) {
 		const id = rowId(row);
 		if (!id) return;
@@ -205,8 +236,9 @@
 		{/if}
 		<div class="mode">Mode: <strong>{String(snapshot.mode ?? 'off')}</strong></div>
 		<div class="grid">
+			{@render DirectiveList(directiveRows)}
 			{@render MemoryList('Entities', 'entities', items('entities'), true)}
-			{@render MemoryList('Facts', 'facts', items('facts'), true)}
+			{@render MemoryList('Facts', 'facts', factRows, true)}
 			{@render MemoryList('Decisions', 'decisions', items('decisions'), true)}
 			{@render MemoryList('Open loops', 'openLoops', items('openLoops'), true)}
 			{@render MemoryList('Events', 'events', items('events'), false)}
@@ -218,6 +250,37 @@
 		</div>
 	</div>
 </section>
+
+{#snippet DirectiveList(rows: unknown[])}
+	<section class="panel directives">
+		<h3>Directives <span>{rows.length}</span></h3>
+		<p class="hint">Standing rules injected verbatim into every turn for this conversation.</p>
+		{#if rows.length === 0}
+			<EmptyState size="sm" description="No standing directives." />
+		{:else}
+			<div class="rows">
+				{#each rows as row}
+					<div class="memory-row">
+						<div class="row-actions">
+							<button
+								type="button"
+								disabled={busyItem !== null}
+								onclick={() => editItem('facts', row)}>Edit</button
+							>
+							<button
+								type="button"
+								class="danger"
+								disabled={busyItem !== null}
+								onclick={() => deactivateDirective(row)}>Deactivate</button
+							>
+						</div>
+						<div class="directive-text">{formatDirective(row)}</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
+{/snippet}
 
 {#snippet MemoryList(title: string, kind: string, rows: unknown[], editable: boolean)}
 	<section class="panel">
@@ -327,6 +390,19 @@
 	.panel h3 span {
 		color: var(--text-muted);
 		font-weight: 400;
+	}
+	.panel .hint {
+		margin: 0 0 var(--space-2);
+		font-size: var(--fs-xs);
+		color: var(--text-muted);
+	}
+	.directive-text {
+		padding: var(--space-2);
+		border-radius: 4px;
+		background: var(--surface-2);
+		font-size: var(--fs-sm);
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 	.rows {
 		display: flex;

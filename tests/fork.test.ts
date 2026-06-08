@@ -282,4 +282,48 @@ describe('fork.forkAtMessage', () => {
 				.sort()
 		).toEqual(['object.door', 'object.key']);
 	});
+
+	it('inherits pinned per-session directives into the fork', async () => {
+		const { users, convs, messages, memory, engine, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('directive-fork');
+		const sourceConv = convs.create(u.id, {
+			title: 'src',
+			workdir: wd,
+			model: null,
+			memoryMode: 'story'
+		});
+
+		messages.append(sourceConv.id, { role: 'user', content: 'first' });
+		const a1 = messages.append(sourceConv.id, { role: 'assistant', content: 'reply 1' });
+		engine.commitPatch({
+			conversationId: sourceConv.id,
+			mode: 'story',
+			sourceMessageId: a1.id,
+			patch: {
+				facts: [{ predicate: 'directive', value: 'When creating new characters, give them names.' }]
+			}
+		});
+		const u2 = messages.append(sourceConv.id, { role: 'user', content: 'second' });
+		messages.append(sourceConv.id, { role: 'assistant', content: 'reply 2' });
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: sourceConv.id,
+			messageId: u2.id,
+			newContent: 'second (edited)'
+		});
+		const forkId = result.conversation.id;
+
+		const inherited = memory.listFacts(forkId, { predicate: 'directive', limit: 10 });
+		expect(inherited.map((d) => d.value)).toEqual([
+			'When creating new characters, give them names.'
+		]);
+		expect(inherited[0].pinned).toBe(true);
+
+		const packet = engine.buildInitialPacket(forkId, 'story');
+		expect(packet.directives.map((d) => d.value)).toContain(
+			'When creating new characters, give them names.'
+		);
+	});
 });
