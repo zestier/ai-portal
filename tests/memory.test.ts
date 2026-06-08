@@ -830,8 +830,8 @@ describe('memory-backed sessions', () => {
 			summary: extraction.summary
 		});
 
-		expect(prompt).toContain('Prefer granular fact collection');
-		expect(prompt).toContain('Reuse entityKey values from the initial packet');
+		expect(prompt).toContain('Keep facts granular');
+		expect(prompt).toContain('Reuse an existing key from the initial packet');
 		expect(extraction.patch.entities).toEqual([
 			expect.objectContaining({ entityKey: 'character.mara' })
 		]);
@@ -1079,6 +1079,71 @@ describe('memory-backed sessions', () => {
 			{ extractorKind: extractor.kind }
 		);
 		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
+	});
+
+	it('returns the issue path and target schema when a staged patch fails Zod validation', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'The cloak is red.'
+		});
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'Noted.'
+		});
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// A fact missing its required `value` -> Zod schema failure, not
+				// a semantic validatePatch issue.
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c1',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({ patch: { facts: [{ predicate: 'color' }] } })
+						}
+					]
+				};
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-schema',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const rejection = feedback.find((entry) => entry.includes('patch_schema_invalid'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.staged).toBe(false);
+		// The whole error is surfaced: the offending field's JSON path, Zod's
+		// own issue code, and the schema the patch must satisfy.
+		expect(parsed.issues[0].path).toBe('facts.0.value');
+		expect(parsed.issues[0]).toHaveProperty('zodCode');
+		expect(parsed.targetSchema?.properties?.facts).toBeDefined();
+		expect(typeof parsed.note).toBe('string');
 	});
 
 	it('stages open-loop resolutions through the tool extractor and prunes on commit', async () => {

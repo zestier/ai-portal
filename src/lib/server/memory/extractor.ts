@@ -269,6 +269,11 @@ const MEMORY_EXTRACTOR_JSON_SCHEMA = {
 	}
 } as const;
 
+// The schema the `patch` argument of memory_propose_patch must satisfy. Echoed
+// back to the extractor when a staged proposal fails Zod validation so it can
+// see the expected shape (not just an opaque per-field message) and self-correct.
+const PATCH_TARGET_SCHEMA = MEMORY_EXTRACTOR_JSON_SCHEMA.schema.properties.patch;
+
 export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 	readonly kind = 'openai-compatible';
 	readonly model: string;
@@ -407,14 +412,25 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			const parsed = MemoryPatchProposalSchema.safeParse(argObj.patch ?? {});
 			if (!parsed.success) {
 				rejectedProposals += 1;
+				// Surface the *whole* error, not just each message: include the
+				// JSON path of the offending field (e.g. `facts.0.value`) and
+				// Zod's own issue code, plus the target schema the `patch`
+				// argument must satisfy. Without these the extractor sees an
+				// opaque message like "Required" with no indication of which
+				// field is wrong or what shape is expected, and tends to loop in
+				// an error state it can't resolve.
 				return JSON.stringify({
 					staged: false,
 					ok: false,
 					issues: parsed.error.issues.map((issue) => ({
 						severity: 'error',
 						code: 'patch_schema_invalid',
+						path: issue.path.length ? issue.path.join('.') : '(root)',
+						zodCode: issue.code,
 						message: issue.message
-					}))
+					})),
+					targetSchema: PATCH_TARGET_SCHEMA,
+					note: "The `patch` argument did not match the required schema. Each issue's `path` points at the offending field; fix those to match `targetSchema`, then call memory_propose_patch again. Nothing is committed until you finish."
 				});
 			}
 			const validation = validatePatch(parsed.data, {
@@ -1552,15 +1568,11 @@ function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): 
  */
 function extractorContextSections(input: ExtractPatchInput): string[] {
 	return [
-		'Extract durable facts, standing directives, decisions, open loops, events, and entities that could be useful after this turn.',
-		'Be exhaustive. Your job is to capture an absolute ton of detail — err strongly toward over-capturing. It is far better to record a detail that is never needed than to lose one that is. When in doubt, include it.',
-		'Prefer granular fact collection: extract each stable attribute, relationship, state, preference, constraint, location, ownership, capability, role, intent, deadline, dependency, numeric value, identifier, and project decision as its own separate fact whenever it may matter later. Do not collapse multiple details into one fact; split them.',
-		'Watch for directives and capture every one — this is the most commonly missed primitive, so err strongly toward emitting. A directive is any instruction that establishes how you should behave from now on rather than just for the current turn — a standing rule about your future conduct, output, or process. What makes something a directive is this forward-looking, rule-setting intent, NOT any particular wording: it need not contain words like "always", "never", or "from now on". Plain declarative statements of policy count just as much (e.g. "All introduced characters are to be given names.", "Responses stay under 200 words.", "We use British spelling."), as do imperative rules ("always do X", "never do Z", "stop doing …", "whenever <situation>, <do this>") and corrections phrased as lasting rules. Whenever the user sets such a standing rule, in any phrasing, you MUST emit it. Store each as a fact with predicate "directive" whose string value is the instruction itself, phrased as a self-contained rule. The only thing that is NOT a directive is a one-off request scoped to just the current turn ("do X now") with no lasting intent — when in doubt, treat it as a directive and capture it. Bookkeeping: directives are additive and stay in effect until the user retires them, so emit a fresh one for each genuinely new rule and re-emit identical text only when the user reaffirms it (duplicates are de-duplicated automatically); when the user replaces a standing rule with a conflicting one, phrase the new directive to fully restate the current rule, since the prior wording stays active until retired out-of-band via the memory inspector.',
-		'Mine every available source for detail — the user message, the assistant message, the recent transcript, and the tool calls — and record the specifics, not just summaries. Capture concrete particulars (names, exact values, conditions, qualifiers) rather than vague generalities.',
-		'Every fact must target an entity via entityKey — facts are always stored grouped under an entity. Reuse entityKey values from the initial packet whenever a mentioned person, object, file, component, topic, or project concept refers to an existing entity. Do not create a new entity for aliases, casing changes, titles, partial names, or expanded names of the same referent — a bare first name and a full name (e.g. character.firstname vs character.firstname_lastname) are the SAME entity, so reuse the key already present rather than minting a second one.',
-		'Create a new entity (include it in entities) for any durable referent that is not already represented, then attach its facts to that key. Use stable namespaced keys such as character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, or decision.append_only_migrations. A fact with no natural entity is acceptable only as a last resort; prefer minting an entity for it.',
-		'When adding facts/events/openLoops about an entity, use the canonical entityKey exactly. If unsure whether two names are the same referent, prefer reusing the existing key and mention uncertainty in diagnostics.',
-		'Prune superseded open loops: when this turn resolves, answers, or abandons an existing open loop, close it via resolveOpenLoops (using the loop id shown as [id=...] in the initial packet\'s open loops list, or from memory_get_open_loops) with status "resolved" (done/answered) or "dropped" (abandoned/superseded) — do not leave it lingering. In particular, when the user is offered several options and picks one, drop the unchosen options; recording new loops without resolving the dead ones makes them accumulate and crowd out useful memory.',
+		'Your job: capture everything from this turn that could matter after it ends. Draw from every source — the user message, the assistant message, the recent transcript, and the tool calls — and record concrete specifics (names, exact values, conditions, qualifiers), never vague summaries. Err strongly toward over-capturing: a detail you record and never need costs little; one you drop is gone. When in doubt, include it.',
+		'Sort what you capture into the right primitive — each serves a distinct purpose:\n- fact: context to KNOW — a durable attribute, relationship, state, preference, constraint, location, ownership, role, capability, deadline, dependency, identifier, or numeric value about the world, the project, or the user.\n- directive: an agent control — a standing rule for how YOU should behave going forward (your conduct, style, format, or process). Stored as a fact with predicate "directive".\n- decision: a settled choice or commitment, recorded with its subject, the decision itself, and an optional rationale.\n- open loop: an unresolved question, task, or thread awaiting follow-up.\n- event: something notable that happened this turn.\n- entity: the durable referent (person, object, file, component, topic, project concept) that facts, events, and open loops attach to.\nThe distinction that causes the most errors is fact vs directive: ask whether the user is telling you how to act from now on (directive) or telling you something to know (fact).',
+		'For directives, phrasing is irrelevant — plain declarative policy ("All introduced characters are to be given names.", "Keep responses under 200 words.") is as much a directive as "always …" / "never …". One-off work for this turn ("rename this variable", "fix the bug in foo()", "add a test") is NOT a directive — record anything durable about it as a fact or decision instead. Store the rule as the directive fact\'s string value. Directives are additive and persist until retired: emit a new one per genuinely new rule, re-emit identical text only when the user reaffirms it (duplicates are de-duped), and when the user overrides a prior rule, state the full replacement (the old wording stays active until retired via the memory inspector).',
+		'Keep facts granular: split each distinct detail into its own fact rather than collapsing several together. Facts, events, and open loops each attach to an entity via its canonical entityKey (decisions stand alone via their subject). Reuse an existing key from the initial packet whenever the referent already exists — do not mint a second entity for an alias, casing change, title, or partial/expanded name (a bare first name and a full name, e.g. character.firstname vs character.firstname_lastname, are the SAME entity). Create a new entity only for a durable referent not already represented, using a stable namespaced key (e.g. character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, concept.append_only_migrations). A fact with no natural entity is a last resort. If unsure whether two names are the same referent, reuse the existing key and note the uncertainty in diagnostics.',
+		'Prune superseded open loops: when this turn resolves, answers, or abandons an existing loop, close it via resolveOpenLoops using its [id=...] from the initial packet (or memory_get_open_loops) with status "resolved" (done/answered) or "dropped" (abandoned/superseded). When the user picks one of several offered options, drop the unchosen ones. Leaving dead loops to accumulate crowds out useful memory.',
 		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
 		`Memory mode: ${input.mode}`,
 		'Initial packet:',
