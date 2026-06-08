@@ -63,11 +63,13 @@ ENV NODE_ENV=production \
     # would spam errors; disable it.
     COPILOT_NO_AUTO_UPDATE=1
 
-COPY --from=build /app/build ./build
-COPY --from=build /app/package.json ./
-# Migrations are read from disk at startup via a path relative to cwd.
-COPY --from=build /app/src/lib/server/db/migrations ./src/lib/server/db/migrations
+# Ordered least- to most-frequently-changing so a code edit doesn't bust the
+# (large) node_modules layer. Docker invalidates every layer after the first
+# changed COPY, so the volatile build output goes last.
 COPY --from=deps  /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./
+COPY --from=build /app/src/lib/server/db/migrations ./src/lib/server/db/migrations
+COPY --from=build /app/build ./build
 
 # Persistent state (encrypted SQLite, per-user data).
 VOLUME ["/data"]
