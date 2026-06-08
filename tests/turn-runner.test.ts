@@ -923,6 +923,13 @@ describe('turn-runner', () => {
 			});
 			expect(parent).toBeTruthy();
 			expect(parent?.status).toBe('ok');
+			// The extractor's input context is threaded onto the card as a
+			// `prompt`, mirroring a real subagent, so the UI can show what the
+			// background agent was asked to work from.
+			const parentArgs = JSON.parse(parent?.argsJson ?? '{}');
+			expect(typeof parentArgs.prompt).toBe('string');
+			expect(parentArgs.prompt.length).toBeGreaterThan(0);
+			expect(parentArgs.prompt).toContain('append-only migrations');
 			// Subagent lifecycle events flowed and persisted, exactly like a real
 			// subagent (running -> completed, with an agent id + timing).
 			expect(parent?.backgroundAgentStatus).toBe('completed');

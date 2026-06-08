@@ -494,14 +494,17 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				// catch below can close the card if extraction throws.
 				let extractorParentId: string | null = null;
 				let extractorAgentId: string | null = null;
-				const ensureExtractorParent = (): string => {
+				const ensureExtractorParent = (prompt?: string): string => {
 					if (extractorParentId) return extractorParentId;
 					extractorParentId = `mem_parent_${ulid()}`;
 					extractorAgentId = `mem_agent_${ulid()}`;
 					// Emit the same event shape as a real subagent: a `task` tool
 					// call plus a `subagent.lifecycle` start. The `agent_type` arg
 					// lets the UI label it without any extractor-specific casing
-					// in the lower layers.
+					// in the lower layers. When the extractor surfaces its input
+					// context first, thread it through as `prompt` so the card
+					// shows what the background agent was asked to work from —
+					// just like a real subagent's prompt.
 					dispatch({
 						type: 'tool.call',
 						toolCallId: extractorParentId,
@@ -509,7 +512,8 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						args: {
 							name: 'Memory extractor',
 							description: 'Memory extraction',
-							agent_type: 'memory-extractor'
+							agent_type: 'memory-extractor',
+							...(prompt ? { prompt } : {})
 						}
 					});
 					dispatch({
@@ -531,6 +535,13 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					}
 				};
 				const onActivity = (activity: ExtractorActivity) => {
+					if (activity.type === 'input') {
+						// Create the card carrying its prompt; the input event is
+						// emitted before any model output, so this is the first
+						// thing that materializes the parent.
+						ensureExtractorParent(activity.text);
+						return;
+					}
 					const parentToolCallId = ensureExtractorParent();
 					switch (activity.type) {
 						case 'tool.call':

@@ -928,9 +928,11 @@ describe('memory-backed sessions', () => {
 		expect(seenToolNames).toContain('memory_search');
 		expect(seenToolNames).toContain('memory_propose_patch');
 		// Activity is surfaced so the extractor reads like a fully-featured
-		// nested agent: thoughts (reasoning + <think>) and spoken content are
-		// separate threaded streams, interleaved with the staging tool call.
+		// nested agent: a leading `input` event carries the context handed to
+		// the extractor, then thoughts (reasoning + <think>) and spoken content
+		// are separate threaded streams, interleaved with the staging tool call.
 		expect(activity.map((event) => event.type)).toEqual([
+			'input',
 			'reasoning',
 			'content',
 			'reasoning.end',
@@ -938,6 +940,11 @@ describe('memory-backed sessions', () => {
 			'tool.result',
 			'content'
 		]);
+		const inputEvent = activity[0];
+		expect(inputEvent).toMatchObject({ type: 'input' });
+		if (inputEvent?.type === 'input') {
+			expect(inputEvent.text.length).toBeGreaterThan(0);
+		}
 		const reasoning = activity.find((event) => event.type === 'reasoning');
 		expect(reasoning).toMatchObject({ type: 'reasoning' });
 		if (reasoning?.type === 'reasoning') {

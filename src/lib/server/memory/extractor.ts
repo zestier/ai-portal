@@ -25,9 +25,11 @@ import type { MemoryToolCall } from '$lib/server/db/repos/memory';
  * can render the background agent's work like a normal subagent — a parent
  * card with each retrieval/staging call threaded underneath. Mirrors the
  * portal `tool.call` / `tool.result` event shapes so the runner can forward
- * them straight through its persistence path.
+ * them straight through its persistence path. The leading `input` event
+ * carries the context handed to the extractor so the card can show its prompt.
  */
 export type ExtractorActivity =
+	| { type: 'input'; text: string }
 	| { type: 'tool.call'; toolCallId: string; tool: string; args: unknown }
 	| { type: 'tool.result'; toolCallId: string; ok: boolean; summary: string; output: string }
 	| { type: 'reasoning'; segmentId: string; text: string }
@@ -469,11 +471,20 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			buildStagingToolSpec()
 		];
 
+		const userContent = truncate(
+			extractorContextSections(input).join('\n\n'),
+			this.opts.maxInputChars
+		);
+		// Surface the context handed to the background extractor as the
+		// subagent's "input" so the card can show what it was asked to work
+		// from, mirroring the prompt shown for a real subagent. Emitted before
+		// any model output so the parent card is created carrying its prompt.
+		input.onActivity?.({ type: 'input', text: userContent });
 		const messages: ExtractorChatMessage[] = [
 			{ role: 'system', content: buildToolExtractorSystemPrompt() },
 			{
 				role: 'user',
-				content: truncate(extractorContextSections(input).join('\n\n'), this.opts.maxInputChars)
+				content: userContent
 			}
 		];
 

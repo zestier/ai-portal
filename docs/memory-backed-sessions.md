@@ -796,6 +796,10 @@ for presentation (the 🧠 icon); no lower-layer component special-cases it.
 Through the optional `onActivity` emitter on `ExtractPatchInput` the extractor
 surfaces:
 
+- its **input** — the context handed to the background agent — as a leading
+  `input` activity, which the turn runner threads onto the parent card as its
+  `prompt` so the UI shows what the extractor was asked to work from, just like
+  a real subagent's prompt;
 - its **thoughts** — provider reasoning fields (`reasoning` / `reasoning_content`)
   and inline `<think>…</think>` — as threaded child reasoning blocks;
 - its **spoken content** — as threaded child content blocks, interleaved with
