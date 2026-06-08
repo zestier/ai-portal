@@ -68,6 +68,11 @@ const CharacterKnowledgeArgs = z.object({
 	limit: z.number().int().min(1).max(100).optional().default(50)
 });
 
+const MergeEntitiesArgs = z.object({
+	from: z.string().trim().min(1).max(200),
+	into: z.string().trim().min(1).max(200)
+});
+
 const GlobalRememberArgs = z.object({
 	kind: z.enum(['preference', 'decision', 'fact', 'style', 'constraint']),
 	key: z.string().trim().min(1).max(200),
@@ -516,6 +521,46 @@ export function buildMemoryTools(opts: {
 					resultSummary: `${results.length} claim(s) checked`
 				});
 				return JSON.stringify({ results }, null, 2);
+			}
+		},
+		{
+			name: 'memory_merge_entities',
+			description:
+				"Fold a duplicate entity into a canonical one when two keys denote the same real referent (e.g. character.firstname and character.firstname_lastname). Reassigns the duplicate's facts, events, and open-loop links onto the canonical entity and retires the duplicate. Use this to clean up duplicates you discover; confirm with memory_get_entity first that they truly match.",
+			argsSchema: MergeEntitiesArgs,
+			permissionBehavior: 'never-prompt',
+			parameters: {
+				type: 'object',
+				properties: {
+					from: {
+						type: 'string',
+						description:
+							'Duplicate entity to retire, by id or key, e.g. character.firstname_lastname.'
+					},
+					into: {
+						type: 'string',
+						description: 'Canonical entity to keep, by id or key, e.g. character.firstname.'
+					}
+				},
+				required: ['from', 'into'],
+				additionalProperties: false
+			},
+			async handler(args) {
+				const parsed = MergeEntitiesArgs.parse(args);
+				const result = memoryRepo.mergeEntities(opts.conversationId, {
+					fromKeyOrId: parsed.from,
+					intoKeyOrId: parsed.into
+				});
+				memoryRepo.recordToolCall(opts.conversationId, {
+					turnId: opts.getTurnId?.() ?? null,
+					toolName: 'memory_merge_entities',
+					arguments: parsed,
+					resultSummary: result.ok
+						? `merged ${parsed.from} into ${parsed.into} (${result.reassignedFacts} fact(s), ${result.reassignedEvents} event(s))`
+						: `not merged: ${result.error ?? 'unknown error'}`,
+					resultIds: result.into ? [result.into.id] : []
+				});
+				return JSON.stringify(result, null, 2);
 			}
 		},
 		{

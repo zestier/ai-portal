@@ -2182,6 +2182,198 @@ describe('memory-backed sessions', () => {
 		expect(memory.getEntity(conv.id, 'object.brass_key')?.status).toBe('deleted');
 	});
 
+	it('merges a duplicate entity into the canonical one and survives rebuild', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'merge', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.john', entityType: 'character', displayName: 'John' },
+					{
+						entityKey: 'character.john_smith',
+						entityType: 'character',
+						displayName: 'John Smith'
+					}
+				],
+				facts: [
+					{ entityKey: 'character.john', predicate: 'role', value: 'host' },
+					{ entityKey: 'character.john_smith', predicate: 'hometown', value: 'Riverton' }
+				],
+				events: [
+					{
+						eventType: 'timeline',
+						summary: 'John Smith walked on stage.',
+						entityKey: 'character.john_smith'
+					}
+				]
+			}
+		});
+
+		const canonical = memory.getEntity(conv.id, 'character.john')!;
+		const duplicate = memory.getEntity(conv.id, 'character.john_smith')!;
+
+		const result = memory.mergeEntities(conv.id, {
+			fromKeyOrId: 'character.john_smith',
+			intoKeyOrId: 'character.john'
+		});
+		expect(result.ok).toBe(true);
+		expect(result.reassignedFacts).toBe(1);
+		expect(result.reassignedEvents).toBe(1);
+
+		// Duplicate is retired; canonical inherits its facts and events.
+		expect(memory.getEntity(conv.id, 'character.john_smith')?.status).toBe('deleted');
+		const facts = memory.listFacts(conv.id, { entityId: canonical.id, limit: 50 });
+		expect(facts.map((f) => f.predicate).sort()).toEqual(['hometown', 'role']);
+		const events = memory.listEvents(conv.id, { entityId: canonical.id });
+		expect(events.some((e) => e.summary.includes('walked on stage'))).toBe(true);
+		expect(memory.listEvents(conv.id, { entityId: duplicate.id })).toHaveLength(0);
+
+		// The reassignment is recorded in the append-only log, so a full
+		// projection rebuild reconstructs the merged state.
+		memory.rebuildSessionMemoryProjection(conv.id);
+		const rebuilt = memory.listFacts(conv.id, { entityId: canonical.id, limit: 50 });
+		expect(rebuilt.map((f) => f.predicate).sort()).toEqual(['hometown', 'role']);
+		expect(memory.getEntity(conv.id, 'character.john_smith')?.status).toBe('deleted');
+	});
+
+	it('consolidates colliding single-valued facts when merging entities', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'merge-collide', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.john', entityType: 'character', displayName: 'John' },
+					{ entityKey: 'character.johnny', entityType: 'character', displayName: 'Johnny' }
+				]
+			}
+		});
+		const canonical = memory.getEntity(conv.id, 'character.john')!.id;
+		const duplicate = memory.getEntity(conv.id, 'character.johnny')!.id;
+		// Canonical observed location first; the duplicate has the newer location.
+		memory.addFact(conv.id, { entityId: canonical, predicate: 'location', value: 'study' });
+		memory.addFact(conv.id, { entityId: duplicate, predicate: 'location', value: 'cellar' });
+
+		memory.mergeEntities(conv.id, {
+			fromKeyOrId: 'character.johnny',
+			intoKeyOrId: 'character.john'
+		});
+
+		// Single-valued 'location' collapses to one active value (the newest).
+		const active = memory.listFacts(conv.id, {
+			entityId: canonical,
+			predicate: 'location',
+			status: 'active'
+		});
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('cellar');
+	});
+
+	it('memory_merge_entities tool merges via key and rejects bad input', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'merge-tool', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.john', entityType: 'character', displayName: 'John' },
+					{
+						entityKey: 'character.john_smith',
+						entityType: 'character',
+						displayName: 'John Smith'
+					}
+				],
+				facts: [{ entityKey: 'character.john_smith', predicate: 'hometown', value: 'Riverton' }]
+			}
+		});
+		const tools = buildMemoryTools({ userId: user.id, conversationId: conv.id, mode: 'project' });
+		const merge = tools.find((tool) => tool.name === 'memory_merge_entities')!;
+		expect(merge.permissionBehavior).toBe('never-prompt');
+
+		const ok = JSON.parse(
+			await merge.handler({ from: 'character.john_smith', into: 'character.john' })
+		) as { ok: boolean; reassignedFacts: number };
+		expect(ok.ok).toBe(true);
+		expect(ok.reassignedFacts).toBe(1);
+		expect(memory.getEntity(conv.id, 'character.john_smith')?.status).toBe('deleted');
+
+		const sameEntity = JSON.parse(
+			await merge.handler({ from: 'character.john', into: 'character.john' })
+		) as { ok: boolean };
+		expect(sameEntity.ok).toBe(false);
+
+		const unknown = JSON.parse(
+			await merge.handler({ from: 'character.ghost', into: 'character.john' })
+		) as { ok: boolean; error: string };
+		expect(unknown.ok).toBe(false);
+		expect(unknown.error).toContain('Unknown source entity');
+	});
+
+	it('refuses to merge into a tombstoned entity but allows merging a tombstoned duplicate away', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'merge-deleted', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.john', entityType: 'character', displayName: 'John' },
+					{
+						entityKey: 'character.john_smith',
+						entityType: 'character',
+						displayName: 'John Smith'
+					}
+				],
+				facts: [{ entityKey: 'character.john_smith', predicate: 'hometown', value: 'Riverton' }]
+			}
+		});
+		const canonical = memory.getEntity(conv.id, 'character.john')!;
+		// Retire the canonical entity, then attempt to fold the duplicate into it.
+		memory.updateEntity(conv.id, canonical.id, { status: 'deleted' });
+		const intoDeleted = memory.mergeEntities(conv.id, {
+			fromKeyOrId: 'character.john_smith',
+			intoKeyOrId: 'character.john'
+		});
+		expect(intoDeleted.ok).toBe(false);
+		expect(intoDeleted.error).toContain('deleted');
+		// The duplicate is untouched: still active and still owns its fact.
+		expect(memory.getEntity(conv.id, 'character.john_smith')?.status).toBe('active');
+
+		// Merging *from* a tombstoned duplicate into a live entity is allowed; this
+		// is the cleanup path when a duplicate was already deleted out-of-band.
+		const live = convs.create(user.id, {
+			title: 'merge-from-deleted',
+			workdir: '/tmp',
+			model: null
+		});
+		commitPatch({
+			conversationId: live.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.john', entityType: 'character', displayName: 'John' },
+					{
+						entityKey: 'character.john_smith',
+						entityType: 'character',
+						displayName: 'John Smith'
+					}
+				],
+				facts: [{ entityKey: 'character.john_smith', predicate: 'hometown', value: 'Riverton' }]
+			}
+		});
+		const duplicate = memory.getEntity(live.id, 'character.john_smith')!;
+		memory.updateEntity(live.id, duplicate.id, { status: 'deleted' });
+		const fromDeleted = memory.mergeEntities(live.id, {
+			fromKeyOrId: 'character.john_smith',
+			intoKeyOrId: 'character.john'
+		});
+		expect(fromDeleted.ok).toBe(true);
+		expect(fromDeleted.reassignedFacts).toBe(1);
+		const target = memory.getEntity(live.id, 'character.john')!;
+		expect(
+			memory.listFacts(live.id, { entityId: target.id, limit: 50 }).map((f) => f.predicate)
+		).toContain('hometown');
+	});
+
 	it('renders legacy detached facts even when no entity-anchored facts exist', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'detached-only', workdir: '/tmp', model: null });

@@ -1099,6 +1099,175 @@ export function updateEntity(
 	return rowToEntity(row);
 }
 
+export interface MergeEntitiesResult {
+	ok: boolean;
+	error?: string;
+	from?: MemoryEntity;
+	into?: MemoryEntity;
+	reassignedFacts: number;
+	reassignedEvents: number;
+}
+
+/**
+ * Fold a duplicate entity into a canonical one. Every fact and event that
+ * pointed at `fromKeyOrId` is re-pointed at `intoKeyOrId` and the duplicate is
+ * tombstoned. All mutations go through the append-only session memory log
+ * (`fact.update` / `event.update` / `entity.delete` events carrying the new
+ * snapshot), so projection rebuilds, reverts and forks reconstruct the merged
+ * state exactly. After reassigning facts, both the source and destination
+ * (entity, predicate) groups are re-consolidated so single-valued predicates
+ * keep one active value and duplicate observations collapse.
+ *
+ * This is the cleanup path for the extractor's most common mistake: minting two
+ * entities for the same referent (e.g. `character.firstname` and
+ * `character.firstname_lastname`). Whether two keys are the *same* referent is a
+ * semantic call left to the caller; this function only performs the merge it is
+ * told to.
+ */
+export function mergeEntities(
+	conversationId: string,
+	opts: { fromKeyOrId: string; intoKeyOrId: string }
+): MergeEntitiesResult {
+	const db = getDb();
+	const tx = db.transaction((): MergeEntitiesResult => {
+		const from = getEntity(conversationId, opts.fromKeyOrId);
+		const into = getEntity(conversationId, opts.intoKeyOrId);
+		if (!from)
+			return {
+				ok: false,
+				error: `Unknown source entity: ${opts.fromKeyOrId}`,
+				reassignedFacts: 0,
+				reassignedEvents: 0
+			};
+		if (!into)
+			return {
+				ok: false,
+				error: `Unknown target entity: ${opts.intoKeyOrId}`,
+				reassignedFacts: 0,
+				reassignedEvents: 0
+			};
+		if (from.id === into.id)
+			return {
+				ok: false,
+				error: 'Source and target refer to the same entity; nothing to merge.',
+				reassignedFacts: 0,
+				reassignedEvents: 0
+			};
+		// Folding into a retired entity would silently bury the source's facts on a
+		// tombstoned referent (hidden from active views), so reject it. Merging
+		// *from* a deleted duplicate is fine — that is exactly the cleanup case.
+		if (into.status === 'deleted')
+			return {
+				ok: false,
+				error: `Target entity is deleted; pick a live canonical entity: ${opts.intoKeyOrId}`,
+				reassignedFacts: 0,
+				reassignedEvents: 0
+			};
+
+		const now = Date.now();
+		// Predicates whose groups must be re-consolidated once facts move across.
+		const touchedPredicates = new Set<string>();
+		const factRows = db
+			.prepare(
+				`SELECT * FROM memory_facts
+				  WHERE conversation_id = ? AND entity_id = ? AND status != 'deleted'`
+			)
+			.all(conversationId, from.id) as FactRow[];
+		for (const factRow of factRows) {
+			db.prepare(
+				'UPDATE memory_facts SET entity_id = ?, updated_at = ? WHERE id = ? AND conversation_id = ?'
+			).run(into.id, now, factRow.id, conversationId);
+			const updated = db
+				.prepare('SELECT * FROM memory_facts WHERE id = ?')
+				.get(factRow.id) as FactRow;
+			syncSessionIndex(
+				db,
+				conversationId,
+				'fact',
+				updated.id,
+				updated.status,
+				factIndexText(updated)
+			);
+			appendSessionMemoryLog(db, conversationId, {
+				eventKind: 'fact.update',
+				itemType: 'fact',
+				itemId: updated.id,
+				payload: { item: rowToFact(updated) }
+			});
+			touchedPredicates.add(updated.predicate);
+		}
+		// Re-derive the active set for both the vacated and the receiving groups:
+		// the destination may now hold duplicate observations of a single-valued
+		// predicate, and the source group is left empty.
+		for (const predicate of touchedPredicates) {
+			consolidateFactGroup(db, conversationId, into.id, predicate);
+			consolidateFactGroup(db, conversationId, from.id, predicate);
+		}
+
+		const eventRows = db
+			.prepare(
+				`SELECT * FROM memory_events
+				  WHERE conversation_id = ? AND (actor_entity_id = ? OR target_entity_id = ?)`
+			)
+			.all(conversationId, from.id, from.id) as EventRow[];
+		for (const eventRow of eventRows) {
+			const nextActor = eventRow.actor_entity_id === from.id ? into.id : eventRow.actor_entity_id;
+			const nextTarget =
+				eventRow.target_entity_id === from.id ? into.id : eventRow.target_entity_id;
+			db.prepare(
+				'UPDATE memory_events SET actor_entity_id = ?, target_entity_id = ? WHERE id = ? AND conversation_id = ?'
+			).run(nextActor, nextTarget, eventRow.id, conversationId);
+			const updated = db
+				.prepare('SELECT * FROM memory_events WHERE id = ?')
+				.get(eventRow.id) as EventRow;
+			indexItem(db, conversationId, 'event', updated.id, eventIndexText(updated));
+			appendSessionMemoryLog(db, conversationId, {
+				eventKind: 'event.update',
+				itemType: 'event',
+				itemId: updated.id,
+				payload: { item: rowToEvent(updated) }
+			});
+		}
+
+		// Carry forward any open loops that referenced only the duplicate so the
+		// canonical entity inherits them.
+		const loopRows = db
+			.prepare(`SELECT * FROM memory_open_loops WHERE conversation_id = ? AND status != 'deleted'`)
+			.all(conversationId) as OpenLoopRow[];
+		for (const loopRow of loopRows) {
+			const related = parseJson(loopRow.related_entity_ids_json, []) as string[];
+			if (!related.includes(from.id)) continue;
+			const next = related.map((id) => (id === from.id ? into.id : id));
+			const deduped = [...new Set(next)];
+			updateOpenLoop(conversationId, loopRow.id, { relatedEntityIds: deduped });
+		}
+
+		const tombstoned = updateEntity(conversationId, from.id, { status: 'deleted' });
+		addEvent(conversationId, {
+			eventType: 'memory_entities_merged',
+			summary: `Merged ${from.entityKey} into ${into.entityKey}.`,
+			payload: {
+				fromEntityId: from.id,
+				fromEntityKey: from.entityKey,
+				intoEntityId: into.id,
+				intoEntityKey: into.entityKey,
+				reassignedFacts: factRows.length,
+				reassignedEvents: eventRows.length
+			},
+			confidence: 1
+		});
+
+		return {
+			ok: true,
+			from: tombstoned ?? from,
+			into,
+			reassignedFacts: factRows.length,
+			reassignedEvents: eventRows.length
+		};
+	});
+	return tx();
+}
+
 export function updateFact(
 	conversationId: string,
 	id: string,

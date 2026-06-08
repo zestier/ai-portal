@@ -115,6 +115,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory.get_open_loops` | Fetch unresolved tasks, plot threads, clues, questions, or commitments. |
 | `memory.get_recent_events` | Fetch recent or relevant event-log entries with source turns. |
 | `memory.check_claims` | Validate proposed factual claims against known memory and return conflicts or unknowns. |
+| `memory.merge_entities` | Fold a duplicate entity into a canonical one — reassigning its facts, events, and open-loop links — to clean up two keys that denote the same referent (e.g. `character.firstname` vs `character.firstname_lastname`). |
 | `memory.propose_patch` | Let the model propose structured memory updates when needed, while the server remains responsible for validation and commit. |
 
 These tools should be available to the model during the main response call for
@@ -719,6 +720,27 @@ a model-backed extraction backend behind the existing patch lifecycle. The
 extractor must never write directly to canonical memory. It proposes a
 `MemoryPatchProposal`; the existing validator, patch log, patch item tracker,
 and committer remain the only mutation path.
+
+### Avoiding and cleaning up duplicate entities
+
+Entities are keyed by a free-form `entityKey` the model chooses, so the same
+referent can end up stored twice under different surface forms (the classic
+case is a bare name vs. a fuller name, e.g. `character.firstname` and
+`character.firstname_lastname`). Two defenses keep this in check:
+
+- **Prevention.** The extractor is instructed to reconcile every referent
+  against existing entities before minting a new one — searching by name and by
+  likely key and reusing the canonical `entityKey` — and the deterministic
+  `canonicalizeEntityKeys` pass collapses obvious within-patch duplicates that
+  match a known entity by display name, key tail, or typed name.
+- **Cleanup.** When a duplicate has already been committed, the extractor can
+  call `memory.merge_entities` to fold the duplicate into the canonical entity.
+  The merge reassigns the duplicate's facts, events, and open-loop links onto
+  the canonical entity through the append-only session memory log (so projection
+  rebuilds, reverts, and forks reconstruct the merged state) and retires the
+  duplicate. Whether two keys are the *same* referent is a semantic judgment
+  left to the model; fuzzy names are never auto-merged, because a shared partial
+  name can denote genuinely distinct referents.
 
 ### Extractor interface
 
