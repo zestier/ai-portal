@@ -179,9 +179,6 @@ invalid config.
 | `MEMORY_EXTRACTOR_MAX_INPUT_CHARS` | `12000`         | Cap on conversation text sent to the model extractor. |
 | `MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS` | `6`         | Max tool-calling iterations for the `openai-compatible-tools` extractor before it stops and commits whatever it staged. |
 | `MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS` | `60000`        | Overall wall-clock budget (ms) for the `openai-compatible-tools` extractor loop. Bounds the whole loop rather than a single request, so it can't hold the turn open for `MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS` × `MEMORY_EXTRACTOR_TIMEOUT_MS` in the worst case. |
-| `MEMORY_EMBEDDING_PROVIDER` | `local-hash`           | Provider for memory-search embeddings: `local-hash` (local, no network) \| `openai-compatible`. Falls back to local-hash unless the base URL and embedding model are both set. |
-| `MEMORY_EMBEDDING_MODEL`  | —                        | Embedding model id; required to activate the `openai-compatible` embedding provider. Uses `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`. |
-| `MEMORY_EMBEDDING_TIMEOUT_MS` | `20000`              | Request timeout (ms) for embedding calls. |
 | `IDLE_TIMEOUT_MIN`        | `15`                     | SDK session idle reap.               |
 | `MAX_CONCURRENT_SESSIONS` | `4`                      | Hard cap on live sessions.           |
 | `LOG_LEVEL`               | `info`                   | `debug` \| `info` \| `warn` \| `error`. |

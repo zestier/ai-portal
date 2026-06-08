@@ -19,10 +19,6 @@ import {
 	type ExtractorChatMessage,
 	type ExtractorToolSpec
 } from '../src/lib/server/memory/extractor';
-import {
-	LocalHashEmbeddingProvider,
-	OpenAICompatibleEmbeddingProvider
-} from '../src/lib/server/memory/embeddings';
 import { getMemoryProfile, listMemoryProfiles } from '../src/lib/server/memory/profiles';
 import * as memoryProfiles from '../src/lib/server/memory/profiles';
 import { buildMemoryTools } from '../src/lib/server/tools/memory';
@@ -1430,7 +1426,7 @@ describe('memory-backed sessions', () => {
 		);
 	});
 
-	it('indexes committed memory for hybrid vector search', () => {
+	it('indexes committed memory for full-text search', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		commitPatch({
@@ -1450,40 +1446,8 @@ describe('memory-backed sessions', () => {
 			limit: 5
 		});
 
-		expect(
-			results.some(
-				(result) => result.sources?.includes('sqlite-vec') || result.sources?.includes('vector')
-			)
-		).toBe(true);
+		expect(results.some((result) => result.sources?.includes('fts'))).toBe(true);
 		expect(results.map((result) => result.text).join('\n')).toContain('append-only migrations');
-	});
-
-	it('supports local and OpenAI-compatible embedding providers', async () => {
-		const local = await new LocalHashEmbeddingProvider().embed({
-			texts: ['append-only migrations'],
-			purpose: 'index'
-		});
-		expect(local.model).toBe('local-hash-v1');
-		expect(local.vectors[0]?.length).toBeGreaterThan(0);
-
-		const openai = new OpenAICompatibleEmbeddingProvider({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'embed-test',
-			timeoutMs: 1_000,
-			embedJson: async () => ({
-				data: [{ embedding: [0.1, 0.2, 0.3] }]
-			})
-		});
-		const remote = await openai.embed({ texts: ['memory recall'], purpose: 'query' });
-		expect(remote).toMatchObject({
-			model: 'embed-test',
-			dimensions: 3,
-			vectors: [[0.1, 0.2, 0.3]]
-		});
-		expect(memory.vectorAccelerationStatus()).toMatchObject({
-			available: true,
-			provider: 'sqlite-vec'
-		});
 	});
 
 	it('wipe removes session memory while preserving conversation rows', () => {

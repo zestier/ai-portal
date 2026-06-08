@@ -2,12 +2,6 @@ import type Database from 'better-sqlite3';
 import { ulid } from '../ids';
 import { getDb } from '../index';
 import { normalizeMemoryMode, type MemoryMode } from '$lib/types';
-import {
-	LOCAL_EMBEDDING_MODEL,
-	cosineSimilarity,
-	localHashEmbedding,
-	textHash
-} from '$lib/server/memory/embeddings';
 
 export type MemoryItemStatus = 'active' | 'superseded' | 'disputed' | 'deleted';
 export type MemoryPatchStatus =
@@ -182,34 +176,6 @@ export interface GlobalMemory {
 	updatedAt: number;
 }
 
-export interface MemoryEmbedding {
-	id: string;
-	conversationId: string | null;
-	userId: string | null;
-	scope: 'session' | 'global';
-	itemType: string;
-	itemId: string;
-	embeddingModel: string;
-	dimensions: number;
-	textHash: string;
-	text: string;
-	vector: number[];
-	createdAt: number;
-	updatedAt: number;
-}
-
-interface VecMapRow {
-	embedding_id: string;
-	dimensions: number;
-	vec_rowid: number;
-}
-
-export interface VectorAccelerationStatus {
-	available: boolean;
-	provider: 'sqlite-vec' | 'json-fallback';
-	message: string;
-}
-
 interface EntityRow {
 	id: string;
 	conversation_id: string;
@@ -349,22 +315,6 @@ interface GlobalMemoryRow {
 	updated_at: number;
 }
 
-interface EmbeddingRow {
-	id: string;
-	conversation_id: string | null;
-	user_id: string | null;
-	scope: 'session' | 'global';
-	item_type: string;
-	item_id: string;
-	embedding_model: string;
-	dimensions: number;
-	text_hash: string;
-	text: string;
-	vector_json: string;
-	created_at: number;
-	updated_at: number;
-}
-
 export interface MemorySnapshot {
 	mode: MemoryMode;
 	entities: MemoryEntity[];
@@ -377,7 +327,6 @@ export interface MemorySnapshot {
 	toolCalls: MemoryToolCall[];
 	patchItems: MemoryPatchItem[];
 	globalMemories?: GlobalMemory[];
-	vectorAcceleration: VectorAccelerationStatus;
 }
 
 export interface UpsertEntityInput {
@@ -480,8 +429,7 @@ export function listSnapshot(
 		issues: listIssues(conversationId, { limit: 100 }),
 		toolCalls: listToolCalls(conversationId, { limit: 50 }),
 		patchItems: listPatchItems(conversationId, { limit: 200 }),
-		globalMemories: opts.userId ? listGlobalMemories(opts.userId, { limit: 100 }) : undefined,
-		vectorAcceleration: vectorAccelerationStatus()
+		globalMemories: opts.userId ? listGlobalMemories(opts.userId, { limit: 100 }) : undefined
 	};
 }
 
@@ -508,7 +456,6 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 			.prepare('SELECT * FROM memory_entities WHERE id = ?')
 			.get(existing.id) as EntityRow;
 		indexItem(db, conversationId, 'entity', existing.id, entityIndexText(updated));
-		indexSessionMemoryItem(conversationId, 'entity', existing.id, entityIndexText(updated));
 		appendSessionMemoryLog(db, conversationId, {
 			eventKind: 'entity.update',
 			itemType: 'entity',
@@ -538,7 +485,6 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 	);
 	const row = db.prepare('SELECT * FROM memory_entities WHERE id = ?').get(id) as EntityRow;
 	indexItem(db, conversationId, 'entity', id, entityIndexText(row));
-	indexSessionMemoryItem(conversationId, 'entity', id, entityIndexText(row));
 	appendSessionMemoryLog(db, conversationId, {
 		eventKind: 'entity.create',
 		itemType: 'entity',
@@ -613,7 +559,6 @@ export function addEvent(conversationId: string, input: AddEventInput): MemoryEv
 		);
 	const row = getDb().prepare('SELECT * FROM memory_events WHERE id = ?').get(id) as EventRow;
 	indexItem(getDb(), conversationId, 'event', id, eventIndexText(row));
-	indexSessionMemoryItem(conversationId, 'event', id, eventIndexText(row));
 	appendSessionMemoryLog(getDb(), conversationId, {
 		eventKind: 'event.create',
 		itemType: 'event',
@@ -692,7 +637,6 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
 		);
 		const row = db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
 		indexItem(db, conversationId, 'fact', id, factIndexText(row));
-		indexSessionMemoryItem(conversationId, 'fact', id, factIndexText(row));
 		appendSessionMemoryLog(db, conversationId, {
 			eventKind: 'fact.create',
 			itemType: 'fact',
@@ -830,7 +774,6 @@ export function addDecision(conversationId: string, input: AddDecisionInput): Me
 		);
 	const row = getDb().prepare('SELECT * FROM memory_decisions WHERE id = ?').get(id) as DecisionRow;
 	indexItem(getDb(), conversationId, 'decision', id, decisionIndexText(row));
-	indexSessionMemoryItem(conversationId, 'decision', id, decisionIndexText(row));
 	appendSessionMemoryLog(getDb(), conversationId, {
 		eventKind: 'decision.create',
 		itemType: 'decision',
@@ -882,7 +825,6 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 		.prepare('SELECT * FROM memory_open_loops WHERE id = ?')
 		.get(id) as OpenLoopRow;
 	indexItem(getDb(), conversationId, 'open_loop', id, openLoopIndexText(row));
-	indexSessionMemoryItem(conversationId, 'open_loop', id, openLoopIndexText(row));
 	appendSessionMemoryLog(getDb(), conversationId, {
 		eventKind: 'open_loop.create',
 		itemType: 'open_loop',
@@ -1392,7 +1334,6 @@ export function upsertGlobalMemory(
 			.prepare('SELECT * FROM global_memories WHERE id = ?')
 			.get(existing.id) as GlobalMemoryRow;
 		indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
-		indexGlobalMemoryItem(userId, 'global_memory', updated.id, globalMemoryIndexText(updated));
 		return rowToGlobalMemory(updated);
 	}
 	const id = ulid();
@@ -1414,7 +1355,6 @@ export function upsertGlobalMemory(
 	);
 	const row = db.prepare('SELECT * FROM global_memories WHERE id = ?').get(id) as GlobalMemoryRow;
 	indexGlobalMemory(db, userId, id, globalMemoryIndexText(row));
-	indexGlobalMemoryItem(userId, 'global_memory', id, globalMemoryIndexText(row));
 	return rowToGlobalMemory(row);
 }
 
@@ -1466,7 +1406,6 @@ export function updateGlobalMemory(
 		.prepare('SELECT * FROM global_memories WHERE id = ? AND user_id = ?')
 		.get(id, userId) as GlobalMemoryRow;
 	indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
-	indexGlobalMemoryItem(userId, 'global_memory', updated.id, globalMemoryIndexText(updated));
 	return { status: 'updated', memory: rowToGlobalMemory(updated) };
 }
 
@@ -1510,204 +1449,6 @@ export function searchGlobalMemories(
 		)
 		.all(userId, ftsQuery(query), opts.limit ?? 20) as { item_id: string; text: string }[];
 	return rows.map((row) => ({ itemId: row.item_id, text: row.text }));
-}
-
-export function upsertEmbedding(input: {
-	conversationId?: string | null;
-	userId?: string | null;
-	scope: 'session' | 'global';
-	itemType: string;
-	itemId: string;
-	text: string;
-	embeddingModel: string;
-	vector: number[];
-}): MemoryEmbedding {
-	const db = getDb();
-	const now = Date.now();
-	const hash = textHash(input.text);
-	const dimensions = input.vector.length;
-	const existing = db
-		.prepare(
-			`SELECT * FROM memory_embeddings
-			  WHERE scope = ? AND item_type = ? AND item_id = ? AND embedding_model = ?`
-		)
-		.get(input.scope, input.itemType, input.itemId, input.embeddingModel) as
-		| EmbeddingRow
-		| undefined;
-	if (existing) {
-		db.prepare(
-			`UPDATE memory_embeddings
-			    SET conversation_id = ?, user_id = ?, dimensions = ?, text_hash = ?, text = ?,
-			        vector_json = ?, updated_at = ?
-			  WHERE id = ?`
-		).run(
-			input.conversationId ?? null,
-			input.userId ?? null,
-			dimensions,
-			hash,
-			input.text,
-			safeJson(input.vector),
-			now,
-			existing.id
-		);
-		const updated = db
-			.prepare('SELECT * FROM memory_embeddings WHERE id = ?')
-			.get(existing.id) as EmbeddingRow;
-		syncVecIndex(db, updated.id, dimensions, input.vector);
-		return rowToEmbedding(updated);
-	}
-	const id = ulid();
-	db.prepare(
-		`INSERT INTO memory_embeddings(
-		   id, conversation_id, user_id, scope, item_type, item_id, embedding_model,
-		   dimensions, text_hash, text, vector_json, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	).run(
-		id,
-		input.conversationId ?? null,
-		input.userId ?? null,
-		input.scope,
-		input.itemType,
-		input.itemId,
-		input.embeddingModel,
-		dimensions,
-		hash,
-		input.text,
-		safeJson(input.vector),
-		now,
-		now
-	);
-	const row = db.prepare('SELECT * FROM memory_embeddings WHERE id = ?').get(id) as EmbeddingRow;
-	syncVecIndex(db, id, dimensions, input.vector);
-	return rowToEmbedding(row);
-}
-
-export function indexEmbedding(input: {
-	conversationId?: string | null;
-	userId?: string | null;
-	scope: 'session' | 'global';
-	itemType: string;
-	itemId: string;
-	text: string;
-}): MemoryEmbedding {
-	return upsertEmbedding({
-		...input,
-		embeddingModel: LOCAL_EMBEDDING_MODEL,
-		vector: localHashEmbedding(input.text)
-	});
-}
-
-export function indexSessionMemoryItem(
-	conversationId: string,
-	itemType: string,
-	itemId: string,
-	text: string
-): void {
-	indexEmbedding({ conversationId, scope: 'session', itemType, itemId, text });
-}
-
-export function indexGlobalMemoryItem(
-	userId: string,
-	itemType: string,
-	itemId: string,
-	text: string
-): void {
-	indexEmbedding({ userId, scope: 'global', itemType, itemId, text });
-}
-
-export function searchEmbeddings(
-	conversationId: string,
-	opts: { query: string; types?: string[]; limit?: number }
-): Array<{ itemType: string; itemId: string; text: string; score: number; sources: string[] }> {
-	const queryVector = localHashEmbedding(opts.query);
-	const accelerated = searchVecEmbeddings(conversationId, queryVector, opts);
-	if (accelerated.length > 0) return accelerated;
-	const rows = getDb()
-		.prepare(
-			`SELECT * FROM memory_embeddings
-			  WHERE scope = 'session' AND conversation_id = ?
-			  ORDER BY updated_at DESC LIMIT 1000`
-		)
-		.all(conversationId) as EmbeddingRow[];
-	const types = new Set(opts.types ?? []);
-	return rows
-		.filter((row) => types.size === 0 || types.has(row.item_type))
-		.map((row) => {
-			const embedding = rowToEmbedding(row);
-			return {
-				itemType: embedding.itemType,
-				itemId: embedding.itemId,
-				text: embedding.text,
-				score: cosineSimilarity(queryVector, embedding.vector) * 5,
-				sources: ['vector']
-			};
-		})
-		.filter((result) => result.score > 0)
-		.sort((a, b) => b.score - a.score)
-		.slice(0, opts.limit ?? 20);
-}
-
-export function vectorAccelerationStatus(): VectorAccelerationStatus {
-	try {
-		const row = getDb().prepare('SELECT vec_version() AS version').get() as
-			| { version?: unknown }
-			| undefined;
-		const version = typeof row?.version === 'string' ? row.version : 'unknown';
-		return {
-			available: true,
-			provider: 'sqlite-vec',
-			message: `sqlite-vec available (${version})`
-		};
-	} catch {
-		return {
-			available: false,
-			provider: 'json-fallback',
-			message: 'sqlite-vec unavailable; using JSON-vector cosine fallback.'
-		};
-	}
-}
-
-function searchVecEmbeddings(
-	conversationId: string,
-	queryVector: number[],
-	opts: { types?: string[]; limit?: number }
-): Array<{ itemType: string; itemId: string; text: string; score: number; sources: string[] }> {
-	const db = getDb();
-	if (!hasSqliteVec(db)) return [];
-	const dimensions = queryVector.length;
-	const table = vecTableName(dimensions);
-	ensureVecSchema(db, dimensions);
-	const types = new Set(opts.types ?? []);
-	const rows = db
-		.prepare(
-			`SELECT e.*, v.distance AS distance
-			   FROM ${table} AS v
-			   JOIN memory_embedding_vec_map AS m
-			     ON m.dimensions = ? AND m.vec_rowid = v.rowid
-			   JOIN memory_embeddings AS e
-			     ON e.id = m.embedding_id
-			  WHERE v.embedding MATCH ?
-			    AND k = ?
-			    AND e.scope = 'session'
-			    AND e.conversation_id = ?`
-		)
-		.all(
-			dimensions,
-			safeJson(queryVector),
-			Math.max(opts.limit ?? 20, 20),
-			conversationId
-		) as Array<EmbeddingRow & { distance: number }>;
-	return rows
-		.filter((row) => types.size === 0 || types.has(row.item_type))
-		.map((row) => ({
-			itemType: row.item_type,
-			itemId: row.item_id,
-			text: row.text,
-			score: Math.max(0, 5 - row.distance),
-			sources: ['sqlite-vec']
-		}))
-		.filter((result) => result.score > 0)
-		.slice(0, opts.limit ?? 20);
 }
 
 export function deleteGlobalMemory(userId: string, id: string): boolean {
@@ -1827,7 +1568,7 @@ export function listToolCalls(
 
 export function search(
 	conversationId: string,
-	opts: { query: string; types?: string[]; limit?: number; includeVector?: boolean }
+	opts: { query: string; types?: string[]; limit?: number }
 ): Array<{ itemType: string; itemId: string; text: string; score?: number; sources?: string[] }> {
 	const query = opts.query.trim();
 	if (!query) return [];
@@ -1847,7 +1588,7 @@ export function search(
 		text: string;
 	}[];
 	const types = new Set(opts.types ?? []);
-	const lexical = rows
+	return rows
 		.filter((row) => types.size === 0 || types.has(row.item_type))
 		.map((row, index) => ({
 			itemType: row.item_type,
@@ -1856,9 +1597,6 @@ export function search(
 			score: limit - index,
 			sources: ['fts']
 		}));
-	if (opts.includeVector === false) return lexical;
-	const vector = searchEmbeddings(conversationId, { query, types: opts.types, limit });
-	return mergeSearchResults([...lexical, ...vector]).slice(0, limit);
 }
 
 export function wipe(conversationId: string): void {
@@ -2318,13 +2056,6 @@ function messageBelongsToConversation(
 }
 
 function clearSessionMemoryProjection(db: Database.Database, conversationId: string): void {
-	const embeddingIds = db
-		.prepare(
-			`SELECT id FROM memory_embeddings
-			  WHERE scope = 'session' AND conversation_id = ?`
-		)
-		.all(conversationId) as { id: string }[];
-	for (const row of embeddingIds) deleteVecIndex(db, row.id);
 	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_patch_items WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_tool_calls WHERE conversation_id = ?').run(conversationId);
@@ -2335,10 +2066,6 @@ function clearSessionMemoryProjection(db: Database.Database, conversationId: str
 	db.prepare('DELETE FROM memory_facts WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_events WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_entities WHERE conversation_id = ?').run(conversationId);
-	db.prepare(
-		`DELETE FROM memory_embeddings
-		  WHERE scope = 'session' AND conversation_id = ?`
-	).run(conversationId);
 }
 
 export function rebuildSessionMemoryProjection(conversationId: string): void {
@@ -2405,17 +2132,6 @@ function applySessionMemoryLogProjection(
 
 function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: string): void {
 	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
-	const embeddingIds = db
-		.prepare(
-			`SELECT id FROM memory_embeddings
-			  WHERE scope = 'session' AND conversation_id = ?`
-		)
-		.all(conversationId) as { id: string }[];
-	for (const row of embeddingIds) deleteVecIndex(db, row.id);
-	db.prepare(
-		`DELETE FROM memory_embeddings
-		  WHERE scope = 'session' AND conversation_id = ?`
-	).run(conversationId);
 	for (const row of db
 		.prepare(`SELECT * FROM memory_entities WHERE conversation_id = ?`)
 		.all(conversationId) as EntityRow[]) {
@@ -2425,7 +2141,6 @@ function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: stri
 		.prepare(`SELECT * FROM memory_events WHERE conversation_id = ?`)
 		.all(conversationId) as EventRow[]) {
 		indexItem(db, conversationId, 'event', row.id, eventIndexText(row));
-		indexSessionMemoryItem(conversationId, 'event', row.id, eventIndexText(row));
 	}
 	for (const row of db
 		.prepare(`SELECT * FROM memory_facts WHERE conversation_id = ?`)
@@ -2807,7 +2522,6 @@ function syncSessionIndex(
 ) {
 	if (shouldIndexSessionItem(itemType, status)) {
 		indexItem(db, conversationId, itemType, itemId, text);
-		indexSessionMemoryItem(conversationId, itemType, itemId, text);
 	} else {
 		deleteSessionIndex(db, conversationId, itemType, itemId);
 	}
@@ -2823,25 +2537,8 @@ function deleteSessionIndex(
 	itemType: string,
 	itemId: string
 ) {
-	const embeddingIds = db
-		.prepare(
-			`SELECT id FROM memory_embeddings
-			  WHERE scope = 'session'
-			    AND conversation_id = ?
-			    AND item_type = ?
-			    AND item_id = ?`
-		)
-		.all(conversationId, itemType, itemId) as { id: string }[];
-	for (const row of embeddingIds) deleteVecIndex(db, row.id);
 	db.prepare(
 		'DELETE FROM memory_search_index WHERE conversation_id = ? AND item_type = ? AND item_id = ?'
-	).run(conversationId, itemType, itemId);
-	db.prepare(
-		`DELETE FROM memory_embeddings
-		  WHERE scope = 'session'
-		    AND conversation_id = ?
-		    AND item_type = ?
-		    AND item_id = ?`
 	).run(conversationId, itemType, itemId);
 }
 
@@ -2857,94 +2554,10 @@ function indexGlobalMemory(db: Database.Database, userId: string, itemId: string
 }
 
 function deleteGlobalIndex(db: Database.Database, userId: string, itemId: string) {
-	const embeddingIds = db
-		.prepare(
-			`SELECT id FROM memory_embeddings
-			  WHERE scope = 'global'
-			    AND user_id = ?
-			    AND item_id = ?`
-		)
-		.all(userId, itemId) as { id: string }[];
-	for (const row of embeddingIds) deleteVecIndex(db, row.id);
 	db.prepare('DELETE FROM global_memory_search_index WHERE user_id = ? AND item_id = ?').run(
 		userId,
 		itemId
 	);
-	db.prepare(
-		`DELETE FROM memory_embeddings
-		  WHERE scope = 'global'
-		    AND user_id = ?
-		    AND item_id = ?`
-	).run(userId, itemId);
-}
-
-function syncVecIndex(
-	db: Database.Database,
-	embeddingId: string,
-	dimensions: number,
-	vector: number[]
-): void {
-	if (!hasSqliteVec(db) || dimensions <= 0) return;
-	ensureVecSchema(db, dimensions);
-	deleteVecIndex(db, embeddingId);
-	const table = vecTableName(dimensions);
-	const result = db.prepare(`INSERT INTO ${table}(embedding) VALUES (?)`).run(safeJson(vector));
-	const rowid = Number(result.lastInsertRowid);
-	db.prepare(
-		`INSERT INTO memory_embedding_vec_map(embedding_id, dimensions, vec_rowid)
-		 VALUES (?, ?, ?)`
-	).run(embeddingId, dimensions, rowid);
-}
-
-function deleteVecIndex(db: Database.Database, embeddingId: string): void {
-	if (!hasSqliteVec(db)) return;
-	ensureVecMapTable(db);
-	const rows = db
-		.prepare('SELECT * FROM memory_embedding_vec_map WHERE embedding_id = ?')
-		.all(embeddingId) as VecMapRow[];
-	for (const row of rows) {
-		const table = vecTableName(row.dimensions);
-		try {
-			db.prepare(`DELETE FROM ${table} WHERE rowid = ?`).run(row.vec_rowid);
-		} catch {
-			/* Table may not exist if a failed/older deployment never created it. */
-		}
-	}
-	db.prepare('DELETE FROM memory_embedding_vec_map WHERE embedding_id = ?').run(embeddingId);
-}
-
-function ensureVecSchema(db: Database.Database, dimensions: number): void {
-	ensureVecMapTable(db);
-	db.prepare(
-		`CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(dimensions)}
-		   USING vec0(embedding float[${dimensions}])`
-	).run();
-}
-
-function ensureVecMapTable(db: Database.Database): void {
-	db.prepare(
-		`CREATE TABLE IF NOT EXISTS memory_embedding_vec_map (
-		   embedding_id TEXT PRIMARY KEY REFERENCES memory_embeddings(id) ON DELETE CASCADE,
-		   dimensions INTEGER NOT NULL,
-		   vec_rowid INTEGER NOT NULL
-		 )`
-	).run();
-}
-
-function vecTableName(dimensions: number): string {
-	if (!Number.isInteger(dimensions) || dimensions <= 0 || dimensions > 100_000) {
-		throw new Error(`Invalid vector dimensions: ${dimensions}`);
-	}
-	return `memory_embedding_vec_${dimensions}`;
-}
-
-function hasSqliteVec(db: Database.Database): boolean {
-	try {
-		db.prepare('SELECT vec_version()').get();
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 function rowToEntity(row: EntityRow): MemoryEntity {
@@ -3106,65 +2719,12 @@ function rowToGlobalMemory(row: GlobalMemoryRow): GlobalMemory {
 	};
 }
 
-function rowToEmbedding(row: EmbeddingRow): MemoryEmbedding {
-	const parsed = parseJson(row.vector_json, []);
-	return {
-		id: row.id,
-		conversationId: row.conversation_id,
-		userId: row.user_id,
-		scope: row.scope,
-		itemType: row.item_type,
-		itemId: row.item_id,
-		embeddingModel: row.embedding_model,
-		dimensions: row.dimensions,
-		textHash: row.text_hash,
-		text: row.text,
-		vector: Array.isArray(parsed)
-			? parsed.filter((value): value is number => typeof value === 'number')
-			: [],
-		createdAt: row.created_at,
-		updatedAt: row.updated_at
-	};
-}
-
 function normalizeKind(kind: string): 'entity' | 'fact' | 'decision' | 'open_loop' | null {
 	if (kind === 'entity' || kind === 'entities') return 'entity';
 	if (kind === 'fact' || kind === 'facts') return 'fact';
 	if (kind === 'decision' || kind === 'decisions') return 'decision';
 	if (kind === 'open_loop' || kind === 'open-loops' || kind === 'openLoops') return 'open_loop';
 	return null;
-}
-
-function mergeSearchResults(
-	results: Array<{
-		itemType: string;
-		itemId: string;
-		text: string;
-		score?: number;
-		sources?: string[];
-	}>
-): Array<{ itemType: string; itemId: string; text: string; score: number; sources: string[] }> {
-	const merged = new Map<
-		string,
-		{ itemType: string; itemId: string; text: string; score: number; sources: string[] }
-	>();
-	for (const result of results) {
-		const key = `${result.itemType}:${result.itemId}`;
-		const existing = merged.get(key);
-		if (existing) {
-			existing.score += result.score ?? 0;
-			existing.sources = [...new Set([...existing.sources, ...(result.sources ?? [])])];
-		} else {
-			merged.set(key, {
-				itemType: result.itemType,
-				itemId: result.itemId,
-				text: result.text,
-				score: result.score ?? 0,
-				sources: result.sources ?? []
-			});
-		}
-	}
-	return [...merged.values()].sort((a, b) => b.score - a.score);
 }
 
 function parseJson(raw: string, fallback: unknown): unknown {

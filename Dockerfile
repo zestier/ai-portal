@@ -3,11 +3,11 @@
 # Multi-arch image (linux/amd64 + linux/arm64).
 #
 # The SvelteKit build output is pure JS (arch-independent). The only native
-# artifacts are `better-sqlite3`'s `.node` and sqlite-vec's loadable extension.
-# To avoid running `vite build` under QEMU when cross-compiling, the `build`
-# stage runs natively on the host platform; the `deps` stage runs on the target
-# platform and uses pnpm's install lifecycle to fetch the right prebuilt native
-# artifacts from npm. The `runtime` stage combines them.
+# artifact is `better-sqlite3`'s `.node`. To avoid running `vite build` under
+# QEMU when cross-compiling, the `build` stage runs natively on the host
+# platform; the `deps` stage runs on the target platform and uses pnpm's install
+# lifecycle to fetch the right prebuilt native artifacts from npm. The `runtime`
+# stage combines them.
 
 ARG NODE_VERSION=24
 

@@ -69,9 +69,6 @@ const Schema = z
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),
 		MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(6),
 		MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: z.coerce.number().int().positive().default(60_000),
-		MEMORY_EMBEDDING_PROVIDER: z.enum(['local-hash', 'openai-compatible']).default('local-hash'),
-		MEMORY_EMBEDDING_MODEL: z.string().trim().optional(),
-		MEMORY_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 
 		IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(15),
 		MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(4),

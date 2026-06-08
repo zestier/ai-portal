@@ -1,7 +1,6 @@
 // SQLite singleton + migrations.
 
 import Database from 'better-sqlite3';
-import { getLoadablePath, load as loadSqliteVec } from 'sqlite-vec';
 import { mkdirSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,23 +32,58 @@ export function getDb(): Database.Database {
 	mkdirSync(dataDir, { recursive: true });
 	const path = join(dataDir, 'portal.db');
 	const db = new Database(path);
-	loadVectorExtension(db);
 	db.pragma('journal_mode = WAL');
 	db.pragma('synchronous = NORMAL');
 	db.pragma('foreign_keys = ON');
 	db.pragma('busy_timeout = 5000');
 	runMigrations(db);
+	dropLegacyEmbeddingTables(db);
 	setCached(db);
 	log.info('db.open', { path });
 	return db;
 }
 
-function loadVectorExtension(db: Database.Database) {
+// One-time teardown for the removed memory-embedding / sqlite-vec layer. Older
+// deployments carry `memory_embeddings`, `memory_embedding_vec_map`, and the
+// runtime-created `memory_embedding_vec_<dims>` vec0 virtual tables. Since the
+// sqlite-vec extension is no longer loaded, those virtual tables can't be
+// dropped normally ("no such module: vec0"), so remove their schema definitions
+// via writable_schema, then drop the now-ordinary shadow + base tables so their
+// pages are freed. No-ops cheaply once the tables are gone.
+function dropLegacyEmbeddingTables(db: Database.Database) {
+	const hasAny = db
+		.prepare(
+			`SELECT 1 FROM sqlite_master
+			  WHERE name = 'memory_embeddings'
+			     OR name = 'memory_embedding_vec_map'
+			     OR name GLOB 'memory_embedding_vec_*'
+			  LIMIT 1`
+		)
+		.get();
+	if (!hasAny) return;
+	db.unsafeMode(true);
 	try {
-		loadSqliteVec(db);
-		log.info('db.sqlite_vec.loaded', { path: getLoadablePath() });
+		db.exec(`PRAGMA writable_schema=ON;`);
+		// Scope to our own vec0 tables so an unrelated virtual table can never be
+		// caught by the `USING vec0` match.
+		db.prepare(
+			`DELETE FROM sqlite_master
+			  WHERE sql LIKE '%USING vec0%'
+			    AND name GLOB 'memory_embedding_vec_*'`
+		).run();
+		db.exec(`PRAGMA writable_schema=RESET;`);
+		db.exec(`PRAGMA writable_schema=OFF;`);
+		const shadow = db
+			.prepare(`SELECT name FROM sqlite_master WHERE name GLOB 'memory_embedding_vec_*'`)
+			.all() as { name: string }[];
+		for (const t of shadow) db.exec(`DROP TABLE IF EXISTS "${t.name}";`);
+		db.exec(`DROP TABLE IF EXISTS memory_embedding_vec_map;`);
+		db.exec(`DROP TABLE IF EXISTS memory_embeddings;`);
+		log.info('db.legacy_embeddings.dropped', {});
 	} catch (e) {
-		log.warn('db.sqlite_vec.load_failed', { err: String(e) });
+		log.warn('db.legacy_embeddings.drop_failed', { err: String(e) });
+	} finally {
+		db.unsafeMode(false);
 	}
 }
 

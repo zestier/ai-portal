@@ -204,17 +204,6 @@
 			<div class="error-wrap"><Alert kind="error">Memory inspector failed: {error}</Alert></div>
 		{/if}
 		<div class="mode">Mode: <strong>{String(snapshot.mode ?? 'off')}</strong></div>
-		{#if snapshot.vectorAcceleration && typeof snapshot.vectorAcceleration === 'object'}
-			<div class="mode">
-				Vector search:
-				<strong
-					>{String(
-						(snapshot.vectorAcceleration as { provider?: unknown }).provider ?? 'unknown'
-					)}</strong
-				>
-				<span>{String((snapshot.vectorAcceleration as { message?: unknown }).message ?? '')}</span>
-			</div>
-		{/if}
 		<div class="grid">
 			{@render MemoryList('Entities', 'entities', items('entities'), true)}
 			{@render MemoryList('Facts', 'facts', items('facts'), true)}

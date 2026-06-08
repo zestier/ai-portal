@@ -29,8 +29,7 @@ The portal now includes the full production-oriented foundation described here:
 - opt-in memory-backed turns with fresh context, initial packets, and mandatory
   memory tools
 - typed session memory tables, patch audit trails, validation issues, global
-  memory, FTS search, local vector fallback, and optional OpenAI-compatible
-  embedding provider support
+  memory, and FTS (full-text) search
 - memory inspector workflows for edit, delete, wipe, patch revert, and individual
   patch-item approve/reject review
 - per-conversation controls for memory mode, harvester model override, and
@@ -39,10 +38,9 @@ The portal now includes the full production-oriented foundation described here:
   conflict checks
 - custom memory profile persistence and settings UI groundwork for user-authored
   schemas/instructions
-- sqlite-vec availability detection hooks while preserving JSON-vector fallback
 - relevance-conditioned packet injection: facts/entities/events are ranked
-  against the current turn (user message + recent transcript) using the hybrid
-  FTS + vector ranking that powers `memory_search`, with a token-budgeted body,
+  against the current turn (user message + recent transcript) using the FTS
+  ranking that powers `memory_search`, with a token-budgeted body,
   an always-present entity-key index, and a server-side auto-search prestep
 - source-side consolidation as a projection derivation: each observation is one
   `fact.create` event, and a consolidation pass (run live and on every rebuild)
@@ -522,8 +520,8 @@ type. The selection pipeline is:
 
 1. **Relevance ranking.** When `opts.query` is provided (the prompt builder
    passes the user message plus recent transcript), facts, entities, and events
-   are ranked against a single per-turn `memory_search` call (the same hybrid
-   FTS + vector ranking the tool exposes); its top hits also feed the
+   are ranked against a single per-turn `memory_search` call (the same FTS
+   ranking the tool exposes); its top hits also feed the
    auto-search section below, so only one search runs per turn. Relevance
    dominates; salience (for facts) and recency (for events/entities) break ties
    and order anything the query did not match.
