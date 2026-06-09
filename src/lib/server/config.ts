@@ -69,6 +69,10 @@ const Schema = z
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),
 		MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(6),
 		MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: z.coerce.number().int().positive().default(60_000),
+		// Open-loop liveness: a presented-but-untouched loop is auto-dropped
+		// after this many consecutive model-backed extraction passes (higher
+		// priority loops get proportionally more grace). 0 disables aging.
+		MEMORY_OPEN_LOOP_MAX_IDLE_TURNS: z.coerce.number().int().min(0).default(6),
 
 		IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(15),
 		MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(4),

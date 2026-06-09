@@ -51,14 +51,14 @@ const BUILT_IN_PROFILES: Record<MemoryMode, MemoryProfileDefinition> = {
 		mode: 'lightweight',
 		label: 'Lightweight',
 		instructions: baseInstructions,
-		primitives: ['directive', 'decision', 'fact', 'open_loop', 'event', 'entity'],
+		primitives: ['entity', 'attribute', 'directive', 'decision', 'open_loop', 'event'],
 		validationFocus: ['provenance', 'low_confidence', 'secret_filtering']
 	},
 	project: {
 		mode: 'project',
 		label: 'Project',
 		instructions: `${baseInstructions} Repository and command memories are historical until revalidated against current files or tool output.`,
-		primitives: ['directive', 'decision', 'fact', 'open_loop', 'event', 'entity'],
+		primitives: ['entity', 'attribute', 'directive', 'decision', 'open_loop', 'event'],
 		validationFocus: ['historical_repository_truth', 'secret_filtering', 'stale_observations']
 	},
 	story: {

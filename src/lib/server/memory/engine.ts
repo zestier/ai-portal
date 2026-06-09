@@ -100,6 +100,15 @@ export interface MemoryPatchProposal {
 		status: 'resolved' | 'dropped';
 		reason?: string;
 	}>;
+	/**
+	 * Ids of existing open loops the extractor is explicitly keeping alive this
+	 * turn. Not a commit action — `commitPatch` ignores it. It feeds open-loop
+	 * liveness (see {@link ageOpenLoops}): a loop that was presented to the
+	 * extractor but appears in neither `keepOpenLoops` nor `resolveOpenLoops`
+	 * accrues idle turns and is eventually auto-dropped, so dead threads stop
+	 * accumulating without the model having to notice their absence.
+	 */
+	keepOpenLoops?: string[];
 }
 
 export interface CommitMemoryPatchInput {
@@ -443,7 +452,13 @@ export function validatePatch(
 	if (opts.conversationId) {
 		const seenResolutionIds = new Set<string>();
 		for (const resolution of patch.resolveOpenLoops ?? []) {
-			if (seenResolutionIds.has(resolution.id)) {
+			// A resolution may reference a loop by its stable key or its raw id;
+			// resolve to the canonical id so dedupe and existence checks agree
+			// regardless of which form the model used.
+			const loopId = memoryRepo.resolveOpenLoopId(opts.conversationId, resolution.id);
+			const existing = loopId ? memoryRepo.getOpenLoop(opts.conversationId, loopId) : null;
+			const dedupeKey = loopId ?? resolution.id;
+			if (seenResolutionIds.has(dedupeKey)) {
 				issues.push({
 					severity: 'warning',
 					code: 'open_loop_resolution_duplicate',
@@ -451,11 +466,10 @@ export function validatePatch(
 				});
 				continue;
 			}
-			seenResolutionIds.add(resolution.id);
-			const existing = memoryRepo.getOpenLoop(opts.conversationId, resolution.id);
+			seenResolutionIds.add(dedupeKey);
 			if (!existing) {
-				// Likely a hallucinated or already-deleted id; the commit is a
-				// no-op, so warn rather than block the rest of the patch.
+				// Likely a hallucinated or already-deleted reference; the commit is
+				// a no-op, so warn rather than block the rest of the patch.
 				issues.push({
 					severity: 'warning',
 					code: 'open_loop_resolution_unknown_id',
@@ -877,10 +891,12 @@ export function commitPatch(
 	}
 	let resolvedOpenLoops = 0;
 	for (const resolution of input.patch.resolveOpenLoops ?? []) {
-		const existing = memoryRepo.getOpenLoop(input.conversationId, resolution.id);
-		// Skip unknown ids (already warned in validation) so a hallucinated id
-		// doesn't abort the rest of the commit.
-		if (!existing) continue;
+		// Accept either the stable loop key or the raw id; resolve to canonical id.
+		const loopId = memoryRepo.resolveOpenLoopId(input.conversationId, resolution.id);
+		const existing = loopId ? memoryRepo.getOpenLoop(input.conversationId, loopId) : null;
+		// Skip unknown references (already warned in validation) so a hallucinated
+		// id doesn't abort the rest of the commit.
+		if (!loopId || !existing) continue;
 		// Re-resolving an already-closed loop to the same status is a no-op:
 		// skip it so we don't append the reason again (unbounded description
 		// growth) or record a duplicate 'resolve' audit item across turns.
@@ -892,7 +908,7 @@ export function commitPatch(
 			existing.status === 'open' && resolution.reason?.trim()
 				? `${existing.description}${existing.description ? '\n' : ''}[${resolution.status}] ${resolution.reason.trim()}`
 				: existing.description;
-		const updated = memoryRepo.updateOpenLoop(input.conversationId, resolution.id, {
+		const updated = memoryRepo.updateOpenLoop(input.conversationId, loopId, {
 			status: resolution.status,
 			description
 		});
@@ -901,7 +917,7 @@ export function commitPatch(
 		memoryRepo.recordPatchItem(input.conversationId, {
 			patchId: patchRecord.id,
 			itemType: 'open_loop',
-			itemId: resolution.id,
+			itemId: loopId,
 			action: 'resolve'
 		});
 	}
@@ -918,6 +934,47 @@ export function commitPatch(
 			issues: validation.issues.length
 		}
 	};
+}
+
+export interface AgeOpenLoopsResult {
+	/** Ids of loops auto-dropped this turn because they aged out. */
+	dropped: string[];
+}
+
+/**
+ * Open-loop liveness ("touch-to-keep"). LLMs reliably notice what is present but
+ * are poor at noticing what is *absent*, which is why open loops historically
+ * accumulate forever — closing one requires spotting that a thread is no longer
+ * live. This inverts the burden: every model-backed extraction the model lists
+ * the loops that are still live (`keptLoopIds`); a loop that was presented to
+ * the extractor but is neither kept nor closed accrues an idle turn, and once it
+ * has been ignored for `baseThreshold + max(0, priority)` consecutive passes it
+ * is auto-dropped.
+ *
+ * Only loops in `presentedLoopIds` are eligible — a loop the extractor never saw
+ * (e.g. beyond the packet's open-loop cap) is never silently culled. The whole
+ * mechanism is event-sourced (see `memoryRepo.recordOpenLoopLiveness`): the idle
+ * counter and auto-drop are derived by replaying the liveness events, so
+ * fork/rewind reconstruct them faithfully, and the drop is audited and
+ * reversible like any other memory mutation.
+ */
+export function ageOpenLoops(
+	conversationId: string,
+	opts: {
+		presentedLoopIds: Iterable<string>;
+		keptLoopIds?: Iterable<string>;
+		baseThreshold: number;
+		sourceMessageId?: string | null;
+		turnId?: string | null;
+	}
+): AgeOpenLoopsResult {
+	return memoryRepo.recordOpenLoopLiveness(conversationId, {
+		presentedLoopIds: [...opts.presentedLoopIds],
+		keptLoopIds: opts.keptLoopIds ? [...opts.keptLoopIds] : [],
+		baseThreshold: opts.baseThreshold,
+		sourceMessageId: opts.sourceMessageId,
+		turnId: opts.turnId
+	});
 }
 
 export function extractHeuristicPatch(params: {
@@ -978,81 +1035,317 @@ export function extractHeuristicPatch(params: {
 	return patch;
 }
 
-export const MemoryPatchProposalSchema: z.ZodType<MemoryPatchProposal> = z
+/**
+ * The write model the extractor (and any direct caller) speaks. Deliberately
+ * narrowed to the two concepts that actually exist — `entities` (the durable
+ * referents) and `facts` (everything you record about them) — plus
+ * `closeLoops` for retiring existing threads.
+ *
+ * Every item in `facts` is a discriminated union on a REQUIRED `kind`, with no
+ * default and no fallback: the model must explicitly decide what each thing is
+ * before it can be written. `directive`, `decision`, `open_loop`, and `event`
+ * are no longer separate top-level arrays nor magic predicates — they are fact
+ * kinds. This is the single change that makes mis-filing (the classic "a
+ * directive came out as a fact / decision / nothing at all") structurally hard:
+ * there is exactly one place to put a thing, and you cannot put it there
+ * without naming its kind.
+ */
+const PatchEntitySchema = z.object({
+	entityKey: z.string().min(1).max(200),
+	entityType: z.string().min(1).max(80),
+	displayName: z.string().min(1).max(200),
+	summary: z.string().max(4000).optional(),
+	metadata: z.unknown().optional()
+});
+
+const PatchFactItemSchema = z.discriminatedUnion('kind', [
+	z.object({
+		kind: z.literal('attribute'),
+		entityKey: z.string().min(1).max(200).optional(),
+		predicate: z.string().min(1).max(100),
+		value: z.custom<unknown>((value) => value !== undefined, {
+			message: 'value is required'
+		}),
+		visibility: z.string().min(1).max(100).optional(),
+		confidence: z.number().min(0).max(1).optional()
+	}),
+	z.object({
+		kind: z.literal('directive'),
+		rule: z.string().trim().min(3).max(4000),
+		entityKey: z.string().min(1).max(200).optional()
+	}),
+	z.object({
+		kind: z.literal('decision'),
+		subject: z.string().min(1).max(200),
+		decision: z.string().min(1).max(4000),
+		rationale: z.string().max(4000).optional()
+	}),
+	z.object({
+		kind: z.literal('open_loop'),
+		loopType: z.string().min(1).max(100),
+		title: z.string().min(1).max(200),
+		description: z.string().max(8000).optional(),
+		priority: z.number().int().min(-100).max(100).optional(),
+		relatedEntityKeys: z.array(z.string().min(1).max(200)).max(50).optional()
+	}),
+	z.object({
+		kind: z.literal('event'),
+		eventType: z.string().min(1).max(100),
+		summary: z.string().min(1).max(4000),
+		entityKey: z.string().min(1).max(200).optional(),
+		payload: z.unknown().optional(),
+		visibility: z.string().min(1).max(100).optional(),
+		confidence: z.number().min(0).max(1).optional()
+	})
+]);
+
+const PatchCloseLoopSchema = z.object({
+	id: z.string().min(1).max(200),
+	status: z.enum(['resolved', 'dropped']),
+	reason: z.string().max(2000).optional()
+});
+
+export type MemoryPatchFactItem = z.infer<typeof PatchFactItemSchema>;
+
+export interface MemoryPatchInput {
+	entities?: z.infer<typeof PatchEntitySchema>[];
+	facts?: MemoryPatchFactItem[];
+	closeLoops?: z.infer<typeof PatchCloseLoopSchema>[];
+	keepOpenLoops?: string[];
+}
+
+/**
+ * Fan the unified `facts[]` (discriminated on `kind`) back out into the
+ * internal, table-shaped {@link MemoryPatchProposal} that `validatePatch` and
+ * `commitPatch` already understand. Storage, the inspector, and the editable
+ * `memory/[kind]` routes are unchanged — only the model-facing write shape is
+ * unified. A `directive` becomes a pinned fact with the reserved
+ * `directive` predicate, exactly as before.
+ */
+export function normalizeMemoryPatchInput(input: MemoryPatchInput): MemoryPatchProposal {
+	const proposal: MemoryPatchProposal = {};
+	if (input.entities?.length) proposal.entities = input.entities;
+
+	const facts: NonNullable<MemoryPatchProposal['facts']> = [];
+	const events: NonNullable<MemoryPatchProposal['events']> = [];
+	const decisions: NonNullable<MemoryPatchProposal['decisions']> = [];
+	const openLoops: NonNullable<MemoryPatchProposal['openLoops']> = [];
+
+	for (const item of input.facts ?? []) {
+		switch (item.kind) {
+			case 'attribute':
+				facts.push({
+					entityKey: item.entityKey,
+					predicate: item.predicate,
+					value: item.value,
+					visibility: item.visibility,
+					confidence: item.confidence
+				});
+				break;
+			case 'directive':
+				facts.push({
+					entityKey: item.entityKey,
+					predicate: DIRECTIVE_PREDICATE,
+					value: item.rule
+				});
+				break;
+			case 'decision':
+				decisions.push({
+					subject: item.subject,
+					decision: item.decision,
+					rationale: item.rationale
+				});
+				break;
+			case 'open_loop':
+				openLoops.push({
+					loopType: item.loopType,
+					title: item.title,
+					description: item.description,
+					priority: item.priority,
+					relatedEntityKeys: item.relatedEntityKeys
+				});
+				break;
+			case 'event':
+				events.push({
+					eventType: item.eventType,
+					summary: item.summary,
+					entityKey: item.entityKey,
+					payload: item.payload,
+					visibility: item.visibility,
+					confidence: item.confidence
+				});
+				break;
+		}
+	}
+
+	if (facts.length) proposal.facts = facts;
+	if (events.length) proposal.events = events;
+	if (decisions.length) proposal.decisions = decisions;
+	if (openLoops.length) proposal.openLoops = openLoops;
+	if (input.closeLoops?.length) proposal.resolveOpenLoops = input.closeLoops;
+	if (input.keepOpenLoops?.length) proposal.keepOpenLoops = input.keepOpenLoops;
+	return proposal;
+}
+
+export const MemoryPatchInputSchema = z
 	.object({
-		entities: z
-			.array(
-				z.object({
-					entityKey: z.string().min(1).max(200),
-					entityType: z.string().min(1).max(80),
-					displayName: z.string().min(1).max(200),
-					summary: z.string().max(4000).optional(),
-					metadata: z.unknown().optional()
-				})
-			)
-			.max(50)
-			.optional(),
-		events: z
-			.array(
-				z.object({
-					eventType: z.string().min(1).max(100),
-					summary: z.string().min(1).max(4000),
-					payload: z.unknown().optional(),
-					visibility: z.string().min(1).max(100).optional(),
-					confidence: z.number().min(0).max(1).optional(),
-					entityKey: z.string().min(1).max(200).optional()
-				})
-			)
-			.max(100)
-			.optional(),
-		facts: z
-			.array(
-				z.object({
-					entityKey: z.string().min(1).max(200).optional(),
-					predicate: z.string().min(1).max(100),
-					value: z.custom<unknown>((value) => value !== undefined, {
-						message: 'value is required'
-					}),
-					visibility: z.string().min(1).max(100).optional(),
-					confidence: z.number().min(0).max(1).optional()
-				})
-			)
-			.max(100)
-			.optional(),
-		decisions: z
-			.array(
-				z.object({
-					subject: z.string().min(1).max(200),
-					decision: z.string().min(1).max(4000),
-					rationale: z.string().max(4000).optional()
-				})
-			)
-			.max(50)
-			.optional(),
-		openLoops: z
-			.array(
-				z.object({
-					loopType: z.string().min(1).max(100),
-					title: z.string().min(1).max(200),
-					description: z.string().max(8000).optional(),
-					priority: z.number().int().min(-100).max(100).optional(),
-					relatedEntityKeys: z.array(z.string().min(1).max(200)).max(50).optional()
-				})
-			)
-			.max(50)
-			.optional(),
-		resolveOpenLoops: z
-			.array(
-				z.object({
-					id: z.string().min(1).max(200),
-					status: z.enum(['resolved', 'dropped']),
-					reason: z.string().max(2000).optional()
-				})
-			)
-			.max(50)
-			.optional()
+		entities: z.array(PatchEntitySchema).max(50).optional(),
+		facts: z.array(PatchFactItemSchema).max(300).optional(),
+		closeLoops: z.array(PatchCloseLoopSchema).max(50).optional(),
+		keepOpenLoops: z.array(z.string().min(1).max(200)).max(200).optional()
 	})
 	.strict();
+
+/**
+ * The schema model output is parsed with. Accepts the unified write shape and
+ * transforms it into the internal {@link MemoryPatchProposal}, so every
+ * downstream consumer (`validatePatch`, `commitPatch`, summarization) is
+ * untouched.
+ */
+export const MemoryPatchProposalSchema =
+	MemoryPatchInputSchema.transform(normalizeMemoryPatchInput);
+
+/**
+ * Hand-written JSON Schema for the unified `patch` argument, shared by the
+ * `memory_propose_patch` tool parameters and the single-shot extractor's
+ * `response_format`, and echoed back to the model when a staged patch fails
+ * validation. Mirrors {@link MemoryPatchInputSchema}; the Zod parse remains the
+ * source of truth.
+ */
+export const MEMORY_PATCH_JSON_SCHEMA = {
+	type: 'object',
+	additionalProperties: false,
+	description:
+		'Durable memory patch. Only two concepts exist: entities (the referents) and facts (everything you record about them). Every item in facts MUST set "kind"; there is no default.',
+	properties: {
+		entities: {
+			type: 'array',
+			maxItems: 50,
+			description:
+				'Durable referents that facts attach to. Reuse an existing entityKey when one exists.',
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['entityKey', 'entityType', 'displayName'],
+				properties: {
+					entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+					entityType: { type: 'string', minLength: 1, maxLength: 80 },
+					displayName: { type: 'string', minLength: 1, maxLength: 200 },
+					summary: { type: 'string', maxLength: 4000 },
+					metadata: { description: 'Arbitrary JSON metadata.' }
+				}
+			}
+		},
+		facts: {
+			type: 'array',
+			maxItems: 300,
+			description:
+				'Everything to remember, each tagged with its kind. attribute = something to KNOW; directive = a standing rule for how you must behave; decision = a settled choice; open_loop = an unresolved task/question; event = something that happened.',
+			items: {
+				oneOf: [
+					{
+						type: 'object',
+						additionalProperties: false,
+						required: ['kind', 'predicate', 'value'],
+						properties: {
+							kind: { const: 'attribute' },
+							entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+							predicate: { type: 'string', minLength: 1, maxLength: 100 },
+							value: { description: 'Required attribute value (any JSON type except undefined).' },
+							visibility: { type: 'string', minLength: 1, maxLength: 100 },
+							confidence: { type: 'number', minimum: 0, maximum: 1 }
+						}
+					},
+					{
+						type: 'object',
+						additionalProperties: false,
+						required: ['kind', 'rule'],
+						properties: {
+							kind: { const: 'directive' },
+							rule: {
+								type: 'string',
+								minLength: 3,
+								maxLength: 4000,
+								description: 'The standing instruction, stated in full as a declarative rule.'
+							},
+							entityKey: { type: 'string', minLength: 1, maxLength: 200 }
+						}
+					},
+					{
+						type: 'object',
+						additionalProperties: false,
+						required: ['kind', 'subject', 'decision'],
+						properties: {
+							kind: { const: 'decision' },
+							subject: { type: 'string', minLength: 1, maxLength: 200 },
+							decision: { type: 'string', minLength: 1, maxLength: 4000 },
+							rationale: { type: 'string', maxLength: 4000 }
+						}
+					},
+					{
+						type: 'object',
+						additionalProperties: false,
+						required: ['kind', 'loopType', 'title'],
+						properties: {
+							kind: { const: 'open_loop' },
+							loopType: { type: 'string', minLength: 1, maxLength: 100 },
+							title: { type: 'string', minLength: 1, maxLength: 200 },
+							description: { type: 'string', maxLength: 8000 },
+							priority: { type: 'integer', minimum: -100, maximum: 100 },
+							relatedEntityKeys: {
+								type: 'array',
+								maxItems: 50,
+								items: { type: 'string', minLength: 1, maxLength: 200 }
+							}
+						}
+					},
+					{
+						type: 'object',
+						additionalProperties: false,
+						required: ['kind', 'eventType', 'summary'],
+						properties: {
+							kind: { const: 'event' },
+							eventType: { type: 'string', minLength: 1, maxLength: 100 },
+							summary: { type: 'string', minLength: 1, maxLength: 4000 },
+							entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+							payload: { description: 'Arbitrary JSON payload.' },
+							visibility: { type: 'string', minLength: 1, maxLength: 100 },
+							confidence: { type: 'number', minimum: 0, maximum: 1 }
+						}
+					}
+				]
+			}
+		},
+		closeLoops: {
+			type: 'array',
+			maxItems: 50,
+			description:
+				'Retire existing open loops when this turn resolved or abandoned them. Reference each loop by the handle shown in its [id=...] in the packet (its stable key, e.g. loop.find_attic_key).',
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['id', 'status'],
+				properties: {
+					id: {
+						type: 'string',
+						minLength: 1,
+						maxLength: 200,
+						description: 'The loop handle from its [id=...] in the packet (key or raw id).'
+					},
+					status: { type: 'string', enum: ['resolved', 'dropped'] },
+					reason: { type: 'string', maxLength: 2000 }
+				}
+			}
+		},
+		keepOpenLoops: {
+			type: 'array',
+			maxItems: 200,
+			description:
+				"Handles (the [id=...] shown in the packet, i.e. each loop's stable key) of presented open loops that are STILL live and should stay open. Any presented loop you neither keep here nor close in closeLoops ages out and is auto-dropped after a few turns.",
+			items: { type: 'string', minLength: 1, maxLength: 200 }
+		}
+	}
+} as const;
 
 function memoryInstructions(mode: MemoryMode): string {
 	return getMemoryProfile(mode).instructions;
@@ -1084,16 +1377,18 @@ function formatMemoryValue(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-function entityLine(entity: memoryRepo.MemoryEntity): string {
+function entityLine(entity: memoryRepo.MemoryEntity, includeId = false): string {
 	const status = entity.status && entity.status !== 'active' ? ` [${entity.status}]` : '';
 	const summary = entity.summary ? ` — ${cleanSentence(entity.summary)}` : '';
-	return `- ${entity.entityKey} (${entity.entityType}) "${entity.displayName}"${status}${summary}`;
+	const idStr = includeId ? ` [id=${entity.id}]` : '';
+	return `- ${entity.entityKey} (${entity.entityType}) "${entity.displayName}"${status}${summary}${idStr}`;
 }
 
-function entityIndexLine(entry: MemoryEntityIndexEntry): string {
+function entityIndexLine(entry: MemoryEntityIndexEntry, includeId = false): string {
 	const status = entry.status && entry.status !== 'active' ? ` [${entry.status}]` : '';
 	const facts = entry.factCount ? ` (${entry.factCount} facts)` : '';
-	return `- ${entry.entityKey} (${entry.entityType})${status}${facts}`;
+	const idStr = includeId ? ` [id=${entry.entityId}]` : '';
+	return `- ${entry.entityKey} (${entry.entityType})${status}${facts}${idStr}`;
 }
 
 function factLine(
@@ -1110,26 +1405,28 @@ function factLine(
  * list bullet. Used when rendering facts grouped beneath their owning entity,
  * where the entity is already named by the surrounding block header.
  */
-function factDetail(fact: memoryRepo.MemoryFact): string {
+function factDetail(fact: memoryRepo.MemoryFact, includeId = false): string {
 	const meta: string[] = [];
 	if (fact.pinned) meta.push('pinned');
 	if (fact.visibility && fact.visibility !== 'session') meta.push(fact.visibility);
 	if (fact.confidence < 1) meta.push(`conf ${fact.confidence}`);
 	if (fact.status && fact.status !== 'active') meta.push(fact.status);
 	const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
-	return `${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}`;
+	const idStr = includeId ? ` [id=${fact.id}]` : '';
+	return `${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}${idStr}`;
 }
 
-function decisionLine(decision: memoryRepo.MemoryDecision): string {
+function decisionLine(decision: memoryRepo.MemoryDecision, includeId = false): string {
 	const status = decision.status && decision.status !== 'active' ? ` [${decision.status}]` : '';
 	const rationale = decision.rationale ? ` — ${cleanSentence(decision.rationale)}` : '';
-	return `- ${decision.subject}: ${decision.decision}${status}${rationale}`;
+	const idStr = includeId ? ` [id=${decision.id}]` : '';
+	return `- ${decision.subject}: ${decision.decision}${status}${rationale}${idStr}`;
 }
 
 function loopLine(
 	loop: memoryRepo.MemoryOpenLoop,
 	keyOf: (id: string | null) => string | null,
-	includeId = false
+	opts: { includeId?: boolean; expiry?: { baseThreshold: number; warnWithin?: number } } = {}
 ): string {
 	const related = loop.relatedEntityIds
 		.map((id) => keyOf(id))
@@ -1137,15 +1434,33 @@ function loopLine(
 	const relatedStr = related.length ? ` [related: ${related.join(', ')}]` : '';
 	const status = loop.status && loop.status !== 'open' ? ` [${loop.status}]` : '';
 	const desc = loop.description ? ` — ${cleanSentence(loop.description)}` : '';
-	// The extractor needs the loop id to populate resolveOpenLoops; the main-turn
-	// injection omits it as noise. Front-load it so it survives truncation.
-	const idStr = includeId ? `[id=${loop.id}] ` : '';
-	return `- ${idStr}(${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`;
+	// The extractor needs a handle to keep/close the loop; the main-turn
+	// injection omits it as noise. Prefer the stable, legible loop key over the
+	// opaque ULID (older loops without a key fall back to the id). Front-load it
+	// so it survives truncation.
+	const handle = loop.loopKey || loop.id;
+	const idStr = opts.includeId ? `[id=${handle}] ` : '';
+	// Liveness nudge: when a still-open loop is within `warnWithin` passes of its
+	// effective auto-drop threshold, flag it so the extractor either reaffirms
+	// (keepOpenLoops) or closes it this turn rather than letting it silently age
+	// out. Effective threshold mirrors applyOpenLoopLivenessProjection:
+	// baseThreshold + max(0, priority). Front-loaded for the same reason as the id.
+	let warnStr = '';
+	if (opts.expiry && opts.expiry.baseThreshold > 0 && loop.status === 'open') {
+		const warnWithin = opts.expiry.warnWithin ?? 2;
+		const effectiveThreshold = opts.expiry.baseThreshold + Math.max(0, loop.priority);
+		const remaining = effectiveThreshold - loop.idleTurns;
+		if (remaining > 0 && remaining <= warnWithin) {
+			warnStr = `[expires in ${remaining} pass${remaining === 1 ? '' : 'es'} unless kept] `;
+		}
+	}
+	return `- ${idStr}${warnStr}(${loop.loopType}, p${loop.priority}) ${loop.title}${status}${desc}${relatedStr}`;
 }
 
 function eventLine(
 	event: memoryRepo.MemoryEvent,
-	keyOf: (id: string | null) => string | null
+	keyOf: (id: string | null) => string | null,
+	includeId = false
 ): string {
 	const actor = keyOf(event.actorEntityId);
 	const target = keyOf(event.targetEntityId);
@@ -1155,7 +1470,36 @@ function eventLine(
 	if (event.visibility && event.visibility !== 'session') meta.push(event.visibility);
 	if (event.confidence < 1) meta.push(`conf ${event.confidence}`);
 	const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
-	return `- ${event.eventType}: ${cleanSentence(event.summary)}${whoStr}${metaStr}`;
+	const idStr = includeId ? ` [id=${event.id}]` : '';
+	return `- ${event.eventType}: ${cleanSentence(event.summary)}${whoStr}${metaStr}${idStr}`;
+}
+
+/**
+ * Options controlling how a packet is rendered for its audience. The two
+ * audiences differ deliberately: the main-turn agent gets a clean, id-free view
+ * (internal handles are noise it can't act on), while the post-turn extractor
+ * opts into stable handles and liveness hints so it can reference, keep, and
+ * close items precisely. Making this one explicit options object — rather than
+ * the previous lone `includeOpenLoopIds` boolean — keeps the agent/extractor
+ * split a single, self-documenting decision instead of per-primitive guesswork.
+ */
+export interface RenderMemoryPacketOptions {
+	/**
+	 * Surface stable `[id=…]` handles on every primitive (entities, facts,
+	 * decisions, events, open loops) so a downstream writer can reference items
+	 * precisely. The main-turn agent omits these; the extractor enables them.
+	 * Note that only open loops are *acted on* by id (keepOpenLoops/closeLoops);
+	 * facts self-supersede by re-asserting the same entityKey+predicate.
+	 */
+	includeIds?: boolean;
+	/**
+	 * When set, annotate open loops nearing auto-drop with an `[expires in N …]`
+	 * hint, nudging the extractor to keep or close them before they age out.
+	 * `baseThreshold` mirrors `MEMORY_OPEN_LOOP_MAX_IDLE_TURNS`; a loop is flagged
+	 * when it is within `warnWithin` (default 2) passes of its effective
+	 * threshold. Omit to render no liveness hints.
+	 */
+	openLoopExpiry?: { baseThreshold: number; warnWithin?: number };
 }
 
 /**
@@ -1167,8 +1511,9 @@ function eventLine(
  */
 export function renderMemoryPacket(
 	packet: TurnMemoryPacket,
-	options: { includeOpenLoopIds?: boolean } = {}
+	options: RenderMemoryPacketOptions = {}
 ): string {
+	const includeIds = options.includeIds ?? false;
 	const keyOf = (id: string | null): string | null =>
 		id ? (packet.entityKeyById[id] ?? null) : null;
 
@@ -1229,11 +1574,12 @@ export function renderMemoryPacket(
 
 	const entityHeader = (id: string): string => {
 		const entity = entityById.get(id);
-		if (entity) return entityLine(entity);
+		if (entity) return entityLine(entity, includeIds);
 		const entry = indexById.get(id);
 		if (entry) {
 			const status = entry.status && entry.status !== 'active' ? ` [${entry.status}]` : '';
-			return `- ${entry.entityKey} (${entry.entityType}) "${entry.displayName}"${status}`;
+			const idStr = includeIds ? ` [id=${entry.entityId}]` : '';
+			return `- ${entry.entityKey} (${entry.entityType}) "${entry.displayName}"${status}${idStr}`;
 		}
 		const key = keyOf(id);
 		return `- ${key ?? id}`;
@@ -1244,33 +1590,34 @@ export function renderMemoryPacket(
 		lines.push('', `entities & facts (${total}):`);
 		for (const id of blockOrder) {
 			lines.push(entityHeader(id));
-			for (const fact of factsByEntity.get(id) ?? []) lines.push(`    ${factDetail(fact)}`);
+			for (const fact of factsByEntity.get(id) ?? [])
+				lines.push(`    ${factDetail(fact, includeIds)}`);
 		}
 		if (detachedFacts.length) {
 			lines.push('- (session-scoped):');
-			for (const fact of detachedFacts) lines.push(`    ${factDetail(fact)}`);
+			for (const fact of detachedFacts) lines.push(`    ${factDetail(fact, includeIds)}`);
 		}
 	}
 
 	if (packet.entityIndex.length) {
 		lines.push('', `entity index (${packet.entityIndex.length}) — queryable by name:`);
-		for (const entry of packet.entityIndex) lines.push(entityIndexLine(entry));
+		for (const entry of packet.entityIndex) lines.push(entityIndexLine(entry, includeIds));
 	}
 
 	if (packet.decisions.length) {
 		lines.push('', `decisions (${packet.decisions.length}):`);
-		for (const decision of packet.decisions) lines.push(decisionLine(decision));
+		for (const decision of packet.decisions) lines.push(decisionLine(decision, includeIds));
 	}
 
 	if (packet.openLoops.length) {
 		lines.push('', `open loops (${packet.openLoops.length}):`);
 		for (const loop of packet.openLoops)
-			lines.push(loopLine(loop, keyOf, options.includeOpenLoopIds));
+			lines.push(loopLine(loop, keyOf, { includeId: includeIds, expiry: options.openLoopExpiry }));
 	}
 
 	if (packet.recentEvents.length) {
 		lines.push('', `recent events (${packet.recentEvents.length}):`);
-		for (const event of packet.recentEvents) lines.push(eventLine(event, keyOf));
+		for (const event of packet.recentEvents) lines.push(eventLine(event, keyOf, includeIds));
 	}
 
 	if (packet.autoSearchHits.length) {

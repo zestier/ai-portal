@@ -3,9 +3,12 @@ import { log } from '$lib/server/log';
 import {
 	commitPatch,
 	extractHeuristicPatch,
+	ageOpenLoops,
+	buildInitialPacket,
 	renderMemoryPacket,
 	validatePatch,
 	type CommitMemoryPatchInput,
+	MEMORY_PATCH_JSON_SCHEMA,
 	MemoryPatchProposalSchema,
 	type MemoryPatchProposal,
 	type TurnMemoryPacket
@@ -17,6 +20,8 @@ import {
 	streamSseData
 } from '$lib/server/providers/provider-utils';
 import { buildMemoryTools } from '$lib/server/tools/memory';
+import * as conversationsRepo from '$lib/server/db/repos/conversations';
+import * as memoryRepo from '$lib/server/db/repos/memory';
 import type { MemoryMode, Message, ToolCallRecord } from '$lib/types';
 import type { MemoryToolCall } from '$lib/server/db/repos/memory';
 
@@ -186,92 +191,7 @@ const MEMORY_EXTRACTOR_JSON_SCHEMA = {
 					required: ['code', 'message']
 				}
 			},
-			patch: {
-				type: 'object',
-				properties: {
-					entities: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								entityKey: { type: 'string' },
-								entityType: { type: 'string' },
-								displayName: { type: 'string' },
-								summary: { type: 'string' },
-								metadata: {}
-							},
-							required: ['entityKey', 'entityType', 'displayName']
-						}
-					},
-					events: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								eventType: { type: 'string' },
-								summary: { type: 'string' },
-								payload: {},
-								visibility: { type: 'string' },
-								confidence: { type: 'number', minimum: 0, maximum: 1 },
-								entityKey: { type: 'string' }
-							},
-							required: ['eventType', 'summary']
-						}
-					},
-					facts: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								entityKey: { type: 'string' },
-								predicate: { type: 'string' },
-								value: {},
-								visibility: { type: 'string' },
-								confidence: { type: 'number', minimum: 0, maximum: 1 }
-							},
-							required: ['predicate', 'value']
-						}
-					},
-					decisions: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								subject: { type: 'string' },
-								decision: { type: 'string' },
-								rationale: { type: 'string' }
-							},
-							required: ['subject', 'decision']
-						}
-					},
-					openLoops: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								loopType: { type: 'string' },
-								title: { type: 'string' },
-								description: { type: 'string' },
-								priority: { type: 'integer' },
-								relatedEntityKeys: { type: 'array', items: { type: 'string' } }
-							},
-							required: ['loopType', 'title']
-						}
-					},
-					resolveOpenLoops: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								id: { type: 'string' },
-								status: { type: 'string', enum: ['resolved', 'dropped'] },
-								reason: { type: 'string' }
-							},
-							required: ['id', 'status']
-						}
-					}
-				}
-			}
+			patch: MEMORY_PATCH_JSON_SCHEMA
 		},
 		required: ['patch']
 	}
@@ -367,7 +287,11 @@ export type ExtractorChatComplete = (
 	signal?: AbortSignal
 ) => Promise<ExtractorAssistantTurn>;
 
-const TOOL_RESULT_MAX_CHARS = 4_000;
+// Upper bound on a single tool result fed back to the extractor. Must comfortably
+// exceed the staging tool's schema-rejection payload, which echoes the full
+// `patch` JSON Schema so the agent can self-correct — that structured result is
+// re-parsed as JSON, so truncating it mid-string would corrupt it.
+const TOOL_RESULT_MAX_CHARS = 8_000;
 
 // Upper bound on the assistant text we re-send each iteration. The model's own
 // chain-of-thought is stripped before storing (see the loop), but even the
@@ -706,10 +630,11 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 function buildToolExtractorSystemPrompt(): string {
 	return [
 		'You are a dedicated background memory extractor. You run after each turn and your job is to durably store memory by calling tools. You are not answering the user; you are recording what should be remembered.',
+		'Memory has only two concepts: entities (the durable referents) and facts (everything recorded about them). Every fact you write must declare its kind — attribute (something to KNOW), directive (a standing rule for how the agent must behave), decision (a settled choice), open_loop (an unresolved task/question), or event (something that happened) — there is no default, so decide deliberately. The classification that fails most often is attribute vs directive: a standing rule about future behavior is a directive (kind:"directive", rule:"…") no matter how it is phrased; a thing to know is an attribute.',
 		'Retrieve before you write: a referent mentioned this turn is very often an entity you already stored under a different surface form. Before creating any entity, call memory_search (and memory_get_entity to confirm) for the person, object, place, file, component, or concept by name AND by likely key, and reuse the existing canonical entityKey instead of minting a near-duplicate. Treat short and long forms of a name as the same entity (e.g. a bare first name vs. a full name like "character.firstname" and "character.firstname_lastname", or "auth" and "auth_service") — pick the existing key and attach new facts to it rather than creating a second one.',
-		'Store by calling memory_propose_patch with a structured patch. You may call it multiple times to batch related items. Each call is validated and the result tells you whether it was accepted and lists any issues — if it reports errors, call memory_propose_patch again with corrections.',
+		'Store by calling memory_propose_patch with a structured patch (entities + facts, each fact tagged with its kind). You may call it multiple times to batch related items. Each call is validated and the result tells you whether it was accepted and lists any issues — if it reports errors, call memory_propose_patch again with corrections.',
 		"Clean up duplicates you find: if a search reveals two entities that denote the same real referent (the classic case is a bare name vs. a fuller name, like character.firstname and character.firstname_lastname), call memory_merge_entities with from = the duplicate to retire and into = the canonical key to keep. This reassigns the duplicate's facts and events onto the canonical entity and retires the duplicate. Verify with memory_get_entity that they are truly the same before merging — never merge two genuinely distinct referents that merely share part of a name.",
-		'Prune as well as add: call memory_get_open_loops to see existing open loops, and when this turn resolves, answers, or supersedes one, close it through the patch\'s resolveOpenLoops field (by id, status "resolved" or "dropped"). Crucially, when the user was offered options and chose one, drop the unchosen options instead of leaving them open. Adding new memory without resolving the dead loops lets them pile up.',
+		'Prune as well as add: call memory_get_open_loops to see existing open loops. Each is shown with a stable handle (its [id=...], e.g. loop.find_attic_key). List every still-live loop\'s handle in the patch\'s keepOpenLoops to keep it alive, and close any the turn resolved or superseded through closeLoops (same handle, status "resolved" or "dropped"). Crucially, when the user was offered options and chose one, drop the unchosen options. Any presented loop you neither keep nor close is treated as stale and auto-dropped after a few passes, so keep the ones that still matter.',
 		'When you have stored everything durable from this turn, stop calling tools and write a brief final message summarizing what you recorded (or noting that nothing durable needed storing). That closing message is shown as the extraction session summary.'
 	].join('\n\n');
 }
@@ -720,7 +645,7 @@ function buildStagingToolSpec(): ExtractorToolSpec {
 		function: {
 			name: 'memory_propose_patch',
 			description:
-				'Stage durable memory updates for this turn. The server validates the patch and returns acceptance plus any issues so you can correct and re-call. Call repeatedly to add more; staged proposals are committed together when you finish.',
+				'Stage durable memory updates for this turn: entities (referents) plus facts, where every fact declares its kind (attribute, directive, decision, open_loop, or event). The server validates the patch and returns acceptance plus any issues so you can correct and re-call. Call repeatedly to add more; staged proposals are committed together when you finish.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -848,12 +773,18 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
 		for (const resolution of patch.resolveOpenLoops ?? [])
 			resolutionById.set(resolution.id, resolution);
 	}
+	// Union the "keep alive" set across every staged proposal. A loop reaffirmed
+	// in ANY call counts as touched — the agent may spread keeps across several
+	// memory_propose_patch calls, and liveness decay runs once on this collapsed
+	// patch, so a keep dropped here would let a still-live loop age out.
+	const keepOpenLoops = [...new Set(patches.flatMap((patch) => patch.keepOpenLoops ?? []))];
 	if (entities.length > 0) merged.entities = entities;
 	if (events.length > 0) merged.events = events;
 	if (facts.length > 0) merged.facts = facts;
 	if (decisions.length > 0) merged.decisions = decisions;
 	if (openLoops.length > 0) merged.openLoops = openLoops;
 	if (resolutionById.size > 0) merged.resolveOpenLoops = [...resolutionById.values()];
+	if (keepOpenLoops.length > 0) merged.keepOpenLoops = keepOpenLoops;
 	return merged;
 }
 
@@ -1153,6 +1084,22 @@ export async function extractAndCommitMemory(
 		model: extractor.model ?? null,
 		emitsActivity: extractor.kind === 'openai-compatible-tools'
 	});
+	// Foundation for entity-key reuse, loop pruning, and loop liveness: the
+	// extractor must see the existing durable state — crucially the open-loop
+	// ids — to reuse keys and to keep/close loops by id. Callers (tests) may
+	// supply their own packet; production does not, so build one here keyed on
+	// the user message. Without this the single-shot extractor renders
+	// "Initial packet: (none)" and is blind to existing ids.
+	if (!input.initialPacket) {
+		const globalMemoryEnabled =
+			conversationsRepo.get(input.conversationId, input.userId)?.globalMemoryEnabled ?? false;
+		input.initialPacket = buildInitialPacket(input.conversationId, input.mode, {
+			query: input.userMessage.content,
+			globalMemoryEnabled
+		});
+	}
+	const presentedLoopIds = input.initialPacket.openLoops.map((loop) => loop.id);
+
 	const extraction = await extractor.extractPatch(input);
 	const commitInput: CommitMemoryPatchInput = {
 		conversationId: input.conversationId,
@@ -1168,6 +1115,43 @@ export async function extractAndCommitMemory(
 		extractorConfidence: extraction.confidence,
 		extractorDiagnostics: extraction.diagnostics
 	});
+
+	// Open-loop liveness: age out loops the extractor was shown but neither kept
+	// nor closed. Gated to model-backed extractors (the heuristic extractor never
+	// populates keepOpenLoops, so letting it age would drop everything) and to a
+	// cleanly committed pass (a needs_review patch is not a reliable liveness
+	// signal). Runs after commit so loops closed this turn are already out of the
+	// open set.
+	const baseThreshold = loadConfig().MEMORY_OPEN_LOOP_MAX_IDLE_TURNS;
+	if (
+		extractor.kind !== 'heuristic' &&
+		committed.patch.status === 'committed' &&
+		baseThreshold > 0
+	) {
+		// keepOpenLoops/closeLoops may reference loops by their stable key or raw
+		// id; liveness compares against presentedLoopIds (canonical ids), so
+		// resolve every reference to its id and drop any that don't resolve.
+		const keptLoopIds = [
+			...(extraction.patch.keepOpenLoops ?? []),
+			...(extraction.patch.resolveOpenLoops ?? []).map((resolution) => resolution.id)
+		]
+			.map((ref) => memoryRepo.resolveOpenLoopId(input.conversationId, ref))
+			.filter((id): id is string => !!id);
+		const aged = ageOpenLoops(input.conversationId, {
+			presentedLoopIds,
+			keptLoopIds,
+			baseThreshold,
+			sourceMessageId: input.assistantMessage.id,
+			turnId: input.turnId
+		});
+		if (aged.dropped.length) {
+			log.info('memory.open_loops.auto_dropped', {
+				conversationId: input.conversationId,
+				count: aged.dropped.length,
+				baseThreshold
+			});
+		}
+	}
 	return { ...committed, extraction, extractorKind: extractor.kind };
 }
 
@@ -1324,7 +1308,15 @@ function sanitizePatch(
 		// reason. Don't drop the whole resolution if the reason trips the secret
 		// filter — that would silently leave the loop open. Instead strip just
 		// the offending reason (keeping id + status) so the loop is still pruned.
-		resolveOpenLoops: keepResolutions(patch.resolveOpenLoops)
+		resolveOpenLoops: keepResolutions(patch.resolveOpenLoops),
+		// Keep-alive ids are opaque open-loop ids (no free text), so they carry
+		// nothing to redact; pass them through so liveness sees the full touched
+		// set. An id that itself looks like a secret can't reference a real loop.
+		keepOpenLoops: patch.keepOpenLoops?.filter((id) => {
+			const safe = !containsSensitiveValue(id);
+			if (!safe) removed++;
+			return safe;
+		})
 	};
 	if (removed > 0) {
 		diagnostics.push({
@@ -1571,7 +1563,8 @@ function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): 
 	return truncate(
 		[
 			'Return JSON with this shape:',
-			'{"summary":"short summary","confidence":0.0,"diagnostics":[],"patch":{"entities":[],"events":[],"facts":[],"decisions":[],"openLoops":[],"resolveOpenLoops":[]}}',
+			'{"summary":"short summary","confidence":0.0,"diagnostics":[],"patch":{"entities":[],"facts":[],"closeLoops":[],"keepOpenLoops":[]}}',
+			'Every item in patch.facts MUST carry a "kind" — one of attribute, directive, decision, open_loop, or event — with that kind\'s required fields, e.g. {"kind":"attribute","entityKey":"...","predicate":"...","value":...}, {"kind":"directive","rule":"..."}, {"kind":"decision","subject":"...","decision":"..."}, {"kind":"open_loop","loopType":"...","title":"..."}, {"kind":"event","eventType":"...","summary":"..."}. keepOpenLoops and closeLoops reference existing open loops by the handle shown in their [id=...] (a stable key like loop.find_attic_key).',
 			...extractorContextSections(input)
 		].join('\n\n'),
 		maxInputChars
@@ -1586,16 +1579,21 @@ function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: number): 
 function extractorContextSections(input: ExtractPatchInput): string[] {
 	return [
 		'Your job: capture everything from this turn that could matter after it ends. Draw from every source — the user message, the assistant message, the recent transcript, and the tool calls — and record concrete specifics (names, exact values, conditions, qualifiers), never vague summaries. Err strongly toward over-capturing: a detail you record and never need costs little; one you drop is gone. When in doubt, include it.',
-		'Sort what you capture into the right primitive — each serves a distinct purpose:\n- fact: context to KNOW — a durable attribute, relationship, state, preference, constraint, location, ownership, role, capability, deadline, dependency, identifier, or numeric value about the world, the project, or the user.\n- directive: an agent control — a standing rule for how YOU should behave going forward (your conduct, style, format, or process). Stored as a fact with predicate "directive".\n- decision: a settled choice or commitment, recorded with its subject, the decision itself, and an optional rationale.\n- open loop: an unresolved question, task, or thread awaiting follow-up.\n- event: something notable that happened this turn.\n- entity: the durable referent (person, object, file, component, topic, project concept) that facts, events, and open loops attach to.\nThe distinction that causes the most errors is fact vs directive: ask whether the user is telling you how to act from now on (directive) or telling you something to know (fact).',
-		'For directives, phrasing is irrelevant — plain declarative policy ("All introduced characters are to be given names.", "Keep responses under 200 words.") is as much a directive as "always …" / "never …". One-off work for this turn ("rename this variable", "fix the bug in foo()", "add a test") is NOT a directive — record anything durable about it as a fact or decision instead. Store the rule as the directive fact\'s string value. Directives are additive and persist until retired: emit a new one per genuinely new rule, re-emit identical text only when the user reaffirms it (duplicates are de-duped), and when the user overrides a prior rule, state the full replacement (the old wording stays active until retired via the memory inspector).',
-		'Keep facts granular: split each distinct detail into its own fact rather than collapsing several together. Facts, events, and open loops each attach to an entity via its canonical entityKey (decisions stand alone via their subject). Reuse an existing key from the initial packet whenever the referent already exists — do not mint a second entity for an alias, casing change, title, or partial/expanded name (a bare first name and a full name, e.g. character.firstname vs character.firstname_lastname, are the SAME entity). Create a new entity only for a durable referent not already represented, using a stable namespaced key (e.g. character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, concept.append_only_migrations). A fact with no natural entity is a last resort. If unsure whether two names are the same referent, reuse the existing key and note the uncertainty in diagnostics.',
-		'Prune superseded open loops: when this turn resolves, answers, or abandons an existing loop, close it via resolveOpenLoops using its [id=...] from the initial packet (or memory_get_open_loops) with status "resolved" (done/answered) or "dropped" (abandoned/superseded). When the user picks one of several offered options, drop the unchosen ones. Leaving dead loops to accumulate crowds out useful memory.',
+		'Memory has only TWO concepts. (1) entities: the durable referents (a person, object, file, component, topic, project concept) that things attach to. (2) facts: everything you record about them. Every fact you write MUST declare its kind — there is no default and no catch-all, so you must decide what each thing is:\n- attribute: something to KNOW — a durable attribute, relationship, state, preference, constraint, location, ownership, role, capability, deadline, dependency, identifier, or numeric value. Fields: entityKey, predicate, value.\n- directive: a standing rule for how YOU must behave going forward (your conduct, style, format, or process). Field: rule (the instruction in full).\n- decision: a settled choice or commitment. Fields: subject, decision, optional rationale.\n- open_loop: an unresolved question, task, or thread awaiting follow-up. Fields: loopType, title.\n- event: something notable that happened this turn. Fields: eventType, summary.',
+		'Two of these kinds are standalone and have their own lifecycle, which is why they are shown with a handle in the packet. open_loop is the only one you actively retire or keep alive by handle (keepOpenLoops / closeLoops, see below). decision and attribute supersede in place — you correct or replace one simply by re-asserting it (a new attribute with the same entityKey+predicate, or a decision with the same subject) and the prior value is retired automatically. directive and event are append-only. So you never "close" anything except open loops.',
+		'The choice that causes the most errors is attribute vs directive: ask whether the user is telling you how to ACT from now on (kind:"directive") or telling you something to KNOW (kind:"attribute"). A directive is a standing rule regardless of phrasing — plain declarative policy ("All introduced characters are to be given names.", "Keep responses under 200 words.") counts exactly as much as "always …" / "never …". One-off work for this turn ("rename this variable", "fix the bug in foo()", "add a test") is NOT a directive — capture anything durable about it as an attribute or decision. Directives are additive and persist until retired: emit a new one per genuinely new rule, re-emit identical text only when the user reaffirms it (duplicates are de-duped), and when the user overrides a prior rule, state the full replacement in a new directive (the old wording stays active until retired via the memory inspector).',
+		'Keep attributes granular: split each distinct detail into its own fact rather than collapsing several together. Attributes, events, and open_loops attach to an entity via its canonical entityKey (decisions stand alone via their subject; directives are global). Reuse an existing key from the initial packet whenever the referent already exists — do not mint a second entity for an alias, casing change, title, or partial/expanded name (a bare first name and a full name, e.g. character.firstname vs character.firstname_lastname, are the SAME entity). Create a new entity only for a durable referent not already represented, using a stable namespaced key (e.g. character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, concept.append_only_migrations). An attribute with no natural entity is a last resort. If unsure whether two names are the same referent, reuse the existing key and note the uncertainty in diagnostics.',
+		'Maintain open loops actively. Each open loop is shown with its handle as [id=...] (a stable, legible key like loop.find_attic_key). For every still-live loop, list its handle in keepOpenLoops to keep it alive. When this turn resolves, answers, or abandons a loop, instead close it via closeLoops (referencing the same handle) with status "resolved" for done/answered or "dropped" for abandoned/superseded — e.g. when the user picks one of several offered options, drop the unchosen ones. Any presented loop you neither keep nor close is treated as stale and auto-dropped after a few passes; a loop close to that cutoff is flagged "[expires in N passes unless kept]", so treat that as a prompt to either reaffirm it (if still live) or close it this turn — do not silently ignore a loop that is still relevant.',
+		'Entities, facts, decisions, and events also show an [id=...] handle for precise reference, but only open loops are acted on by handle (keep/close). To correct a fact, re-assert an attribute with the same entityKey and predicate (the prior value is superseded automatically); you never close a fact, decision, or event by id.',
 		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
 		`Memory mode: ${input.mode}`,
 		'Initial packet:',
 		redactSensitiveText(
 			input.initialPacket
-				? renderMemoryPacket(input.initialPacket, { includeOpenLoopIds: true })
+				? renderMemoryPacket(input.initialPacket, {
+						includeIds: true,
+						openLoopExpiry: { baseThreshold: loadConfig().MEMORY_OPEN_LOOP_MAX_IDLE_TURNS }
+					})
 				: '(none)'
 		),
 		'Memory tool calls this turn:',

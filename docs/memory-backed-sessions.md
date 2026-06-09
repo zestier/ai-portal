@@ -376,13 +376,54 @@ Important fields:
 - `updated_at`
 
 Open loops are pruned, not just appended. A memory patch may carry a
-`resolveOpenLoops` array — `{ id, status: "resolved" | "dropped", reason? }` —
+`closeLoops` array — `{ id, status: "resolved" | "dropped", reason? }` —
 that flips an existing loop's `status` so superseded threads stop crowding the
 packet. This is how the extractor closes the unchosen options when the user
 picks one of several offered choices (`resolved` = done/answered, `dropped` =
 abandoned/superseded; the optional `reason` is appended to the loop's
 description). Resolutions are recorded as `resolve` patch items, so reverting the
 patch reopens the loop.
+
+### Open-loop liveness ("touch-to-keep")
+
+Explicit closing is not enough on its own: closing a loop requires the model to
+notice that a thread is *no longer* live, and LLMs are far better at reacting to
+what is present than at detecting an absence — so historically loops accumulated
+forever. Liveness inverts the burden. Every model-backed extraction pass the
+extractor is shown all currently-open loops (each with its stable handle) and
+lists the ones that are still live in the patch's `keepOpenLoops`. A loop that
+was **presented but neither kept nor closed** accrues an idle turn, and once it
+has been ignored for
+`MEMORY_OPEN_LOOP_MAX_IDLE_TURNS + max(0, priority)` consecutive passes it is
+auto-dropped. Only presented loops are eligible, so a loop beyond the packet's
+open-loop cap is never silently culled, and higher-priority loops get
+proportionally more grace.
+
+To make the cutoff actionable rather than silent, the extractor's view of each
+open loop is annotated with an `[expires in N passes unless kept]` hint once the
+loop is within a couple of passes of its effective threshold (`idle_turns`
+relative to `MEMORY_OPEN_LOOP_MAX_IDLE_TURNS + max(0, priority)`). This is purely
+a rendering nudge — it changes no state — but it surfaces the pending auto-drop
+to the model so it can deliberately reaffirm a still-live loop or close a dead
+one this turn. The hint is part of the extractor-only render mode (see
+[Packet rendering](#packet-rendering)) and is never shown to the main-turn agent.
+
+Liveness is fully event-sourced. Each pass appends one `open_loop.liveness`
+event carrying `{ presented, kept, baseThreshold }`; the per-loop `idle_turns`
+column and the terminal auto-drop are *derived* by replaying those events when
+the projection is (re)built — exactly like fact supersession — so fork and
+rewind reconstruct idle counts and auto-drops faithfully instead of losing them.
+The decay threshold is captured in the event payload so a later config change
+never rewrites historical decay. The auto-drop itself flows through the normal
+open-loop projection, so it is audited and reversible like any other resolution.
+
+Because the tool-calling extractor may spread its keeps across several
+`memory_propose_patch` calls, `keepOpenLoops` is unioned when the staged
+proposals are collapsed, and liveness runs once on that collapsed patch (gated to
+a cleanly committed, model-backed pass — the heuristic extractor emits no keep
+signal, so it never ages loops). The extractor is always handed a freshly built
+initial packet so it can see existing entity keys and open-loop ids even on the
+production path, which previously passed no packet at all.
 
 ### `memory_decisions`
 
@@ -445,21 +486,45 @@ This is useful for debugging why the model remembered or asserted something.
 
 ## Memory primitives
 
-The common model should support these primitives across profiles:
+At the write boundary memory has only **two concepts** — _entities_ (the durable
+referents) and _facts_ (everything recorded about them). A patch is therefore
+`{ entities[], facts[], closeLoops[], keepOpenLoops[] }`, and every item in
+`facts[]` carries a **required `kind`** (a discriminated union, no default and no
+fallback) so the extractor must explicitly classify each thing it stores:
 
-| Primitive | Meaning |
-| --- | --- |
-| Entity | Person, file, object, location, feature, bug, clue, concept, decision, task. |
-| Event | Something that happened or was observed. |
-| Fact | A durable assertion about an entity. |
-| Directive | A per-session standing rule: a durable, forward-looking instruction the user gives for how the agent should behave for the rest of the conversation ("always do X", "from now on Y", "never Z"). |
-| Decision | A choice made by user, assistant, or team. |
-| Observation | A fact-like note that may become stale. |
-| Open loop | Unresolved task, promise, question, clue, or plot thread. |
-| Source | Provenance back to a message, turn, event, or tool call. |
-| Visibility | Who is allowed to know or receive the fact. |
-| Confidence | Extractor certainty. |
-| Status | Whether the item is active, superseded, disputed, deleted, or needs review. |
+| Fact `kind` | Meaning | Required fields |
+| --- | --- | --- |
+| `attribute` | Something to KNOW: a durable attribute, relationship, state, preference, constraint, ownership, role, deadline, identifier, or numeric value. | `predicate`, `value` (+ optional `entityKey`) |
+| `directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). | `rule` |
+| `decision` | A settled choice made by user, assistant, or team. | `subject`, `decision` (+ optional `rationale`) |
+| `open_loop` | An unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
+| `event` | Something that happened or was observed this turn. | `eventType`, `summary` (+ optional `entityKey`) |
+
+`entities[]` carries `{ entityKey, entityType, displayName, summary?, metadata? }`;
+`closeLoops[]` retires existing loops by `{ id, status: 'resolved' | 'dropped', reason? }`;
+`keepOpenLoops[]` lists the handles of presented open loops that are still live (see
+[Open-loop liveness](#open-loop-liveness-touch-to-keep)). The `id` in `closeLoops`
+and the entries in `keepOpenLoops` are **loop handles**: each open loop carries a
+stable, human-legible `loop_key` (a slug of its title, e.g. `loop.find_attic_key`,
+unique within the conversation) that is rendered as its `[id=…]` in the extractor's
+packet. References resolve by key or by raw id, so both forms work; the key is what
+the model sees, which keeps loop references legible instead of opaque ULIDs.
+
+Only open loops are addressed this way. `decision` and `attribute` facts supersede
+in place — re-asserting one (same `subject`, or same `entityKey`+`predicate`)
+retires the prior value automatically — and `directive`/`event` are append-only, so
+the extractor never "closes" anything except open loops. This asymmetry is stated
+explicitly to the model rather than hidden, because it is the one piece of lifecycle
+vocabulary that the unified `facts[]` shape would otherwise obscure.
+
+Internally these still fan out into the same storage tables: an `attribute`
+becomes a fact, a `directive` becomes a pinned fact under the reserved
+`directive` predicate, and `decision` / `open_loop` / `event` land in their
+respective tables. The discriminated union is purely a write-time data model
+that forces the classification decision; nothing about persistence, the memory
+inspector, or the editable `memory/[kind]` routes changes. Each stored item also
+keeps its provenance (source message/turn/event), visibility, confidence, and
+status (active, superseded, disputed, deleted, needs review).
 
 ### Per-session directives (standing rules)
 
@@ -577,6 +642,31 @@ type. The selection pipeline is:
    an `auto-retrieved for this turn` section (retrieval-augmented), so the "query
    as needed" goal is met without relying on weak models to self-initiate tool
    calls.
+
+### Packet rendering
+
+`renderMemoryPacket(packet, options)` turns the assembled packet into the compact
+text actually injected into a prompt. The same packet is rendered for two
+different audiences, and the differences are a single explicit
+`RenderMemoryPacketOptions` object rather than per-primitive special-casing:
+
+- **`includeIds`** — surfaces stable `[id=...]` handles on every primitive
+  (entities, facts, decisions, events, open loops). The main-turn agent renders
+  without ids (they are noise it cannot act on); the post-turn extractor enables
+  them so it can reference items precisely. Open loops render their legible
+  `loop_key` (e.g. `loop.find_attic_key`) in the `[id=...]` slot rather than a raw
+  ULID, and `keepOpenLoops`/`closeLoops` accept that key (or the id). Note that
+  only open loops are *acted on* by handle — a fact is corrected by re-asserting
+  an attribute with the same `entityKey`+`predicate`, which supersedes the prior
+  value automatically (see [Source-side consolidation](#source-side-consolidation-event-derived)).
+- **`openLoopExpiry`** — when set (extractor only, carrying
+  `MEMORY_OPEN_LOOP_MAX_IDLE_TURNS`), annotates open loops within a couple of
+  passes of auto-drop with an `[expires in N passes unless kept]` hint. This is a
+  pure rendering nudge tied to [open-loop liveness](#open-loop-liveness-touch-to-keep);
+  it changes no state.
+
+Keeping the agent/extractor split in one options object means the rendering
+contract is a single self-documenting decision instead of a scatter of booleans.
 
 ### Source-side consolidation (event-derived)
 
@@ -799,7 +889,8 @@ The extractor prompt should be boring and schema-first:
 ```text
 You extract durable memory changes from one completed assistant turn.
 
-Return only JSON matching MemoryPatchProposal.
+Return only JSON matching the unified memory patch shape
+({ entities[], facts[], closeLoops[] }, every fact tagged with its kind).
 Do not summarize the whole conversation.
 Do not create facts for transient wording, speculation, or rejected ideas.
 Do not store secrets, credentials, raw tool output, or private tokens.
@@ -818,9 +909,11 @@ Input:
 - regular tool calls summarized
 ```
 
-The model response is parsed with the existing `MemoryPatchProposalSchema`.
-Invalid JSON or schema errors create a `memory_validation_issues` row and fall
-back to heuristic extraction only when the profile allows fallback.
+The model response is parsed with `MemoryPatchProposalSchema`, which accepts the
+unified write shape (entities + kind-tagged facts + closeLoops) and normalizes it
+into the internal table-shaped patch. Invalid JSON or schema errors create a
+`memory_validation_issues` row and fall back to heuristic extraction only when
+the profile allows fallback.
 
 ### Execution modes
 

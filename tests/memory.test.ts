@@ -4,6 +4,7 @@ import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
 import * as memory from '../src/lib/server/db/repos/memory';
 import {
+	ageOpenLoops,
 	buildInitialPacket,
 	buildPromptWithMemory,
 	commitPatch,
@@ -170,12 +171,16 @@ describe('memory-backed sessions', () => {
 		expect(rendered).toContain('lighting: Keep the candle lit.');
 		expect(rendered).toContain('Find the attic key');
 		expect(rendered).toContain('[related: character.mara]');
-		// The default (main-turn) rendering omits internal loop ids as noise.
+		// The default (main-turn) rendering omits internal ids as noise.
 		expect(rendered).not.toMatch(/\[id=/);
-		// The extractor view opts in to loop ids so it can populate
-		// resolveOpenLoops and actually close loops instead of only opening them.
-		const extractorRendered = renderMemoryPacket(packet, { includeOpenLoopIds: true });
+		// The extractor view opts into ids for every primitive so it can reference
+		// and close items precisely instead of only opening them.
+		const extractorRendered = renderMemoryPacket(packet, { includeIds: true });
 		expect(extractorRendered).toMatch(/\[id=[^\]]+\] \(task, p\d+\) Find the attic key/);
+		// Ids are surfaced on entities, facts, and decisions too, not just loops.
+		expect(extractorRendered).toMatch(/character\.mara[^\n]*\[id=[^\]]+\]/);
+		expect(extractorRendered).toMatch(/location = the cellar \[id=[^\]]+\]/);
+		expect(extractorRendered).toMatch(/lighting: Keep the candle lit\.[^\n]*\[id=[^\]]+\]/);
 
 		const prompt = buildPromptWithMemory({
 			conversationId: conv.id,
@@ -291,6 +296,297 @@ describe('memory-backed sessions', () => {
 		expect(resolved?.status).toBe('resolved');
 		expect(resolved?.description).toContain('User chose to search the attic.');
 		expect(memory.getOpenLoop(conv.id, dropped[0].id)?.status).toBe('dropped');
+	});
+
+	it('ages out presented-but-untouched open loops while keeping touched ones alive', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Keep me alive' },
+					{ loopType: 'task', title: 'Forget me slowly' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const keep = loops.find((l) => l.title.includes('Keep me'))!;
+		const forget = loops.find((l) => l.title.includes('Forget me'))!;
+		const presentedLoopIds = [keep.id, forget.id];
+
+		// Pass 1: keep `keep`, ignore `forget`. With base threshold 2, the
+		// untouched loop only accrues one idle turn — not yet dropped.
+		let aged = ageOpenLoops(conv.id, {
+			presentedLoopIds,
+			keptLoopIds: [keep.id],
+			baseThreshold: 2
+		});
+		expect(aged.dropped).toEqual([]);
+		expect(memory.getOpenLoop(conv.id, forget.id)?.idleTurns).toBe(1);
+		expect(memory.getOpenLoop(conv.id, keep.id)?.idleTurns).toBe(0);
+
+		// Pass 2: same again — `forget` crosses the threshold and is auto-dropped,
+		// while the continuously-kept loop stays open at idle 0.
+		aged = ageOpenLoops(conv.id, { presentedLoopIds, keptLoopIds: [keep.id], baseThreshold: 2 });
+		expect(aged.dropped).toEqual([forget.id]);
+		expect(memory.getOpenLoop(conv.id, forget.id)?.status).toBe('dropped');
+		expect(memory.getOpenLoop(conv.id, forget.id)?.description).toContain('auto-dropped');
+		expect(memory.getOpenLoop(conv.id, keep.id)?.status).toBe('open');
+		expect(memory.getOpenLoop(conv.id, keep.id)?.idleTurns).toBe(0);
+		expect(memory.listOpenLoops(conv.id)).toHaveLength(1);
+	});
+
+	it('resets the idle counter when a stale loop is touched again', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Intermittently relevant' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+		const presentedLoopIds = [loop.id];
+
+		ageOpenLoops(conv.id, { presentedLoopIds, baseThreshold: 3 });
+		expect(memory.getOpenLoop(conv.id, loop.id)?.idleTurns).toBe(1);
+		ageOpenLoops(conv.id, { presentedLoopIds, baseThreshold: 3 });
+		expect(memory.getOpenLoop(conv.id, loop.id)?.idleTurns).toBe(2);
+		// Reaffirmed this pass — idle resets, the accrued staleness is forgiven.
+		ageOpenLoops(conv.id, { presentedLoopIds, keptLoopIds: [loop.id], baseThreshold: 3 });
+		expect(memory.getOpenLoop(conv.id, loop.id)?.idleTurns).toBe(0);
+		expect(memory.getOpenLoop(conv.id, loop.id)?.status).toBe('open');
+	});
+
+	it('never ages a loop the extractor was not shown', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Presented and ignored' },
+					{ loopType: 'task', title: 'Beyond the packet cap' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const presented = loops.find((l) => l.title.includes('Presented'))!;
+		const unseen = loops.find((l) => l.title.includes('Beyond'))!;
+
+		// Only `presented` is in presentedLoopIds; with threshold 1 it drops at
+		// once, but `unseen` — which the extractor never saw — must be untouched.
+		const aged = ageOpenLoops(conv.id, { presentedLoopIds: [presented.id], baseThreshold: 1 });
+		expect(aged.dropped).toEqual([presented.id]);
+		expect(memory.getOpenLoop(conv.id, unseen.id)?.status).toBe('open');
+		expect(memory.getOpenLoop(conv.id, unseen.id)?.idleTurns).toBe(0);
+	});
+
+	it('grants higher-priority loops more grace before aging out', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Low priority chore', priority: 0 },
+					{ loopType: 'task', title: 'High priority thread', priority: 3 }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const low = loops.find((l) => l.title.includes('Low'))!;
+		const high = loops.find((l) => l.title.includes('High'))!;
+
+		// One untouched pass at base threshold 1: the low-priority loop drops
+		// immediately (1 >= 1), but the high-priority loop's effective threshold
+		// is 1 + 3 = 4, so it only accrues idle and survives.
+		const aged = ageOpenLoops(conv.id, {
+			presentedLoopIds: [low.id, high.id],
+			baseThreshold: 1
+		});
+		expect(aged.dropped).toEqual([low.id]);
+		expect(memory.getOpenLoop(conv.id, high.id)?.status).toBe('open');
+		expect(memory.getOpenLoop(conv.id, high.id)?.idleTurns).toBe(1);
+	});
+
+	it('renders an expiry warning for loops nearing auto-drop', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Fading thread' },
+					{ loopType: 'task', title: 'Fresh thread' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const fading = loops.find((l) => l.title.includes('Fading'))!;
+		const fresh = loops.find((l) => l.title.includes('Fresh'))!;
+		const presentedLoopIds = loops.map((l) => l.id);
+
+		// Age only `fading` so it sits one pass short of a base-threshold-3 drop;
+		// `fresh` is reaffirmed each pass and stays at idle 0.
+		ageOpenLoops(conv.id, { presentedLoopIds, keptLoopIds: [fresh.id], baseThreshold: 3 });
+		ageOpenLoops(conv.id, { presentedLoopIds, keptLoopIds: [fresh.id], baseThreshold: 3 });
+		expect(memory.getOpenLoop(conv.id, fading.id)?.idleTurns).toBe(2);
+		expect(memory.getOpenLoop(conv.id, fresh.id)?.idleTurns).toBe(0);
+
+		const packet = buildInitialPacket(conv.id, 'project');
+		const rendered = renderMemoryPacket(packet, {
+			includeIds: true,
+			openLoopExpiry: { baseThreshold: 3 }
+		});
+		// effective threshold 3, idle 2 -> drops next pass: "expires in 1 pass".
+		expect(rendered).toMatch(/Fading thread/);
+		expect(rendered).toContain('[expires in 1 pass unless kept]');
+		// The freshly-kept loop is nowhere near the cutoff, so it carries no warning.
+		expect(rendered).not.toMatch(/\[expires in [^\]]+\] \(task, p\d+\) Fresh thread/);
+		// Without the expiry option, no warning is rendered even when ids are on.
+		expect(renderMemoryPacket(packet, { includeIds: true })).not.toContain('[expires in');
+	});
+
+	it('reconstructs idle counts and auto-drops when the projection is rebuilt', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const seed = messages.append(conv.id, { role: 'assistant', content: 'Tracking two threads.' });
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: seed.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Survivor loop' },
+					{ loopType: 'task', title: 'Doomed loop' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const survivor = loops.find((l) => l.title.includes('Survivor'))!;
+		const doomed = loops.find((l) => l.title.includes('Doomed'))!;
+		const presentedLoopIds = [survivor.id, doomed.id];
+
+		const liveness = messages.append(conv.id, { role: 'assistant', content: 'Liveness pass.' });
+		ageOpenLoops(conv.id, {
+			presentedLoopIds,
+			keptLoopIds: [survivor.id],
+			baseThreshold: 2,
+			sourceMessageId: liveness.id
+		});
+		ageOpenLoops(conv.id, {
+			presentedLoopIds,
+			keptLoopIds: [survivor.id],
+			baseThreshold: 2,
+			sourceMessageId: liveness.id
+		});
+		expect(memory.getOpenLoop(conv.id, doomed.id)?.status).toBe('dropped');
+
+		// The idle counts and the auto-drop are derived from the liveness events,
+		// not soft column state — a full projection rebuild must reproduce them
+		// exactly (this is the property a non-event-sourced counter would lose).
+		memory.rebuildSessionMemoryProjection(conv.id);
+		expect(memory.getOpenLoop(conv.id, doomed.id)?.status).toBe('dropped');
+		expect(memory.getOpenLoop(conv.id, survivor.id)?.status).toBe('open');
+		expect(memory.getOpenLoop(conv.id, survivor.id)?.idleTurns).toBe(0);
+	});
+
+	it('does not age open loops under the heuristic extractor', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const seed = messages.append(conv.id, { role: 'assistant', content: 'Tracking a thread.' });
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: seed.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Should survive heuristic extraction' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Anything new?' });
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'Not really.'
+		});
+
+		const result = await extractAndCommitMemory({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-heuristic',
+			userMessage,
+			assistantMessage
+		});
+		// The heuristic extractor emits no keep signal, so aging it would drop
+		// everything — the wiring must gate liveness to model-backed extractors.
+		expect(result.extractorKind).toBe('heuristic');
+		expect(memory.getOpenLoop(conv.id, loop.id)?.status).toBe('open');
+		expect(memory.getOpenLoop(conv.id, loop.id)?.idleTurns).toBe(0);
+	});
+
+	it('assigns a stable, legible loop key and addresses keep/close by it', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Find the attic key' },
+					// Two identical titles must get distinct, conversation-unique keys.
+					{ loopType: 'task', title: 'Find the attic key' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const keys = loops.map((l) => l.loopKey).sort();
+		expect(keys).toEqual(['loop.find_the_attic_key', 'loop.find_the_attic_key_2']);
+
+		// The extractor view renders the legible key as the handle, not a ULID.
+		const packet = buildInitialPacket(conv.id, 'project');
+		const rendered = renderMemoryPacket(packet, { includeIds: true });
+		expect(rendered).toContain('[id=loop.find_the_attic_key]');
+
+		// resolveOpenLoopId accepts either the key or the raw id.
+		const first = loops.find((l) => l.loopKey === 'loop.find_the_attic_key')!;
+		expect(memory.resolveOpenLoopId(conv.id, 'loop.find_the_attic_key')).toBe(first.id);
+		expect(memory.resolveOpenLoopId(conv.id, first.id)).toBe(first.id);
+		expect(memory.resolveOpenLoopId(conv.id, 'loop.nope')).toBeNull();
+
+		// Closing a loop by its key resolves to the right row and retires it.
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				resolveOpenLoops: [
+					{ id: 'loop.find_the_attic_key', status: 'resolved', reason: 'found it' }
+				]
+			}
+		});
+		expect(memory.getOpenLoop(conv.id, first.id)?.status).toBe('resolved');
+		expect(memory.getOpenLoop(conv.id, first.id)?.description).toContain('found it');
+	});
+
+	it('keeps a loop alive via liveness when reaffirmed by key', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Kept by key' },
+					{ loopType: 'task', title: 'Ignored thread' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const kept = loops.find((l) => l.title.includes('Kept'))!;
+		const ignored = loops.find((l) => l.title.includes('Ignored'))!;
+		const presentedLoopIds = loops.map((l) => l.id);
+
+		// keptLoopIds carries the model-facing key; liveness resolves it to the id
+		// (presentedLoopIds are ids) so the kept loop stays at idle 0.
+		const keptId = memory.resolveOpenLoopId(conv.id, kept.loopKey)!;
+		ageOpenLoops(conv.id, { presentedLoopIds, keptLoopIds: [keptId], baseThreshold: 2 });
+		ageOpenLoops(conv.id, { presentedLoopIds, keptLoopIds: [keptId], baseThreshold: 2 });
+		expect(memory.getOpenLoop(conv.id, kept.id)?.status).toBe('open');
+		expect(memory.getOpenLoop(conv.id, kept.id)?.idleTurns).toBe(0);
+		expect(memory.getOpenLoop(conv.id, ignored.id)?.status).toBe('dropped');
 	});
 
 	it('warns but does not block when resolving an unknown open loop id', () => {
@@ -572,7 +868,9 @@ describe('memory-backed sessions', () => {
 		await propose.handler({
 			summary: 'Remember decision',
 			patch: {
-				decisions: [{ subject: 'memory', decision: 'Tools are mandatory in the MVP.' }]
+				facts: [
+					{ kind: 'decision', subject: 'memory', decision: 'Tools are mandatory in the MVP.' }
+				]
 			}
 		});
 
@@ -719,17 +1017,19 @@ describe('memory-backed sessions', () => {
 				confidence: 0.9,
 				diagnostics: [{ severity: 'info', code: 'fixture', message: 'fixture model output' }],
 				patch: {
-					decisions: [
+					facts: [
 						{
+							kind: 'decision',
 							subject: 'migrations',
 							decision: 'Use append-only migrations for schema changes.'
 						},
 						{
+							kind: 'decision',
 							subject: 'secret',
 							decision: 'token=abcdefghijklmnopqrstuvwxyz'
-						}
-					],
-					openLoops: [{ loopType: 'project_task', title: 'Document migration decision' }]
+						},
+						{ kind: 'open_loop', loopType: 'project_task', title: 'Document migration decision' }
+					]
 				}
 			})
 		});
@@ -802,10 +1102,25 @@ describe('memory-backed sessions', () => {
 							{ entityKey: 'character.the_raven', entityType: 'character', displayName: 'Mara' }
 						],
 						facts: [
-							{ entityKey: 'person.raven', predicate: 'alias', value: 'the Raven' },
-							{ entityKey: 'character.the_raven', predicate: 'location', value: 'study' },
-							{ entityKey: 'Mara', predicate: 'owns', value: 'brass key' },
-							{ entityKey: 'person.raven', predicate: 'distrusts', value: 'Elias' }
+							{
+								kind: 'attribute',
+								entityKey: 'person.raven',
+								predicate: 'alias',
+								value: 'the Raven'
+							},
+							{
+								kind: 'attribute',
+								entityKey: 'character.the_raven',
+								predicate: 'location',
+								value: 'study'
+							},
+							{ kind: 'attribute', entityKey: 'Mara', predicate: 'owns', value: 'brass key' },
+							{
+								kind: 'attribute',
+								entityKey: 'person.raven',
+								predicate: 'distrusts',
+								value: 'Elias'
+							}
 						]
 					}
 				};
@@ -830,7 +1145,7 @@ describe('memory-backed sessions', () => {
 			summary: extraction.summary
 		});
 
-		expect(prompt).toContain('Keep facts granular');
+		expect(prompt).toContain('Keep attributes granular');
 		expect(prompt).toContain('Reuse an existing key from the initial packet');
 		expect(extraction.patch.entities).toEqual([
 			expect.objectContaining({ entityKey: 'character.mara' })
@@ -888,8 +1203,19 @@ describe('memory-backed sessions', () => {
 									entities: [
 										{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }
 									],
-									facts: [{ entityKey: 'character.mara', predicate: 'owns', value: 'brass key' }],
-									decisions: [{ subject: 'migrations', decision: 'Use append-only migrations.' }]
+									facts: [
+										{
+											kind: 'attribute',
+											entityKey: 'character.mara',
+											predicate: 'owns',
+											value: 'brass key'
+										},
+										{
+											kind: 'decision',
+											subject: 'migrations',
+											decision: 'Use append-only migrations.'
+										}
+									]
 								}
 							})
 						}
@@ -1017,7 +1343,7 @@ describe('memory-backed sessions', () => {
 							id: 'c1',
 							name: 'memory_propose_patch',
 							arguments: JSON.stringify({
-								patch: { openLoops: [{ loopType: 'task', title: 'go' }] }
+								patch: { facts: [{ kind: 'open_loop', loopType: 'task', title: 'go' }] }
 							})
 						}
 					]
@@ -1032,7 +1358,9 @@ describe('memory-backed sessions', () => {
 							id: 'c2',
 							name: 'memory_propose_patch',
 							arguments: JSON.stringify({
-								patch: { openLoops: [{ loopType: 'task', title: 'Inspect the cellar' }] }
+								patch: {
+									facts: [{ kind: 'open_loop', loopType: 'task', title: 'Inspect the cellar' }]
+								}
 							})
 						}
 					]
@@ -1107,7 +1435,9 @@ describe('memory-backed sessions', () => {
 						{
 							id: 'c1',
 							name: 'memory_propose_patch',
-							arguments: JSON.stringify({ patch: { facts: [{ predicate: 'color' }] } })
+							arguments: JSON.stringify({
+								patch: { facts: [{ kind: 'attribute', predicate: 'color' }] }
+							})
 						}
 					]
 				};
@@ -1193,7 +1523,7 @@ describe('memory-backed sessions', () => {
 							name: 'memory_propose_patch',
 							arguments: JSON.stringify({
 								patch: {
-									resolveOpenLoops: [
+									closeLoops: [
 										{ id: keep.id, status: 'resolved', reason: 'Chosen.' },
 										{ id: drop.id, status: 'dropped' }
 									]
@@ -1277,7 +1607,7 @@ describe('memory-backed sessions', () => {
 							name: 'memory_propose_patch',
 							arguments: JSON.stringify({
 								patch: {
-									resolveOpenLoops: [
+									closeLoops: [
 										{
 											id: loop.id,
 											status: 'resolved',
@@ -1334,6 +1664,79 @@ describe('memory-backed sessions', () => {
 		expect(resolved?.description ?? '').not.toContain('sk_live_');
 	});
 
+	it('unions keepOpenLoops across multiple staged proposals when collapsing', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				openLoops: [
+					{ loopType: 'task', title: 'Thread one' },
+					{ loopType: 'task', title: 'Thread two' }
+				]
+			}
+		});
+		const loops = memory.listOpenLoops(conv.id);
+		const first = loops.find((l) => l.title.includes('one'))!;
+		const second = loops.find((l) => l.title.includes('two'))!;
+
+		// The agent reaffirms each live loop in a SEPARATE staging call. Neither
+		// call alone is the complete keep-set; the collapse must union them, or a
+		// loop kept early would be aged out.
+		let step = 0;
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			if (step === 1) {
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c1',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({ patch: { keepOpenLoops: [first.id] } })
+						}
+					]
+				};
+			}
+			if (step === 2) {
+				return {
+					content: '',
+					toolCalls: [
+						{
+							id: 'c2',
+							name: 'memory_propose_patch',
+							arguments: JSON.stringify({ patch: { keepOpenLoops: [second.id] } })
+						}
+					]
+				};
+			}
+			return { content: 'Kept both threads.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-keep-union',
+			userMessage: messages.append(conv.id, { role: 'user', content: 'Both still matter.' }),
+			assistantMessage: messages.append(conv.id, { role: 'assistant', content: 'Understood.' }),
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		expect([...(extraction.patch.keepOpenLoops ?? [])].sort()).toEqual(
+			[first.id, second.id].sort()
+		);
+	});
+
 	it('aborts the tool-calling extractor between iterations when its signal fires', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
@@ -1363,7 +1766,9 @@ describe('memory-backed sessions', () => {
 					{
 						id: `c${calls}`,
 						name: 'memory_propose_patch',
-						arguments: JSON.stringify({ patch: { facts: [{ predicate: 'state', value: 'open' }] } })
+						arguments: JSON.stringify({
+							patch: { facts: [{ kind: 'attribute', predicate: 'state', value: 'open' }] }
+						})
 					}
 				]
 			};
@@ -1431,7 +1836,7 @@ describe('memory-backed sessions', () => {
 									{
 										index: 0,
 										id: 'c1',
-										function: { name: 'memory_propose_patch', arguments: '{"patch":{"deci' }
+										function: { name: 'memory_propose_patch', arguments: '{"patch":{"facts":[{"ki' }
 									}
 								]
 							}
@@ -1446,7 +1851,8 @@ describe('memory-backed sessions', () => {
 									{
 										index: 0,
 										function: {
-											arguments: 'sions":[{"subject":"migrations","decision":"append-only"}]}}'
+											arguments:
+												'nd":"decision","subject":"migrations","decision":"append-only"}]}}'
 										}
 									}
 								]

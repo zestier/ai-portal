@@ -78,7 +78,7 @@ describe('validatePortalToolArgs', () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error('unreachable');
 		expect(result.feedback).toMatch(/Expected JSON Schema for "memory_propose_patch" parameters:/);
-		expect(result.feedback).toMatch(/resolveOpenLoops/);
+		expect(result.feedback).toMatch(/closeLoops/);
 		expect(result.feedback).toMatch(/entityKey/);
 		expect(result.feedback).toMatch(/"predicate"/);
 	});

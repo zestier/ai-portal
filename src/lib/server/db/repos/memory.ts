@@ -62,6 +62,13 @@ export interface MemoryFact {
 export interface MemoryOpenLoop {
 	id: string;
 	conversationId: string;
+	/**
+	 * Stable, human-legible handle (slug of the title, e.g. `loop.find_attic_key`),
+	 * unique within a conversation. This is what the extractor sees and references
+	 * to keep/close the loop, rather than the opaque ULID `id`. Empty for loops
+	 * created before migration 039; resolution falls back to `id` in that case.
+	 */
+	loopKey: string;
 	loopType: string;
 	title: string;
 	description: string;
@@ -70,6 +77,7 @@ export interface MemoryOpenLoop {
 	relatedEntityIds: string[];
 	sourceEventId: string | null;
 	sourceMessageId: string | null;
+	idleTurns: number;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -158,6 +166,7 @@ type SessionMemoryLogItemType =
 	| 'fact'
 	| 'decision'
 	| 'open_loop'
+	| 'open_loop_liveness'
 	| 'patch'
 	| 'patch_item'
 	| 'issue'
@@ -226,6 +235,7 @@ interface FactRow {
 interface OpenLoopRow {
 	id: string;
 	conversation_id: string;
+	loop_key: string;
 	loop_type: string;
 	title: string;
 	description: string;
@@ -234,6 +244,7 @@ interface OpenLoopRow {
 	related_entity_ids_json: string;
 	source_event_id: string | null;
 	source_message_id: string | null;
+	idle_turns: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -798,19 +809,73 @@ export function listDecisions(
 	return rows.map(rowToDecision);
 }
 
+/**
+ * Derive a stable, legible loop key from its title (e.g. "Find the attic key"
+ * -> `loop.find_the_attic_key`). The result is namespaced like an entityKey so
+ * the model treats it as the same kind of handle.
+ */
+function slugifyLoopKey(title: string): string {
+	const base = title
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '_')
+		.replace(/^_+|_+$/g, '')
+		.slice(0, 60);
+	return `loop.${base || 'thread'}`;
+}
+
+/**
+ * Allocate a conversation-unique loop key, suffixing `_2`, `_3`, ... on
+ * collision. Generated once at creation and persisted in the create event, so
+ * replay restores it rather than regenerating (keeping event-sourcing faithful).
+ */
+function allocateLoopKey(db: Database.Database, conversationId: string, title: string): string {
+	const base = slugifyLoopKey(title);
+	const taken = db.prepare(
+		'SELECT 1 FROM memory_open_loops WHERE conversation_id = ? AND loop_key = ?'
+	);
+	if (!taken.get(conversationId, base)) return base;
+	let n = 2;
+	while (taken.get(conversationId, `${base}_${n}`)) n++;
+	return `${base}_${n}`;
+}
+
+/**
+ * Resolve a model-supplied open-loop reference — which may be either the stable
+ * `loop_key` or the raw ULID `id` — to the canonical loop id, or null if no such
+ * loop exists in the conversation. Tries the id (primary key) first, then a
+ * non-empty key, so both addressing forms work and id-based internal callers are
+ * unaffected.
+ */
+export function resolveOpenLoopId(conversationId: string, ref: string): string | null {
+	if (!ref) return null;
+	const db = getDb();
+	const byId = db
+		.prepare('SELECT id FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
+		.get(ref, conversationId) as { id: string } | undefined;
+	if (byId) return byId.id;
+	const byKey = db
+		.prepare(
+			"SELECT id FROM memory_open_loops WHERE loop_key = ? AND conversation_id = ? AND loop_key != ''"
+		)
+		.get(ref, conversationId) as { id: string } | undefined;
+	return byKey ? byKey.id : null;
+}
+
 export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): MemoryOpenLoop {
 	const id = ulid();
 	const now = Date.now();
+	const loopKey = allocateLoopKey(getDb(), conversationId, input.title);
 	getDb()
 		.prepare(
 			`INSERT INTO memory_open_loops(
-			   id, conversation_id, loop_type, title, description, status, priority,
+			   id, conversation_id, loop_key, loop_type, title, description, status, priority,
 			   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			id,
 			conversationId,
+			loopKey,
 			input.loopType,
 			input.title,
 			input.description ?? '',
@@ -1398,6 +1463,118 @@ export function updateOpenLoop(
 		payload: { item: rowToOpenLoop(row) }
 	});
 	return rowToOpenLoop(row);
+}
+
+/**
+ * Record one open-loop liveness ("touch-to-keep") pass as a first-class memory
+ * event, then apply it to the live projection. `presentedLoopIds` are the open
+ * loops the extractor was shown this pass; `keptLoopIds` are the subset it
+ * reaffirmed. A presented loop that is not kept accrues an idle turn, and once
+ * it has been ignored for `baseThreshold + max(0, priority)` consecutive passes
+ * it is auto-dropped.
+ *
+ * Liveness is fully event-sourced: the decay/drop is *derived* by replaying the
+ * liveness events during a projection rebuild (see
+ * {@link applyOpenLoopLivenessProjection}), so fork/rewind reconstruct idle
+ * counts and auto-drops faithfully instead of losing them. The decay threshold
+ * is captured in the event payload so a later config change never rewrites
+ * historical decay. Returns the ids dropped by this pass.
+ */
+export function recordOpenLoopLiveness(
+	conversationId: string,
+	input: {
+		presentedLoopIds: string[];
+		keptLoopIds?: string[];
+		baseThreshold: number;
+		sourceMessageId?: string | null;
+		turnId?: string | null;
+	}
+): { dropped: string[] } {
+	const presented = [...new Set(input.presentedLoopIds)].filter(Boolean);
+	if (presented.length === 0 || !(input.baseThreshold > 0)) return { dropped: [] };
+	const kept = [...new Set(input.keptLoopIds ?? [])].filter(Boolean);
+	const payload = { presented, kept, baseThreshold: input.baseThreshold };
+	const db = getDb();
+	let dropped: string[] = [];
+	const tx = db.transaction(() => {
+		// Mutate the live projection directly (mirroring addOpenLoop et al.,
+		// which upsert then log), then append the event so a later rebuild
+		// re-derives the same result.
+		dropped = applyOpenLoopLivenessProjection(db, conversationId, payload);
+		appendSessionMemoryLog(db, conversationId, {
+			eventKind: 'open_loop.liveness',
+			itemType: 'open_loop_liveness',
+			itemId: ulid(),
+			sourceMessageId: input.sourceMessageId ?? null,
+			turnId: input.turnId ?? null,
+			payload
+		});
+	});
+	tx();
+	return { dropped };
+}
+
+interface OpenLoopLivenessPayload {
+	presented?: unknown;
+	kept?: unknown;
+	baseThreshold?: unknown;
+}
+
+/**
+ * Apply a single liveness pass to the open-loop projection rows. Pure function
+ * of (current projection state, payload): reset kept loops to idle 0, increment
+ * the rest, and auto-drop any that cross their effective threshold. Invoked both
+ * on the live write path and during projection replay, so the two always agree.
+ * Returns the ids dropped by this pass.
+ */
+function applyOpenLoopLivenessProjection(
+	db: Database.Database,
+	conversationId: string,
+	payload: OpenLoopLivenessPayload
+): string[] {
+	const presented = Array.isArray(payload.presented) ? (payload.presented as string[]) : [];
+	const baseThreshold = typeof payload.baseThreshold === 'number' ? payload.baseThreshold : 0;
+	if (presented.length === 0 || baseThreshold <= 0) return [];
+	const kept = new Set(Array.isArray(payload.kept) ? (payload.kept as string[]) : []);
+	const dropped: string[] = [];
+	for (const id of presented) {
+		const row = db
+			.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
+			.get(id, conversationId) as OpenLoopRow | undefined;
+		// Only age loops that are still open; a loop closed earlier in this same
+		// replay (or this turn) is out of the open set and left untouched.
+		if (!row || row.status !== 'open') continue;
+		if (kept.has(id)) {
+			if (row.idle_turns !== 0) {
+				db.prepare(
+					'UPDATE memory_open_loops SET idle_turns = 0 WHERE id = ? AND conversation_id = ?'
+				).run(id, conversationId);
+			}
+			continue;
+		}
+		const next = row.idle_turns + 1;
+		// Higher-priority loops linger proportionally longer before aging out.
+		const effectiveThreshold = baseThreshold + Math.max(0, row.priority);
+		if (next >= effectiveThreshold) {
+			const note = `[auto-dropped] untouched by the extractor for ${next} passes`;
+			const description = row.description ? `${row.description}\n${note}` : note;
+			db.prepare(
+				`UPDATE memory_open_loops
+				    SET status = 'dropped', description = ?, idle_turns = ?, updated_at = ?
+				  WHERE id = ? AND conversation_id = ?`
+			).run(description, next, Date.now(), id, conversationId);
+			const updated = db
+				.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
+				.get(id, conversationId) as OpenLoopRow;
+			syncSessionIndex(db, conversationId, 'open_loop', id, 'dropped', openLoopIndexText(updated));
+			dropped.push(id);
+		} else {
+			db.prepare(
+				'UPDATE memory_open_loops SET idle_turns = ? WHERE id = ? AND conversation_id = ?'
+			).run(next, id, conversationId);
+		}
+	}
+	return dropped;
 }
 
 export function deleteItem(conversationId: string, kind: string, id: string): boolean {
@@ -2284,6 +2461,10 @@ function applySessionMemoryLogProjection(
 	} else if (row.item_type === 'open_loop') {
 		const item = record.item as MemoryOpenLoop | undefined;
 		if (item) upsertOpenLoopProjection(db, item);
+	} else if (row.item_type === 'open_loop_liveness') {
+		// Decay/drop is derived, not stored: replaying the liveness event
+		// reconstructs idle counts and auto-drops, so fork/rewind stay faithful.
+		applyOpenLoopLivenessProjection(db, row.conversation_id, record as OpenLoopLivenessPayload);
 	} else if (row.item_type === 'patch') {
 		const patch = record.patch as MemoryPatch | undefined;
 		if (patch) upsertPatchProjection(db, patch);
@@ -2421,12 +2602,13 @@ function upsertDecisionProjection(db: Database.Database, item: MemoryDecision): 
 function upsertOpenLoopProjection(db: Database.Database, item: MemoryOpenLoop): void {
 	db.prepare(
 		`INSERT OR REPLACE INTO memory_open_loops(
-		   id, conversation_id, loop_type, title, description, status, priority,
+		   id, conversation_id, loop_key, loop_type, title, description, status, priority,
 		   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		item.id,
 		item.conversationId,
+		item.loopKey ?? '',
 		item.loopType,
 		item.title,
 		item.description,
@@ -2649,6 +2831,19 @@ function createForkMemoryRemapper(
 		if ('patch' in result) result.patch = remapItem('patch', result.patch);
 		if ('issue' in result) result.issue = remapItem('issue', result.issue);
 		if ('toolCall' in result) result.toolCall = remapItem('tool_call', result.toolCall);
+		// A liveness event references open loops by id in its presented/kept
+		// arrays; remap them to the fork-local loop ids and drop any whose loop
+		// was not copied, so the replayed decay still targets the right rows.
+		if (itemType === 'open_loop_liveness') {
+			const remapLoopIds = (value: unknown): string[] =>
+				Array.isArray(value)
+					? value
+							.map((id) => (typeof id === 'string' ? refId('open_loop', id) : null))
+							.filter((id): id is string => !!id)
+					: [];
+			result.presented = remapLoopIds(result.presented);
+			result.kept = remapLoopIds(result.kept);
+		}
 		return result;
 	};
 }
@@ -2786,6 +2981,7 @@ function rowToOpenLoop(row: OpenLoopRow): MemoryOpenLoop {
 	return {
 		id: row.id,
 		conversationId: row.conversation_id,
+		loopKey: row.loop_key ?? '',
 		loopType: row.loop_type,
 		title: row.title,
 		description: row.description,
@@ -2794,6 +2990,7 @@ function rowToOpenLoop(row: OpenLoopRow): MemoryOpenLoop {
 		relatedEntityIds: parseStringArray(row.related_entity_ids_json),
 		sourceEventId: row.source_event_id,
 		sourceMessageId: row.source_message_id,
+		idleTurns: row.idle_turns ?? 0,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};
@@ -2947,7 +3144,7 @@ function decisionIndexText(row: DecisionRow): string {
 }
 
 function openLoopIndexText(row: OpenLoopRow): string {
-	return [row.loop_type, row.title, row.description].join('\n');
+	return [row.loop_key, row.loop_type, row.title, row.description].join('\n');
 }
 
 function globalMemoryIndexText(row: GlobalMemoryRow): string {
