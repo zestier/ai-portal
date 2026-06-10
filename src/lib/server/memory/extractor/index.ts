@@ -114,9 +114,10 @@ const ASSISTANT_TRANSCRIPT_MAX_CHARS = 4_000;
  * Agentic, tool-calling memory extractor. Instead of returning a single JSON
  * patch, a dedicated background agent stores durable memory by *calling tools*:
  * it retrieves with the read-only memory tools as needed and stages writes via
- * `memory_propose_patch`, receiving per-call validation feedback (e.g. "this
- * fact is not attached to an entity but must be") so it can self-correct with
- * full turn context — context the deterministic post-commit fixups never see.
+ * the per-kind `remember_*` / `keep_loops` / `close_loop` write tools, receiving
+ * per-call validation feedback (e.g. "this fact is not attached to an entity but
+ * must be") so it can self-correct with full turn context — context the
+ * deterministic post-commit fixups never see.
  *
  * Staged proposals are merged and returned so the existing single durable
  * `commitPatch` (with extractor metadata, secret filtering, and entity-key
@@ -152,7 +153,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			// ledger (which would double-count when queried by turnId).
 			getTurnId: () => null,
 			mode: input.mode
-		}).filter((tool) => tool.name !== 'memory_propose_patch');
+		});
 
 		const presentedLoops = input.initialPacket?.openLoops ?? [];
 
@@ -543,7 +544,7 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
 	}
 	// Union the "keep alive" set across every staged proposal. A loop reaffirmed
 	// in ANY call counts as touched — the agent may spread keeps across several
-	// memory_propose_patch calls, and liveness decay runs once on this collapsed
+	// keep_loops calls, and liveness decay runs once on this collapsed
 	// patch, so a keep dropped here would let a still-live loop age out.
 	const keepOpenLoops = [...new Set(patches.flatMap((patch) => patch.keepOpenLoops ?? []))];
 	if (entities.length > 0) merged.entities = entities;
@@ -608,8 +609,7 @@ export function createMemoryExtractor(opts: { model?: string | null } = {}): Mem
 /**
  * Returns true when a model-backed extractor is configured for the given
  * options. When this is true the extractor — not the main model — owns writing
- * durable memory for each turn, so the main-model prompt should discourage
- * direct memory_propose_patch calls.
+ * durable memory for each turn; the main model has no direct memory write tool.
  */
 export function isModelBackedExtractorConfigured(opts: { model?: string | null } = {}): boolean {
 	return createMemoryExtractor(opts).kind !== 'heuristic';
