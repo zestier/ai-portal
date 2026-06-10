@@ -297,7 +297,8 @@ describe('structured git tools', () => {
 		expect(tool).toBeDefined();
 
 		const out = await tool!.handler({ output: 'name-status' });
-		expect(JSON.parse(out)).toEqual({
+		expect(out.ok).toBe(true);
+		expect(out.ok && out.result).toEqual({
 			files: [{ statusCode: 'M', status: 'modified', path: 'a.txt', origPath: null }]
 		});
 	});

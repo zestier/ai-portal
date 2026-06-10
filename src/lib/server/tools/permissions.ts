@@ -3,7 +3,7 @@ import type { PermissionPolicy, SessionMode } from '$lib/types';
 import { GRANT_TOOLS, isFilesystemPermissionKind } from '$lib/permissions/metadata';
 import { capabilityRuleKindForScope, capabilityScopeSummary } from '$lib/permissions/scope-summary';
 import * as settings from '../db/repos/settings';
-import type { PortalTool } from './git';
+import { ok, type PortalTool } from './types';
 
 const CAPABILITY_PERMISSION_KINDS = [...GRANT_TOOLS, 'custom-tool'] as const;
 const PermissionKind = z.enum(CAPABILITY_PERMISSION_KINDS);
@@ -68,7 +68,7 @@ export function buildPermissionTools(opts: {
 			},
 			async handler(args) {
 				const parsed = CapabilitiesArgs.parse(args);
-				return JSON.stringify(
+				return ok(
 					permissionCapabilities({
 						userId: opts.userId,
 						conversationId: opts.conversationId,
@@ -77,9 +77,7 @@ export function buildPermissionTools(opts: {
 						permissionKind: parsed.permissionKind,
 						toolName: parsed.toolName,
 						intent: parsed.intent
-					}),
-					null,
-					2
+					})
 				);
 			}
 		}

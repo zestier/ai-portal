@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { ToolInvocation } from '@github/copilot-sdk';
 import { wrapToolsForStreaming } from '../src/lib/server/copilot/tool-streaming';
 import type { PortalTool, ToolStreamContext } from '../src/lib/server/tools/git';
+import { ok } from '../src/lib/server/tools/types';
 import type { PortalEvent } from '../src/lib/types';
 
 function fakeInvocation(toolCallId: string | undefined): ToolInvocation {
@@ -18,7 +19,7 @@ function demoTool(run: (args: unknown, ctx: ToolStreamContext) => Promise<string
 		name: 'demo',
 		description: 'demo tool',
 		parameters: { type: 'object' },
-		handler: (args, ctx) => run(args, ctx as ToolStreamContext)
+		handler: async (args, ctx) => ok(await run(args, ctx as ToolStreamContext))
 	};
 }
 
@@ -39,7 +40,7 @@ describe('wrapToolsForStreaming', () => {
 
 		const result = await wrapped.handler({}, fakeInvocation('call-abc'));
 
-		expect(result).toBe('final');
+		expect(result).toBe(JSON.stringify({ ok: true, result: 'final' }, null, 2));
 		expect(events).toEqual([
 			{ type: 'tool.progress', toolCallId: 'call-abc', message: 'working…' },
 			{ type: 'tool.partial_output', toolCallId: 'call-abc', output: 'chunk-1' },

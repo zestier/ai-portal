@@ -8,6 +8,7 @@ import type {
 	SessionMode
 } from '$lib/types';
 import { log } from '../log';
+import { deriveEnvelopeSummary, type ToolResult } from '../tools/types';
 import {
 	cancel as cancelInteractive,
 	newRequestId,
@@ -417,12 +418,21 @@ export class SdkEventAdapter {
 		const ev = parseSdkEvent('tool.execution_complete', ToolCompleteEvent, e);
 		if (!ev) return;
 		if (!this.activeQueue) return;
-		const ok = ev?.data?.success !== false && !ev?.data?.error;
+		// Portal tools hand back a once-serialized `ToolResult` envelope as their
+		// result string. When present it is the single source of truth for
+		// ok/summary — covering both handler-returned `{ ok: false }` envelopes and
+		// thrown errors that `wrapToolsForStreaming` normalized into one. Native
+		// SDK tools (non-envelope results) fall back to the runtime's signals.
+		const envelope = decodePortalEnvelope(ev?.data?.result);
+		const ok = envelope ? envelope.ok : ev?.data?.success !== false && !ev?.data?.error;
+		const summary = envelope
+			? deriveEnvelopeSummary(envelope)
+			: summarizeResult(ev?.data?.result, ev?.data?.error);
 		this.emit({
 			type: 'tool.result',
 			toolCallId: ev?.data?.toolCallId ?? ulid(),
 			ok,
-			summary: summarizeResult(ev?.data?.result, ev?.data?.error),
+			summary,
 			output: ev?.data?.result ?? ev?.data?.error ?? null,
 			parentToolCallId: this.parentToolCallId(ev)
 		});
@@ -669,6 +679,32 @@ export class SdkEventAdapter {
 			source: 'agent'
 		});
 	};
+}
+
+// Best-effort decode of a portal tool's serialized `ToolResult` envelope from
+// the SDK's `tool.execution_complete` result. Returns null for native-tool
+// results (non-string, non-envelope) so their existing handling is preserved.
+// Normalizes into a typed `ToolResult` so the shared `deriveEnvelopeSummary`
+// produces text identical to the OpenAI-compatible provider boundary.
+function decodePortalEnvelope(result: unknown): ToolResult | null {
+	if (typeof result !== 'string') return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(result);
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+	const rec = parsed as Record<string, unknown>;
+	if (typeof rec.ok !== 'boolean') return null;
+	const summary = typeof rec.summary === 'string' ? rec.summary : undefined;
+	if (rec.ok === false) {
+		if (rec.error == null || typeof rec.error !== 'object') return null;
+		const error = rec.error as Record<string, unknown>;
+		const message = typeof error.message === 'string' ? error.message : 'error';
+		return { ok: false, summary, error: { message } };
+	}
+	return { ok: true, summary, result: rec.result };
 }
 
 function summarizeResult(result: unknown, error: unknown): string {

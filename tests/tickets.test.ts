@@ -169,6 +169,8 @@ describe('workspace tickets', () => {
 		expect(ticket.title).toBe('Remember this');
 		expect(ticket.sourceConversationId).toBe('conv-ticket-test');
 		await update.handler({ id: ticket.id, status: 'done' });
-		expect(await list.handler({ status: 'all' })).toContain('[done] Remember this');
+		const listed = await list.handler({ status: 'all' });
+		expect(listed.ok).toBe(true);
+		expect(listed.ok && listed.result).toContain('[done] Remember this');
 	});
 });

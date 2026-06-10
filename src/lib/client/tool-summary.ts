@@ -54,6 +54,24 @@ const summaryHandlers: Record<string, SummaryHandler> = {
 	git_log: gitLogSummary,
 	git_show_commit: gitShowCommitSummary,
 	git_commit: gitCommitSummary,
+	git_show_file: gitShowFileSummary,
+	memory_search: memoryQuerySummary,
+	memory_global_search: memoryQuerySummary,
+	memory_transcript_lookup: memoryQuerySummary,
+	memory_get_entity: entityIdSummary,
+	memory_get_character_knowledge: characterKnowledgeSummary,
+	memory_merge_entities: mergeEntitiesSummary,
+	memory_global_remember: globalRememberSummary,
+	memory_get_recent_events: eventFilterSummary,
+	memory_query_timeline: eventFilterSummary,
+	memory_get_open_loops: loopTypeSummary,
+	memory_query_clues: clueStatusSummary,
+	memory_check_claims: checkClaimsSummary,
+	ticket_add: ticketAddSummary,
+	ticket_get: ticketIdSummary,
+	ticket_update: ticketUpdateSummary,
+	ticket_list: ticketListSummary,
+	permission_capabilities: permissionCapabilitiesSummary,
 	skill: skillSummary,
 	sql: sqlSummary,
 	session_store_sql: sqlSummary
@@ -191,4 +209,84 @@ function skillSummary(args: Record<string, unknown>): string | null {
 function sqlSummary(args: Record<string, unknown>): string | null {
 	const query = str(args.query);
 	return str(args.description) ?? (query ? truncate(query, 60) : null);
+}
+
+function gitShowFileSummary(args: Record<string, unknown>): string | null {
+	const path = str(args.path);
+	const ref = str(args.ref);
+	if (path && ref) return `${ref} · ${path}`;
+	return path ?? ref ?? null;
+}
+
+function memoryQuerySummary(args: Record<string, unknown>): string | null {
+	const query = str(args.query);
+	return query ? truncate(query, 60) : null;
+}
+
+function entityIdSummary(args: Record<string, unknown>): string | null {
+	return str(args.id);
+}
+
+function characterKnowledgeSummary(args: Record<string, unknown>): string | null {
+	return str(args.characterEntityKey);
+}
+
+function mergeEntitiesSummary(args: Record<string, unknown>): string | null {
+	const from = str(args.from);
+	const into = str(args.into);
+	if (from && into) return `${from} → ${into}`;
+	return from ?? into ?? null;
+}
+
+function globalRememberSummary(args: Record<string, unknown>): string | null {
+	const kind = str(args.kind);
+	const key = str(args.key);
+	if (kind && key) return `${kind} · ${key}`;
+	return key ?? kind ?? null;
+}
+
+function eventFilterSummary(args: Record<string, unknown>): string | null {
+	const eventType = str(args.eventType);
+	const entityId = str(args.entityId);
+	return [eventType, entityId].filter(Boolean).join(' · ') || null;
+}
+
+function loopTypeSummary(args: Record<string, unknown>): string | null {
+	return str(args.loopType);
+}
+
+function clueStatusSummary(args: Record<string, unknown>): string | null {
+	return str(args.status);
+}
+
+function checkClaimsSummary(args: Record<string, unknown>): string | null {
+	const claims = Array.isArray(args.claims) ? args.claims.length : 0;
+	return claims ? `${claims} claim(s)` : null;
+}
+
+function ticketAddSummary(args: Record<string, unknown>): string | null {
+	const title = str(args.title);
+	return title ? truncate(title, 60) : null;
+}
+
+function ticketIdSummary(args: Record<string, unknown>): string | null {
+	return str(args.id);
+}
+
+function ticketUpdateSummary(args: Record<string, unknown>): string | null {
+	const id = str(args.id);
+	const status = str(args.status);
+	if (id && status) return `${id} · ${status}`;
+	return id;
+}
+
+function ticketListSummary(args: Record<string, unknown>): string {
+	return str(args.status) ?? 'all';
+}
+
+function permissionCapabilitiesSummary(args: Record<string, unknown>): string | null {
+	const kind = str(args.permissionKind);
+	const tool = str(args.toolName);
+	if (kind && tool) return `${kind} · ${tool}`;
+	return kind ?? tool ?? null;
 }

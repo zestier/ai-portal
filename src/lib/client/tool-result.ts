@@ -106,6 +106,8 @@ export function decodeToolResult(resultJson: string | null): DecodedResult {
 		const txt = JSON.stringify(v, null, 2);
 		return { blocks: [{ kind: 'text', text: txt }], fallbackText: txt };
 	}
+	const envelope = decodeEnvelope(v);
+	if (envelope) return envelope;
 	if (Array.isArray(v.contents) && v.contents.length > 0) {
 		const blocks = decodeContents(v.contents);
 		if (blocks.length > 0) {
@@ -122,5 +124,34 @@ export function decodeToolResult(resultJson: string | null): DecodedResult {
 		null;
 	if (text) return { blocks: [{ kind: 'text', text }], fallbackText: text };
 	const txt = JSON.stringify(v, null, 2);
+	return { blocks: [{ kind: 'text', text: txt }], fallbackText: txt };
+}
+
+// Decode the structured tool-result envelope (`{ ok, summary?, result? | error }`)
+// emitted by portal tools. Returns null when the record isn't an envelope so
+// SDK-native result shapes keep their existing handling. The `fallbackText`
+// carries the inner payload (raw string or pretty JSON) so downstream parsers
+// like `parseGitToolResult` can read a tool's domain data.
+function decodeEnvelope(v: Record<string, unknown>): DecodedResult | null {
+	if (typeof v.ok !== 'boolean') return null;
+	if (v.ok === false) {
+		if (!isRecord(v.error)) return null;
+		const message =
+			typeof v.error.message === 'string'
+				? v.error.message
+				: typeof v.summary === 'string'
+					? v.summary
+					: JSON.stringify(v.error, null, 2);
+		return { blocks: [{ kind: 'text', text: message }], fallbackText: message };
+	}
+	const result = v.result;
+	if (result === undefined) {
+		const text = typeof v.summary === 'string' && v.summary ? v.summary : '(ok)';
+		return { blocks: [{ kind: 'text', text }], fallbackText: text };
+	}
+	if (typeof result === 'string') {
+		return { blocks: [{ kind: 'text', text: result }], fallbackText: result };
+	}
+	const txt = JSON.stringify(result, null, 2);
 	return { blocks: [{ kind: 'text', text: txt }], fallbackText: txt };
 }

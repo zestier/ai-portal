@@ -23,9 +23,20 @@ import {
 import { getMemoryProfile, listMemoryProfiles } from '../src/lib/server/memory/profiles';
 import * as memoryProfiles from '../src/lib/server/memory/profiles';
 import { buildMemoryTools } from '../src/lib/server/tools/memory';
+import type { ToolResult } from '../src/lib/server/tools/types';
 import { PATCH as patchMemoryItem } from '../src/routes/api/conversations/[id]/memory/[kind]/[itemId]/+server';
 import { getDb } from '../src/lib/server/db';
 import { setupLocalEnv } from './helpers/env';
+
+// The structured tool-result envelope is the model-visible payload; substring
+// assertions check that serialized form, structured assertions read `result`.
+function toolText(r: ToolResult): string {
+	return JSON.stringify(r);
+}
+function toolData<T>(r: ToolResult): T {
+	if (!r.ok) throw new Error(`expected ok envelope, got error: ${r.error.message}`);
+	return r.result as T;
+}
 
 function routeEvent(
 	conversationId: string,
@@ -875,7 +886,7 @@ describe('memory-backed sessions', () => {
 
 		const search = tools.find((tool) => tool.name === 'memory_search')!;
 		const raw = await search.handler({ query: 'mandatory', limit: 5 });
-		expect(raw).toContain('Tools are mandatory');
+		expect(toolText(raw)).toContain('Tools are mandatory');
 	});
 
 	it('recalls transcript, timeline, clues, character knowledge, and global memory via tools', async () => {
@@ -926,10 +937,12 @@ describe('memory-backed sessions', () => {
 		const globalRemember = tools.find((tool) => tool.name === 'memory_global_remember')!;
 		const globalSearch = tools.find((tool) => tool.name === 'memory_global_search')!;
 
-		expect(await transcript.handler({ query: 'blue candle' })).toContain('half burned');
-		expect(await timeline.handler({ eventType: 'timeline' })).toContain('entered the study');
-		expect(await clues.handler({ status: 'all' })).toContain('Blue candle');
-		expect(await knowledge.handler({ characterEntityKey: 'character.elias' })).toContain(
+		expect(toolText(await transcript.handler({ query: 'blue candle' }))).toContain('half burned');
+		expect(toolText(await timeline.handler({ eventType: 'timeline' }))).toContain(
+			'entered the study'
+		);
+		expect(toolText(await clues.handler({ status: 'all' }))).toContain('Blue candle');
+		expect(toolText(await knowledge.handler({ characterEntityKey: 'character.elias' }))).toContain(
 			'candle was lit'
 		);
 		await globalRemember.handler({
@@ -937,7 +950,7 @@ describe('memory-backed sessions', () => {
 			key: 'story-tone',
 			value: 'noir'
 		});
-		expect(await globalSearch.handler({ query: 'noir' })).toContain('story-tone');
+		expect(toolText(await globalSearch.handler({ query: 'noir' }))).toContain('story-tone');
 	});
 
 	it('does not check missing entity claims against unrelated predicate facts', async () => {
@@ -960,7 +973,7 @@ describe('memory-backed sessions', () => {
 		const raw = await checkClaims.handler({
 			claims: [{ entityKey: 'character.elias', predicate: 'location', value: 'study' }]
 		});
-		const parsed = JSON.parse(raw) as { results: Array<{ status: string; sources: unknown[] }> };
+		const parsed = toolData<{ results: Array<{ status: string; sources: unknown[] }> }>(raw);
 
 		expect(parsed.results[0]?.status).toBe('unknown');
 		expect(parsed.results[0]?.sources).toHaveLength(0);
@@ -3493,21 +3506,21 @@ describe('memory-backed sessions', () => {
 		const merge = tools.find((tool) => tool.name === 'memory_merge_entities')!;
 		expect(merge.permissionBehavior).toBe('never-prompt');
 
-		const ok = JSON.parse(
+		const ok = toolData<{ ok: boolean; reassignedFacts: number }>(
 			await merge.handler({ from: 'character.john_smith', into: 'character.john' })
-		) as { ok: boolean; reassignedFacts: number };
+		);
 		expect(ok.ok).toBe(true);
 		expect(ok.reassignedFacts).toBe(1);
 		expect(memory.getEntity(conv.id, 'character.john_smith')?.status).toBe('deleted');
 
-		const sameEntity = JSON.parse(
+		const sameEntity = toolData<{ ok: boolean }>(
 			await merge.handler({ from: 'character.john', into: 'character.john' })
-		) as { ok: boolean };
+		);
 		expect(sameEntity.ok).toBe(false);
 
-		const unknown = JSON.parse(
+		const unknown = toolData<{ ok: boolean; error: string }>(
 			await merge.handler({ from: 'character.ghost', into: 'character.john' })
-		) as { ok: boolean; error: string };
+		);
 		expect(unknown.ok).toBe(false);
 		expect(unknown.error).toContain('Unknown source entity');
 	});

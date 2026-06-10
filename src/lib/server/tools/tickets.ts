@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
-import type { PortalTool } from './git';
+import { err, ok, type PortalTool } from './types';
 
 const Status = z.enum(['open', 'done', 'archived']);
 
@@ -64,7 +64,10 @@ export function buildTicketTools(opts: {
 					body: parsed.body,
 					sourceConversationId: opts.conversationId
 				});
-				return `Added ticket ${ticket.id}: ${ticket.title}`;
+				return ok(
+					{ id: ticket.id, title: ticket.title, status: ticket.status },
+					`Added ticket ${ticket.id}: ${ticket.title}`
+				);
 			}
 		},
 		{
@@ -90,11 +93,14 @@ export function buildTicketTools(opts: {
 			async handler(args) {
 				const parsed = ListArgs.parse(args);
 				const rows = tickets.list(opts.userId, opts.workspaceKey, parsed);
-				if (rows.length === 0)
-					return `No ${parsed.status === 'all' ? '' : `${parsed.status} `}tickets.`;
-				return rows
+				if (rows.length === 0) {
+					const empty = `No ${parsed.status === 'all' ? '' : `${parsed.status} `}tickets.`;
+					return ok(empty, empty);
+				}
+				const rendered = rows
 					.map((t) => `- ${t.id} [${t.status}] ${t.title}${t.body ? `\n  ${t.body}` : ''}`)
 					.join('\n');
+				return ok(rendered, `${rows.length} ticket(s).`);
 			}
 		},
 		{
@@ -113,9 +119,9 @@ export function buildTicketTools(opts: {
 				const { id } = GetArgs.parse(args);
 				const ticket = tickets.get(id, opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
-					throw new Error(`Ticket not found: ${id}`);
+					return err(`Ticket not found: ${id}`);
 				}
-				return JSON.stringify(ticket, null, 2);
+				return ok(ticket);
 			}
 		},
 		{
@@ -142,11 +148,14 @@ export function buildTicketTools(opts: {
 				const { id, ...patch } = UpdateArgs.parse(args);
 				const current = tickets.get(id, opts.userId);
 				if (!current || current.workspaceKey !== opts.workspaceKey) {
-					throw new Error(`Ticket not found: ${id}`);
+					return err(`Ticket not found: ${id}`);
 				}
 				const updated = tickets.update(id, opts.userId, patch as UpdateInput);
-				if (!updated) throw new Error(`Ticket not found: ${id}`);
-				return `Updated ticket ${updated.id}: ${updated.title} [${updated.status}]`;
+				if (!updated) return err(`Ticket not found: ${id}`);
+				return ok(
+					{ id: updated.id, title: updated.title, status: updated.status },
+					`Updated ticket ${updated.id}: ${updated.title} [${updated.status}]`
+				);
 			}
 		}
 	];

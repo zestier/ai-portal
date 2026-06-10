@@ -3,6 +3,7 @@ import { loadConfig } from '../config';
 import { log } from '../log';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 import { buildGitTools, type PortalTool, type ToolStreamContext } from '../tools/git';
+import { err, deriveEnvelopeSummary, type ToolResult } from '../tools/types';
 import { buildPermissionTools } from '../tools/permissions';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
@@ -489,6 +490,17 @@ export function openOpenAICompatibleSession(
 		toolCall: OpenAIToolCall,
 		q: AsyncQueue<PortalEvent>
 	): Promise<ToolExecutionResult> {
+		// Serialize a handler's `ToolResult` envelope exactly once here, at the
+		// provider boundary. The resulting JSON string is both the model-visible
+		// tool message content AND what the UI deserializes — a single source of
+		// truth with no hidden, model-invisible data.
+		const finish = (envelope: ToolResult): ToolExecutionResult => {
+			const output = JSON.stringify(envelope, null, 2);
+			const summary = deriveEnvelopeSummary(envelope);
+			q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: envelope.ok, summary, output });
+			return { ok: envelope.ok, summary, output };
+		};
+
 		const parsedArgs = parseToolArguments(toolCall.function.arguments);
 		const args = parsedArgs.ok ? parsedArgs.args : toolCall.function.arguments;
 		q.push({
@@ -498,31 +510,17 @@ export function openOpenAICompatibleSession(
 			args
 		});
 		if (!parsedArgs.ok) {
-			const summary = parsedArgs.error;
-			const result = { ok: false, summary, output: summary };
-			q.push({
-				type: 'tool.result',
-				toolCallId: toolCall.id,
-				ok: false,
-				summary,
-				output: summary
-			});
-			return result;
+			return finish(err(parsedArgs.error));
 		}
 		const tool = toolsByName.get(toolCall.function.name);
 		if (!tool) {
-			const summary = toolCall.function.name
-				? `Unknown portal tool requested: ${toolCall.function.name}`
-				: 'Tool call did not include a function name.';
-			const result = { ok: false, summary, output: summary };
-			q.push({
-				type: 'tool.result',
-				toolCallId: toolCall.id,
-				ok: false,
-				summary,
-				output: summary
-			});
-			return result;
+			return finish(
+				err(
+					toolCall.function.name
+						? `Unknown portal tool requested: ${toolCall.function.name}`
+						: 'Tool call did not include a function name.'
+				)
+			);
 		}
 		// Validate args against the tool's Zod schema *before* opening a
 		// permission request. Misuse of a tool's argument schema is the
@@ -531,16 +529,7 @@ export function openOpenAICompatibleSession(
 		// self-correct on the next turn without a permission round-trip.
 		const validation = validatePortalToolArgs(tool, parsedArgs.args);
 		if (!validation.ok) {
-			const summary = validation.feedback;
-			const result = { ok: false, summary, output: summary };
-			q.push({
-				type: 'tool.result',
-				toolCallId: toolCall.id,
-				ok: false,
-				summary,
-				output: summary
-			});
-			return result;
+			return finish(err(validation.feedback));
 		}
 		// Per-call streaming channel bound to this tool call's id. Emits onto the
 		// owned, single-consumer FIFO queue `q`; `tool.call` was already pushed
@@ -556,25 +545,17 @@ export function openOpenAICompatibleSession(
 			},
 			signal: activeAbortController?.signal ?? new AbortController().signal
 		};
-		if (tool.permissionBehavior === 'never-prompt') {
+		const runHandler = async (): Promise<ToolExecutionResult> => {
 			try {
-				const output = await tool.handler(parsedArgs.args, ctx);
-				const summary = outputSummary(output);
-				const result = { ok: true, summary, output };
-				q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: true, summary, output });
-				return result;
+				return finish(await tool.handler(parsedArgs.args, ctx));
 			} catch (e) {
-				const summary = e instanceof Error ? e.message : String(e);
-				const result = { ok: false, summary, output: summary };
-				q.push({
-					type: 'tool.result',
-					toolCallId: toolCall.id,
-					ok: false,
-					summary,
-					output: summary
-				});
-				return result;
+				// Central try/catch normalizes thrown exceptions into the same
+				// `{ ok: false, error }` envelope handlers may return directly.
+				return finish(err(e instanceof Error ? e.message : String(e)));
 			}
+		};
+		if (tool.permissionBehavior === 'never-prompt') {
+			return runHandler();
 		}
 		const permission = await onPermissionRequest({
 			kind: 'custom-tool',
@@ -590,35 +571,9 @@ export function openOpenAICompatibleSession(
 				permission && 'feedback' in permission && typeof permission.feedback === 'string'
 					? permission.feedback
 					: 'Permission denied.';
-			const summary = `Permission denied for ${tool.name}: ${feedback}`;
-			const result = { ok: false, summary, output: summary };
-			q.push({
-				type: 'tool.result',
-				toolCallId: toolCall.id,
-				ok: false,
-				summary,
-				output: summary
-			});
-			return result;
+			return finish(err(`Permission denied for ${tool.name}: ${feedback}`));
 		}
-		try {
-			const output = await tool.handler(parsedArgs.args, ctx);
-			const summary = outputSummary(output);
-			const result = { ok: true, summary, output };
-			q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: true, summary, output });
-			return result;
-		} catch (e) {
-			const summary = e instanceof Error ? e.message : String(e);
-			const result = { ok: false, summary, output: summary };
-			q.push({
-				type: 'tool.result',
-				toolCallId: toolCall.id,
-				ok: false,
-				summary,
-				output: summary
-			});
-			return result;
-		}
+		return runHandler();
 	}
 
 	return {
@@ -774,8 +729,9 @@ function reconstructToolCalls(
 }
 
 function restoredToolContent(tool: ToolCallRecord): string {
-	const result = tool.resultJson ?? '';
-	return tool.status === 'ok' ? result : JSON.stringify({ error: result });
+	// `resultJson` is the once-serialized envelope persisted at the boundary;
+	// replay it to the model verbatim.
+	return tool.resultJson ?? '';
 }
 
 async function yieldFromQueue<T>(
@@ -835,14 +791,10 @@ function parseToolArguments(
 	}
 }
 
-function outputSummary(output: string): string {
-	const singleLine = output.replace(/\s+/g, ' ').trim();
-	if (!singleLine) return '(empty result)';
-	return singleLine.length > 200 ? `${singleLine.slice(0, 197)}...` : singleLine;
-}
-
 function toolMessageContent(result: ToolExecutionResult): string {
-	return result.ok ? result.output : JSON.stringify({ error: result.output });
+	// `output` is already the once-serialized envelope (success or error), so it
+	// is fed back to the model verbatim.
+	return result.output;
 }
 
 function buildOpenAITools(opts: {

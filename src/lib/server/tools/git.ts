@@ -15,30 +15,12 @@ import {
 	status,
 	type DiffTarget
 } from '../git';
+import { ok, type PortalTool } from './types';
 
-// Optional, opt-in streaming channel handed to a PortalTool handler so it can
-// surface incremental feedback while it runs. Both methods reuse the existing
-// ephemeral streaming events (`tool.partial_output` / `tool.progress`) and are
-// no-ops once the turn is aborted. Handlers that don't need streaming simply
-// ignore `ctx` and keep returning `Promise<string>`.
-export interface ToolStreamContext {
-	// Cumulative stdout/stderr snapshot. The client REPLACES (not appends) on each
-	// call, mirroring `tool.partial_output` semantics.
-	partial(output: string): void;
-	// Short human-readable status line.
-	progress(message: string): void;
-	// Mirrors the turn's abort signal.
-	readonly signal: AbortSignal;
-}
-
-export interface PortalTool {
-	name: string;
-	description: string;
-	parameters: Record<string, unknown>;
-	argsSchema?: z.ZodTypeAny;
-	permissionBehavior?: 'normal' | 'always-prompt' | 'never-prompt';
-	handler(args: unknown, ctx?: ToolStreamContext): Promise<string>;
-}
+// Re-exported so existing importers of these symbols from `./git` keep
+// compiling now that the canonical definitions live in `./types`.
+export { ok, err } from './types';
+export type { PortalTool, ToolStreamContext, ToolResult, ToolError } from './types';
 
 const TargetKind = z.enum([
 	'worktree-vs-head',
@@ -153,21 +135,17 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			async handler(args) {
 				const { includeIgnored } = GitStatusArgs.parse(args);
 				if (!(await isGitRepo(cwd))) {
-					return JSON.stringify({ initialized: false, changes: [] }, null, 2);
+					return ok({ initialized: false, changes: [] });
 				}
 				const [head, entries] = await Promise.all([headInfo(cwd), status(cwd, { includeIgnored })]);
-				return JSON.stringify(
-					{
-						initialized: true,
-						head,
-						changes: entries.map((e) => ({
-							...e,
-							status: aggregateStatus(e, { includeIgnored })
-						}))
-					},
-					null,
-					2
-				);
+				return ok({
+					initialized: true,
+					head,
+					changes: entries.map((e) => ({
+						...e,
+						status: aggregateStatus(e, { includeIgnored })
+					}))
+				});
 			}
 		},
 		{
@@ -206,16 +184,16 @@ export function buildGitTools(cwd: string): PortalTool[] {
 				switch (parsed.output) {
 					case 'patch': {
 						const out = await diff(cwd, target, parsed.path);
-						return out || '(no diff)';
+						return ok(out || '(no diff)');
 					}
 					case 'stat':
-						return JSON.stringify(await diffStat(cwd, target, parsed.path), null, 2);
+						return ok(await diffStat(cwd, target, parsed.path));
 					case 'numstat':
-						return JSON.stringify({ files: await numstat(cwd, target, parsed.path) }, null, 2);
+						return ok({ files: await numstat(cwd, target, parsed.path) });
 					case 'name-only':
-						return JSON.stringify({ files: await nameOnly(cwd, target, parsed.path) }, null, 2);
+						return ok({ files: await nameOnly(cwd, target, parsed.path) });
 					case 'name-status':
-						return JSON.stringify({ files: await nameStatus(cwd, target, parsed.path) }, null, 2);
+						return ok({ files: await nameStatus(cwd, target, parsed.path) });
 				}
 			}
 		},
@@ -249,7 +227,7 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			async handler(args) {
 				const parsed = GitLogArgs.parse(args);
 				const entries = await log(cwd, parsed);
-				return JSON.stringify({ commits: entries }, null, 2);
+				return ok({ commits: entries });
 			}
 		},
 		{
@@ -276,7 +254,7 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			async handler(args) {
 				const { sha, includePatch } = GitShowCommitArgs.parse(args);
 				const commit = await showCommit(cwd, sha, { includePatch });
-				return JSON.stringify(commit, null, 2);
+				return ok(commit);
 			}
 		},
 		{
@@ -301,7 +279,7 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			},
 			async handler(args) {
 				const { ref, path } = GitShowFileArgs.parse(args);
-				return await showFile(cwd, ref, path);
+				return ok(await showFile(cwd, ref, path));
 			}
 		},
 		{
@@ -354,7 +332,7 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			},
 			async handler(args, ctx) {
 				const parsed = GitCommitArgs.parse(args);
-				return JSON.stringify(await commitChanges(cwd, parsed, ctx), null, 2);
+				return ok(await commitChanges(cwd, parsed, ctx));
 			}
 		}
 	];

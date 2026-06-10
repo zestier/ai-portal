@@ -3,7 +3,7 @@ import * as memoryRepo from '../db/repos/memory';
 import * as messagesRepo from '../db/repos/messages';
 import { buildInitialPacket, renderMemoryPacket } from '../memory/engine';
 import type { MemoryMode } from '$lib/types';
-import type { PortalTool } from './git';
+import { ok, type PortalTool } from './types';
 
 const SearchArgs = z.object({
 	query: z.string().trim().min(1).max(500),
@@ -123,14 +123,15 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const parsed = SearchArgs.parse(args);
 				const results = memoryRepo.search(opts.conversationId, parsed);
+				const summary = `${results.length} result(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_search',
 					arguments: parsed,
-					resultSummary: `${results.length} result(s)`,
+					resultSummary: summary,
 					resultIds: results.map((result) => result.itemId)
 				});
-				return JSON.stringify({ results }, null, 2);
+				return ok({ results }, summary);
 			}
 		},
 		{
@@ -150,7 +151,7 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const { id } = EntityArgs.parse(args);
 				const entity = memoryRepo.getEntity(opts.conversationId, id);
-				if (!entity) return JSON.stringify({ entity: null }, null, 2);
+				if (!entity) return ok({ entity: null });
 				const facts = memoryRepo.listFacts(opts.conversationId, {
 					entityId: entity.id,
 					limit: 100
@@ -167,7 +168,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: entity.displayName,
 					resultIds: [entity.id]
 				});
-				return JSON.stringify(result, null, 2);
+				return ok(result, entity.displayName);
 			}
 		},
 		{
@@ -187,14 +188,15 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const parsed = OpenLoopsArgs.parse(args);
 				const openLoops = memoryRepo.listOpenLoops(opts.conversationId, parsed);
+				const summary = `${openLoops.length} open loop(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_get_open_loops',
 					arguments: parsed,
-					resultSummary: `${openLoops.length} open loop(s)`,
+					resultSummary: summary,
 					resultIds: openLoops.map((loop) => loop.id)
 				});
-				return JSON.stringify({ openLoops }, null, 2);
+				return ok({ openLoops }, summary);
 			}
 		},
 		{
@@ -215,14 +217,15 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const parsed = RecentEventsArgs.parse(args);
 				const events = memoryRepo.listEvents(opts.conversationId, parsed);
+				const summary = `${events.length} event(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_get_recent_events',
 					arguments: parsed,
-					resultSummary: `${events.length} event(s)`,
+					resultSummary: summary,
 					resultIds: events.map((event) => event.id)
 				});
-				return JSON.stringify({ events }, null, 2);
+				return ok({ events }, summary);
 			}
 		},
 		{
@@ -245,14 +248,15 @@ export function buildMemoryTools(opts: {
 				const matches = messagesRepo.searchConversation(opts.conversationId, parsed.query, {
 					limit: parsed.limit
 				});
+				const summary = `${matches.length} message(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_transcript_lookup',
 					arguments: parsed,
-					resultSummary: `${matches.length} message(s)`,
+					resultSummary: summary,
 					resultIds: matches.map((message) => message.id)
 				});
-				return JSON.stringify({ messages: matches }, null, 2);
+				return ok({ messages: matches }, summary);
 			}
 		},
 		{
@@ -275,14 +279,15 @@ export function buildMemoryTools(opts: {
 				const events = memoryRepo
 					.listEvents(opts.conversationId, parsed)
 					.sort((a, b) => a.occurredAt - b.occurredAt || a.id.localeCompare(b.id));
+				const summary = `${events.length} timeline event(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_query_timeline',
 					arguments: parsed,
-					resultSummary: `${events.length} timeline event(s)`,
+					resultSummary: summary,
 					resultIds: events.map((event) => event.id)
 				});
-				return JSON.stringify({ events }, null, 2);
+				return ok({ events }, summary);
 			}
 		},
 		{
@@ -315,14 +320,15 @@ export function buildMemoryTools(opts: {
 				const clueFacts = memoryRepo
 					.listFacts(opts.conversationId, { predicate: 'clue', limit: parsed.limit })
 					.filter((fact) => parsed.status === 'all' || fact.status === parsed.status);
+				const summary = `${loops.length + clueFacts.length} clue record(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_query_clues',
 					arguments: parsed,
-					resultSummary: `${loops.length + clueFacts.length} clue record(s)`,
+					resultSummary: summary,
 					resultIds: [...loops.map((loop) => loop.id), ...clueFacts.map((fact) => fact.id)]
 				});
-				return JSON.stringify({ openLoops: loops, facts: clueFacts }, null, 2);
+				return ok({ openLoops: loops, facts: clueFacts }, summary);
 			}
 		},
 		{
@@ -354,14 +360,15 @@ export function buildMemoryTools(opts: {
 				const events = entity
 					? memoryRepo.listEvents(opts.conversationId, { entityId: entity.id, limit: parsed.limit })
 					: [];
+				const summary = `${facts.length + events.length} knowledge record(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_get_character_knowledge',
 					arguments: parsed,
-					resultSummary: `${facts.length + events.length} knowledge record(s)`,
+					resultSummary: summary,
 					resultIds: [...facts.map((fact) => fact.id), ...events.map((event) => event.id)]
 				});
-				return JSON.stringify({ entity, facts, events }, null, 2);
+				return ok({ entity, facts, events }, summary);
 			}
 		},
 		{
@@ -393,13 +400,14 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const parsed = CheckClaimsArgs.parse(args);
 				const results = parsed.claims.map((claim) => checkClaim(opts.conversationId, claim));
+				const summary = `${results.length} claim(s) checked`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_check_claims',
 					arguments: parsed,
-					resultSummary: `${results.length} claim(s) checked`
+					resultSummary: summary
 				});
-				return JSON.stringify({ results }, null, 2);
+				return ok({ results }, summary);
 			}
 		},
 		{
@@ -430,16 +438,17 @@ export function buildMemoryTools(opts: {
 					fromKeyOrId: parsed.from,
 					intoKeyOrId: parsed.into
 				});
+				const summary = result.ok
+					? `merged ${parsed.from} into ${parsed.into} (${result.reassignedFacts} fact(s), ${result.reassignedEvents} event(s))`
+					: `not merged: ${result.error ?? 'unknown error'}`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_merge_entities',
 					arguments: parsed,
-					resultSummary: result.ok
-						? `merged ${parsed.from} into ${parsed.into} (${result.reassignedFacts} fact(s), ${result.reassignedEvents} event(s))`
-						: `not merged: ${result.error ?? 'unknown error'}`,
+					resultSummary: summary,
 					resultIds: result.into ? [result.into.id] : []
 				});
-				return JSON.stringify(result, null, 2);
+				return ok(result, summary);
 			}
 		},
 		{
@@ -470,14 +479,15 @@ export function buildMemoryTools(opts: {
 					value: parsed.value,
 					sourceConversationId: opts.conversationId
 				});
+				const summary = `Stored global ${row.kind}: ${row.memoryKey}`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_global_remember',
 					arguments: parsed,
-					resultSummary: `Stored global ${row.kind}: ${row.memoryKey}`,
+					resultSummary: summary,
 					resultIds: [row.id]
 				});
-				return JSON.stringify({ memory: row }, null, 2);
+				return ok({ memory: row }, summary);
 			}
 		},
 		{
@@ -498,14 +508,15 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const parsed = GlobalSearchArgs.parse(args);
 				const results = memoryRepo.searchGlobalMemories(opts.userId, parsed);
+				const summary = `${results.length} global result(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_global_search',
 					arguments: parsed,
-					resultSummary: `${results.length} global result(s)`,
+					resultSummary: summary,
 					resultIds: results.map((result) => result.itemId)
 				});
-				return JSON.stringify({ results }, null, 2);
+				return ok({ results }, summary);
 			}
 		},
 		{
@@ -528,7 +539,7 @@ export function buildMemoryTools(opts: {
 					arguments: {},
 					resultSummary: packet.summary
 				});
-				return renderMemoryPacket(packet);
+				return ok(renderMemoryPacket(packet), packet.summary);
 			}
 		}
 	];

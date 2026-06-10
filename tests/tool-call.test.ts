@@ -100,6 +100,40 @@ describe('summarizeToolCall', () => {
 			)
 		).toBe('Add feature · src/a.ts +1 more · body · 1 trailers');
 	});
+
+	it('summarizes portal memory tool options', () => {
+		expect(summarizeToolCall('memory_search', JSON.stringify({ query: 'blue candle' }))).toBe(
+			'blue candle'
+		);
+		expect(summarizeToolCall('memory_get_entity', JSON.stringify({ id: 'character.elias' }))).toBe(
+			'character.elias'
+		);
+		expect(
+			summarizeToolCall(
+				'memory_merge_entities',
+				JSON.stringify({ from: 'character.john_smith', into: 'character.john' })
+			)
+		).toBe('character.john_smith → character.john');
+		expect(summarizeToolCall('memory_check_claims', JSON.stringify({ claims: [{}, {}, {}] }))).toBe(
+			'3 claim(s)'
+		);
+	});
+
+	it('summarizes portal ticket and permission tool options', () => {
+		expect(summarizeToolCall('ticket_add', JSON.stringify({ title: 'Remember this' }))).toBe(
+			'Remember this'
+		);
+		expect(summarizeToolCall('ticket_update', JSON.stringify({ id: 't1', status: 'done' }))).toBe(
+			't1 · done'
+		);
+		expect(summarizeToolCall('ticket_list', JSON.stringify({ status: 'open' }))).toBe('open');
+		expect(
+			summarizeToolCall(
+				'permission_capabilities',
+				JSON.stringify({ permissionKind: 'url', toolName: 'url_fetcher' })
+			)
+		).toBe('url · url_fetcher');
+	});
 });
 
 describe('parseGitToolResult', () => {
@@ -180,6 +214,69 @@ describe('parseGitToolResult', () => {
 			trailers: [{ token: 'Reviewed-by', value: 'Tester <t@example.com>' }],
 			diffStat: { filesChanged: 1, added: 1, removed: 0 }
 		});
+	});
+	it('parses git_commit output from the envelope result field', () => {
+		expect(
+			parseGitToolResult(
+				'git_commit',
+				'{}',
+				JSON.stringify({
+					ok: true,
+					result: {
+						sha: 'abcdef123456',
+						shortSha: 'abcdef12',
+						subject: 'created',
+						body: 'Body line',
+						trailers: [],
+						files: [],
+						fileStats: [],
+						diffStat: { filesChanged: 1, added: 1, removed: 0 },
+						remainingDirtyFiles: []
+					}
+				})
+			)
+		).toMatchObject({
+			kind: 'commit-created',
+			shortSha: 'abcdef12',
+			diffStat: { filesChanged: 1, added: 1, removed: 0 }
+		});
+	});
+
+	it('returns null for an errored envelope', () => {
+		expect(
+			parseGitToolResult(
+				'git_commit',
+				'{}',
+				JSON.stringify({ ok: false, error: { message: 'nothing to commit' } })
+			)
+		).toBeNull();
+	});
+});
+
+describe('decodeToolResult envelope', () => {
+	it('decodes a success envelope with an object result as pretty JSON', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: true, result: { commits: [] } }));
+		expect(r.blocks).toEqual([{ kind: 'text', text: JSON.stringify({ commits: [] }, null, 2) }]);
+		expect(r.fallbackText).toBe(JSON.stringify({ commits: [] }, null, 2));
+	});
+
+	it('decodes a success envelope with a string result', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: true, result: 'plain text' }));
+		expect(r.blocks).toEqual([{ kind: 'text', text: 'plain text' }]);
+		expect(r.fallbackText).toBe('plain text');
+	});
+
+	it('decodes an error envelope to its message', () => {
+		const r = decodeToolResult(
+			JSON.stringify({ ok: false, error: { message: 'Ticket not found: t1' } })
+		);
+		expect(r.blocks).toEqual([{ kind: 'text', text: 'Ticket not found: t1' }]);
+		expect(r.fallbackText).toBe('Ticket not found: t1');
+	});
+
+	it('falls back to summary for a result-less success envelope', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: true, summary: 'Added ticket t1' }));
+		expect(r.blocks).toEqual([{ kind: 'text', text: 'Added ticket t1' }]);
 	});
 });
 

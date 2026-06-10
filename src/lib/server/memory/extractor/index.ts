@@ -158,7 +158,11 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		const presentedLoops = input.initialPacket?.openLoops ?? [];
 
 		const handlers = new Map<string, (args: unknown) => Promise<string>>();
-		for (const tool of readTools) handlers.set(tool.name, (args) => tool.handler(args));
+		// Read tools now return the structured `ToolResult` envelope; the extractor
+		// feeds tool results back to its model as plain message content, so
+		// serialize the envelope here (mirroring the provider boundary).
+		for (const tool of readTools)
+			handlers.set(tool.name, async (args) => JSON.stringify(await tool.handler(args)));
 		const writeHandlers = createWriteToolHandlers({
 			conversationId: input.conversationId,
 			mode: input.mode,

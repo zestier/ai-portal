@@ -78,6 +78,17 @@ function parseJsonRecord(text: string | null): JsonRecord | null {
 	}
 }
 
+// Unwrap the `{ ok, result }` tool-result envelope to the git tool's domain
+// record. `ok: false` envelopes (errors) yield null so no card renders. Records
+// without an `ok` discriminant are treated as legacy bare payloads.
+function unwrapEnvelopeResult(envelope: JsonRecord): JsonRecord | null {
+	if (typeof envelope.ok === 'boolean') {
+		if (!envelope.ok) return null;
+		return isRecord(envelope.result) ? envelope.result : null;
+	}
+	return envelope;
+}
+
 function parseArgs(json: string): JsonRecord {
 	try {
 		const v = JSON.parse(json);
@@ -176,7 +187,12 @@ export function parseGitToolResult(
 	resultText: string | null
 ): GitRenderedResult | null {
 	const t = tool.toLowerCase();
-	const result = parseJsonRecord(resultText);
+	const envelope = parseJsonRecord(resultText);
+	if (!envelope) return null;
+	// Unwrap the structured tool-result envelope: commit/diff/log data now nests
+	// under `result`. Errored tools have no card. Bare records (legacy persisted
+	// results) are used as-is.
+	const result = unwrapEnvelopeResult(envelope);
 	if (!result) return null;
 
 	if (t === 'git_diff') {

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGitTools } from '../src/lib/server/tools/git';
+import { ok } from '../src/lib/server/tools/types';
 import { buildMemoryTools } from '../src/lib/server/tools/memory';
 import {
 	buildToolArgsValidator,
@@ -54,7 +55,7 @@ describe('validatePortalToolArgs', () => {
 					description: 'x',
 					parameters: {},
 					async handler() {
-						return '';
+						return ok('');
 					}
 				},
 				{ anything: 1 }

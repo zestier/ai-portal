@@ -291,20 +291,25 @@ describe('bridge.open() session mode and permissions', () => {
 		const tool = tools.find((t) => t.name === 'permission_capabilities');
 		expect(tool).toBeTruthy();
 
-		const response = JSON.parse(
+		const envelope = JSON.parse(
 			await tool!.handler({ permissionKind: 'url', toolName: 'url_fetcher' })
 		) as {
-			mode: string;
-			bestEffort: boolean;
-			capabilities: Array<{
-				permissionKind: string;
-				status: string;
-				allowed?: Array<{ summary: string }>;
-			}>;
-			escalation: {
-				forcePermissionPrompt: { supported: boolean; guidance: string };
+			ok: boolean;
+			result: {
+				mode: string;
+				bestEffort: boolean;
+				capabilities: Array<{
+					permissionKind: string;
+					status: string;
+					allowed?: Array<{ summary: string }>;
+				}>;
+				escalation: {
+					forcePermissionPrompt: { supported: boolean; guidance: string };
+				};
 			};
 		};
+		expect(envelope.ok).toBe(true);
+		const response = envelope.result;
 
 		expect(response).toMatchObject({
 			mode: 'best-effort',

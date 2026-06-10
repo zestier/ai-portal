@@ -65,7 +65,7 @@
 	const renderedDiffs = $derived(toolCall.status === 'ok' ? synthesizeDiffs(toolCall) : []);
 	const gitRenderedResult = $derived(
 		toolCall.status === 'ok'
-			? parseGitToolResult(toolCall.tool, toolCall.argsJson, decoded.fallbackText)
+			? parseGitToolResult(toolCall.tool, toolCall.argsJson, toolCall.resultJson)
 			: null
 	);
 	const gitDiffText = $derived(
