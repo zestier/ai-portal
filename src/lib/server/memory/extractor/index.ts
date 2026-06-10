@@ -551,12 +551,24 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
 	// keep_loops calls, and liveness decay runs once on this collapsed
 	// patch, so a keep dropped here would let a still-live loop age out.
 	const keepOpenLoops = [...new Set(patches.flatMap((patch) => patch.keepOpenLoops ?? []))];
+	// De-dupe forget targets by their selector (handle, or entityKey+predicate)
+	// so the same fact staged for forgetting across calls is tombstoned once.
+	const forgetByKey = new Map<string, NonNullable<MemoryPatchProposal['forgetFacts']>[number]>();
+	for (const patch of patches) {
+		for (const target of patch.forgetFacts ?? []) {
+			const key = target.factId
+				? `id:${target.factId}`
+				: `kp:${target.entityKey ?? ''}|${target.predicate ?? ''}`;
+			forgetByKey.set(key, target);
+		}
+	}
 	if (entities.length > 0) merged.entities = entities;
 	if (events.length > 0) merged.events = events;
 	if (facts.length > 0) merged.facts = facts;
 	if (openLoops.length > 0) merged.openLoops = openLoops;
 	if (resolutionById.size > 0) merged.resolveOpenLoops = [...resolutionById.values()];
 	if (keepOpenLoops.length > 0) merged.keepOpenLoops = keepOpenLoops;
+	if (forgetByKey.size > 0) merged.forgetFacts = [...forgetByKey.values()];
 	return merged;
 }
 

@@ -2335,6 +2335,433 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.keepOpenLoops).toEqual([live.id]);
 	});
 
+	it('forgets the original compound attribute after splitting it into granular facts', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		// Seed on a prior assistant-message branch so the post-turn projection
+		// (rebuilt from the current descendant head) still sees the original fact.
+		const priorAssistant = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'Mara is a tall woman with red hair who fears deep water.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistant.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [
+					{
+						entityKey: 'character.mara',
+						predicate: 'description',
+						value: 'a tall woman with red hair who fears deep water'
+					}
+				]
+			}
+		});
+		const original = memory.listFacts(conv.id, { predicate: 'description' })[0];
+		expect(original.status).toBe('active');
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara is tall, red-haired, and fears deep water.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('c1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [
+						{ predicate: 'build', value: 'tall' },
+						{ predicate: 'hair', value: 'red' },
+						{ predicate: 'fears', value: 'deep water' }
+					]
+				});
+			}
+			if (step === 2) {
+				// The granular predicates are NEW, so nothing superseded the original
+				// "description"; forget it directly (by entityKey+predicate).
+				return writeCall('c2', 'forget_attribute', {
+					entityKey: 'character.mara',
+					predicate: 'description'
+				});
+			}
+			return { content: 'Split the description into granular traits.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-split',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// The forget call succeeded and staged the target.
+		const ok = feedback.find(
+			(entry) => entry.includes('"forget_attribute"') && entry.includes('"ok":true')
+		);
+		expect(ok).toBeDefined();
+		expect(extraction.patch.forgetFacts).toEqual([
+			{ entityKey: 'character.mara', predicate: 'description' }
+		]);
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-split',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+		expect(committed.counts.forgottenFacts).toBe(1);
+
+		// The compound is tombstoned; the granular traits replace it.
+		expect(memory.getFact(conv.id, original.id)?.status).toBe('deleted');
+		const active = memory
+			.listFacts(conv.id, { entityId: original.entityId!, limit: 50 })
+			.map((fact) => fact.predicate)
+			.sort();
+		expect(active).toEqual(['build', 'fears', 'hair']);
+	});
+
+	it('forgets an explicitly retracted attribute by handle and restores it on revert', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const priorAssistant = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'The box contains a brass key.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistant.id,
+			patch: {
+				entities: [{ entityKey: 'object.box', entityType: 'object', displayName: 'Box' }],
+				facts: [{ entityKey: 'object.box', predicate: 'contents', value: 'a brass key' }]
+			}
+		});
+		const fact = memory.listFacts(conv.id, { predicate: 'contents' })[0];
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Actually the box is empty now — forget what was in it.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		let step = 0;
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			if (step === 1) {
+				return writeCall('c1', 'forget_attribute', { handle: fact.id });
+			}
+			return { content: 'Removed the retracted attribute.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-retract-attr',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+		expect(extraction.patch.forgetFacts).toEqual([{ factId: fact.id }]);
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-retract-attr',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+		expect(committed.counts.forgottenFacts).toBe(1);
+		expect(memory.getFact(conv.id, fact.id)?.status).toBe('deleted');
+
+		// Reverting the patch restores the tombstoned fact to active.
+		const result = memory.revertPatch(conv.id, committed.patch.id);
+		expect(result.reverted).toBe(1);
+		expect(memory.getFact(conv.id, fact.id)?.status).toBe('active');
+	});
+
+	it('forgets an explicitly retracted directive by handle', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const priorAssistant = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'I will always greet you by name.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistant.id,
+			patch: { facts: [{ predicate: 'directive', value: 'Always greet the user by name.' }] }
+		});
+		const directive = memory.listFacts(conv.id, { predicate: 'directive' })[0];
+		expect(directive.status).toBe('active');
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Stop greeting me by name — drop that rule entirely.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Okay.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// Wrong tool: forget_attribute must refuse a directive handle.
+				return writeCall('c1', 'forget_attribute', { handle: directive.id });
+			}
+			if (step === 2) {
+				return writeCall('c2', 'forget_directive', { handle: directive.id });
+			}
+			return { content: 'Retired the directive.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-retract-directive',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// forget_attribute refused the directive and redirected to forget_directive.
+		const refusal = feedback.find(
+			(entry) => entry.includes('"forget_attribute"') && entry.includes('"ok":false')
+		);
+		expect(refusal).toBeDefined();
+		expect(JSON.parse(refusal!).error.code).toBe('is_directive');
+		// Only the forget_directive target was staged.
+		expect(extraction.patch.forgetFacts).toEqual([{ factId: directive.id }]);
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-retract-directive',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+		expect(committed.counts.forgottenFacts).toBe(1);
+		expect(memory.getFact(conv.id, directive.id)?.status).toBe('deleted');
+	});
+
+	it('rejects a forget_attribute whose target does not resolve to an active fact', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Forget that.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('c1', 'forget_attribute', { handle: 'fact.does_not_exist' });
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-forget-unknown',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// Unresolved target is an execution error with a hint — never a silent no-op.
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.tool).toBe('forget_attribute');
+		expect(parsed.error.kind).toBe('execution');
+		expect(parsed.error.code).toBe('unknown_fact');
+		expect(typeof parsed.issues[0].hint).toBe('string');
+		// Nothing was staged.
+		expect(extraction.patch.forgetFacts ?? []).toHaveLength(0);
+	});
+
+	it('flags an unresolved forget target as a blocking diagnostic on commit', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const validation = validatePatch(
+			{ forgetFacts: [{ factId: 'fact.nope' }] },
+			{ conversationId: conv.id, mode: 'project' }
+		);
+		expect(validation.ok).toBe(false);
+		expect(validation.issues.some((i) => i.code === 'forget_target_unresolved')).toBe(true);
+
+		const committed = commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			patch: { forgetFacts: [{ factId: 'fact.nope' }] }
+		});
+		// The bad target blocks the commit (needs_review) and tombstones nothing.
+		expect(committed.patch.status).toBe('needs_review');
+		expect(committed.counts.forgottenFacts).toBe(0);
+	});
+
+	it('prefers supersede for a same-predicate update (no forget needed)', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'object.door', entityType: 'object', displayName: 'Door' }],
+				facts: [{ entityKey: 'object.door', predicate: 'status', value: 'closed' }]
+			}
+		});
+		const first = memory.listFacts(conv.id, { predicate: 'status' })[0];
+
+		// Re-asserting the SAME entityKey+predicate with a new value supersedes the
+		// prior automatically — no forget required.
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'object.door', predicate: 'status', value: 'open' }] }
+		});
+		expect(memory.getFact(conv.id, first.id)?.status).toBe('superseded');
+		const active = memory.listFacts(conv.id, { predicate: 'status' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('open');
+	});
+
+	it('does not forget a fact the same patch re-asserts (supersede wins over a redundant forget)', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'object.lamp', entityType: 'object', displayName: 'Lamp' }],
+				facts: [{ entityKey: 'object.lamp', predicate: 'state', value: 'off' }]
+			}
+		});
+		const original = memory.listFacts(conv.id, { predicate: 'state' })[0];
+
+		// A self-contradictory patch: re-assert state=on (supersede) AND forget the
+		// same entityKey+predicate. Without the guard, commit would re-resolve the
+		// forget to the freshly-superseding fact and tombstone it, dropping the
+		// predicate entirely. The guard skips that forget so supersede wins.
+		const committed = commitPatch({
+			conversationId: conv.id,
+			patch: {
+				facts: [{ entityKey: 'object.lamp', predicate: 'state', value: 'on' }],
+				forgetFacts: [{ entityKey: 'object.lamp', predicate: 'state' }]
+			}
+		});
+		expect(committed.counts.forgottenFacts).toBe(0);
+		expect(memory.getFact(conv.id, original.id)?.status).toBe('superseded');
+		const active = memory.listFacts(conv.id, { predicate: 'state' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('on');
+	});
+
+	it('restores a forgotten fact on revert and re-consolidates against a later supersede', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'object.safe', entityType: 'object', displayName: 'Safe' }],
+				// `status` is a single-valued predicate, so only one value is ever
+				// active — the case where restoring a stale fact could collide.
+				facts: [{ entityKey: 'object.safe', predicate: 'status', value: 'locked' }]
+			}
+		});
+		const original = memory.listFacts(conv.id, { predicate: 'status' })[0];
+
+		// Forget the attribute outright.
+		const forgetCommit = commitPatch({
+			conversationId: conv.id,
+			patch: { forgetFacts: [{ factId: original.id }] }
+		});
+		expect(forgetCommit.counts.forgottenFacts).toBe(1);
+		expect(memory.getFact(conv.id, original.id)?.status).toBe('deleted');
+
+		// A LATER patch re-asserts the same single-valued predicate with a fresh
+		// value, becoming the lone active fact.
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ entityKey: 'object.safe', predicate: 'status', value: 'open' }] }
+		});
+		const replacement = memory.listFacts(conv.id, { predicate: 'status' })[0];
+		expect(replacement.value).toBe('open');
+		expect(replacement.id).not.toBe(original.id);
+
+		// Reverting the forget restores the old fact; consolidation (run inside
+		// updateFact) re-derives the single-valued group so exactly one fact stays
+		// active — the newer value wins and the restored one settles to superseded
+		// rather than producing two simultaneously-active values.
+		const result = memory.revertPatch(conv.id, forgetCommit.patch.id);
+		expect(result.reverted).toBe(1);
+		const active = memory.listFacts(conv.id, { predicate: 'status', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('open');
+		// The restored fact is out of the 'deleted' tombstone state (superseded by
+		// the newer value), never left dangling as a second active fact.
+		expect(memory.getFact(conv.id, original.id)?.status).toBe('superseded');
+	});
+
 	it('aborts the tool-calling extractor between iterations when its signal fires', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });

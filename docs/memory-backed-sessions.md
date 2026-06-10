@@ -118,6 +118,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory.merge_entities` | Fold a duplicate entity into a canonical one — reassigning its facts, events, and open-loop links — to clean up two keys that denote the same referent (e.g. `character.firstname` vs `character.firstname_lastname`). |
 | `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` / `remember_entity` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
 | `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
+| `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Revertible; prefer supersede when the predicate is unchanged. |
 
 These tools should be available to the model during the main response call for
 memory-backed sessions. The model should be instructed to call them whenever a
@@ -384,6 +385,21 @@ abandoned/superseded; the optional `reason` is appended to the loop's
 description). Resolutions are recorded as `resolve` patch items, so reverting the
 patch reopens the loop.
 
+Attributes and directives can likewise be retired when no natural supersede
+applies. The extractor calls `forget_attribute` (`{ handle }` or
+`{ entityKey, predicate }`) or `forget_directive` (`{ handle }`) to **tombstone**
+an existing fact (`status='deleted'`). The motivating case is the *compound
+split*: when the extractor breaks a non-specific attribute
+(`description="tall, red hair, fears water"`) into granular facts under new
+predicates (`build`, `hair`, `fears`), the original `description` predicate is
+never superseded, so it is forgotten directly. The other case is an attribute or
+directive the user **explicitly retracted** with no replacement. Forgetting is
+recorded as a `forget` patch item, so reverting the patch restores the fact to
+`active`; an unresolved target (a stale handle, or an `entityKey`+`predicate`
+with no active fact) is a blocking diagnostic rather than a silent no-op. Same
+predicate → prefer supersede (re-assert via `remember_attributes`); never forget
+merely to tidy.
+
 ### Open-loop liveness ("touch-to-keep")
 
 Explicit closing is not enough on its own: closing a loop requires the model to
@@ -488,6 +504,8 @@ flat tool per concept, where the tool name *is* the classification (there is no
 | `remember_entity` | Establish a durable referent that facts attach to; prose blurb goes in `summary`. | `entityKey`, `entityType`, `displayName` |
 | `keep_loops` | Batch-reaffirm presented open loops that are still live. | `handles[]` |
 | `close_loop` | Retire one existing loop by handle. | `handle`, `status` (`resolved`/`dropped`) |
+| `forget_attribute` | Retire (tombstone) an existing **attribute** fact that has no natural supersede — the compound-split case (after breaking a non-specific attribute into granular facts under new predicates, forget the orphaned original) or a trait the user explicitly retracted. Prefer supersede (re-assert same `entityKey`+`predicate`) when the predicate is unchanged. | `handle` **or** `entityKey`+`predicate` |
+| `forget_directive` | Retire (tombstone) an existing **directive** the user explicitly retracted with no replacement, by handle only (directives are global). When a rule is overridden, record the replacement with `remember_directive` instead. | `handle` |
 
 `keep_loops.handles[]` and `close_loop.handle` are **loop handles**: each open
 loop carries a stable, human-legible `loop_key` (a slug of its title, e.g.
@@ -810,18 +828,20 @@ Output:
 - `unknown`
 - relevant source facts/events
 
-### Durable-write tools (`remember_*`, `keep_loops`, `close_loop`)
+### Durable-write tools (`remember_*`, `keep_loops`, `close_loop`, `forget_*`)
 
 The background extractor records durable memory by calling **per-kind write
 tools** — `remember_attributes`, `remember_directive`, `remember_event`,
 `remember_loop`, and `remember_entity`, plus `keep_loops`/`close_loop` for
-open-loop lifecycle. Each takes a small, flat argument object (`remember_attributes`
-takes a shared `entityKey` plus an array of flat trait items); the tool name *is*
-the classification (no `kind` discriminator). The server validates and stages
-each call, returning a uniform `{ ok, accepted | error, staged_totals, … }`
-envelope so a rejected call gives targeted, per-tool feedback without discarding
-anything already staged. Everything staged across the turn commits once at the
-end. The model never writes directly to canonical memory.
+open-loop lifecycle and `forget_attribute`/`forget_directive` for retiring a
+stale attribute or directive that has no natural supersede. Each takes a small,
+flat argument object (`remember_attributes` takes a shared `entityKey` plus an
+array of flat trait items); the tool name *is* the classification (no `kind`
+discriminator). The server validates and stages each call, returning a uniform
+`{ ok, accepted | error, staged_totals, … }` envelope so a rejected call gives
+targeted, per-tool feedback without discarding anything already staged.
+Everything staged across the turn commits once at the end. The model never
+writes directly to canonical memory.
 
 ## Extraction and commit flow
 
@@ -835,7 +855,8 @@ calls, which collapses to:
   "facts": [],
   "openLoops": [],
   "resolveOpenLoops": [],
-  "keepOpenLoops": []
+  "keepOpenLoops": [],
+  "forgetFacts": []
 }
 ```
 
@@ -1629,7 +1650,7 @@ First production-capable slice:
   - `memory.get_open_loops`
   - `memory.get_recent_events`
   - `memory.check_claims`
-  - durable-write tools (extractor): `remember_*`, `keep_loops`, `close_loop`
+  - durable-write tools (extractor): `remember_*`, `keep_loops`, `close_loop`, `forget_attribute`, `forget_directive`
 - post-turn extraction
 - patch validation
 - transactional commit

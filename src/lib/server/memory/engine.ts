@@ -103,6 +103,25 @@ export interface MemoryPatchProposal {
 	 * accumulating without the model having to notice their absence.
 	 */
 	keepOpenLoops?: string[];
+	/**
+	 * Explicit retirements of existing *facts* (attributes or directives) the
+	 * extractor decided are stale and have no natural supersede — e.g. after
+	 * breaking a compound attribute (`description="tall, red hair, fears water"`)
+	 * into granular facts under new predicates, the original compound predicate is
+	 * never superseded, so it is forgotten directly; or a trait/rule the user
+	 * explicitly retracted with no replacement. Each target resolves to one active
+	 * fact, either by its `factId` (the `[id=...]` handle) or, for attributes, by
+	 * `entityKey` + `predicate`. Commit tombstones the fact (`status='deleted'`)
+	 * and records a `forget` patch item, so the retirement is revertible and
+	 * visible in the inspector. Prefer supersede (re-assert same entityKey +
+	 * predicate) whenever the predicate is unchanged; forgetting is for the cases
+	 * supersede cannot reach.
+	 */
+	forgetFacts?: Array<{
+		factId?: string;
+		entityKey?: string;
+		predicate?: string;
+	}>;
 }
 
 export interface CommitMemoryPatchInput {
@@ -141,6 +160,46 @@ export const MAX_DIRECTIVES = 50;
 
 export function isDirectivePredicate(predicate: string): boolean {
 	return predicate.trim().toLowerCase() === DIRECTIVE_PREDICATE;
+}
+
+/**
+ * Resolve a forget target — supplied either as a `factId` (the packet `[id=...]`
+ * handle) or, for attributes, as `entityKey` + `predicate` — to the single
+ * ACTIVE fact it names, reporting whether that fact is a directive. Returns null
+ * when nothing active resolves (a stale handle, a hallucinated id, or an
+ * entity/predicate with no active fact), so both `validatePatch` and the forget
+ * tools surface an explicit miss instead of silently committing a no-op.
+ *
+ * `factId` takes precedence: it is unambiguous and the only selector directives
+ * accept (they share the reserved `directive` predicate and have no per-entity
+ * key). The `entityKey` + `predicate` path is attribute-only in practice — a
+ * directive's predicate is `directive` on the session entity — and the caller
+ * (forget_attribute) additionally refuses a directive hit via `isDirective`.
+ */
+export function resolveForgetTarget(
+	conversationId: string,
+	target: { factId?: string; entityKey?: string; predicate?: string }
+): { factId: string; isDirective: boolean } | null {
+	if (target.factId) {
+		const fact = memoryRepo.getFact(conversationId, target.factId);
+		if (!fact || fact.status !== 'active') return null;
+		return { factId: fact.id, isDirective: isDirectivePredicate(fact.predicate) };
+	}
+	if (target.entityKey && target.predicate) {
+		const entity = memoryRepo.getEntity(conversationId, target.entityKey);
+		if (!entity) return null;
+		const fact = memoryRepo
+			.listFacts(conversationId, {
+				entityId: entity.id,
+				predicate: target.predicate,
+				status: 'active',
+				limit: 1
+			})
+			.at(0);
+		if (!fact) return null;
+		return { factId: fact.id, isDirective: isDirectivePredicate(fact.predicate) };
+	}
+	return null;
 }
 
 export interface BuildInitialPacketOptions {
@@ -474,6 +533,25 @@ export function validatePatch(
 				});
 			}
 		}
+		for (const target of patch.forgetFacts ?? []) {
+			// Every forget must resolve to an ACTIVE fact (by handle, or by
+			// entityKey+predicate for attributes). An unresolved target is an
+			// error — not a silent no-op — so a stale/hallucinated handle is
+			// surfaced rather than committed as nothing.
+			const resolved = resolveForgetTarget(opts.conversationId, target);
+			if (!resolved) {
+				const selector = target.factId
+					? `id "${target.factId}"`
+					: target.entityKey || target.predicate
+						? `${target.entityKey ?? '?'}.${target.predicate ?? '?'}`
+						: '(no selector)';
+				issues.push({
+					severity: 'error',
+					code: 'forget_target_unresolved',
+					message: `No active fact matches the forget target ${selector}.`
+				});
+			}
+		}
 	}
 	if (opts.mode === 'project') {
 		for (const fact of patch.facts ?? []) {
@@ -671,6 +749,7 @@ export function commitPatch(
 		facts: number;
 		openLoops: number;
 		resolvedOpenLoops: number;
+		forgottenFacts: number;
 		issues: number;
 	};
 } {
@@ -707,6 +786,7 @@ export function commitPatch(
 				facts: 0,
 				openLoops: 0,
 				resolvedOpenLoops: 0,
+				forgottenFacts: 0,
 				issues: validation.issues.length
 			}
 		};
@@ -818,6 +898,12 @@ export function commitPatch(
 	};
 
 	let factCount = 0;
+	// Fact ids created by THIS patch. A forget that re-resolves to one of these
+	// (e.g. a forget-by-entityKey+predicate aimed at a predicate the same patch
+	// also re-asserted — supersede already retired the old value, leaving the
+	// fresh one active under that selector) must be skipped, otherwise the forget
+	// would tombstone the just-written value and wipe the predicate entirely.
+	const createdFactIds = new Set<string>();
 	for (const fact of input.patch.facts ?? []) {
 		const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
 		// Directives are always-on standing rules: force them pinned so they
@@ -845,6 +931,7 @@ export function commitPatch(
 			itemId: row.id,
 			action: 'create'
 		});
+		createdFactIds.add(row.id);
 		factCount++;
 	}
 
@@ -902,6 +989,34 @@ export function commitPatch(
 		});
 	}
 
+	// Forget: tombstone each targeted active fact. Resolution is re-checked here
+	// (not just at tool-call time) so a handle superseded/deleted by an earlier
+	// item in THIS patch is skipped rather than mis-deleting whatever now sits
+	// under that id. Recorded as a `forget` patch item so the delete is
+	// revertible (revertPatch restores it to active) and visible in the inspector.
+	let forgottenFacts = 0;
+	for (const target of input.patch.forgetFacts ?? []) {
+		const resolved = resolveForgetTarget(input.conversationId, target);
+		// Unresolved targets were already flagged in validation; skip so a stale
+		// handle doesn't abort the rest of the commit.
+		if (!resolved) continue;
+		// Never forget a fact this same patch just created: a forget-by-predicate
+		// re-resolves to the freshly-superseding value, so tombstoning it would
+		// undo the supersede and drop the predicate. Prefer the supersede.
+		if (createdFactIds.has(resolved.factId)) continue;
+		const updated = memoryRepo.updateFact(input.conversationId, resolved.factId, {
+			status: 'deleted'
+		});
+		if (!updated) continue;
+		forgottenFacts += 1;
+		memoryRepo.recordPatchItem(input.conversationId, {
+			patchId: patchRecord.id,
+			itemType: 'fact',
+			itemId: resolved.factId,
+			action: 'forget'
+		});
+	}
+
 	return {
 		patch: patchRecord,
 		counts: {
@@ -910,6 +1025,7 @@ export function commitPatch(
 			facts: factCount,
 			openLoops: input.patch.openLoops?.length ?? 0,
 			resolvedOpenLoops,
+			forgottenFacts,
 			issues: validation.issues.length
 		}
 	};
@@ -1802,7 +1918,8 @@ function summarizePatch(patch: MemoryPatchProposal): string {
 		patch.events?.length ? `${patch.events.length} events` : '',
 		patch.facts?.length ? `${patch.facts.length} facts` : '',
 		patch.openLoops?.length ? `${patch.openLoops.length} open loops` : '',
-		patch.resolveOpenLoops?.length ? `${patch.resolveOpenLoops.length} resolved loops` : ''
+		patch.resolveOpenLoops?.length ? `${patch.resolveOpenLoops.length} resolved loops` : '',
+		patch.forgetFacts?.length ? `${patch.forgetFacts.length} forgotten facts` : ''
 	]
 		.filter(Boolean)
 		.join(', ');

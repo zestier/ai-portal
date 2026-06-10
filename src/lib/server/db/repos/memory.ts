@@ -711,6 +711,19 @@ export function listFacts(
  * entity-key index in the turn packet (so the model knows how much is queryable
  * by name even when individual fact bodies are dropped from the packet).
  */
+/**
+ * Fetch a single fact by id (any status), or null if it doesn't exist in this
+ * conversation. Used by the forget path to resolve a packet `[id=...]` handle to
+ * a concrete fact and check its current status/kind before tombstoning it.
+ */
+export function getFact(conversationId: string, id: string): MemoryFact | null {
+	if (!id) return null;
+	const row = getDb()
+		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
+		.get(id, conversationId) as FactRow | undefined;
+	return row ? rowToFact(row) : null;
+}
+
 export function entityFactCounts(conversationId: string): Map<string, number> {
 	const rows = getDb()
 		.prepare(
@@ -1489,6 +1502,20 @@ export function revertPatch(
 			// 'open' is correct in practice.
 			if (item.itemType === 'open_loop') {
 				const ok = updateOpenLoop(conversationId, item.itemId, { status: 'open' }) !== null;
+				if (ok) reverted++;
+				else skipped++;
+			} else {
+				skipped++;
+			}
+			continue;
+		}
+		if (item.action === 'forget') {
+			// Reverting a forget restores the tombstoned fact to active.
+			// Consolidation (run inside updateFact) re-derives the active set, so a
+			// sibling that was promoted when the fact was forgotten settles back
+			// correctly. Only facts are ever forgotten.
+			if (item.itemType === 'fact') {
+				const ok = updateFact(conversationId, item.itemId, { status: 'active' }) !== null;
 				if (ok) reverted++;
 				else skipped++;
 			} else {

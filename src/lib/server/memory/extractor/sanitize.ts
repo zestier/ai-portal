@@ -55,7 +55,8 @@ export function sanitizePatch(
 			entities: keep(patch.entities),
 			events: keep(patch.events),
 			facts: keep(patch.facts),
-			openLoops: keep(patch.openLoops)
+			openLoops: keep(patch.openLoops),
+			forgetFacts: patch.forgetFacts
 		},
 		initialPacket
 	);
@@ -78,6 +79,10 @@ export function sanitizePatch(
 		events: sanitized.patch.events,
 		facts: sanitized.patch.facts,
 		openLoops: sanitized.patch.openLoops,
+		// Forget targets carry an opaque factId or an entityKey+predicate selector
+		// (no free text to redact); pass them through with entityKeys already
+		// canonicalized so a forget aimed at an alias still resolves the same fact.
+		forgetFacts: sanitized.patch.forgetFacts,
 		// Resolutions only reference an existing loop id plus a short free-text
 		// reason. Don't drop the whole resolution if the reason trips the secret
 		// filter — that would silently leave the loop open. Instead strip just
@@ -187,6 +192,10 @@ function canonicalizeEntityKeys(
 		openLoops: patch.openLoops?.map((loop) => ({
 			...loop,
 			relatedEntityKeys: loop.relatedEntityKeys?.map((key) => rewriteKey(key) ?? key)
+		})),
+		forgetFacts: patch.forgetFacts?.map((target) => ({
+			...target,
+			entityKey: rewriteKey(target.entityKey)
 		}))
 	};
 	next.entities = entities.length > 0 ? entities : undefined;

@@ -16,6 +16,7 @@ import type { MemoryMode } from '$lib/types';
 import {
 	validatePatch,
 	isDirectivePredicate,
+	resolveForgetTarget,
 	MEMORY_FACT_KINDS,
 	MEMORY_FACT_KIND_SCHEMAS,
 	MEMORY_FACT_KIND_EXAMPLES,
@@ -77,7 +78,9 @@ type WriteToolName =
 	| 'remember_attributes'
 	| 'remember_entity'
 	| 'keep_loops'
-	| 'close_loop';
+	| 'close_loop'
+	| 'forget_attribute'
+	| 'forget_directive';
 
 const REMEMBER_TOOL_DESCRIPTIONS: Record<RememberToolName, string> = {
 	remember_directive:
@@ -166,6 +169,59 @@ const CLOSE_LOOP_SCHEMA = {
 
 const KEEP_LOOPS_EXAMPLE = { handles: ['loop.find_attic_key'] };
 const CLOSE_LOOP_EXAMPLE = { handle: 'loop.find_attic_key', status: 'resolved' };
+
+// forget_attribute / forget_directive retire an EXISTING fact (tombstone it) when
+// no natural supersede applies — e.g. after splitting a compound attribute into
+// granular facts under new predicates the original predicate is never superseded,
+// or the user explicitly retracted a trait/rule with no replacement. Targets are
+// resolved against committed memory (not the staged buffer) the same way the
+// commit path resolves them, so an unresolved handle is reported rather than
+// silently staged as a no-op.
+const FORGET_ATTRIBUTE_SCHEMA = {
+	type: 'object',
+	additionalProperties: false,
+	properties: {
+		handle: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 200,
+			description:
+				"The attribute fact's [id=...] handle from the packet/search. Provide this OR both entityKey and predicate."
+		},
+		entityKey: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 200,
+			description:
+				'The entity the attribute is on. Provide with `predicate` as an alternative to `handle`.'
+		},
+		predicate: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 100,
+			description:
+				'The attribute predicate to forget on `entityKey`. Provide with `entityKey` as an alternative to `handle`.'
+		}
+	}
+} as const;
+
+const FORGET_DIRECTIVE_SCHEMA = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['handle'],
+	properties: {
+		handle: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 200,
+			description:
+				"The directive fact's [id=...] handle from the packet. Directives are global (no entityKey), so the handle is the only selector."
+		}
+	}
+} as const;
+
+const FORGET_ATTRIBUTE_EXAMPLE = { entityKey: 'character.mara', predicate: 'description' };
+const FORGET_DIRECTIVE_EXAMPLE = { handle: '01J9Z0M5Q2K7V8N3B4C5D6E7F8' };
 
 // A remember_* tool advertises its fact kind's schema/example with the internal
 // `kind` discriminator stripped — the tool name already fixes the kind.
@@ -276,6 +332,8 @@ const ATTRIBUTES_BATCH_EXAMPLE = {
 function writeToolParameters(tool: WriteToolName): Record<string, unknown> {
 	if (tool === 'keep_loops') return KEEP_LOOPS_SCHEMA;
 	if (tool === 'close_loop') return CLOSE_LOOP_SCHEMA;
+	if (tool === 'forget_attribute') return FORGET_ATTRIBUTE_SCHEMA;
+	if (tool === 'forget_directive') return FORGET_DIRECTIVE_SCHEMA;
 	if (tool === 'remember_entity') return ENTITY_SCHEMA;
 	if (tool === 'remember_attributes') return ATTRIBUTES_BATCH_SCHEMA;
 	return stripKind(MEMORY_FACT_KIND_SCHEMAS[REMEMBER_TOOL_KINDS[tool]]);
@@ -284,6 +342,8 @@ function writeToolParameters(tool: WriteToolName): Record<string, unknown> {
 function writeToolExample(tool: WriteToolName): Record<string, unknown> {
 	if (tool === 'keep_loops') return KEEP_LOOPS_EXAMPLE;
 	if (tool === 'close_loop') return CLOSE_LOOP_EXAMPLE;
+	if (tool === 'forget_attribute') return FORGET_ATTRIBUTE_EXAMPLE;
+	if (tool === 'forget_directive') return FORGET_DIRECTIVE_EXAMPLE;
 	if (tool === 'remember_entity') return ENTITY_EXAMPLE;
 	if (tool === 'remember_attributes') return ATTRIBUTES_BATCH_EXAMPLE;
 	return stripKindExample(MEMORY_FACT_KIND_EXAMPLES[REMEMBER_TOOL_KINDS[tool]]);
@@ -356,6 +416,7 @@ function stagedTotals(staged: MemoryPatchProposal[]): Record<string, number> {
 	let loops = 0;
 	let keptLoops = 0;
 	let closedLoops = 0;
+	let forgotten = 0;
 	for (const patch of staged) {
 		entities += patch.entities?.length ?? 0;
 		for (const fact of patch.facts ?? []) {
@@ -366,13 +427,14 @@ function stagedTotals(staged: MemoryPatchProposal[]): Record<string, number> {
 		loops += patch.openLoops?.length ?? 0;
 		keptLoops += patch.keepOpenLoops?.length ?? 0;
 		closedLoops += patch.resolveOpenLoops?.length ?? 0;
+		forgotten += patch.forgetFacts?.length ?? 0;
 	}
-	return { entities, attributes, directives, events, loops, keptLoops, closedLoops };
+	return { entities, attributes, directives, events, loops, keptLoops, closedLoops, forgotten };
 }
 
 function writeSuccess(
 	tool: WriteToolName,
-	action: 'created' | 'kept' | 'closed',
+	action: 'created' | 'kept' | 'closed' | 'forgotten',
 	accepted: unknown,
 	totals: Record<string, number>,
 	warnings: WriteIssue[],
@@ -509,6 +571,24 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 				description:
 					'Retire one EXISTING open loop by handle: status "resolved" when done/answered, "dropped" when abandoned or superseded (e.g. an option the user did not choose).',
 				parameters: writeToolParameters('close_loop')
+			}
+		},
+		{
+			type: 'function',
+			function: {
+				name: 'forget_attribute',
+				description:
+					'Retire (tombstone) an EXISTING attribute fact that has no natural supersede. Use ONLY in two cases: (a) after you split a compound attribute into granular facts under NEW predicates (e.g. a single description="tall, red hair, fears water" replaced by build/hair/fears) — forget the original compound predicate, which nothing superseded; or (b) the user EXPLICITLY retracted a trait with no replacement. Otherwise prefer supersede: re-asserting the same entityKey+predicate via remember_attributes retires the old value automatically — do NOT forget just to tidy. Target by `handle` (the fact\'s [id=...]) OR by `entityKey`+`predicate`.',
+				parameters: writeToolParameters('forget_attribute')
+			}
+		},
+		{
+			type: 'function',
+			function: {
+				name: 'forget_directive',
+				description:
+					'Retire (tombstone) an EXISTING directive the user EXPLICITLY retracted with no replacement, by its [id=...] handle. When the user instead OVERRIDES a rule, record the replacement with remember_directive rather than forgetting. Never forget a directive merely to tidy.',
+				parameters: writeToolParameters('forget_directive')
 			}
 		}
 	];
@@ -900,6 +980,182 @@ export function createWriteToolHandlers(
 		);
 	};
 
+	// forget_attribute: retire an existing ATTRIBUTE fact, addressed by handle
+	// ([id=...]) or by entityKey+predicate. Resolution runs against committed
+	// memory the same way commitPatch resolves it (re-checked again at commit, so
+	// a handle a sibling call deletes this turn is skipped there too). Two
+	// guardrails keep it attribute-only: a `predicate` of `directive` is refused
+	// up front, and a handle that resolves to a directive fact is refused with a
+	// redirect to forget_directive.
+	const handleForgetAttribute = async (rawArgs: unknown): Promise<string> => {
+		deps.onProposeCall();
+		const args = (rawArgs ?? {}) as Record<string, unknown>;
+		const handle =
+			typeof args.handle === 'string' && args.handle.trim() ? args.handle.trim() : undefined;
+		const entityKey =
+			typeof args.entityKey === 'string' && args.entityKey.trim()
+				? args.entityKey.trim()
+				: undefined;
+		const predicate =
+			typeof args.predicate === 'string' && args.predicate.trim()
+				? args.predicate.trim()
+				: undefined;
+		if (!handle && !(entityKey && predicate)) {
+			deps.onReject();
+			return writeError(
+				'forget_attribute',
+				'validation',
+				'schema_invalid',
+				"Provide either `handle` (the fact's [id=...]) or BOTH `entityKey` and `predicate`.",
+				[
+					{
+						field: 'handle',
+						code: 'missing_selector',
+						message: 'No target selector was given.',
+						hint: 'Pass `handle`, or pass both `entityKey` and `predicate`.'
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		if (predicate && isDirectivePredicate(predicate)) {
+			deps.onReject();
+			return writeError(
+				'forget_attribute',
+				'execution',
+				'is_directive',
+				'That predicate names a directive, not an attribute.',
+				[
+					{
+						field: 'predicate',
+						code: 'is_directive',
+						message: 'Directives are retired with forget_directive.',
+						hint: "Call forget_directive with the directive's [id=...] handle instead."
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		const target = handle ? { factId: handle } : { entityKey, predicate };
+		const resolved = resolveForgetTarget(conversationId, target);
+		if (!resolved) {
+			deps.onReject();
+			return writeError(
+				'forget_attribute',
+				'execution',
+				'unknown_fact',
+				handle
+					? `No active fact matches handle "${handle}".`
+					: `No active attribute "${predicate}" on ${entityKey}.`,
+				[
+					{
+						field: handle ? 'handle' : 'predicate',
+						code: 'unknown_fact',
+						message: 'The forget target did not resolve to an active fact.',
+						hint: "Check the packet/search for the fact's [id=...], or that entityKey+predicate is active."
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		if (resolved.isDirective) {
+			deps.onReject();
+			return writeError(
+				'forget_attribute',
+				'execution',
+				'is_directive',
+				'That handle points to a directive, not an attribute.',
+				[
+					{
+						field: 'handle',
+						code: 'is_directive',
+						message: 'Directives are retired with forget_directive.',
+						hint: 'Call forget_directive with this [id=...] handle instead.'
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		staged.push({ forgetFacts: [target] });
+		const canonical: Record<string, unknown> = handle ? { handle } : { entityKey, predicate };
+		return writeSuccess('forget_attribute', 'forgotten', canonical, stagedTotals(staged), []);
+	};
+
+	// forget_directive: retire an existing DIRECTIVE fact by handle only
+	// (directives are global, sharing the reserved `directive` predicate, so the
+	// [id=...] handle is the sole selector). A handle that resolves to a
+	// non-directive fact is refused with a redirect to forget_attribute.
+	const handleForgetDirective = async (rawArgs: unknown): Promise<string> => {
+		deps.onProposeCall();
+		const args = (rawArgs ?? {}) as Record<string, unknown>;
+		const handle =
+			typeof args.handle === 'string' && args.handle.trim() ? args.handle.trim() : undefined;
+		if (!handle) {
+			deps.onReject();
+			return writeError(
+				'forget_directive',
+				'validation',
+				'schema_invalid',
+				"`handle` is required — the directive fact's [id=...] handle.",
+				[
+					{
+						field: 'handle',
+						code: 'missing_handle',
+						message: '`handle` is required.',
+						hint: "Pass the directive's [id=...] handle from the packet."
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		const resolved = resolveForgetTarget(conversationId, { factId: handle });
+		if (!resolved) {
+			deps.onReject();
+			return writeError(
+				'forget_directive',
+				'execution',
+				'unknown_fact',
+				`No active fact matches handle "${handle}".`,
+				[
+					{
+						field: 'handle',
+						code: 'unknown_fact',
+						message: 'The handle did not resolve to an active fact.',
+						hint: "Check the packet for the directive's [id=...] handle."
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		if (!resolved.isDirective) {
+			deps.onReject();
+			return writeError(
+				'forget_directive',
+				'execution',
+				'not_directive',
+				'That handle points to an attribute, not a directive.',
+				[
+					{
+						field: 'handle',
+						code: 'not_directive',
+						message: 'Attributes are retired with forget_attribute.',
+						hint: 'Call forget_attribute with this handle (or entityKey+predicate) instead.'
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+		staged.push({ forgetFacts: [{ factId: handle }] });
+		return writeSuccess('forget_directive', 'forgotten', { handle }, stagedTotals(staged), []);
+	};
+
 	// Per-run signature -> times-seen counter. A tool-calling extractor can get
 	// stuck re-issuing the same write (e.g. the same attributes on one entity)
 	// every iteration; tracking exact-argument repeats lets us fold a nudge into
@@ -926,5 +1182,7 @@ export function createWriteToolHandlers(
 	handlers.set('remember_entity', withDuplicateNudge('remember_entity', handleRememberEntity));
 	handlers.set('keep_loops', withDuplicateNudge('keep_loops', handleKeepLoops));
 	handlers.set('close_loop', withDuplicateNudge('close_loop', handleCloseLoop));
+	handlers.set('forget_attribute', withDuplicateNudge('forget_attribute', handleForgetAttribute));
+	handlers.set('forget_directive', withDuplicateNudge('forget_directive', handleForgetDirective));
 	return handlers;
 }
