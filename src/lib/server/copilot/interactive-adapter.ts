@@ -107,33 +107,20 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			audit('auto-deny');
 			return { kind: 'reject', feedback: forcePermissionPrompt.feedback } as const;
 		}
-		// Schema-validate custom portal tool args before any permission
-		// dialog or grant matching. Args that don't match the tool's
-		// declared schema are an agent bug, not something the user
-		// should approve; rejecting here with the schema in the
-		// feedback lets the agent self-correct on the next turn.
-		if (req.toolName && opts.validateCustomToolArgs) {
-			const invalid = opts.validateCustomToolArgs(req.toolName, req.args);
-			if (invalid) {
-				audit('auto-deny');
-				return { kind: 'reject', feedback: invalid.feedback } as const;
-			}
-		}
-		if (neverPrompt) {
-			audit('auto-allow');
-			return { kind: 'approve-once' } as const;
-		}
 		const forceEscalationReason =
 			forcePermissionPrompt.kind === 'valid' ? forcePermissionPrompt.reason : null;
 
+		// Compute shell analysis up front so it can be surfaced in any
+		// permission dialog, including a forced prompt that overrides the
+		// misuse guard. detectShellMisuse only auto-rejects when there is
+		// no valid force; under a valid force the misuse reason is passed
+		// to the forced prompt as its defaultDenyFeedback (see below)
+		// instead of being hard-rejected here.
 		let shellSegments: ParsedSegment[] | null = null;
 		let shellAnalysis: import('$lib/types').ShellAnalysisView | undefined = undefined;
+		let shellMisuse: { feedback: string } | null = null;
 		if (permissionKind === 'shell' && typeof scopeKey === 'string') {
-			const misuse = detectShellMisuse(scopeKey);
-			if (misuse) {
-				audit('auto-deny');
-				return { kind: 'reject', feedback: misuse.feedback } as const;
-			}
+			shellMisuse = detectShellMisuse(scopeKey);
 			const parsed = parseShellCommand(scopeKey);
 			if (parsed.kind === 'parsed') {
 				shellSegments = parsed.segments;
@@ -177,6 +164,85 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			return { kind: 'approve-once' } as const;
 		};
 
+		// Grant matching is a side-effect-free lookup. Compute it lazily and
+		// memoize so the forced-escalation block can reuse a deny/prompt
+		// grant's feedback without paying for a second lookup on the main path.
+		const lookupGrant = () => {
+			const target = isFilesystemPermissionKind(permissionKind) ? scopeKey : null;
+			const url = permissionKind === 'url' ? scopeKey : null;
+			return settingsRepo.matchGrantDetailed(
+				opts.userId,
+				opts.conversationId,
+				tool,
+				permissionKind,
+				scopeKey,
+				{
+					shellSegments,
+					target,
+					url,
+					workspaceRoot: opts.workingDirectory ?? null,
+					sessionWorkspaceRoot: opts.getSessionWorkspacePath(),
+					argsHash: hash
+				}
+			);
+		};
+		let grantResult: ReturnType<typeof settingsRepo.matchGrantDetailed> | null = null;
+		const getGrant = () => (grantResult ??= lookupGrant());
+
+		// A present, valid `forcePermissionPrompt` is the strongest signal:
+		// it overrides every auto-allow and auto-deny path that follows —
+		// the arg-schema and shell-misuse guards, `never-prompt`,
+		// `always-prompt`, grants (including hard denies), the session
+		// approve-all toggle, and policy — and always reaches a human
+		// prompt. Only the malformed-force reject above runs ahead of it.
+		// The forced prompt is approve-once: the human cannot persist a
+		// grant from it (`canPersistDecision: false`).
+		//
+		// Whatever specific reason would otherwise have auto-rejected the
+		// request (schema-invalid tool args, a hardcoded shell-misuse
+		// refusal, or a deny/prompt grant) is surfaced to the human as the
+		// dialog's `defaultDenyFeedback` and returned to the agent if the
+		// human declines, so neither side loses that context.
+		if (forceEscalationReason) {
+			let forcedDenyFeedback: string | undefined;
+			if (req.toolName && opts.validateCustomToolArgs) {
+				forcedDenyFeedback = opts.validateCustomToolArgs(req.toolName, req.args)?.feedback;
+			}
+			if (!forcedDenyFeedback && shellMisuse) {
+				forcedDenyFeedback = shellMisuse.feedback;
+			}
+			if (!forcedDenyFeedback) {
+				const g = getGrant();
+				if (g.outcome === 'deny' || g.outcome === 'prompt') {
+					forcedDenyFeedback = g.feedback ?? undefined;
+				}
+			}
+			const forced = await maybePromptForEscalation(forcedDenyFeedback, forcedDenyFeedback);
+			if (forced) return forced;
+		}
+
+		// Schema-validate custom portal tool args before any permission
+		// dialog or grant matching. Args that don't match the tool's
+		// declared schema are an agent bug, not something the user
+		// should approve; rejecting here with the schema in the
+		// feedback lets the agent self-correct on the next turn. A valid
+		// force above overrides this guard.
+		if (req.toolName && opts.validateCustomToolArgs) {
+			const invalid = opts.validateCustomToolArgs(req.toolName, req.args);
+			if (invalid) {
+				audit('auto-deny');
+				return { kind: 'reject', feedback: invalid.feedback } as const;
+			}
+		}
+		if (neverPrompt) {
+			audit('auto-allow');
+			return { kind: 'approve-once' } as const;
+		}
+		if (shellMisuse) {
+			audit('auto-deny');
+			return { kind: 'reject', feedback: shellMisuse.feedback } as const;
+		}
+
 		if (alwaysPrompt) {
 			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
 				'permission',
@@ -197,24 +263,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			audit('auto-allow');
 			return { kind: 'approve-once' } as const;
 		}
-		const target = isFilesystemPermissionKind(permissionKind) ? scopeKey : null;
-		const url = permissionKind === 'url' ? scopeKey : null;
-
-		const grant = settingsRepo.matchGrantDetailed(
-			opts.userId,
-			opts.conversationId,
-			tool,
-			permissionKind,
-			scopeKey,
-			{
-				shellSegments,
-				target,
-				url,
-				workspaceRoot: opts.workingDirectory ?? null,
-				sessionWorkspaceRoot: opts.getSessionWorkspacePath(),
-				argsHash: hash
-			}
-		);
+		const grant = getGrant();
 		if (grant.outcome === 'allow') {
 			audit('auto-allow');
 			return { kind: 'approve-once' } as const;
@@ -260,11 +309,9 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 
 		if (opts.getMode() === 'best-effort') {
-			const escalated = await maybePromptForEscalation(
-				promptRequest.bestEffortFeedback,
-				promptRequest.defaultDenyFeedback
-			);
-			if (escalated) return escalated;
+			// A valid force would have returned from the forced-escalation
+			// block above, so an interactive escalation is never reachable
+			// here; best-effort simply auto-rejects with actionable feedback.
 			audit('auto-prompt-required');
 			return {
 				kind: 'reject',

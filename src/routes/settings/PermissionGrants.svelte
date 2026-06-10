@@ -364,7 +364,7 @@
 				id: 'deny',
 				title: 'Hard deny rules',
 				description:
-					'Rules that absolutely reject matching requests. They never prompt and forcePermissionPrompt cannot override them.',
+					'Rules that reject matching requests automatically. They never prompt on their own, but a valid forcePermissionPrompt still reaches a human permission dialog that can override them.',
 				grants: deny
 			},
 			{

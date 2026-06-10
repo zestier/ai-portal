@@ -233,7 +233,7 @@ function guidanceFor(permissionKind: string, status: CapabilityStatus): string {
 		return `${permissionKind} has a mix of approve, prompt, or deny rules; use approved alternatives and avoid denied shapes.`;
 	}
 	if (status === 'denied')
-		return `${permissionKind} is hard-denied by policy or grants; forcePermissionPrompt cannot override hard denies.`;
+		return `${permissionKind} is hard-denied by policy or grants; a valid forcePermissionPrompt still reaches a human permission prompt that can override it.`;
 	return (
 		`${permissionKind} requests not covered by listed grants will prompt. ` +
 		'In best-effort mode, prompt-worthy requests auto-reject unless retried with forcePermissionPrompt.'

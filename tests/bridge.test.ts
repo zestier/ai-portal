@@ -702,8 +702,9 @@ describe('bridge.open() session mode and permissions', () => {
 		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
 	});
 
-	it('does not let forcePermissionPrompt escalate hard deny grants', async () => {
+	it('lets forcePermissionPrompt escalate hard deny grants to a human prompt', async () => {
 		const { open } = await importBridge();
+		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const settings = await import('../src/lib/server/db/repos/settings');
 		const user = ensureLocalUser();
@@ -716,23 +717,43 @@ describe('bridge.open() session mode and permissions', () => {
 			decision: 'deny',
 			denyReason: 'Hard deny: rm is forbidden in shell.'
 		});
-		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
+		const reason =
+			'There is no structured deletion tool available, and the user explicitly requested cleanup.';
 
-		const result = await onPermissionRequest({
-			kind: 'shell',
-			toolName: 'shell',
-			fullCommandText: 'rm -rf build',
-			args: {
-				command: 'rm -rf build',
-				forcePermissionPrompt:
-					'There is no structured deletion tool available, and the user explicitly requested cleanup.'
-			}
+		sdkSessionStub.send.mockReset().mockImplementation(async () => {
+			await Promise.resolve();
+			void onPermissionRequest({
+				kind: 'shell',
+				toolName: 'shell',
+				fullCommandText: 'rm -rf build',
+				args: {
+					command: 'rm -rf build',
+					forcePermissionPrompt: reason
+				}
+			});
+			return 'msg-id';
 		});
 
-		expect(result).toEqual({ kind: 'reject', feedback: 'Hard deny: rm is forbidden in shell.' });
+		const ac = new AbortController();
+		const iter = session.send('hi', ac.signal)[Symbol.asyncIterator]();
+		const first = await iter.next();
+		expect(first.value).toMatchObject({
+			type: 'interactive.request',
+			request: {
+				kind: 'permission',
+				tool: 'shell',
+				permissionKind: 'shell',
+				canPersistDecision: false,
+				escalationReason: reason,
+				defaultDenyFeedback: expect.stringContaining('rm is forbidden')
+			}
+		});
+		ac.abort();
+		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
 	});
 
 	it('lets forcePermissionPrompt escalate prompt-required grants', async () => {
