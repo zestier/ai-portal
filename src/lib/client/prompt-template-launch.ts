@@ -15,15 +15,18 @@ export function promptTemplateDraftUrl(
 
 export async function createPromptTemplateDraftChat({
 	template,
-	fetcher = fetch
+	fetcher = fetch,
+	signal
 }: {
 	template: Pick<PromptTemplateListItem, 'id' | 'source' | 'title'>;
 	fetcher?: TemplateFetch;
+	signal?: AbortSignal;
 }): Promise<{ ok: true; href: string } | { ok: false; status?: number }> {
 	const convRes = await fetcher('/api/conversations', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ title: template.title })
+		body: JSON.stringify({ title: template.title }),
+		signal
 	});
 	if (!convRes.ok) return { ok: false, status: convRes.status };
 	const body = await convRes.json();

@@ -33,4 +33,42 @@ describe('prompt template chat launcher', () => {
 			'/conversations/conv%2F1?promptTemplateSource=custom&promptTemplateId=tmpl%2F1'
 		);
 	});
+
+	it('forwards an AbortSignal to the conversations fetch init', async () => {
+		const controller = new AbortController();
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			void url;
+			void init;
+			return Response.json({ conversation: { id: 'conv-2' } }, { status: 201 });
+		});
+
+		await createPromptTemplateDraftChat({
+			template: { id: 'debug-error', source: 'builtin', title: 'Debug an error' },
+			fetcher,
+			signal: controller.signal
+		});
+
+		const [, init] = fetcher.mock.calls[0];
+		expect(init?.signal).toBe(controller.signal);
+	});
+
+	it('propagates an AbortError when the signal is aborted mid-flight', async () => {
+		const controller = new AbortController();
+		const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+			return new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener('abort', () => {
+					reject(new DOMException('Aborted', 'AbortError'));
+				});
+			});
+		});
+
+		const pending = createPromptTemplateDraftChat({
+			template: { id: 'debug-error', source: 'builtin', title: 'Debug an error' },
+			fetcher,
+			signal: controller.signal
+		});
+		controller.abort();
+
+		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+	});
 });

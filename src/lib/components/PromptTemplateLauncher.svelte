@@ -21,8 +21,10 @@
 	let pickerOpen = $state(false);
 	let loadingTemplates = $state(false);
 	let launchingTemplateId = $state<string | null>(null);
+	let launchController: AbortController | null = null;
 	let templates = $state<PromptTemplateListItem[] | null>(null);
 	let localError = $state<string | null>(null);
+	let launchError = $state<string | null>(null);
 
 	const builtIns = $derived(templates?.filter((template) => template.source === 'builtin') ?? []);
 	const customTemplates = $derived(
@@ -80,31 +82,49 @@
 
 	async function openPicker() {
 		pickerOpen = true;
+		launchError = null;
 		await loadTemplates();
 	}
 
 	function closePicker() {
-		if (launchingTemplateId) return;
+		if (launchController) {
+			launchController.abort();
+			launchController = null;
+		}
+		launchingTemplateId = null;
+		launchError = null;
 		pickerOpen = false;
 	}
 
 	async function launchTemplate(template: PromptTemplateListItem) {
 		if (launchingTemplateId) return;
 		launchingTemplateId = template.id;
-		localError = null;
+		launchError = null;
+		const controller = new AbortController();
+		launchController = controller;
 		try {
-			const result = await createPromptTemplateDraftChat({ template, fetcher: fetch });
+			const result = await createPromptTemplateDraftChat({
+				template,
+				fetcher: fetch,
+				signal: controller.signal
+			});
+			if (controller.signal.aborted) return;
 			if (!result.ok) {
-				reportError(`Could not create chat (${result.status ?? 'network'})`);
+				launchError = `Could not create chat (${result.status ?? 'network'})`;
 				return;
 			}
 			await invalidateAll();
 			onNavigate?.();
+			pickerOpen = false;
 			await goto(result.href);
-		} catch {
-			reportError('Could not open prompt template');
+		} catch (err) {
+			if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+				return;
+			}
+			launchError = 'Could not open prompt template';
 		} finally {
-			launchingTemplateId = null;
+			if (launchController === controller) launchController = null;
+			if (launchingTemplateId === template.id) launchingTemplateId = null;
 		}
 	}
 </script>
@@ -188,6 +208,10 @@
 		<p class="muted small">
 			Pick a reusable prompt to prefill the composer. You can edit it before sending.
 		</p>
+
+		{#if launchError}
+			<p class="launcher-error" role="alert">{launchError}</p>
+		{/if}
 
 		{#if loadingTemplates}
 			<p class="muted">Loading templates...</p>
