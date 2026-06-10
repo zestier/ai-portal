@@ -21,6 +21,11 @@ export interface DecodedResult {
 	// Best-effort plain text fallback (used as the body of a Raw
 	// disclosure, or when nothing structured is available).
 	fallbackText: string | null;
+	// Reserved framework next-step nudge carried on a successful envelope.
+	// Rendered as a muted note by the generic tool-result path in
+	// ToolCall.svelte. (Git cards read the hint off the envelope themselves via
+	// parseGitToolResult, so they don't go through this field.)
+	followUpHint?: string;
 }
 
 const markdownResultTools = new Set([
@@ -145,13 +150,16 @@ function decodeEnvelope(v: Record<string, unknown>): DecodedResult | null {
 		return { blocks: [{ kind: 'text', text: message }], fallbackText: message };
 	}
 	const result = v.result;
+	const followUpHint = typeof v.followUpHint === 'string' ? v.followUpHint : undefined;
+	const withHint = (decoded: DecodedResult): DecodedResult =>
+		followUpHint === undefined ? decoded : { ...decoded, followUpHint };
 	if (result === undefined) {
 		const text = typeof v.summary === 'string' && v.summary ? v.summary : '(ok)';
-		return { blocks: [{ kind: 'text', text }], fallbackText: text };
+		return withHint({ blocks: [{ kind: 'text', text }], fallbackText: text });
 	}
 	if (typeof result === 'string') {
-		return { blocks: [{ kind: 'text', text: result }], fallbackText: result };
+		return withHint({ blocks: [{ kind: 'text', text: result }], fallbackText: result });
 	}
 	const txt = JSON.stringify(result, null, 2);
-	return { blocks: [{ kind: 'text', text: txt }], fallbackText: txt };
+	return withHint({ blocks: [{ kind: 'text', text: txt }], fallbackText: txt });
 }

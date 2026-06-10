@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import * as git from '../src/lib/server/git';
 import { buildGitTools } from '../src/lib/server/tools/git';
+import { COMMIT_TICKET_FOLLOW_UP_HINT } from '../src/lib/server/tools/follow-up-hints';
 
 let repo: string;
 let firstSha = '';
@@ -319,6 +320,25 @@ describe('structured git tools', () => {
 		await expect(
 			tool!.handler({ paths: 'all', subject: 'ok', trailers: [{ token: 'Bad Token', value: 'x' }] })
 		).rejects.toThrow();
+	});
+
+	it('sets the verbatim followUpHint on a successful git_commit envelope', async () => {
+		// Pin the exact wording the ticket mandates so a typo in the shared
+		// constant can't silently change the agent-visible nudge.
+		expect(COMMIT_TICKET_FOLLOW_UP_HINT).toBe(
+			'If this commit completes or advances any workspace ticket, update it with ticket_update (or review open ones with ticket_list).'
+		);
+		const { tmp } = initRepo();
+		try {
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			const tool = buildGitTools(tmp).find((t) => t.name === 'git_commit');
+			expect(tool).toBeDefined();
+			const out = await tool!.handler({ paths: 'all', subject: 'commit all' });
+			expect(out.ok).toBe(true);
+			expect(out.ok && out.followUpHint).toBe(COMMIT_TICKET_FOLLOW_UP_HINT);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 });
 

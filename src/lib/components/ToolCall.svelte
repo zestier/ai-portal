@@ -224,6 +224,9 @@
 						markdown={markdownResult}
 					/>
 				{/each}
+				{#if decoded.followUpHint}
+					<div class="muted">{decoded.followUpHint}</div>
+				{/if}
 			{/if}
 			<details class="raw">
 				<summary class="disclosure eyebrow">Raw output</summary>

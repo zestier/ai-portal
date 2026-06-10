@@ -31,9 +31,12 @@ export interface ToolError {
 // sees AND the UI deserializes — there is no hidden, model-invisible data.
 //
 // The shape is intentionally open to additional optional top-level framework
-// fields (e.g. a future `followUpHint`) without restructuring.
+// fields without restructuring. `followUpHint` is one such reserved framework
+// field: an optional, model-visible nudge about a sensible next step that any
+// successful tool may set (e.g. git_commit reminding the agent to reconcile
+// workspace tickets). It lives only on the `ok: true` variant.
 export type ToolResult =
-	| { ok: true; summary?: string; result?: unknown }
+	| { ok: true; summary?: string; result?: unknown; followUpHint?: string }
 	| { ok: false; summary?: string; error: ToolError };
 
 export interface PortalTool {
@@ -47,9 +50,17 @@ export interface PortalTool {
 
 // Build a success envelope. `result` is the tool's domain payload (any
 // JSON-serializable value); `summary` is an optional short, human-readable line
-// the provider prefers over its derived fallback.
-export function ok(result?: unknown, summary?: string): ToolResult {
-	return summary === undefined ? { ok: true, result } : { ok: true, result, summary };
+// the provider prefers over its derived fallback. `opts.followUpHint` sets the
+// reserved, model-visible next-step nudge.
+export function ok(
+	result?: unknown,
+	summary?: string,
+	opts?: { followUpHint?: string }
+): ToolResult {
+	const envelope: ToolResult = { ok: true, result };
+	if (summary !== undefined) envelope.summary = summary;
+	if (opts?.followUpHint !== undefined) envelope.followUpHint = opts.followUpHint;
+	return envelope;
 }
 
 // Build an error envelope. Handlers may return this directly instead of

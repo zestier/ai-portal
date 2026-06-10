@@ -62,6 +62,7 @@ export type GitRenderedResult =
 			fileStats: GitFileStat[];
 			diffStat: { filesChanged: number; added: number; removed: number } | null;
 			remainingDirtyFiles: GitNameStatusEntry[];
+			followUpHint?: string;
 	  };
 
 function isRecord(v: unknown): v is JsonRecord {
@@ -245,6 +246,9 @@ export function parseGitToolResult(
 					removed: num(result.diffStat.removed) ?? 0
 				}
 			: null;
+		// `followUpHint` is a reserved top-level envelope field (sibling to `ok`/
+		// `result`), so read it from the envelope rather than the unwrapped payload.
+		const followUpHint = str(envelope.followUpHint) ?? undefined;
 		return {
 			kind: 'commit-created',
 			sha,
@@ -263,7 +267,8 @@ export function parseGitToolResult(
 			diffStat,
 			remainingDirtyFiles: Array.isArray(result.remainingDirtyFiles)
 				? result.remainingDirtyFiles.map(nameStatusEntry).filter((f) => f !== null)
-				: []
+				: [],
+			followUpHint
 		};
 	}
 

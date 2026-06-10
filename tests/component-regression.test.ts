@@ -4,8 +4,10 @@ import Chat from '../src/lib/components/Chat.svelte';
 import Composer from '../src/lib/components/Composer.svelte';
 import DiffView from '../src/lib/components/DiffView.svelte';
 import FileBrowser from '../src/lib/components/FileBrowser.svelte';
+import GitToolResult from '../src/lib/components/tool/GitToolResult.svelte';
 import InteractiveRequestDialog from '../src/lib/components/InteractiveRequestDialog.svelte';
 import PromptTemplateLauncher from '../src/lib/components/PromptTemplateLauncher.svelte';
+import ToolCall from '../src/lib/components/ToolCall.svelte';
 import PromptsSettings from '../src/routes/settings/PromptsSettings.svelte';
 import { MAX_RENDERABLE_DIFF_CHARS } from '../src/lib/client/diff-parser';
 import { listBuiltInPromptTemplates } from '../src/lib/prompt-templates';
@@ -345,6 +347,59 @@ describe('Svelte component regression coverage', () => {
 		expect(armedBody).toMatch(/class="icon-btn send[^"]*\barmed\b/);
 		// Stop remains the primary mid-turn control even when armed.
 		expect(armedBody).toContain('aria-label="Stop generating"');
+	});
+
+	test('GitToolResult renders the followUpHint as a muted note on a commit card', () => {
+		const base = {
+			kind: 'commit-created' as const,
+			sha: 'abcdef123456',
+			shortSha: 'abcdef12',
+			subject: 'commit all',
+			body: '',
+			trailers: [],
+			files: [],
+			fileStats: [],
+			diffStat: { filesChanged: 1, added: 1, removed: 0 },
+			remainingDirtyFiles: []
+		};
+		const withHint = render(GitToolResult, {
+			props: { result: { ...base, followUpHint: 'reconcile your tickets' } }
+		}).body;
+		expect(withHint).toContain('reconcile your tickets');
+
+		const withoutHint = render(GitToolResult, { props: { result: base } }).body;
+		expect(withoutHint).not.toContain('reconcile your tickets');
+	});
+
+	test('ToolCall surfaces a generic followUpHint for non-git tools', () => {
+		const toolCall = {
+			id: 'tc-1',
+			messageId: 'm-1',
+			tool: 'ticket_add',
+			argsJson: '{}',
+			resultJson: JSON.stringify({
+				ok: true,
+				summary: 'Added ticket t1',
+				followUpHint: 'remember to reconcile your tickets'
+			}),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const withHint = render(ToolCall, { props: { toolCall } }).body;
+		expect(withHint).toContain('remember to reconcile your tickets');
+
+		const withoutHint = render(ToolCall, {
+			props: {
+				toolCall: {
+					...toolCall,
+					resultJson: JSON.stringify({ ok: true, summary: 'Added ticket t1' })
+				}
+			}
+		}).body;
+		expect(withoutHint).not.toContain('remember to reconcile your tickets');
 	});
 
 	test('FileBrowser renders safe empty states without client fetch data', () => {

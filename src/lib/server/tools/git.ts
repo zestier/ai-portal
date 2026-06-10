@@ -15,6 +15,7 @@ import {
 	status,
 	type DiffTarget
 } from '../git';
+import { COMMIT_TICKET_FOLLOW_UP_HINT } from './follow-up-hints';
 import { ok, type PortalTool } from './types';
 
 // Re-exported so existing importers of these symbols from `./git` keep
@@ -332,7 +333,9 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			},
 			async handler(args, ctx) {
 				const parsed = GitCommitArgs.parse(args);
-				return ok(await commitChanges(cwd, parsed, ctx));
+				return ok(await commitChanges(cwd, parsed, ctx), undefined, {
+					followUpHint: COMMIT_TICKET_FOLLOW_UP_HINT
+				});
 			}
 		}
 	];

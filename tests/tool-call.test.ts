@@ -251,6 +251,34 @@ describe('parseGitToolResult', () => {
 			)
 		).toBeNull();
 	});
+
+	it('carries followUpHint from the envelope onto the commit card', () => {
+		expect(
+			parseGitToolResult(
+				'git_commit',
+				'{}',
+				JSON.stringify({
+					ok: true,
+					followUpHint: 'remember the tickets',
+					result: {
+						sha: 'abcdef123456',
+						shortSha: 'abcdef12',
+						subject: 'created',
+						body: '',
+						trailers: [],
+						files: [],
+						fileStats: [],
+						diffStat: { filesChanged: 1, added: 1, removed: 0 },
+						remainingDirtyFiles: []
+					}
+				})
+			)
+		).toMatchObject({
+			kind: 'commit-created',
+			shortSha: 'abcdef12',
+			followUpHint: 'remember the tickets'
+		});
+	});
 });
 
 describe('decodeToolResult envelope', () => {
@@ -277,6 +305,18 @@ describe('decodeToolResult envelope', () => {
 	it('falls back to summary for a result-less success envelope', () => {
 		const r = decodeToolResult(JSON.stringify({ ok: true, summary: 'Added ticket t1' }));
 		expect(r.blocks).toEqual([{ kind: 'text', text: 'Added ticket t1' }]);
+	});
+
+	it('surfaces followUpHint from a success envelope', () => {
+		const r = decodeToolResult(
+			JSON.stringify({ ok: true, result: { sha: 'abc' }, followUpHint: 'do the thing' })
+		);
+		expect(r.followUpHint).toBe('do the thing');
+	});
+
+	it('omits followUpHint when absent', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: true, result: 'plain' }));
+		expect(r.followUpHint).toBeUndefined();
 	});
 });
 

@@ -215,6 +215,9 @@
 		{:else}
 			<div class="muted">No remaining dirty files.</div>
 		{/if}
+		{#if result.followUpHint}
+			<div class="muted">{result.followUpHint}</div>
+		{/if}
 	</div>
 {/if}
 
