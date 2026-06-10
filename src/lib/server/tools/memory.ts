@@ -8,7 +8,7 @@ import type { PortalTool } from './git';
 const SearchArgs = z.object({
 	query: z.string().trim().min(1).max(500),
 	types: z
-		.array(z.enum(['entity', 'event', 'fact', 'decision', 'open_loop']))
+		.array(z.enum(['entity', 'event', 'fact', 'open_loop']))
 		.max(5)
 		.optional(),
 	limit: z.number().int().min(1).max(50).optional().default(20)
@@ -112,7 +112,7 @@ export function buildMemoryTools(opts: {
 					query: { type: 'string', description: 'Text to search for in durable memory.' },
 					types: {
 						type: 'array',
-						items: { type: 'string', enum: ['entity', 'event', 'fact', 'decision', 'open_loop'] },
+						items: { type: 'string', enum: ['entity', 'event', 'fact', 'open_loop'] },
 						description: 'Optional memory item types to include.'
 					},
 					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' }

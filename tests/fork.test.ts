@@ -156,10 +156,9 @@ describe('fork.forkAtMessage', () => {
 			sourceMessageId: a1.id,
 			patch: {
 				entities: [{ entityKey: 'object.key', entityType: 'object', displayName: 'Brass key' }],
-				facts: [{ entityKey: 'object.key', predicate: 'location', value: 'study' }],
-				decisions: [
-					{ subject: 'plan', decision: 'Search the study first.' },
-					{ subject: 'stale-plan', decision: 'Use the discarded plan.' }
+				facts: [
+					{ entityKey: 'object.key', predicate: 'location', value: 'study' },
+					{ entityKey: 'object.key', predicate: 'stale_plan', value: 'Use the discarded plan.' }
 				],
 				openLoops: [
 					{ loopType: 'task', title: 'Inspect the study', relatedEntityKeys: ['object.key'] }
@@ -167,13 +166,10 @@ describe('fork.forkAtMessage', () => {
 			}
 		});
 
-		const prefixDecisions = memory.listDecisions(sourceConv.id, { limit: 10 });
-		const keptDecision = prefixDecisions.find((d) => d.decision === 'Search the study first.')!;
-		const staleDecision = prefixDecisions.find((d) => d.subject === 'stale-plan')!;
-		memory.updateDecision(sourceConv.id, keptDecision.id, {
-			decision: 'Search the study cautiously.'
-		});
-		expect(memory.deleteItem(sourceConv.id, 'decisions', staleDecision.id)).toBe(true);
+		const staleFact = memory
+			.listFacts(sourceConv.id, { limit: 10 })
+			.find((f) => f.predicate === 'stale_plan')!;
+		expect(memory.deleteItem(sourceConv.id, 'facts', staleFact.id)).toBe(true);
 		const entityPatchItem = memory
 			.listPatchItems(sourceConv.id, { patchId: prefixCommit.patch.id, limit: 20 })
 			.find((item) => item.itemType === 'entity')!;
@@ -195,27 +191,21 @@ describe('fork.forkAtMessage', () => {
 					},
 					{ entityKey: 'object.door', entityType: 'object', displayName: 'Locked door' }
 				],
-				facts: [{ entityKey: 'object.door', predicate: 'state', value: 'locked' }],
-				decisions: [{ subject: 'plan', decision: 'Force the door open.' }]
+				facts: [{ entityKey: 'object.door', predicate: 'state', value: 'locked' }]
 			}
 		});
 
 		// Pin memory timestamps around the fork boundary (u2's real created_at)
 		// without touching the messages table — message ordering is by
 		// created_at, so rewriting message timestamps would reorder history.
-		// Linked memory (facts/decisions/loops/events) is deliberately pinned
+		// Linked memory (facts/loops/events) is deliberately pinned
 		// AFTER the boundary to simulate late async extraction: it must still be
 		// carried over because it is linked to a kept prefix message, proving the
 		// clone classifies by source_message_id rather than the timestamp.
 		// Entities have no message link, so they are still split by the boundary.
 		const conn = db.getDb();
 		const boundary = u2.createdAt;
-		for (const table of [
-			'memory_facts',
-			'memory_decisions',
-			'memory_open_loops',
-			'memory_events'
-		]) {
+		for (const table of ['memory_facts', 'memory_open_loops', 'memory_events']) {
 			conn
 				.prepare(`UPDATE ${table} SET created_at = ? WHERE source_message_id = ?`)
 				.run(boundary + 100, a1.id);
@@ -244,20 +234,11 @@ describe('fork.forkAtMessage', () => {
 		expect(memory.listEntities(forkId)[0].summary).toBe('');
 		const facts = memory.listFacts(forkId);
 		expect(facts.map((f) => f.predicate)).toEqual(['location']);
-		expect(memory.listDecisions(forkId).map((d) => d.decision)).toEqual([
-			'Search the study cautiously.'
-		]);
 		const loops = memory.listOpenLoops(forkId);
 		expect(loops.map((l) => l.title)).toEqual(['Inspect the study']);
 
 		// Rewound-suffix memory left behind.
 		expect(memory.listEntities(forkId).map((e) => e.entityKey)).not.toContain('object.door');
-		expect(memory.listDecisions(forkId).map((d) => d.decision)).not.toContain(
-			'Force the door open.'
-		);
-		expect(memory.listDecisions(forkId).map((d) => d.decision)).not.toContain(
-			'Use the discarded plan.'
-		);
 
 		// Internal references are remapped to the clone's own rows/transcript.
 		const clonedAssistant = messages

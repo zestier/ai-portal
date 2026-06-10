@@ -192,9 +192,6 @@
 		if (kind === 'facts') {
 			return pick(record, ['predicate', 'value', 'status', 'visibility', 'confidence']);
 		}
-		if (kind === 'decisions') {
-			return pick(record, ['subject', 'decision', 'rationale', 'status']);
-		}
 		if (kind === 'openLoops') {
 			return pick(record, [
 				'loopType',
@@ -239,7 +236,6 @@
 			{@render DirectiveList(directiveRows)}
 			{@render MemoryList('Entities', 'entities', items('entities'), true)}
 			{@render MemoryList('Facts', 'facts', factRows, true)}
-			{@render MemoryList('Decisions', 'decisions', items('decisions'), true)}
 			{@render MemoryList('Open loops', 'openLoops', items('openLoops'), true)}
 			{@render MemoryList('Events', 'events', items('events'), false)}
 			{@render MemoryList('Patches', 'patches', items('patches'), false)}

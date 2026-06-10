@@ -151,7 +151,6 @@ describe('memory-backed sessions', () => {
 					}
 				],
 				facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'the cellar' }],
-				decisions: [{ subject: 'lighting', decision: 'Keep the candle lit.' }],
 				openLoops: [
 					{
 						loopType: 'task',
@@ -175,7 +174,6 @@ describe('memory-backed sessions', () => {
 		// "entityKey.predicate = value" lines.
 		expect(rendered).not.toContain('character.mara.location = the cellar');
 		expect(rendered).toMatch(/character\.mara[^\n]*\n {4}location = the cellar/);
-		expect(rendered).toContain('lighting: Keep the candle lit.');
 		expect(rendered).toContain('Find the attic key');
 		expect(rendered).toContain('[related: character.mara]');
 		// The default (main-turn) rendering omits internal ids as noise.
@@ -184,10 +182,9 @@ describe('memory-backed sessions', () => {
 		// and close items precisely instead of only opening them.
 		const extractorRendered = renderMemoryPacket(packet, { includeIds: true });
 		expect(extractorRendered).toMatch(/\[id=[^\]]+\] \(task, p\d+\) Find the attic key/);
-		// Ids are surfaced on entities, facts, and decisions too, not just loops.
+		// Ids are surfaced on entities and facts too, not just loops.
 		expect(extractorRendered).toMatch(/character\.mara[^\n]*\[id=[^\]]+\]/);
 		expect(extractorRendered).toMatch(/location = the cellar \[id=[^\]]+\]/);
-		expect(extractorRendered).toMatch(/lighting: Keep the candle lit\.[^\n]*\[id=[^\]]+\]/);
 
 		const prompt = buildPromptWithMemory({
 			conversationId: conv.id,
@@ -219,12 +216,6 @@ describe('memory-backed sessions', () => {
 						value: 'mandatory_first_pass'
 					}
 				],
-				decisions: [
-					{
-						subject: 'fresh context',
-						decision: 'Memory-backed turns include tools in the first pass.'
-					}
-				],
 				openLoops: [{ loopType: 'implementation', title: 'Build strict profile validators' }]
 			}
 		});
@@ -232,10 +223,10 @@ describe('memory-backed sessions', () => {
 		expect(committed.patch.status).toBe('committed');
 		expect(
 			memory.search(conv.id, { query: 'mandatory tools' }).map((row) => row.itemType)
-		).toContain('decision');
+		).toContain('entity');
 		const packet = buildInitialPacket(conv.id, 'project');
 		expect(packet.toolGuidance.mandatory).toBe(true);
-		expect(packet.decisions[0]?.decision).toContain('first pass');
+		expect(packet.entities.map((entity) => entity.entityKey)).toContain('decision.memory_tools');
 		expect(packet.openLoops[0]?.title).toContain('strict profile');
 		expect(memory.listSnapshot(conv.id).patchItems.length).toBeGreaterThan(0);
 	});
@@ -668,20 +659,20 @@ describe('memory-backed sessions', () => {
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const committed = commitPatch({
 			conversationId: conv.id,
-			patch: { decisions: [{ subject: 'review', decision: 'Reject stale item.' }] }
+			patch: { facts: [{ predicate: 'note', value: 'Reject stale item.' }] }
 		});
 		const item = memory
 			.listPatchItems(conv.id, { patchId: committed.patch.id })
-			.find((row) => row.itemType === 'decision')!;
+			.find((row) => row.itemType === 'fact')!;
 
 		const approved = memory.reviewPatchItem(conv.id, item.id, 'approve');
 		expect(approved.item?.reviewStatus).toBe('approved');
-		expect(memory.listDecisions(conv.id)).toHaveLength(1);
+		expect(memory.listFacts(conv.id)).toHaveLength(1);
 
 		const rejected = memory.reviewPatchItem(conv.id, item.id, 'reject');
 		expect(rejected.item?.reviewStatus).toBe('rejected');
 		expect(rejected.affected).toBe(true);
-		expect(memory.listDecisions(conv.id)).toHaveLength(0);
+		expect(memory.listFacts(conv.id)).toHaveLength(0);
 		expect(memory.search(conv.id, { query: 'stale item' })).toHaveLength(0);
 	});
 
@@ -766,18 +757,18 @@ describe('memory-backed sessions', () => {
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const committed = commitPatch({
 			conversationId: conv.id,
-			patch: { decisions: [{ subject: 'memory', decision: 'Initial decision' }] }
+			patch: { facts: [{ predicate: 'plan', value: 'Initial decision' }] }
 		});
-		const decisionItem = memory
+		const factItem = memory
 			.listPatchItems(conv.id, { patchId: committed.patch.id })
-			.find((item) => item.itemType === 'decision')!;
+			.find((item) => item.itemType === 'fact')!;
 
-		const updated = memory.updateDecision(conv.id, decisionItem.itemId, {
-			decision: 'Corrected decision'
+		const updated = memory.updateFact(conv.id, factItem.itemId, {
+			value: 'Corrected decision'
 		});
-		expect(updated?.decision).toBe('Corrected decision');
-		expect(memory.deleteItem(conv.id, 'decisions', decisionItem.itemId)).toBe(true);
-		expect(memory.listDecisions(conv.id)).toHaveLength(0);
+		expect(updated?.value).toBe('Corrected decision');
+		expect(memory.deleteItem(conv.id, 'facts', factItem.itemId)).toBe(true);
+		expect(memory.listFacts(conv.id)).toHaveLength(0);
 	});
 
 	it('updates global memories by id instead of upserting a body-selected key', async () => {
@@ -825,20 +816,20 @@ describe('memory-backed sessions', () => {
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const committed = commitPatch({
 			conversationId: conv.id,
-			patch: { decisions: [{ subject: 'memory', decision: 'Initial decision' }] }
+			patch: { facts: [{ predicate: 'plan', value: 'Initial decision' }] }
 		});
-		const decisionItem = memory
+		const factItem = memory
 			.listPatchItems(conv.id, { patchId: committed.patch.id })
-			.find((item) => item.itemType === 'decision')!;
+			.find((item) => item.itemType === 'fact')!;
 
 		await expect(
 			patchMemoryItem(
-				routeEvent(conv.id, user.id, 'decisions', decisionItem.itemId, {
+				routeEvent(conv.id, user.id, 'facts', factItem.itemId, {
 					status: 'invisible'
 				})
 			)
 		).rejects.toMatchObject({ status: 400 });
-		expect(memory.listDecisions(conv.id)[0]?.status).toBe('active');
+		expect(memory.listFacts(conv.id)[0]?.status).toBe('active');
 	});
 
 	it('builds fresh-context prompts with durable memory and recent transcript', () => {
@@ -2493,10 +2484,10 @@ describe('memory-backed sessions', () => {
 		commitPatch({
 			conversationId: conv.id,
 			patch: {
-				decisions: [
+				facts: [
 					{
-						subject: 'database migration strategy',
-						decision: 'Use append-only migrations for portal schema changes.'
+						predicate: 'database_migration_strategy',
+						value: 'Use append-only migrations for portal schema changes.'
 					}
 				]
 			}
@@ -2531,11 +2522,11 @@ describe('memory-backed sessions', () => {
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const committed = commitPatch({
 			conversationId: conv.id,
-			patch: { decisions: [{ subject: 'search cleanup', decision: 'Delete stale indexes.' }] }
+			patch: { facts: [{ predicate: 'search_cleanup', value: 'Delete stale indexes.' }] }
 		});
-		const decisionItem = memory
+		const factItem = memory
 			.listPatchItems(conv.id, { patchId: committed.patch.id })
-			.find((item) => item.itemType === 'decision')!;
+			.find((item) => item.itemType === 'fact')!;
 		const global = memory.upsertGlobalMemory(user.id, {
 			kind: 'preference',
 			memoryKey: 'stale-search',
@@ -2547,7 +2538,7 @@ describe('memory-backed sessions', () => {
 			memory.searchGlobalMemories(user.id, { query: 'global stale indexes' })
 		).not.toHaveLength(0);
 
-		expect(memory.deleteItem(conv.id, 'decisions', decisionItem.itemId)).toBe(true);
+		expect(memory.deleteItem(conv.id, 'facts', factItem.itemId)).toBe(true);
 		expect(memory.deleteGlobalMemory(user.id, global.id)).toBe(true);
 
 		expect(memory.search(conv.id, { query: 'stale indexes' })).toHaveLength(0);
@@ -2682,10 +2673,10 @@ describe('memory-backed sessions', () => {
 		commitPatch({
 			conversationId: conv.id,
 			patch: {
-				decisions: [
+				facts: [
 					{
-						subject: 'caching',
-						decision: 'Adopt a write-through redis cache for hot lookups.'
+						predicate: 'caching',
+						value: 'Adopt a write-through redis cache for hot lookups.'
 					}
 				]
 			}
@@ -3137,22 +3128,19 @@ describe('memory-backed sessions', () => {
 		expect(packet.facts[0].predicate).toBe('oath');
 	});
 
-	it('always includes decisions and open loops regardless of token budget', () => {
+	it('always includes open loops regardless of token budget', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'continuity', workdir: '/tmp', model: null });
 		commitPatch({
 			conversationId: conv.id,
 			patch: {
-				decisions: [{ subject: 'engine', decision: 'Use a fresh context per request.' }],
 				openLoops: [{ loopType: 'task', title: 'Wire up the salience ranker' }]
 			}
 		});
 
 		const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 1 });
-		expect(packet.decisions).toHaveLength(1);
 		expect(packet.openLoops).toHaveLength(1);
 		const rendered = renderMemoryPacket(packet);
-		expect(rendered).toContain('Use a fresh context per request.');
 		expect(rendered).toContain('Wire up the salience ranker');
 	});
 
@@ -3472,7 +3460,7 @@ describe('memory-backed sessions', () => {
 		commitPatch({
 			conversationId: conv.id,
 			patch: {
-				decisions: [{ subject: 'cache', decision: 'Adopt a redis write-through cache.' }]
+				facts: [{ predicate: 'cache', value: 'Adopt a redis write-through cache.' }]
 			}
 		});
 		const userMsg = messages.append(conv.id, {

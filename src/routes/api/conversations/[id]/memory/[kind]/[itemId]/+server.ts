@@ -31,15 +31,6 @@ const FactPatch = z
 	})
 	.strict();
 
-const DecisionPatch = z
-	.object({
-		subject: z.string().trim().min(1).max(200).optional(),
-		decision: z.string().trim().min(1).max(4000).optional(),
-		rationale: z.string().max(4000).optional(),
-		status: ItemStatus.optional()
-	})
-	.strict();
-
 const OpenLoopPatch = z
 	.object({
 		loopType: z.string().trim().min(1).max(100).optional(),
@@ -113,15 +104,6 @@ function updateMemoryItem(
 			status: parsed.status,
 			visibility: parsed.visibility,
 			confidence: parsed.confidence
-		});
-	}
-	if (kind === 'decisions' || kind === 'decision') {
-		const parsed = parsePatchBody(DecisionPatch, body);
-		return memory.updateDecision(conversationId, itemId, {
-			subject: parsed.subject,
-			decision: parsed.decision,
-			rationale: parsed.rationale,
-			status: parsed.status
 		});
 	}
 	if (kind === 'openLoops' || kind === 'open-loops' || kind === 'open_loop') {

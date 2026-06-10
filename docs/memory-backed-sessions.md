@@ -245,7 +245,6 @@ memory_entities
 memory_events
 memory_facts
 memory_open_loops
-memory_decisions  # legacy: read-only, no new rows written (decision kind removed)
 memory_patches
 memory_patch_items
 memory_validation_issues
@@ -426,25 +425,6 @@ signal, so it never ages loops). The extractor is always handed a freshly built
 initial packet so it can see existing entity keys and open-loop ids even on the
 production path, which previously passed no packet at all.
 
-### `memory_decisions`
-
-Durable decisions made during the session. **Legacy/read-only:** the `decision`
-write kind has been removed, so no new rows are written — settled choices are now
-stored as attributes (`predicate: "decision"`) or directives. Existing rows
-continue to render in packets and the inspector.
-
-Important fields:
-
-- `id`
-- `session_id`
-- `subject`
-- `decision`
-- `rationale`
-- `status`
-- `source_event_id`
-- `created_at`
-- `updated_at`
-
 ### `memory_patches`
 
 Every post-turn extraction should create a patch record, even if no changes are
@@ -519,8 +499,7 @@ legible instead of opaque ULIDs.
 There is deliberately **no `decision` concept**: a settled choice is recorded as
 an `attribute` (e.g. `predicate: "decision"`) or, when it is forward-looking, a
 `directive`. Dropping it removes the hardest classification boundary
-(attribute vs directive vs decision). Existing decision rows still render
-read-only; nothing new is written to them.
+(attribute vs directive vs decision).
 
 Only open loops have an explicit lifecycle. `attribute` facts supersede in place
 — re-asserting one (same `entityKey`+`predicate`) retires the prior value
@@ -672,7 +651,7 @@ type. The selection pipeline is:
    independent of the body budget. This guarantees the model knows what is
    queryable by name even when a fact's body is dropped. `entityKey` values are
    preserved verbatim for downstream consumers.
-4. **Token budget.** Decisions and open loops are pinned as cheap, high-value
+4. **Token budget.** Open loops are pinned as cheap, high-value
    continuity. The remaining token budget (per-mode, overridable via
    `opts.tokenBudget`) is spent on relevance-ranked facts, then events, then
    entity summaries, so total packet size stays bounded regardless of how much
@@ -690,7 +669,7 @@ different audiences, and the differences are a single explicit
 `RenderMemoryPacketOptions` object rather than per-primitive special-casing:
 
 - **`includeIds`** — surfaces stable `[id=...]` handles on every primitive
-  (entities, facts, decisions, events, open loops). The main-turn agent renders
+  (entities, facts, events, open loops). The main-turn agent renders
   without ids (they are noise it cannot act on); the post-turn extractor enables
   them so it can reference items precisely. Open loops render their legible
   `loop_key` (e.g. `loop.find_attic_key`) in the `[id=...]` slot rather than a raw
@@ -1176,7 +1155,6 @@ Tabs:
 - Facts
 - Events
 - Entities
-- Decisions
 - Open loops
 - Tool calls
 - Validation issues
@@ -1197,13 +1175,12 @@ Actions:
 After each turn in memory-backed mode, show a collapsed memory update summary:
 
 ```text
-Memory updated: 2 facts, 1 decision, 1 open loop
+Memory updated: 2 facts, 1 open loop
 ```
 
 Expanded view:
 
 ```diff
-+ Decision: Fresh-context sessions should include memory tools in the first pass.
 + Open loop: Define memory tool schemas.
 ~ Fact: Memory mode MVP scope updated.
 ```
@@ -1388,7 +1365,6 @@ Every memory record needs a deterministic text representation:
 | Entity | key, type, display name, summary, metadata |
 | Event | type, summary, payload, actor/target display names |
 | Fact | entity display name, predicate, value, visibility |
-| Decision | subject, decision, rationale |
 | Open loop | type, title, description, status |
 | Patch | summary, validation issues |
 | Global memory | kind, key, value |

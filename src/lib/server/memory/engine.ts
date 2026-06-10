@@ -24,7 +24,6 @@ export interface TurnMemoryPacket {
 	mode: MemoryMode;
 	instructions: string;
 	summary: string;
-	decisions: memoryRepo.MemoryDecision[];
 	openLoops: memoryRepo.MemoryOpenLoop[];
 	facts: memoryRepo.MemoryFact[];
 	/**
@@ -73,16 +72,6 @@ export interface MemoryPatchProposal {
 		value?: unknown;
 		visibility?: string;
 		confidence?: number;
-	}>;
-	/**
-	 * Legacy, read-only: no current write path emits decisions (the `decision`
-	 * fact kind was retired). Kept so existing stored decisions still render and
-	 * so `commitPatch` stays tolerant of any historical patch that carries them.
-	 */
-	decisions?: Array<{
-		subject: string;
-		decision: string;
-		rationale?: string;
 	}>;
 	openLoops?: Array<{
 		loopType: string;
@@ -242,7 +231,6 @@ export function buildInitialPacket(
 		.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
 	const factPool = allFacts.filter((fact) => !isDirectivePredicate(fact.predicate));
 	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
-	const decisions = memoryRepo.listDecisions(conversationId, { limit: 40 });
 	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
 
 	const entityKeyById: Record<string, string> = {};
@@ -290,7 +278,7 @@ export function buildInitialPacket(
 			factCount: factCounts.get(entity.id) ?? 0
 		}));
 
-	// Decisions and open loops are cheap, high-value continuity: always pinned.
+	// Open loops are cheap, high-value continuity: always pinned.
 	// The token budget is spent on the growing body content — relevance-ranked
 	// facts and events plus entity summaries — so the packet stays bounded
 	// regardless of how much total memory exists.
@@ -341,11 +329,10 @@ export function buildInitialPacket(
 	return {
 		mode,
 		instructions: memoryInstructions(mode),
-		summary: summarizePacket({ entities, facts, decisions, openLoops, recentEvents, directives }),
+		summary: summarizePacket({ entities, facts, openLoops, recentEvents, directives }),
 		entities,
 		facts,
 		directives,
-		decisions,
 		openLoops,
 		recentEvents,
 		entityIndex,
@@ -682,7 +669,6 @@ export function commitPatch(
 		entities: number;
 		events: number;
 		facts: number;
-		decisions: number;
 		openLoops: number;
 		resolvedOpenLoops: number;
 		issues: number;
@@ -719,7 +705,6 @@ export function commitPatch(
 				entities: 0,
 				events: 0,
 				facts: 0,
-				decisions: 0,
 				openLoops: 0,
 				resolvedOpenLoops: 0,
 				issues: validation.issues.length
@@ -863,20 +848,9 @@ export function commitPatch(
 		factCount++;
 	}
 
-	// Legacy decisions: retained so a historical patch carrying them still
-	// commits, but no current extractor or heuristic emits this kind.
-	for (const decision of input.patch.decisions ?? []) {
-		const row = memoryRepo.addDecision(input.conversationId, {
-			...decision,
-			sourceMessageId: input.sourceMessageId ?? null
-		});
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'decision',
-			itemId: row.id,
-			action: 'create'
-		});
-	}
+	// Legacy decisions: any `decisions` array on a historical/foreign patch is
+	// silently ignored — the primitive has been retired (settled choices live on
+	// as facts/attributes or directives).
 	for (const loop of input.patch.openLoops ?? []) {
 		const row = memoryRepo.addOpenLoop(input.conversationId, {
 			loopType: loop.loopType,
@@ -934,7 +908,6 @@ export function commitPatch(
 			entities: input.patch.entities?.length ?? 0,
 			events: eventCount,
 			facts: factCount,
-			decisions: input.patch.decisions?.length ?? 0,
 			openLoops: input.patch.openLoops?.length ?? 0,
 			resolvedOpenLoops,
 			issues: validation.issues.length
@@ -1038,10 +1011,10 @@ export function extractHeuristicPatch(params: {
  *
  * Every item in `facts` is a discriminated union on a REQUIRED `kind`, with no
  * default and no fallback: the model must explicitly decide what each thing is
- * before it can be written. `directive`, `decision`, `open_loop`, and `event`
- * are no longer separate top-level arrays nor magic predicates — they are fact
- * kinds. This is the single change that makes mis-filing (the classic "a
- * directive came out as a fact / decision / nothing at all") structurally hard:
+ * before it can be written. `directive`, `open_loop`, and `event` are no longer
+ * separate top-level arrays nor magic predicates — they are fact kinds. This is
+ * the single change that makes mis-filing (the classic "a directive came out as
+ * a fact / attribute / nothing at all") structurally hard:
  * there is exactly one place to put a thing, and you cannot put it there
  * without naming its kind.
  */
@@ -1524,7 +1497,6 @@ function memoryInstructions(mode: MemoryMode): string {
 function summarizePacket(packet: {
 	entities: memoryRepo.MemoryEntity[];
 	facts: memoryRepo.MemoryFact[];
-	decisions: memoryRepo.MemoryDecision[];
 	openLoops: memoryRepo.MemoryOpenLoop[];
 	recentEvents: memoryRepo.MemoryEvent[];
 	directives?: memoryRepo.MemoryFact[];
@@ -1533,7 +1505,6 @@ function summarizePacket(packet: {
 		packet.directives?.length ? `${packet.directives.length} directives` : '',
 		`${packet.entities.length} entities`,
 		`${packet.facts.length} active facts`,
-		`${packet.decisions.length} decisions`,
 		`${packet.openLoops.length} open loops`,
 		`${packet.recentEvents.length} recent events`
 	]
@@ -1584,13 +1555,6 @@ function factDetail(fact: memoryRepo.MemoryFact, includeId = false): string {
 	const metaStr = meta.length ? ` (${meta.join(', ')})` : '';
 	const idStr = includeId ? ` [id=${fact.id}]` : '';
 	return `${fact.predicate} = ${formatMemoryValue(fact.value)}${metaStr}${idStr}`;
-}
-
-function decisionLine(decision: memoryRepo.MemoryDecision, includeId = false): string {
-	const status = decision.status && decision.status !== 'active' ? ` [${decision.status}]` : '';
-	const rationale = decision.rationale ? ` — ${cleanSentence(decision.rationale)}` : '';
-	const idStr = includeId ? ` [id=${decision.id}]` : '';
-	return `- ${decision.subject}: ${decision.decision}${status}${rationale}${idStr}`;
 }
 
 function loopLine(
@@ -1774,11 +1738,6 @@ export function renderMemoryPacket(
 		for (const entry of packet.entityIndex) lines.push(entityIndexLine(entry, includeIds));
 	}
 
-	if (packet.decisions.length) {
-		lines.push('', `decisions (${packet.decisions.length}):`);
-		for (const decision of packet.decisions) lines.push(decisionLine(decision, includeIds));
-	}
-
 	if (packet.openLoops.length) {
 		lines.push('', `open loops (${packet.openLoops.length}):`);
 		for (const loop of packet.openLoops)
@@ -1812,7 +1771,6 @@ function summarizePatch(patch: MemoryPatchProposal): string {
 		patch.entities?.length ? `${patch.entities.length} entities` : '',
 		patch.events?.length ? `${patch.events.length} events` : '',
 		patch.facts?.length ? `${patch.facts.length} facts` : '',
-		patch.decisions?.length ? `${patch.decisions.length} decisions` : '',
 		patch.openLoops?.length ? `${patch.openLoops.length} open loops` : '',
 		patch.resolveOpenLoops?.length ? `${patch.resolveOpenLoops.length} resolved loops` : ''
 	]

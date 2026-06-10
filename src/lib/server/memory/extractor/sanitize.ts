@@ -55,7 +55,6 @@ export function sanitizePatch(
 			entities: keep(patch.entities),
 			events: keep(patch.events),
 			facts: keep(patch.facts),
-			decisions: keep(patch.decisions),
 			openLoops: keep(patch.openLoops)
 		},
 		initialPacket
@@ -78,7 +77,6 @@ export function sanitizePatch(
 		entities: sanitized.patch.entities,
 		events: sanitized.patch.events,
 		facts: sanitized.patch.facts,
-		decisions: sanitized.patch.decisions,
 		openLoops: sanitized.patch.openLoops,
 		// Resolutions only reference an existing loop id plus a short free-text
 		// reason. Don't drop the whole resolution if the reason trips the secret
@@ -186,7 +184,6 @@ function canonicalizeEntityKeys(
 	const next: MemoryPatchProposal = {
 		events: patch.events?.map((event) => ({ ...event, entityKey: rewriteKey(event.entityKey) })),
 		facts: patch.facts?.map((fact) => ({ ...fact, entityKey: rewriteKey(fact.entityKey) })),
-		decisions: patch.decisions,
 		openLoops: patch.openLoops?.map((loop) => ({
 			...loop,
 			relatedEntityKeys: loop.relatedEntityKeys?.map((key) => rewriteKey(key) ?? key)

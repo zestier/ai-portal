@@ -121,7 +121,6 @@ function hasMemoryRecords(snapshot: memory.MemorySnapshot): boolean {
 	return (
 		snapshot.entities.length +
 			snapshot.facts.length +
-			snapshot.decisions.length +
 			snapshot.openLoops.length +
 			snapshot.events.length +
 			snapshot.patches.length +

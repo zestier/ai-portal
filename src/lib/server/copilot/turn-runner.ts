@@ -667,7 +667,6 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						counts: {
 							events: committed.counts.events,
 							facts: committed.counts.facts,
-							decisions: committed.counts.decisions,
 							openLoops: committed.counts.openLoops,
 							issues: committed.counts.issues
 						}

@@ -530,7 +530,6 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
 	const entities = patches.flatMap((patch) => patch.entities ?? []);
 	const events = patches.flatMap((patch) => patch.events ?? []);
 	const facts = patches.flatMap((patch) => patch.facts ?? []);
-	const decisions = patches.flatMap((patch) => patch.decisions ?? []);
 	const openLoops = patches.flatMap((patch) => patch.openLoops ?? []);
 	// De-dupe resolutions by id (last write wins) so a loop the model staged
 	// twice across calls is only resolved once.
@@ -550,7 +549,6 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
 	if (entities.length > 0) merged.entities = entities;
 	if (events.length > 0) merged.events = events;
 	if (facts.length > 0) merged.facts = facts;
-	if (decisions.length > 0) merged.decisions = decisions;
 	if (openLoops.length > 0) merged.openLoops = openLoops;
 	if (resolutionById.size > 0) merged.resolveOpenLoops = [...resolutionById.values()];
 	if (keepOpenLoops.length > 0) merged.keepOpenLoops = keepOpenLoops;

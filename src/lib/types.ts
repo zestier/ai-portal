@@ -710,7 +710,6 @@ export type PortalEvent =
 			counts?: {
 				events?: number;
 				facts?: number;
-				decisions?: number;
 				openLoops?: number;
 				issues?: number;
 			};

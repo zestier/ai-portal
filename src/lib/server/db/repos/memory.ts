@@ -82,19 +82,6 @@ export interface MemoryOpenLoop {
 	updatedAt: number;
 }
 
-export interface MemoryDecision {
-	id: string;
-	conversationId: string;
-	subject: string;
-	decision: string;
-	rationale: string;
-	status: string;
-	sourceEventId: string | null;
-	sourceMessageId: string | null;
-	createdAt: number;
-	updatedAt: number;
-}
-
 export interface MemoryPatch {
 	id: string;
 	conversationId: string;
@@ -164,7 +151,6 @@ type SessionMemoryLogItemType =
 	| 'entity'
 	| 'event'
 	| 'fact'
-	| 'decision'
 	| 'open_loop'
 	| 'open_loop_liveness'
 	| 'patch'
@@ -249,19 +235,6 @@ interface OpenLoopRow {
 	updated_at: number;
 }
 
-interface DecisionRow {
-	id: string;
-	conversation_id: string;
-	subject: string;
-	decision: string;
-	rationale: string;
-	status: string;
-	source_event_id: string | null;
-	source_message_id: string | null;
-	created_at: number;
-	updated_at: number;
-}
-
 interface PatchRow {
 	id: string;
 	conversation_id: string;
@@ -330,7 +303,6 @@ export interface MemorySnapshot {
 	mode: MemoryMode;
 	entities: MemoryEntity[];
 	facts: MemoryFact[];
-	decisions: MemoryDecision[];
 	openLoops: MemoryOpenLoop[];
 	events: MemoryEvent[];
 	patches: MemoryPatch[];
@@ -386,14 +358,6 @@ function isSingleValuedPredicate(predicate: string): boolean {
 	return SINGLE_VALUED_PREDICATES.has(predicate.toLowerCase());
 }
 
-export interface AddDecisionInput {
-	subject: string;
-	decision: string;
-	rationale?: string;
-	sourceEventId?: string | null;
-	sourceMessageId?: string | null;
-}
-
 export interface AddOpenLoopInput {
 	loopType: string;
 	title: string;
@@ -433,7 +397,6 @@ export function listSnapshot(
 		mode: getMode(conversationId),
 		entities: listEntities(conversationId, { limit: 200 }),
 		facts: listFacts(conversationId, { limit: 300 }),
-		decisions: listDecisions(conversationId, { limit: 100 }),
 		openLoops: listOpenLoops(conversationId, { status: 'open', limit: 100 }),
 		events: listEvents(conversationId, { limit: 100 }),
 		patches: listPatches(conversationId, { limit: 50 }),
@@ -760,53 +723,6 @@ export function entityFactCounts(conversationId: string): Map<string, number> {
 	const counts = new Map<string, number>();
 	for (const row of rows) counts.set(row.entityId, row.count);
 	return counts;
-}
-
-export function addDecision(conversationId: string, input: AddDecisionInput): MemoryDecision {
-	const id = ulid();
-	const now = Date.now();
-	getDb()
-		.prepare(
-			`INSERT INTO memory_decisions(
-			   id, conversation_id, subject, decision, rationale, status, source_event_id,
-			   source_message_id, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
-		)
-		.run(
-			id,
-			conversationId,
-			input.subject,
-			input.decision,
-			input.rationale ?? '',
-			input.sourceEventId ?? null,
-			input.sourceMessageId ?? null,
-			now,
-			now
-		);
-	const row = getDb().prepare('SELECT * FROM memory_decisions WHERE id = ?').get(id) as DecisionRow;
-	indexItem(getDb(), conversationId, 'decision', id, decisionIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind: 'decision.create',
-		itemType: 'decision',
-		itemId: id,
-		sourceMessageId: input.sourceMessageId ?? null,
-		payload: { item: rowToDecision(row) }
-	});
-	return rowToDecision(row);
-}
-
-export function listDecisions(
-	conversationId: string,
-	opts: { limit?: number; status?: string } = {}
-): MemoryDecision[] {
-	const rows = getDb()
-		.prepare(
-			`SELECT * FROM memory_decisions
-			  WHERE conversation_id = ? AND status = ?
-			  ORDER BY updated_at DESC LIMIT ?`
-		)
-		.all(conversationId, opts.status ?? 'active', opts.limit ?? 50) as DecisionRow[];
-	return rows.map(rowToDecision);
 }
 
 /**
@@ -1381,43 +1297,6 @@ export function updateFact(
 	return tx();
 }
 
-export function updateDecision(
-	conversationId: string,
-	id: string,
-	patch: Partial<Pick<MemoryDecision, 'subject' | 'decision' | 'rationale' | 'status'>>
-): MemoryDecision | null {
-	const current = getDb()
-		.prepare('SELECT * FROM memory_decisions WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as DecisionRow | undefined;
-	if (!current) return null;
-	getDb()
-		.prepare(
-			`UPDATE memory_decisions
-			    SET subject = ?, decision = ?, rationale = ?, status = ?, updated_at = ?
-			  WHERE id = ? AND conversation_id = ?`
-		)
-		.run(
-			patch.subject ?? current.subject,
-			patch.decision ?? current.decision,
-			patch.rationale ?? current.rationale,
-			patch.status ?? current.status,
-			Date.now(),
-			id,
-			conversationId
-		);
-	const row = getDb()
-		.prepare('SELECT * FROM memory_decisions WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as DecisionRow;
-	syncSessionIndex(getDb(), conversationId, 'decision', id, row.status, decisionIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind: row.status === 'deleted' ? 'decision.delete' : 'decision.update',
-		itemType: 'decision',
-		itemId: id,
-		payload: { item: rowToDecision(row) }
-	});
-	return rowToDecision(row);
-}
-
 export function updateOpenLoop(
 	conversationId: string,
 	id: string,
@@ -1583,8 +1462,6 @@ export function deleteItem(conversationId: string, kind: string, id: string): bo
 	if (normalized === 'entity')
 		return updateEntity(conversationId, id, { status: 'deleted' }) !== null;
 	if (normalized === 'fact') return updateFact(conversationId, id, { status: 'deleted' }) !== null;
-	if (normalized === 'decision')
-		return updateDecision(conversationId, id, { status: 'deleted' }) !== null;
 	if (normalized === 'open_loop')
 		return updateOpenLoop(conversationId, id, { status: 'deleted' }) !== null;
 	return false;
@@ -1961,12 +1838,12 @@ export function replaySessionMemoryLogForFork(
 	sourceConversationId: string,
 	targetConversationId: string,
 	opts: { messageIdMap: Map<string, string>; createdBefore?: number }
-): { entities: number; events: number; facts: number; decisions: number; openLoops: number } {
+): { entities: number; events: number; facts: number; openLoops: number } {
 	const db = getDb();
 	const included = new Set<string>();
 	const isIncluded = (type: string, id: string) => included.has(`${type}:${id}`);
 	const markIncluded = (type: string, id: string) => included.add(`${type}:${id}`);
-	const counts = { entities: 0, events: 0, facts: 0, decisions: 0, openLoops: 0 };
+	const counts = { entities: 0, events: 0, facts: 0, openLoops: 0 };
 	const tx = db.transaction(() => {
 		clearSessionMemoryProjection(db, targetConversationId);
 		db.prepare('DELETE FROM memory_event_log WHERE conversation_id = ?').run(targetConversationId);
@@ -2008,12 +1885,6 @@ export function replaySessionMemoryLogForFork(
 		);
 		counts.events = countSessionProjectionRows(db, 'memory_events', targetConversationId, null);
 		counts.facts = countSessionProjectionRows(db, 'memory_facts', targetConversationId, 'active');
-		counts.decisions = countSessionProjectionRows(
-			db,
-			'memory_decisions',
-			targetConversationId,
-			'active'
-		);
 		counts.openLoops = countSessionProjectionRows(
 			db,
 			'memory_open_loops',
@@ -2407,7 +2278,6 @@ function clearSessionMemoryProjection(db: Database.Database, conversationId: str
 	db.prepare('DELETE FROM memory_tool_calls WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_validation_issues WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_patches WHERE conversation_id = ?').run(conversationId);
-	db.prepare('DELETE FROM memory_decisions WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_open_loops WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_facts WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_events WHERE conversation_id = ?').run(conversationId);
@@ -2455,9 +2325,6 @@ function applySessionMemoryLogProjection(
 			// observations always yields the correct active facts.
 			consolidateFactGroup(db, item.conversationId, item.entityId, item.predicate);
 		}
-	} else if (row.item_type === 'decision') {
-		const item = record.item as MemoryDecision | undefined;
-		if (item) upsertDecisionProjection(db, item);
 	} else if (row.item_type === 'open_loop') {
 		const item = record.item as MemoryOpenLoop | undefined;
 		if (item) upsertOpenLoopProjection(db, item);
@@ -2496,11 +2363,6 @@ function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: stri
 		.prepare(`SELECT * FROM memory_facts WHERE conversation_id = ?`)
 		.all(conversationId) as FactRow[]) {
 		syncSessionIndex(db, conversationId, 'fact', row.id, row.status, factIndexText(row));
-	}
-	for (const row of db
-		.prepare(`SELECT * FROM memory_decisions WHERE conversation_id = ?`)
-		.all(conversationId) as DecisionRow[]) {
-		syncSessionIndex(db, conversationId, 'decision', row.id, row.status, decisionIndexText(row));
 	}
 	for (const row of db
 		.prepare(`SELECT * FROM memory_open_loops WHERE conversation_id = ?`)
@@ -2574,26 +2436,6 @@ function upsertFactProjection(db: Database.Database, item: MemoryFact): void {
 		item.sourceMessageId,
 		item.supersedesFactId,
 		item.pinned ? 1 : 0,
-		item.createdAt,
-		item.updatedAt
-	);
-}
-
-function upsertDecisionProjection(db: Database.Database, item: MemoryDecision): void {
-	db.prepare(
-		`INSERT OR REPLACE INTO memory_decisions(
-		   id, conversation_id, subject, decision, rationale, status, source_event_id,
-		   source_message_id, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	).run(
-		item.id,
-		item.conversationId,
-		item.subject,
-		item.decision,
-		item.rationale,
-		item.status,
-		item.sourceEventId,
-		item.sourceMessageId,
 		item.createdAt,
 		item.updatedAt
 	);
@@ -2765,16 +2607,6 @@ function createForkMemoryRemapper(
 				supersedesFactId: refId('fact', item.supersedesFactId)
 			};
 		}
-		if (itemType === 'decision') {
-			const item = value as MemoryDecision;
-			return {
-				...item,
-				id: mintId('decision', item.id),
-				conversationId: targetConversationId,
-				sourceEventId: refId('event', item.sourceEventId),
-				sourceMessageId: mapMessage(item.sourceMessageId)
-			};
-		}
 		if (itemType === 'open_loop') {
 			const item = value as MemoryOpenLoop;
 			return {
@@ -2816,13 +2648,20 @@ function createForkMemoryRemapper(
 				patchId: refId('patch', issue.patchId)
 			};
 		}
-		const toolCall = value as MemoryToolCall;
-		return {
-			...toolCall,
-			id: mintId('tool_call', toolCall.id),
-			conversationId: targetConversationId,
-			turnId: null
-		};
+		if (itemType === 'tool_call') {
+			const toolCall = value as MemoryToolCall;
+			return {
+				...toolCall,
+				id: mintId('tool_call', toolCall.id),
+				conversationId: targetConversationId,
+				turnId: null
+			};
+		}
+		// Unknown/legacy item types (e.g. retired `decision` log rows on old
+		// conversations) are copied verbatim. They have no live projection, so
+		// the replayed entry is a silent no-op rather than being mis-minted as a
+		// tool call.
+		return value;
 	};
 	return (itemType, payload) => {
 		const record = payloadObject(payload);
@@ -2996,21 +2835,6 @@ function rowToOpenLoop(row: OpenLoopRow): MemoryOpenLoop {
 	};
 }
 
-function rowToDecision(row: DecisionRow): MemoryDecision {
-	return {
-		id: row.id,
-		conversationId: row.conversation_id,
-		subject: row.subject,
-		decision: row.decision,
-		rationale: row.rationale,
-		status: row.status,
-		sourceEventId: row.source_event_id,
-		sourceMessageId: row.source_message_id,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at
-	};
-}
-
 function rowToPatch(row: PatchRow): MemoryPatch {
 	return {
 		id: row.id,
@@ -3085,10 +2909,9 @@ function rowToGlobalMemory(row: GlobalMemoryRow): GlobalMemory {
 	};
 }
 
-function normalizeKind(kind: string): 'entity' | 'fact' | 'decision' | 'open_loop' | null {
+function normalizeKind(kind: string): 'entity' | 'fact' | 'open_loop' | null {
 	if (kind === 'entity' || kind === 'entities') return 'entity';
 	if (kind === 'fact' || kind === 'facts') return 'fact';
-	if (kind === 'decision' || kind === 'decisions') return 'decision';
 	if (kind === 'open_loop' || kind === 'open-loops' || kind === 'openLoops') return 'open_loop';
 	return null;
 }
@@ -3137,10 +2960,6 @@ function eventIndexText(row: EventRow): string {
 
 function factIndexText(row: FactRow): string {
 	return [row.predicate, row.value_json].join('\n');
-}
-
-function decisionIndexText(row: DecisionRow): string {
-	return [row.subject, row.decision, row.rationale].join('\n');
 }
 
 function openLoopIndexText(row: OpenLoopRow): string {
