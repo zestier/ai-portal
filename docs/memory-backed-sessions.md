@@ -498,7 +498,7 @@ flat tool per concept, where the tool name *is* the classification (there is no
 | Write tool | Meaning | Required fields |
 | --- | --- | --- |
 | `remember_attributes` | Things to KNOW about ONE entity: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` (+ optional top-level `entityKey`; per-item `event`, `eventType`) |
-| `remember_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). | `rule` |
+| `remember_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). Captured whether the user issues the rule or the assistant declares it about its own role/operating behavior. | `rule` |
 | `remember_loop` | Open a NEW unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
 | `remember_event` | A point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, failed build, approach tried, clue revealed). Recency-ranked and capped, so used sparingly. | `eventType`, `summary` (+ optional `entityKey`) |
 | `remember_entity` | Establish a durable referent that facts attach to; prose blurb goes in `summary`. | `entityKey`, `entityType`, `displayName` |
@@ -566,9 +566,16 @@ provenance (source message/turn/event), visibility, confidence, and status
 
 ### Per-session directives (standing rules)
 
-Directives are user-authored standing instructions that must flow into **every**
+Directives are standing instructions that must flow into **every**
 future memory-backed turn for a conversation — for example, while telling a story
-the user says _"when creating new characters, give them names."_ Unlike facts
+the user says _"when creating new characters, give them names."_ A directive is
+captured regardless of **who** states it: it may be a rule the user issues, or one
+the assistant declares about its own role or operating behavior in a
+self-describing reply (e.g. _"I am a text-based RPG; I track inventory and always
+describe the scene before asking for input"_ yields a role directive plus each
+operating rule it states). Only durable role definitions and standing operating
+rules are captured — greetings, conversational offers to proceed, and one-off
+next-step plans for the current turn are not. Unlike facts
 and open loops (which describe state/history and compete for the packet
 token budget), and unlike global memories (user-scoped, pulled in only on demand),
 a directive is an always-on behavioral instruction that is never dropped.
@@ -580,8 +587,10 @@ a directive is an always-on behavioral instruction that is never dropped.
   existing per-conversation memory-copy path (pinned directive facts are carried
   over). Not user-global in v1.
 - **Creation:** automatic — the extractor captures durable, forward-looking
-  instructions via the `remember_directive` tool / commit flow. Extraction
-  guidance stays conservative (only standing instructions, not one-off asks).
+  instructions via the `remember_directive` tool / commit flow, whether they are
+  issued by the user or declared by the assistant about its own role/behavior.
+  Extraction guidance stays conservative (only standing instructions and role
+  definitions, not one-off asks or transient self-talk).
 - **Injection:** every active directive is rendered verbatim in a dedicated
   `standing directives` packet header block, exempt from the token budget — they are
   never elided regardless of how many other facts exist.

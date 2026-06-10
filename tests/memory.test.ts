@@ -21,6 +21,11 @@ import {
 	type ExtractorToolSpec
 } from '../src/lib/server/memory/extractor';
 import { getMemoryProfile, listMemoryProfiles } from '../src/lib/server/memory/profiles';
+import {
+	buildToolExtractorSystemPrompt,
+	buildExtractorPrompt
+} from '../src/lib/server/memory/extractor/prompts';
+import type { ExtractPatchInput } from '../src/lib/server/memory/extractor/types';
 import * as memoryProfiles from '../src/lib/server/memory/profiles';
 import { buildMemoryTools } from '../src/lib/server/tools/memory';
 import type { ToolResult } from '../src/lib/server/tools/types';
@@ -4545,4 +4550,39 @@ describe('memory-backed sessions', () => {
 			expect(getMemoryProfile(mode).primitives).toContain('directive');
 		}
 	});
+});
+
+describe('extractor prompt directive guidance', () => {
+	function singleShotPrompt(): string {
+		const input = {
+			conversationId: 'c1',
+			userId: 'u1',
+			mode: 'story',
+			turnId: 't1',
+			userMessage: { role: 'user', content: 'You are a text-based RPG.' },
+			assistantMessage: {
+				role: 'assistant',
+				content: 'I am a text-based RPG. I track inventory. How would you like to begin?'
+			}
+		} as unknown as ExtractPatchInput;
+		return buildExtractorPrompt(input, 100_000);
+	}
+
+	// Both extractor prompts must teach that a directive can originate from the
+	// ASSISTANT's own self-description, not only from a user instruction.
+	for (const [label, build] of [
+		['tool-calling system prompt', buildToolExtractorSystemPrompt],
+		['single-shot inline prompt', singleShotPrompt]
+	] as const) {
+		it(`${label} states a directive may come from the assistant's self-description`, () => {
+			const text = build();
+			expect(text).toMatch(/regardless of who states it/i);
+			expect(text).toMatch(/assistant declares it about its own role/i);
+			// Identity/role statement recorded as a standing-rule directive.
+			expect(text).toContain('Act as a text-based RPG');
+			// Boundary: durable rules in, transient self-talk out.
+			expect(text).toMatch(/durable\/standing operating rules and role definitions/i);
+			expect(text).toContain('How would you like to begin?');
+		});
+	}
 });
