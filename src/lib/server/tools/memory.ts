@@ -4,6 +4,40 @@ import * as messagesRepo from '../db/repos/messages';
 import { buildInitialPacket, renderMemoryPacket } from '../memory/engine';
 import type { MemoryMode } from '$lib/types';
 import { ok, type PortalTool } from './types';
+import { project, combineOmitted, withOmitted } from './project';
+
+// Per-shape allowlists of model-relevant fields. Everything else (provenance
+// ids, timestamps, raw payloads, confidence/visibility, etc.) is dropped from
+// the compact-by-default result; pass `verbose: true` to recover the full row.
+const ENTITY_KEEP = ['id', 'entityKey', 'entityType', 'displayName', 'summary', 'status'] as const;
+const EVENT_KEEP = [
+	'id',
+	'eventType',
+	'occurredAt',
+	'actorEntityId',
+	'targetEntityId',
+	'summary'
+] as const;
+const FACT_KEEP = ['id', 'entityId', 'predicate', 'value', 'status'] as const;
+const OPEN_LOOP_KEEP = [
+	'id',
+	'loopKey',
+	'loopType',
+	'title',
+	'description',
+	'status',
+	'priority'
+] as const;
+const SEARCH_HIT_KEEP = ['itemType', 'itemId', 'text'] as const;
+const MESSAGE_KEEP = ['id', 'role', 'content'] as const;
+const GLOBAL_MEMORY_KEEP = ['id', 'kind', 'memoryKey', 'value', 'status'] as const;
+
+// Neutral, non-imperative copy reused across tool descriptions and the
+// `verbose` parameter docs so the capability is discoverable without nudging
+// models to reflexively opt into the larger payload.
+const VERBOSE_NOTE = 'Pass verbose:true to return the full payload including omitted fields.';
+
+const Verbose = z.boolean().optional().default(false);
 
 const SearchArgs = z.object({
 	query: z.string().trim().min(1).max(500),
@@ -11,17 +45,20 @@ const SearchArgs = z.object({
 		.array(z.enum(['entity', 'event', 'fact', 'open_loop']))
 		.max(5)
 		.optional(),
-	limit: z.number().int().min(1).max(50).optional().default(20)
+	limit: z.number().int().min(1).max(50).optional().default(20),
+	verbose: Verbose
 });
 
 const EntityArgs = z.object({
-	id: z.string().trim().min(1).max(200)
+	id: z.string().trim().min(1).max(200),
+	verbose: Verbose
 });
 
 const OpenLoopsArgs = z
 	.object({
 		loopType: z.string().trim().min(1).max(100).optional(),
-		limit: z.number().int().min(1).max(50).optional().default(20)
+		limit: z.number().int().min(1).max(50).optional().default(20),
+		verbose: Verbose
 	})
 	.optional()
 	.default({});
@@ -30,21 +67,24 @@ const RecentEventsArgs = z
 	.object({
 		entityId: z.string().trim().min(1).max(200).optional(),
 		eventType: z.string().trim().min(1).max(100).optional(),
-		limit: z.number().int().min(1).max(50).optional().default(20)
+		limit: z.number().int().min(1).max(50).optional().default(20),
+		verbose: Verbose
 	})
 	.optional()
 	.default({});
 
 const TranscriptLookupArgs = z.object({
 	query: z.string().trim().min(1).max(500),
-	limit: z.number().int().min(1).max(20).optional().default(8)
+	limit: z.number().int().min(1).max(20).optional().default(8),
+	verbose: Verbose
 });
 
 const TimelineArgs = z
 	.object({
 		entityId: z.string().trim().min(1).max(200).optional(),
 		eventType: z.string().trim().min(1).max(100).optional(),
-		limit: z.number().int().min(1).max(100).optional().default(50)
+		limit: z.number().int().min(1).max(100).optional().default(50),
+		verbose: Verbose
 	})
 	.optional()
 	.default({});
@@ -52,14 +92,16 @@ const TimelineArgs = z
 const ClueArgs = z
 	.object({
 		status: z.enum(['all', 'open', 'revealed', 'resolved']).optional().default('all'),
-		limit: z.number().int().min(1).max(100).optional().default(50)
+		limit: z.number().int().min(1).max(100).optional().default(50),
+		verbose: Verbose
 	})
 	.optional()
 	.default({});
 
 const CharacterKnowledgeArgs = z.object({
 	characterEntityKey: z.string().trim().min(1).max(200),
-	limit: z.number().int().min(1).max(100).optional().default(50)
+	limit: z.number().int().min(1).max(100).optional().default(50),
+	verbose: Verbose
 });
 
 const MergeEntitiesArgs = z.object({
@@ -70,12 +112,14 @@ const MergeEntitiesArgs = z.object({
 const GlobalRememberArgs = z.object({
 	kind: z.enum(['preference', 'decision', 'fact', 'style', 'constraint']),
 	key: z.string().trim().min(1).max(200),
-	value: z.unknown()
+	value: z.unknown(),
+	verbose: Verbose
 });
 
 const GlobalSearchArgs = z.object({
 	query: z.string().trim().min(1).max(500),
-	limit: z.number().int().min(1).max(50).optional().default(20)
+	limit: z.number().int().min(1).max(50).optional().default(20),
+	verbose: Verbose
 });
 
 const CheckClaimsArgs = z.object({
@@ -103,7 +147,8 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_search',
 			description:
-				'Search durable session memory. Mandatory when prior details are relevant but absent from the initial packet.',
+				'Search durable session memory. Mandatory when prior details are relevant but absent from the initial packet. ' +
+				VERBOSE_NOTE,
 			argsSchema: SearchArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -115,7 +160,8 @@ export function buildMemoryTools(opts: {
 						items: { type: 'string', enum: ['entity', 'event', 'fact', 'open_loop'] },
 						description: 'Optional memory item types to include.'
 					},
-					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' }
+					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				required: ['query'],
 				additionalProperties: false
@@ -131,25 +177,28 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: results.map((result) => result.itemId)
 				});
-				return ok({ results }, summary);
+				const projected = project(results, { verbose: parsed.verbose, keep: SEARCH_HIT_KEEP });
+				return ok(withOmitted({ results: projected.value }, projected.omitted), summary);
 			}
 		},
 		{
 			name: 'memory_get_entity',
 			description:
-				'Fetch canonical durable state for one entity by entity id or key, including active facts and recent events.',
+				'Fetch canonical durable state for one entity by entity id or key, including active facts and recent events. ' +
+				VERBOSE_NOTE,
 			argsSchema: EntityArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
 				type: 'object',
 				properties: {
-					id: { type: 'string', description: 'Entity id or symbolic key, e.g. character.elias.' }
+					id: { type: 'string', description: 'Entity id or symbolic key, e.g. character.elias.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				required: ['id'],
 				additionalProperties: false
 			},
 			async handler(args) {
-				const { id } = EntityArgs.parse(args);
+				const { id, verbose } = EntityArgs.parse(args);
 				const entity = memoryRepo.getEntity(opts.conversationId, id);
 				if (!entity) return ok({ entity: null });
 				const facts = memoryRepo.listFacts(opts.conversationId, {
@@ -160,7 +209,13 @@ export function buildMemoryTools(opts: {
 					entityId: entity.id,
 					limit: 30
 				});
-				const result = { entity, facts, events };
+				const entityP = project(entity, { verbose, keep: ENTITY_KEEP });
+				const factsP = project(facts, { verbose, keep: FACT_KEEP });
+				const eventsP = project(events, { verbose, keep: EVENT_KEEP });
+				const result = withOmitted(
+					{ entity: entityP.value, facts: factsP.value, events: eventsP.value },
+					combineOmitted(entityP, factsP, eventsP)
+				);
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
 					toolName: 'memory_get_entity',
@@ -174,14 +229,16 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_get_open_loops',
 			description:
-				'Fetch unresolved durable open loops: tasks, promises, plot threads, clues, questions, or commitments.',
+				'Fetch unresolved durable open loops: tasks, promises, plot threads, clues, questions, or commitments. ' +
+				VERBOSE_NOTE,
 			argsSchema: OpenLoopsArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
 				type: 'object',
 				properties: {
 					loopType: { type: 'string', description: 'Optional loop type filter.' },
-					limit: { type: 'number', description: 'Maximum open loops, 1-50. Defaults to 20.' }
+					limit: { type: 'number', description: 'Maximum open loops, 1-50. Defaults to 20.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				additionalProperties: false
 			},
@@ -196,13 +253,15 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: openLoops.map((loop) => loop.id)
 				});
-				return ok({ openLoops }, summary);
+				const projected = project(openLoops, { verbose: parsed.verbose, keep: OPEN_LOOP_KEEP });
+				return ok(withOmitted({ openLoops: projected.value }, projected.omitted), summary);
 			}
 		},
 		{
 			name: 'memory_get_recent_events',
 			description:
-				'Fetch recent durable memory events, optionally filtered by entity or event type.',
+				'Fetch recent durable memory events, optionally filtered by entity or event type. ' +
+				VERBOSE_NOTE,
 			argsSchema: RecentEventsArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -210,7 +269,8 @@ export function buildMemoryTools(opts: {
 				properties: {
 					entityId: { type: 'string', description: 'Optional entity id.' },
 					eventType: { type: 'string', description: 'Optional event type.' },
-					limit: { type: 'number', description: 'Maximum events, 1-50. Defaults to 20.' }
+					limit: { type: 'number', description: 'Maximum events, 1-50. Defaults to 20.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				additionalProperties: false
 			},
@@ -225,20 +285,23 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: events.map((event) => event.id)
 				});
-				return ok({ events }, summary);
+				const projected = project(events, { verbose: parsed.verbose, keep: EVENT_KEEP });
+				return ok(withOmitted({ events: projected.value }, projected.omitted), summary);
 			}
 		},
 		{
 			name: 'memory_transcript_lookup',
 			description:
-				'Search exact prior conversation wording. Use when phrasing, quotes, or an old user/assistant statement matters.',
+				'Search exact prior conversation wording. Use when phrasing, quotes, or an old user/assistant statement matters. ' +
+				VERBOSE_NOTE,
 			argsSchema: TranscriptLookupArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'Literal text to find in prior messages.' },
-					limit: { type: 'number', description: 'Maximum matching messages, 1-20. Defaults to 8.' }
+					limit: { type: 'number', description: 'Maximum matching messages, 1-20. Defaults to 8.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				required: ['query'],
 				additionalProperties: false
@@ -256,13 +319,15 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: matches.map((message) => message.id)
 				});
-				return ok({ messages: matches }, summary);
+				const projected = project(matches, { verbose: parsed.verbose, keep: MESSAGE_KEEP });
+				return ok(withOmitted({ messages: projected.value }, projected.omitted), summary);
 			}
 		},
 		{
 			name: 'memory_query_timeline',
 			description:
-				'Return ordered memory events for timeline reasoning. Use in strict mode for alibis, chronology, and continuity checks.',
+				'Return ordered memory events for timeline reasoning. Use in strict mode for alibis, chronology, and continuity checks. ' +
+				VERBOSE_NOTE,
 			argsSchema: TimelineArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -270,7 +335,8 @@ export function buildMemoryTools(opts: {
 				properties: {
 					entityId: { type: 'string', description: 'Optional entity id.' },
 					eventType: { type: 'string', description: 'Optional event type.' },
-					limit: { type: 'number', description: 'Maximum events, 1-100. Defaults to 50.' }
+					limit: { type: 'number', description: 'Maximum events, 1-100. Defaults to 50.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				additionalProperties: false
 			},
@@ -287,13 +353,15 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: events.map((event) => event.id)
 				});
-				return ok({ events }, summary);
+				const projected = project(events, { verbose: parsed.verbose, keep: EVENT_KEEP });
+				return ok(withOmitted({ events: projected.value }, projected.omitted), summary);
 			}
 		},
 		{
 			name: 'memory_query_clues',
 			description:
-				'Return clue-ledger records stored as open loops or facts. Use in mystery/strict sessions to preserve fair-play clues.',
+				'Return clue-ledger records stored as open loops or facts. Use in mystery/strict sessions to preserve fair-play clues. ' +
+				VERBOSE_NOTE,
 			argsSchema: ClueArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -304,7 +372,8 @@ export function buildMemoryTools(opts: {
 						enum: ['all', 'open', 'revealed', 'resolved'],
 						description: 'Clue status filter. Defaults to all.'
 					},
-					limit: { type: 'number', description: 'Maximum clues, 1-100. Defaults to 50.' }
+					limit: { type: 'number', description: 'Maximum clues, 1-100. Defaults to 50.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				additionalProperties: false
 			},
@@ -328,13 +397,20 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: [...loops.map((loop) => loop.id), ...clueFacts.map((fact) => fact.id)]
 				});
-				return ok({ openLoops: loops, facts: clueFacts }, summary);
+				const loopsP = project(loops, { verbose: parsed.verbose, keep: OPEN_LOOP_KEEP });
+				const factsP = project(clueFacts, { verbose: parsed.verbose, keep: FACT_KEEP });
+				const result = withOmitted(
+					{ openLoops: loopsP.value, facts: factsP.value },
+					combineOmitted(loopsP, factsP)
+				);
+				return ok(result, summary);
 			}
 		},
 		{
 			name: 'memory_get_character_knowledge',
 			description:
-				'Return facts/events describing what a character or participant knows. Use to prevent impossible knowledge leakage.',
+				'Return facts/events describing what a character or participant knows. Use to prevent impossible knowledge leakage. ' +
+				VERBOSE_NOTE,
 			argsSchema: CharacterKnowledgeArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -344,7 +420,8 @@ export function buildMemoryTools(opts: {
 						type: 'string',
 						description: 'Character entity key, e.g. character.elias.'
 					},
-					limit: { type: 'number', description: 'Maximum records, 1-100. Defaults to 50.' }
+					limit: { type: 'number', description: 'Maximum records, 1-100. Defaults to 50.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				required: ['characterEntityKey'],
 				additionalProperties: false
@@ -368,7 +445,14 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: [...facts.map((fact) => fact.id), ...events.map((event) => event.id)]
 				});
-				return ok({ entity, facts, events }, summary);
+				const entityP = project(entity, { verbose: parsed.verbose, keep: ENTITY_KEEP });
+				const factsP = project(facts, { verbose: parsed.verbose, keep: FACT_KEEP });
+				const eventsP = project(events, { verbose: parsed.verbose, keep: EVENT_KEEP });
+				const result = withOmitted(
+					{ entity: entityP.value, facts: factsP.value, events: eventsP.value },
+					combineOmitted(entityP, factsP, eventsP)
+				);
+				return ok(result, summary);
 			}
 		},
 		{
@@ -454,7 +538,8 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_global_remember',
 			description:
-				'Explicitly store a user-scoped global memory that may be recalled across conversations. Use only when the user asks to remember something beyond this session.',
+				'Explicitly store a user-scoped global memory that may be recalled across conversations. Use only when the user asks to remember something beyond this session. ' +
+				VERBOSE_NOTE,
 			argsSchema: GlobalRememberArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -466,7 +551,8 @@ export function buildMemoryTools(opts: {
 						description: 'Global memory kind.'
 					},
 					key: { type: 'string', description: 'Stable key for this memory.' },
-					value: { description: 'JSON-serializable global memory value.' }
+					value: { description: 'JSON-serializable global memory value.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				required: ['kind', 'key', 'value'],
 				additionalProperties: false
@@ -487,20 +573,23 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: [row.id]
 				});
-				return ok({ memory: row }, summary);
+				const projected = project(row, { verbose: parsed.verbose, keep: GLOBAL_MEMORY_KEEP });
+				return ok(withOmitted({ memory: projected.value }, projected.omitted), summary);
 			}
 		},
 		{
 			name: 'memory_global_search',
 			description:
-				'Search explicit user-scoped global memories. Use for opt-in cross-session preferences, decisions, facts, style, and constraints.',
+				'Search explicit user-scoped global memories. Use for opt-in cross-session preferences, decisions, facts, style, and constraints. ' +
+				VERBOSE_NOTE,
 			argsSchema: GlobalSearchArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'Text to search in global memories.' },
-					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' }
+					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' },
+					verbose: { type: 'boolean', description: VERBOSE_NOTE }
 				},
 				required: ['query'],
 				additionalProperties: false
@@ -516,7 +605,8 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: results.map((result) => result.itemId)
 				});
-				return ok({ results }, summary);
+				const projected = project(results, { verbose: parsed.verbose, keep: SEARCH_HIT_KEEP });
+				return ok(withOmitted({ results: projected.value }, projected.omitted), summary);
 			}
 		},
 		{

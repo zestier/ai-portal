@@ -2,6 +2,11 @@ import { z } from 'zod';
 import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
 import { err, ok, type PortalTool } from './types';
+import { project, withOmitted } from './project';
+
+// Model-relevant ticket fields; provenance ids and timestamps are dropped from
+// the compact default and recoverable via verbose:true.
+const TICKET_KEEP = ['id', 'title', 'body', 'status'] as const;
 
 const Status = z.enum(['open', 'done', 'archived']);
 
@@ -33,7 +38,8 @@ const UpdateArgs = z
 	);
 
 const GetArgs = z.object({
-	id: z.string().min(1)
+	id: z.string().min(1),
+	verbose: z.boolean().optional().default(false)
 });
 
 export function buildTicketTools(opts: {
@@ -105,23 +111,34 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_get',
-			description: 'Read one durable workspace ticket by id.',
+			description:
+				'Read one durable workspace ticket by id. Pass verbose:true to return the full payload including omitted fields.',
 			argsSchema: GetArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					id: { type: 'string', description: 'Ticket id.' }
+					id: { type: 'string', description: 'Ticket id.' },
+					verbose: {
+						type: 'boolean',
+						description: 'Pass verbose:true to return the full payload including omitted fields.'
+					}
 				},
 				required: ['id'],
 				additionalProperties: false
 			},
 			async handler(args) {
-				const { id } = GetArgs.parse(args);
+				const { id, verbose } = GetArgs.parse(args);
 				const ticket = tickets.get(id, opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				return ok(ticket);
+				const projected = project(ticket, { verbose, keep: TICKET_KEEP });
+				return ok(
+					withOmitted(
+						{ ...(projected.value as unknown as Record<string, unknown>) },
+						projected.omitted
+					)
+				);
 			}
 		},
 		{

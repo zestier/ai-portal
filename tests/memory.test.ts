@@ -953,6 +953,52 @@ describe('memory-backed sessions', () => {
 		expect(toolText(await globalSearch.handler({ query: 'noir' }))).toContain('story-tone');
 	});
 
+	it('returns compact memory rows by default and full rows under verbose', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'strict',
+			patch: {
+				entities: [{ entityKey: 'character.elias', entityType: 'character', displayName: 'Elias' }],
+				events: [
+					{
+						eventType: 'timeline',
+						summary: 'Elias entered the study.',
+						entityKey: 'character.elias'
+					}
+				]
+			}
+		});
+		const tools = buildMemoryTools({ userId: user.id, conversationId: conv.id, mode: 'strict' });
+		const getEntity = tools.find((tool) => tool.name === 'memory_get_entity')!;
+
+		const compact = toolData<{
+			entity: Record<string, unknown>;
+			events: Array<Record<string, unknown>>;
+			_omitted?: string[];
+		}>(await getEntity.handler({ id: 'character.elias' }));
+		// Allowlisted fields survive; noisy provenance/timestamps are dropped.
+		expect(compact.entity).toHaveProperty('displayName', 'Elias');
+		expect(compact.entity).not.toHaveProperty('createdAt');
+		expect(compact.entity).not.toHaveProperty('conversationId');
+		expect(compact.events[0]).toHaveProperty('summary');
+		expect(compact.events[0]).not.toHaveProperty('payload');
+		// Passive marker lists dropped field names only when something was dropped.
+		expect(Array.isArray(compact._omitted)).toBe(true);
+		expect(compact._omitted).toContain('conversationId');
+		expect(compact._omitted).not.toContain('summary');
+
+		const verbose = toolData<{
+			entity: Record<string, unknown>;
+			_omitted?: string[];
+		}>(await getEntity.handler({ id: 'character.elias', verbose: true }));
+		// Verbose restores the full payload and omits the marker.
+		expect(verbose.entity).toHaveProperty('createdAt');
+		expect(verbose.entity).toHaveProperty('conversationId');
+		expect(verbose._omitted).toBeUndefined();
+	});
+
 	it('does not check missing entity claims against unrelated predicate facts', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
