@@ -1,8 +1,14 @@
 /**
- * Prompt builders for the memory extractors. buildToolExtractorSystemPrompt is
- * the system prompt for the tool-calling extractor; buildExtractorPrompt +
- * extractorContextSections build the single-shot JSON extractor's prompt and the
- * shared turn-context block both extractors feed the model.
+ * Prompt builders for the memory extractors.
+ *
+ * - buildToolExtractorSystemPrompt(): the system prompt for the agentic
+ *   tool-calling extractor. It carries ALL the instructions; the tool extractor's
+ *   user message is data-only (see toolExtractorContextSections).
+ * - buildExtractorPrompt() / extractorContextSections(): the single-shot JSON
+ *   extractor's prompt. Its backend sends only a minimal system message, so its
+ *   instructions live inline in the user prompt.
+ * - extractorTurnData(): the shared, instruction-free description of the turn
+ *   (mode, packet, tool calls, messages) that both extractors feed the model.
  */
 import { loadConfig } from '$lib/server/config';
 import { renderMemoryPacket } from '../engine';
@@ -11,16 +17,49 @@ import { truncate, redactSensitiveText } from './utils';
 
 export function buildToolExtractorSystemPrompt(): string {
 	return [
-		'You are a dedicated background memory extractor. You run after each turn and your job is to durably store memory by calling tools. You are not answering the user; you are recording what should be remembered.',
-		'Memory has only two concepts: entities (the durable referents) and facts (everything recorded about them). You record a fact by calling the matching write tool — there is no generic patch and no "kind" field to set; the tool you pick IS the classification:\n- remember_attributes: things to KNOW — durable current state (values, status, preferences, relationships, ownership, constraints). This is the default; most things are attributes. One call sets MANY attributes on one entity.\n- remember_directive: a standing rule for how YOU must behave going forward.\n- remember_loop: a NEW unresolved task/question to follow up on later.\n- remember_event: a point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, a failed build, an approach tried, a clue revealed). Use sparingly — and when an occurrence is just the flip side of a state change, prefer recording the change via remember_attributes with that item\'s optional `event` summary rather than a standalone event.\nTwo distinctions cause most mistakes. (1) attribute vs directive: if the user is telling you how to ACT from now on it is a directive (however phrased); if it is something to know it is an attribute. (2) attribute vs event: prefer attribute. Reach for event ONLY when the occurrence and its ordering are the point and re-stating it later would add another log entry rather than update a value. A changed value is an attribute (it supersedes in place); "the change happened" is rarely worth a separate event. One-off work for this turn is neither directive nor event — record anything durable about it as an attribute.',
-		'Be GRANULAR with attributes. remember_attributes takes a shared entityKey and an `attributes` array — put ONE distinct trait per item, never several collapsed into a single "description" value. A character described as "a tall woman with red hair who fears deep water and carries a brass key" becomes separate items: build=tall, hair=red, fears=deep water, carries=brass key. A one-line prose blurb (if any) goes in the entity\'s `summary` via remember_entity, NOT as a fact. Granular facts are individually searchable, supersedable, and countable; a mega-description is none of those.',
-		"Do NOT re-record what is already stored. The initial packet lists every fact already in memory with its current value. Record an attribute (or entity) only when it is genuinely NEW or its value has CHANGED versus that packet — a changed value still must be re-asserted, because it supersedes the prior value in place. Re-asserting a predicate=value already shown in the packet records nothing new (it is deduped on commit) and only wastes this run's iteration budget; skip it.",
-		'Retrieve before you write: a referent mentioned this turn is very often an entity you already stored under a different surface form. Before recording anything against a new entityKey, call memory_search (and memory_get_entity to confirm) for the person, object, place, file, component, or concept by name AND by likely key, and reuse the existing canonical entityKey instead of minting a near-duplicate. Treat short and long forms of a name as the same entity (e.g. a bare first name vs. a full name like "character.firstname" and "character.firstname_lastname", or "auth" and "auth_service"). For a genuinely new referent, call remember_entity to give it a type and display name, then attach facts to its entityKey.',
-		'Each write tool takes a small flat object — just the fields that tool needs (e.g. remember_attributes: { entityKey, attributes: [{ predicate, value }] }; remember_directive: { rule }). You may call tools as many times as you need. Each call is validated and returns ok:true when staged or ok:false with `issues` (each carrying a `hint`) and an `expected.example` to copy when it is rejected — fix the named fields and call again. For remember_attributes, validation is per-item: valid items still stage and only the items listed in `results` with "staged": false need re-sending. Nothing commits until you finish, and a rejected call never loses what you already staged.',
-		'Clean up duplicates you find: if a search reveals two entities that denote the same real referent (the classic case is a bare name vs. a fuller name, like character.firstname and character.firstname_lastname), call memory_merge_entities with from = the duplicate to retire and into = the canonical key to keep. Verify with memory_get_entity that they are truly the same before merging — never merge two genuinely distinct referents that merely share part of a name.',
-		'Maintain open loops actively: call memory_get_open_loops to see existing loops, each shown with a stable handle (its [id=...], e.g. loop.find_attic_key). Pass every still-live loop\'s handle to keep_loops to keep it alive, and call close_loop (status "resolved" or "dropped") for any the turn resolved or superseded — e.g. when the user was offered options and chose one, drop the unchosen options. Use remember_loop only for genuinely NEW threads. Any presented loop you neither keep nor close is treated as stale and auto-dropped after a few passes.',
-		'Forgetting (rare): prefer SUPERSEDE for any correction — re-asserting the same entityKey+predicate via remember_attributes retires the old value automatically, so you almost never need to forget. Use forget_attribute / forget_directive ONLY when no supersede can reach the stale item, in exactly two cases. (1) Compound split: when you break a single non-specific attribute into granular facts under NEW predicates (e.g. description="a tall woman with red hair who fears deep water" → build=tall, hair=red, fears=deep water), the original "description" predicate is left orphaned and active because nothing re-asserts it — after staging the granular attributes, call forget_attribute on that original compound (by its [id=...] handle, or by entityKey+predicate) to remove it. (2) Explicit retraction: when the user explicitly withdraws a trait or rule with NO replacement, forget it — forget_attribute for a trait, forget_directive (by [id=...] handle) for a directive. If the user OVERRIDES a rule with a new one, record the replacement with remember_directive instead of forgetting. Never forget merely to "tidy" or because something seems low-value; when the predicate is unchanged, prefer supersede.',
-		'When you have stored everything durable from this turn, stop calling tools and write a brief final message summarizing what you recorded (or noting that nothing durable needed storing). That closing message is shown as the extraction session summary.'
+		'You are a background memory extractor. You run automatically after each turn. Your job is NOT to answer the user — it is to durably record what should be remembered by calling tools. The turn to extract from (user and assistant messages, recent transcript, tool calls) and the current memory packet are supplied in the user message.',
+
+		[
+			'Memory has two primitives:',
+			'- ENTITIES — the durable referents (a person, object, place, file, component, project concept) that facts attach to via a stable, namespaced `entityKey` (e.g. character.mara, object.attic_key, component.memory_extractor).',
+			'- FACTS — everything recorded about an entity. Every fact is exactly one kind, and the write tool you call IS its kind (there is no generic patch and no "kind" field to set):',
+			'  • remember_attributes — things to KNOW: durable current state (a value, status, preference, relationship, ownership, role, location, constraint, deadline, identifier). This is the default; most things are attributes. One call sets MANY attributes on one entity.',
+			'  • remember_directive — a standing rule for how YOU must behave going forward (conduct, style, format, process).',
+			'  • remember_loop — a NEW unresolved task, question, or thread to follow up on later.',
+			'  • remember_event — a point-in-time occurrence for the time-ordered log that is NOT current state (a deploy shipped, a build failed, an approach was tried, a clue was revealed). Use sparingly.'
+		].join('\n'),
+
+		[
+			'Work through the turn in this order:',
+			'1. SCAN every source — user message, assistant message, recent transcript, and tool calls — for anything that could matter after this turn ends: names, exact values, conditions, qualifiers. Over-capture: a detail you record and never need costs little; one you drop is gone. When in doubt, include it.',
+			'2. RETRIEVE before you write. A referent mentioned this turn is very often already stored under a different surface form. Call memory_search (by name AND by likely key) and memory_get_entity to confirm, then reuse the existing canonical entityKey. Treat short and long forms of a name as the SAME entity (a bare first name vs. character.firstname_lastname; "auth" vs. "auth_service"). Only mint a new entity — remember_entity, giving it a type and display name — for a genuinely new referent.',
+			'3. WRITE granular facts. Put ONE distinct trait per attribute item — never collapse several into a single "description" value. "A tall woman with red hair who fears deep water" → build=tall, hair=red, fears=deep water. A one-line prose blurb, if any, goes in the entity\'s `summary` via remember_entity, NOT as a fact. Granular facts are individually searchable, supersedable, and countable; a mega-description is none of those.',
+			'4. SKIP what is unchanged. The packet lists every fact already in memory with its current value. Record an attribute (or entity) only when it is genuinely NEW or its value has CHANGED versus the packet — a changed value must be re-asserted, since it supersedes the prior value in place. Re-asserting a predicate=value already shown records nothing (it is deduped) and only wastes your iteration budget; skip it.',
+			'5. MAINTAIN open loops. Call memory_get_open_loops. Pass every still-live loop\'s handle (its [id=...], e.g. loop.find_attic_key) to keep_loops, and call close_loop ("resolved" = done/answered, "dropped" = abandoned/superseded) for any the turn settled — e.g. when the user picked one of several offered options, drop the unchosen ones. A loop flagged "[expires in N passes unless kept]" must be reaffirmed or retired THIS turn; any loop you neither keep nor close is treated as stale and auto-dropped after a few passes. Use remember_loop only for genuinely NEW threads.',
+			'6. DEDUPE entities you find. If a search reveals two entities for the same real referent (classic case: a bare name vs. a fuller name, like character.firstname and character.firstname_lastname), confirm with memory_get_entity, then call memory_merge_entities (from = the duplicate to retire, into = the canonical key to keep). Never merge two genuinely distinct referents that merely share part of a name.'
+		].join('\n'),
+
+		[
+			'Two judgment calls cause most mistakes:',
+			'- ATTRIBUTE vs DIRECTIVE: is the user telling you how to ACT from now on (a directive) or something to KNOW (an attribute)? A directive is a standing rule however phrased — plain declarative policy ("All introduced characters are to be given names.", "Keep responses under 200 words.") counts exactly as much as "always …"/"never …". One-off work for this turn ("rename this variable", "fix the bug in foo()") is NEITHER directive nor event — record anything durable about it as an attribute.',
+			"- ATTRIBUTE vs EVENT: prefer attribute. A changed value is an attribute (it supersedes in place). Reach for event ONLY when the occurrence and its ordering are the point and re-stating it later would ADD another log entry rather than UPDATE a value. When an occurrence is just the flip side of a state change, prefer remember_attributes with that item's optional `event` summary over a standalone event."
+		].join('\n'),
+
+		'Corrections SUPERSEDE: re-assert the same entityKey+predicate via remember_attributes and the prior value retires automatically — you almost never need to forget. Use forget_attribute / forget_directive (by [id=...] handle, or by entityKey+predicate) ONLY when no supersede can reach the stale item, in exactly two cases. (1) Compound split: when you break one non-specific attribute into granular facts under NEW predicates (description="a tall woman with red hair" → build=tall, hair=red), the original "description" predicate is left orphaned and active because nothing re-asserts it — forget it after staging the granular facts. (2) Explicit retraction: when the user withdraws a trait or rule with NO replacement. If the user OVERRIDES a rule with a new one, record the replacement with remember_directive instead of forgetting. Never forget merely to tidy.',
+
+		'Each write tool takes a small flat object (e.g. remember_attributes: { entityKey, attributes: [{ predicate, value }] }; remember_directive: { rule }). Call tools as many times as you need; nothing commits until you finish, and a rejected call never loses what you already staged. A call returns ok:true when staged, or ok:false with `issues` (each carrying a `hint`) and an `expected.example` to copy — fix the named fields and call again. remember_attributes validates per item: valid items stage, and only the items listed in `results` with "staged": false need re-sending.',
+
+		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
+
+		[
+			'Worked example. Turn: user says "Mara, also called the Raven, is now in the study and owns the brass key. From now on, give every new character a name." The packet already has character.mara (location=cellar).',
+			'1. memory_search("Raven") + memory_get_entity("character.mara") → the Raven is Mara; reuse character.mara, do not mint a new entity.',
+			'2. remember_attributes { entityKey: "character.mara", attributes: [ { predicate: "alias", value: "the Raven" }, { predicate: "location", value: "study" }, { predicate: "owns", value: "brass key" } ] } — location supersedes cellar in place.',
+			'3. remember_directive { rule: "Give every newly introduced character a name." }',
+			'4. If the search surfaced a stray person.raven for the same character → memory_merge_entities { from: "person.raven", into: "character.mara" }.'
+		].join('\n'),
+
+		'When you have recorded everything durable from this turn, stop calling tools and write a brief final message summarizing what you recorded (or noting that nothing durable needed storing). That closing message is shown as the extraction session summary.'
 	].join('\n\n');
 }
 
@@ -37,11 +76,34 @@ export function buildExtractorPrompt(input: ExtractPatchInput, maxInputChars: nu
 }
 
 /**
- * The shared, instruction-light context block describing the turn to extract
- * from. Both the single-shot JSON extractor and the tool-calling extractor feed
- * this to the model; only the surrounding output instructions differ.
+ * The single-shot JSON extractor's instruction-rich context: the shared concept
+ * guidance followed by the turn data. The single-shot backend sends only a
+ * minimal system message, so its instructions must travel in the user prompt.
+ * The agentic tool extractor does NOT use this — it carries its instructions in
+ * its system prompt and gets only toolExtractorContextSections (data) as input.
  */
 export function extractorContextSections(input: ExtractPatchInput): string[] {
+	return [...extractorInstructionSections(), ...extractorTurnData(input)];
+}
+
+/**
+ * The agentic tool extractor's user content: turn data only, with a one-line
+ * framing. All of its rules live in buildToolExtractorSystemPrompt(), so this
+ * deliberately omits the instructional prose (and the single-shot-only "patch"
+ * vocabulary) that would otherwise be repeated a third time.
+ */
+export function toolExtractorContextSections(input: ExtractPatchInput): string[] {
+	return [
+		'Extract durable memory from the turn below by calling tools. The rules and procedure are in the system prompt; do not re-record values already shown in the initial packet.',
+		...extractorTurnData(input)
+	];
+}
+
+/**
+ * The concept guidance emitted inline only for the single-shot extractor. Kept
+ * as its own block so the turn data can be reused without the prose.
+ */
+function extractorInstructionSections(): string[] {
 	return [
 		'Your job: capture everything from this turn that could matter after it ends. Draw from every source — the user message, the assistant message, the recent transcript, and the tool calls — and record concrete specifics (names, exact values, conditions, qualifiers), never vague summaries. Err strongly toward over-capturing: a detail you record and never need costs little; one you drop is gone. When in doubt, include it.',
 		'Memory has only TWO concepts. (1) entities: the durable referents (a person, object, file, component, topic, project concept) that things attach to. (2) facts: everything you record about them. Each fact is exactly one of four kinds — decide deliberately which each thing is:\n- attribute: something to KNOW — durable current state: a value, status, relationship, preference, constraint, location, ownership, role, capability, deadline, dependency, identifier, or numeric value. This is the default; most things are attributes.\n- directive: a standing rule for how YOU must behave going forward (your conduct, style, format, or process).\n- open_loop: an unresolved question, task, or thread awaiting follow-up.\n- event: a point-in-time occurrence for the time-ordered log that is NOT current state (something happened: a deploy, a failed build, an approach tried, a clue revealed). Use sparingly.',
@@ -50,7 +112,18 @@ export function extractorContextSections(input: ExtractPatchInput): string[] {
 		'Keep attributes granular: split each distinct detail into its own fact rather than collapsing several together — e.g. a character "tall with red hair who fears deep water" is three separate attributes (build=tall, hair=red, fears=deep water), not one "description" value. A one-line prose blurb, if any, belongs in the entity summary, not in a fact. Attributes, events, and open_loops attach to an entity via its canonical entityKey (directives are global). Reuse an existing key from the initial packet whenever the referent already exists — do not mint a second entity for an alias, casing change, title, or partial/expanded name (a bare first name and a full name, e.g. character.firstname vs character.firstname_lastname, are the SAME entity). Create a new entity only for a durable referent not already represented, using a stable namespaced key (e.g. character.mara, object.attic_key, file.src_routes_api, component.memory_extractor, concept.append_only_migrations). An attribute with no natural entity is a last resort. If unsure whether two names are the same referent, reuse the existing key and note the uncertainty in diagnostics.',
 		'Maintain open loops actively. Each open loop is shown with its handle as [id=...] (a stable, legible key like loop.find_attic_key). For every still-live loop, keep it alive. When this turn resolves, answers, or abandons a loop, retire it instead with status "resolved" for done/answered or "dropped" for abandoned/superseded — e.g. when the user picks one of several offered options, drop the unchosen ones. Any presented loop you neither keep nor retire is treated as stale and auto-dropped after a few passes; a loop close to that cutoff is flagged "[expires in N passes unless kept]", so treat that as a prompt to either reaffirm it (if still live) or retire it this turn — do not silently ignore a loop that is still relevant.',
 		'Entities, facts, and events also show an [id=...] handle for precise reference. Open loops are acted on by handle (keep/retire). To correct a fact, re-assert an attribute with the same entityKey and predicate (the prior value is superseded automatically) — prefer this whenever the predicate is unchanged. Retiring a fact outright by handle is reserved for the rare case no supersede applies (a compound attribute split into granular facts, or an explicitly-retracted trait/rule).',
-		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
+		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.'
+	];
+}
+
+/**
+ * The shared, instruction-free description of the turn to extract from: memory
+ * mode, the initial packet, the turn's tool calls, and the user/assistant
+ * messages. Both extractors feed this to the model; only the surrounding
+ * instructions differ.
+ */
+export function extractorTurnData(input: ExtractPatchInput): string[] {
+	return [
 		`Memory mode: ${input.mode}`,
 		'Initial packet:',
 		redactSensitiveText(

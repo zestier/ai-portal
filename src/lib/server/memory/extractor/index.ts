@@ -16,7 +16,7 @@ import {
 	buildStoredFactSignatures
 } from './write-tools';
 import { sanitizePatch } from './sanitize';
-import { buildToolExtractorSystemPrompt, extractorContextSections } from './prompts';
+import { buildToolExtractorSystemPrompt, toolExtractorContextSections } from './prompts';
 import { makeThinkStream, requestOpenAICompatibleChat } from './streaming';
 import { OpenAICompatibleMemoryExtractor } from './single-shot';
 import { buildMemoryTools } from '$lib/server/tools/memory';
@@ -203,7 +203,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		];
 
 		const userContent = truncate(
-			extractorContextSections(input).join('\n\n'),
+			toolExtractorContextSections(input).join('\n\n'),
 			this.opts.maxInputChars
 		);
 		// Surface the context handed to the background extractor as the
