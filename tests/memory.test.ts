@@ -2651,15 +2651,18 @@ describe('memory-backed sessions', () => {
 			}
 		});
 
-		// Even with a budget so small that no fact bodies survive, the entity index
-		// must still name every queryable entity by key.
+		// Even with a budget so small that no fact bodies survive, the merged
+		// `also on record` remainder must still name every queryable entity by key.
 		const packet = buildInitialPacket(conv.id, 'story', { tokenBudget: 1 });
 		expect(packet.facts).toHaveLength(0);
 		expect(packet.entityIndex.map((entry) => entry.entityKey)).toEqual(
 			expect.arrayContaining(['character.mara', 'object.lantern'])
 		);
 		const rendered = renderMemoryPacket(packet);
-		expect(rendered).toContain('entity index');
+		// The standalone `entity index` block is gone; names survive in the merged
+		// name-only remainder instead.
+		expect(rendered).not.toContain('entity index');
+		expect(rendered).toContain('also on record');
 		expect(rendered).toContain('character.mara');
 		expect(rendered).toContain('object.lantern');
 		expect(
@@ -2667,7 +2670,69 @@ describe('memory-backed sessions', () => {
 		).toBe(1);
 	});
 
-	it('injects auto-search hits for the user message without a model tool call', () => {
+	it('merges the entity index into entities & facts without duplicating shown entities', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'merge', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' },
+					{ entityKey: 'object.lantern', entityType: 'object', displayName: 'Lantern' },
+					{ entityKey: 'place.vault', entityType: 'place', displayName: 'Vault' }
+				]
+			}
+		});
+		// Pin mara & lantern's facts so they survive a tiny budget and render with
+		// detail, while place.vault (no surviving body) falls to the name-only
+		// remainder — exercising the merged section's two halves at once.
+		memory.addFact(conv.id, {
+			entityId: memory.getEntity(conv.id, 'character.mara')!.id,
+			predicate: 'mood',
+			value: 'wary',
+			pinned: true
+		});
+		memory.addFact(conv.id, {
+			entityId: memory.getEntity(conv.id, 'object.lantern')!.id,
+			predicate: 'fuel',
+			value: 'half',
+			pinned: true
+		});
+
+		const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 1 });
+		const rendered = renderMemoryPacket(packet);
+
+		// One merged section: detailed entities + a compact name-only remainder, no
+		// standalone superset block.
+		expect(rendered).not.toContain('entity index');
+		expect(rendered).toContain('entities & facts');
+		expect(rendered).toContain('also on record');
+
+		// mara & lantern render with detail and must NOT reappear in the remainder;
+		// each key occurs exactly once across the whole packet.
+		const occurrences = (key: string) => rendered.split(key).length - 1;
+		expect(occurrences('character.mara')).toBe(1);
+		expect(occurrences('object.lantern')).toBe(1);
+		// place.vault has no facts/summary detail, so it lives only in the remainder.
+		expect(rendered).toContain('place.vault');
+
+		// The union of detailed + remainder still equals the full index set, so no
+		// entity becomes unqueryable by name.
+		for (const entry of packet.entityIndex) expect(rendered).toContain(entry.entityKey);
+
+		// Dedupe strictly shrinks the entity-index portion: the old block listed the
+		// full superset, the new remainder only the entities not shown in detail.
+		const indexLineLen = (e: { entityKey: string; entityType: string; factCount: number }) =>
+			`- ${e.entityKey} (${e.entityType})${e.factCount ? ` (${e.factCount} facts)` : ''}\n`.length;
+		const oldIndexLen = packet.entityIndex.reduce((n, e) => n + indexLineLen(e), 0);
+		const shownKeys = new Set(['character.mara', 'object.lantern']);
+		const newIndexLen = packet.entityIndex
+			.filter((e) => !shownKeys.has(e.entityKey))
+			.reduce((n, e) => n + indexLineLen(e), 0);
+		expect(newIndexLen).toBeLessThan(oldIndexLen);
+	});
+
+	it('injects auto-search hits for the user message and dedupes already-rendered ones', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'autosearch', workdir: '/tmp', model: null });
 		commitPatch({
@@ -2686,13 +2751,30 @@ describe('memory-backed sessions', () => {
 			role: 'user',
 			content: 'What did we decide about the redis cache?'
 		});
-		const prompt = buildPromptWithMemory({ conversationId: conv.id, mode: 'project', userMsg });
-		expect(prompt).toContain('auto-retrieved for this turn');
-		expect(prompt).toContain('redis cache');
 
-		const packet = buildInitialPacket(conv.id, 'project', { query: 'redis cache' });
-		expect(packet.autoSearchHits.length).toBeGreaterThan(0);
-		expect(packet.autoSearchHits.map((hit) => hit.text).join('\n')).toContain('redis cache');
+		// Under the normal budget the matching fact is rendered in `entities & facts`,
+		// so the auto-retrieved section must suppress the duplicate hit rather than
+		// print the same body twice.
+		const prompt = buildPromptWithMemory({ conversationId: conv.id, mode: 'project', userMsg });
+		expect(prompt).toContain('redis cache');
+		expect(prompt).not.toContain('auto-retrieved for this turn');
+
+		const fullPacket = buildInitialPacket(conv.id, 'project', { query: 'redis cache' });
+		expect(fullPacket.autoSearchHits.length).toBeGreaterThan(0);
+		expect(fullPacket.autoSearchHits.map((hit) => hit.text).join('\n')).toContain('redis cache');
+		// The hit's item is rendered above, so the deduped render drops the section.
+		expect(renderMemoryPacket(fullPacket)).not.toContain('auto-retrieved for this turn');
+
+		// When the matching fact is squeezed out of the body by the token budget it is
+		// no longer rendered above, so the auto-retrieved section surfaces it instead.
+		const tightPacket = buildInitialPacket(conv.id, 'project', {
+			query: 'redis cache',
+			tokenBudget: 1
+		});
+		expect(tightPacket.facts).toHaveLength(0);
+		const tightRender = renderMemoryPacket(tightPacket);
+		expect(tightRender).toContain('auto-retrieved for this turn');
+		expect(tightRender).toContain('redis cache');
 	});
 
 	it('consolidates re-observed facts down to a single active row', () => {

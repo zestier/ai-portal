@@ -686,6 +686,27 @@ different audiences, and the differences are a single explicit
 Keeping the agent/extractor split in one options object means the rendering
 contract is a single self-documenting decision instead of a scatter of booleans.
 
+**Render-time dedupe.** Two sections used to re-emit content already present in
+the same packet, inflating token cost every turn:
+
+- The detailed `entities & facts` block and the standalone `entity index` block
+  overlapped — the index was a superset of the entities shown in detail, so every
+  shown key/type was printed twice. The index is now merged into the entities
+  section: detailed entities render as before, then a single compact `also on
+  record (queryable by name)` remainder lists only the indexed entities **not**
+  already shown. The union of the two still equals the full index set, so no
+  entity becomes unqueryable by name even when its fact bodies are dropped under a
+  tight budget.
+- `auto-retrieved for this turn` printed the top search hits verbatim, but the
+  same per-turn search ranks the pools, so the highest-scoring hits are usually
+  already rendered in `entities & facts` / `recent events`. Hits whose `itemId`
+  already appears above (across facts, events, entities, open loops, and
+  directives) are now suppressed.
+
+Both are pure render-time dedupes: selection, caps, and the token budget are
+unchanged. When dedupe empties a section, its header is omitted entirely rather
+than printing an empty `(0)` block.
+
 ### Source-side consolidation (event-derived)
 
 The event log is the source of truth; `memory_facts` is a projection rebuilt by

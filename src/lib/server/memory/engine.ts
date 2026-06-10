@@ -392,7 +392,7 @@ export function buildPromptWithMemory(params: {
 		'',
 		'You are running in a fresh model context for this request. Durable session memory, not hidden chat context, is the source of continuity.',
 		'The packet above is a deliberately small, turn-relevant slice of durable memory selected for your current question — it is not the whole memory store. Treat it as a starting index, not the full picture.',
-		'The entity index lists every entity you can query by name even when its details were not injected. Auto-retrieved memory below was pulled by searching your current message.',
+		"The packet lists every entity you can query by name (detailed entries plus the compact 'also on record' remainder) even when an entity's details were not injected. Auto-retrieved memory below was pulled by searching your current message.",
 		'Whenever the answer could depend on details that are missing from or only partially covered by the packet, proactively query the memory tools (memory_search, memory_get_entity, memory_get_open_loops, memory_get_recent_events, and the others) to pull in more before you respond. Prefer querying too often over assuming; querying is cheap, inventing details is not.',
 		'Do not invent older details when memory returns unknown.',
 		writeGuidance,
@@ -1719,39 +1719,69 @@ export function renderMemoryPacket(
 		return `- ${key ?? id}`;
 	};
 
+	// Track every item id rendered above so the auto-retrieved section below can
+	// suppress search hits that already appear verbatim in this packet. Search
+	// itemTypes are entity | fact | event | open_loop, all keyed by their row id.
+	const shownIds = new Set<string>();
+	for (const directive of packet.directives) shownIds.add(directive.id);
+
 	if (blockOrder.length || detachedFacts.length) {
 		const total = blockOrder.length + (detachedFacts.length ? 1 : 0);
 		lines.push('', `entities & facts (${total}):`);
 		for (const id of blockOrder) {
+			shownIds.add(id);
 			lines.push(entityHeader(id));
-			for (const fact of factsByEntity.get(id) ?? [])
+			for (const fact of factsByEntity.get(id) ?? []) {
+				shownIds.add(fact.id);
 				lines.push(`    ${factDetail(fact, includeIds)}`);
+			}
 		}
 		if (detachedFacts.length) {
 			lines.push('- (session-scoped):');
-			for (const fact of detachedFacts) lines.push(`    ${factDetail(fact, includeIds)}`);
+			for (const fact of detachedFacts) {
+				shownIds.add(fact.id);
+				lines.push(`    ${factDetail(fact, includeIds)}`);
+			}
 		}
 	}
 
-	if (packet.entityIndex.length) {
-		lines.push('', `entity index (${packet.entityIndex.length}) — queryable by name:`);
-		for (const entry of packet.entityIndex) lines.push(entityIndexLine(entry, includeIds));
+	// The former standalone `entity index` block is a superset of the detailed
+	// entities rendered above, so it re-emitted every shown key/type. Instead,
+	// append only the indexed entities NOT already shown as a compact, name-only
+	// remainder — preserving the guarantee that every ranked entity stays
+	// queryable by name (detailed ∪ name-only == the full index set).
+	const remainingIndex = packet.entityIndex.filter((entry) => !shownIds.has(entry.entityId));
+	if (remainingIndex.length) {
+		lines.push('', `also on record (${remainingIndex.length}) — queryable by name:`);
+		for (const entry of remainingIndex) {
+			shownIds.add(entry.entityId);
+			lines.push(entityIndexLine(entry, includeIds));
+		}
 	}
 
 	if (packet.openLoops.length) {
 		lines.push('', `open loops (${packet.openLoops.length}):`);
-		for (const loop of packet.openLoops)
+		for (const loop of packet.openLoops) {
+			shownIds.add(loop.id);
 			lines.push(loopLine(loop, keyOf, { includeId: includeIds, expiry: options.openLoopExpiry }));
+		}
 	}
 
 	if (packet.recentEvents.length) {
 		lines.push('', `recent events (${packet.recentEvents.length}):`);
-		for (const event of packet.recentEvents) lines.push(eventLine(event, keyOf, includeIds));
+		for (const event of packet.recentEvents) {
+			shownIds.add(event.id);
+			lines.push(eventLine(event, keyOf, includeIds));
+		}
 	}
 
-	if (packet.autoSearchHits.length) {
-		lines.push('', `auto-retrieved for this turn (${packet.autoSearchHits.length}):`);
-		for (const hit of packet.autoSearchHits) {
+	// Suppress auto-retrieved hits whose item already appears above: the same
+	// per-turn search ranks the pools, so the top hits are usually entities/facts/
+	// events already rendered. Re-printing their bodies just burns tokens.
+	const dedupedHits = packet.autoSearchHits.filter((hit) => !shownIds.has(hit.itemId));
+	if (dedupedHits.length) {
+		lines.push('', `auto-retrieved for this turn (${dedupedHits.length}):`);
+		for (const hit of dedupedHits) {
 			lines.push(`- [${hit.itemType}] ${cleanSentence(hit.text)}`);
 		}
 	}
