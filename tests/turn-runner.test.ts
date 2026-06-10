@@ -956,6 +956,206 @@ describe('turn-runner', () => {
 		}
 	});
 
+	it('frees the turn and marks memory skipped when Stop hits during extraction', async () => {
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		// Short post-abort deadline; keep the absolute ceiling huge so only the
+		// post-abort path can finalize this turn.
+		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '50';
+		process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS = '60000';
+		process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS = '60000';
+
+		let capturedSignal: AbortSignal | undefined;
+		vi.resetModules();
+		await setupLocalEnv();
+		// An extractor that ignores its abort signal and never resolves: only the
+		// watchdog can end the turn. Emits an `input` activity so the subagent
+		// card materializes (and must be closed when the extraction is abandoned).
+		vi.doMock('../src/lib/server/memory/extractor', async () => {
+			const actual = await vi.importActual<typeof import('../src/lib/server/memory/extractor')>(
+				'../src/lib/server/memory/extractor'
+			);
+			return {
+				...actual,
+				extractAndCommitMemory: vi.fn(
+					(input: {
+						signal?: AbortSignal;
+						onActivity?: (a: { type: string; text: string }) => void;
+					}) => {
+						capturedSignal = input.signal;
+						input.onActivity?.({ type: 'input', text: 'extractor context' });
+						return new Promise(() => {});
+					}
+				)
+			};
+		});
+		try {
+			const users = await import('../src/lib/server/db/repos/users');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const turnRunner = await import('../src/lib/server/runtime/turn-runner');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, { title: 'mem stop', workdir: wd, model: 'gpt-4' });
+			const userMsg = messages.append(conv.id, { role: 'user', content: 'remember this' });
+
+			acquireMock.mockResolvedValue(
+				makeFakeSession([
+					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'm1', text: 'Done.' },
+					{ type: 'done' }
+				])
+			);
+
+			const turn = await turnRunner.startTurn({
+				bridge: {
+					conversationId: conv.id,
+					userId: user.id,
+					workingDirectory: wd,
+					model: 'gpt-4',
+					policy: 'prompt'
+				},
+				prompt: 'hi',
+				conversationId: conv.id,
+				memory: { mode: 'project', userMessageId: userMsg.id, userContent: 'remember this' }
+			});
+
+			// Wait until extraction has started (its card is live), then Stop.
+			for await (const { event } of turn.subscribe()) {
+				if (event.type === 'memory.status' && event.phase === 'extracting') {
+					void turn.abort();
+					break;
+				}
+			}
+
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe()) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+
+			// The turn reached a terminal `interrupted` done despite the extractor
+			// never unwinding on its own.
+			expect(events.find((e) => e.type === 'done')).toMatchObject({
+				type: 'done',
+				status: 'interrupted'
+			});
+			// Memory surfaced as cancelled/skipped.
+			expect(events.find((e) => e.type === 'memory.status' && e.phase === 'skipped')).toBeTruthy();
+			// The extraction signal was aborted, so no partial patch can commit.
+			expect(capturedSignal?.aborted).toBe(true);
+			// Assistant reply retained.
+			const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
+			expect(assistant?.content).toContain('Done.');
+			// The spinning subagent card was closed (not left running).
+			const parent = assistant?.toolCalls?.find((t) => {
+				try {
+					return JSON.parse(t.argsJson).agent_type === 'memory-extractor';
+				} catch {
+					return false;
+				}
+			});
+			expect(parent?.backgroundAgentStatus).toBe('failed');
+			// Turn freed: it is no longer `running`, so a fresh send is accepted.
+			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
+		} finally {
+			vi.doUnmock('../src/lib/server/memory/extractor');
+			delete process.env.MEMORY_EXTRACTOR_BACKEND;
+			delete process.env.MEMORY_EXTRACTOR_MODEL;
+			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+			delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
+			delete process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS;
+			delete process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS;
+		}
+	});
+
+	it('finalizes via the watchdog ceiling when extraction ignores abort and overruns', async () => {
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		// No user Stop in this case: only the absolute extraction-phase ceiling
+		// can free the turn, so keep it small.
+		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '5000';
+		process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS = '40';
+		process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS = '40';
+
+		let capturedSignal: AbortSignal | undefined;
+		vi.resetModules();
+		await setupLocalEnv();
+		vi.doMock('../src/lib/server/memory/extractor', async () => {
+			const actual = await vi.importActual<typeof import('../src/lib/server/memory/extractor')>(
+				'../src/lib/server/memory/extractor'
+			);
+			return {
+				...actual,
+				extractAndCommitMemory: vi.fn((input: { signal?: AbortSignal }) => {
+					capturedSignal = input.signal;
+					// Never resolves and never observes the abort signal.
+					return new Promise(() => {});
+				})
+			};
+		});
+		try {
+			const users = await import('../src/lib/server/db/repos/users');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const turnRunner = await import('../src/lib/server/runtime/turn-runner');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, { title: 'mem ceiling', workdir: wd, model: 'gpt-4' });
+			const userMsg = messages.append(conv.id, { role: 'user', content: 'remember this' });
+
+			acquireMock.mockResolvedValue(
+				makeFakeSession([
+					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'm1', text: 'Done.' },
+					{ type: 'done' }
+				])
+			);
+
+			const turn = await turnRunner.startTurn({
+				bridge: {
+					conversationId: conv.id,
+					userId: user.id,
+					workingDirectory: wd,
+					model: 'gpt-4',
+					policy: 'prompt'
+				},
+				prompt: 'hi',
+				conversationId: conv.id,
+				memory: { mode: 'project', userMessageId: userMsg.id, userContent: 'remember this' }
+			});
+
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe()) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+
+			// The turn finalized cleanly (no user Stop) once the extraction-phase
+			// ceiling tripped, surfacing the extraction for review.
+			expect(events.find((e) => e.type === 'done')).toMatchObject({
+				type: 'done',
+				status: 'complete'
+			});
+			expect(
+				events.find((e) => e.type === 'memory.status' && e.phase === 'needs_review')
+			).toBeTruthy();
+			// The watchdog aborted the extractor, so its commit path is fenced off.
+			expect(capturedSignal?.aborted).toBe(true);
+			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
+		} finally {
+			vi.doUnmock('../src/lib/server/memory/extractor');
+			delete process.env.MEMORY_EXTRACTOR_BACKEND;
+			delete process.env.MEMORY_EXTRACTOR_MODEL;
+			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+			delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
+			delete process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS;
+			delete process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS;
+		}
+	});
+
 	it('persists manual rerun tool calls as separate attempts without overwriting the original', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const messages = await import('../src/lib/server/db/repos/messages');

@@ -69,6 +69,12 @@ const Schema = z
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),
 		MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(6),
 		MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: z.coerce.number().int().positive().default(60_000),
+		// Grace added on top of the extractor wall-clock budget before the
+		// turn-runner watchdog force-finalizes the post-turn extraction phase.
+		// The ceiling (wallclock + grace) bounds ONLY the post-turn extraction
+		// phase so an abort-ignoring provider can never hold the turn open; the
+		// main agent turn stays unbounded.
+		MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS: z.coerce.number().int().min(0).default(15_000),
 		// Tool-calling extractor: how the backend is told to choose tools.
 		// 'auto' lets the model decide each step; 'required' forces a tool call
 		// per step (useful for ramble-prone local models that otherwise narrate
@@ -81,6 +87,10 @@ const Schema = z
 
 		IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(15),
 		MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(4),
+		// After a user Stop, the turn must reach a terminal state and free the
+		// conversation within this deadline even if post-turn memory extraction
+		// hasn't unwound — the stuck extraction is abandoned past this point.
+		TURN_ABORT_FINALIZE_DEADLINE_MS: z.coerce.number().int().positive().default(5_000),
 
 		// Set to "1" to enable POST /api/admin/redeploy (rebuilds and restarts
 		// the process; requires the supervisor `pnpm run serve` to relaunch).

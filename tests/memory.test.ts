@@ -1599,6 +1599,303 @@ describe('memory-backed sessions', () => {
 		]);
 	});
 
+	it('skips attributes already stored unchanged and re-asserts changed ones', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// Seed memory from a prior turn: Mara has red hair and is tall.
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			turnId: 'turn-seed',
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [
+					{ entityKey: 'character.mara', predicate: 'hair', value: 'red' },
+					{ entityKey: 'character.mara', predicate: 'build', value: 'tall' }
+				]
+			}
+		});
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara still has red hair, now wears a green cloak, and dyed it black.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			feedback.length = 0;
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [
+						{ predicate: 'hair', value: 'red' }, // unchanged -> redundant skip
+						{ predicate: 'hair', value: 'black' }, // changed -> supersedes, stages
+						{ predicate: 'cloak', value: 'green' } // new -> stages
+					]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-redundant',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const parsed = JSON.parse(feedback[0]);
+		// The unchanged hair=red item is flagged redundant; the changed and new
+		// items stage normally.
+		expect(parsed.results).toEqual([
+			expect.objectContaining({ index: 0, staged: false, unchanged: true }),
+			{ index: 1, staged: true },
+			{ index: 2, staged: true }
+		]);
+		expect(parsed.unchanged).toBe(1);
+		expect(parsed.note).toContain('already stored unchanged');
+
+		// Only the changed + new attributes reach the patch; the unchanged
+		// re-assertion was dropped rather than staged.
+		expect(extraction.patch.facts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ entityKey: 'character.mara', predicate: 'hair', value: 'black' }),
+				expect.objectContaining({ entityKey: 'character.mara', predicate: 'cloak', value: 'green' })
+			])
+		);
+		expect(extraction.patch.facts).toHaveLength(2);
+
+		// Telemetry: the redundant skip is surfaced as a diagnostic.
+		expect(extraction.diagnostics.map((d) => d.code)).toContain('redundant_rewrite');
+	});
+
+	it('returns clear already-stored feedback when every attribute is unchanged', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			turnId: 'turn-seed',
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [{ entityKey: 'character.mara', predicate: 'hair', value: 'red' }]
+			}
+		});
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara has red hair.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			feedback.length = 0;
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'hair', value: 'red' }]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-all-redundant',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const parsed = JSON.parse(feedback[0]);
+		// ok:true but a clear "nothing new" note rather than a plain success, and
+		// nothing staged.
+		expect(parsed.ok).toBe(true);
+		expect(parsed.unchanged).toBe(1);
+		expect(parsed.note).toContain('already stored with that exact value');
+		expect(parsed.accepted.attributes).toEqual([]);
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
+	});
+
+	it('does not skip a per-item entityKey override against the hoisted key signature', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// Mara has hair=red stored; Bob exists but has no hair fact yet.
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			turnId: 'turn-seed',
+			patch: {
+				entities: [
+					{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' },
+					{ entityKey: 'character.bob', entityType: 'character', displayName: 'Bob' }
+				],
+				facts: [{ entityKey: 'character.mara', predicate: 'hair', value: 'red' }]
+			}
+		});
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Bob also has red hair.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			feedback.length = 0;
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// Hoisted key is Mara, but the item overrides it to Bob. The
+				// signature must be computed against Bob (no stored hair=red), not
+				// Mara (which has one) — otherwise this genuinely-new fact is lost.
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ entityKey: 'character.bob', predicate: 'hair', value: 'red' }]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-per-item-key',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const parsed = JSON.parse(feedback[0]);
+		// The Bob fact stages — it is not falsely deduped against Mara's hair=red.
+		expect(parsed.results).toEqual([{ index: 0, staged: true }]);
+		expect(parsed.unchanged).toBeUndefined();
+		expect(extraction.patch.facts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ entityKey: 'character.bob', predicate: 'hair', value: 'red' })
+			])
+		);
+	});
+
+	it('re-stages an unchanged value when only its visibility changes', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// Seed a fact at the default 'session' visibility.
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			turnId: 'turn-seed',
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [{ entityKey: 'character.mara', predicate: 'secret_word', value: 'rosebud' }]
+			}
+		});
+
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: "Mara's secret word rosebud must stay hidden."
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			feedback.length = 0;
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// Same predicate+value, but promoted to hidden visibility — a real
+				// change that must NOT be skipped as redundant.
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'secret_word', value: 'rosebud', visibility: 'hidden' }]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-visibility-change',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const parsed = JSON.parse(feedback[0]);
+		// The visibility change stages — it is not falsely deduped against the
+		// stored session-visibility fact.
+		expect(parsed.results).toEqual([{ index: 0, staged: true }]);
+		expect(parsed.unchanged).toBeUndefined();
+		expect(extraction.patch.facts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					entityKey: 'character.mara',
+					predicate: 'secret_word',
+					value: 'rosebud',
+					visibility: 'hidden'
+				})
+			])
+		);
+	});
+
 	it('stages granular attributes in one batch and partially accepts on a bad item', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });

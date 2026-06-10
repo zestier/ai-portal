@@ -23,7 +23,8 @@ import {
 	MemoryPatchInputSchema,
 	normalizeMemoryPatchInput,
 	type MemoryFactKind,
-	type MemoryPatchProposal
+	type MemoryPatchProposal,
+	type TurnMemoryPacket
 } from '../engine';
 import type { ExtractorToolSpec } from './types';
 
@@ -438,7 +439,8 @@ function writeSuccess(
 	accepted: unknown,
 	totals: Record<string, number>,
 	warnings: WriteIssue[],
-	extra: Record<string, unknown> = {}
+	extra: Record<string, unknown> = {},
+	noteOverride?: string
 ): string {
 	return JSON.stringify({
 		ok: true,
@@ -448,7 +450,9 @@ function writeSuccess(
 		...(warnings.length ? { issues: warnings } : {}),
 		staged_totals: totals,
 		...extra,
-		note: 'Staged. Call another write tool to record more, or stop when nothing durable remains. Nothing commits until you finish.'
+		note:
+			noteOverride ??
+			'Staged. Call another write tool to record more, or stop when nothing durable remains. Nothing commits until you finish.'
 	});
 }
 
@@ -465,6 +469,58 @@ function stableStringify(value: unknown): string {
 		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 		.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
 	return `{${entries.join(',')}}`;
+}
+
+// Canonical signature for an active stored fact, matching how commit dedupes:
+// entityKey + predicate + the value serialized exactly as `safeJson` stores it
+// (`JSON.stringify(value ?? null)`) + visibility + confidence. A re-assertion
+// that produces this same signature supersedes the prior identical observation
+// in place and changes nothing the user can observe, so handlers can flag it as
+// redundant. visibility/confidence are part of the signature because re-asserting
+// the SAME value with a DIFFERENT visibility/confidence is a real change (commit
+// makes the new row active, carrying the new fields) — dropping it would silently
+// discard e.g. a secret being promoted to hidden visibility. Defaults are
+// normalized to match `addFact` (`visibility ?? 'session'`, `confidence ?? 1`) so
+// an unset staged field compares equal to the stored default.
+export function factSignature(
+	entityKey: string | undefined,
+	predicate: string,
+	value: unknown,
+	visibility?: string,
+	confidence?: number
+): string {
+	let valueJson: string;
+	try {
+		valueJson = JSON.stringify(value ?? null);
+	} catch {
+		valueJson = JSON.stringify(String(value));
+	}
+	const vis = visibility ?? 'session';
+	const conf = confidence ?? 1;
+	return `${entityKey ?? ''}\u0000${predicate}\u0000${valueJson}\u0000${vis}\u0000${conf}`;
+}
+
+// Build the set of signatures for every attribute/directive fact already active
+// in the turn's initial packet. Re-asserting one of these supersedes the prior
+// identical observation in place at commit (see `consolidateFactGroup`) and
+// changes nothing observable, so threading this set into the write handlers lets
+// them give corrective "already stored, unchanged" feedback instead of a plain
+// success — the cross-turn analogue of the same-run duplicate nudge.
+export function buildStoredFactSignatures(packet: TurnMemoryPacket | undefined): Set<string> {
+	const signatures = new Set<string>();
+	if (!packet) return signatures;
+	const keyById = packet.entityKeyById ?? {};
+	const add = (facts: TurnMemoryPacket['facts'] | undefined) => {
+		for (const fact of facts ?? []) {
+			const entityKey = fact.entityId ? (keyById[fact.entityId] ?? '') : '';
+			signatures.add(
+				factSignature(entityKey, fact.predicate, fact.value, fact.visibility, fact.confidence)
+			);
+		}
+	};
+	add(packet.facts);
+	add(packet.directives);
+	return signatures;
 }
 
 // When a write call exactly repeats one already made this turn, fold a nudge
@@ -606,12 +662,25 @@ export interface WriteToolDeps {
 	mode: MemoryMode;
 	/** Open loops presented to the extractor this turn (for handle validation). */
 	presentedLoops: Array<{ id: string; loopKey: string }>;
+	/**
+	 * Signatures (entityKey+predicate+value) of attribute/directive facts already
+	 * active in the initial packet. Re-asserting one stores nothing new, so the
+	 * attribute handler flags it as redundant instead of returning a plain
+	 * success. Built via {@link buildStoredFactSignatures}; omit for no checking.
+	 */
+	storedFactSignatures?: Set<string>;
 	/** Shared staging buffer; handlers push accepted normalized patch fragments. */
 	staged: MemoryPatchProposal[];
 	/** Invoked once per write-tool call (telemetry: total propose calls). */
 	onProposeCall: () => void;
 	/** Invoked when a write-tool call is rejected (telemetry: rejected count). */
 	onReject: () => void;
+	/**
+	 * Invoked once per attribute item that was skipped because its value is
+	 * already stored unchanged (telemetry: redundant re-records). Lets the
+	 * extractor quantify wasted focus before/after the prompt + feedback nudges.
+	 */
+	onRedundant?: () => void;
 }
 
 /**
@@ -715,6 +784,7 @@ export function createWriteToolHandlers(
 		const results: Array<Record<string, unknown>> = [];
 		const failureIssues: WriteIssue[] = [];
 		let pairedEvents = 0;
+		let redundantCount = 0;
 
 		for (let i = 0; i < items.length; i += 1) {
 			const raw = (items[i] ?? {}) as Record<string, unknown>;
@@ -770,6 +840,43 @@ export function createWriteToolHandlers(
 				fail(semanticToWriteIssues(errors));
 				continue;
 			}
+			// Cross-turn redundancy: if this exact entityKey+predicate+value (and
+			// visibility/confidence) is already active in the initial packet,
+			// re-asserting it changes nothing observable — commit supersedes the
+			// prior identical observation in place. Skip it and give corrective
+			// feedback — the cross-turn analogue of the same-run duplicate nudge. A
+			// *changed* value (or a changed visibility/confidence) yields a different
+			// signature and still stages (it supersedes). An item carrying a paired
+			// `event` is exempt: the event is a fresh append-only timeline entry even
+			// when the attribute is unchanged. Sign with the NORMALIZED staged fact
+			// (`internal.facts[0]`), not the raw item + hoisted key: an item may
+			// carry its own `entityKey` that overrides the batch key, so
+			// `topEntityKey` could point at the wrong entity and falsely skip a
+			// genuinely-new fact.
+			const attrFact = internal.facts?.[0];
+			if (
+				!itemPaired &&
+				attrFact &&
+				deps.storedFactSignatures?.has(
+					factSignature(
+						attrFact.entityKey,
+						attrFact.predicate,
+						attrFact.value,
+						attrFact.visibility,
+						attrFact.confidence
+					)
+				)
+			) {
+				redundantCount += 1;
+				deps.onRedundant?.();
+				results.push({
+					index: i,
+					staged: false,
+					unchanged: true,
+					note: 'Already stored with this exact value in the initial packet; skipped (nothing new to record).'
+				});
+				continue;
+			}
 			acceptedPatches.push(internal);
 			// Canonical input echo: the parsed attribute item (kind + the hoisted
 			// entityKey removed) plus, if paired, the normalized event summary and
@@ -789,10 +896,13 @@ export function createWriteToolHandlers(
 		for (const patch of acceptedPatches) staged.push(patch);
 		const extra: Record<string, unknown> = { results };
 		if (pairedEvents) extra.pairedEvents = pairedEvents;
+		if (redundantCount) extra.unchanged = redundantCount;
 
 		if (failureIssues.length) {
 			deps.onReject();
-			const failed = results.filter((result) => !result.staged).length;
+			// Redundant (unchanged) items are not failures — they staged nothing on
+			// purpose — so exclude them from the "not staged" failure count.
+			const failed = results.filter((result) => !result.staged && !result.unchanged).length;
 			return writeError(
 				'remember_attributes',
 				'validation',
@@ -805,13 +915,22 @@ export function createWriteToolHandlers(
 				`Staged the valid attribute(s); the items in \`results\` with "staged": false were NOT. Re-send ONLY those items (corrected) — do not resend the whole batch, or the already-staged items would be duplicated.`
 			);
 		}
+		// When every item was already stored unchanged, nothing was staged: return
+		// a clear "already stored" note instead of a plain success so the model
+		// learns to stop re-asserting values present in the initial packet.
+		const redundantNote = redundantCount
+			? acceptedItems.length === 0
+				? `Every attribute you sent is already stored with that exact value (see the initial packet) — nothing new was recorded. Do not re-assert unchanged values; record only new or changed facts, or stop if nothing durable remains.`
+				: `Staged the new/changed attribute(s). ${redundantCount} item(s) were already stored unchanged and were skipped — do not re-assert values already shown in the initial packet. Nothing commits until you finish.`
+			: undefined;
 		return writeSuccess(
 			'remember_attributes',
 			'created',
 			{ ...(topEntityKey ? { entityKey: topEntityKey } : {}), attributes: acceptedItems },
 			stagedTotals(staged),
 			[],
-			extra
+			extra,
+			redundantNote
 		);
 	};
 

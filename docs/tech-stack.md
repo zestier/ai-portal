@@ -179,8 +179,10 @@ invalid config.
 | `MEMORY_EXTRACTOR_MAX_INPUT_CHARS` | `12000`         | Cap on conversation text sent to the model extractor. |
 | `MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS` | `6`         | Max tool-calling iterations for the `openai-compatible-tools` extractor before it stops and commits whatever it staged. |
 | `MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS` | `60000`        | Overall wall-clock budget (ms) for the `openai-compatible-tools` extractor loop. Bounds the whole loop rather than a single request, so it can't hold the turn open for `MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS` × `MEMORY_EXTRACTOR_TIMEOUT_MS` in the worst case. |
+| `MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS` | `15000`      | Grace added to the extractor wall-clock budget before the turn-runner watchdog force-finalizes the post-turn extraction phase (ceiling = wallclock + grace). Bounds only the extraction phase — even a provider that ignores fetch abort can't wedge the turn in `running`; the main agent turn stays unbounded. |
 | `IDLE_TIMEOUT_MIN`        | `15`                     | SDK session idle reap.               |
 | `MAX_CONCURRENT_SESSIONS` | `4`                      | Hard cap on live sessions.           |
+| `TURN_ABORT_FINALIZE_DEADLINE_MS` | `5000`           | After a user Stop, the turn must reach a terminal state and free the conversation within this deadline even if post-turn memory extraction hasn't unwound; the stuck extraction is abandoned past this point. |
 | `LOG_LEVEL`               | `info`                   | `debug` \| `info` \| `warn` \| `error`. |
 | `ENABLE_REDEPLOY`         | —                        | Set to `1` to enable `POST /api/admin/redeploy` (only meaningful under `pnpm run serve`). |
 | `COPILOT_STUB`            | —                        | Set to `1` to swap the real SDK for the in-process stub. Used by e2e tests. |

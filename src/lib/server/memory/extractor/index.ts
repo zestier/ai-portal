@@ -10,7 +10,11 @@ import {
 } from '../engine';
 import { loadConfig } from '$lib/server/config';
 import { redactSensitiveText, truncate } from './utils';
-import { buildWriteToolSpecs, createWriteToolHandlers } from './write-tools';
+import {
+	buildWriteToolSpecs,
+	createWriteToolHandlers,
+	buildStoredFactSignatures
+} from './write-tools';
 import { sanitizePatch } from './sanitize';
 import { buildToolExtractorSystemPrompt, extractorContextSections } from './prompts';
 import { makeThinkStream, requestOpenAICompatibleChat } from './streaming';
@@ -138,6 +142,11 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		const diagnostics: Diagnostic[] = [];
 		let proposeCalls = 0;
 		let rejectedProposals = 0;
+		// Count of attribute items skipped because their value was already stored
+		// unchanged (see write-tools redundancy check). Surfaced in logs and
+		// diagnostics so the wasted-focus problem can be sized before/after the
+		// prompt + feedback nudges that discourage re-asserting stored values.
+		let redundantRewrites = 0;
 		// Per-rejection reason tags for telemetry: keyed by `${tool}:${error.code}`
 		// so logs show whether failures are schema (wrong-field-for-tool) vs
 		// execution (e.g. unknown loop handle) — the data that tells us whether
@@ -167,12 +176,16 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			conversationId: input.conversationId,
 			mode: input.mode,
 			presentedLoops,
+			storedFactSignatures: buildStoredFactSignatures(input.initialPacket),
 			staged,
 			onProposeCall: () => {
 				proposeCalls += 1;
 			},
 			onReject: () => {
 				rejectedProposals += 1;
+			},
+			onRedundant: () => {
+				redundantRewrites += 1;
 			}
 		});
 		for (const [name, fn] of writeHandlers) handlers.set(name, fn);
@@ -373,6 +386,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			proposeCalls,
 			rejectedProposals,
 			rejectionTags,
+			redundantRewrites,
 			stagedProposals: staged.length,
 			hitIterationCap,
 			hitWallClockBudget
@@ -395,6 +409,13 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 				severity: 'warning',
 				code: 'proposals_with_issues',
 				message: `${rejectedProposals} staged proposal(s) reported validation issues during extraction.`
+			});
+		}
+		if (redundantRewrites > 0) {
+			diagnostics.push({
+				severity: 'info',
+				code: 'redundant_rewrite',
+				message: `${redundantRewrites} attribute(s) were already stored unchanged and were skipped rather than re-recorded.`
 			});
 		}
 		if (hitWallClockBudget) {
@@ -663,6 +684,10 @@ export async function extractAndCommitMemory(
 	const presentedLoopIds = input.initialPacket.openLoops.map((loop) => loop.id);
 
 	const extraction = await extractor.extractPatch(input);
+	// A user Stop (or the turn-runner watchdog) aborts the extraction signal.
+	// If the extractor ignored the signal and still returned, refuse to commit:
+	// the turn is being torn down and a late partial patch must not land.
+	input.signal?.throwIfAborted();
 	const commitInput: CommitMemoryPatchInput = {
 		conversationId: input.conversationId,
 		mode: input.mode,

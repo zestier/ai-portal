@@ -24,6 +24,7 @@ import { isStubMode } from './bridge-stub';
 import { AsyncQueue } from '../runtime/async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
 import { isEnabled } from '../memory/engine';
+import { loadConfig } from '../config';
 import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
 import type { MemoryMode } from '$lib/types';
@@ -186,11 +187,22 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 		async abort() {
 			turnAc.abort();
 			interactiveRequests.cancelConversation(opts.conversationId, 'turn_aborted');
-			try {
-				await session?.abort();
-			} catch {
-				/* ignore */
-			}
+			// Do NOT await session.abort(): if the underlying session is wedged,
+			// awaiting here would block the DELETE handler (and any caller) until
+			// it unwinds. Aborting the turn signal already tears down the active
+			// stream and arms the extraction watchdog, so the turn is guaranteed
+			// to finalize regardless of how long the session takes to settle.
+			// We still surface a failed teardown: the turn finalizes either way,
+			// but a rejecting abort now points at a leaked/wedged SDK session
+			// instead of vanishing silently.
+			void Promise.resolve()
+				.then(() => session?.abort())
+				.catch((err) => {
+					log.warn('turn.session.abort_failed', {
+						conversationId: opts.conversationId,
+						err: err instanceof Error ? err.message : String(err)
+					});
+				});
 		}
 	};
 
@@ -494,6 +506,84 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				// catch below can close the card if extraction throws.
 				let extractorParentId: string | null = null;
 				let extractorAgentId: string | null = null;
+				const cfg = loadConfig();
+				// Extraction runs behind a watchdog so a Stop (or a provider that
+				// never honors fetch abort) can't wedge the turn in `running`
+				// forever. `extractionAc` is the signal actually handed to the
+				// extractor: it fires on a user Stop (linked from the turn signal)
+				// and on a watchdog trip, so both the in-flight request and the
+				// pre-commit guard observe an abort — no partial patch can land.
+				const extractionAc = new AbortController();
+				const linkExtractionAbort = () => extractionAc.abort(turnAc.signal.reason);
+				if (turnAc.signal.aborted) linkExtractionAbort();
+				else turnAc.signal.addEventListener('abort', linkExtractionAbort, { once: true });
+				// Once the watchdog abandons a stuck extraction, every later
+				// extractor-sourced callback must become a no-op: the turn is being
+				// finalized, its subscribers are ending, and it may be evicted from
+				// the registry. Guarded at the single `onActivity` entry point.
+				let abandoned = false;
+				// Race the extraction against two deadlines: a short post-abort
+				// deadline (the turn must free promptly after Stop) and an absolute
+				// ceiling on the whole extraction phase (so even an abort-ignoring
+				// provider can't hold the turn open past the budget). On either trip
+				// we abort the extractor, abandon the still-pending promise, and
+				// reject so the existing catch finalizes the turn — emitting
+				// `skipped` on a user Stop or `needs_review` on a timeout.
+				const runExtractionWithWatchdog = <T>(pending: Promise<T>): Promise<T> =>
+					new Promise<T>((resolve, reject) => {
+						let settled = false;
+						let deadlineArmed = false;
+						const timers: ReturnType<typeof setTimeout>[] = [];
+						const track = (timer: ReturnType<typeof setTimeout>) => {
+							(timer as { unref?: () => void }).unref?.();
+							timers.push(timer);
+						};
+						const cleanup = () => {
+							for (const timer of timers) clearTimeout(timer);
+							turnAc.signal.removeEventListener('abort', armDeadline);
+						};
+						const trip = (reason: Error) => {
+							if (settled) return;
+							settled = true;
+							abandoned = true;
+							extractionAc.abort();
+							cleanup();
+							reject(reason);
+						};
+						function armDeadline() {
+							if (deadlineArmed) return;
+							deadlineArmed = true;
+							track(
+								setTimeout(
+									() => trip(new Error('Memory extraction was cancelled.')),
+									cfg.TURN_ABORT_FINALIZE_DEADLINE_MS
+								)
+							);
+						}
+						track(
+							setTimeout(
+								() =>
+									trip(new Error('Memory extraction exceeded its time budget and was abandoned.')),
+								cfg.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS + cfg.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS
+							)
+						);
+						if (turnAc.signal.aborted) armDeadline();
+						else turnAc.signal.addEventListener('abort', armDeadline, { once: true });
+						pending.then(
+							(value) => {
+								if (settled) return;
+								settled = true;
+								cleanup();
+								resolve(value);
+							},
+							(err) => {
+								if (settled) return;
+								settled = true;
+								cleanup();
+								reject(err);
+							}
+						);
+					});
 				const ensureExtractorParent = (prompt?: string): string => {
 					if (extractorParentId) return extractorParentId;
 					extractorParentId = `mem_parent_${ulid()}`;
@@ -535,6 +625,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					}
 				};
 				const onActivity = (activity: ExtractorActivity) => {
+					// Suppress late callbacks from an abandoned (watchdog-tripped)
+					// extraction so it can't mutate a finalized turn.
+					if (abandoned) return;
 					if (activity.type === 'input') {
 						// Create the card carrying its prompt; the input event is
 						// emitted before any model output, so this is the first
@@ -624,17 +717,19 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						summary: 'Validating durable memory patch.'
 					});
 
-					const committed = await extractAndCommitMemory({
-						conversationId: opts.conversationId,
-						userId: opts.bridge.userId,
-						mode: opts.memory.mode,
-						extractorModel: opts.memory.extractorModel,
-						turnId: turn.id,
-						userMessage,
-						assistantMessage,
-						onActivity,
-						signal: turnAc.signal
-					});
+					const committed = await runExtractionWithWatchdog(
+						extractAndCommitMemory({
+							conversationId: opts.conversationId,
+							userId: opts.bridge.userId,
+							mode: opts.memory.mode,
+							extractorModel: opts.memory.extractorModel,
+							turnId: turn.id,
+							userMessage,
+							assistantMessage,
+							onActivity,
+							signal: extractionAc.signal
+						})
+					);
 					if (extractorParentId) {
 						const spoken =
 							committed.extraction.response?.trim() ||
@@ -708,10 +803,17 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 							summary: memoryFailureSummary(memoryErr)
 						});
 					}
+				} finally {
+					// Drop the turn→extraction abort link so it can't outlive the
+					// extraction phase on a turn that finished without a Stop.
+					turnAc.signal.removeEventListener('abort', linkExtractionAbort);
 				}
 			}
 
-			turn.status = status === 'interrupted' ? 'interrupted' : 'complete';
+			// A Stop issued while the post-turn extractor was still running aborts
+			// the turn signal after `status` was computed as `complete`; reflect
+			// that late interrupt so the turn ends `interrupted`.
+			turn.status = turnAc.signal.aborted ? 'interrupted' : status;
 			turn.endedAt = Date.now();
 
 			// We always emit our own terminal `done` here: `dispatch` suppresses
