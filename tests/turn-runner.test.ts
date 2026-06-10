@@ -838,14 +838,12 @@ describe('turn-runner', () => {
 										index: 0,
 										id: 'call-1',
 										function: {
-											name: 'memory_propose_patch',
+											name: 'remember_attributes',
 											arguments: JSON.stringify({
-												summary: 'Recorded the migration decision.',
-												patch: {
-													decisions: [
-														{ subject: 'migrations', decision: 'Use append-only migrations.' }
-													]
-												}
+												entityKey: 'migrations',
+												attributes: [
+													{ predicate: 'decision', value: 'Use append-only migrations.' }
+												]
 											})
 										}
 									}
@@ -935,7 +933,7 @@ describe('turn-runner', () => {
 			expect(parent?.backgroundAgentStatus).toBe('completed');
 			expect(parent?.backgroundAgentId).toBeTruthy();
 			const child = assistant?.toolCalls?.find(
-				(t) => t.parentToolCallId === parent?.id && t.tool === 'memory_propose_patch'
+				(t) => t.parentToolCallId === parent?.id && t.tool === 'remember_attributes'
 			);
 			expect(child).toBeTruthy();
 			expect(child?.status).toBe('ok');

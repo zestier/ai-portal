@@ -62,25 +62,15 @@ describe('validatePortalToolArgs', () => {
 		).toEqual({ ok: true });
 	});
 
-	it('returns the full patch shape when memory_propose_patch args are invalid', () => {
+	it('no longer exposes memory_propose_patch to the main model', () => {
+		// Durable writes are owned by the background extractor's per-kind
+		// remember_* tools; the main model has no direct memory write tool.
 		const proposePatch = buildMemoryTools({
 			userId: 'u1',
 			conversationId: 'c1',
 			mode: 'project'
 		}).find((t) => t.name === 'memory_propose_patch');
-		if (!proposePatch) throw new Error('memory_propose_patch tool not found');
-		// Missing required `value` on a fact — previously the feedback only
-		// surfaced an opaque `{ type: 'object' }`, leaving the agent unable to
-		// see the patch shape it needed to fix.
-		const result = validatePortalToolArgs(proposePatch, {
-			patch: { facts: [{ predicate: 'color' }] }
-		});
-		expect(result.ok).toBe(false);
-		if (result.ok) throw new Error('unreachable');
-		expect(result.feedback).toMatch(/Expected JSON Schema for "memory_propose_patch" parameters:/);
-		expect(result.feedback).toMatch(/closeLoops/);
-		expect(result.feedback).toMatch(/entityKey/);
-		expect(result.feedback).toMatch(/"predicate"/);
+		expect(proposePatch).toBeUndefined();
 	});
 });
 

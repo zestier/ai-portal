@@ -116,7 +116,8 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory.get_recent_events` | Fetch recent or relevant event-log entries with source turns. |
 | `memory.check_claims` | Validate proposed factual claims against known memory and return conflicts or unknowns. |
 | `memory.merge_entities` | Fold a duplicate entity into a canonical one — reassigning its facts, events, and open-loop links — to clean up two keys that denote the same referent (e.g. `character.firstname` vs `character.firstname_lastname`). |
-| `memory.propose_patch` | Let the model propose structured memory updates when needed, while the server remains responsible for validation and commit. |
+| `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` / `remember_entity` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
+| `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
 
 These tools should be available to the model during the main response call for
 memory-backed sessions. The model should be instructed to call them whenever a
@@ -244,7 +245,7 @@ memory_entities
 memory_events
 memory_facts
 memory_open_loops
-memory_decisions
+memory_decisions  # legacy: read-only, no new rows written (decision kind removed)
 memory_patches
 memory_patch_items
 memory_validation_issues
@@ -375,9 +376,9 @@ Important fields:
 - `created_at`
 - `updated_at`
 
-Open loops are pruned, not just appended. A memory patch may carry a
-`closeLoops` array — `{ id, status: "resolved" | "dropped", reason? }` —
-that flips an existing loop's `status` so superseded threads stop crowding the
+Open loops are pruned, not just appended. The extractor retires a loop by
+calling `close_loop` — `{ handle, status: "resolved" | "dropped", reason? }` —
+which flips an existing loop's `status` so superseded threads stop crowding the
 packet. This is how the extractor closes the unchosen options when the user
 picks one of several offered choices (`resolved` = done/answered, `dropped` =
 abandoned/superseded; the optional `reason` is appended to the loop's
@@ -391,7 +392,7 @@ notice that a thread is *no longer* live, and LLMs are far better at reacting to
 what is present than at detecting an absence — so historically loops accumulated
 forever. Liveness inverts the burden. Every model-backed extraction pass the
 extractor is shown all currently-open loops (each with its stable handle) and
-lists the ones that are still live in the patch's `keepOpenLoops`. A loop that
+reaffirms the ones that are still live via `keep_loops`. A loop that
 was **presented but neither kept nor closed** accrues an idle turn, and once it
 has been ignored for
 `MEMORY_OPEN_LOOP_MAX_IDLE_TURNS + max(0, priority)` consecutive passes it is
@@ -418,8 +419,8 @@ never rewrites historical decay. The auto-drop itself flows through the normal
 open-loop projection, so it is audited and reversible like any other resolution.
 
 Because the tool-calling extractor may spread its keeps across several
-`memory_propose_patch` calls, `keepOpenLoops` is unioned when the staged
-proposals are collapsed, and liveness runs once on that collapsed patch (gated to
+`keep_loops` calls, the kept handles are unioned when the staged proposals are
+collapsed, and liveness runs once on that collapsed patch (gated to
 a cleanly committed, model-backed pass — the heuristic extractor emits no keep
 signal, so it never ages loops). The extractor is always handed a freshly built
 initial packet so it can see existing entity keys and open-loop ids even on the
@@ -427,7 +428,10 @@ production path, which previously passed no packet at all.
 
 ### `memory_decisions`
 
-Durable decisions made during the session.
+Durable decisions made during the session. **Legacy/read-only:** the `decision`
+write kind has been removed, so no new rows are written — settled choices are now
+stored as attributes (`predicate: "decision"`) or directives. Existing rows
+continue to render in packets and the inspector.
 
 Important fields:
 
@@ -487,51 +491,88 @@ This is useful for debugging why the model remembered or asserted something.
 ## Memory primitives
 
 At the write boundary memory has only **two concepts** — _entities_ (the durable
-referents) and _facts_ (everything recorded about them). A patch is therefore
-`{ entities[], facts[], closeLoops[], keepOpenLoops[] }`, and every item in
-`facts[]` carries a **required `kind`** (a discriminated union, no default and no
-fallback) so the extractor must explicitly classify each thing it stores:
+referents) and _facts_ (everything recorded about them). The extractor records
+each item by calling a dedicated per-kind tool, so the classification is the
+tool it picks rather than a `kind` field it must set:
 
-| Fact `kind` | Meaning | Required fields |
+The extractor records durable memory by calling **per-kind write tools** — one
+flat tool per concept, where the tool name *is* the classification (there is no
+`kind` discriminator and no generic patch argument for the model to misassemble):
+
+| Write tool | Meaning | Required fields |
 | --- | --- | --- |
-| `attribute` | Something to KNOW: a durable attribute, relationship, state, preference, constraint, ownership, role, deadline, identifier, or numeric value. | `predicate`, `value` (+ optional `entityKey`) |
-| `directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). | `rule` |
-| `decision` | A settled choice made by user, assistant, or team. | `subject`, `decision` (+ optional `rationale`) |
-| `open_loop` | An unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
-| `event` | Something that happened or was observed this turn. | `eventType`, `summary` (+ optional `entityKey`) |
+| `remember_attributes` | Things to KNOW about ONE entity: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` (+ optional top-level `entityKey`; per-item `event`, `eventType`) |
+| `remember_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). | `rule` |
+| `remember_loop` | Open a NEW unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
+| `remember_event` | A point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, failed build, approach tried, clue revealed). Recency-ranked and capped, so used sparingly. | `eventType`, `summary` (+ optional `entityKey`) |
+| `remember_entity` | Establish a durable referent that facts attach to; prose blurb goes in `summary`. | `entityKey`, `entityType`, `displayName` |
+| `keep_loops` | Batch-reaffirm presented open loops that are still live. | `handles[]` |
+| `close_loop` | Retire one existing loop by handle. | `handle`, `status` (`resolved`/`dropped`) |
 
-`entities[]` carries `{ entityKey, entityType, displayName, summary?, metadata? }`;
-`closeLoops[]` retires existing loops by `{ id, status: 'resolved' | 'dropped', reason? }`;
-`keepOpenLoops[]` lists the handles of presented open loops that are still live (see
-[Open-loop liveness](#open-loop-liveness-touch-to-keep)). The `id` in `closeLoops`
-and the entries in `keepOpenLoops` are **loop handles**: each open loop carries a
-stable, human-legible `loop_key` (a slug of its title, e.g. `loop.find_attic_key`,
-unique within the conversation) that is rendered as its `[id=…]` in the extractor's
-packet. References resolve by key or by raw id, so both forms work; the key is what
-the model sees, which keeps loop references legible instead of opaque ULIDs.
+`keep_loops.handles[]` and `close_loop.handle` are **loop handles**: each open
+loop carries a stable, human-legible `loop_key` (a slug of its title, e.g.
+`loop.find_attic_key`, unique within the conversation) that is rendered as its
+`[id=…]` in the extractor's packet. References resolve by key or by raw id, so
+both forms work; the key is what the model sees, which keeps loop references
+legible instead of opaque ULIDs.
 
-Only open loops are addressed this way. `decision` and `attribute` facts supersede
-in place — re-asserting one (same `subject`, or same `entityKey`+`predicate`)
-retires the prior value automatically — and `directive`/`event` are append-only, so
-the extractor never "closes" anything except open loops. This asymmetry is stated
-explicitly to the model rather than hidden, because it is the one piece of lifecycle
-vocabulary that the unified `facts[]` shape would otherwise obscure.
+There is deliberately **no `decision` concept**: a settled choice is recorded as
+an `attribute` (e.g. `predicate: "decision"`) or, when it is forward-looking, a
+`directive`. Dropping it removes the hardest classification boundary
+(attribute vs directive vs decision). Existing decision rows still render
+read-only; nothing new is written to them.
 
+Only open loops have an explicit lifecycle. `attribute` facts supersede in place
+— re-asserting one (same `entityKey`+`predicate`) retires the prior value
+automatically — and `directive`/`event` are append-only, so the extractor never
+"closes" anything except open loops. This asymmetry is stated explicitly to the
+model.
+
+Events are deliberately kept scarce: they feed a recency-ranked, hard-capped
+`recentEvents` window and never supersede, so an over-eager extractor that logged
+every state change as an event would both flood that window and lose the
+"current value" view that attributes provide. The extractor is therefore steered
+hard toward `attribute` as the default, with `event` reserved for genuine
+log-worthy occurrences. Because a state change is *also* often a notable
+occurrence, each `remember_attributes` item accepts an optional thin paired event
+(`event` summary + optional `eventType`, default `"change"`, inheriting the
+batch's `entityKey`): the model logs both in one deliberate call rather than
+choosing between current state and timeline, and the event stays model-gated so
+the window is never auto-flooded.
+
+Attributes are recorded in **batches** rather than one per call, for a structural
+reason: with one-item-per-call tools, granularity is *expensive* (six traits =
+six round-trips), so a model rationally collapses a character description into one
+big `description` value — defeating per-trait search, supersession, and counting.
+`remember_attributes` hoists `entityKey` to the top level and takes an
+`attributes` array of flat `{predicate, value, …}` items, making granular cheap;
+the advertised example and prompt both demonstrate decomposition (a "tall woman
+with red hair who fears water" → `build=tall`, `hair=red`, `fears=water`), and the
+prose blurb is steered to the entity `summary`. Items are validated
+**independently** — valid traits stage and only the items flagged `staged: false`
+in the result's `results[]` need re-sending — so one malformed trait never sinks
+the batch.
+
+Each write tool validates and **stages** what it records (one item, or a batch of
+attributes), returning a uniform envelope (`ok`, `accepted`/`error`,
+`staged_totals`, …) so a rejected call gives targeted, per-tool feedback without
+discarding anything already staged.
+Everything staged across the turn commits via a single `commitPatch` at the end.
 Internally these still fan out into the same storage tables: an `attribute`
 becomes a fact, a `directive` becomes a pinned fact under the reserved
-`directive` predicate, and `decision` / `open_loop` / `event` land in their
-respective tables. The discriminated union is purely a write-time data model
-that forces the classification decision; nothing about persistence, the memory
-inspector, or the editable `memory/[kind]` routes changes. Each stored item also
-keeps its provenance (source message/turn/event), visibility, confidence, and
-status (active, superseded, disputed, deleted, needs review).
+`directive` predicate, and `open_loop` / `event` land in their respective
+tables. The per-kind tools are purely a write-time data model that forces the
+classification decision; nothing about persistence, the memory inspector, or the
+editable `memory/[kind]` routes changes. Each stored item also keeps its
+provenance (source message/turn/event), visibility, confidence, and status
+(active, superseded, disputed, deleted, needs review).
 
 ### Per-session directives (standing rules)
 
 Directives are user-authored standing instructions that must flow into **every**
 future memory-backed turn for a conversation — for example, while telling a story
-the user says _"when creating new characters, give them names."_ Unlike facts,
-decisions, and open loops (which describe state/history and compete for the packet
+the user says _"when creating new characters, give them names."_ Unlike facts
+and open loops (which describe state/history and compete for the packet
 token budget), and unlike global memories (user-scoped, pulled in only on demand),
 a directive is an always-on behavioral instruction that is never dropped.
 
@@ -542,9 +583,8 @@ a directive is an always-on behavioral instruction that is never dropped.
   existing per-conversation memory-copy path (pinned directive facts are carried
   over). Not user-global in v1.
 - **Creation:** automatic — the extractor captures durable, forward-looking
-  instructions as `directive` facts on the normal `memory_propose_patch` / commit
-  flow. Extraction guidance stays conservative (only standing instructions, not
-  one-off asks).
+  instructions via the `remember_directive` tool / commit flow. Extraction
+  guidance stays conservative (only standing instructions, not one-off asks).
 - **Injection:** every active directive is rendered verbatim in a dedicated
   `standing directives` packet header block, exempt from the token budget — they are
   never elided regardless of how many other facts exist.
@@ -596,8 +636,7 @@ Example:
       "memory.get_entity",
       "memory.get_open_loops",
       "memory.get_recent_events",
-      "memory.check_claims",
-      "memory.propose_patch"
+      "memory.check_claims"
     ]
   }
 }
@@ -655,7 +694,7 @@ different audiences, and the differences are a single explicit
   without ids (they are noise it cannot act on); the post-turn extractor enables
   them so it can reference items precisely. Open loops render their legible
   `loop_key` (e.g. `loop.find_attic_key`) in the `[id=...]` slot rather than a raw
-  ULID, and `keepOpenLoops`/`closeLoops` accept that key (or the id). Note that
+  ULID, and `keep_loops`/`close_loop` accept that key (or the id). Note that
   only open loops are *acted on* by handle — a fact is corrected by re-asserting
   an attribute with the same `entityKey`+`predicate`, which supersedes the prior
   value automatically (see [Source-side consolidation](#source-side-consolidation-event-derived)).
@@ -771,24 +810,32 @@ Output:
 - `unknown`
 - relevant source facts/events
 
-### `memory.propose_patch`
+### Durable-write tools (`remember_*`, `keep_loops`, `close_loop`)
 
-Accepts a structured memory patch proposal from the model. The server validates
-and commits it; the model never writes directly to canonical memory.
+The background extractor records durable memory by calling **per-kind write
+tools** — `remember_attributes`, `remember_directive`, `remember_event`,
+`remember_loop`, and `remember_entity`, plus `keep_loops`/`close_loop` for
+open-loop lifecycle. Each takes a small, flat argument object (`remember_attributes`
+takes a shared `entityKey` plus an array of flat trait items); the tool name *is*
+the classification (no `kind` discriminator). The server validates and stages
+each call, returning a uniform `{ ok, accepted | error, staged_totals, … }`
+envelope so a rejected call gives targeted, per-tool feedback without discarding
+anything already staged. Everything staged across the turn commits once at the
+end. The model never writes directly to canonical memory.
 
 ## Extraction and commit flow
 
-After a response, the extractor creates a memory patch:
+After a response, the extractor stages a memory patch across its write-tool
+calls, which collapses to:
 
 ```json
 {
+  "entities": [],
   "events": [],
-  "facts_to_add": [],
-  "facts_to_supersede": [],
-  "decisions_to_add": [],
-  "open_loops_to_add": [],
-  "open_loops_to_resolve": [],
-  "uncertain_items": []
+  "facts": [],
+  "openLoops": [],
+  "resolveOpenLoops": [],
+  "keepOpenLoops": []
 }
 ```
 
@@ -952,8 +999,8 @@ surfaces:
   and inline `<think>…</think>` — as threaded child reasoning blocks;
 - its **spoken content** — as threaded child content blocks, interleaved with
   its thoughts and tools (see "Fully-featured nested agents" below);
-- each **retrieval** (`memory_search`, `memory_get_entity`, …) and **staging**
-  (`memory_propose_patch`) call, with its validation feedback, as a threaded
+- each **retrieval** (`memory_search`, `memory_get_entity`, …) and **write**
+  (`remember_attributes`, `keep_loops`, …) call, with its validation feedback, as a threaded
   child tool call; and
 - its **closing message** as the parent tool result → the card's Response
   (`ExtractPatchResult.response`).
@@ -1585,7 +1632,7 @@ First production-capable slice:
   - `memory.get_open_loops`
   - `memory.get_recent_events`
   - `memory.check_claims`
-  - `memory.propose_patch`
+  - durable-write tools (extractor): `remember_*`, `keep_loops`, `close_loop`
 - post-turn extraction
 - patch validation
 - transactional commit

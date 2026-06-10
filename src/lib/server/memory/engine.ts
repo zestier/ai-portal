@@ -74,6 +74,11 @@ export interface MemoryPatchProposal {
 		visibility?: string;
 		confidence?: number;
 	}>;
+	/**
+	 * Legacy, read-only: no current write path emits decisions (the `decision`
+	 * fact kind was retired). Kept so existing stored decisions still render and
+	 * so `commitPatch` stays tolerant of any historical patch that carries them.
+	 */
 	decisions?: Array<{
 		subject: string;
 		decision: string;
@@ -359,7 +364,6 @@ export function buildInitialPacket(
 				'memory_query_clues',
 				'memory_get_character_knowledge',
 				'memory_check_claims',
-				'memory_propose_patch',
 				...(opts.globalMemoryEnabled ? ['memory_global_remember', 'memory_global_search'] : [])
 			],
 			recallTriggers: [
@@ -392,8 +396,8 @@ export function buildPromptWithMemory(params: {
 		query
 	});
 	const writeGuidance = params.extractorPresent
-		? 'A dedicated memory extractor reviews every turn after you respond and records durable memory on your behalf. Do not call memory_propose_patch yourself: writing patches directly duplicates the extractor, blurs responsibilities, and makes a mess of the memory store. Concentrate on answering well and let the extractor capture what to remember. Only use memory_propose_patch if you must correct a specific, concrete memory error.'
-		: 'If you make durable decisions, create tasks/open loops, establish story facts, or change important state, call memory_propose_patch with a structured patch before the final answer when practical.';
+		? 'A dedicated memory extractor reviews every turn after you respond and records durable memory on your behalf. You have no direct memory-write tool — do not attempt to write memory yourself. Concentrate on answering well and querying the recall tools as needed, and let the extractor capture what to remember.'
+		: 'Durable memory is captured automatically after each turn; you have no direct memory-write tool. Concentrate on answering well and use the recall tools to pull in anything you need.';
 	return [
 		'<portal_memory_mode>',
 		renderMemoryPacket(packet),
@@ -859,6 +863,8 @@ export function commitPatch(
 		factCount++;
 	}
 
+	// Legacy decisions: retained so a historical patch carrying them still
+	// commits, but no current extractor or heuristic emits this kind.
 	for (const decision of input.patch.decisions ?? []) {
 		const row = memoryRepo.addDecision(input.conversationId, {
 			...decision,
@@ -983,19 +989,8 @@ export function extractHeuristicPatch(params: {
 	mode: MemoryMode;
 }): MemoryPatchProposal {
 	const combined = `${params.userMsg.content}\n\n${params.assistantContent}`.trim();
-	const patch: MemoryPatchProposal = { events: [], facts: [], decisions: [], openLoops: [] };
+	const patch: MemoryPatchProposal = { events: [], facts: [], openLoops: [] };
 	if (!combined) return patch;
-
-	const decisionMatch = combined.match(
-		/\b(?:decided|decision|we will|we should|use|choose)\b[:\s]+(.{12,240})/i
-	);
-	if (decisionMatch) {
-		patch.decisions?.push({
-			subject: 'session_decision',
-			decision: cleanSentence(decisionMatch[1]),
-			rationale: 'Heuristically extracted from the turn.'
-		});
-	}
 
 	if (/\b(todo|follow[- ]?up|open question|remember to|next step)\b/i.test(combined)) {
 		patch.openLoops?.push({
@@ -1075,12 +1070,6 @@ const PatchFactItemSchema = z.discriminatedUnion('kind', [
 		entityKey: z.string().min(1).max(200).optional()
 	}),
 	z.object({
-		kind: z.literal('decision'),
-		subject: z.string().min(1).max(200),
-		decision: z.string().min(1).max(4000),
-		rationale: z.string().max(4000).optional()
-	}),
-	z.object({
 		kind: z.literal('open_loop'),
 		loopType: z.string().min(1).max(100),
 		title: z.string().min(1).max(200),
@@ -1128,7 +1117,6 @@ export function normalizeMemoryPatchInput(input: MemoryPatchInput): MemoryPatchP
 
 	const facts: NonNullable<MemoryPatchProposal['facts']> = [];
 	const events: NonNullable<MemoryPatchProposal['events']> = [];
-	const decisions: NonNullable<MemoryPatchProposal['decisions']> = [];
 	const openLoops: NonNullable<MemoryPatchProposal['openLoops']> = [];
 
 	for (const item of input.facts ?? []) {
@@ -1147,13 +1135,6 @@ export function normalizeMemoryPatchInput(input: MemoryPatchInput): MemoryPatchP
 					entityKey: item.entityKey,
 					predicate: DIRECTIVE_PREDICATE,
 					value: item.rule
-				});
-				break;
-			case 'decision':
-				decisions.push({
-					subject: item.subject,
-					decision: item.decision,
-					rationale: item.rationale
 				});
 				break;
 			case 'open_loop':
@@ -1180,7 +1161,6 @@ export function normalizeMemoryPatchInput(input: MemoryPatchInput): MemoryPatchP
 
 	if (facts.length) proposal.facts = facts;
 	if (events.length) proposal.events = events;
-	if (decisions.length) proposal.decisions = decisions;
 	if (openLoops.length) proposal.openLoops = openLoops;
 	if (input.closeLoops?.length) proposal.resolveOpenLoops = input.closeLoops;
 	if (input.keepOpenLoops?.length) proposal.keepOpenLoops = input.keepOpenLoops;
@@ -1205,12 +1185,275 @@ export const MemoryPatchInputSchema = z
 export const MemoryPatchProposalSchema =
 	MemoryPatchInputSchema.transform(normalizeMemoryPatchInput);
 
+/** The fact kinds, in canonical order. */
+export const MEMORY_FACT_KINDS = ['attribute', 'directive', 'open_loop', 'event'] as const;
+export type MemoryFactKind = (typeof MEMORY_FACT_KINDS)[number];
+
 /**
- * Hand-written JSON Schema for the unified `patch` argument, shared by the
- * `memory_propose_patch` tool parameters and the single-shot extractor's
- * `response_format`, and echoed back to the model when a staged patch fails
- * validation. Mirrors {@link MemoryPatchInputSchema}; the Zod parse remains the
- * source of truth.
+ * Per-kind JSON Schema for a single `facts[]` item, one object per kind. The
+ * model-facing schema advertises a single *flattened* fact object (see
+ * {@link MEMORY_FACT_FLAT_JSON_SCHEMA}) because many function-calling backends
+ * constrain `oneOf`/discriminated unions poorly, but these precise per-branch
+ * shapes are kept so a schema failure can echo back *only* the branch the model
+ * was aiming for instead of the whole five-way union.
+ */
+export const MEMORY_FACT_KIND_SCHEMAS = {
+	attribute: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['kind', 'predicate', 'value'],
+		properties: {
+			kind: { const: 'attribute' },
+			entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+			predicate: { type: 'string', minLength: 1, maxLength: 100 },
+			value: { description: 'Required attribute value (any JSON type except undefined).' },
+			visibility: { type: 'string', minLength: 1, maxLength: 100 },
+			confidence: { type: 'number', minimum: 0, maximum: 1 }
+		}
+	},
+	directive: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['kind', 'rule'],
+		properties: {
+			kind: { const: 'directive' },
+			rule: {
+				type: 'string',
+				minLength: 3,
+				maxLength: 4000,
+				description: 'The standing instruction, stated in full as a declarative rule.'
+			},
+			entityKey: { type: 'string', minLength: 1, maxLength: 200 }
+		}
+	},
+	open_loop: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['kind', 'loopType', 'title'],
+		properties: {
+			kind: { const: 'open_loop' },
+			loopType: { type: 'string', minLength: 1, maxLength: 100 },
+			title: { type: 'string', minLength: 1, maxLength: 200 },
+			description: { type: 'string', maxLength: 8000 },
+			priority: { type: 'integer', minimum: -100, maximum: 100 },
+			relatedEntityKeys: {
+				type: 'array',
+				maxItems: 50,
+				items: { type: 'string', minLength: 1, maxLength: 200 }
+			}
+		}
+	},
+	event: {
+		type: 'object',
+		additionalProperties: false,
+		required: ['kind', 'eventType', 'summary'],
+		properties: {
+			kind: { const: 'event' },
+			eventType: { type: 'string', minLength: 1, maxLength: 100 },
+			summary: { type: 'string', minLength: 1, maxLength: 4000 },
+			entityKey: { type: 'string', minLength: 1, maxLength: 200 },
+			payload: { description: 'Arbitrary JSON payload.' },
+			visibility: { type: 'string', minLength: 1, maxLength: 100 },
+			confidence: { type: 'number', minimum: 0, maximum: 1 }
+		}
+	}
+} as const satisfies Record<MemoryFactKind, unknown>;
+
+/**
+ * A tiny, valid example per kind. Echoed back on a schema failure: a concrete
+ * correct object is far easier for a model to copy than an abstract schema.
+ */
+export const MEMORY_FACT_KIND_EXAMPLES = {
+	attribute: {
+		kind: 'attribute',
+		entityKey: 'auth_service',
+		predicate: 'language',
+		value: 'TypeScript'
+	},
+	directive: { kind: 'directive', rule: 'Keep responses under 200 words.' },
+	open_loop: {
+		kind: 'open_loop',
+		loopType: 'task',
+		title: 'Add rate limiting to the login endpoint'
+	},
+	event: { kind: 'event', eventType: 'deploy', summary: 'Shipped v1.2 to production' }
+} as const satisfies Record<MemoryFactKind, { kind: MemoryFactKind } & Record<string, unknown>>;
+
+/** The required field names (besides `kind`) for each kind, for error hints. */
+export const MEMORY_FACT_KIND_REQUIRED_FIELDS: Record<MemoryFactKind, string[]> = {
+	attribute: ['predicate', 'value'],
+	directive: ['rule'],
+	open_loop: ['loopType', 'title'],
+	event: ['eventType', 'summary']
+};
+
+/**
+ * Single, flattened JSON Schema for a `facts[]` item: `kind` is an enum and every
+ * possible field is an optional property whose description names the kind(s) it
+ * belongs to. The Zod {@link PatchFactItemSchema} discriminated union remains the
+ * source of truth (it strips fields that don't belong to the chosen kind), so
+ * advertising one flat object — rather than a five-way `oneOf` — gives weaker
+ * backends a shape they can actually fill while losing nothing on validation.
+ */
+const MEMORY_FACT_FLAT_JSON_SCHEMA = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['kind'],
+	description:
+		'One thing to remember. Set "kind" first — it decides which other fields are required. attribute: predicate + value. directive: rule. open_loop: loopType + title. event: eventType + summary.',
+	properties: {
+		kind: {
+			type: 'string',
+			enum: [...MEMORY_FACT_KINDS],
+			description:
+				'Required. attribute = something to KNOW (needs predicate + value); directive = a standing behavioural rule (needs rule); open_loop = an unresolved task/question (needs loopType + title); event = something that happened (needs eventType + summary).'
+		},
+		entityKey: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 200,
+			description: 'Referent this attaches to. Used by attribute, directive, and event.'
+		},
+		predicate: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 100,
+			description: 'attribute (required): the property name, e.g. "language".'
+		},
+		value: { description: 'attribute (required): the value (any JSON type).' },
+		rule: {
+			type: 'string',
+			minLength: 3,
+			maxLength: 4000,
+			description: 'directive (required): the standing instruction, stated in full.'
+		},
+		loopType: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 100,
+			description: 'open_loop (required): the kind of thread, e.g. "task" or "question".'
+		},
+		title: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 200,
+			description: 'open_loop (required): a short title for the thread.'
+		},
+		description: { type: 'string', maxLength: 8000, description: 'open_loop (optional): detail.' },
+		priority: {
+			type: 'integer',
+			minimum: -100,
+			maximum: 100,
+			description: 'open_loop (optional).'
+		},
+		relatedEntityKeys: {
+			type: 'array',
+			maxItems: 50,
+			items: { type: 'string', minLength: 1, maxLength: 200 },
+			description: 'open_loop (optional): related entity keys.'
+		},
+		eventType: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 100,
+			description: 'event (required): the kind of event, e.g. "deploy".'
+		},
+		summary: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 4000,
+			description: 'event (required): what happened.'
+		},
+		payload: { description: 'event (optional): arbitrary JSON payload.' },
+		visibility: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 100,
+			description: 'attribute / event (optional).'
+		},
+		confidence: {
+			type: 'number',
+			minimum: 0,
+			maximum: 1,
+			description: 'attribute / event (optional).'
+		}
+	}
+} as const;
+
+/** Where to put a lifted scalar when a `{ "<kind>": value }` shape is repaired. */
+const MEMORY_FACT_KIND_PRIMARY_FIELD: Record<MemoryFactKind, string> = {
+	attribute: 'value',
+	directive: 'rule',
+	open_loop: 'title',
+	event: 'summary'
+};
+
+function isMemoryFactKind(value: unknown): value is MemoryFactKind {
+	return typeof value === 'string' && (MEMORY_FACT_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * Best-effort repair of a single malformed `facts[]` item before strict parsing.
+ * Small models routinely collapse `{ "kind": "directive", "rule": "…" }` into
+ * `{ "directive": "…" }` — using the kind value as the property key and stashing
+ * the payload as its value. When an item has no usable `kind` but *does* carry a
+ * key that is itself a kind name, lift it into the canonical shape rather than
+ * bouncing the whole patch back. Deliberately conservative: it only fires when
+ * `kind` is missing/invalid and a kind-named key is present, and never
+ * overwrites a field the model already set.
+ */
+function coerceFactItem(item: unknown): { item: unknown; warning?: string } {
+	if (!item || typeof item !== 'object' || Array.isArray(item)) return { item };
+	const record = item as Record<string, unknown>;
+	if (isMemoryFactKind(record.kind)) return { item };
+
+	const kindKey = MEMORY_FACT_KINDS.find(
+		(kind) => kind in record && record[kind] !== undefined && record[kind] !== null
+	);
+	if (!kindKey) return { item };
+
+	const lifted = record[kindKey];
+	const repaired: Record<string, unknown> = { ...record };
+	delete repaired[kindKey];
+	repaired.kind = kindKey;
+	const primaryField = MEMORY_FACT_KIND_PRIMARY_FIELD[kindKey];
+	let placement = '';
+	if (
+		repaired[primaryField] === undefined &&
+		(typeof lifted === 'string' || typeof lifted === 'number' || typeof lifted === 'boolean')
+	) {
+		repaired[primaryField] = lifted;
+		placement = ` and moved its value into "${primaryField}"`;
+	}
+	return {
+		item: repaired,
+		warning: `Rewrote a fact that used "${kindKey}" as a key into { "kind": "${kindKey}", … }${placement}.`
+	};
+}
+
+/**
+ * Apply {@link coerceFactItem} across a raw patch's `facts[]`, returning the
+ * (possibly) repaired patch plus any human-readable warnings describing what was
+ * changed. Non-object / arrayless input is returned untouched.
+ */
+export function coerceMemoryPatchInput(raw: unknown): { patch: unknown; warnings: string[] } {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { patch: raw, warnings: [] };
+	const record = raw as Record<string, unknown>;
+	if (!Array.isArray(record.facts)) return { patch: raw, warnings: [] };
+	const warnings: string[] = [];
+	const facts = record.facts.map((fact, index) => {
+		const { item, warning } = coerceFactItem(fact);
+		if (warning) warnings.push(`facts[${index}]: ${warning}`);
+		return item;
+	});
+	if (!warnings.length) return { patch: raw, warnings };
+	return { patch: { ...record, facts }, warnings };
+}
+
+/**
+ * Hand-written JSON Schema for the unified `patch` argument, used as the
+ * single-shot extractor's `response_format` schema. Mirrors
+ * {@link MemoryPatchInputSchema}; the Zod parse remains the source of truth.
  */
 export const MEMORY_PATCH_JSON_SCHEMA = {
 	type: 'object',
@@ -1240,81 +1483,8 @@ export const MEMORY_PATCH_JSON_SCHEMA = {
 			type: 'array',
 			maxItems: 300,
 			description:
-				'Everything to remember, each tagged with its kind. attribute = something to KNOW; directive = a standing rule for how you must behave; decision = a settled choice; open_loop = an unresolved task/question; event = something that happened.',
-			items: {
-				oneOf: [
-					{
-						type: 'object',
-						additionalProperties: false,
-						required: ['kind', 'predicate', 'value'],
-						properties: {
-							kind: { const: 'attribute' },
-							entityKey: { type: 'string', minLength: 1, maxLength: 200 },
-							predicate: { type: 'string', minLength: 1, maxLength: 100 },
-							value: { description: 'Required attribute value (any JSON type except undefined).' },
-							visibility: { type: 'string', minLength: 1, maxLength: 100 },
-							confidence: { type: 'number', minimum: 0, maximum: 1 }
-						}
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						required: ['kind', 'rule'],
-						properties: {
-							kind: { const: 'directive' },
-							rule: {
-								type: 'string',
-								minLength: 3,
-								maxLength: 4000,
-								description: 'The standing instruction, stated in full as a declarative rule.'
-							},
-							entityKey: { type: 'string', minLength: 1, maxLength: 200 }
-						}
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						required: ['kind', 'subject', 'decision'],
-						properties: {
-							kind: { const: 'decision' },
-							subject: { type: 'string', minLength: 1, maxLength: 200 },
-							decision: { type: 'string', minLength: 1, maxLength: 4000 },
-							rationale: { type: 'string', maxLength: 4000 }
-						}
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						required: ['kind', 'loopType', 'title'],
-						properties: {
-							kind: { const: 'open_loop' },
-							loopType: { type: 'string', minLength: 1, maxLength: 100 },
-							title: { type: 'string', minLength: 1, maxLength: 200 },
-							description: { type: 'string', maxLength: 8000 },
-							priority: { type: 'integer', minimum: -100, maximum: 100 },
-							relatedEntityKeys: {
-								type: 'array',
-								maxItems: 50,
-								items: { type: 'string', minLength: 1, maxLength: 200 }
-							}
-						}
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						required: ['kind', 'eventType', 'summary'],
-						properties: {
-							kind: { const: 'event' },
-							eventType: { type: 'string', minLength: 1, maxLength: 100 },
-							summary: { type: 'string', minLength: 1, maxLength: 4000 },
-							entityKey: { type: 'string', minLength: 1, maxLength: 200 },
-							payload: { description: 'Arbitrary JSON payload.' },
-							visibility: { type: 'string', minLength: 1, maxLength: 100 },
-							confidence: { type: 'number', minimum: 0, maximum: 1 }
-						}
-					}
-				]
-			}
+				'Everything to remember, each tagged with its kind. attribute = something to KNOW; directive = a standing rule for how you must behave; open_loop = an unresolved task/question; event = something that happened.',
+			items: MEMORY_FACT_FLAT_JSON_SCHEMA
 		},
 		closeLoops: {
 			type: 'array',

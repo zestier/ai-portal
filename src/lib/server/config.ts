@@ -69,6 +69,11 @@ const Schema = z
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),
 		MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(6),
 		MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: z.coerce.number().int().positive().default(60_000),
+		// Tool-calling extractor: how the backend is told to choose tools.
+		// 'auto' lets the model decide each step; 'required' forces a tool call
+		// per step (useful for ramble-prone local models that otherwise narrate
+		// without acting). Backends that ignore tool_choice are unaffected.
+		MEMORY_EXTRACTOR_TOOL_CHOICE: z.enum(['auto', 'required']).default('auto'),
 		// Open-loop liveness: a presented-but-untouched loop is auto-dropped
 		// after this many consecutive model-backed extraction passes (higher
 		// priority loops get proportionally more grace). 0 disables aging.

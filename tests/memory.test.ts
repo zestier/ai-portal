@@ -45,6 +45,13 @@ function routeEvent(
 	} as Parameters<typeof patchMemoryItem>[0];
 }
 
+// Build a single-tool-call assistant turn for the tool-calling extractor's
+// chatComplete double. The new write surface is one tool per fact kind plus
+// keep_loops/close_loop, each taking a flat args object.
+function writeCall(id: string, name: string, args: unknown): ExtractorAssistantTurn {
+	return { content: '', toolCalls: [{ id, name, arguments: JSON.stringify(args) }] };
+}
+
 describe('memory-backed sessions', () => {
 	beforeEach(async () => {
 		await setupLocalEnv();
@@ -863,13 +870,14 @@ describe('memory-backed sessions', () => {
 			mode: 'lightweight'
 		});
 		expect(tools.every((tool) => tool.permissionBehavior === 'never-prompt')).toBe(true);
-
-		const propose = tools.find((tool) => tool.name === 'memory_propose_patch')!;
-		await propose.handler({
-			summary: 'Remember decision',
+		// The main model no longer has a direct write tool; durable writes are
+		// owned by the extractor. Commit directly to seed searchable memory.
+		commitPatch({
+			conversationId: conv.id,
+			mode: 'lightweight',
 			patch: {
 				facts: [
-					{ kind: 'decision', subject: 'memory', decision: 'Tools are mandatory in the MVP.' }
+					{ entityKey: 'memory', predicate: 'policy', value: 'Tools are mandatory in the MVP.' }
 				]
 			}
 		});
@@ -1019,14 +1027,16 @@ describe('memory-backed sessions', () => {
 				patch: {
 					facts: [
 						{
-							kind: 'decision',
-							subject: 'migrations',
-							decision: 'Use append-only migrations for schema changes.'
+							kind: 'attribute',
+							entityKey: 'migrations',
+							predicate: 'decision',
+							value: 'Use append-only migrations for schema changes.'
 						},
 						{
-							kind: 'decision',
-							subject: 'secret',
-							decision: 'token=abcdefghijklmnopqrstuvwxyz'
+							kind: 'attribute',
+							entityKey: 'secret',
+							predicate: 'token',
+							value: 'token=abcdefghijklmnopqrstuvwxyz'
 						},
 						{ kind: 'open_loop', loopType: 'project_task', title: 'Document migration decision' }
 					]
@@ -1064,8 +1074,11 @@ describe('memory-backed sessions', () => {
 		);
 		expect(committed.patch.extractorKind).toBe('openai-compatible');
 		expect(committed.patch.extractorModel).toBe('test-extractor');
-		expect(memory.listDecisions(conv.id)).toHaveLength(1);
-		expect(memory.listDecisions(conv.id)[0]?.decision).toContain('append-only');
+		const migrationFacts = memory
+			.listFacts(conv.id, { limit: 20 })
+			.filter((fact) => fact.predicate === 'decision');
+		expect(migrationFacts).toHaveLength(1);
+		expect(String(migrationFacts[0]?.value)).toContain('append-only');
 	});
 
 	it('canonicalizes model-backed entity aliases while preserving granular facts', async () => {
@@ -1196,27 +1209,10 @@ describe('memory-backed sessions', () => {
 					toolCalls: [
 						{
 							id: 'call-1',
-							name: 'memory_propose_patch',
+							name: 'remember_attributes',
 							arguments: JSON.stringify({
-								summary: 'Recorded migration decision and Mara key ownership.',
-								patch: {
-									entities: [
-										{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }
-									],
-									facts: [
-										{
-											kind: 'attribute',
-											entityKey: 'character.mara',
-											predicate: 'owns',
-											value: 'brass key'
-										},
-										{
-											kind: 'decision',
-											subject: 'migrations',
-											decision: 'Use append-only migrations.'
-										}
-									]
-								}
+								entityKey: 'character.mara',
+								attributes: [{ predicate: 'owns', value: 'brass key' }]
 							})
 						}
 					]
@@ -1246,9 +1242,9 @@ describe('memory-backed sessions', () => {
 			onActivity: (event) => activity.push(event)
 		});
 
-		// The background agent is offered both read tools and the staging writer.
+		// The background agent is offered both read tools and the durable-write tools.
 		expect(seenToolNames).toContain('memory_search');
-		expect(seenToolNames).toContain('memory_propose_patch');
+		expect(seenToolNames).toContain('remember_attributes');
 		// Activity is surfaced so the extractor reads like a fully-featured
 		// nested agent: a leading `input` event carries the context handed to
 		// the extractor, then thoughts (reasoning + <think>) and spoken content
@@ -1288,12 +1284,12 @@ describe('memory-backed sessions', () => {
 		expect(contentText).not.toContain('<think>');
 		const activityCall = activity.find((event) => event.type === 'tool.call');
 		const activityResult = activity.find((event) => event.type === 'tool.result');
-		expect(activityCall).toMatchObject({ type: 'tool.call', tool: 'memory_propose_patch' });
+		expect(activityCall).toMatchObject({ type: 'tool.call', tool: 'remember_attributes' });
 		expect(activityResult).toMatchObject({ type: 'tool.result', ok: true });
 		// The final spoken message is captured as the session response.
 		expect(extraction.response).toBe('Stored the migration decision and Mara key ownership.');
 		// It received validation feedback after staging.
-		expect(feedback.some((entry) => String(entry).includes('"staged":true'))).toBe(true);
+		expect(feedback.some((entry) => String(entry).includes('"ok":true'))).toBe(true);
 		expect(extraction.patch.facts).toEqual([
 			expect.objectContaining({ entityKey: 'character.mara', predicate: 'owns' })
 		]);
@@ -1317,6 +1313,497 @@ describe('memory-backed sessions', () => {
 		expect(memory.listFacts(conv.id, { limit: 10 })).toHaveLength(1);
 	});
 
+	it('stages across multiple per-kind tools and preserves staged totals through a rejection', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara owns the brass key. Keep replies short. Track a follow-up.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1)
+				return writeCall('e1', 'remember_entity', {
+					entityKey: 'character.mara',
+					entityType: 'character',
+					displayName: 'Mara'
+				});
+			if (step === 2)
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'owns', value: 'brass key' }]
+				});
+			if (step === 3) return writeCall('d1', 'remember_directive', { rule: 'Keep replies short.' });
+			// A malformed event mid-stream must not drop the three already staged.
+			if (step === 4) return writeCall('x1', 'remember_event', { summary: 'missing eventType' });
+			if (step === 5)
+				return writeCall('l1', 'remember_loop', { loopType: 'task', title: 'Follow up later' });
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 8,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-multi',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// The rejection envelope echoes staged_totals proving prior work survived
+		// (1 entity + 1 attribute + 1 directive already staged before the bad event).
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsedRejection = JSON.parse(rejection!);
+		expect(parsedRejection.tool).toBe('remember_event');
+		expect(parsedRejection.staged_totals).toMatchObject({ attributes: 1, directives: 1 });
+
+		// All valid items across the different tools made it into the merged patch;
+		// only the malformed event is missing.
+		expect(extraction.patch.entities).toHaveLength(1);
+		expect(extraction.patch.facts).toHaveLength(2); // attribute + directive
+		expect(extraction.patch.openLoops).toHaveLength(1);
+		expect(extraction.patch.events ?? []).toHaveLength(0);
+
+		const committed = commitPatch(
+			{
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-multi',
+				sourceMessageId: assistantMessage.id,
+				patch: extraction.patch,
+				summary: extraction.summary
+			},
+			{ extractorKind: extractor.kind }
+		);
+		expect(committed.patch.status).toBe('committed');
+		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
+	});
+
+	it('stages a paired event when a remember_attributes item carries an event summary', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara just picked up the brass key.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// A state change that is also a notable occurrence: one item records
+				// both the attribute and a paired timeline event.
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [
+						{ predicate: 'owns', value: 'brass key', event: 'Mara picked up the brass key.' }
+					]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-paired',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// The success envelope flags the pairing and counts both items.
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsedOk = JSON.parse(ok!);
+		expect(parsedOk.pairedEvents).toBe(1);
+		expect(parsedOk.staged_totals).toMatchObject({ attributes: 1, events: 1 });
+		// `accepted` echoes the CANONICAL input: a hoisted entityKey plus flat
+		// attribute items, with the paired event's defaulted `eventType: "change"`
+		// surfaced (the normalized form the server consumed).
+		expect(parsedOk.accepted).toEqual({
+			entityKey: 'character.mara',
+			attributes: [
+				{
+					predicate: 'owns',
+					value: 'brass key',
+					event: 'Mara picked up the brass key.',
+					eventType: 'change'
+				}
+			]
+		});
+
+		// Both the attribute fact and the paired event landed in the patch, the
+		// event defaulting to eventType "change" and inheriting the entityKey.
+		expect(extraction.patch.facts).toEqual([
+			expect.objectContaining({ entityKey: 'character.mara', predicate: 'owns' })
+		]);
+		expect(extraction.patch.events).toEqual([
+			expect.objectContaining({
+				eventType: 'change',
+				summary: 'Mara picked up the brass key.',
+				entityKey: 'character.mara'
+			})
+		]);
+	});
+
+	it('rejects a remember_attributes item with eventType but no event summary', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Cloak is red.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'object.cloak',
+					attributes: [{ predicate: 'color', value: 'red', eventType: 'change' }]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-evttype',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.issues[0].field).toBe('attributes.0.eventType');
+		// The single bad item was not staged.
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
+		expect(extraction.patch.events ?? []).toHaveLength(0);
+	});
+
+	it('stages granular attributes in one batch and partially accepts on a bad item', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara is a tall woman with red hair who fears deep water.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// Granular decomposition in ONE call, with one malformed item (no
+				// value) that must not sink the valid siblings.
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [
+						{ predicate: 'build', value: 'tall' },
+						{ predicate: 'hair', value: 'red' },
+						{ predicate: 'fears' }, // missing value -> item rejected
+						{ predicate: 'gender', value: 'woman' }
+					]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-batch',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// Partial acceptance: the three valid traits stage; only the bad item is
+		// reported, by its index, with the rest preserved.
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.error.code).toBe('batch_partial');
+		expect(parsed.staged_totals.attributes).toBe(3);
+		expect(parsed.results).toEqual([
+			{ index: 0, staged: true },
+			{ index: 1, staged: true },
+			expect.objectContaining({ index: 2, staged: false }),
+			{ index: 3, staged: true }
+		]);
+		expect(parsed.issues[0].field).toBe('attributes.2.value');
+		// The note steers the model to re-send only the failed item.
+		expect(parsed.note).toMatch(/only those items/i);
+
+		// The three valid traits are in the patch as separate granular facts.
+		expect(extraction.patch.facts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ entityKey: 'character.mara', predicate: 'build', value: 'tall' }),
+				expect.objectContaining({ entityKey: 'character.mara', predicate: 'hair', value: 'red' }),
+				expect.objectContaining({
+					entityKey: 'character.mara',
+					predicate: 'gender',
+					value: 'woman'
+				})
+			])
+		);
+		expect(extraction.patch.facts).toHaveLength(3);
+	});
+
+	it('echoes accepted as clean input-shaped items for a multi-attribute batch', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara is tall, red-haired, and wary of water.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [
+						{ predicate: 'build', value: 'tall' },
+						{ predicate: 'hair', value: 'red' },
+						{ predicate: 'fears', value: 'deep water', confidence: 0.8 }
+					]
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-accepted-echo',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsed = JSON.parse(ok!);
+		// `accepted` must be a clean echo: a single hoisted entityKey plus the flat
+		// input items — NOT an array of internal { facts: [...] } patch fragments,
+		// and never the entityKey duplicated into every item.
+		expect(parsed.accepted).toEqual({
+			entityKey: 'character.mara',
+			attributes: [
+				{ predicate: 'build', value: 'tall' },
+				{ predicate: 'hair', value: 'red' },
+				{ predicate: 'fears', value: 'deep water', confidence: 0.8 }
+			]
+		});
+		// Guard against regression to the leaky shape.
+		expect(parsed.accepted.attributes[0]).not.toHaveProperty('facts');
+		expect(parsed.accepted.attributes[0]).not.toHaveProperty('entityKey');
+	});
+
+	it('echoes accepted as a clean input echo for every single-item write tool', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		// Seed an open loop so close_loop has a real handle to retire.
+		const priorAssistant = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'You could search the attic.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistant.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Search the attic' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Lots happened.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		// Each tool's exact input args; `accepted` must echo these verbatim — no
+		// internal { facts: [...] } / { entities: [...] } wrappers, single-item
+		// arrays, or renamed fields (e.g. directive's rule -> predicate/value).
+		const inputs: Record<string, Record<string, unknown>> = {
+			remember_entity: {
+				entityKey: 'character.mara',
+				entityType: 'character',
+				displayName: 'Mara'
+			},
+			remember_directive: { rule: 'Keep replies under 200 words.' },
+			remember_event: { eventType: 'deploy', summary: 'Shipped v1.2.' },
+			remember_loop: { loopType: 'task', title: 'Draft the changelog' },
+			close_loop: { handle: loop.id, status: 'resolved' }
+		};
+		const order = Object.keys(inputs);
+
+		const byTool: Record<string, unknown> = {};
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) {
+				if (msg.role !== 'tool' || !msg.content) continue;
+				try {
+					const parsed = JSON.parse(msg.content) as { ok?: boolean; tool?: string };
+					if (parsed.ok && parsed.tool) byTool[parsed.tool] = parsed;
+				} catch {
+					/* ignore non-JSON */
+				}
+			}
+			if (step < order.length) {
+				const tool = order[step];
+				step += 1;
+				return writeCall(`c${step}`, tool, inputs[tool]);
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 10,
+			chatComplete
+		});
+
+		await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-accepted-all',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		for (const tool of order) {
+			const envelope = byTool[tool] as { accepted?: unknown } | undefined;
+			expect(envelope, `${tool} should have produced a success envelope`).toBeDefined();
+			// Clean echo: deep-equals the exact input the model sent.
+			expect(envelope!.accepted, `${tool} accepted should echo its input`).toEqual(inputs[tool]);
+		}
+	});
+
+	it('echoes accepted as the canonical (normalized) input, not the raw input', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Keep it short.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// Raw input has surrounding whitespace (the directive schema trims)
+				// and an unknown extra field (the schema drops it).
+				return writeCall('d1', 'remember_directive', {
+					rule: '   Keep replies short.   ',
+					bogus: 'should be dropped'
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-canonical',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsed = JSON.parse(ok!);
+		// Canonical: trimmed rule, no unknown `bogus` key — what the server
+		// consumed, not the raw input.
+		expect(parsed.accepted).toEqual({ rule: 'Keep replies short.' });
+		// `received` still shows the raw input for contrast (not asserted on the
+		// success path, but the canonical form must differ from the raw one).
+		expect(parsed.accepted.rule).not.toContain('  ');
+		expect(parsed.accepted).not.toHaveProperty('bogus');
+	});
+
 	it('does not stage rejected proposals, so a correction replaces rather than duplicates', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
@@ -1336,35 +1823,11 @@ describe('memory-backed sessions', () => {
 			step += 1;
 			if (step === 1) {
 				// First attempt: an open loop with a too-short title -> error.
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c1',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({
-								patch: { facts: [{ kind: 'open_loop', loopType: 'task', title: 'go' }] }
-							})
-						}
-					]
-				};
+				return writeCall('c1', 'remember_loop', { loopType: 'task', title: 'go' });
 			}
 			if (step === 2) {
 				// Correction: a valid title for the same loop.
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c2',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({
-								patch: {
-									facts: [{ kind: 'open_loop', loopType: 'task', title: 'Inspect the cellar' }]
-								}
-							})
-						}
-					]
-				};
+				return writeCall('c2', 'remember_loop', { loopType: 'task', title: 'Inspect the cellar' });
 			}
 			return { content: 'Stored one follow-up.', toolCalls: [] };
 		};
@@ -1390,7 +1853,7 @@ describe('memory-backed sessions', () => {
 
 		// The first (invalid) proposal was rejected, not staged; only the
 		// corrected one survives, so there is exactly one open loop.
-		expect(feedback.some((entry) => entry.includes('"staged":false'))).toBe(true);
+		expect(feedback.some((entry) => entry.includes('"ok":false'))).toBe(true);
 		expect(extraction.patch.openLoops).toEqual([
 			expect.objectContaining({ title: 'Inspect the cellar' })
 		]);
@@ -1409,7 +1872,7 @@ describe('memory-backed sessions', () => {
 		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
 	});
 
-	it('returns the issue path and target schema when a staged patch fails Zod validation', async () => {
+	it('returns a targeted per-tool error when a write tool gets invalid args', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -1427,20 +1890,11 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				// A fact missing its required `value` -> Zod schema failure, not
-				// a semantic validatePatch issue.
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c1',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({
-								patch: { facts: [{ kind: 'attribute', predicate: 'color' }] }
-							})
-						}
-					]
-				};
+				// remember_attributes item missing its required `value` -> schema failure.
+				return writeCall('c1', 'remember_attributes', {
+					entityKey: 'object.cloak',
+					attributes: [{ predicate: 'color' }]
+				});
 			}
 			return { content: 'Done.', toolCalls: [] };
 		};
@@ -1464,16 +1918,71 @@ describe('memory-backed sessions', () => {
 			initialPacket: buildInitialPacket(conv.id, 'project')
 		});
 
-		const rejection = feedback.find((entry) => entry.includes('patch_schema_invalid'));
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
 		expect(rejection).toBeDefined();
 		const parsed = JSON.parse(rejection!);
-		expect(parsed.staged).toBe(false);
-		// The whole error is surfaced: the offending field's JSON path, Zod's
-		// own issue code, and the schema the patch must satisfy.
-		expect(parsed.issues[0].path).toBe('facts.0.value');
-		expect(parsed.issues[0]).toHaveProperty('zodCode');
-		expect(parsed.targetSchema?.properties?.facts).toBeDefined();
+		expect(parsed.ok).toBe(false);
+		expect(parsed.tool).toBe('remember_attributes');
+		expect(parsed.error.kind).toBe('validation');
+		// The error is scoped to THIS tool and the offending item index: the field
+		// path, a hint, and only this tool's flat schema + example.
+		expect(parsed.issues[0].field).toBe('attributes.0.value');
+		expect(typeof parsed.issues[0].hint).toBe('string');
+		expect(parsed.expected.schema.properties.attributes).toBeDefined();
+		expect(parsed.expected.schema.properties.kind).toBeUndefined();
+		expect(parsed.expected.example.attributes).toBeDefined();
+		// Nothing already staged was lost — the totals are echoed back.
+		expect(parsed.staged_totals).toBeDefined();
 		expect(typeof parsed.note).toBe('string');
+	});
+
+	it('reports an execution error when close_loop targets an unknown handle', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Done with that.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('c1', 'close_loop', { handle: 'loop.does_not_exist', status: 'resolved' });
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-close-unknown',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.tool).toBe('close_loop');
+		// Unknown handle is an execution error (retrying the same args won't help),
+		// not a schema error — the hint redirects to memory_get_open_loops.
+		expect(parsed.error.kind).toBe('execution');
+		expect(parsed.error.code).toBe('unknown_loop');
+		expect(parsed.issues[0].hint).toMatch(/memory_get_open_loops/);
+		// The bad close was not staged.
+		expect(extraction.patch.resolveOpenLoops ?? []).toHaveLength(0);
 	});
 
 	it('stages open-loop resolutions through the tool extractor and prunes on commit', async () => {
@@ -1515,23 +2024,14 @@ describe('memory-backed sessions', () => {
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c1',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({
-								patch: {
-									closeLoops: [
-										{ id: keep.id, status: 'resolved', reason: 'Chosen.' },
-										{ id: drop.id, status: 'dropped' }
-									]
-								}
-							})
-						}
-					]
-				};
+				return writeCall('c1', 'close_loop', {
+					handle: keep.id,
+					status: 'resolved',
+					reason: 'Chosen.'
+				});
+			}
+			if (step === 2) {
+				return writeCall('c2', 'close_loop', { handle: drop.id, status: 'dropped' });
 			}
 			return { content: 'Pruned the unchosen option.', toolCalls: [] };
 		};
@@ -1599,26 +2099,11 @@ describe('memory-backed sessions', () => {
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c1',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({
-								patch: {
-									closeLoops: [
-										{
-											id: loop.id,
-											status: 'resolved',
-											reason: 'Replaced key sk_live_0123456789abcdefghij in the vault.'
-										}
-									]
-								}
-							})
-						}
-					]
-				};
+				return writeCall('c1', 'close_loop', {
+					handle: loop.id,
+					status: 'resolved',
+					reason: 'Replaced key sk_live_0123456789abcdefghij in the vault.'
+				});
 			}
 			return { content: 'Pruned the loop.', toolCalls: [] };
 		};
@@ -1680,35 +2165,17 @@ describe('memory-backed sessions', () => {
 		const first = loops.find((l) => l.title.includes('one'))!;
 		const second = loops.find((l) => l.title.includes('two'))!;
 
-		// The agent reaffirms each live loop in a SEPARATE staging call. Neither
+		// The agent reaffirms each live loop in a SEPARATE keep_loops call. Neither
 		// call alone is the complete keep-set; the collapse must union them, or a
 		// loop kept early would be aged out.
 		let step = 0;
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c1',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({ patch: { keepOpenLoops: [first.id] } })
-						}
-					]
-				};
+				return writeCall('c1', 'keep_loops', { handles: [first.id] });
 			}
 			if (step === 2) {
-				return {
-					content: '',
-					toolCalls: [
-						{
-							id: 'c2',
-							name: 'memory_propose_patch',
-							arguments: JSON.stringify({ patch: { keepOpenLoops: [second.id] } })
-						}
-					]
-				};
+				return writeCall('c2', 'keep_loops', { handles: [second.id] });
 			}
 			return { content: 'Kept both threads.', toolCalls: [] };
 		};
@@ -1735,6 +2202,62 @@ describe('memory-backed sessions', () => {
 		expect([...(extraction.patch.keepOpenLoops ?? [])].sort()).toEqual(
 			[first.id, second.id].sort()
 		);
+	});
+
+	it('keeps known handles but reports unknown ones in a keep_loops batch', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { openLoops: [{ loopType: 'task', title: 'Live thread' }] }
+		});
+		const live = memory.listOpenLoops(conv.id)[0];
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// One real handle plus one hallucinated handle in the same batch.
+				return writeCall('c1', 'keep_loops', { handles: [live.id, 'loop.bogus'] });
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-keep-partial',
+			userMessage: messages.append(conv.id, { role: 'user', content: 'Still relevant.' }),
+			assistantMessage: messages.append(conv.id, { role: 'assistant', content: 'Noted.' }),
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// Partial acceptance: the known handle is kept; the unknown one is an
+		// execution error reported per-handle in results[].
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.tool).toBe('keep_loops');
+		expect(parsed.error.kind).toBe('execution');
+		expect(parsed.error.code).toBe('unknown_handles');
+		expect(parsed.results).toEqual([
+			{ handle: live.id, kept: true },
+			expect.objectContaining({ handle: 'loop.bogus', kept: false })
+		]);
+		// The real handle still made it into the kept set despite the bad sibling.
+		expect(extraction.patch.keepOpenLoops).toEqual([live.id]);
 	});
 
 	it('aborts the tool-calling extractor between iterations when its signal fires', async () => {
@@ -1765,9 +2288,10 @@ describe('memory-backed sessions', () => {
 				toolCalls: [
 					{
 						id: `c${calls}`,
-						name: 'memory_propose_patch',
+						name: 'remember_attributes',
 						arguments: JSON.stringify({
-							patch: { facts: [{ kind: 'attribute', predicate: 'state', value: 'open' }] }
+							entityKey: 'object.door',
+							attributes: [{ predicate: 'state', value: 'open' }]
 						})
 					}
 				]
@@ -1836,7 +2360,7 @@ describe('memory-backed sessions', () => {
 									{
 										index: 0,
 										id: 'c1',
-										function: { name: 'memory_propose_patch', arguments: '{"patch":{"facts":[{"ki' }
+										function: { name: 'remember_attributes', arguments: '{"entityKey":"mig' }
 									}
 								]
 							}
@@ -1852,7 +2376,7 @@ describe('memory-backed sessions', () => {
 										index: 0,
 										function: {
 											arguments:
-												'nd":"decision","subject":"migrations","decision":"append-only"}]}}'
+												'rations","attributes":[{"predicate":"decision","value":"append-only"}]}'
 										}
 									}
 								]
@@ -1902,8 +2426,12 @@ describe('memory-backed sessions', () => {
 		expect(reasoningText).not.toContain('<thi');
 
 		// Tool-call arguments split across SSE deltas were reassembled and staged.
-		expect(extraction.patch.decisions).toEqual([
-			expect.objectContaining({ subject: 'migrations', decision: 'append-only' })
+		expect(extraction.patch.facts).toEqual([
+			expect.objectContaining({
+				entityKey: 'migrations',
+				predicate: 'decision',
+				value: 'append-only'
+			})
 		]);
 		expect(activity.some((event) => event.type === 'tool.call')).toBe(true);
 		// The closing message became the session response.

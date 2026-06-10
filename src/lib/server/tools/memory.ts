@@ -1,14 +1,7 @@
 import { z } from 'zod';
 import * as memoryRepo from '../db/repos/memory';
 import * as messagesRepo from '../db/repos/messages';
-import {
-	MEMORY_PATCH_JSON_SCHEMA,
-	MemoryPatchProposalSchema,
-	buildInitialPacket,
-	commitPatch,
-	renderMemoryPacket,
-	validatePatch
-} from '../memory/engine';
+import { buildInitialPacket, renderMemoryPacket } from '../memory/engine';
 import type { MemoryMode } from '$lib/types';
 import type { PortalTool } from './git';
 
@@ -96,11 +89,6 @@ const CheckClaimsArgs = z.object({
 		)
 		.min(1)
 		.max(50)
-});
-
-const ProposePatchArgs = z.object({
-	summary: z.string().trim().max(1000).optional(),
-	patch: MemoryPatchProposalSchema
 });
 
 export function buildMemoryTools(opts: {
@@ -452,44 +440,6 @@ export function buildMemoryTools(opts: {
 					resultIds: result.into ? [result.into.id] : []
 				});
 				return JSON.stringify(result, null, 2);
-			}
-		},
-		{
-			name: 'memory_propose_patch',
-			description:
-				'Propose durable memory updates for this turn. Provide entities (referents) and facts (each tagged with a required kind: attribute, directive, decision, open_loop, or event). The server validates and commits the patch; the model cannot mutate memory directly.',
-			argsSchema: ProposePatchArgs,
-			permissionBehavior: 'never-prompt',
-			parameters: {
-				type: 'object',
-				properties: {
-					summary: { type: 'string', description: 'Short summary of the memory change.' },
-					patch: MEMORY_PATCH_JSON_SCHEMA
-				},
-				required: ['patch'],
-				additionalProperties: false
-			},
-			async handler(args) {
-				const parsed = ProposePatchArgs.parse(args);
-				const validation = validatePatch(parsed.patch, {
-					conversationId: opts.conversationId,
-					mode: opts.mode
-				});
-				const committed = commitPatch({
-					conversationId: opts.conversationId,
-					mode: opts.mode,
-					turnId: opts.getTurnId?.() ?? null,
-					patch: parsed.patch,
-					summary: parsed.summary
-				});
-				memoryRepo.recordToolCall(opts.conversationId, {
-					turnId: opts.getTurnId?.() ?? null,
-					toolName: 'memory_propose_patch',
-					arguments: parsed,
-					resultSummary: `${committed.patch.status}: ${committed.patch.summary}`,
-					resultIds: [committed.patch.id]
-				});
-				return JSON.stringify({ validation, committed }, null, 2);
 			}
 		},
 		{
