@@ -390,6 +390,44 @@ function writeSuccess(
 	});
 }
 
+// Order-independent serialization of a write call's arguments, used as the
+// signature for duplicate-call detection: object keys are emitted sorted (at
+// every depth) so two calls that differ only in key order — common when a model
+// regenerates the "same" arguments — collapse to one signature. Arrays keep
+// their order (a reordered attribute list is a different intent).
+function stableStringify(value: unknown): string {
+	if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+	if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+	const entries = Object.entries(value as Record<string, unknown>)
+		.filter(([, v]) => v !== undefined)
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+		.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+	return `{${entries.join(',')}}`;
+}
+
+// When a write call exactly repeats one already made this turn, fold a nudge
+// into its result envelope so the model sees — in the very feedback it self-
+// corrects against — that it is looping. The nudge adapts to the outcome:
+// repeating a *successful* stage records nothing new, while repeating a
+// *failing* call will keep failing identically. `repeatCount` is the number of
+// times these exact arguments have now been sent (2 on the first repeat).
+function annotateDuplicateCall(result: string, tool: WriteToolName, repeatCount: number): string {
+	let parsed: Record<string, unknown>;
+	try {
+		parsed = JSON.parse(result) as Record<string, unknown>;
+	} catch {
+		// Non-JSON envelope (shouldn't happen for write tools); leave as-is.
+		return result;
+	}
+	const succeeded = parsed.ok === true;
+	const nudge = succeeded
+		? `You have already made this exact ${tool} call this turn (${repeatCount} times now). It was staged the first time, so repeating it records nothing new and nothing commits twice. Do NOT call it again — record different durable memory, or stop if nothing durable remains.`
+		: `You have now sent these exact ${tool} arguments ${repeatCount} times and they keep failing the same way. Retrying them unchanged will not help — change the arguments to fix the issues above, switch to a different durable memory, or stop.`;
+	parsed.duplicate = { repeatCount };
+	parsed.note = typeof parsed.note === 'string' ? `${nudge} ${parsed.note}` : nudge;
+	return JSON.stringify(parsed);
+}
+
 function writeError(
 	tool: WriteToolName,
 	kind: 'validation' | 'execution',
@@ -862,13 +900,31 @@ export function createWriteToolHandlers(
 		);
 	};
 
+	// Per-run signature -> times-seen counter. A tool-calling extractor can get
+	// stuck re-issuing the same write (e.g. the same attributes on one entity)
+	// every iteration; tracking exact-argument repeats lets us fold a nudge into
+	// the result so the model notices it is looping and either moves on or stops.
+	const writeCallCounts = new Map<string, number>();
+	const withDuplicateNudge =
+		(tool: WriteToolName, handler: (args: unknown) => Promise<string>) =>
+		async (args: unknown): Promise<string> => {
+			const result = await handler(args);
+			const signature = `${tool}:${stableStringify(args)}`;
+			const count = (writeCallCounts.get(signature) ?? 0) + 1;
+			writeCallCounts.set(signature, count);
+			return count > 1 ? annotateDuplicateCall(result, tool, count) : result;
+		};
+
 	const handlers = new Map<string, (args: unknown) => Promise<string>>();
 	for (const tool of Object.keys(REMEMBER_TOOL_KINDS) as RememberToolName[]) {
-		handlers.set(tool, handleRemember(tool));
+		handlers.set(tool, withDuplicateNudge(tool, handleRemember(tool)));
 	}
-	handlers.set('remember_attributes', handleRememberAttributes);
-	handlers.set('remember_entity', handleRememberEntity);
-	handlers.set('keep_loops', handleKeepLoops);
-	handlers.set('close_loop', handleCloseLoop);
+	handlers.set(
+		'remember_attributes',
+		withDuplicateNudge('remember_attributes', handleRememberAttributes)
+	);
+	handlers.set('remember_entity', withDuplicateNudge('remember_entity', handleRememberEntity));
+	handlers.set('keep_loops', withDuplicateNudge('keep_loops', handleKeepLoops));
+	handlers.set('close_loop', withDuplicateNudge('close_loop', handleCloseLoop));
 	return handlers;
 }

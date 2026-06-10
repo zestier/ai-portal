@@ -1515,6 +1515,77 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.events ?? []).toHaveLength(0);
 	});
 
+	it('nudges the model when it repeats the exact same write call within a turn', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara has red hair.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			// Re-read the full ordered tool transcript each step; after the run
+			// `feedback` holds every tool result in call order (1, 2, 3).
+			feedback.length = 0;
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			// The model loops: it stages the same attribute on the same entity
+			// three times in a row (key order shuffled the third time to prove the
+			// signature is order-independent) before finally stopping.
+			if (step === 1 || step === 2) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'hair', value: 'red' }]
+				});
+			}
+			if (step === 3) {
+				return writeCall('a1', 'remember_attributes', {
+					attributes: [{ value: 'red', predicate: 'hair' }],
+					entityKey: 'character.mara'
+				});
+			}
+			return { content: 'Done.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 6,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-dup',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const parsed = feedback.map((entry) => JSON.parse(entry));
+		// First call is not flagged; the second and third (the repeats) are, with
+		// an escalating repeatCount and a nudge folded into the note.
+		expect(parsed[0].duplicate).toBeUndefined();
+		expect(parsed[1].duplicate).toEqual({ repeatCount: 2 });
+		expect(parsed[2].duplicate).toEqual({ repeatCount: 3 });
+		expect(parsed[1].note).toContain('already made this exact remember_attributes call');
+		// The nudge is purely advisory: the underlying writes still succeed (the
+		// duplicate fragments stage and are deduped later at commit time).
+		expect(parsed[1].ok).toBe(true);
+		expect(extraction.patch.facts).toEqual([
+			expect.objectContaining({ entityKey: 'character.mara', predicate: 'hair' }),
+			expect.objectContaining({ entityKey: 'character.mara', predicate: 'hair' }),
+			expect.objectContaining({ entityKey: 'character.mara', predicate: 'hair' })
+		]);
+	});
+
 	it('stages granular attributes in one batch and partially accepts on a bad item', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
