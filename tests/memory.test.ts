@@ -3010,6 +3010,42 @@ describe('memory-backed sessions', () => {
 		expect(committed.counts.forgottenFacts).toBe(0);
 	});
 
+	it('runs beforeCommit only when the patch validates and is about to apply', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		let fired = 0;
+		const committed = commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			beforeCommit: () => fired++,
+			patch: {
+				entities: [{ entityKey: 'topic.x', entityType: 'topic', displayName: 'X' }],
+				facts: [{ entityKey: 'topic.x', predicate: 'note', value: 'kept' }]
+			}
+		});
+		expect(committed.patch.status).toBe('committed');
+		expect(fired).toBe(1);
+	});
+
+	it('does NOT run beforeCommit when the patch fails validation (needs_review)', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// Guards the retry path's deferred revert: a needs_review patch must not
+		// trigger beforeCommit, or the prior committed memory would be destroyed
+		// while the replacement applies nothing.
+		let fired = 0;
+		const committed = commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			beforeCommit: () => fired++,
+			patch: { forgetFacts: [{ factId: 'fact.nope' }] }
+		});
+		expect(committed.patch.status).toBe('needs_review');
+		expect(fired).toBe(0);
+	});
+
 	it('prefers supersede for a same-predicate update (no forget needed)', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });

@@ -18,9 +18,11 @@
 		forks = [],
 		isInFlightTurnUser = false,
 		thinking = false,
+		canRetryMemory = false,
 		onForked,
 		onInlineEdited,
-		onToolRerunStarted
+		onToolRerunStarted,
+		onMemoryRetryStarted
 	}: {
 		message: Message;
 		conversationId?: string;
@@ -28,9 +30,13 @@
 		forks?: Array<{ id: string; title: string; archivedAt: number | null }>;
 		isInFlightTurnUser?: boolean;
 		thinking?: boolean;
+		// True when this is the latest assistant message and the conversation is
+		// idle, enabling the memory extractor card's "Retry extraction" control.
+		canRetryMemory?: boolean;
 		onForked?: () => void;
 		onInlineEdited?: (messageId: string, content: string, turnId: string) => void;
 		onToolRerunStarted?: (turnId: string) => void;
+		onMemoryRetryStarted?: (turnId: string) => void;
 	} = $props();
 
 	let editing = $state(false);
@@ -450,6 +456,9 @@
 					{#if p.tool.tool === 'task'}
 						<SubagentCall
 							toolCall={p.tool}
+							{conversationId}
+							canRetry={canRetryMemory}
+							onRetryStarted={onMemoryRetryStarted}
 							childTools={(message.toolCalls ?? []).filter((t) => t.parentToolCallId === p.tool.id)}
 							childReasoning={(message.reasoningBlocks ?? []).filter(
 								(r) => r.parentToolCallId === p.tool.id

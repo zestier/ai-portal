@@ -434,6 +434,15 @@
 		if (!eventSource) attachStream(turnId, { replay: false });
 	}
 
+	// Memory-extraction retry: the server re-runs extraction for the latest
+	// turn under a fresh streaming turn (no new message). Attach to its stream
+	// so the live extractor card + memory.status updates render in place.
+	async function handleMemoryRetryStarted(turnId: string) {
+		streaming = true;
+		await refreshMessages();
+		if (!eventSource) attachStream(turnId, { replay: false });
+	}
+
 	function handleInlineEdited(messageId: string, content: string, turnId: string) {
 		const idx = messages.findIndex((m) => m.id === messageId);
 		if (idx >= 0) {
@@ -923,6 +932,14 @@
 	// <Message_> wiring (input inspector, forks, idle state) as a real turn —
 	// no second rendering path to keep in sync.
 	const lastIsAssistant = $derived(messages[messages.length - 1]?.role === 'assistant');
+	// The latest persisted assistant message. Its memory-extractor card may show
+	// a "Retry extraction" control — but only while the conversation is idle.
+	const latestAssistantMessageId = $derived.by(() => {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].role === 'assistant') return messages[i].id;
+		}
+		return null;
+	});
 	// The user message that triggered the currently-streaming turn. Edit-fork
 	// is hidden on it (you can't edit the live turn's boundary); every earlier
 	// user message stays forkable even while this turn streams.
@@ -1000,9 +1017,11 @@
 						forks={forksByMessage[m.id] ?? []}
 						isInFlightTurnUser={m.id === inFlightUserMessageId}
 						thinking={thinking && i === renderedMessages.length - 1}
+						canRetryMemory={!streaming && m.id === latestAssistantMessageId}
 						onForked={refreshForks}
 						onInlineEdited={handleInlineEdited}
 						onToolRerunStarted={handleToolRerunStarted}
+						onMemoryRetryStarted={handleMemoryRetryStarted}
 					/>
 				{/each}
 				{#each visibleInteractive as p (p.requestId)}

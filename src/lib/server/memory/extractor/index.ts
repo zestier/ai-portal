@@ -694,7 +694,12 @@ export async function extractAndCommitMemory(
 		turnId: input.turnId,
 		sourceMessageId: input.assistantMessage.id,
 		patch: extraction.patch,
-		summary: extraction.summary
+		summary: extraction.summary,
+		// Defer the prior-patch revert (retry path) into `commitPatch`, which runs
+		// it only when the replacement patch validates and is about to be applied.
+		// A `needs_review`, failed, or aborted extraction therefore never destroys
+		// the existing committed memory.
+		beforeCommit: input.beforeCommit
 	};
 	const committed = commitPatch(commitInput, {
 		extractorKind: extractor.kind,

@@ -131,6 +131,17 @@ export interface CommitMemoryPatchInput {
 	sourceMessageId?: string | null;
 	patch: MemoryPatchProposal;
 	summary?: string;
+	/**
+	 * Optional hook invoked exactly once, only when the patch validates and is
+	 * about to be applied — after the (failed) early return for a `needs_review`
+	 * patch, but before any durable items are written. The retry path uses it to
+	 * revert the prior turn's patch only once a replacement is guaranteed to
+	 * land, so a `needs_review` (or otherwise non-committing) retry never
+	 * destroys the existing committed memory. Reverting here — immediately before
+	 * applying the new items — also keeps entity-key reuse on clean pre-turn
+	 * state, avoiding double-counting.
+	 */
+	beforeCommit?: () => void;
 }
 
 export function isEnabled(mode: MemoryMode): boolean {
@@ -791,6 +802,14 @@ export function commitPatch(
 			}
 		};
 	}
+
+	// The patch validated and is about to be applied: now — and only now — is it
+	// safe to run the caller's pre-commit hook (the retry path's revert of the
+	// prior patch). A `needs_review` patch returns above without reaching this,
+	// so a failed retry leaves the existing committed memory intact. Running it
+	// here, immediately before the upserts below, also means the new patch's
+	// entity-key reuse operates on clean pre-turn state.
+	input.beforeCommit?.();
 
 	const entityIdsByKey = new Map<string, string>();
 	for (const entity of input.patch.entities ?? []) {

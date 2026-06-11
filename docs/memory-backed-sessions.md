@@ -1221,6 +1221,37 @@ Actions:
 - wipe session memory
 - export memory
 
+### Retry extraction (latest turn)
+
+The live memory-extractor subagent card for the **latest** turn carries a
+"Retry extraction" control. It re-runs **only** the extraction step for that
+turn, reusing the stored user + assistant messages — it does not re-prompt the
+model, start a new turn, or regenerate the assistant response.
+
+Flow (`POST /api/conversations/[id]/memory`):
+
+1. Authorize against the conversation owner; no-op/blocked when memory mode is
+   disabled (`400`).
+2. Block with `409` if a turn (or its extraction) is already running.
+3. Resolve the latest turn server-side (most recent assistant message + the
+   user message that triggered it).
+4. Re-run `extractAndCommitMemory` for the latest turn. Only once the
+   re-extraction yields a *committable* (validated) patch is the latest turn's
+   prior committed patch reverted — immediately before the replacement is
+   applied, so the commit still lands cleanly with no double-counting. A failed,
+   timed-out, aborted, or `needs_review` retry never runs the revert, so the
+   existing memory is preserved. If the prior extraction committed nothing
+   (failed / `needs_review` / cancelled), or the latest turn cannot be pinned to
+   a stable turn id (legacy/stub turns), there is nothing to revert.
+
+The retry runs under a fresh streaming turn so the card reflects live status
+(`extracting` -> `validating` -> `committed`/`needs_review`) via the same
+`memory.status` SSE events, and a fresh extractor card/result is emitted exactly
+as in a normal post-turn extraction. The committed patch is grouped under the
+latest turn's stable turn id, so repeated retries each revert the previous one
+cleanly. Only the latest turn is retryable — older turns' cards do not show the
+control, and the "is latest" check is enforced server-side, not just in the UI.
+
 ### Memory diff
 
 After each turn in memory-backed mode, show a collapsed memory update summary:

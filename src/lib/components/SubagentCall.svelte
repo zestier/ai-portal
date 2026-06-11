@@ -10,17 +10,27 @@
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import DiffView from './DiffView.svelte';
 	import Pill from './ui/Pill.svelte';
+	import Alert from './ui/Alert.svelte';
 
 	let {
 		toolCall,
 		childTools = [],
 		childReasoning = [],
-		childEdits = []
+		childEdits = [],
+		conversationId,
+		canRetry = false,
+		onRetryStarted
 	}: {
 		toolCall: ToolCallRecord;
 		childTools?: ToolCallRecord[];
 		childReasoning?: ReasoningBlockRecord[];
 		childEdits?: FileEditRecord[];
+		conversationId?: string;
+		// True only for the latest assistant turn's extractor card while the
+		// conversation is idle; older turns' cards and a busy conversation
+		// disable the affordance (enforced server-side too).
+		canRetry?: boolean;
+		onRetryStarted?: (turnId: string) => void;
 	} = $props();
 
 	// Auto-expand while the subagent is running so the user sees activity,
@@ -54,6 +64,51 @@
 	const resultText = $derived(displayState.resultText);
 	const promptHtml = $derived(args.prompt ? renderMarkdown(args.prompt) : null);
 	const resultHtml = $derived(resultText ? renderMarkdown(resultText) : null);
+
+	// The memory extractor reuses this card. For the latest turn's extractor
+	// card we surface a "Retry extraction" control that re-runs extraction-only
+	// (revert prior patch + re-extract) without re-prompting the model.
+	const isMemoryExtractor = $derived(args.agent_type === 'memory-extractor');
+	const showRetry = $derived(isMemoryExtractor && canRetry && !!conversationId && !pending);
+	let retrying = $state(false);
+	let retryError = $state<string | null>(null);
+
+	async function retryExtraction(e: Event) {
+		// The button lives in the <summary>; stop the click from toggling the
+		// disclosure open/closed.
+		e.preventDefault();
+		e.stopPropagation();
+		if (!conversationId || retrying || !showRetry) return;
+		retryError = null;
+		retrying = true;
+		try {
+			const r = await fetch(`/api/conversations/${conversationId}/memory`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{}'
+			});
+			if (!r.ok) {
+				const body = await r.text();
+				// SvelteKit `error(status, message)` responses are JSON
+				// (`{ message }`); fall back to the raw body / status otherwise.
+				let message = body;
+				try {
+					const parsed = JSON.parse(body) as { message?: string };
+					if (parsed?.message) message = parsed.message;
+				} catch {
+					// Non-JSON body: use it verbatim.
+				}
+				retryError = message || `Retry failed (${r.status})`;
+				return;
+			}
+			const data = (await r.json()) as { turnId: string };
+			onRetryStarted?.(data.turnId);
+		} catch (err) {
+			retryError = err instanceof Error ? err.message : String(err);
+		} finally {
+			retrying = false;
+		}
+	}
 
 	function firstLine(s: string, max = 80): string {
 		const line =
@@ -201,8 +256,22 @@
 		{#if elapsedLabel}
 			<span class="elapsed">· {elapsedLabel}</span>
 		{/if}
+		{#if showRetry}
+			<button
+				type="button"
+				class="retry-btn"
+				onclick={retryExtraction}
+				disabled={retrying}
+				title="Re-run memory extraction for this turn; the prior patch is replaced only if the new extraction succeeds (does not re-prompt the model)"
+			>
+				{retrying ? 'Retrying…' : 'Retry extraction'}
+			</button>
+		{/if}
 	</summary>
 	<div class="content">
+		{#if retryError}
+			<Alert kind="error">{retryError}</Alert>
+		{/if}
 		{#if promptHtml}
 			<details class="section prompt">
 				<summary class="disclosure">
@@ -410,6 +479,28 @@
 		font-size: var(--fs-xs);
 		color: var(--text-muted);
 		font-family: var(--mono);
+	}
+	.retry-btn {
+		margin-left: auto;
+		font-size: var(--fs-xs);
+		font-weight: 600;
+		color: var(--text-muted);
+		background: var(--surface-1, transparent);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.1rem 0.5rem;
+		cursor: pointer;
+		transition:
+			color 0.12s ease,
+			border-color 0.12s ease;
+	}
+	.retry-btn:hover:not(:disabled) {
+		color: var(--text);
+		border-color: var(--accent);
+	}
+	.retry-btn:disabled {
+		opacity: 0.6;
+		cursor: default;
 	}
 	.content {
 		margin-top: var(--space-2);

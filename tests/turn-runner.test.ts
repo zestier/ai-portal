@@ -1156,6 +1156,340 @@ describe('turn-runner', () => {
 		}
 	});
 
+	it('re-runs extraction for an existing assistant message via startExtractionRetryTurn', async () => {
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		const sseChunks = [
+			[
+				{ choices: [{ delta: { reasoning: 'Re-extracting the migration decision.' } }] },
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: 'call-1',
+										function: {
+											name: 'remember_attributes',
+											arguments: JSON.stringify({
+												entityKey: 'migrations',
+												attributes: [
+													{ predicate: 'decision', value: 'Use append-only migrations.' }
+												]
+											})
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			],
+			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+		];
+		let chatCall = 0;
+		const fetchMock = vi.fn(async () => {
+			const chunks = sseChunks[Math.min(chatCall, sseChunks.length - 1)];
+			chatCall += 1;
+			const text =
+				chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
+			return new Response(text, {
+				status: 200,
+				headers: { 'content-type': 'text/event-stream' }
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		try {
+			const { users, convs, turnRunner } = await freshImports();
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const memory = await import('../src/lib/server/db/repos/memory');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, { title: 'mem retry', workdir: wd, model: 'gpt-4' });
+			const userMsg = messages.append(conv.id, {
+				role: 'user',
+				content: 'Remember we chose append-only migrations.'
+			});
+			const assistantMsg = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
+
+			const turn = await turnRunner.startExtractionRetryTurn({
+				conversationId: conv.id,
+				userId: user.id,
+				assistantMessageId: assistantMsg.id,
+				assistantContent: assistantMsg.content,
+				memory: {
+					mode: 'project',
+					userMessageId: userMsg.id,
+					userContent: userMsg.content,
+					patchTurnId: 'turn-1'
+				}
+			});
+
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe()) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+
+			// Live status lifecycle flowed: extracting -> validating -> committed.
+			expect(
+				events.find((e) => e.type === 'memory.status' && e.phase === 'extracting')
+			).toBeTruthy();
+			expect(
+				events.find((e) => e.type === 'memory.status' && e.phase === 'committed')
+			).toBeTruthy();
+			expect(events.find((e) => e.type === 'done')).toMatchObject({
+				type: 'done',
+				status: 'complete'
+			});
+
+			// The extractor card is persisted onto the SAME existing assistant
+			// message; no new assistant message was appended.
+			const assistants = messages.listByConversation(conv.id).filter((m) => m.role === 'assistant');
+			expect(assistants).toHaveLength(1);
+			expect(assistants[0].id).toBe(assistantMsg.id);
+			expect(assistants[0].content).toBe('Done.');
+			const parent = assistants[0].toolCalls?.find((t) => {
+				try {
+					return JSON.parse(t.argsJson).agent_type === 'memory-extractor';
+				} catch {
+					return false;
+				}
+			});
+			expect(parent).toBeTruthy();
+			expect(parent?.backgroundAgentStatus).toBe('completed');
+
+			// The patch committed under the stable turn id so revert can find it.
+			const patch = memory.listPatches(conv.id).find((p) => p.status === 'committed');
+			expect(patch?.turnId).toBe('turn-1');
+			expect(memory.listFacts(conv.id).map((f) => f.value)).toContain(
+				'Use append-only migrations.'
+			);
+
+			// Turn freed.
+			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
+		} finally {
+			delete process.env.MEMORY_EXTRACTOR_BACKEND;
+			delete process.env.MEMORY_EXTRACTOR_MODEL;
+			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('reverts the prior committed patch only after a successful re-extraction', async () => {
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		const sseChunks = [
+			[
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: 'call-1',
+										function: {
+											name: 'remember_attributes',
+											arguments: JSON.stringify({
+												entityKey: 'migrations',
+												attributes: [
+													{ predicate: 'decision', value: 'Use append-only migrations.' }
+												]
+											})
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			],
+			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+		];
+		let chatCall = 0;
+		const fetchMock = vi.fn(async () => {
+			const chunks = sseChunks[Math.min(chatCall, sseChunks.length - 1)];
+			chatCall += 1;
+			const text =
+				chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
+			return new Response(text, {
+				status: 200,
+				headers: { 'content-type': 'text/event-stream' }
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		try {
+			const { users, convs, turnRunner } = await freshImports();
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const memory = await import('../src/lib/server/db/repos/memory');
+			const { commitPatch } = await import('../src/lib/server/memory/engine');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, {
+				title: 'mem retry revert',
+				workdir: wd,
+				model: 'gpt-4'
+			});
+			const userMsg = messages.append(conv.id, {
+				role: 'user',
+				content: 'Remember we chose append-only migrations.'
+			});
+			const assistantMsg = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
+
+			// A prior committed patch for the same logical turn.
+			const prior = commitPatch({
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-1',
+				sourceMessageId: assistantMsg.id,
+				patch: {
+					entities: [{ entityKey: 'migrations', entityType: 'topic', displayName: 'Migrations' }],
+					facts: [{ entityKey: 'migrations', predicate: 'decision', value: 'Stale decision.' }]
+				}
+			});
+			expect(prior.patch.status).toBe('committed');
+			expect(memory.listFacts(conv.id).map((f) => f.value)).toContain('Stale decision.');
+
+			const turn = await turnRunner.startExtractionRetryTurn({
+				conversationId: conv.id,
+				userId: user.id,
+				assistantMessageId: assistantMsg.id,
+				assistantContent: assistantMsg.content,
+				memory: {
+					mode: 'project',
+					userMessageId: userMsg.id,
+					userContent: userMsg.content,
+					patchTurnId: 'turn-1',
+					revertPatchId: prior.patch.id
+				}
+			});
+
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe()) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+			expect(
+				events.find((e) => e.type === 'memory.status' && e.phase === 'committed')
+			).toBeTruthy();
+
+			// The prior patch was reverted as part of the successful retry and the
+			// replacement landed: the stale fact is gone, the fresh one is present.
+			expect(memory.listPatches(conv.id).find((p) => p.id === prior.patch.id)?.status).toBe(
+				'reverted'
+			);
+			const facts = memory.listFacts(conv.id).map((f) => f.value);
+			expect(facts).toContain('Use append-only migrations.');
+			expect(facts).not.toContain('Stale decision.');
+		} finally {
+			delete process.env.MEMORY_EXTRACTOR_BACKEND;
+			delete process.env.MEMORY_EXTRACTOR_MODEL;
+			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('on retry timeout surfaces needs_review (not cancelled) and preserves the prior patch', async () => {
+		process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS = '40';
+		process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS = '40';
+
+		let capturedSignal: AbortSignal | undefined;
+		vi.resetModules();
+		await setupLocalEnv();
+		vi.doMock('../src/lib/server/memory/extractor', async () => {
+			const actual = await vi.importActual<typeof import('../src/lib/server/memory/extractor')>(
+				'../src/lib/server/memory/extractor'
+			);
+			return {
+				...actual,
+				// Hang without observing the abort signal and without ever invoking
+				// beforeCommit, so only the watchdog can end it.
+				extractAndCommitMemory: vi.fn((input: { signal?: AbortSignal }) => {
+					capturedSignal = input.signal;
+					return new Promise(() => {});
+				})
+			};
+		});
+		try {
+			const users = await import('../src/lib/server/db/repos/users');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const memory = await import('../src/lib/server/db/repos/memory');
+			const turnRunner = await import('../src/lib/server/runtime/turn-runner');
+			const { commitPatch } = await import('../src/lib/server/memory/engine');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, {
+				title: 'mem retry timeout',
+				workdir: wd,
+				model: 'gpt-4'
+			});
+			const userMsg = messages.append(conv.id, { role: 'user', content: 'remember this' });
+			const assistantMsg = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
+
+			const prior = commitPatch({
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-1',
+				sourceMessageId: assistantMsg.id,
+				patch: {
+					entities: [{ entityKey: 'migrations', entityType: 'topic', displayName: 'Migrations' }],
+					facts: [{ entityKey: 'migrations', predicate: 'decision', value: 'Stale decision.' }]
+				}
+			});
+			expect(prior.patch.status).toBe('committed');
+
+			const turn = await turnRunner.startExtractionRetryTurn({
+				conversationId: conv.id,
+				userId: user.id,
+				assistantMessageId: assistantMsg.id,
+				assistantContent: assistantMsg.content,
+				memory: {
+					mode: 'project',
+					userMessageId: userMsg.id,
+					userContent: userMsg.content,
+					patchTurnId: 'turn-1',
+					revertPatchId: prior.patch.id
+				}
+			});
+
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe()) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+
+			// A watchdog timeout is a failure, not a user cancellation: it ends the
+			// turn cleanly and surfaces needs_review, never the `skipped`/cancelled
+			// status reserved for a user Stop.
+			expect(events.find((e) => e.type === 'done')).toMatchObject({
+				type: 'done',
+				status: 'complete'
+			});
+			expect(
+				events.find((e) => e.type === 'memory.status' && e.phase === 'needs_review')
+			).toBeTruthy();
+			expect(events.find((e) => e.type === 'memory.status' && e.phase === 'skipped')).toBeFalsy();
+			expect(capturedSignal?.aborted).toBe(true);
+
+			// The prior patch survives the failed retry untouched (no data loss).
+			expect(memory.listPatches(conv.id).find((p) => p.id === prior.patch.id)?.status).toBe(
+				'committed'
+			);
+			expect(memory.listFacts(conv.id).map((f) => f.value)).toContain('Stale decision.');
+		} finally {
+			vi.doUnmock('../src/lib/server/memory/extractor');
+			delete process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS;
+			delete process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS;
+		}
+	});
+
 	it('persists manual rerun tool calls as separate attempts without overwriting the original', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const messages = await import('../src/lib/server/db/repos/messages');
