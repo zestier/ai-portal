@@ -130,6 +130,7 @@ export function extractorTurnData(input: ExtractPatchInput): string[] {
 			input.initialPacket
 				? renderMemoryPacket(input.initialPacket, {
 						includeIds: true,
+						includeToolGuidance: false,
 						openLoopExpiry: { baseThreshold: loadConfig().MEMORY_OPEN_LOOP_MAX_IDLE_TURNS }
 					})
 				: '(none)'

@@ -1769,6 +1769,18 @@ export interface RenderMemoryPacketOptions {
 	 * threshold. Omit to render no liveness hints.
 	 */
 	openLoopExpiry?: { baseThreshold: number; warnWithin?: number };
+	/**
+	 * Append the live-session `memory tools:` recall-guidance block (the
+	 * `mandatory/optional recall via: …` + `recall when: …` lines derived from
+	 * `packet.toolGuidance`). Defaults to true for the live agent, which acts on
+	 * that guidance. The background extractor sets this false: it carries its own
+	 * tool vocabulary (the `remember_*` write tools plus the recall tools) in its
+	 * system prompt, and embedding the live agent's recall-only tool list in the
+	 * extractor's turn data is both redundant and misleading — it names recall
+	 * tools but not the write tools the extractor must call, which has prompted
+	 * models to hallucinate hybrids like `memory_attributes`.
+	 */
+	includeToolGuidance?: boolean;
 }
 
 /**
@@ -1922,11 +1934,13 @@ export function renderMemoryPacket(
 	}
 
 	const guidance = packet.toolGuidance;
-	lines.push('', 'memory tools:');
-	lines.push(
-		`- ${guidance.mandatory ? 'mandatory' : 'optional'} recall via: ${guidance.availableTools.join(', ')}`
-	);
-	lines.push(`- recall when: ${guidance.recallTriggers.join('; ')}`);
+	if (options.includeToolGuidance ?? true) {
+		lines.push('', 'memory tools:');
+		lines.push(
+			`- ${guidance.mandatory ? 'mandatory' : 'optional'} recall via: ${guidance.availableTools.join(', ')}`
+		);
+		lines.push(`- recall when: ${guidance.recallTriggers.join('; ')}`);
+	}
 
 	return lines.join('\n');
 }

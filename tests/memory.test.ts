@@ -226,6 +226,19 @@ describe('memory-backed sessions', () => {
 		// Ids are surfaced on entities and facts too, not just loops.
 		expect(extractorRendered).toMatch(/character\.mara[^\n]*\[id=[^\]]+\]/);
 		expect(extractorRendered).toMatch(/location = the cellar \[id=[^\]]+\]/);
+		// The live-agent render carries the recall-tool guidance block; the
+		// extractor render suppresses it. The extractor's own tool vocabulary
+		// (recall + remember_* write tools) lives in its system prompt, so
+		// echoing the live agent's recall-only tool list here is redundant and
+		// has prompted models to invent hybrids like `memory_attributes`.
+		expect(rendered).toContain('memory tools:');
+		expect(rendered).toMatch(/recall via:/);
+		const extractorTurnText = renderMemoryPacket(packet, {
+			includeIds: true,
+			includeToolGuidance: false
+		});
+		expect(extractorTurnText).not.toContain('memory tools:');
+		expect(extractorTurnText).not.toMatch(/recall via:/);
 
 		const prompt = buildPromptWithMemory({
 			conversationId: conv.id,
