@@ -378,10 +378,31 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			for (const call of turn.toolCalls) {
 				input.signal?.throwIfAborted();
 				// finish_extraction is a control signal, not a write: it stages
-				// nothing and is not rendered as a tool card. Skip dispatch/activity
-				// for it; the run is ended after this turn's real tool calls are
-				// processed (so writes batched alongside finish still commit).
-				if (call.name === FINISH_EXTRACTION_TOOL) continue;
+				// nothing and is never dispatched to a write handler. We still
+				// surface it as a tool card so the run visibly ends on an explicit
+				// model decision rather than appearing to stop on its own. The run
+				// is ended after this turn's real tool calls are processed (so
+				// writes batched alongside finish still commit).
+				if (call.name === FINISH_EXTRACTION_TOOL) {
+					const finishActivityId = `mem_${ulid()}`;
+					input.onActivity?.({
+						type: 'tool.call',
+						toolCallId: finishActivityId,
+						tool: call.name,
+						args: parseActivityArgs(call.arguments)
+					});
+					const finishSummary = parseFinishSummary(call.arguments);
+					input.onActivity?.({
+						type: 'tool.result',
+						toolCallId: finishActivityId,
+						ok: true,
+						summary: finishSummary
+							? `extraction finished — ${finishSummary}`
+							: 'extraction finished',
+						output: (call.arguments ?? '').trim() || '{}'
+					});
+					continue;
+				}
 				const activityId = `mem_${ulid()}`;
 				input.onActivity?.({
 					type: 'tool.call',

@@ -120,7 +120,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` / `remember_entity` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
 | `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
 | `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Revertible; prefer supersede when the predicate is unchanged. |
-| `finish_extraction` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is not rendered as a tool card. |
+| `finish_extraction` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
 
 These tools should be available to the model during the main response call for
 memory-backed sessions. The model should be instructed to call them whenever a
@@ -863,9 +863,11 @@ thinking block) having stored nothing. An empty turn is instead nudged toward
 either further writes or an explicit `finish_extraction`, bounded by a small cap
 (`MAX_EMPTY_TURN_NUDGES`) so a model that never cooperates still terminates well
 before the iteration/wall-clock budgets. `finish_extraction` is a control
-signal, not a write: it stages nothing and is not rendered as a tool card; its
-optional `summary` seeds the extraction session summary (falling back to the
-turn's final visible text).
+signal, not a write: it stages nothing and is never dispatched to a write
+handler, but it _is_ surfaced as a tool card so the run visibly ends on an
+explicit model decision rather than appearing to stop on its own. Its optional
+`summary` seeds the extraction session summary (falling back to the turn's final
+visible text) and is echoed in the finish card's result.
 
 ## Extraction and commit flow
 

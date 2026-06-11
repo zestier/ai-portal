@@ -1342,6 +1342,7 @@ describe('memory-backed sessions', () => {
 		// nested agent: a leading `input` event carries the context handed to
 		// the extractor, then thoughts (reasoning + <think>) and spoken content
 		// are separate threaded streams, interleaved with the staging tool call.
+		// The closing finish_extraction also surfaces as a tool card.
 		expect(activity.map((event) => event.type)).toEqual([
 			'input',
 			'reasoning',
@@ -1349,7 +1350,9 @@ describe('memory-backed sessions', () => {
 			'reasoning.end',
 			'tool.call',
 			'tool.result',
-			'content'
+			'content',
+			'tool.call',
+			'tool.result'
 		]);
 		const inputEvent = activity[0];
 		expect(inputEvent).toMatchObject({ type: 'input' });
@@ -1551,16 +1554,23 @@ describe('memory-backed sessions', () => {
 		// overriding the turn's visible text.
 		expect(extraction.summary).toBe('Recorded that Mara owns the brass key.');
 		expect(extraction.response).toBe('Recorded that Mara owns the brass key.');
-		// finish_extraction is a control signal, not a write: it is never rendered
-		// as a tool card.
-		expect(
-			activity.some(
-				(event) =>
-					(event.type === 'tool.call' || event.type === 'tool.result') &&
-					'tool' in event &&
-					event.tool === 'finish_extraction'
-			)
-		).toBe(false);
+		// finish_extraction stages nothing, but it IS surfaced as a tool card so
+		// the run visibly ends on an explicit model decision. The call card names
+		// the tool; its result echoes the finish summary.
+		const finishCallEvent = activity.find(
+			(event) => event.type === 'tool.call' && 'tool' in event && event.tool === 'finish_extraction'
+		);
+		expect(finishCallEvent).toBeDefined();
+		const finishCallId =
+			finishCallEvent && 'toolCallId' in finishCallEvent ? finishCallEvent.toolCallId : null;
+		const finishResultEvent = activity.find(
+			(event) => event.type === 'tool.result' && event.toolCallId === finishCallId
+		);
+		expect(finishResultEvent).toMatchObject({
+			type: 'tool.result',
+			ok: true,
+			summary: 'extraction finished — Recorded that Mara owns the brass key.'
+		});
 	});
 
 	it('nudges an empty (no-tool-call) turn instead of stopping, then ends after the cap', async () => {
