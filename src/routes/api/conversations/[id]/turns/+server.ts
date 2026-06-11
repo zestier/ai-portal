@@ -33,6 +33,9 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 
 	// Persist user message immediately.
 	const userMsg = messages.append(conv.id, { role: 'user', content });
+	// Once a turn is started any pending composer draft (e.g. from a deferred
+	// edit-fork) has been consumed, so it must not re-seed on future loads.
+	convs.clearDraftPrompt(conv.id);
 	convs.touch(conv.id);
 
 	const title = tryRenameFromFirstUserMessage(conv, userMsg);

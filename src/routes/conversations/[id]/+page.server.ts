@@ -49,6 +49,16 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		if (!template || template.status !== 'open') throw error(404);
 		initialComposer = template.prompt;
 	}
+	// A fork created while its source was busy stashes the edited prompt as a
+	// persisted draft (no turn auto-started). Seed it into the composer until
+	// the user sends it; survives reloads since it lives on the conversation row.
+	// We can't gate on `msgs.length === 0` here — a deferred edit-fork clones the
+	// prefix before the edited message, so the fork usually already has messages.
+	// The draft is cleared when the first turn starts, so a non-null value always
+	// means "not yet sent".
+	if (!initialComposer && conv.draftPrompt) {
+		initialComposer = conv.draftPrompt;
+	}
 
 	// Surface any in-flight turn so the client can reattach its
 	// EventSource on page load. Only running turns count — finished but

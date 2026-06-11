@@ -1,7 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setupLocalEnv } from './helpers/env';
+import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../src/lib/server/global-singleton';
+
+// Register a fake "running" turn for `conversationId` in the shared turn
+// registry so `getTurn()` reports the source as busy, without spinning up a
+// real provider turn. Returns a cleanup that removes it again.
+function markConversationBusy(conversationId: string): () => void {
+	const registry = getOrCreateGlobalSingleton<Map<string, { status: string }>>(
+		appGlobalSymbols('turns'),
+		() => new Map()
+	);
+	registry.set(conversationId, { status: 'running' });
+	return () => registry.delete(conversationId);
+}
 
 async function freshImports() {
 	const users = await import('../src/lib/server/db/repos/users');
@@ -17,9 +30,15 @@ async function freshImports() {
 
 describe('fork.forkAtMessage', () => {
 	let dataDir: string;
+	let cleanupBusy: (() => void) | null = null;
 
 	beforeEach(async () => {
 		dataDir = await setupLocalEnv('portal-fork-test-');
+	});
+
+	afterEach(() => {
+		cleanupBusy?.();
+		cleanupBusy = null;
 	});
 
 	function workdirFor(convId: string): string {
@@ -306,5 +325,91 @@ describe('fork.forkAtMessage', () => {
 		expect(packet.directives.map((d) => d.value)).toContain(
 			'When creating new characters, give them names.'
 		);
+	});
+
+	it('edit-fork while the source is running defers: no trailing user row, persists draft', async () => {
+		const { users, convs, messages, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('busy-edit');
+		const sourceConv = convs.create(u.id, { title: 'src', workdir: wd, model: null });
+
+		messages.append(sourceConv.id, { role: 'user', content: 'first' });
+		const a1 = messages.append(sourceConv.id, { role: 'assistant', content: 'reply 1' });
+		void a1;
+		const u2 = messages.append(sourceConv.id, { role: 'user', content: 'second' });
+
+		cleanupBusy = markConversationBusy(sourceConv.id);
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: sourceConv.id,
+			messageId: u2.id,
+			newContent: 'second (edited)'
+		});
+
+		// Deferred: no user row appended; edited text persisted as the draft.
+		expect(result.deferred).toBe(true);
+		expect(result.userMessage).toBeNull();
+		// The edited text is persisted as the fork's composer draft so it
+		// survives reload/navigation and is seeded into the composer on load.
+		expect(result.conversation.draftPrompt).toBe('second (edited)');
+
+		// The fork holds only the prefix (no dangling trailing user message).
+		const cloned = messages.listByConversation(result.conversation.id);
+		expect(cloned.map((m) => `${m.role}:${m.content}`)).toEqual([
+			'user:first',
+			'assistant:reply 1'
+		]);
+
+		// Source untouched.
+		expect(messages.listByConversation(sourceConv.id)).toHaveLength(3);
+	});
+
+	it('retry-fork works while the source is running (no auto-start, clones through target)', async () => {
+		const { users, convs, messages, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('busy-retry');
+		const sourceConv = convs.create(u.id, { title: 'src', workdir: wd, model: null });
+
+		messages.append(sourceConv.id, { role: 'user', content: 'first' });
+		const a1 = messages.append(sourceConv.id, { role: 'assistant', content: 'reply 1' });
+
+		cleanupBusy = markConversationBusy(sourceConv.id);
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: sourceConv.id,
+			messageId: a1.id,
+			newContent: null
+		});
+
+		expect(result.userMessage).toBeNull();
+		// Retry-forks never carry a composer draft (only deferred edit-forks do).
+		expect(result.conversation.draftPrompt).toBeNull();
+		const cloned = messages.listByConversation(result.conversation.id);
+		expect(cloned.map((m) => `${m.role}:${m.content}`)).toEqual([
+			'user:first',
+			'assistant:reply 1'
+		]);
+	});
+
+	it('edit-fork while the source is idle still auto-starts (appends the user row)', async () => {
+		const { users, convs, messages, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('idle-edit');
+		const sourceConv = convs.create(u.id, { title: 'src', workdir: wd, model: null });
+
+		const u1 = messages.append(sourceConv.id, { role: 'user', content: 'first' });
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: sourceConv.id,
+			messageId: u1.id,
+			newContent: 'first (edited)'
+		});
+
+		expect(result.deferred).toBe(false);
+		expect(result.conversation.draftPrompt).toBeNull();
+		expect(result.userMessage).toMatchObject({ role: 'user', content: 'first (edited)' });
 	});
 });

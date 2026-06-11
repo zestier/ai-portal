@@ -29,6 +29,7 @@ interface ConvRow {
 	memory_extractor_model: string | null;
 	global_memory_enabled: number | null;
 	approve_all_tools: number | null;
+	draft_prompt: string | null;
 }
 
 function rowToConv(r: ConvRow): Conversation {
@@ -50,7 +51,8 @@ function rowToConv(r: ConvRow): Conversation {
 		archivedAt: r.archived_at,
 		forkedFromConversationId: r.forked_from_conversation_id,
 		forkedFromMessageId: r.forked_from_message_id,
-		providerSessionId: r.provider_session_id ?? r.id
+		providerSessionId: r.provider_session_id ?? r.id,
+		draftPrompt: r.draft_prompt ?? null
 	};
 }
 
@@ -104,6 +106,7 @@ export interface CreateInput {
 	forkedFromConversationId?: string | null;
 	forkedFromMessageId?: string | null;
 	providerSessionId?: string | null;
+	draftPrompt?: string | null;
 }
 
 /**
@@ -127,13 +130,14 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const globalMemoryEnabled = input.globalMemoryEnabled === true;
 	const provider =
 		input.provider ?? normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
+	const draftPrompt = input.draftPrompt ?? null;
 	getDb()
 		.prepare(
 			`INSERT INTO conversations(
 			   id, user_id, title, workdir, provider, model, mode, memory_mode, memory_extractor_model,
 			   global_memory_enabled, created_at, updated_at,
-			   forked_from_conversation_id, forked_from_message_id, provider_session_id
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			id,
@@ -150,7 +154,8 @@ export function create(userId: string, input: CreateInput): Conversation {
 			now,
 			forkConv,
 			forkMsg,
-			providerSessionId
+			providerSessionId,
+			draftPrompt
 		);
 	return {
 		id,
@@ -169,7 +174,8 @@ export function create(userId: string, input: CreateInput): Conversation {
 		archivedAt: null,
 		forkedFromConversationId: forkConv,
 		forkedFromMessageId: forkMsg,
-		providerSessionId
+		providerSessionId,
+		draftPrompt
 	};
 }
 
@@ -280,6 +286,20 @@ function normalizeOptionalModel(value: string | null | undefined): string | null
 
 export function touch(id: string) {
 	getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), id);
+}
+
+/**
+ * Clear a pending composer draft (see `draft_prompt`). Called once the
+ * conversation's first turn is started so the draft isn't re-seeded into the
+ * composer on subsequent loads.
+ *
+ * IMPORTANT: this must be invoked from every turn-start entry point. Today the
+ * only path that starts a deferred fork's turn is `POST /turns`; if another
+ * turn-start path is ever added it must call this too, or a stale draft will
+ * keep re-seeding the composer after the turn has already begun.
+ */
+export function clearDraftPrompt(id: string) {
+	getDb().prepare('UPDATE conversations SET draft_prompt = NULL WHERE id = ?').run(id);
 }
 
 export function archive(id: string, userId: string): boolean {

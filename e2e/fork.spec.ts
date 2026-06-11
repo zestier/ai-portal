@@ -36,8 +36,9 @@ test('fork by editing a user message produces a new conversation with the edited
 	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: original prompt');
 	await expect(page.getByText('Stubbed reply to: original prompt').first()).toBeVisible();
 
-	// Wait for the turn to finalize so the fork POST doesn't race against
-	// an in-flight turn (source_busy).
+	// Wait for the turn to finalize so this fork auto-starts (an edit-fork
+	// only auto-runs when the source is idle; while it's busy the fork defers
+	// and prefills the composer instead).
 	const msgs = await getConversation(request, sourceId);
 	const userMsg = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
 		(m) => m.role === 'user' && m.content === 'original prompt'
@@ -77,6 +78,121 @@ test('fork by editing a user message produces a new conversation with the edited
 	);
 	expect(srcContents).toContain('original prompt');
 	expect(srcContents).toContain('Stubbed reply to: original prompt');
+});
+
+test('edit-fork while the source turn is running defers and prefills the new composer', async ({
+	page,
+	request
+}) => {
+	const sourceId = await createConversation(request, uniqueTitle('Busy Source'));
+
+	await page.goto(`/conversations/${sourceId}`);
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.click();
+	await composer.fill('first');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: first');
+	await expect(page.getByText('Stubbed reply to: first').first()).toBeVisible();
+
+	// Grab the first user message id before kicking off a long-running turn.
+	const msgs = await getConversation(request, sourceId);
+	const firstUser = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
+		(m) => m.role === 'user' && m.content === 'first'
+	);
+	expect(firstUser).toBeDefined();
+
+	// @trigger-slow-start holds the stub before its first delta, so the source
+	// turn sits in the running state long enough to fork against it.
+	await composer.fill('@trigger-slow-start second');
+	await composer.press('Enter');
+	await expect(page.getByRole('button', { name: 'Stop generating' })).toBeVisible();
+
+	// Fork-edit an earlier user message while the source turn is still running.
+	const forkRes = await request.post(
+		`/api/conversations/${sourceId}/messages/${firstUser!.id}/fork`,
+		{ data: { content: 'first edited while busy' } }
+	);
+	expect(forkRes.ok()).toBeTruthy();
+	const body = await forkRes.json();
+	expect(body.deferred).toBe(true);
+	const newId = body.conversationId as string;
+	expect(newId).not.toBe(sourceId);
+
+	// Deferred: no turn was auto-started, so the fork holds only the cloned
+	// prefix (here: nothing before the first user message) — no user row, no reply.
+	const newMsgs = await getConversation(request, newId);
+	expect((newMsgs.messages as unknown[]).length).toBe(0);
+
+	// Navigating to the fork seeds the persisted draft into the composer so the
+	// user can press Send to start the turn themselves.
+	await page.goto(`/conversations/${newId}`);
+	await expect(page.getByPlaceholder(/Message GitHub Copilot/)).toHaveValue(
+		'first edited while busy'
+	);
+
+	// And it survives a reload (the draft is persisted on the conversation row).
+	await page.reload();
+	await expect(page.getByPlaceholder(/Message GitHub Copilot/)).toHaveValue(
+		'first edited while busy'
+	);
+});
+
+test('deferred edit-fork of a non-first message seeds the composer, then clears after Send', async ({
+	page,
+	request
+}) => {
+	const sourceId = await createConversation(request, uniqueTitle('Busy Source Mid'));
+
+	await page.goto(`/conversations/${sourceId}`);
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.click();
+	await composer.fill('first');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: first');
+
+	// A second completed turn, so the message we edit has a non-empty prefix
+	// (this is what regressed: the fork is created with cloned prior messages,
+	// so the composer must be seeded even though `msgs.length > 0`).
+	await composer.fill('second');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: second');
+	await expect(page.getByText('Stubbed reply to: second').first()).toBeVisible();
+
+	const msgs = await getConversation(request, sourceId);
+	const secondUser = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
+		(m) => m.role === 'user' && m.content === 'second'
+	);
+	expect(secondUser).toBeDefined();
+
+	// Hold a third turn open so the source is busy when we fork.
+	await composer.fill('@trigger-slow-start third');
+	await composer.press('Enter');
+	await expect(page.getByRole('button', { name: 'Stop generating' })).toBeVisible();
+
+	const forkRes = await request.post(
+		`/api/conversations/${sourceId}/messages/${secondUser!.id}/fork`,
+		{ data: { content: 'second edited while busy' } }
+	);
+	expect(forkRes.ok()).toBeTruthy();
+	const body = await forkRes.json();
+	expect(body.deferred).toBe(true);
+	const newId = body.conversationId as string;
+
+	// The fork carries the cloned prefix (user:first + its reply), so it is NOT
+	// empty — yet the persisted draft must still seed the composer.
+	const newMsgs = await getConversation(request, newId);
+	expect((newMsgs.messages as unknown[]).length).toBeGreaterThan(0);
+
+	const forkComposer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await page.goto(`/conversations/${newId}`);
+	await expect(forkComposer).toHaveValue('second edited while busy');
+
+	// Sending the draft starts the turn and clears it; a later reload must not
+	// re-seed the stale draft.
+	await forkComposer.press('Enter');
+	await waitForAssistantMessage(request, newId, 'Stubbed reply to: second edited while busy');
+	await page.reload();
+	await expect(forkComposer).toHaveValue('');
 });
 
 test('retry from an assistant message clones up to it without a new user prompt', async ({

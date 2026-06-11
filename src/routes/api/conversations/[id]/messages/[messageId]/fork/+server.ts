@@ -16,8 +16,7 @@ const REJECT_STATUS: Record<string, number> = {
 	not_user_message: 400,
 	unsupported_role: 400,
 	content_required: 400,
-	content_not_allowed: 400,
-	source_busy: 409
+	content_not_allowed: 400
 };
 
 /**
@@ -27,7 +26,11 @@ const REJECT_STATUS: Record<string, number> = {
  *  - Body `{}`           → retry from that assistant message.
  *
  * Returns `{ conversationId }` of the new fork. The client should
- * navigate to it to continue.
+ * navigate to it to continue. When the source has a running turn an
+ * edit-fork is created without auto-starting its turn; the response carries
+ * `{ deferred: true }`. The edited text is persisted as the new
+ * conversation's `draft_prompt` and seeded into its composer on load, so the
+ * client just navigates and lets the user press Send.
  */
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
@@ -37,13 +40,15 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const parsed = await parseBody(request, Body, { allowEmpty: true });
 
 	try {
-		const { conversation, userMessage } = await forkAtMessage({
+		const { conversation, userMessage, deferred } = await forkAtMessage({
 			userId,
 			sourceConversationId: sourceId,
 			messageId,
 			newContent: parsed.content ?? null
 		});
-		if (!userMessage) return json({ ok: true, conversationId: conversation.id });
+		if (!userMessage) {
+			return json({ ok: true, conversationId: conversation.id, deferred });
+		}
 		const turn = await startTurnFromUserMessage(conversation, userMessage, {
 			includePriorMessages: true
 		});

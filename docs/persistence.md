@@ -157,6 +157,11 @@ When a user edits a previous message, the portal:
    conversation, then appends the edited content as a fresh user message
    (for the edit flavour; the retry flavour clones up to and including
    the assistant target and appends nothing).
+   - **Exception — source busy:** if the source has a *running* turn, the
+     edit-fork is deferred: no user row is appended and the turn is not
+     auto-started. The edited text is stored in `conversations.draft_prompt`
+     (migration `041`) and seeded into the new conversation's composer on
+     load so the user starts the turn manually.
 4. Starts a brand-new SDK session under the new conversation id. No
    prior conversation events are seeded into the SDK in v1 — the agent
    starts fresh from the next prompt, using the live shared workdir. The

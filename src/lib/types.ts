@@ -67,6 +67,12 @@ export interface Conversation {
 	forkedFromMessageId: string | null;
 	/** Backend runtime session id. May rotate when a conversation is destructively rewritten. */
 	providerSessionId: string;
+	/**
+	 * Pending composer draft seeded into the chat input on load. Set when an
+	 * edit-fork is created while the source has a running turn (the fork's
+	 * turn is deferred, not auto-started). Null when there is no pending draft.
+	 */
+	draftPrompt: string | null;
 }
 
 export type WorkspaceTicketStatus = 'open' | 'done' | 'archived';

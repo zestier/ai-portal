@@ -16,7 +16,7 @@
 		conversationId,
 		inputMessageId = null,
 		forks = [],
-		conversationIdle = true,
+		isInFlightTurnUser = false,
 		thinking = false,
 		onForked,
 		onInlineEdited,
@@ -26,7 +26,7 @@
 		conversationId?: string;
 		inputMessageId?: string | null;
 		forks?: Array<{ id: string; title: string; archivedAt: number | null }>;
-		conversationIdle?: boolean;
+		isInFlightTurnUser?: boolean;
 		thinking?: boolean;
 		onForked?: () => void;
 		onInlineEdited?: (messageId: string, content: string, turnId: string) => void;
@@ -52,11 +52,13 @@
 	// Editing is only possible for persisted user messages (a temporary
 	// id like `local-1234` is created optimistically before the server
 	// confirms; we can't fork from those). It also requires the parent to
-	// pass the conversation id.
+	// pass the conversation id. Forking is allowed while the source is busy,
+	// but NOT on the user message that triggered the in-flight turn — that
+	// is the live, streaming turn's boundary and editing it makes no sense.
 	const canEdit = $derived(
 		message.role === 'user' &&
 			!!conversationId &&
-			conversationIdle &&
+			!isInFlightTurnUser &&
 			!message.id.startsWith('local-') &&
 			!message.id.startsWith('err-')
 	);
@@ -100,8 +102,16 @@
 				errorMsg = body || `Fork failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { conversationId: string; turnId?: string };
+			const data = (await r.json()) as {
+				conversationId: string;
+				turnId?: string;
+				deferred?: boolean;
+			};
 			onForked?.();
+			// When the source was busy the fork's turn isn't auto-started; the
+			// server persisted the edited text as the new conversation's draft,
+			// which its page load seeds into the composer. So we just navigate —
+			// no client-side prefill relay (which was lost on reload).
 			await goto(`/conversations/${data.conversationId}`);
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : String(e);

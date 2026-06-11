@@ -291,7 +291,7 @@ covers both:
 
 | Body          | Target role | Snapshot used | Prefix cloned         | New user msg appended |
 | ------------- | ----------- | ------------- | --------------------- | --------------------- |
-| `{content}`   | `user`      | `pre`         | strictly before target | yes (edited content)  |
+| `{content}`   | `user`      | `pre`         | strictly before target | yes (edited content)¹ |
 | `{}`          | `assistant` | `post`        | up to and incl. target | no                    |
 
 "Edit-and-rerun" creates a new transcript from the selected point and lets the
@@ -299,6 +299,17 @@ user reword it. "Retry-from-here" creates a new transcript after the selected
 assistant turn and lets the user pick up with a different follow-up. Neither
 mode rewinds the live files automatically; the snapshot named in the table is a
 manual restore/diff reference.
+
+Forking is read-only with respect to the source, so it is allowed even while
+the source has a running turn — there is no `source_busy`/`409` rejection.
+
+¹ **Deferred edit-forks:** when the source has a *running* turn, an edit-fork is
+created with the prefix only (no trailing user row) and its turn is **not**
+auto-started — running a second turn against the shared workdir requires the
+user to opt in. The edited text is persisted as the new conversation's
+`draft_prompt` (migration `041`) and seeded into the composer on load, so the
+user just presses Send. The endpoint response carries `{ deferred: true }` in
+this case. While the source is idle the edit-fork still auto-starts as before.
 
 ### Discovering forks
 

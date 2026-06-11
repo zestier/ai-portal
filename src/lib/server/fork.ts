@@ -23,9 +23,15 @@
 //             appended — the user types their next prompt themselves in
 //             the new conversation.
 //
+// Forking is non-destructive and read-only with respect to the source, so
+// it is allowed even while the source has a running turn. To avoid two turns
+// racing in the shared workdir without the user opting in, an edit-fork made
+// while the source is busy is created with the prefix only (no trailing user
+// row) and its turn is NOT auto-started — the edited text is handed back for
+// composer prefill so the user starts it manually.
+//
 // Constraints:
 //  - System messages can never be the fork target.
-//  - The source conversation must not have a running turn.
 
 import { ulid } from './db/ids';
 import { getDb } from './db';
@@ -42,8 +48,7 @@ export type ForkError =
 	| 'not_user_message'
 	| 'unsupported_role'
 	| 'content_required'
-	| 'content_not_allowed'
-	| 'source_busy';
+	| 'content_not_allowed';
 
 export class ForkRejected extends Error {
 	constructor(
@@ -69,6 +74,11 @@ export interface ForkInput {
 export interface ForkResult {
 	conversation: Conversation;
 	userMessage: Message | null;
+	/**
+	 * True when the source had a running turn and this fork's turn was NOT
+	 * auto-started (the caller should let the user start it manually).
+	 */
+	deferred: boolean;
 }
 
 /**
@@ -116,10 +126,22 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		throw new ForkRejected('unsupported_role', `Cannot fork from a ${target.role} message.`);
 	}
 
+	// Forking only reads the source's messages + memory and clones them into a
+	// brand-new conversation; the source thread is never mutated, so a running
+	// source turn is not a hard blocker. It does, however, change whether we
+	// auto-start the fork's turn: doing so while the source is mid-turn would
+	// race a second turn against the shared workdir without the user opting in.
 	const active = getTurn(source.id);
-	if (active && active.status === 'running') {
-		throw new ForkRejected('source_busy', 'Source conversation has a running turn.');
-	}
+	const sourceBusy = active?.status === 'running';
+
+	// A busy source defers an edit-fork: we create the fork with the prefix
+	// only (no trailing user row to "resume") and stash the edited text as the
+	// new conversation's composer draft instead of auto-starting its turn. The
+	// draft is persisted on the conversation row so it survives reload/navigation
+	// and is seeded into the composer on load; the user presses Send to start
+	// the turn, explicitly opting into a concurrent turn in the shared workdir.
+	const deferred = mode === 'edit' && sourceBusy;
+	const draftPrompt = deferred ? input.newContent! : null;
 
 	// The forked conversation reuses the source's workdir. We deliberately
 	// do NOT roll the workdir back to the snapshot — multiple conversations
@@ -139,7 +161,8 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		memoryExtractorModel: source.memoryExtractorModel,
 		globalMemoryEnabled: source.globalMemoryEnabled,
 		forkedFromConversationId: source.id,
-		forkedFromMessageId: target.id
+		forkedFromMessageId: target.id,
+		draftPrompt
 	});
 
 	// Edit mode clones strictly before the target (so the new user message
@@ -161,7 +184,10 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	});
 
 	let userMessage: Message | null = null;
-	if (mode === 'edit') {
+	// Only an idle-source edit-fork auto-starts: append the user row so the
+	// caller kicks off the turn. A deferred edit-fork (busy source) leaves the
+	// prefix untouched and relies on the persisted draft_prompt seeded above.
+	if (mode === 'edit' && !deferred) {
 		userMessage = messages.append(newConv.id, { role: 'user', content: input.newContent! });
 	}
 
@@ -173,9 +199,10 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		newId: newConv.id,
 		messageId: target.id,
 		prefix: prefix.length,
-		memory: memoryCounts
+		memory: memoryCounts,
+		deferred
 	});
-	return { conversation: refreshed, userMessage };
+	return { conversation: refreshed, userMessage, deferred };
 }
 
 function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string, string> {

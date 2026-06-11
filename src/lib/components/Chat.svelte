@@ -923,6 +923,16 @@
 	// <Message_> wiring (input inspector, forks, idle state) as a real turn —
 	// no second rendering path to keep in sync.
 	const lastIsAssistant = $derived(messages[messages.length - 1]?.role === 'assistant');
+	// The user message that triggered the currently-streaming turn. Edit-fork
+	// is hidden on it (you can't edit the live turn's boundary); every earlier
+	// user message stays forkable even while this turn streams.
+	const inFlightUserMessageId = $derived.by(() => {
+		if (!streaming) return null;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].role === 'user') return messages[i].id;
+		}
+		return null;
+	});
 	const thinkingPlaceholder = $derived<Message>({
 		id: 'thinking-placeholder',
 		conversationId: conversation.id,
@@ -988,7 +998,7 @@
 						conversationId={conversation.id}
 						inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
 						forks={forksByMessage[m.id] ?? []}
-						conversationIdle={!streaming}
+						isInFlightTurnUser={m.id === inFlightUserMessageId}
 						thinking={thinking && i === renderedMessages.length - 1}
 						onForked={refreshForks}
 						onInlineEdited={handleInlineEdited}

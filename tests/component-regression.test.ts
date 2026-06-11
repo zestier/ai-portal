@@ -81,7 +81,8 @@ const conversation: Conversation = {
 	archivedAt: null,
 	forkedFromConversationId: null,
 	forkedFromMessageId: null,
-	providerSessionId: 'session-1'
+	providerSessionId: 'session-1',
+	draftPrompt: null
 };
 
 function textOf(body: string): string {
