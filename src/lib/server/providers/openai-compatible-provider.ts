@@ -3,7 +3,7 @@ import { loadConfig } from '../config';
 import { log } from '../log';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 import { buildGitTools, type PortalTool, type ToolStreamContext } from '../tools/git';
-import { err, deriveEnvelopeSummary, type ToolResult } from '../tools/types';
+import { err, deriveToolResultViews, parseEnvelopeJson, type ToolResult } from '../tools/types';
 import { buildPermissionTools } from '../tools/permissions';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
@@ -99,7 +99,10 @@ interface AssistantTurn {
 interface ToolExecutionResult {
 	ok: boolean;
 	summary: string;
+	// Full serialized envelope persisted/streamed for the UI (`tool.result.output`).
 	output: string;
+	// Concise, RAW text fed back to the model as the tool message content.
+	modelText: string;
 }
 
 interface ModelsResponse {
@@ -490,15 +493,26 @@ export function openOpenAICompatibleSession(
 		toolCall: OpenAIToolCall,
 		q: AsyncQueue<PortalEvent>
 	): Promise<ToolExecutionResult> {
-		// Serialize a handler's `ToolResult` envelope exactly once here, at the
-		// provider boundary. The resulting JSON string is both the model-visible
-		// tool message content AND what the UI deserializes — a single source of
-		// truth with no hidden, model-invisible data.
+		// Project the handler's `ToolResult` envelope into its two views via the
+		// shared derive step (same one the SDK edge uses). The model receives the
+		// concise, RAW `modelText` as its tool-message content; the UI receives
+		// the full serialized envelope as `output`. Splitting them here is what
+		// stops multi-line payloads reaching the model JSON-escaped.
 		const finish = (envelope: ToolResult): ToolExecutionResult => {
-			const output = JSON.stringify(envelope, null, 2);
-			const summary = deriveEnvelopeSummary(envelope);
-			q.push({ type: 'tool.result', toolCallId: toolCall.id, ok: envelope.ok, summary, output });
-			return { ok: envelope.ok, summary, output };
+			const views = deriveToolResultViews(envelope);
+			q.push({
+				type: 'tool.result',
+				toolCallId: toolCall.id,
+				ok: views.ok,
+				summary: views.summary,
+				output: views.fullContent
+			});
+			return {
+				ok: views.ok,
+				summary: views.summary,
+				output: views.fullContent,
+				modelText: views.modelText
+			};
 		};
 
 		const parsedArgs = parseToolArguments(toolCall.function.arguments);
@@ -729,9 +743,14 @@ function reconstructToolCalls(
 }
 
 function restoredToolContent(tool: ToolCallRecord): string {
-	// `resultJson` is the once-serialized envelope persisted at the boundary;
-	// replay it to the model verbatim.
-	return tool.resultJson ?? '';
+	// `resultJson` is the persisted full envelope. Replay the SAME concise, RAW
+	// model text the live boundary produced (not the JSON-escaped envelope) so a
+	// resumed turn sees its prior tool results exactly as the model originally
+	// did. Non-envelope persisted shapes (native tools) replay verbatim.
+	const raw = tool.resultJson;
+	if (!raw) return '';
+	const envelope = parseEnvelopeJson(raw);
+	return envelope ? deriveToolResultViews(envelope).modelText : raw;
 }
 
 async function yieldFromQueue<T>(
@@ -792,9 +811,10 @@ function parseToolArguments(
 }
 
 function toolMessageContent(result: ToolExecutionResult): string {
-	// `output` is already the once-serialized envelope (success or error), so it
-	// is fed back to the model verbatim.
-	return result.output;
+	// The model receives the concise, RAW model text (real newlines/tabs), NOT
+	// the JSON-escaped envelope. The full envelope travels separately as
+	// `output` for the UI/timeline.
+	return result.modelText;
 }
 
 function buildOpenAITools(opts: {

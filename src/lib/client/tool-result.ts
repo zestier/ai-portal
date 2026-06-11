@@ -1,12 +1,16 @@
 // Decodes the `resultJson` field on a ToolCallRecord into a normalized
-// list of typed blocks the UI can render. The Copilot SDK's
-// `tool.execution_complete` event ships a `result` object with shape:
+// list of typed blocks the UI can render. Two families of shapes occur:
 //
-//   { content, detailedContent?, contents?: ContentBlock[] }
+//   - Portal tools: the serialized `{ ok, summary?, result? | error }`
+//     envelope (persisted as the boundary's `fullContent`). `decodeEnvelope`
+//     unwraps it and surfaces the inner payload as raw text/JSON.
+//   - Native SDK tools: the Copilot runtime's `tool.execution_complete`
+//     `result` object, shape `{ content, detailedContent?, contents?:
+//     ContentBlock[] }`, where ContentBlock is a typed union (text / terminal
+//     / image / audio / resource_link / resource).
 //
-// where ContentBlock is a typed union (text / terminal / image / audio /
-// resource_link / resource). Older shapes (plain string, raw error
-// object) also occur — we normalize them all into a Block[].
+// Older shapes (plain string, raw error object) also occur — we normalize them
+// all into a Block[].
 
 export type ResultBlock =
 	| { kind: 'text'; text: string }

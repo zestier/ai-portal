@@ -225,3 +225,99 @@ describe('SdkEventAdapter zod event boundary', () => {
 		});
 	});
 });
+
+describe('SdkEventAdapter portal tool-result carriers', () => {
+	const envelope = JSON.stringify({ ok: true, result: { files: ['a.txt'] } }, null, 2);
+
+	function toolResult(h: ReturnType<typeof makeHarness>) {
+		const ev = h.events.find((e) => e.type === 'tool.result');
+		return ev && ev.type === 'tool.result' ? ev : null;
+	}
+
+	it('recovers the envelope from a structured detailedContent carrier', () => {
+		const h = makeHarness();
+		h.source.emit('tool.execution_complete', {
+			data: {
+				toolCallId: 'tool-1',
+				success: true,
+				result: { content: '1 file(s) changed.', detailedContent: envelope }
+			}
+		});
+		const r = toolResult(h);
+		expect(r?.ok).toBe(true);
+		// UI output is the full envelope JSON so structured cards can render.
+		expect(r?.output).toBe(envelope);
+	});
+
+	it('recovers the envelope from a sessionLog carrier', () => {
+		// `sessionLog` is the field the handler-side ToolResultObject carries the
+		// full envelope on; a runtime that surfaces it (rather than mapping it to
+		// `detailedContent`) must still drive structured UI rendering.
+		const h = makeHarness();
+		h.source.emit('tool.execution_complete', {
+			data: {
+				toolCallId: 'tool-1',
+				success: true,
+				result: { content: '1 file(s) changed.', sessionLog: envelope }
+			}
+		});
+		const r = toolResult(h);
+		expect(r?.ok).toBe(true);
+		expect(r?.output).toBe(envelope);
+	});
+
+	it('recovers the envelope from a legacy bare string carrier', () => {
+		const h = makeHarness();
+		h.source.emit('tool.execution_complete', {
+			data: { toolCallId: 'tool-1', success: true, result: envelope }
+		});
+		const r = toolResult(h);
+		expect(r?.ok).toBe(true);
+		expect(r?.output).toBe(envelope);
+	});
+
+	it('derives ok=false and the error summary from an error envelope', () => {
+		const h = makeHarness();
+		const errEnvelope = JSON.stringify(
+			{ ok: false, error: { message: 'nothing to commit' } },
+			null,
+			2
+		);
+		h.source.emit('tool.execution_complete', {
+			data: { toolCallId: 'tool-1', success: true, result: { detailedContent: errEnvelope } }
+		});
+		const r = toolResult(h);
+		expect(r?.ok).toBe(false);
+		expect(r?.summary).toBe('nothing to commit');
+		expect(r?.output).toBe(errEnvelope);
+	});
+
+	it('leaves native SDK tool results (non-envelope) untouched', () => {
+		const h = makeHarness();
+		const native = { content: 'short', detailedContent: 'full terminal output', contents: [] };
+		h.source.emit('tool.execution_complete', {
+			data: { toolCallId: 'tool-1', success: true, result: native }
+		});
+		const r = toolResult(h);
+		expect(r?.ok).toBe(true);
+		// Native shape preserved verbatim so the client can render contents blocks.
+		expect(r?.output).toEqual(native);
+	});
+
+	it('does not misread a native result with structured blocks as a portal envelope', () => {
+		const h = makeHarness();
+		// A native tool whose detailedContent happens to be envelope-shaped JSON
+		// must NOT be unwrapped — its `contents` blocks mark it as native.
+		const native = {
+			content: 'ok',
+			detailedContent: JSON.stringify({ ok: true, result: { spoofed: true } }),
+			contents: [{ type: 'text', text: 'block' }]
+		};
+		h.source.emit('tool.execution_complete', {
+			data: { toolCallId: 'tool-1', success: true, result: native }
+		});
+		const r = toolResult(h);
+		expect(r?.ok).toBe(true);
+		expect(r?.output).toEqual(native);
+	});
+});

@@ -26,9 +26,11 @@ export interface ToolError {
 
 // The uniform envelope every PortalTool handler returns. Discriminated on `ok`:
 // framework fields (`ok`/`summary`) live top-level so they never collide with a
-// tool's own data, which nests under `result`. The whole envelope is serialized
-// exactly once at the provider boundary and is the single payload the model
-// sees AND the UI deserializes — there is no hidden, model-invisible data.
+// tool's own data, which nests under `result`. The envelope is the single
+// provider-agnostic internal API: at each provider boundary it is projected
+// (via `deriveToolResultViews`) into two views that derive from this one source
+// — a concise, RAW text for the model and the full serialized payload for the
+// UI — so the two can never silently diverge.
 //
 // The shape is intentionally open to additional optional top-level framework
 // fields without restructuring. `followUpHint` is one such reserved framework
@@ -97,4 +99,181 @@ export function deriveEnvelopeSummary(envelope: ToolResult): string {
 	const singleLine = envelopePayloadText(envelope).replace(/\s+/g, ' ').trim();
 	if (!singleLine) return '(empty result)';
 	return singleLine.length > 200 ? `${singleLine.slice(0, 197)}...` : singleLine;
+}
+
+// Parse a persisted/relayed serialized envelope JSON back into a typed
+// `ToolResult`, preserving every framework field (`summary`, `followUpHint`,
+// `error.code`/`details`). Returns null when the text isn't a portal envelope
+// (e.g. a native SDK tool's `{ content, … }` shape) so callers can fall back.
+// Used by both provider boundaries so a replayed/relayed result projects to the
+// same model text a freshly produced one would.
+export function parseEnvelopeJson(json: string): ToolResult | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+	const rec = parsed as Record<string, unknown>;
+	if (typeof rec.ok !== 'boolean') return null;
+	const summary = typeof rec.summary === 'string' ? rec.summary : undefined;
+	if (rec.ok === false) {
+		if (!rec.error || typeof rec.error !== 'object') return null;
+		const e = rec.error as Record<string, unknown>;
+		if (typeof e.message !== 'string') return null;
+		const error: ToolError = { message: e.message };
+		if (typeof e.code === 'string') error.code = e.code;
+		if ('details' in e) error.details = e.details;
+		return summary === undefined ? { ok: false, error } : { ok: false, summary, error };
+	}
+	const out: { ok: true; summary?: string; result?: unknown; followUpHint?: string } = {
+		ok: true,
+		result: rec.result
+	};
+	if (summary !== undefined) out.summary = summary;
+	if (typeof rec.followUpHint === 'string') out.followUpHint = rec.followUpHint;
+	return out;
+}
+
+// The neutral, provider-agnostic projection of a `ToolResult` envelope into the
+// two views every provider boundary needs. Both are derived from the SAME
+// envelope by `deriveToolResultViews`, so a tool's model-facing text and its
+// UI/timeline payload can never silently diverge. The field names are
+// intentionally NEUTRAL (not SDK terms like `textResultForLlm`/`detailedContent`)
+// — each adapter translates these into its provider's transport shape and must
+// not invent its own projection.
+export interface ToolResultViews {
+	ok: boolean;
+	// Collapsed single-line label for sidebar/timeline. Same value both edges show.
+	summary: string;
+	// Concise text handed to the model. RAW and unescaped (real newlines/tabs):
+	// a readable rendering of the payload with any multi-line string fields
+	// surfaced verbatim, falling back to the explicit `summary` only when there
+	// is no meaningful payload. Never the JSON-escaped envelope, and never the
+	// `summary` in place of an available payload.
+	modelText: string;
+	// Full payload for the UI: the canonical serialized envelope. The client
+	// decodes this to render structured cards (git diffs, ticket/memory lists,
+	// commit details, …) and falls back to its embedded raw text otherwise.
+	fullContent: string;
+}
+
+// Canonical serialization of an envelope. This is the UI/timeline carrier
+// (`fullContent`) — the client's `decodeToolResult` / `parseGitToolResult`
+// decode exactly this shape — NOT the model-facing text.
+export function serializeEnvelope(envelope: ToolResult): string {
+	return JSON.stringify(envelope, null, 2);
+}
+
+// The one shared derive step both provider edges use to project an envelope
+// into model text + UI payload. Centralizing it here is what keeps the two
+// provider paths consistent and prevents the model/UI views from drifting.
+export function deriveToolResultViews(envelope: ToolResult): ToolResultViews {
+	return {
+		ok: envelope.ok,
+		summary: deriveEnvelopeSummary(envelope),
+		modelText: deriveModelText(envelope),
+		fullContent: serializeEnvelope(envelope)
+	};
+}
+
+// Concise, raw text for the model. Errors render their message (plus code and
+// any readable details). Successes render the PAYLOAD so multi-line string
+// fields read as real text rather than JSON-escaped one-liners — the explicit
+// `summary` is only a short headline for the UI/timeline (via
+// `deriveEnvelopeSummary`), NOT a replacement for the payload: many tools pass a
+// count-style summary (e.g. "5 result(s)") alongside the real result, so
+// preferring it here would starve the model of the data it asked for. The
+// summary is used only as a fallback when there is no meaningful payload, so the
+// model never receives empty tool-message content. A reserved `followUpHint`,
+// when present, is appended so the model still sees the next-step nudge it used
+// to receive when the whole envelope was serialized verbatim to the model.
+function deriveModelText(envelope: ToolResult): string {
+	if (!envelope.ok) {
+		const { message, code, details } = envelope.error;
+		let text = code ? `${message} (code: ${code})` : message;
+		if (details !== undefined) text += `\n${renderReadable(details)}`;
+		return text;
+	}
+	return withFollowUpHint(derivePayloadText(envelope), envelope.followUpHint);
+}
+
+function derivePayloadText(envelope: { result?: unknown; summary?: string }): string {
+	if (envelope.result !== undefined) {
+		const text =
+			typeof envelope.result === 'string' ? envelope.result : renderReadable(envelope.result);
+		if (text.trim()) return text;
+	}
+	return envelope.summary?.trim() || '(no result)';
+}
+
+function withFollowUpHint(text: string, hint: string | undefined): string {
+	const trimmed = hint?.trim();
+	return trimmed ? `${text}\n\n${trimmed}` : text;
+}
+
+// Generic (no per-tool special-casing) readable renderer: a compact YAML-ish
+// projection of a JSON value where multi-line string fields are printed
+// verbatim (indented) instead of JSON-escaped. Used only for the model-facing
+// text of object/array payloads; structured UI rendering uses `fullContent`.
+function renderReadable(value: unknown): string {
+	const lines: string[] = [];
+	emitReadable(value, 0, lines);
+	return lines.join('\n').replace(/\s+$/, '');
+}
+
+function scalarText(v: unknown): string | null {
+	if (v === null) return 'null';
+	if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+	if (typeof v === 'string') return v.includes('\n') ? null : v;
+	return null;
+}
+
+function emitReadable(value: unknown, depth: number, lines: string[]): void {
+	const pad = '  '.repeat(depth);
+	if (Array.isArray(value)) {
+		if (value.length === 0) {
+			lines.push(`${pad}(empty)`);
+			return;
+		}
+		for (const item of value) {
+			const scalar = scalarText(item);
+			if (scalar !== null) {
+				lines.push(`${pad}- ${scalar}`);
+			} else if (typeof item === 'string') {
+				const [first, ...rest] = item.split('\n');
+				lines.push(`${pad}- ${first}`);
+				for (const r of rest) lines.push(`${pad}  ${r}`);
+			} else {
+				const sub: string[] = [];
+				emitReadable(item, 0, sub);
+				const [first, ...rest] = sub;
+				lines.push(`${pad}- ${first ?? ''}`);
+				for (const r of rest) lines.push(`${pad}  ${r}`);
+			}
+		}
+		return;
+	}
+	if (value !== null && typeof value === 'object') {
+		const entries = Object.entries(value as Record<string, unknown>);
+		if (entries.length === 0) {
+			lines.push(`${pad}(empty)`);
+			return;
+		}
+		for (const [k, v] of entries) {
+			const scalar = scalarText(v);
+			if (scalar !== null) {
+				lines.push(`${pad}${k}: ${scalar}`);
+			} else if (typeof v === 'string') {
+				lines.push(`${pad}${k}:`);
+				for (const r of v.split('\n')) lines.push(`${pad}  ${r}`);
+			} else {
+				lines.push(`${pad}${k}:`);
+				emitReadable(v, depth + 1, lines);
+			}
+		}
+		return;
+	}
+	lines.push(`${pad}${scalarText(value) ?? String(value)}`);
 }

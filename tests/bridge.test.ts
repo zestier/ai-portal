@@ -286,13 +286,15 @@ describe('bridge.open() session mode and permissions', () => {
 
 		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{
 			name: string;
-			handler(args: unknown): Promise<string>;
+			handler(args: unknown): Promise<{ detailedContent: string }>;
 		}>;
 		const tool = tools.find((t) => t.name === 'permission_capabilities');
 		expect(tool).toBeTruthy();
 
+		// The SDK adapter returns a structured ToolResultObject; the full envelope
+		// rides on `detailedContent` (the model gets concise `textResultForLlm`).
 		const envelope = JSON.parse(
-			await tool!.handler({ permissionKind: 'url', toolName: 'url_fetcher' })
+			(await tool!.handler({ permissionKind: 'url', toolName: 'url_fetcher' })).detailedContent
 		) as {
 			ok: boolean;
 			result: {
@@ -333,7 +335,8 @@ describe('bridge.open() session mode and permissions', () => {
 			})
 		]);
 
-		const readResponseText = await tool!.handler({ permissionKind: 'read' });
+		const readResult = await tool!.handler({ permissionKind: 'read' });
+		const readResponseText = readResult.detailedContent;
 		expect(readResponseText).not.toContain('/secret/file.txt');
 		expect(readResponseText).not.toContain('Do not expose this exact path');
 		expect(readResponseText).toContain('specific absolute exact rule');

@@ -40,7 +40,18 @@ describe('wrapToolsForStreaming', () => {
 
 		const result = await wrapped.handler({}, fakeInvocation('call-abc'));
 
-		expect(result).toBe(JSON.stringify({ ok: true, result: 'final' }, null, 2));
+		// The SDK adapter now returns a structured ToolResultObject: concise raw
+		// model text on `textResultForLlm`; the full envelope rides on both
+		// `sessionLog` (the field ToolResultObject carries it on) and
+		// `detailedContent` (the runtime's output field) so it survives whichever
+		// the deployment forwards.
+		const fullEnvelope = JSON.stringify({ ok: true, result: 'final' }, null, 2);
+		expect(result).toEqual({
+			textResultForLlm: 'final',
+			resultType: 'success',
+			sessionLog: fullEnvelope,
+			detailedContent: fullEnvelope
+		});
 		expect(events).toEqual([
 			{ type: 'tool.progress', toolCallId: 'call-abc', message: 'working…' },
 			{ type: 'tool.partial_output', toolCallId: 'call-abc', output: 'chunk-1' },

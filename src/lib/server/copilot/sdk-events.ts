@@ -8,7 +8,7 @@ import type {
 	SessionMode
 } from '$lib/types';
 import { log } from '../log';
-import { deriveEnvelopeSummary, type ToolResult } from '../tools/types';
+import { deriveEnvelopeSummary, parseEnvelopeJson } from '../tools/types';
 import {
 	cancel as cancelInteractive,
 	newRequestId,
@@ -418,22 +418,34 @@ export class SdkEventAdapter {
 		const ev = parseSdkEvent('tool.execution_complete', ToolCompleteEvent, e);
 		if (!ev) return;
 		if (!this.activeQueue) return;
-		// Portal tools hand back a once-serialized `ToolResult` envelope as their
-		// result string. When present it is the single source of truth for
-		// ok/summary — covering both handler-returned `{ ok: false }` envelopes and
-		// thrown errors that `wrapToolsForStreaming` normalized into one. Native
-		// SDK tools (non-envelope results) fall back to the runtime's signals.
-		const envelope = decodePortalEnvelope(ev?.data?.result);
-		const ok = envelope ? envelope.ok : ev?.data?.success !== false && !ev?.data?.error;
-		const summary = envelope
-			? deriveEnvelopeSummary(envelope)
-			: summarizeResult(ev?.data?.result, ev?.data?.error);
+		// Portal tools hand back a structured result whose full serialized envelope
+		// rides on the detail channel. Recover it from whichever carrier the
+		// runtime relayed (object `detailedContent`/`sessionLog`/`content`, or a
+		// legacy bare string) and derive ok/summary plus the UI `output` from that
+		// one envelope. Native SDK tools (non-envelope results) keep their existing
+		// `{ content, detailedContent, contents }` handling untouched.
+		const raw = ev?.data?.result;
+		const envelopeJson = portalEnvelopeCarrier(raw);
+		const envelope = envelopeJson === null ? null : parseEnvelopeJson(envelopeJson);
+		if (envelope) {
+			this.emit({
+				type: 'tool.result',
+				toolCallId: ev?.data?.toolCallId ?? ulid(),
+				ok: envelope.ok,
+				summary: deriveEnvelopeSummary(envelope),
+				output: envelopeJson,
+				parentToolCallId: this.parentToolCallId(ev)
+			});
+			return;
+		}
+		const ok = ev?.data?.success !== false && !ev?.data?.error;
+		const summary = summarizeResult(raw, ev?.data?.error);
 		this.emit({
 			type: 'tool.result',
 			toolCallId: ev?.data?.toolCallId ?? ulid(),
 			ok,
 			summary,
-			output: ev?.data?.result ?? ev?.data?.error ?? null,
+			output: raw ?? ev?.data?.error ?? null,
 			parentToolCallId: this.parentToolCallId(ev)
 		});
 	};
@@ -681,30 +693,30 @@ export class SdkEventAdapter {
 	};
 }
 
-// Best-effort decode of a portal tool's serialized `ToolResult` envelope from
-// the SDK's `tool.execution_complete` result. Returns null for native-tool
-// results (non-string, non-envelope) so their existing handling is preserved.
-// Normalizes into a typed `ToolResult` so the shared `deriveEnvelopeSummary`
-// produces text identical to the OpenAI-compatible provider boundary.
-function decodePortalEnvelope(result: unknown): ToolResult | null {
-	if (typeof result !== 'string') return null;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(result);
-	} catch {
-		return null;
+// Locate the portal envelope JSON within the SDK's `tool.execution_complete`
+// result, regardless of how the runtime relayed our structured result:
+//   - a bare string (legacy / runtimes that pass the handler return verbatim);
+//   - an object exposing the full payload on `detailedContent` (the runtime's
+//     `ToolExecutionCompleteResult` field) or `sessionLog` (the field the
+//     handler-side `ToolResultObject` actually carries it on), falling back to
+//     `content`.
+// Returns null for native SDK tool shapes so their handling is preserved: a
+// non-empty `contents` block array is the runtime's marker for a native tool
+// returning structured content, so we never dig into such results for an
+// envelope (which would otherwise risk a false positive if their text happened
+// to be envelope-shaped JSON, dropping the `contents` blocks). The subsequent
+// `parseEnvelopeJson` also rejects any non-envelope string we do surface (e.g. a
+// native tool's plain `detailedContent`, or the concise model `content`).
+function portalEnvelopeCarrier(result: unknown): string | null {
+	if (typeof result === 'string') return result;
+	if (result && typeof result === 'object' && !Array.isArray(result)) {
+		const rec = result as Record<string, unknown>;
+		if (Array.isArray(rec.contents) && rec.contents.length > 0) return null;
+		if (typeof rec.detailedContent === 'string') return rec.detailedContent;
+		if (typeof rec.sessionLog === 'string') return rec.sessionLog;
+		if (typeof rec.content === 'string') return rec.content;
 	}
-	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-	const rec = parsed as Record<string, unknown>;
-	if (typeof rec.ok !== 'boolean') return null;
-	const summary = typeof rec.summary === 'string' ? rec.summary : undefined;
-	if (rec.ok === false) {
-		if (rec.error == null || typeof rec.error !== 'object') return null;
-		const error = rec.error as Record<string, unknown>;
-		const message = typeof error.message === 'string' ? error.message : 'error';
-		return { ok: false, summary, error: { message } };
-	}
-	return { ok: true, summary, result: rec.result };
+	return null;
 }
 
 function summarizeResult(result: unknown, error: unknown): string {
