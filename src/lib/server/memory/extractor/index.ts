@@ -1,5 +1,6 @@
 import { ulid } from 'ulid';
 import { log } from '$lib/server/log';
+import type { MemoryExtractorBackend } from '$lib/types';
 import {
 	commitPatch,
 	extractHeuristicPatch,
@@ -13,7 +14,8 @@ import { redactSensitiveText, truncate } from './utils';
 import {
 	buildWriteToolSpecs,
 	createWriteToolHandlers,
-	buildStoredFactSignatures
+	buildStoredFactSignatures,
+	FINISH_EXTRACTION_TOOL
 } from './write-tools';
 import { sanitizePatch } from './sanitize';
 import { buildToolExtractorSystemPrompt, toolExtractorContextSections } from './prompts';
@@ -113,6 +115,20 @@ const TOOL_RESULT_MAX_CHARS = 8_000;
 // visible text can be large with chatty local models, and it is resent on every
 // subsequent request — so cap it to keep the growing transcript bounded.
 const ASSISTANT_TRANSCRIPT_MAX_CHARS = 4_000;
+
+// How many times an empty turn (a completion with no tool calls) is nudged
+// toward an explicit finish before the loop gives up and stops on its own.
+// Reasoning models frequently end a step with chain-of-thought but no tool
+// call; rather than read that as "done" and stop (storing nothing), we re-prompt
+// the model to either keep recording or call `finish_extraction`. Bounded so a
+// model that never emits a tool call still terminates well before the iteration
+// cap instead of burning the whole budget on empty rounds.
+const MAX_EMPTY_TURN_NUDGES = 2;
+
+// The corrective user message appended after an empty turn. Names the explicit
+// finish tool so the model ends deliberately rather than by falling silent.
+const EMPTY_TURN_NUDGE =
+	'You did not call any tool. If there is anything durable left to record from this turn, call the appropriate write tool now. If you have recorded everything (or nothing durable needed storing), call finish_extraction to end — do not stop without calling it.';
 
 /**
  * Agentic, tool-calling memory extractor. Instead of returning a single JSON
@@ -225,6 +241,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		let hitWallClockBudget = false;
 		let iterationsRun = 0;
 		let totalToolCalls = 0;
+		let emptyTurnNudges = 0;
 		const deadline = Date.now() + (this.opts.maxWallClockMs ?? Number.POSITIVE_INFINITY);
 		for (let iteration = 0; iteration < this.opts.maxToolIterations; iteration += 1) {
 			// A user "stop" during background extraction aborts the turn's
@@ -304,14 +321,28 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					durationMs: Math.max(0, Date.now() - stepStartedAt)
 				});
 			}
-			if (!hasMoreToolCalls && visible.trim()) finalContent = visible.trim();
+			// The explicit finish signal: a control-tool call, not a write. It ends
+			// the run cleanly (below) and its optional `summary` seeds the run
+			// summary. It also counts as "this turn spoke a final word", so the
+			// turn's visible text can still serve as the summary when no explicit
+			// `summary` arg is given.
+			const finishCall = turn.toolCalls.find((call) => call.name === FINISH_EXTRACTION_TOOL);
+			if ((!hasMoreToolCalls || finishCall) && visible.trim()) finalContent = visible.trim();
+			if (finishCall) {
+				const finishSummary = parseFinishSummary(finishCall.arguments);
+				if (finishSummary) finalContent = finishSummary;
+			}
 			messages.push({
 				role: 'assistant',
 				// Re-send only the bounded, think-stripped assistant text: the
 				// model doesn't need its own chain-of-thought back, and unbounded
 				// <think> blocks accumulated across iterations would balloon every
-				// subsequent request.
-				content: truncate(visible, ASSISTANT_TRANSCRIPT_MAX_CHARS) || null,
+				// subsequent request. A tool-call-free turn must carry a string
+				// (never null) so the corrective nudge appended after it forms a
+				// valid assistant→user exchange for providers that reject a
+				// null-content assistant message without tool calls.
+				content:
+					truncate(visible, ASSISTANT_TRANSCRIPT_MAX_CHARS) || (hasMoreToolCalls ? null : ''),
 				...(turn.toolCalls.length > 0
 					? {
 							tool_calls: turn.toolCalls.map((call) => ({
@@ -323,11 +354,29 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					: {})
 			});
 			if (turn.toolCalls.length === 0) {
+				// An empty turn is no longer a stop. Reasoning models routinely end
+				// a step with chain-of-thought and no tool call; treating that as
+				// "done" is exactly what stored nothing. Nudge the model toward an
+				// explicit finish (or further writes), bounded so a model that never
+				// emits a tool call still terminates rather than running to the cap.
+				if (emptyTurnNudges < MAX_EMPTY_TURN_NUDGES) {
+					emptyTurnNudges += 1;
+					messages.push({ role: 'user', content: EMPTY_TURN_NUDGE });
+					continue;
+				}
 				voluntaryStop = true;
 				break;
 			}
+			// The model acted this turn; renew the empty-turn nudge budget so a
+			// later, separate stall is still given its full allowance.
+			emptyTurnNudges = 0;
 			for (const call of turn.toolCalls) {
 				input.signal?.throwIfAborted();
+				// finish_extraction is a control signal, not a write: it stages
+				// nothing and is not rendered as a tool card. Skip dispatch/activity
+				// for it; the run is ended after this turn's real tool calls are
+				// processed (so writes batched alongside finish still commit).
+				if (call.name === FINISH_EXTRACTION_TOOL) continue;
 				const activityId = `mem_${ulid()}`;
 				input.onActivity?.({
 					type: 'tool.call',
@@ -367,6 +416,12 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					// dispatch boundary (dispatchExtractorToolCall).
 					content: truncate(result, TOOL_RESULT_MAX_CHARS)
 				});
+			}
+			// The model explicitly ended the run this turn (after any writes it
+			// batched alongside the finish call were processed above).
+			if (finishCall) {
+				voluntaryStop = true;
+				break;
 			}
 		}
 
@@ -480,6 +535,25 @@ function parseActivityArgs(raw: string): unknown {
 		return JSON.parse(trimmed);
 	} catch {
 		return { _raw: trimmed };
+	}
+}
+
+/**
+ * Pull the optional one-line `summary` out of a `finish_extraction` call's
+ * arguments. Tolerant of the malformed/partial JSON small models emit: returns
+ * null when there is no usable string summary, so the caller falls back to the
+ * turn's visible text.
+ */
+function parseFinishSummary(raw: string): string | null {
+	const trimmed = (raw ?? '').trim();
+	if (!trimmed) return null;
+	try {
+		const parsed = JSON.parse(trimmed) as { summary?: unknown };
+		return typeof parsed.summary === 'string' && parsed.summary.trim()
+			? parsed.summary.trim()
+			: null;
+	} catch {
+		return null;
 	}
 }
 
@@ -599,15 +673,17 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
  * prerequisites are configured, otherwise falls back to the heuristic
  * extractor (logging why, so misconfiguration is diagnosable).
  */
-export function createMemoryExtractor(opts: { model?: string | null } = {}): MemoryExtractor {
+export function createMemoryExtractor(
+	opts: { model?: string | null; backend?: MemoryExtractorBackend | null } = {}
+): MemoryExtractor {
 	const cfg = loadConfig();
-	const wantsModel =
-		cfg.MEMORY_EXTRACTOR_BACKEND === 'openai-compatible' ||
-		cfg.MEMORY_EXTRACTOR_BACKEND === 'openai-compatible-tools';
+	// Precedence: per-conversation backend override → server default env backend.
+	const backend = opts.backend ?? cfg.MEMORY_EXTRACTOR_BACKEND;
+	const wantsModel = backend === 'openai-compatible' || backend === 'openai-compatible-tools';
 	if (wantsModel) {
 		const model = opts.model?.trim() || cfg.MEMORY_EXTRACTOR_MODEL;
 		if (cfg.OPENAI_COMPATIBLE_BASE_URL && model) {
-			if (cfg.MEMORY_EXTRACTOR_BACKEND === 'openai-compatible-tools') {
+			if (backend === 'openai-compatible-tools') {
 				return new ToolCallingMemoryExtractor({
 					baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL,
 					apiKey: cfg.OPENAI_COMPATIBLE_API_KEY,
@@ -632,7 +708,7 @@ export function createMemoryExtractor(opts: { model?: string | null } = {}): Mem
 		// confusing "extraction runs but nothing model-driven happens"
 		// failure. Surface it so misconfiguration is diagnosable.
 		log.warn('memory.extractor.fallback_heuristic', {
-			backend: cfg.MEMORY_EXTRACTOR_BACKEND,
+			backend,
 			hasBaseUrl: Boolean(cfg.OPENAI_COMPATIBLE_BASE_URL),
 			hasModel: Boolean(model),
 			reason: !cfg.OPENAI_COMPATIBLE_BASE_URL
@@ -648,7 +724,9 @@ export function createMemoryExtractor(opts: { model?: string | null } = {}): Mem
  * options. When this is true the extractor — not the main model — owns writing
  * durable memory for each turn; the main model has no direct memory write tool.
  */
-export function isModelBackedExtractorConfigured(opts: { model?: string | null } = {}): boolean {
+export function isModelBackedExtractorConfigured(
+	opts: { model?: string | null; backend?: MemoryExtractorBackend | null } = {}
+): boolean {
 	return createMemoryExtractor(opts).kind !== 'heuristic';
 }
 
@@ -657,7 +735,10 @@ export async function extractAndCommitMemory(
 ): Promise<
 	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
 > {
-	const extractor = createMemoryExtractor({ model: input.extractorModel });
+	const extractor = createMemoryExtractor({
+		model: input.extractorModel,
+		backend: input.extractorBackend
+	});
 	// Always record which extractor actually ran. This is the definitive
 	// signal when diagnosing "extraction happens but no subagent card": only
 	// the `openai-compatible-tools` kind emits tool activity / a card.

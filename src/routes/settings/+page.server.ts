@@ -25,6 +25,7 @@ import * as memoryProfiles from '$lib/server/memory/profiles';
 import {
 	normalizeBackendProvider,
 	BACKEND_PROVIDER_IDS,
+	MEMORY_EXTRACTOR_BACKEND_IDS,
 	type PermissionPolicy,
 	type SessionMode,
 	type UserSettings
@@ -98,7 +99,9 @@ const SaveSchema = z.object({
 	defaultWorkdir: z.string().optional(),
 	defaultConversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']),
 	defaultPolicy: z.enum(['prompt', 'allow-all', 'deny-all']),
-	theme: z.enum(['dark', 'light', 'system'])
+	theme: z.enum(['dark', 'light', 'system']),
+	defaultMemoryExtractorModel: z.string().optional(),
+	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional()
 });
 
 const PromptTemplateSchema = z
@@ -167,7 +170,10 @@ export const actions: Actions = {
 			defaultWorkdir: (data.get('defaultWorkdir') as string) || undefined,
 			defaultConversationMode: data.get('defaultConversationMode'),
 			defaultPolicy: data.get('defaultPolicy'),
-			theme: data.get('theme')
+			theme: data.get('theme'),
+			defaultMemoryExtractorModel: (data.get('defaultMemoryExtractorModel') as string) || undefined,
+			defaultMemoryExtractorBackend:
+				(data.get('defaultMemoryExtractorBackend') as string) || undefined
 		});
 		if (!parsed.success) {
 			return {
@@ -182,7 +188,9 @@ export const actions: Actions = {
 			defaultWorkdir: parsed.data.defaultWorkdir ?? null,
 			defaultConversationMode: parsed.data.defaultConversationMode as SessionMode,
 			defaultPolicy: parsed.data.defaultPolicy as PermissionPolicy,
-			theme: parsed.data.theme
+			theme: parsed.data.theme,
+			defaultMemoryExtractorModel: parsed.data.defaultMemoryExtractorModel ?? null,
+			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null
 		};
 		settings.save(locals.userId, next);
 		return { ok: true, formId: 'save' };

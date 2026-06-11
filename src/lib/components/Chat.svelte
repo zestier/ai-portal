@@ -4,6 +4,7 @@
 	import type {
 		Conversation,
 		ConversationUsage,
+		MemoryExtractorBackend,
 		MemoryMode,
 		Message,
 		PortalEvent,
@@ -93,6 +94,9 @@
 	let memoryExtractorModel = $state<string | null>(
 		untrack(() => conversation.memoryExtractorModel)
 	);
+	let memoryExtractorBackend = $state<MemoryExtractorBackend | null>(
+		untrack(() => conversation.memoryExtractorBackend)
+	);
 	let globalMemoryEnabled = $state<boolean>(untrack(() => conversation.globalMemoryEnabled));
 	let approveAllTools = $state<boolean>(untrack(() => conversation.approveAllTools));
 	let usage = $state<ConversationUsage | null>(untrack(() => initialUsage));
@@ -157,6 +161,7 @@
 			sessionMode = conversation.mode;
 			memoryMode = conversation.memoryMode;
 			memoryExtractorModel = conversation.memoryExtractorModel;
+			memoryExtractorBackend = conversation.memoryExtractorBackend;
 			globalMemoryEnabled = conversation.globalMemoryEnabled;
 			approveAllTools = conversation.approveAllTools;
 			usage = initialUsage;
@@ -983,6 +988,7 @@
 		mode={sessionMode}
 		{memoryMode}
 		{memoryExtractorModel}
+		{memoryExtractorBackend}
 		{globalMemoryEnabled}
 		{approveAllTools}
 		modelChangeDisabled={streaming}
@@ -992,6 +998,8 @@
 			if (patch.memoryMode !== undefined) memoryMode = patch.memoryMode;
 			if (patch.memoryExtractorModel !== undefined)
 				memoryExtractorModel = patch.memoryExtractorModel;
+			if (patch.memoryExtractorBackend !== undefined)
+				memoryExtractorBackend = patch.memoryExtractorBackend;
 			if (patch.globalMemoryEnabled !== undefined) globalMemoryEnabled = patch.globalMemoryEnabled;
 			if (patch.approveAllTools !== undefined) approveAllTools = patch.approveAllTools;
 		}}

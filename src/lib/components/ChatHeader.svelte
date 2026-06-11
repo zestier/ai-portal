@@ -4,6 +4,7 @@
 		ConversationUsage,
 		ProviderRuntimeFeatureStatus,
 		ProviderCapabilities,
+		MemoryExtractorBackend,
 		MemoryMode,
 		SessionMode
 	} from '$lib/types';
@@ -24,6 +25,7 @@
 		mode,
 		memoryMode,
 		memoryExtractorModel,
+		memoryExtractorBackend,
 		globalMemoryEnabled,
 		approveAllTools,
 		modelChangeDisabled = false,
@@ -48,6 +50,7 @@
 		mode: SessionMode;
 		memoryMode: MemoryMode;
 		memoryExtractorModel: string | null;
+		memoryExtractorBackend: MemoryExtractorBackend | null;
 		globalMemoryEnabled: boolean;
 		approveAllTools: boolean;
 		modelChangeDisabled?: boolean;
@@ -58,6 +61,7 @@
 			mode?: SessionMode;
 			memoryMode?: MemoryMode;
 			memoryExtractorModel?: string | null;
+			memoryExtractorBackend?: MemoryExtractorBackend | null;
 			globalMemoryEnabled?: boolean;
 			approveAllTools?: boolean;
 		}) => void;
@@ -68,6 +72,7 @@
 	let savingMode = $state(false);
 	let savingMemory = $state(false);
 	let savingHarvester = $state(false);
+	let savingHarvesterBackend = $state(false);
 	let savingGlobalMemory = $state(false);
 	let savingApprove = $state(false);
 	let resetting = $state(false);
@@ -79,6 +84,13 @@
 	let customHarvesterModel = $state('');
 	const CUSTOM_MODEL_OPTION = '__custom__';
 	const DEFAULT_HARVESTER_OPTION = '__default__';
+	const DEFAULT_HARVESTER_BACKEND_OPTION = '__default__';
+
+	const HARVESTER_BACKENDS: { value: MemoryExtractorBackend; label: string }[] = [
+		{ value: 'heuristic', label: 'Heuristic (local)' },
+		{ value: 'openai-compatible', label: 'OpenAI-compatible (single-shot)' },
+		{ value: 'openai-compatible-tools', label: 'OpenAI-compatible (tools)' }
+	];
 
 	const MODES: { value: SessionMode; label: string; hint: string }[] = [
 		{
@@ -188,6 +200,7 @@
 		mode?: SessionMode;
 		memoryMode?: MemoryMode;
 		memoryExtractorModel?: string | null;
+		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
 		approveAllTools?: boolean;
 	}) {
@@ -273,6 +286,27 @@
 		} else if (next !== CUSTOM_MODEL_OPTION) {
 			void chooseHarvesterModel(next);
 		}
+	}
+
+	async function chooseHarvesterBackend(next: MemoryExtractorBackend | null) {
+		if (next === memoryExtractorBackend || savingHarvesterBackend || modelChangeDisabled) return;
+		savingHarvesterBackend = true;
+		const prev = memoryExtractorBackend;
+		onSettingsChange?.({ memoryExtractorBackend: next });
+		try {
+			await patchSession({ memoryExtractorBackend: next });
+		} catch {
+			onSettingsChange?.({ memoryExtractorBackend: prev });
+		} finally {
+			savingHarvesterBackend = false;
+		}
+	}
+
+	function selectHarvesterBackend(e: Event) {
+		const next = (e.currentTarget as HTMLSelectElement).value;
+		void chooseHarvesterBackend(
+			next === DEFAULT_HARVESTER_BACKEND_OPTION ? null : (next as MemoryExtractorBackend)
+		);
 	}
 
 	async function toggleGlobalMemory(e: Event) {
@@ -545,6 +579,27 @@
 						{/if}
 					</div>
 					{#if memoryMode !== 'off'}
+						<div class="setting-row model-row">
+							<span class="setting-label">Backend</span>
+							<select
+								class="model-select"
+								aria-label="Memory harvester backend"
+								value={memoryExtractorBackend ?? DEFAULT_HARVESTER_BACKEND_OPTION}
+								disabled={savingHarvesterBackend || modelChangeDisabled}
+								onchange={selectHarvesterBackend}
+							>
+								<option value={DEFAULT_HARVESTER_BACKEND_OPTION}>Server default backend</option>
+								{#each HARVESTER_BACKENDS as opt (opt.value)}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
+							</select>
+							<span
+								class="unsupported-chip"
+								title="Heuristic keeps the main model owning memory writes; OpenAI-compatible backends run a model-backed extractor. Leave default to use server settings."
+							>
+								{memoryExtractorBackend ?? 'server default'}
+							</span>
+						</div>
 						<div class="setting-row model-row">
 							<span class="setting-label">Harvester</span>
 							<select

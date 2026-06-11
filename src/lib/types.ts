@@ -47,6 +47,12 @@ export interface Conversation {
 	 */
 	memoryExtractorModel: string | null;
 	/**
+	 * Optional per-conversation override for the memory extractor backend.
+	 * Null means "use the server default backend" (env `MEMORY_EXTRACTOR_BACKEND`).
+	 * Seeded from the user's default at creation; existing rows stay NULL.
+	 */
+	memoryExtractorBackend: MemoryExtractorBackend | null;
+	/**
 	 * Explicit opt-in for user-scoped global memory tools in this conversation.
 	 * Session memory remains per-conversation even when this is false.
 	 */
@@ -161,6 +167,29 @@ export function normalizeMemoryMode(raw: string | null | undefined): MemoryMode 
 	return raw === 'lightweight' || raw === 'project' || raw === 'story' || raw === 'strict'
 		? raw
 		: 'off';
+}
+
+// Single source of truth for the model-backed memory extractor backends.
+// Reused by the config zod enum, the settings save schema, the conversation
+// row normalizer, and the UI selectors so the set can't drift.
+export const MEMORY_EXTRACTOR_BACKEND_IDS = [
+	'heuristic',
+	'openai-compatible',
+	'openai-compatible-tools'
+] as const;
+export type MemoryExtractorBackend = (typeof MEMORY_EXTRACTOR_BACKEND_IDS)[number];
+
+/**
+ * Normalizes a stored/posted extractor backend. NULL/unknown means "use the
+ * server default" (env `MEMORY_EXTRACTOR_BACKEND`), preserving behaviour for
+ * every existing conversation whose column is NULL.
+ */
+export function normalizeMemoryExtractorBackend(
+	raw: string | null | undefined
+): MemoryExtractorBackend | null {
+	return MEMORY_EXTRACTOR_BACKEND_IDS.includes(raw as MemoryExtractorBackend)
+		? (raw as MemoryExtractorBackend)
+		: null;
 }
 
 export const BACKEND_PROVIDER_IDS = ['copilot', 'openai-compatible', 'lm-studio'] as const;
@@ -362,6 +391,13 @@ export interface UserSettings {
 	defaultConversationMode: SessionMode;
 	defaultPolicy: PermissionPolicy;
 	theme: 'dark' | 'light' | 'system';
+	/**
+	 * Seed-only defaults for the memory extractor, copied onto each newly
+	 * created conversation. NULL = "use server default" (env). Changing these
+	 * never retroactively alters existing conversations.
+	 */
+	defaultMemoryExtractorModel: string | null;
+	defaultMemoryExtractorBackend: MemoryExtractorBackend | null;
 }
 
 // 'prompt' is the default: auto-approves `url` requests and file-system

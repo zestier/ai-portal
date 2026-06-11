@@ -159,6 +159,7 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		mode: source.mode,
 		memoryMode: source.memoryMode,
 		memoryExtractorModel: source.memoryExtractorModel,
+		memoryExtractorBackend: source.memoryExtractorBackend,
 		globalMemoryEnabled: source.globalMemoryEnabled,
 		forkedFromConversationId: source.id,
 		forkedFromMessageId: target.id,

@@ -28,7 +28,7 @@ import { isEnabled } from '../memory/engine';
 import { loadConfig } from '../config';
 import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
-import type { MemoryMode } from '$lib/types';
+import type { MemoryExtractorBackend, MemoryMode } from '$lib/types';
 import type { ProviderOpenOptions } from '../providers';
 import type { PortalEvent } from '$lib/types';
 
@@ -135,6 +135,7 @@ export interface StartTurnOptions {
 		userMessageId: string;
 		userContent: string;
 		extractorModel?: string | null;
+		extractorBackend?: MemoryExtractorBackend | null;
 	};
 }
 
@@ -510,6 +511,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					userContent: opts.memory.userContent,
 					mode: opts.memory.mode,
 					extractorModel: opts.memory.extractorModel,
+					extractorBackend: opts.memory.extractorBackend,
 					turnId: turn.id,
 					cardDescription: 'Memory extraction',
 					extractingSummary: 'Extracting durable memory updates.',
@@ -815,6 +817,7 @@ interface MemoryExtractionCardOptions {
 	userContent: string;
 	mode: MemoryMode;
 	extractorModel?: string | null;
+	extractorBackend?: MemoryExtractorBackend | null;
 	turnId: string;
 	// Card label + "extracting" status copy — the only user-visible difference
 	// between a normal post-turn extraction and an explicit retry.
@@ -993,6 +996,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 				userId: o.userId,
 				mode: o.mode,
 				extractorModel: o.extractorModel,
+				extractorBackend: o.extractorBackend,
 				turnId: o.turnId,
 				userMessage,
 				assistantMessage,
@@ -1098,6 +1102,7 @@ export interface StartExtractionRetryOptions {
 		userMessageId: string;
 		userContent: string;
 		extractorModel?: string | null;
+		extractorBackend?: MemoryExtractorBackend | null;
 		// Stable turn id used for the committed patch so repeated retries of the
 		// same logical turn keep grouping under one turn id (revert lookup keys
 		// off it). Defaults to the retry turn's own id when absent.
@@ -1194,6 +1199,7 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 				userContent: opts.memory.userContent,
 				mode: opts.memory.mode,
 				extractorModel: opts.memory.extractorModel,
+				extractorBackend: opts.memory.extractorBackend,
 				turnId: opts.memory.patchTurnId ?? turn.id,
 				cardDescription: 'Memory extraction (retry)',
 				extractingSummary: 'Re-extracting durable memory updates.',

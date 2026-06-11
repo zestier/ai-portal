@@ -12,7 +12,9 @@ import {
 	validatePatch
 } from '../src/lib/server/memory/engine';
 import {
+	createMemoryExtractor,
 	extractAndCommitMemory,
+	isModelBackedExtractorConfigured,
 	OpenAICompatibleMemoryExtractor,
 	ToolCallingMemoryExtractor,
 	type ExtractorActivity,
@@ -68,6 +70,18 @@ function writeCall(id: string, name: string, args: unknown): ExtractorAssistantT
 	return { content: '', toolCalls: [{ id, name, arguments: JSON.stringify(args) }] };
 }
 
+// Build the terminal assistant turn for the tool-calling extractor's
+// chatComplete double: an explicit finish_extraction control call (the only
+// clean way to end the run). The `summary` is carried both as the call's
+// argument and as visible content, so it surfaces as the extraction summary /
+// response exactly as a model's closing message would.
+function finishCall(summary: string, id = 'finish'): ExtractorAssistantTurn {
+	return {
+		content: summary,
+		toolCalls: [{ id, name: 'finish_extraction', arguments: JSON.stringify({ summary }) }]
+	};
+}
+
 describe('memory-backed sessions', () => {
 	beforeEach(async () => {
 		await setupLocalEnv();
@@ -93,6 +107,17 @@ describe('memory-backed sessions', () => {
 			true
 		);
 		expect(convs.get(conv.id, user.id)?.memoryExtractorModel).toBeNull();
+		expect(conv.memoryExtractorBackend).toBeNull();
+		expect(
+			convs.updateSessionSettings(conv.id, user.id, {
+				memoryExtractorBackend: 'openai-compatible-tools'
+			})
+		).toBe(true);
+		expect(convs.get(conv.id, user.id)?.memoryExtractorBackend).toBe('openai-compatible-tools');
+		expect(convs.updateSessionSettings(conv.id, user.id, { memoryExtractorBackend: null })).toBe(
+			true
+		);
+		expect(convs.get(conv.id, user.id)?.memoryExtractorBackend).toBeNull();
 		expect(convs.updateSessionSettings(conv.id, user.id, { globalMemoryEnabled: true })).toBe(true);
 		expect(convs.get(conv.id, user.id)?.globalMemoryEnabled).toBe(true);
 	});
@@ -1273,7 +1298,7 @@ describe('memory-backed sessions', () => {
 					]
 				};
 			}
-			return { content: 'Stored the migration decision and Mara key ownership.', toolCalls: [] };
+			return finishCall('Stored the migration decision and Mara key ownership.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1398,7 +1423,7 @@ describe('memory-backed sessions', () => {
 			if (step === 4) return writeCall('x1', 'remember_event', { summary: 'missing eventType' });
 			if (step === 5)
 				return writeCall('l1', 'remember_loop', { loopType: 'task', title: 'Follow up later' });
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1450,6 +1475,137 @@ describe('memory-backed sessions', () => {
 		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
 	});
 
+	it('ends the run when the model calls finish_extraction and uses its summary arg', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara owns the brass key.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		let step = 0;
+		let callsAfterFinish = 0;
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			if (step === 1)
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'owns', value: 'brass key' }]
+				});
+			if (step === 2)
+				return {
+					content: 'ignored visible text',
+					toolCalls: [
+						{
+							id: 'fin',
+							name: 'finish_extraction',
+							arguments: JSON.stringify({ summary: 'Recorded that Mara owns the brass key.' })
+						}
+					]
+				};
+			// The loop must not request another completion after finish_extraction.
+			callsAfterFinish += 1;
+			return finishCall('should never run');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const activity: ExtractorActivity[] = [];
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-finish',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project'),
+			onActivity: (event) => activity.push(event)
+		});
+
+		// The run stopped at the finish call — no further completions.
+		expect(callsAfterFinish).toBe(0);
+		// The attribute staged before finishing was committed.
+		expect(extraction.patch.facts).toHaveLength(1);
+		// finish_extraction's `summary` arg seeds the session summary/response,
+		// overriding the turn's visible text.
+		expect(extraction.summary).toBe('Recorded that Mara owns the brass key.');
+		expect(extraction.response).toBe('Recorded that Mara owns the brass key.');
+		// finish_extraction is a control signal, not a write: it is never rendered
+		// as a tool card.
+		expect(
+			activity.some(
+				(event) =>
+					(event.type === 'tool.call' || event.type === 'tool.result') &&
+					'tool' in event &&
+					event.tool === 'finish_extraction'
+			)
+		).toBe(false);
+	});
+
+	it('nudges an empty (no-tool-call) turn instead of stopping, then ends after the cap', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara owns the brass key.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const nudges: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			// Capture any corrective nudge appended after an empty turn.
+			const last = msgs[msgs.length - 1];
+			if (last?.role === 'user' && last.content && msgs.length > 2) nudges.push(last.content);
+			step += 1;
+			if (step === 1)
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'owns', value: 'brass key' }]
+				});
+			// A reasoning model that ends every subsequent step with thought but no
+			// tool call: each empty turn is nudged rather than treated as "done".
+			return { content: 'I think I am finished.', toolCalls: [] };
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 10,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-nudge',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// Empty turns were nudged toward an explicit finish (bounded), not stopped
+		// on first sight — so the loop did NOT terminate at step 2.
+		expect(nudges.length).toBe(2);
+		expect(nudges[0]).toContain('finish_extraction');
+		// It still terminates well before the iteration cap (1 write + 1 empty
+		// that ends the loop... + 2 nudged empties = 4 completions).
+		expect(step).toBe(4);
+		// Work staged before the stall is preserved.
+		expect(extraction.patch.facts).toHaveLength(1);
+	});
+
 	it('stages a paired event when a remember_attributes item carries an event summary', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
@@ -1474,7 +1630,7 @@ describe('memory-backed sessions', () => {
 					]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1548,7 +1704,7 @@ describe('memory-backed sessions', () => {
 					attributes: [{ predicate: 'color', value: 'red', eventType: 'change' }]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1611,7 +1767,7 @@ describe('memory-backed sessions', () => {
 					entityKey: 'character.mara'
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1690,7 +1846,7 @@ describe('memory-backed sessions', () => {
 					]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1769,7 +1925,7 @@ describe('memory-backed sessions', () => {
 					attributes: [{ predicate: 'hair', value: 'red' }]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1840,7 +1996,7 @@ describe('memory-backed sessions', () => {
 					attributes: [{ entityKey: 'character.bob', predicate: 'hair', value: 'red' }]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1908,7 +2064,7 @@ describe('memory-backed sessions', () => {
 					attributes: [{ predicate: 'secret_word', value: 'rosebud', visibility: 'hidden' }]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -1974,7 +2130,7 @@ describe('memory-backed sessions', () => {
 					]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2052,7 +2208,7 @@ describe('memory-backed sessions', () => {
 					]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2144,7 +2300,7 @@ describe('memory-backed sessions', () => {
 				step += 1;
 				return writeCall(`c${step}`, tool, inputs[tool]);
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2193,7 +2349,7 @@ describe('memory-backed sessions', () => {
 					bogus: 'should be dropped'
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2252,7 +2408,7 @@ describe('memory-backed sessions', () => {
 				// Correction: a valid title for the same loop.
 				return writeCall('c2', 'remember_loop', { loopType: 'task', title: 'Inspect the cellar' });
 			}
-			return { content: 'Stored one follow-up.', toolCalls: [] };
+			return finishCall('Stored one follow-up.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2319,7 +2475,7 @@ describe('memory-backed sessions', () => {
 					attributes: [{ predicate: 'color' }]
 				});
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2373,7 +2529,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				return writeCall('c1', 'close_loop', { handle: 'loop.does_not_exist', status: 'resolved' });
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2456,7 +2612,7 @@ describe('memory-backed sessions', () => {
 			if (step === 2) {
 				return writeCall('c2', 'close_loop', { handle: drop.id, status: 'dropped' });
 			}
-			return { content: 'Pruned the unchosen option.', toolCalls: [] };
+			return finishCall('Pruned the unchosen option.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2528,7 +2684,7 @@ describe('memory-backed sessions', () => {
 					reason: 'Replaced key sk_live_0123456789abcdefghij in the vault.'
 				});
 			}
-			return { content: 'Pruned the loop.', toolCalls: [] };
+			return finishCall('Pruned the loop.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2600,7 +2756,7 @@ describe('memory-backed sessions', () => {
 			if (step === 2) {
 				return writeCall('c2', 'keep_loops', { handles: [second.id] });
 			}
-			return { content: 'Kept both threads.', toolCalls: [] };
+			return finishCall('Kept both threads.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2645,7 +2801,7 @@ describe('memory-backed sessions', () => {
 				// One real handle plus one hallucinated handle in the same batch.
 				return writeCall('c1', 'keep_loops', { handles: [live.id, 'loop.bogus'] });
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2738,7 +2894,7 @@ describe('memory-backed sessions', () => {
 					predicate: 'description'
 				});
 			}
-			return { content: 'Split the description into granular traits.', toolCalls: [] };
+			return finishCall('Split the description into granular traits.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2820,7 +2976,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				return writeCall('c1', 'forget_attribute', { handle: fact.id });
 			}
-			return { content: 'Removed the retracted attribute.', toolCalls: [] };
+			return finishCall('Removed the retracted attribute.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2896,7 +3052,7 @@ describe('memory-backed sessions', () => {
 			if (step === 2) {
 				return writeCall('c2', 'forget_directive', { handle: directive.id });
 			}
-			return { content: 'Retired the directive.', toolCalls: [] };
+			return finishCall('Retired the directive.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -2956,7 +3112,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				return writeCall('c1', 'forget_attribute', { handle: 'fact.does_not_exist' });
 			}
-			return { content: 'Done.', toolCalls: [] };
+			return finishCall('Done.');
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
@@ -3231,7 +3387,8 @@ describe('memory-backed sessions', () => {
 
 		// Step 1: reasoning streamed in two deltas; a <think> tag split across
 		// two content deltas; tool-call arguments split across two deltas.
-		// Step 2: a final spoken message with no tool calls ends the loop.
+		// Step 2: a closing message plus an explicit finish_extraction call ends
+		// the loop (the model finishes deliberately rather than falling silent).
 		const responses = [
 			sse([
 				{ choices: [{ delta: { reasoning: 'Mara owns ' } }] },
@@ -3271,7 +3428,20 @@ describe('memory-backed sessions', () => {
 					]
 				}
 			]),
-			sse([{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }])
+			sse([
+				{ choices: [{ delta: { content: 'Stored the migration decision.' } }] },
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{ index: 0, id: 'fin', function: { name: 'finish_extraction', arguments: '{}' } }
+								]
+							}
+						}
+					]
+				}
+			])
 		];
 		let call = 0;
 		vi.stubGlobal(
@@ -4622,3 +4792,98 @@ describe('extractor prompt directive guidance', () => {
 		});
 	}
 });
+
+describe('memory extractor backend defaults + override resolution', () => {
+	beforeEach(async () => {
+		await setupLocalEnv();
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'env-harvester';
+		delete process.env.MEMORY_EXTRACTOR_BACKEND;
+		const { resetConfigForTests } = await import('../src/lib/server/config');
+		resetConfigForTests();
+	});
+
+	afterEach(() => {
+		delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+		delete process.env.MEMORY_EXTRACTOR_MODEL;
+		delete process.env.MEMORY_EXTRACTOR_BACKEND;
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	it('uses the env backend when no per-conversation backend is given (NULL)', () => {
+		// Default env backend is heuristic.
+		expect(createMemoryExtractor({}).kind).toBe('heuristic');
+		expect(isModelBackedExtractorConfigured({})).toBe(false);
+	});
+
+	it('honours a per-conversation backend override (precedence over env)', () => {
+		const tools = createMemoryExtractor({ backend: 'openai-compatible-tools' });
+		expect(tools.kind).toBe('openai-compatible-tools');
+		const single = createMemoryExtractor({ backend: 'openai-compatible' });
+		expect(single.kind).toBe('openai-compatible');
+		expect(isModelBackedExtractorConfigured({ backend: 'openai-compatible-tools' })).toBe(true);
+	});
+
+	it('falls back to heuristic when an override backend lacks prerequisites', () => {
+		delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+		const extractor = createMemoryExtractor({ backend: 'openai-compatible-tools' });
+		expect(extractor.kind).toBe('heuristic');
+	});
+
+	it('seeds new conversations with the user default backend + model', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const settings = await import('../src/lib/server/db/repos/settings');
+		const { POST } = await import('../src/routes/api/conversations/+server');
+		const user = users.ensureLocalUser();
+		settings.save(user.id, {
+			defaultProvider: 'copilot',
+			defaultModel: null,
+			defaultWorkdir: null,
+			defaultConversationMode: 'interactive',
+			defaultPolicy: 'prompt',
+			theme: 'dark',
+			defaultMemoryExtractorModel: 'seeded-harvester',
+			defaultMemoryExtractorBackend: 'openai-compatible-tools'
+		});
+
+		const seeded = await callCreate(POST, user.id, {});
+		expect(seeded.memoryExtractorModel).toBe('seeded-harvester');
+		expect(seeded.memoryExtractorBackend).toBe('openai-compatible-tools');
+
+		// Explicit create-body field wins over the user default.
+		const overridden = await callCreate(POST, user.id, {
+			memoryExtractorModel: 'body-harvester',
+			memoryExtractorBackend: 'openai-compatible'
+		});
+		expect(overridden.memoryExtractorModel).toBe('body-harvester');
+		expect(overridden.memoryExtractorBackend).toBe('openai-compatible');
+	});
+
+	it('leaves backend/model NULL when the user has no defaults', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const { POST } = await import('../src/routes/api/conversations/+server');
+		const user = users.ensureLocalUser();
+		const created = await callCreate(POST, user.id, {});
+		expect(created.memoryExtractorModel).toBeNull();
+		expect(created.memoryExtractorBackend).toBeNull();
+	});
+});
+
+async function callCreate(
+	post: typeof import('../src/routes/api/conversations/+server').POST,
+	userId: string,
+	body: Record<string, unknown>
+): Promise<import('../src/lib/types').Conversation> {
+	const event = {
+		locals: { userId },
+		request: new Request('http://local.test/api/conversations', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		})
+	} as unknown as Parameters<typeof post>[0];
+	const res = await post(event);
+	const data = (await res.json()) as { conversation: import('../src/lib/types').Conversation };
+	return data.conversation;
+}

@@ -3,6 +3,7 @@ import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import {
 	normalizeBackendProvider,
+	normalizeMemoryExtractorBackend,
 	normalizeSessionMode,
 	type UserSettings,
 	type PermissionPolicy
@@ -16,6 +17,8 @@ interface SettingsRow {
 	default_mode: string | null;
 	default_policy: string;
 	theme: string;
+	default_memory_extractor_model: string | null;
+	default_memory_extractor_backend: string | null;
 	updated_at: number;
 }
 
@@ -31,7 +34,11 @@ function rowToSettings(r: SettingsRow): UserSettings {
 		defaultWorkdir: r.default_workdir,
 		defaultConversationMode: normalizeSessionMode(r.default_mode),
 		defaultPolicy: policy,
-		theme: r.theme === 'light' ? 'light' : r.theme === 'system' ? 'system' : 'dark'
+		theme: r.theme === 'light' ? 'light' : r.theme === 'system' ? 'system' : 'dark',
+		defaultMemoryExtractorModel: r.default_memory_extractor_model ?? null,
+		defaultMemoryExtractorBackend: normalizeMemoryExtractorBackend(
+			r.default_memory_extractor_backend
+		)
 	};
 }
 
@@ -54,7 +61,9 @@ export function defaults(): UserSettings {
 		defaultWorkdir: null,
 		defaultConversationMode: 'interactive',
 		defaultPolicy: 'prompt',
-		theme: 'system'
+		theme: 'system',
+		defaultMemoryExtractorModel: null,
+		defaultMemoryExtractorBackend: null
 	};
 }
 
@@ -62,9 +71,10 @@ export function save(userId: string, s: UserSettings) {
 	getDb()
 		.prepare(
 			`INSERT INTO user_settings(
-			   user_id, default_provider, default_model, default_workdir, default_mode, default_policy, theme, updated_at
+			   user_id, default_provider, default_model, default_workdir, default_mode, default_policy, theme,
+			   default_memory_extractor_model, default_memory_extractor_backend, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
 			   default_provider = excluded.default_provider,
 			   default_model = excluded.default_model,
@@ -72,6 +82,8 @@ export function save(userId: string, s: UserSettings) {
 			   default_mode = excluded.default_mode,
 			   default_policy = excluded.default_policy,
 			   theme = excluded.theme,
+			   default_memory_extractor_model = excluded.default_memory_extractor_model,
+			   default_memory_extractor_backend = excluded.default_memory_extractor_backend,
 			   updated_at = excluded.updated_at`
 		)
 		.run(
@@ -82,6 +94,8 @@ export function save(userId: string, s: UserSettings) {
 			s.defaultConversationMode,
 			s.defaultPolicy,
 			s.theme,
+			s.defaultMemoryExtractorModel,
+			s.defaultMemoryExtractorBackend,
 			Date.now()
 		);
 }

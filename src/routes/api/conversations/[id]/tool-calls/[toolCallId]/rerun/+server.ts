@@ -114,7 +114,8 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 					mode: conv.memoryMode,
 					userMessageId: userMessage.id,
 					userContent: userMessage.content,
-					extractorModel: conv.memoryExtractorModel
+					extractorModel: conv.memoryExtractorModel,
+					extractorBackend: conv.memoryExtractorBackend
 				}
 			: undefined
 	});

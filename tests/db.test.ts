@@ -336,7 +336,9 @@ describe('db migrations + repos', () => {
 			defaultWorkdir: null,
 			defaultConversationMode: 'best-effort',
 			defaultPolicy: 'allow-all',
-			theme: 'light'
+			theme: 'light',
+			defaultMemoryExtractorModel: 'harvester-x',
+			defaultMemoryExtractorBackend: 'openai-compatible-tools'
 		});
 		expect(settings.get(u.id)).toEqual({
 			defaultProvider: 'openai-compatible',
@@ -344,8 +346,23 @@ describe('db migrations + repos', () => {
 			defaultWorkdir: null,
 			defaultConversationMode: 'best-effort',
 			defaultPolicy: 'allow-all',
-			theme: 'light'
+			theme: 'light',
+			defaultMemoryExtractorModel: 'harvester-x',
+			defaultMemoryExtractorBackend: 'openai-compatible-tools'
 		});
+		// '(use server default)' round-trips as NULL for both extractor defaults.
+		settings.save(u.id, {
+			defaultProvider: 'openai-compatible',
+			defaultModel: 'claude',
+			defaultWorkdir: null,
+			defaultConversationMode: 'best-effort',
+			defaultPolicy: 'allow-all',
+			theme: 'light',
+			defaultMemoryExtractorModel: null,
+			defaultMemoryExtractorBackend: null
+		});
+		expect(settings.get(u.id)?.defaultMemoryExtractorModel).toBeNull();
+		expect(settings.get(u.id)?.defaultMemoryExtractorBackend).toBeNull();
 	});
 
 	it('coerces a stale legacy allow-readonly policy row to prompt', () => {
@@ -356,7 +373,9 @@ describe('db migrations + repos', () => {
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'prompt',
-			theme: 'dark'
+			theme: 'dark',
+			defaultMemoryExtractorModel: null,
+			defaultMemoryExtractorBackend: null
 		});
 		// Simulate a row that escaped migration 008.
 		getDb()

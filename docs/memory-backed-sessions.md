@@ -32,8 +32,9 @@ The portal now includes the full production-oriented foundation described here:
   memory, and FTS (full-text) search
 - memory inspector workflows for edit, delete, wipe, patch revert, and individual
   patch-item approve/reject review
-- per-conversation controls for memory mode, harvester model override, and
-  explicit global-memory tool opt-in
+- per-conversation controls for memory mode, harvester backend + model override,
+  and explicit global-memory tool opt-in (with user-level seed defaults in
+  Settings → General)
 - model-backed extraction metadata, strict-mode validators, and timeline/alibi
   conflict checks
 - custom memory profile persistence and settings UI groundwork for user-authored
@@ -119,6 +120,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` / `remember_entity` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
 | `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
 | `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Revertible; prefer supersede when the predicate is unchanged. |
+| `finish_extraction` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is not rendered as a tool card. |
 
 These tools should be available to the model during the main response call for
 memory-backed sessions. The model should be instructed to call them whenever a
@@ -852,6 +854,19 @@ targeted, per-tool feedback without discarding anything already staged.
 Everything staged across the turn commits once at the end. The model never
 writes directly to canonical memory.
 
+The extractor ends its run by calling a dedicated control tool,
+**`finish_extraction`** (optional `summary`). This is the only clean way to
+stop: a completion that simply returns no tool call is **not** treated as
+"done" — reasoning models routinely close a step with chain-of-thought and no
+tool call, which would otherwise end the run prematurely (often at the second
+thinking block) having stored nothing. An empty turn is instead nudged toward
+either further writes or an explicit `finish_extraction`, bounded by a small cap
+(`MAX_EMPTY_TURN_NUDGES`) so a model that never cooperates still terminates well
+before the iteration/wall-clock budgets. `finish_extraction` is a control
+signal, not a write: it stages nothing and is not rendered as a tool card; its
+optional `summary` seeds the extraction session summary (falling back to the
+turn's final visible text).
+
 ## Extraction and commit flow
 
 After a response, the extractor stages a memory patch across its write-tool
@@ -1032,7 +1047,8 @@ surfaces:
 - each **retrieval** (`memory_search`, `memory_get_entity`, …) and **write**
   (`remember_attributes`, `keep_loops`, …) call, with its validation feedback, as a threaded
   child tool call; and
-- its **closing message** as the parent tool result → the card's Response
+- its **closing summary** — `finish_extraction`'s `summary` arg, or the turn's
+  final visible text — as the parent tool result → the card's Response
   (`ExtractPatchResult.response`).
 
 The extractor's chat requests use `stream: true`, so reasoning and content are
@@ -1134,6 +1150,9 @@ productionized.
 4. Store extractor diagnostics in the patch validation result.
 5. Add profile-specific tests with transcript fixtures.
 6. Add a settings flag for extractor backend/model once multiple choices exist.
+   _(Done: per-conversation `memory_extractor_backend` + `memory_extractor_model`
+   columns, user-level seed defaults in Settings → General, and chat-header
+   selectors; NULL resolves to the server env defaults.)_
 
 ## Validation
 
@@ -1196,6 +1215,32 @@ Suggested copy:
   continuity."
 - **Strict**: "Use detailed memory tools and validation for timelines, clues,
   secrets, and fine-grained continuity."
+
+#### Extractor backend + harvester model
+
+Two further per-conversation controls live in the chat header alongside the
+memory mode selector (shown only when memory is enabled):
+
+- **Backend** — `Server default backend` (NULL) / `Heuristic (local)` /
+  `OpenAI-compatible (single-shot)` / `OpenAI-compatible (tools)`. Persisted to
+  `conversations.memory_extractor_backend`. NULL resolves to the server env
+  `MEMORY_EXTRACTOR_BACKEND` at runtime. The choice flows into
+  `isModelBackedExtractorConfigured`: a `heuristic` backend keeps the main model
+  owning memory writes, while an OpenAI-compatible backend hands writes to the
+  background extractor.
+- **Harvester** — the per-conversation extractor model override
+  (`conversations.memory_extractor_model`); NULL means "use the server default
+  model".
+
+Both controls have **user-level seed defaults** in Settings → General
+(`default_memory_extractor_backend` / `default_memory_extractor_model`). Like
+the other General defaults (provider/model/mode), they are **seed-only**: copied
+onto each conversation at creation and never retroactively applied. Resolution
+precedence is therefore: per-conversation column → (seeded from) user default →
+server env. An OpenAI-compatible backend without `OPENAI_COMPATIBLE_BASE_URL`
+and a model still degrades to the heuristic extractor (logged as
+`memory.extractor.fallback_heuristic`); the UI surfaces a non-blocking hint but
+does not prevent saving.
 
 ### Memory inspector
 

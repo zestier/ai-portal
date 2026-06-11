@@ -7,6 +7,7 @@ import { getTurn } from '$lib/server/runtime/turn-runner';
 import { getProvider } from '$lib/server/providers';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { parseBody } from '$lib/server/validate';
+import { MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
 import { log } from '$lib/server/log';
 
 // PATCH /api/conversations/:id/session — flip per-conversation SDK settings.
@@ -29,6 +30,7 @@ const PatchBody = z
 			.transform((value) => (value ? value : null))
 			.nullable()
 			.optional(),
+		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).nullable().optional(),
 		globalMemoryEnabled: z.boolean().optional(),
 		approveAllTools: z.boolean().optional()
 	})
@@ -38,6 +40,7 @@ const PatchBody = z
 			b.mode !== undefined ||
 			b.memoryMode !== undefined ||
 			b.memoryExtractorModel !== undefined ||
+			b.memoryExtractorBackend !== undefined ||
 			b.globalMemoryEnabled !== undefined ||
 			b.approveAllTools !== undefined,
 		{
@@ -54,26 +57,43 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const extractorModelChanged =
 		body.memoryExtractorModel !== undefined &&
 		body.memoryExtractorModel !== conv.memoryExtractorModel;
+	const extractorBackendChanged =
+		body.memoryExtractorBackend !== undefined &&
+		body.memoryExtractorBackend !== conv.memoryExtractorBackend;
 	const globalMemoryChanged =
 		body.globalMemoryEnabled !== undefined && body.globalMemoryEnabled !== conv.globalMemoryEnabled;
 	const turn = getTurn(conv.id);
 	if (
-		(modelChanged || memoryChanged || extractorModelChanged || globalMemoryChanged) &&
+		(modelChanged ||
+			memoryChanged ||
+			extractorModelChanged ||
+			extractorBackendChanged ||
+			globalMemoryChanged) &&
 		turn?.status === 'running'
 	) {
 		throw error(
 			409,
-			'Cannot change model, memory mode, harvester model, or global memory while a turn is running.'
+			'Cannot change model, memory mode, harvester model, harvester backend, or global memory while a turn is running.'
 		);
 	}
 
 	const persistedPatch = { ...body };
 	convs.updateSessionSettings(conv.id, conv.userId, body);
-	if (modelChanged || memoryChanged || extractorModelChanged || globalMemoryChanged) {
+	if (
+		modelChanged ||
+		memoryChanged ||
+		extractorModelChanged ||
+		extractorBackendChanged ||
+		globalMemoryChanged
+	) {
 		await pool.release(conv.id);
 	}
 	const live =
-		modelChanged || memoryChanged || extractorModelChanged || globalMemoryChanged
+		modelChanged ||
+		memoryChanged ||
+		extractorModelChanged ||
+		extractorBackendChanged ||
+		globalMemoryChanged
 			? null
 			: pool.getActive(conv.id);
 	if (live) {

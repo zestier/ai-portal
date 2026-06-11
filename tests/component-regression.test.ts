@@ -74,6 +74,7 @@ const conversation: Conversation = {
 	mode: 'best-effort',
 	memoryMode: 'off',
 	memoryExtractorModel: null,
+	memoryExtractorBackend: null,
 	globalMemoryEnabled: false,
 	approveAllTools: false,
 	createdAt: 1_700_000_000_000,

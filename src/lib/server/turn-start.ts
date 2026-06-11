@@ -46,7 +46,8 @@ export async function startTurnFromUserMessage(
 				globalMemoryEnabled: conv.globalMemoryEnabled,
 				includeRecentTranscript: true,
 				extractorPresent: isModelBackedExtractorConfigured({
-					model: conv.memoryExtractorModel
+					model: conv.memoryExtractorModel,
+					backend: conv.memoryExtractorBackend
 				})
 			})
 		: promptIncludesPriorMessages
@@ -88,7 +89,8 @@ export async function startTurnFromUserMessage(
 					mode: conv.memoryMode,
 					userMessageId: userMsg.id,
 					userContent: userMsg.content,
-					extractorModel: conv.memoryExtractorModel
+					extractorModel: conv.memoryExtractorModel,
+					extractorBackend: conv.memoryExtractorBackend
 				}
 			: undefined,
 		beforeSend: async () => {

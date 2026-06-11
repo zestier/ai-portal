@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BACKEND_PROVIDER_IDS } from '$lib/types';
+import { BACKEND_PROVIDER_IDS, MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
 
 const optionalUrl = z
 	.string()
@@ -61,9 +61,7 @@ const Schema = z
 		OPENAI_COMPATIBLE_FREQUENCY_PENALTY: z.coerce.number().min(-2).max(2).optional(),
 		LMSTUDIO_BASE_URL: z.string().trim().url().default('http://127.0.0.1:1234'),
 		LMSTUDIO_API_KEY: z.string().optional(),
-		MEMORY_EXTRACTOR_BACKEND: z
-			.enum(['heuristic', 'openai-compatible', 'openai-compatible-tools'])
-			.default('heuristic'),
+		MEMORY_EXTRACTOR_BACKEND: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).default('heuristic'),
 		MEMORY_EXTRACTOR_MODEL: z.string().trim().optional(),
 		MEMORY_EXTRACTOR_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),

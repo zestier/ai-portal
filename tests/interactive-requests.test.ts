@@ -251,7 +251,9 @@ describe('interactive request registry', () => {
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'deny-all',
-			theme: 'dark'
+			theme: 'dark',
+			defaultMemoryExtractorModel: null,
+			defaultMemoryExtractorBackend: null
 		});
 		const requestId = newRequestId();
 		makePending('permission', permView(requestId), undefined);
@@ -377,7 +379,9 @@ describe('interactive request registry', () => {
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'deny-all',
-			theme: 'dark'
+			theme: 'dark',
+			defaultMemoryExtractorModel: null,
+			defaultMemoryExtractorBackend: null
 		});
 		const requestId = newRequestId();
 		makePending('permission', permView(requestId), undefined);

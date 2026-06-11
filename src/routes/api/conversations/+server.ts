@@ -5,7 +5,11 @@ import * as convs from '$lib/server/db/repos/conversations';
 import * as settings from '$lib/server/db/repos/settings';
 import { loadConfig } from '$lib/server/config';
 import { getDefaultProviderId } from '$lib/server/providers';
-import { BACKEND_PROVIDER_IDS, normalizeBackendProvider } from '$lib/types';
+import {
+	BACKEND_PROVIDER_IDS,
+	MEMORY_EXTRACTOR_BACKEND_IDS,
+	normalizeBackendProvider
+} from '$lib/types';
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
@@ -21,7 +25,9 @@ const CreateBody = z.object({
 	provider: z.enum(BACKEND_PROVIDER_IDS).optional(),
 	model: z.string().min(1).optional(),
 	workdir: z.string().min(1).optional(),
-	mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional()
+	mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+	memoryExtractorModel: z.string().min(1).optional(),
+	memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional()
 });
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -50,7 +56,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		workdir,
 		provider: normalizeBackendProvider(provider),
 		model,
-		mode: body.mode ?? userSettings.defaultConversationMode
+		mode: body.mode ?? userSettings.defaultConversationMode,
+		// Seed-only, mirroring model/mode precedence: explicit create-body field
+		// wins, else the user's default, else NULL (resolved from env at runtime).
+		memoryExtractorModel:
+			body.memoryExtractorModel ?? userSettings.defaultMemoryExtractorModel ?? null,
+		memoryExtractorBackend:
+			body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null
 	});
 	return json({ ok: true, conversation: conv }, { status: 201 });
 };

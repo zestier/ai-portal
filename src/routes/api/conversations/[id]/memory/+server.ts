@@ -97,6 +97,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			userMessageId: userMessage.id,
 			userContent: userMessage.content,
 			extractorModel: conv.memoryExtractorModel,
+			extractorBackend: conv.memoryExtractorBackend,
 			patchTurnId: latestTurnId,
 			revertPatchId: priorPatch?.id ?? null
 		}

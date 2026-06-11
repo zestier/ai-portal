@@ -9,6 +9,7 @@
 	import {
 		BACKEND_PROVIDER_IDS,
 		type BackendProviderId,
+		type MemoryExtractorBackend,
 		type ProviderRuntimeFeatureStatus,
 		type SessionMode
 	} from '$lib/types';
@@ -16,6 +17,13 @@
 	import Pill from '$lib/components/ui/Pill.svelte';
 
 	const CUSTOM_MODEL_OPTION = '__custom__';
+	const DEFAULT_EXTRACTOR_OPTION = '';
+
+	const EXTRACTOR_BACKEND_OPTIONS: { value: MemoryExtractorBackend; label: string }[] = [
+		{ value: 'heuristic', label: 'Heuristic (local)' },
+		{ value: 'openai-compatible', label: 'OpenAI-compatible (single-shot)' },
+		{ value: 'openai-compatible-tools', label: 'OpenAI-compatible (tools)' }
+	];
 
 	const MODE_OPTIONS: { value: SessionMode; label: string; hint: string }[] = [
 		{
@@ -53,8 +61,14 @@
 	let selectedProvider = $state<BackendProviderId>(BACKEND_PROVIDER_IDS[0]);
 	let selectedModelChoice = $state('');
 	let customModel = $state('');
+	let selectedExtractorBackend = $state<MemoryExtractorBackend | ''>('');
+	let selectedExtractorModelChoice = $state('');
+	let customExtractorModel = $state('');
 	$effect(() => {
 		selectedProvider = settings.defaultProvider;
+	});
+	$effect(() => {
+		selectedExtractorBackend = settings.defaultMemoryExtractorBackend ?? '';
 	});
 	const selectedProviderStatus = $derived(
 		providers.find((provider) => provider.id === selectedProvider) ?? providers[0]
@@ -82,8 +96,26 @@
 		}
 	});
 
+	$effect(() => {
+		const savedExtractorModel = settings.defaultMemoryExtractorModel ?? '';
+		const modelIds = new Set(selectedProviderStatus.models.map((model) => model.id));
+		if (!savedExtractorModel || modelIds.has(savedExtractorModel)) {
+			selectedExtractorModelChoice = savedExtractorModel;
+			customExtractorModel = '';
+		} else {
+			selectedExtractorModelChoice = CUSTOM_MODEL_OPTION;
+			customExtractorModel = savedExtractorModel;
+		}
+	});
+
 	function selectedModelFormValue(): string {
 		return selectedModelChoice === CUSTOM_MODEL_OPTION ? customModel : selectedModelChoice;
+	}
+
+	function selectedExtractorModelFormValue(): string {
+		return selectedExtractorModelChoice === CUSTOM_MODEL_OPTION
+			? customExtractorModel
+			: selectedExtractorModelChoice;
 	}
 
 	function modelAvailability(provider: ProviderStatus): string {
@@ -256,6 +288,63 @@
 					{modeFeature.description}
 				{/if}
 			</span>
+		</label>
+		<label>
+			Default memory harvester backend
+			<select name="defaultMemoryExtractorBackend" bind:value={selectedExtractorBackend}>
+				<option value={DEFAULT_EXTRACTOR_OPTION}>(use server default)</option>
+				{#each EXTRACTOR_BACKEND_OPTIONS as opt (opt.value)}
+					<option value={opt.value}>{opt.label}</option>
+				{/each}
+			</select>
+			<span class="muted small">
+				Seeds the memory extractor backend for newly created conversations. Existing conversations
+				keep their current backend.
+				{#if selectedExtractorBackend === 'openai-compatible' || selectedExtractorBackend === 'openai-compatible-tools'}
+					<br />
+					Requires <code>OPENAI_COMPATIBLE_BASE_URL</code> and a harvester model; otherwise extraction
+					falls back to the heuristic backend.
+				{/if}
+			</span>
+		</label>
+		<label>
+			Default memory harvester model
+			{#if selectedProviderStatus.models.length > 0}
+				<input
+					type="hidden"
+					name="defaultMemoryExtractorModel"
+					value={selectedExtractorModelFormValue()}
+				/>
+				<select bind:value={selectedExtractorModelChoice}>
+					<option value="">(use server default)</option>
+					{#each selectedProviderStatus.models as m (m.id)}
+						<option value={m.id}>
+							{m.name} — {m.id} ({formatContextWindow(m.maxContextWindowTokens)})
+						</option>
+					{/each}
+					<option value={CUSTOM_MODEL_OPTION}>Enter a custom model id…</option>
+				</select>
+				{#if selectedExtractorModelChoice === CUSTOM_MODEL_OPTION}
+					<input
+						bind:value={customExtractorModel}
+						placeholder={selectedProviderStatus.ui.defaultModelPlaceholder}
+						aria-label="Custom default harvester model id"
+					/>
+				{/if}
+				<span class="muted small">
+					Seeds the model-backed harvester for newly created conversations. Pick a discovered model
+					or enter an exact model id.
+				</span>
+			{:else}
+				<input
+					name="defaultMemoryExtractorModel"
+					value={settings.defaultMemoryExtractorModel ?? ''}
+					placeholder={selectedProviderStatus.ui.defaultModelPlaceholder}
+				/>
+				<span class="muted small">
+					Seeds the model-backed harvester for newly created conversations.
+				</span>
+			{/if}
 		</label>
 		<label>
 			Permission policy

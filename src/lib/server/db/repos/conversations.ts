@@ -3,10 +3,12 @@ import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import {
 	normalizeBackendProvider,
+	normalizeMemoryExtractorBackend,
 	normalizeMemoryMode,
 	normalizeSessionMode,
 	type BackendProviderId,
 	type Conversation,
+	type MemoryExtractorBackend,
 	type MemoryMode,
 	type SessionMode
 } from '$lib/types';
@@ -27,6 +29,7 @@ interface ConvRow {
 	mode: string | null;
 	memory_mode: string | null;
 	memory_extractor_model: string | null;
+	memory_extractor_backend: string | null;
 	global_memory_enabled: number | null;
 	approve_all_tools: number | null;
 	draft_prompt: string | null;
@@ -44,6 +47,7 @@ function rowToConv(r: ConvRow): Conversation {
 		mode,
 		memoryMode: normalizeMemoryMode(r.memory_mode),
 		memoryExtractorModel: r.memory_extractor_model ?? null,
+		memoryExtractorBackend: normalizeMemoryExtractorBackend(r.memory_extractor_backend),
 		globalMemoryEnabled: r.global_memory_enabled === 1,
 		approveAllTools: r.approve_all_tools === 1,
 		createdAt: r.created_at,
@@ -101,6 +105,7 @@ export interface CreateInput {
 	mode?: SessionMode;
 	memoryMode?: MemoryMode;
 	memoryExtractorModel?: string | null;
+	memoryExtractorBackend?: MemoryExtractorBackend | null;
 	globalMemoryEnabled?: boolean;
 	id?: string;
 	forkedFromConversationId?: string | null;
@@ -127,6 +132,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const mode = input.mode ?? 'interactive';
 	const memoryMode = input.memoryMode ?? 'off';
 	const memoryExtractorModel = normalizeOptionalModel(input.memoryExtractorModel);
+	const memoryExtractorBackend = normalizeMemoryExtractorBackend(input.memoryExtractorBackend);
 	const globalMemoryEnabled = input.globalMemoryEnabled === true;
 	const provider =
 		input.provider ?? normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
@@ -135,9 +141,9 @@ export function create(userId: string, input: CreateInput): Conversation {
 		.prepare(
 			`INSERT INTO conversations(
 			   id, user_id, title, workdir, provider, model, mode, memory_mode, memory_extractor_model,
-			   global_memory_enabled, created_at, updated_at,
+			   memory_extractor_backend, global_memory_enabled, created_at, updated_at,
 			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			id,
@@ -149,6 +155,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 			mode,
 			memoryMode,
 			memoryExtractorModel,
+			memoryExtractorBackend,
 			globalMemoryEnabled ? 1 : 0,
 			now,
 			now,
@@ -167,6 +174,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 		mode,
 		memoryMode,
 		memoryExtractorModel,
+		memoryExtractorBackend,
 		globalMemoryEnabled,
 		approveAllTools: false,
 		createdAt: now,
@@ -239,6 +247,7 @@ export function updateSessionSettings(
 		mode?: SessionMode;
 		memoryMode?: MemoryMode;
 		memoryExtractorModel?: string | null;
+		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
 		approveAllTools?: boolean;
 	}
@@ -260,6 +269,10 @@ export function updateSessionSettings(
 	if (patch.memoryExtractorModel !== undefined) {
 		sets.push('memory_extractor_model = ?');
 		args.push(normalizeOptionalModel(patch.memoryExtractorModel));
+	}
+	if (patch.memoryExtractorBackend !== undefined) {
+		sets.push('memory_extractor_backend = ?');
+		args.push(normalizeMemoryExtractorBackend(patch.memoryExtractorBackend));
 	}
 	if (patch.globalMemoryEnabled !== undefined) {
 		sets.push('global_memory_enabled = ?');
