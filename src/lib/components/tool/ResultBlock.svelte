@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { renderMarkdown } from '$lib/client/markdown';
+	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 	import type { ResultBlock } from '$lib/client/tool-result';
 	import TerminalBlock from './TerminalBlock.svelte';
 
@@ -20,7 +21,7 @@
 	<TerminalBlock text={block.text} {command} />
 {:else if block.kind === 'text' && markdownHtml}
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-	<div class="markdown-result">{@html markdownHtml}</div>
+	<div class="markdown-result" use:copyableCodeBlocks>{@html markdownHtml}</div>
 {:else if block.kind === 'image'}
 	<img class="image" src={`data:${block.mimeType};base64,${block.data}`} alt="tool output" />
 {:else if block.kind === 'audio'}
@@ -32,10 +33,10 @@
 {:else if block.kind === 'resource'}
 	<div class="resource">
 		<a href={block.uri} target="_blank" rel="noopener noreferrer"><code>{block.uri}</code></a>
-		{#if block.text}<pre><code>{block.text}</code></pre>{/if}
+		{#if block.text}<div use:copyableCodeBlocks><pre><code>{block.text}</code></pre></div>{/if}
 	</div>
 {:else}
-	<pre><code>{block.text}</code></pre>
+	<div use:copyableCodeBlocks><pre><code>{block.text}</code></pre></div>
 {/if}
 
 <style>

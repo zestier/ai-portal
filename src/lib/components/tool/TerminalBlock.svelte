@@ -3,6 +3,8 @@
 	// stream while a tool is running and for the final `terminal` content
 	// block returned by tools like bash.
 	import { renderTerminal } from '$lib/client/terminal-render';
+	import { trimOneTrailingNewline, writeClipboard } from '$lib/client/copy-helper';
+	import { onDestroy } from 'svelte';
 
 	let {
 		text,
@@ -20,6 +22,20 @@
 
 	const rendered = $derived(renderTerminal(text));
 	const hasHeader = $derived(cwd != null || exitCode != null);
+
+	// Copy OUTPUT ONLY: the ANSI-stripped terminal text, excluding the cwd/exit
+	// header and the leading `$ command` prompt line.
+	let copyState = $state<'idle' | 'copied' | 'failed'>('idle');
+	let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	async function copyOutput() {
+		const ok = await writeClipboard(trimOneTrailingNewline(rendered));
+		copyState = ok ? 'copied' : 'failed';
+		clearTimeout(copyTimer);
+		copyTimer = setTimeout(() => (copyState = 'idle'), 1500);
+	}
+
+	onDestroy(() => clearTimeout(copyTimer));
 </script>
 
 <div class="terminal-block" class:streaming>
@@ -31,11 +47,39 @@
 			{/if}
 		</div>
 	{/if}
-	<pre class="body">{#if command}<span class="prompt">$ </span><span class="command">{command}</span
-			>{#if rendered}{'\n'}{/if}{/if}<code>{rendered}</code>{#if streaming}<span
-				class="cursor"
-				aria-hidden="true">▍</span
-			>{/if}</pre>
+	<div class="body-wrap">
+		<pre class="body">{#if command}<span class="prompt">$ </span><span class="command"
+					>{command}</span
+				>{#if rendered}{'\n'}{/if}{/if}<code>{rendered}</code>{#if streaming}<span
+					class="cursor"
+					aria-hidden="true">▍</span
+				>{/if}</pre>
+		{#if copyState === 'failed'}<span class="copy-status">Copy failed</span>{/if}
+		<button
+			type="button"
+			class="copy-btn"
+			data-state={copyState}
+			aria-label={copyState === 'copied' ? 'Copied' : 'Copy code'}
+			onclick={copyOutput}
+		>
+			{#if copyState === 'copied'}
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+					<path
+						d="M13.78 4.22a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0L2.72 8.03a.75.75 0 0 1 1.06-1.06L7 10.19l5.72-5.97a.75.75 0 0 1 1.06 0z"
+					/>
+				</svg>
+			{:else}
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+					<path
+						d="M10 1H4a1 1 0 0 0-1 1v8h1.5V2.5h5.5V1zM12 4H7a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1zm-.5 9.5h-4v-8h4v8z"
+					/>
+				</svg>
+			{/if}
+		</button>
+		<span class="copy-live" aria-live="polite"
+			>{copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : ''}</span
+		>
+	</div>
 </div>
 
 <style>
@@ -87,6 +131,76 @@
 		word-break: break-all;
 		max-height: 28em;
 		margin: 0;
+	}
+	.body-wrap {
+		position: relative;
+	}
+	.copy-btn {
+		position: absolute;
+		top: var(--space-2);
+		right: var(--space-2);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 4px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-2);
+		color: var(--text-muted);
+		cursor: pointer;
+		opacity: 0;
+		transition:
+			opacity 0.12s ease,
+			color 0.12s ease,
+			background 0.12s ease;
+		z-index: 2;
+	}
+	.copy-btn :global(svg) {
+		display: block;
+	}
+	.body-wrap:hover .copy-btn,
+	.body-wrap:focus-within .copy-btn,
+	.copy-btn:focus-visible {
+		opacity: 1;
+	}
+	.copy-btn:hover {
+		color: var(--text);
+		background: var(--surface);
+	}
+	.copy-btn:focus-visible {
+		outline: var(--focus-ring);
+	}
+	.copy-btn[data-state='copied'] {
+		color: var(--success);
+		opacity: 1;
+	}
+	.copy-btn[data-state='failed'] {
+		color: var(--danger);
+		opacity: 1;
+	}
+	.copy-status {
+		position: absolute;
+		top: var(--space-2);
+		right: calc(var(--space-2) + 30px);
+		font-size: var(--fs-xs);
+		color: var(--danger);
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		pointer-events: none;
+		z-index: 2;
+	}
+	.copy-live {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+		border: 0;
 	}
 	.cursor {
 		display: inline-block;

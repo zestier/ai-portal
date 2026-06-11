@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Message, ToolCallRecord, FileEditRecord, ReasoningBlockRecord } from '$lib/types';
 	import { renderMarkdown } from '$lib/client/markdown';
+	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 	import ToolCall from './ToolCall.svelte';
 	import SubagentCall from './SubagentCall.svelte';
 	import DiffView from './DiffView.svelte';
@@ -451,7 +452,7 @@
 			{#each parts as p, i (i)}
 				{#if p.kind === 'text'}
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					<div class="text-part">{@html p.html}</div>
+					<div class="text-part" use:copyableCodeBlocks>{@html p.html}</div>
 				{:else if p.kind === 'tool'}
 					{#if p.tool.tool === 'task'}
 						<SubagentCall
@@ -522,7 +523,7 @@
 			</form>
 		{:else}
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			<div class="text-part">{@html renderMarkdown(message.content)}</div>
+			<div class="text-part" use:copyableCodeBlocks>{@html renderMarkdown(message.content)}</div>
 		{/if}
 	</div>
 </article>

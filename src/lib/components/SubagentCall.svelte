@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '$lib/types';
 	import { renderMarkdown } from '$lib/client/markdown';
+	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 	import {
 		getSubagentDisplayState,
 		getSubagentPresentation,
@@ -292,7 +293,7 @@
 					<span class="label">Prompt</span>
 				</summary>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				<div class="markdown">{@html promptHtml}</div>
+				<div class="markdown" use:copyableCodeBlocks>{@html promptHtml}</div>
 			</details>
 		{/if}
 		{#if activity.length > 0}
@@ -324,8 +325,10 @@
 								durationMs={item.block.durationMs}
 							/>
 						{:else if item.kind === 'content'}
-							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-							<div class="markdown agent-content">{@html renderMarkdown(item.block.text)}</div>
+							<div class="markdown agent-content" use:copyableCodeBlocks>
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+								{@html renderMarkdown(item.block.text)}
+							</div>
 						{:else if item.kind === 'tool'}
 							<ToolCall toolCall={item.tool} />
 						{:else}
@@ -360,7 +363,7 @@
 					{displayState.isBackgroundLaunch ? 'Launch result' : 'Response'}
 				</div>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				<div class="markdown">{@html resultHtml}</div>
+				<div class="markdown" use:copyableCodeBlocks>{@html resultHtml}</div>
 			</div>
 		{:else if toolCall.status === 'pending'}
 			<div class="section">
