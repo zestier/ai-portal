@@ -14,8 +14,7 @@ import { redactSensitiveText, truncate } from './utils';
 import {
 	buildWriteToolSpecs,
 	createWriteToolHandlers,
-	buildStoredFactSignatures,
-	FINISH_EXTRACTION_TOOL
+	buildStoredFactSignatures
 } from './write-tools';
 import { sanitizePatch } from './sanitize';
 import { buildToolExtractorSystemPrompt, toolExtractorContextSections } from './prompts';
@@ -129,6 +128,12 @@ const MAX_EMPTY_TURN_NUDGES = 2;
 // finish tool so the model ends deliberately rather than by falling silent.
 const EMPTY_TURN_NUDGE =
 	'You did not call any tool. If there is anything durable left to record from this turn, call the appropriate write tool now. If you have recorded everything (or nothing durable needed storing), call finish_extraction to end — do not stop without calling it.';
+
+// Name of the explicit finish control-tool. It is not a write (it stages
+// nothing and is not advertised as a durable-write spec); the loop recognizes a
+// call with this name as a clean end signal and reads its optional `summary`
+// arg as the run summary.
+const FINISH_EXTRACTION_TOOL = 'finish_extraction';
 
 /**
  * Agentic, tool-calling memory extractor. Instead of returning a single JSON
