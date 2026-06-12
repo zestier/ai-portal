@@ -59,7 +59,7 @@ describe('memory retry-extraction endpoint', () => {
 		return { user, conv, convs, messages };
 	}
 
-	it('defers the patch revert to the retry turn and starts an extraction-only retry', async () => {
+	it('defers the patch undo to the retry turn and starts an extraction-only retry', async () => {
 		const { user, conv, messages } = await fixture('project');
 		const memory = await import('../src/lib/server/db/repos/memory');
 		const turnInputs = await import('../src/lib/server/db/repos/turn-inputs');
@@ -93,21 +93,21 @@ describe('memory retry-extraction endpoint', () => {
 		const body = (await response.json()) as {
 			turnId: string;
 			assistantMessageId: string;
-			revertPatchId: string | null;
+			priorPatchId: string | null;
 		};
 		expect(body.turnId).toBe('retry-turn');
 		expect(body.assistantMessageId).toBe(assistantMsg.id);
-		expect(body.revertPatchId).toBe(committed.patch.id);
+		expect(body.priorPatchId).toBe(committed.patch.id);
 
-		// The endpoint no longer reverts up-front: the patch is handed to the retry
-		// turn, which reverts it only once re-extraction succeeds. With the turn
-		// mocked here, the prior patch and its items remain intact.
+		// The endpoint no longer undoes the patch up-front: the patch is handed to
+		// the retry turn, which undoes it only once re-extraction succeeds. With the
+		// turn mocked here, the prior patch and its items remain intact.
 		expect(memory.listEntities(conv.id).map((e) => e.entityKey)).toContain('item.attic_key');
 		const patch = memory.listPatches(conv.id).find((p) => p.id === committed.patch.id);
 		expect(patch?.status).toBe('committed');
 
 		// Re-extraction reuses the stored messages, the configured turn id, and is
-		// told which patch to revert on success.
+		// told which patch to undo on success.
 		expect(startExtractionRetryTurnMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				conversationId: conv.id,
@@ -119,13 +119,13 @@ describe('memory retry-extraction endpoint', () => {
 					userMessageId: userMsg.id,
 					userContent: 'remember the attic key',
 					patchTurnId: 'turn-1',
-					revertPatchId: committed.patch.id
+					priorPatchId: committed.patch.id
 				})
 			})
 		);
 	});
 
-	it('passes a null revertPatchId when the latest turn committed nothing', async () => {
+	it('passes a null priorPatchId when the latest turn committed nothing', async () => {
 		const { user, conv, messages } = await fixture('project');
 		const turnInputs = await import('../src/lib/server/db/repos/turn-inputs');
 		const memory = await import('../src/lib/server/db/repos/memory');
@@ -145,12 +145,12 @@ describe('memory retry-extraction endpoint', () => {
 
 		const response = await call(conv.id, user.id);
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { revertPatchId: string | null };
-		expect(body.revertPatchId).toBeNull();
+		const body = (await response.json()) as { priorPatchId: string | null };
+		expect(body.priorPatchId).toBeNull();
 		expect(startExtractionRetryTurnMock).toHaveBeenCalledTimes(1);
 		expect(startExtractionRetryTurnMock).toHaveBeenCalledWith(
 			expect.objectContaining({
-				memory: expect.objectContaining({ revertPatchId: null })
+				memory: expect.objectContaining({ priorPatchId: null })
 			})
 		);
 	});

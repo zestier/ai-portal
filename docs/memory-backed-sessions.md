@@ -30,7 +30,7 @@ The portal now includes the full production-oriented foundation described here:
   memory tools
 - typed session memory tables, patch audit trails, validation issues, global
   memory, and FTS (full-text) search
-- memory inspector workflows for edit, delete, wipe, patch revert, and individual
+- memory inspector workflows for edit, delete, wipe, and individual
   patch-item approve/reject review
 - per-conversation controls for memory mode, harvester backend + model override,
   and explicit global-memory tool opt-in (with user-level seed defaults in
@@ -46,8 +46,8 @@ The portal now includes the full production-oriented foundation described here:
 - source-side consolidation as a projection derivation: each observation is one
   `fact.create` event, and a consolidation pass (run live and on every rebuild)
   derives the active set — deduping re-observations and superseding single-valued
-  predicates. Supersession is never stored, so revert/rebuild re-derive the
-  correct active facts for free. A `pinned` flag plus confidence/recency form the
+  predicates. Supersession is never stored, so a rebuild re-derives the correct
+  active facts for free. A `pinned` flag plus confidence/recency form the
   salience used to rank by durable importance instead of bare `updated_at`
 
 ## Non-goals
@@ -119,7 +119,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory.merge_entities` | Fold a duplicate entity into a canonical one — reassigning its facts, events, and open-loop links — to clean up two keys that denote the same referent (e.g. `character.firstname` vs `character.firstname_lastname`). |
 | `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items, and optional top-level entity metadata to construct the referent); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
 | `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
-| `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Revertible; prefer supersede when the predicate is unchanged. |
+| `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Prefer supersede when the predicate is unchanged. |
 | `finish_extraction` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
 
 These tools should be available to the model during the main response call for
@@ -384,8 +384,8 @@ which flips an existing loop's `status` so superseded threads stop crowding the
 packet. This is how the extractor closes the unchosen options when the user
 picks one of several offered choices (`resolved` = done/answered, `dropped` =
 abandoned/superseded; the optional `reason` is appended to the loop's
-description). Resolutions are recorded as `resolve` patch items, so reverting the
-patch reopens the loop.
+description). Resolutions are recorded as `resolve` patch items for audit and
+per-item review.
 
 Attributes and directives can likewise be retired when no natural supersede
 applies. The extractor calls `forget_attribute` (`{ handle }` or
@@ -396,8 +396,8 @@ split*: when the extractor breaks a non-specific attribute
 predicates (`build`, `hair`, `fears`), the original `description` predicate is
 never superseded, so it is forgotten directly. The other case is an attribute or
 directive the user **explicitly retracted** with no replacement. Forgetting is
-recorded as a `forget` patch item, so reverting the patch restores the fact to
-`active`; an unresolved target (a stale handle, or an `entityKey`+`predicate`
+recorded as a `forget` patch item for audit and per-item review; an unresolved
+target (a stale handle, or an `entityKey`+`predicate`
 with no active fact) is a blocking diagnostic rather than a silent no-op. Same
 predicate → prefer supersede (re-assert via `remember_attributes`); never forget
 merely to tidy.
@@ -467,7 +467,6 @@ Status values:
 - `partially_committed`
 - `rejected`
 - `needs_review`
-- `reverted`
 
 ### `memory_tool_calls`
 
@@ -749,12 +748,11 @@ during replay so the same rule applies live and on rebuild:
 - **Other predicates:** the newest observation of each distinct value stays
   active; older identical observations become `superseded` (dedupe).
 
-Because supersession is never written to the event stream, **revert needs no
-special handling**: `revertPatch` just deletes the rows its patch created
-(appending delete events), and consolidation re-derives the active set from the
-surviving observations — promoting a previously superseded sibling back to active
-where appropriate. A full `rebuildSessionMemoryProjection` yields the identical
-result, since the projection is purely a function of the event stream.
+Because supersession is never written to the event stream, **consolidation needs
+no special handling on a rebuild**: a full `rebuildSessionMemoryProjection`
+replays the surviving `fact.create` events and re-derives the active set from
+them — promoting a previously superseded sibling back to active where
+appropriate — since the projection is purely a function of the event stream.
 
 `pinned` (migration `035_memory_fact_salience.sql`) feeds the injector's salience
 score.
@@ -922,7 +920,7 @@ case is a bare name vs. a fuller name, e.g. `character.firstname` and
   call `memory.merge_entities` to fold the duplicate into the canonical entity.
   The merge reassigns the duplicate's facts, events, and open-loop links onto
   the canonical entity through the append-only session memory log (so projection
-  rebuilds, reverts, and forks reconstruct the merged state) and retires the
+  rebuilds and forks reconstruct the merged state) and retires the
   duplicate. Whether two keys are the *same* referent is a semantic judgment
   left to the model; fuzzy names are never auto-merged, because a shared partial
   name can denote genuinely distinct referents.
@@ -1265,7 +1263,6 @@ Actions:
 - mark wrong
 - delete or hide
 - pin
-- revert patch
 - wipe session memory
 - export memory
 
@@ -1285,18 +1282,22 @@ Flow (`POST /api/conversations/[id]/memory`):
    user message that triggered it).
 4. Re-run `extractAndCommitMemory` for the latest turn. Only once the
    re-extraction yields a *committable* (validated) patch is the latest turn's
-   prior committed patch reverted — immediately before the replacement is
-   applied, so the commit still lands cleanly with no double-counting. A failed,
-   timed-out, aborted, or `needs_review` retry never runs the revert, so the
-   existing memory is preserved. If the prior extraction committed nothing
-   (failed / `needs_review` / cancelled), or the latest turn cannot be pinned to
-   a stable turn id (legacy/stub turns), there is nothing to revert.
+   prior committed patch undone — immediately before the replacement is
+   applied, so the commit still lands cleanly with no double-counting. The undo
+   appends the inverse mutations for the prior patch's items (delete what it
+   created, reopen what it resolved, restore what it forgot) and rebuilds the
+   projection, so the active set is re-derived from the event log rather than
+   hand-maintained. A failed, timed-out, aborted, or `needs_review` retry never
+   runs the undo, so the existing memory is preserved. If the prior extraction
+   committed nothing (failed / `needs_review` / cancelled), or the latest turn
+   cannot be pinned to a stable turn id (legacy/stub turns), there is nothing to
+   undo.
 
 The retry runs under a fresh streaming turn so the card reflects live status
 (`extracting` -> `validating` -> `committed`/`needs_review`) via the same
 `memory.status` SSE events, and a fresh extractor card/result is emitted exactly
 as in a normal post-turn extraction. The committed patch is grouped under the
-latest turn's stable turn id, so repeated retries each revert the previous one
+latest turn's stable turn id, so repeated retries each undo the previous one
 cleanly. Only the latest turn is retryable — older turns' cards do not show the
 control, and the "is latest" check is enforced server-side, not just in the UI.
 

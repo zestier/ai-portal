@@ -112,8 +112,8 @@ export interface MemoryPatchProposal {
 	 * explicitly retracted with no replacement. Each target resolves to one active
 	 * fact, either by its `factId` (the `[id=...]` handle) or, for attributes, by
 	 * `entityKey` + `predicate`. Commit tombstones the fact (`status='deleted'`)
-	 * and records a `forget` patch item, so the retirement is revertible and
-	 * visible in the inspector. Prefer supersede (re-assert same entityKey +
+	 * and records a `forget` patch item, so the retirement is auditable and
+	 * visible in the inspector (and reviewable per item). Prefer supersede (re-assert same entityKey +
 	 * predicate) whenever the predicate is unchanged; forgetting is for the cases
 	 * supersede cannot reach.
 	 */
@@ -135,9 +135,9 @@ export interface CommitMemoryPatchInput {
 	 * Optional hook invoked exactly once, only when the patch validates and is
 	 * about to be applied — after the (failed) early return for a `needs_review`
 	 * patch, but before any durable items are written. The retry path uses it to
-	 * revert the prior turn's patch only once a replacement is guaranteed to
+	 * undo the prior turn's patch only once a replacement is guaranteed to
 	 * land, so a `needs_review` (or otherwise non-committing) retry never
-	 * destroys the existing committed memory. Reverting here — immediately before
+	 * destroys the existing committed memory. Running it here — immediately before
 	 * applying the new items — also keeps entity-key reuse on clean pre-turn
 	 * state, avoiding double-counting.
 	 */
@@ -842,7 +842,7 @@ export function commitPatch(
 	}
 
 	// The patch validated and is about to be applied: now — and only now — is it
-	// safe to run the caller's pre-commit hook (the retry path's revert of the
+	// safe to run the caller's pre-commit hook (the retry path's undo of the
 	// prior patch). A `needs_review` patch returns above without reaching this,
 	// so a failed retry leaves the existing committed memory intact. Running it
 	// here, immediately before the upserts below, also means the new patch's
@@ -897,8 +897,8 @@ export function commitPatch(
 	// from the key itself; a fact with no key at all is attached to the
 	// per-conversation session entity (created lazily, only when needed).
 	// Record a freshly minted entity as a patch item so it participates in
-	// revert/review just like an explicitly-declared entity. Pre-existing
-	// entities are reused silently and must NOT be recorded, or reverting this
+	// undo/review just like an explicitly-declared entity. Pre-existing
+	// entities are reused silently and must NOT be recorded, or undoing this
 	// patch would delete an entity that other patches rely on.
 	const recordMintedEntity = (entityId: string) => {
 		memoryRepo.recordPatchItem(input.conversationId, {
@@ -1050,7 +1050,7 @@ export function commitPatch(
 	// (not just at tool-call time) so a handle superseded/deleted by an earlier
 	// item in THIS patch is skipped rather than mis-deleting whatever now sits
 	// under that id. Recorded as a `forget` patch item so the delete is
-	// revertible (revertPatch restores it to active) and visible in the inspector.
+	// auditable and visible in the inspector (and reviewable per item).
 	let forgottenFacts = 0;
 	for (const target of input.patch.forgetFacts ?? []) {
 		const resolved = resolveForgetTarget(input.conversationId, target);

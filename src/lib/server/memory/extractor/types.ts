@@ -55,7 +55,7 @@ export interface ExtractPatchInput {
 	 * Optional hook forwarded to `commitPatch` and invoked exactly once — only
 	 * when the freshly extracted patch validates and is about to be applied
 	 * (i.e. a committing patch), immediately before its items are written. The
-	 * retry path uses it to revert the prior turn's patch only once a replacement
+	 * retry path uses it to undo the prior turn's patch only once a replacement
 	 * is guaranteed to land, so a failed, timed-out, aborted, or `needs_review`
 	 * retry never destroys the existing committed memory.
 	 */

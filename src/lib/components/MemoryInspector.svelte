@@ -114,25 +114,6 @@
 		await mutateItem(kind, id, 'DELETE');
 	}
 
-	async function revertPatch(row: unknown) {
-		const id = rowId(row);
-		if (!id || busyItem) return;
-		busyItem = `patch:${id}`;
-		error = null;
-		try {
-			const res = await fetch(`/api/conversations/${conversationId}/memory/patches/${id}/revert`, {
-				method: 'POST'
-			});
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const body = (await res.json()) as { memory: unknown };
-			memory = body.memory;
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			busyItem = null;
-		}
-	}
-
 	async function reviewPatchItem(row: unknown, decision: 'approve' | 'reject') {
 		const id = rowId(row);
 		if (!id || busyItem) return;
@@ -299,10 +280,6 @@
 									class="danger"
 									disabled={busyItem !== null}
 									onclick={() => deleteItem(kind, row)}>Delete</button
-								>
-							{:else if kind === 'patches' && (row as { status?: string }).status !== 'reverted'}
-								<button type="button" disabled={busyItem !== null} onclick={() => revertPatch(row)}
-									>Revert patch</button
 								>
 							{:else if kind === 'patchItems'}
 								{#if (row as { reviewStatus?: string }).reviewStatus !== 'approved'}

@@ -17,7 +17,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
  *
  * Reuses the stored user + assistant messages, re-runs `extractAndCommitMemory`
  * using the conversation's configured extractor model, and — only once that
- * produces a *committable* (validated) patch — reverts the latest turn's prior
+ * produces a *committable* (validated) patch — undoes the latest turn's prior
  * committed patch (if any) immediately before the replacement is applied. A
  * failed, timed-out, aborted, or `needs_review` retry therefore preserves the
  * existing memory. The assistant response is NOT regenerated and no new
@@ -65,24 +65,24 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 
 	// The stable turn id for the latest turn (recorded against its triggering
 	// user message). Committed patches — original and any prior retries — are
-	// grouped under it, so revert can find the prior patch across repeated
+	// grouped under it, so the undo can find the prior patch across repeated
 	// retries even though each retry runs under a fresh streaming turn.
 	const latestTurnId = turnInputs.get(conv.id, userMessage.id)?.turnId ?? null;
 
-	// Identify the prior committed patch to revert. The revert itself is
-	// deferred into the retry turn and applied only once re-extraction produces
-	// a committable patch (see `startExtractionRetryTurn`), so a failed retry
+	// Identify the prior committed patch to undo. The undo itself is deferred
+	// into the retry turn and applied only once re-extraction produces a
+	// committable patch (see `startExtractionRetryTurn`), so a failed retry
 	// never destroys the existing memory. Skip when the prior extraction
-	// committed nothing (failed / needs_review / already reverted).
+	// committed nothing (failed / needs_review).
 	const patches = memory.listPatches(conv.id, { limit: 50 });
 	const isCommitted = (status: string) =>
 		status === 'committed' || status === 'partially_committed';
-	// Only revert when we can pin the patch to *this* turn via its stable turn
+	// Only undo when we can pin the patch to *this* turn via its stable turn
 	// id. Without a recorded turn id (legacy/stub turns) we deliberately do NOT
 	// fall back to "the most recent committed patch": that patch may belong to an
-	// earlier turn (e.g. the latest turn committed nothing), and reverting it
-	// would destroy unrelated memory. Skipping the revert at worst leaves a stale
-	// patch alongside the replacement — far safer than clobbering another turn.
+	// earlier turn (e.g. the latest turn committed nothing), and undoing it
+	// would destroy unrelated memory. Skipping at worst leaves a stale patch
+	// alongside the replacement — far safer than clobbering another turn.
 	const priorPatch = latestTurnId
 		? patches.find((p) => p.turnId === latestTurnId && isCommitted(p.status))
 		: undefined;
@@ -99,16 +99,16 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			extractorModel: conv.memoryExtractorModel,
 			extractorBackend: conv.memoryExtractorBackend,
 			patchTurnId: latestTurnId,
-			revertPatchId: priorPatch?.id ?? null
+			priorPatchId: priorPatch?.id ?? null
 		}
 	});
 
 	return json({
 		turnId: turn.id,
 		assistantMessageId: assistantMessage.id,
-		// The patch slated for revert; the revert is applied only if/when the
+		// The patch slated to be undone; the undo is applied only if/when the
 		// retry's re-extraction succeeds.
-		revertPatchId: priorPatch?.id ?? null
+		priorPatchId: priorPatch?.id ?? null
 	});
 };
 

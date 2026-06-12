@@ -9,8 +9,7 @@ export type MemoryPatchStatus =
 	| 'committed'
 	| 'partially_committed'
 	| 'rejected'
-	| 'needs_review'
-	| 'reverted';
+	| 'needs_review';
 
 export interface MemoryEntity {
 	id: string;
@@ -586,8 +585,8 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
 		// Append the raw observation as a `fact.create` event + projection row.
 		// Supersession and dedupe are NOT decided here; they are derived from the
 		// event stream by consolidateFactGroup (below), which is replayed on every
-		// projection rebuild. That keeps revert correct "for free": rebuilding from
-		// the surviving observations re-derives the active set.
+		// projection rebuild. That keeps a rebuild correct "for free": rebuilding
+		// from the surviving observations re-derives the active set.
 		db.prepare(
 			`INSERT INTO memory_facts(
 			   id, conversation_id, entity_id, predicate, value_json, status, visibility,
@@ -636,8 +635,8 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
  *     active; older identical observations become `superseded` (dedupe).
  *
  * Because it operates purely on the projected rows (never emitting events), a
- * projection rebuilt from a stream that omits some observations — e.g. after a
- * patch revert deletes the facts it created — re-derives the correct active set
+ * projection rebuilt from a stream that omits some observations — e.g. after the
+ * facts a patch created are deleted — re-derives the correct active set
  * without any reference counting or supersede bookkeeping.
  */
 function consolidateFactGroup(
@@ -956,7 +955,7 @@ export function updatePatchStatus(
 		.prepare('SELECT * FROM memory_patches WHERE id = ? AND conversation_id = ?')
 		.get(patchId, conversationId) as PatchRow;
 	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind: status === 'reverted' ? 'patch.revert' : 'patch.update',
+		eventKind: 'patch.update',
 		itemType: 'patch',
 		itemId: patchId,
 		payload: { patch: rowToPatch(row) }
@@ -1107,7 +1106,7 @@ export interface MergeEntitiesResult {
  * pointed at `fromKeyOrId` is re-pointed at `intoKeyOrId` and the duplicate is
  * tombstoned. All mutations go through the append-only session memory log
  * (`fact.update` / `event.update` / `entity.delete` events carrying the new
- * snapshot), so projection rebuilds, reverts and forks reconstruct the merged
+ * snapshot), so projection rebuilds and forks reconstruct the merged
  * state exactly. After reassigning facts, both the source and destination
  * (entity, predicate) groups are re-consolidated so single-valued predicates
  * keep one active value and duplicate observations collapse.
@@ -1303,7 +1302,7 @@ export function updateFact(
 			payload: { item: rowToFact(row) }
 		});
 		// Re-derive the active set: deleting/editing a fact can promote a previously
-		// superseded sibling (e.g. reverting the observation that overrode it).
+		// superseded sibling (e.g. dropping the observation that overrode it).
 		consolidateFactGroup(db, conversationId, row.entity_id, row.predicate);
 		return rowToFact(db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow);
 	});
@@ -1478,75 +1477,6 @@ export function deleteItem(conversationId: string, kind: string, id: string): bo
 	if (normalized === 'open_loop')
 		return updateOpenLoop(conversationId, id, { status: 'deleted' }) !== null;
 	return false;
-}
-
-export function revertPatch(
-	conversationId: string,
-	patchId: string
-): {
-	patch: MemoryPatch | null;
-	reverted: number;
-	skipped: number;
-} {
-	const patch = getDb()
-		.prepare('SELECT * FROM memory_patches WHERE id = ? AND conversation_id = ?')
-		.get(patchId, conversationId) as PatchRow | undefined;
-	if (!patch) return { patch: null, reverted: 0, skipped: 0 };
-	const items = listPatchItems(conversationId, { patchId, limit: 1000 });
-	let reverted = 0;
-	let skipped = 0;
-	for (const item of items) {
-		if (item.action === 'resolve') {
-			// Reverting a resolution reopens the loop. We don't snapshot the
-			// prior status, but loops are 'open' until resolved, so restoring to
-			// 'open' is correct in practice.
-			if (item.itemType === 'open_loop') {
-				const ok = updateOpenLoop(conversationId, item.itemId, { status: 'open' }) !== null;
-				if (ok) reverted++;
-				else skipped++;
-			} else {
-				skipped++;
-			}
-			continue;
-		}
-		if (item.action === 'forget') {
-			// Reverting a forget restores the tombstoned fact to active.
-			// Consolidation (run inside updateFact) re-derives the active set, so a
-			// sibling that was promoted when the fact was forgotten settles back
-			// correctly. Only facts are ever forgotten.
-			if (item.itemType === 'fact') {
-				const ok = updateFact(conversationId, item.itemId, { status: 'active' }) !== null;
-				if (ok) reverted++;
-				else skipped++;
-			} else {
-				skipped++;
-			}
-			continue;
-		}
-		if (item.action !== 'create') {
-			skipped++;
-			continue;
-		}
-		// Reverting deletes the rows this patch created (appending delete events).
-		// Consolidation re-derives the active set from the surviving observations,
-		// so a fact another patch also observed simply stays — no reference
-		// counting needed here.
-		const ok = deleteItem(conversationId, item.itemType, item.itemId);
-		if (ok) reverted++;
-		else skipped++;
-	}
-	const updated = updatePatchStatus(conversationId, patchId, 'reverted', {
-		revertedAt: Date.now(),
-		reverted,
-		skipped
-	});
-	addEvent(conversationId, {
-		eventType: 'memory_patch_reverted',
-		summary: `Reverted memory patch ${patchId}.`,
-		payload: { patchId, reverted, skipped },
-		confidence: 1
-	});
-	return { patch: updated, reverted, skipped };
 }
 
 export function upsertGlobalMemory(

@@ -1262,7 +1262,7 @@ describe('turn-runner', () => {
 			expect(parent).toBeTruthy();
 			expect(parent?.backgroundAgentStatus).toBe('completed');
 
-			// The patch committed under the stable turn id so revert can find it.
+			// The patch committed under the stable turn id so the undo can find it.
 			const patch = memory.listPatches(conv.id).find((p) => p.status === 'committed');
 			expect(patch?.turnId).toBe('turn-1');
 			expect(memory.listFacts(conv.id).map((f) => f.value)).toContain(
@@ -1279,7 +1279,7 @@ describe('turn-runner', () => {
 		}
 	});
 
-	it('reverts the prior committed patch only after a successful re-extraction', async () => {
+	it('undoes the prior committed patch only after a successful re-extraction', async () => {
 		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
 		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
 		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
@@ -1366,7 +1366,7 @@ describe('turn-runner', () => {
 					userMessageId: userMsg.id,
 					userContent: userMsg.content,
 					patchTurnId: 'turn-1',
-					revertPatchId: prior.patch.id
+					priorPatchId: prior.patch.id
 				}
 			});
 
@@ -1379,11 +1379,10 @@ describe('turn-runner', () => {
 				events.find((e) => e.type === 'memory.status' && e.phase === 'committed')
 			).toBeTruthy();
 
-			// The prior patch was reverted as part of the successful retry and the
-			// replacement landed: the stale fact is gone, the fresh one is present.
-			expect(memory.listPatches(conv.id).find((p) => p.id === prior.patch.id)?.status).toBe(
-				'reverted'
-			);
+			// The prior patch's contributions were undone as part of the successful
+			// retry and the replacement landed: the stale fact is gone, the fresh
+			// one is present. Only the active set is re-derived — the prior patch
+			// row itself is left untouched (no 'reverted' status).
 			const facts = memory.listFacts(conv.id).map((f) => f.value);
 			expect(facts).toContain('Use append-only migrations.');
 			expect(facts).not.toContain('Stale decision.');
@@ -1455,7 +1454,7 @@ describe('turn-runner', () => {
 					userMessageId: userMsg.id,
 					userContent: userMsg.content,
 					patchTurnId: 'turn-1',
-					revertPatchId: prior.patch.id
+					priorPatchId: prior.patch.id
 				}
 			});
 

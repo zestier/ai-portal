@@ -827,7 +827,7 @@ interface MemoryExtractionCardOptions {
 	// and the card body shown when a user Stop cancels the extraction.
 	logPrefix: string;
 	cancelOutput: string;
-	// Retry path only: revert the prior committed patch. Forwarded to
+	// Retry path only: undo the prior committed patch. Forwarded to
 	// `commitPatch`, which fires it once the replacement patch validates, so a
 	// failed/aborted/needs_review retry leaves the existing memory intact.
 	beforeCommit?: () => void;
@@ -1104,14 +1104,14 @@ export interface StartExtractionRetryOptions {
 		extractorModel?: string | null;
 		extractorBackend?: MemoryExtractorBackend | null;
 		// Stable turn id used for the committed patch so repeated retries of the
-		// same logical turn keep grouping under one turn id (revert lookup keys
-		// off it). Defaults to the retry turn's own id when absent.
+		// same logical turn keep grouping under one turn id (the prior-patch
+		// lookup keys off it). Defaults to the retry turn's own id when absent.
 		patchTurnId?: string | null;
-		// The prior committed patch to revert as part of this retry. The revert
-		// is deferred until extraction succeeds (see `beforeCommit`), so a
+		// The prior committed patch to undo as part of this retry. The undo is
+		// deferred until extraction succeeds (see `beforeCommit`), so a
 		// failed/timed-out/aborted retry preserves the existing memory. Null
-		// when the prior turn committed nothing to revert.
-		revertPatchId?: string | null;
+		// when the prior turn committed nothing to undo.
+		priorPatchId?: string | null;
 	};
 }
 
@@ -1123,7 +1123,7 @@ export interface StartExtractionRetryOptions {
  * SSE machinery as a normal post-turn extraction, so the live card and inspector
  * update identically.
  *
- * Reverting the prior patch (`memory.revertPatchId`) is deferred until the
+ * Undoing the prior patch (`memory.priorPatchId`) is deferred until the
  * extraction has produced a committable patch — it runs immediately before the
  * new commit. A failed, timed-out, or aborted retry therefore leaves the
  * previously committed memory intact instead of destroying it.
@@ -1174,14 +1174,34 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 	const cfg = loadConfig();
 
 	turn.finishedPromise = (async () => {
-		// Revert the prior committed patch only once a replacement patch has
+		// Undo the prior committed patch only once a replacement patch has
 		// validated and is about to be applied (invoked by `commitPatch`, which
 		// `extractAndCommitMemory` forwards `beforeCommit` to). If extraction
 		// fails, times out, aborts, or yields a `needs_review` patch, this never
 		// runs and the existing committed memory is preserved.
-		const beforeCommit = opts.memory.revertPatchId
+		//
+		// Rather than imperatively reasoning about consolidation, we append the
+		// inverse mutations for the prior patch's items (delete what it created,
+		// reopen what it resolved, restore what it forgot) and then rebuild the
+		// projection from the event log, so the active set is re-derived rather
+		// than hand-maintained.
+		const priorPatchId = opts.memory.priorPatchId;
+		const beforeCommit = priorPatchId
 			? () => {
-					memory.revertPatch(opts.conversationId, opts.memory.revertPatchId!);
+					const items = memory.listPatchItems(opts.conversationId, {
+						patchId: priorPatchId,
+						limit: 1000
+					});
+					for (const item of items) {
+						if (item.action === 'create') {
+							memory.deleteItem(opts.conversationId, item.itemType, item.itemId);
+						} else if (item.action === 'resolve' && item.itemType === 'open_loop') {
+							memory.updateOpenLoop(opts.conversationId, item.itemId, { status: 'open' });
+						} else if (item.action === 'forget' && item.itemType === 'fact') {
+							memory.updateFact(opts.conversationId, item.itemId, { status: 'active' });
+						}
+					}
+					memory.rebuildSessionMemoryProjection(opts.conversationId);
 				}
 			: undefined;
 

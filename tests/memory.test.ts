@@ -45,6 +45,20 @@ function toolData<T>(r: ToolResult): T {
 	return r.result as T;
 }
 
+// Re-derive the active set after dropping a patch's contributions: delete the
+// items the patch created (appending delete events to the log) and rebuild the
+// projection so consolidation is re-derived purely from the surviving
+// observations — the rebuild-based equivalent of the old whole-patch revert.
+function dropPatchAndRebuild(conversationId: string, patchId: string): void {
+	const items = memory.listPatchItems(conversationId, { patchId, limit: 1000 });
+	for (const item of items) {
+		if (item.action === 'create') {
+			memory.deleteItem(conversationId, item.itemType, item.itemId);
+		}
+	}
+	memory.rebuildSessionMemoryProjection(conversationId);
+}
+
 function routeEvent(
 	conversationId: string,
 	userId: string,
@@ -283,30 +297,6 @@ describe('memory-backed sessions', () => {
 		expect(packet.entities.map((entity) => entity.entityKey)).toContain('decision.memory_tools');
 		expect(packet.openLoops[0]?.title).toContain('strict profile');
 		expect(memory.listSnapshot(conv.id).patchItems.length).toBeGreaterThan(0);
-	});
-
-	it('reverts records created by a memory patch', () => {
-		const user = users.ensureLocalUser();
-		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
-		const committed = commitPatch({
-			conversationId: conv.id,
-			patch: {
-				entities: [{ entityKey: 'object.key', entityType: 'object', displayName: 'Key' }],
-				facts: [{ entityKey: 'object.key', predicate: 'location', value: 'study' }],
-				openLoops: [{ loopType: 'clue', title: 'Find the key owner' }]
-			}
-		});
-
-		const result = memory.revertPatch(conv.id, committed.patch.id);
-
-		expect(result.reverted).toBeGreaterThanOrEqual(3);
-		expect(result.patch?.status).toBe('reverted');
-		expect(memory.listFacts(conv.id, { status: 'active' })).toHaveLength(0);
-		expect(memory.listOpenLoops(conv.id)).toHaveLength(0);
-		const searchAfterRevert = memory.search(conv.id, { query: 'study key owner' });
-		expect(searchAfterRevert.map((row) => row.itemType)).not.toEqual(
-			expect.arrayContaining(['entity', 'fact', 'open_loop'])
-		);
 	});
 
 	it('resolves superseded open loops via resolveOpenLoops', () => {
@@ -686,26 +676,6 @@ describe('memory-backed sessions', () => {
 		const afterSecond = memory.getOpenLoop(conv.id, loop.id);
 		expect(afterSecond?.description).toBe(afterFirst?.description);
 		expect(afterSecond?.description).not.toContain('Done again.');
-	});
-
-	it('reopens a resolved loop when its resolving patch is reverted', () => {
-		const user = users.ensureLocalUser();
-		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
-		commitPatch({
-			conversationId: conv.id,
-			patch: { openLoops: [{ loopType: 'task', title: 'Investigate the noise' }] }
-		});
-		const loop = memory.listOpenLoops(conv.id)[0];
-		const resolving = commitPatch({
-			conversationId: conv.id,
-			patch: { resolveOpenLoops: [{ id: loop.id, status: 'dropped' }] }
-		});
-		expect(memory.listOpenLoops(conv.id)).toHaveLength(0);
-
-		const result = memory.revertPatch(conv.id, resolving.patch.id);
-		expect(result.reverted).toBe(1);
-		expect(memory.getOpenLoop(conv.id, loop.id)?.status).toBe('open');
-		expect(memory.listOpenLoops(conv.id)).toHaveLength(1);
 	});
 
 	it('reviews individual memory patch items', () => {
@@ -3390,7 +3360,7 @@ describe('memory-backed sessions', () => {
 		expect(active).toEqual(['build', 'fears', 'hair']);
 	});
 
-	it('forgets an explicitly retracted attribute by handle and restores it on revert', async () => {
+	it('forgets an explicitly retracted attribute by handle', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const priorAssistant = messages.append(conv.id, {
@@ -3455,11 +3425,6 @@ describe('memory-backed sessions', () => {
 		);
 		expect(committed.counts.forgottenFacts).toBe(1);
 		expect(memory.getFact(conv.id, fact.id)?.status).toBe('deleted');
-
-		// Reverting the patch restores the tombstoned fact to active.
-		const result = memory.revertPatch(conv.id, committed.patch.id);
-		expect(result.reverted).toBe(1);
-		expect(memory.getFact(conv.id, fact.id)?.status).toBe('active');
 	});
 
 	it('forgets an explicitly retracted directive by handle', async () => {
@@ -3631,7 +3596,7 @@ describe('memory-backed sessions', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 
-		// Guards the retry path's deferred revert: a needs_review patch must not
+		// Guards the retry path's deferred undo: a needs_review patch must not
 		// trigger beforeCommit, or the prior committed memory would be destroyed
 		// while the replacement applies nothing.
 		let fired = 0;
@@ -3697,52 +3662,6 @@ describe('memory-backed sessions', () => {
 		const active = memory.listFacts(conv.id, { predicate: 'state' });
 		expect(active).toHaveLength(1);
 		expect(active[0].value).toBe('on');
-	});
-
-	it('restores a forgotten fact on revert and re-consolidates against a later supersede', () => {
-		const user = users.ensureLocalUser();
-		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
-		commitPatch({
-			conversationId: conv.id,
-			patch: {
-				entities: [{ entityKey: 'object.safe', entityType: 'object', displayName: 'Safe' }],
-				// `status` is a single-valued predicate, so only one value is ever
-				// active — the case where restoring a stale fact could collide.
-				facts: [{ entityKey: 'object.safe', predicate: 'status', value: 'locked' }]
-			}
-		});
-		const original = memory.listFacts(conv.id, { predicate: 'status' })[0];
-
-		// Forget the attribute outright.
-		const forgetCommit = commitPatch({
-			conversationId: conv.id,
-			patch: { forgetFacts: [{ factId: original.id }] }
-		});
-		expect(forgetCommit.counts.forgottenFacts).toBe(1);
-		expect(memory.getFact(conv.id, original.id)?.status).toBe('deleted');
-
-		// A LATER patch re-asserts the same single-valued predicate with a fresh
-		// value, becoming the lone active fact.
-		commitPatch({
-			conversationId: conv.id,
-			patch: { facts: [{ entityKey: 'object.safe', predicate: 'status', value: 'open' }] }
-		});
-		const replacement = memory.listFacts(conv.id, { predicate: 'status' })[0];
-		expect(replacement.value).toBe('open');
-		expect(replacement.id).not.toBe(original.id);
-
-		// Reverting the forget restores the old fact; consolidation (run inside
-		// updateFact) re-derives the single-valued group so exactly one fact stays
-		// active — the newer value wins and the restored one settles to superseded
-		// rather than producing two simultaneously-active values.
-		const result = memory.revertPatch(conv.id, forgetCommit.patch.id);
-		expect(result.reverted).toBe(1);
-		const active = memory.listFacts(conv.id, { predicate: 'status', status: 'active' });
-		expect(active).toHaveLength(1);
-		expect(active[0].value).toBe('open');
-		// The restored fact is out of the 'deleted' tombstone state (superseded by
-		// the newer value), never left dangling as a second active fact.
-		expect(memory.getFact(conv.id, original.id)?.status).toBe('superseded');
 	});
 
 	it('aborts the tool-calling extractor between iterations when its signal fires', async () => {
@@ -4313,7 +4232,7 @@ describe('memory-backed sessions', () => {
 		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
 	});
 
-	it('revert re-derives the active set from the surviving observations', () => {
+	it('re-derives the active set from the surviving observations when an observing patch is dropped', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'revert-support', workdir: '/tmp', model: null });
 		commitPatch({
@@ -4335,17 +4254,17 @@ describe('memory-backed sessions', () => {
 		// Two observations of the same fact: one active, one superseded.
 		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
 
-		// Reverting one observing patch must not lose the fact — the other
-		// observation is promoted back to active by consolidation.
-		memory.revertPatch(conv.id, second.patch.id);
+		// Dropping one observing patch must not lose the fact — the other
+		// observation is promoted back to active by consolidation on rebuild.
+		dropPatchAndRebuild(conv.id, second.patch.id);
 		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(1);
 
-		// Reverting the last observation finally removes it.
-		memory.revertPatch(conv.id, first.patch.id);
+		// Dropping the last observation finally removes it.
+		dropPatchAndRebuild(conv.id, first.patch.id);
 		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(0);
 	});
 
-	it('un-supersedes a single-valued fact when the overriding patch is reverted', () => {
+	it('un-supersedes a single-valued fact when the overriding patch is dropped', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'revert-supersede', workdir: '/tmp', model: null });
 		commitPatch({
@@ -4364,10 +4283,10 @@ describe('memory-backed sessions', () => {
 		expect(active).toHaveLength(1);
 		expect(active[0].value).toBe('the attic');
 
-		// Reverting the move restores the prior location as active — the supersede
+		// Dropping the move restores the prior location as active — the supersede
 		// was never stored, so rebuilding from the surviving observation re-derives
 		// 'the cellar' as the current value.
-		memory.revertPatch(conv.id, moved.patch.id);
+		dropPatchAndRebuild(conv.id, moved.patch.id);
 		active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
 		expect(active).toHaveLength(1);
 		expect(active[0].value).toBe('the cellar');
@@ -4557,7 +4476,7 @@ describe('memory-backed sessions', () => {
 		expect(superseded[0].value).toBe('loyal');
 	});
 
-	// ---- Event-sourced revert / rebuild ----
+	// ---- Event-sourced rebuild ----
 
 	it('rebuilds the identical active set from the event stream for a single-valued chain', () => {
 		const user = users.ensureLocalUser();
@@ -4603,7 +4522,7 @@ describe('memory-backed sessions', () => {
 		expect(active.map((f) => f.value).sort()).toEqual(['brave', 'loyal']);
 	});
 
-	it('reverting a middle patch of a single-valued chain re-derives the newest survivor', () => {
+	it('dropping a middle patch of a single-valued chain re-derives the newest survivor', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'revert-middle', workdir: '/tmp', model: null });
 		commitPatch({
@@ -4622,14 +4541,14 @@ describe('memory-backed sessions', () => {
 			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'garden' }] }
 		});
 
-		// Reverting the middle observation leaves cellar + garden; garden is newest.
-		memory.revertPatch(conv.id, middle.patch.id);
+		// Dropping the middle observation leaves cellar + garden; garden is newest.
+		dropPatchAndRebuild(conv.id, middle.patch.id);
 		const active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
 		expect(active).toHaveLength(1);
 		expect(active[0].value).toBe('garden');
 	});
 
-	it('reverting the newest single-valued observation restores the prior value', () => {
+	it('dropping the newest single-valued observation restores the prior value', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'revert-newest', workdir: '/tmp', model: null });
 		commitPatch({
@@ -4644,7 +4563,7 @@ describe('memory-backed sessions', () => {
 			patch: { facts: [{ entityKey: 'character.mara', predicate: 'location', value: 'attic' }] }
 		});
 
-		memory.revertPatch(conv.id, newest.patch.id);
+		dropPatchAndRebuild(conv.id, newest.patch.id);
 		const active = memory.listFacts(conv.id, { predicate: 'location', status: 'active' });
 		expect(active).toHaveLength(1);
 		expect(active[0].value).toBe('cellar');
@@ -4801,7 +4720,7 @@ describe('memory-backed sessions', () => {
 		expect(rendered).toMatch(/session\.context[^\n]*\n {4}tone = formal/);
 	});
 
-	it('records minted entities as patch items so revert removes them', () => {
+	it('records minted entities as patch items so dropping the patch removes them', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'mint-revert', workdir: '/tmp', model: null });
 		const { patch } = commitPatch({
@@ -4816,8 +4735,8 @@ describe('memory-backed sessions', () => {
 		const items = memory.listPatchItems(conv.id, { patchId: patch.id, limit: 100 });
 		expect(items.some((i) => i.itemType === 'entity' && i.itemId === entity!.id)).toBe(true);
 
-		memory.revertPatch(conv.id, patch.id);
-		// The auto-minted entity must be reverted (soft-deleted), not left active.
+		dropPatchAndRebuild(conv.id, patch.id);
+		// The auto-minted entity must be removed (soft-deleted), not left active.
 		expect(memory.getEntity(conv.id, 'object.brass_key')?.status).toBe('deleted');
 	});
 

@@ -68,7 +68,7 @@
 
 	// The memory extractor reuses this card. For the latest turn's extractor
 	// card we surface a "Retry extraction" control that re-runs extraction-only
-	// (revert prior patch + re-extract) without re-prompting the model.
+	// (undo prior patch + re-extract) without re-prompting the model.
 	const isMemoryExtractor = $derived(args.agent_type === 'memory-extractor');
 	const showRetry = $derived(isMemoryExtractor && canRetry && !!conversationId && !pending);
 	let retrying = $state(false);
