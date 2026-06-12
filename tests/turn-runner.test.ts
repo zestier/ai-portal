@@ -956,6 +956,186 @@ describe('turn-runner', () => {
 		}
 	});
 
+	it('nudges memory-mode turns that only queried recall tools to actually answer', async () => {
+		vi.resetModules();
+		await setupLocalEnv();
+		// Keep the post-turn extractor out of the way so the turn finalizes fast.
+		vi.doMock('../src/lib/server/memory/extractor', async () => {
+			const actual = await vi.importActual<typeof import('../src/lib/server/memory/extractor')>(
+				'../src/lib/server/memory/extractor'
+			);
+			return {
+				...actual,
+				extractAndCommitMemory: vi.fn(async () => ({
+					extraction: { response: '' },
+					patch: { id: 'mem-patch', status: 'committed', summary: '' },
+					counts: { events: 0 }
+				}))
+			};
+		});
+		try {
+			const users = await import('../src/lib/server/db/repos/users');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const turnRunner = await import('../src/lib/server/runtime/turn-runner');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, { title: 'mem nudge', workdir: wd, model: 'gpt-4' });
+			const userMsg = messages.append(conv.id, { role: 'user', content: 'where is Mara?' });
+
+			const prompts: string[] = [];
+			let sendCount = 0;
+			acquireMock.mockResolvedValue({
+				conversationId: conv.id,
+				workingDirectory: wd,
+				async *send(prompt: string): AsyncIterable<PortalEvent> {
+					prompts.push(prompt);
+					sendCount += 1;
+					if (sendCount === 1) {
+						// First turn: only a memory recall tool, no user-facing text —
+						// the "checked memory then ended the turn" failure mode.
+						yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+						yield {
+							type: 'tool.call',
+							toolCallId: 'mem-1',
+							tool: 'memory_search',
+							args: { query: 'Mara' }
+						};
+						yield {
+							type: 'tool.result',
+							toolCallId: 'mem-1',
+							ok: true,
+							summary: 'found',
+							output: 'Mara is in the tower.'
+						};
+					} else {
+						// Continuation after the nudge: now actually answer.
+						yield { type: 'message.delta', messageId: 'm1', text: 'Mara is in the tower.' };
+					}
+				},
+				async abort() {},
+				async dispose() {},
+				async setMode() {},
+				async setApproveAll() {},
+				async resetSessionApprovals() {},
+				lastUsed: Date.now()
+			});
+
+			const turn = await turnRunner.startTurn({
+				bridge: {
+					conversationId: conv.id,
+					userId: user.id,
+					workingDirectory: wd,
+					model: 'gpt-4',
+					policy: 'prompt'
+				},
+				prompt: 'where is Mara?',
+				conversationId: conv.id,
+				memory: { mode: 'project', userMessageId: userMsg.id, userContent: 'where is Mara?' }
+			});
+
+			for await (const { event } of turn.subscribe()) {
+				if (event.type === 'done') break;
+			}
+
+			// The guard re-sent exactly once with the continuation nudge.
+			expect(sendCount).toBe(2);
+			expect(prompts[1]).toContain('not yet answered');
+			// The assistant ultimately produced a substantive reply.
+			const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
+			expect(assistant?.content).toContain('Mara is in the tower.');
+			expect(assistant?.toolCalls?.[0]).toMatchObject({ id: 'mem-1', tool: 'memory_search' });
+		} finally {
+			vi.doUnmock('../src/lib/server/memory/extractor');
+		}
+	});
+
+	it('does not nudge a memory-mode turn whose only top-level tool was a write', async () => {
+		vi.resetModules();
+		await setupLocalEnv();
+		vi.doMock('../src/lib/server/memory/extractor', async () => {
+			const actual = await vi.importActual<typeof import('../src/lib/server/memory/extractor')>(
+				'../src/lib/server/memory/extractor'
+			);
+			return {
+				...actual,
+				extractAndCommitMemory: vi.fn(async () => ({
+					extraction: { response: '' },
+					patch: { id: 'mem-patch', status: 'committed', summary: '' },
+					counts: { events: 0 }
+				}))
+			};
+		});
+		try {
+			const users = await import('../src/lib/server/db/repos/users');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const turnRunner = await import('../src/lib/server/runtime/turn-runner');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, { title: 'mem write', workdir: wd, model: 'gpt-4' });
+			const userMsg = messages.append(conv.id, { role: 'user', content: 'note this globally' });
+
+			let sendCount = 0;
+			acquireMock.mockResolvedValue({
+				conversationId: conv.id,
+				workingDirectory: wd,
+				async *send(): AsyncIterable<PortalEvent> {
+					sendCount += 1;
+					// A write tool (memory_global_remember) with no user-facing
+					// text is NOT the recall-then-nothing failure mode, so the
+					// guard must leave it alone.
+					yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+					yield {
+						type: 'tool.call',
+						toolCallId: 'w-1',
+						tool: 'memory_global_remember',
+						args: { text: 'user prefers metric units' }
+					};
+					yield {
+						type: 'tool.result',
+						toolCallId: 'w-1',
+						ok: true,
+						summary: 'stored',
+						output: 'ok'
+					};
+				},
+				async abort() {},
+				async dispose() {},
+				async setMode() {},
+				async setApproveAll() {},
+				async resetSessionApprovals() {},
+				lastUsed: Date.now()
+			});
+
+			const turn = await turnRunner.startTurn({
+				bridge: {
+					conversationId: conv.id,
+					userId: user.id,
+					workingDirectory: wd,
+					model: 'gpt-4',
+					policy: 'prompt'
+				},
+				prompt: 'note this globally',
+				conversationId: conv.id,
+				memory: {
+					mode: 'project',
+					userMessageId: userMsg.id,
+					userContent: 'note this globally'
+				}
+			});
+
+			for await (const { event } of turn.subscribe()) {
+				if (event.type === 'done') break;
+			}
+
+			// No continuation nudge: a write-only turn is not the targeted bug.
+			expect(sendCount).toBe(1);
+		} finally {
+			vi.doUnmock('../src/lib/server/memory/extractor');
+		}
+	});
+
 	it('frees the turn and marks memory skipped when Stop hits during extraction', async () => {
 		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
 		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';

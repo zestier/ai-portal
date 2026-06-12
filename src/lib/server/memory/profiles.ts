@@ -37,7 +37,7 @@ interface CustomProfileRow {
 }
 
 const baseInstructions =
-	'Use durable memory as explicit continuity state. Query memory tools before relying on prior details that are absent from the packet. Treat unknown as unknown.';
+	'Use durable memory as explicit continuity state. Query memory tools when you need prior details that are absent from the packet, then always answer the user in the same turn — a recall call is never a substitute for responding. Treat unknown as unknown.';
 
 const BUILT_IN_PROFILES: Record<MemoryMode, MemoryProfileDefinition> = {
 	off: {

@@ -55,6 +55,47 @@ interface PendingReasoning {
 	parentToolCallId: string | null;
 }
 
+// Nudge used by the memory-mode continuation guard. Some models treat a single
+// memory recall call as the whole turn — they query memory, then end without
+// ever answering the user. When a memory-mode turn produces no user-facing text
+// and the model itself only fired recall tools, we re-send this once so the
+// model uses what it retrieved and actually responds.
+const MEMORY_CONTINUATION_NUDGE =
+	'You queried durable memory but have not yet answered me. A memory tool call is not a response, and I never see tool output directly. Using what you retrieved, respond to my message now. Do not end your turn without a substantive reply.';
+
+// Read-only memory recall tools exposed to the model. Deliberately excludes
+// write/mutation tools (memory_global_remember, memory_merge_entities): a turn
+// that *wrote* memory without answering is not the "recall then nothing"
+// failure this guard targets, so it must not be nudged. Keep in sync with the
+// recall tools advertised in memory/engine.ts.
+const MEMORY_RECALL_TOOLS = new Set([
+	'memory_search',
+	'memory_get_entity',
+	'memory_get_open_loops',
+	'memory_get_recent_events',
+	'memory_transcript_lookup',
+	'memory_query_timeline',
+	'memory_query_clues',
+	'memory_get_character_knowledge',
+	'memory_check_claims',
+	'memory_global_search'
+]);
+
+// True when the turn yielded no assistant text and every top-level tool call the
+// model made was a memory recall — the "checked memory then ended the turn"
+// failure mode. Sub-agent (child) tool calls are ignored: they belong to a
+// non-memory parent tool, which represents real work, not the failure mode.
+function isMemoryOnlyEmptyTurn(assistantText: string, tools: Map<string, PendingTool>): boolean {
+	if (assistantText.trim().length > 0) return false;
+	let sawTopLevelRecall = false;
+	for (const t of tools.values()) {
+		if (t.parentToolCallId !== null) continue;
+		if (!MEMORY_RECALL_TOOLS.has(t.tool)) return false;
+		sawTopLevelRecall = true;
+	}
+	return sawTopLevelRecall;
+}
+
 // A single event in the turn's transcript, paired with its monotonic id.
 // `id` corresponds to the event's index in `eventLog`, which is what the
 // SSE layer writes as `id:` and what clients send back as `Last-Event-ID`
@@ -437,6 +478,35 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			}
 			for await (const ev of session.send(promptToSend, turnAc.signal)) {
 				dispatch(ev);
+			}
+			// Memory-mode "tool call then nothing" guard: if the model only
+			// fired recall tools and produced no user-facing text, nudge it
+			// once to answer using what it retrieved. The provider session
+			// retains the prior tool calls/results, so this continues in
+			// context. Bounded to a single retry to avoid loops.
+			if (
+				!turnAc.signal.aborted &&
+				opts.memory &&
+				isEnabled(opts.memory.mode) &&
+				isMemoryOnlyEmptyTurn(assistantBuf, pendingTools)
+			) {
+				log.info('turn.memory.continuation_nudge', {
+					conversationId: opts.conversationId,
+					toolCalls: pendingTools.size
+				});
+				for await (const ev of session.send(MEMORY_CONTINUATION_NUDGE, turnAc.signal)) {
+					dispatch(ev);
+				}
+				// The nudge is bounded to one retry. If the continuation still
+				// produced no user-facing text, the turn finalizes without an
+				// answer — surface that so the failure mode is observable
+				// rather than silently swallowed.
+				if (!turnAc.signal.aborted && isMemoryOnlyEmptyTurn(assistantBuf, pendingTools)) {
+					log.warn('turn.memory.continuation_nudge_unanswered', {
+						conversationId: opts.conversationId,
+						toolCalls: pendingTools.size
+					});
+				}
 			}
 		} catch (e) {
 			if (turnAc.signal.aborted) return;
