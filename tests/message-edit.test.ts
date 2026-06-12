@@ -306,3 +306,136 @@ describe('message-edit.inlineEditMessage', () => {
 		).toThrowError(expect.objectContaining({ reason: 'not_user_message' }));
 	});
 });
+
+describe('message-edit.regenerateFromAssistant', () => {
+	beforeEach(async () => {
+		await setupLocalEnv('portal-message-regenerate-test-');
+	});
+
+	it('discards the assistant reply (and anything after) and re-runs from the unchanged preceding user message', async () => {
+		const { users, convs, messages, usage, edit, db } = await freshImports();
+		const u = users.ensureLocalUser();
+		const conv = convs.create(u.id, { title: 'src', workdir: '/tmp', model: null });
+		const originalProviderSessionId = conv.providerSessionId;
+
+		const u1 = messages.append(conv.id, { role: 'user', content: 'prompt' });
+		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply 1' });
+		messages.insertToolCall(a1.id, {
+			id: 'tool-later',
+			tool: 'task',
+			argsJson: '{}',
+			resultJson: null,
+			status: 'ok',
+			startedAt: Date.now(),
+			endedAt: Date.now(),
+			textOffset: 0,
+			parentToolCallId: null
+		});
+		messages.insertReasoningBlock(a1.id, {
+			id: 'reason-later',
+			segmentIndex: 0,
+			text: 'thinking',
+			kind: 'reasoning',
+			textOffset: 0,
+			startedAt: Date.now(),
+			durationMs: 10,
+			parentToolCallId: null
+		});
+		messages.append(conv.id, { role: 'user', content: 'later user' });
+		usage.upsert(conv.id, { currentTokens: 9000, tokenLimit: 128_000, messagesLength: 3 });
+
+		const result = edit.regenerateFromAssistant({
+			userId: u.id,
+			conversationId: conv.id,
+			messageId: a1.id
+		});
+
+		// The preceding user message survives with its content untouched and is
+		// the only remaining message; the assistant reply and trailing user
+		// message are gone.
+		expect(result.userMessage).toMatchObject({ id: u1.id, content: 'prompt', role: 'user' });
+		expect(result.conversation.providerSessionId).not.toBe(originalProviderSessionId);
+		expect(messages.listByConversation(conv.id)).toMatchObject([
+			{ id: u1.id, role: 'user', content: 'prompt' }
+		]);
+		expect(usage.get(conv.id)).toBeNull();
+
+		const database = db.getDb();
+		expect(database.prepare('SELECT count(*) AS n FROM tool_calls').get()).toMatchObject({ n: 0 });
+		expect(database.prepare('SELECT count(*) AS n FROM reasoning_blocks').get()).toMatchObject({
+			n: 0
+		});
+	});
+
+	it('rewinds session memory to the regenerated turn prefix', async () => {
+		const { users, convs, messages, memory, edit, engine } = await freshImports();
+		const u = users.ensureLocalUser();
+		const conv = convs.create(u.id, {
+			title: 'src',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+
+		messages.append(conv.id, { role: 'user', content: 'first' });
+		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply 1' });
+		engine.commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			sourceMessageId: a1.id,
+			patch: {
+				entities: [{ entityKey: 'topic.keep', entityType: 'topic', displayName: 'Keep' }],
+				facts: [{ entityKey: 'topic.keep', predicate: 'state', value: 'kept' }]
+			}
+		});
+		const u2 = messages.append(conv.id, { role: 'user', content: 'second' });
+		const a2 = messages.append(conv.id, { role: 'assistant', content: 'reply 2' });
+		engine.commitPatch({
+			conversationId: conv.id,
+			mode: 'project',
+			sourceMessageId: a2.id,
+			patch: {
+				entities: [{ entityKey: 'topic.drop', entityType: 'topic', displayName: 'Drop' }],
+				facts: [{ entityKey: 'topic.drop', predicate: 'state', value: 'stale' }]
+			}
+		});
+
+		// Regenerating a2 rewinds to the u2 prefix: a2's memory is dropped, a1's
+		// is kept, and the thread is truncated to [first-user, a1, u2].
+		edit.regenerateFromAssistant({ userId: u.id, conversationId: conv.id, messageId: a2.id });
+
+		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual(['topic.keep']);
+		expect(memory.listFacts(conv.id).map((fact) => fact.value)).toEqual(['kept']);
+		expect(messages.listByConversation(conv.id).map((message) => message.id)).toEqual([
+			expect.any(String),
+			a1.id,
+			u2.id
+		]);
+	});
+
+	it('rejects user messages', async () => {
+		const { users, convs, messages, edit } = await freshImports();
+		const u = users.ensureLocalUser();
+		const conv = convs.create(u.id, { title: 'src', workdir: '/tmp', model: null });
+		const user = messages.append(conv.id, { role: 'user', content: 'prompt' });
+
+		expect(() =>
+			edit.regenerateFromAssistant({ userId: u.id, conversationId: conv.id, messageId: user.id })
+		).toThrowError(expect.objectContaining({ reason: 'not_assistant_message' }));
+	});
+
+	it('rejects an assistant message with no preceding user message', async () => {
+		const { users, convs, messages, edit } = await freshImports();
+		const u = users.ensureLocalUser();
+		const conv = convs.create(u.id, { title: 'src', workdir: '/tmp', model: null });
+		const assistant = messages.append(conv.id, { role: 'assistant', content: 'reply' });
+
+		expect(() =>
+			edit.regenerateFromAssistant({
+				userId: u.id,
+				conversationId: conv.id,
+				messageId: assistant.id
+			})
+		).toThrowError(expect.objectContaining({ reason: 'no_user_message' }));
+	});
+});

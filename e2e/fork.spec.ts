@@ -271,3 +271,52 @@ test('inline edit replaces a user message, truncates later messages, and reruns 
 	]);
 	expect(list[0].id).toBe(firstUser!.id);
 });
+
+test('regenerate an assistant message re-runs in place from the unchanged user prompt', async ({
+	page,
+	request
+}) => {
+	const sourceId = await createConversation(request, uniqueTitle('Regenerate Source'));
+
+	await page.goto(`/conversations/${sourceId}`);
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.click();
+	await composer.fill('first prompt');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: first prompt');
+	await composer.click();
+	await composer.fill('second prompt');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: second prompt');
+	await expect(page.getByText('Stubbed reply to: second prompt').first()).toBeVisible();
+
+	const before = await getConversation(request, sourceId);
+	const beforeList = before.messages as Array<{ id: string; role: string; content: string }>;
+	const firstAssistant = beforeList.find(
+		(m) => m.role === 'assistant' && m.content === 'Stubbed reply to: first prompt'
+	);
+	const firstUser = beforeList.find((m) => m.role === 'user' && m.content === 'first prompt');
+	expect(firstAssistant).toBeDefined();
+	expect(firstUser).toBeDefined();
+
+	// Regenerate the first assistant reply: the reply and everything after it
+	// (second prompt + its reply) is discarded and the turn re-runs from the
+	// unchanged "first prompt" user message, in the same conversation.
+	const res = await request.post(
+		`/api/conversations/${sourceId}/messages/${firstAssistant!.id}/regenerate`,
+		{ data: {} }
+	);
+	expect(res.ok()).toBeTruthy();
+	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: first prompt');
+
+	const after = await getConversation(request, sourceId);
+	const list = after.messages as Array<{ id: string; role: string; content: string }>;
+	expect(list.map((m) => `${m.role}:${m.content}`)).toEqual([
+		'user:first prompt',
+		'assistant:Stubbed reply to: first prompt'
+	]);
+	// The user message is preserved (same id, unchanged content); only the
+	// assistant reply is freshly regenerated.
+	expect(list[0].id).toBe(firstUser!.id);
+	expect(list[1].id).not.toBe(firstAssistant!.id);
+});

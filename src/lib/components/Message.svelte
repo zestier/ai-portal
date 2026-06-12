@@ -20,8 +20,10 @@
 		isInFlightTurnUser = false,
 		thinking = false,
 		canRetryMemory = false,
+		busy = false,
 		onForked,
 		onInlineEdited,
+		onRegenerated,
 		onToolRerunStarted,
 		onMemoryRetryStarted
 	}: {
@@ -34,8 +36,13 @@
 		// True when this is the latest assistant message and the conversation is
 		// idle, enabling the memory extractor card's "Retry extraction" control.
 		canRetryMemory?: boolean;
+		// True when the conversation has an in-flight (streaming) turn. Used to
+		// disable the in-place regenerate action, which would be rejected server
+		// side with `conversation_busy`. Forking is still allowed while busy.
+		busy?: boolean;
 		onForked?: () => void;
 		onInlineEdited?: (messageId: string, content: string, turnId: string) => void;
+		onRegenerated?: (userMessageId: string, turnId: string) => void;
 		onToolRerunStarted?: (turnId: string) => void;
 		onMemoryRetryStarted?: (turnId: string) => void;
 	} = $props();
@@ -70,10 +77,10 @@
 			!message.id.startsWith('err-')
 	);
 
-	// Retry-from-here on assistant messages: re-uses the post snapshot
-	// captured after that turn, starts a new conversation in that state
-	// with no pending user prompt.
-	const canRetry = $derived(
+	// Assistant-message actions: regenerate the reply in place, or fork the
+	// thread up to here into a new conversation. Both require a persisted,
+	// completed assistant message and the parent's conversation id.
+	const canAssistantActions = $derived(
 		message.role === 'assistant' &&
 			message.status === 'complete' &&
 			!!conversationId &&
@@ -157,7 +164,38 @@
 		}
 	}
 
-	async function retryFromHere() {
+	async function regenerate() {
+		if (!conversationId || submitting || busy) return;
+		const confirmed = window.confirm(
+			'Regenerate this response? This will discard this reply and any later messages in this thread and re-run from your previous prompt.'
+		);
+		if (!confirmed) return;
+		submitting = true;
+		errorMsg = null;
+		try {
+			const r = await fetch(
+				`/api/conversations/${conversationId}/messages/${message.id}/regenerate`,
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: '{}'
+				}
+			);
+			if (!r.ok) {
+				const body = await r.text();
+				errorMsg = body || `Regenerate failed (${r.status})`;
+				return;
+			}
+			const data = (await r.json()) as { turnId: string; userMessageId: string };
+			onRegenerated?.(data.userMessageId, data.turnId);
+		} catch (e) {
+			errorMsg = e instanceof Error ? e.message : String(e);
+		} finally {
+			submitting = false;
+		}
+	}
+
+	async function continueInNewConversation() {
 		if (!conversationId || submitting) return;
 		submitting = true;
 		errorMsg = null;
@@ -169,7 +207,7 @@
 			});
 			if (!r.ok) {
 				const body = await r.text();
-				errorMsg = body || `Retry failed (${r.status})`;
+				errorMsg = body || `Continue failed (${r.status})`;
 				return;
 			}
 			const data = (await r.json()) as { conversationId: string };
@@ -418,14 +456,16 @@
 				Edit
 			</button>
 		{/if}
-		{#if canRetry}
+		{#if canAssistantActions}
 			<button
 				type="button"
 				class="action-btn retry-btn"
-				onclick={retryFromHere}
-				disabled={submitting}
-				title="Continue from here in a new conversation, with the workdir restored to this point"
-				aria-label="Retry from here in a new conversation"
+				onclick={regenerate}
+				disabled={submitting || busy}
+				title={busy
+					? 'Regenerate is unavailable while a response is in progress'
+					: 'Regenerate this response (discards it and re-runs from your previous prompt)'}
+				aria-label="Regenerate this response"
 			>
 				<svg
 					width="12"
@@ -444,6 +484,32 @@
 					<path d="M3 13v-3h3" />
 				</svg>
 				Retry
+			</button>
+			<button
+				type="button"
+				class="action-btn fork-btn"
+				onclick={continueInNewConversation}
+				disabled={submitting}
+				title="Clone this conversation up to here into a new conversation (shares the workdir)"
+				aria-label="Continue from here in a new conversation"
+			>
+				<svg
+					width="12"
+					height="12"
+					viewBox="0 0 16 16"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M5 3.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+					<path d="M14 5.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+					<path d="M3.5 5v3a3 3 0 003 3h2" />
+					<path d="M11 12.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+				</svg>
+				Continue in new conversation
 			</button>
 		{/if}
 	</header>

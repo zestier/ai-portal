@@ -467,6 +467,24 @@
 		attachStream(turnId);
 	}
 
+	// Regenerate: the server discarded the assistant reply (and anything after)
+	// and re-ran the turn from the unchanged preceding user message. Truncate
+	// the rendered thread to that user message and attach to the new turn's
+	// stream so the fresh response renders in place. Mirrors handleInlineEdited
+	// but the user message's content is unchanged.
+	function handleRegenerated(userMessageId: string, turnId: string) {
+		const idx = messages.findIndex((m) => m.id === userMessageId);
+		if (idx >= 0) {
+			messages = messages.slice(0, idx + 1);
+		} else {
+			void refreshMessages();
+		}
+		pendingInteractive = [];
+		usage = null;
+		streaming = true;
+		attachStream(turnId);
+	}
+
 	function applyEvent(ev: PortalEvent) {
 		switch (ev.type) {
 			case 'message.start': {
@@ -1026,8 +1044,10 @@
 						isInFlightTurnUser={m.id === inFlightUserMessageId}
 						thinking={thinking && i === renderedMessages.length - 1}
 						canRetryMemory={!streaming && m.id === latestAssistantMessageId}
+						busy={streaming}
 						onForked={refreshForks}
 						onInlineEdited={handleInlineEdited}
+						onRegenerated={handleRegenerated}
 						onToolRerunStarted={handleToolRerunStarted}
 						onMemoryRetryStarted={handleMemoryRetryStarted}
 					/>
