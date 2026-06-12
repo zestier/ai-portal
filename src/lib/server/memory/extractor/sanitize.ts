@@ -214,14 +214,14 @@ function setUniqueAlias(aliases: Map<string, string | null>, raw: string, entity
 	aliases.set(alias, prior === undefined ? entityKey : prior === entityKey ? prior : null);
 }
 
-function typedNameKey(entityType: string, displayName: string): string {
+function typedNameKey(entityType: string | undefined, displayName: string | undefined): string {
 	const type = normalizedName(entityType);
 	const name = normalizedName(displayName);
 	return type && name ? `${type}:${name}` : '';
 }
 
-function normalizedName(raw: string): string {
-	return raw
+function normalizedName(raw: string | undefined): string {
+	return (raw ?? '')
 		.toLowerCase()
 		.replace(/['’]/g, '')
 		.replace(/[^a-z0-9]+/g, ' ')

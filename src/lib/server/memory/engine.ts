@@ -53,8 +53,8 @@ export interface TurnMemoryPacket {
 export interface MemoryPatchProposal {
 	entities?: Array<{
 		entityKey: string;
-		entityType: string;
-		displayName: string;
+		entityType?: string;
+		displayName?: string;
 		summary?: string;
 		metadata?: unknown;
 	}>;
@@ -852,8 +852,23 @@ export function commitPatch(
 
 	const entityIdsByKey = new Map<string, string>();
 	for (const entity of input.patch.entities ?? []) {
+		// entityType/displayName are independently optional. For a brand-new
+		// entity, fill whichever the caller omitted from the key (the single
+		// derive site shared with ensureEntityForKey below). For an EXISTING
+		// entity, leave the omitted field undefined so upsertEntity preserves the
+		// stored value instead of clobbering it.
+		const existing = memoryRepo.getEntity(input.conversationId, entity.entityKey);
+		let resolved = entity;
+		if (!existing && (entity.entityType === undefined || entity.displayName === undefined)) {
+			const derived = deriveEntityFromKey(entity.entityKey);
+			resolved = {
+				...entity,
+				entityType: entity.entityType ?? derived.entityType,
+				displayName: entity.displayName ?? derived.displayName
+			};
+		}
 		const row = memoryRepo.upsertEntity(input.conversationId, {
-			...entity,
+			...resolved,
 			sourceMessageId: input.sourceMessageId ?? null,
 			turnId: input.turnId ?? null
 		});
@@ -1194,8 +1209,8 @@ export function extractHeuristicPatch(params: {
  */
 const PatchEntitySchema = z.object({
 	entityKey: z.string().min(1).max(200),
-	entityType: z.string().min(1).max(80),
-	displayName: z.string().min(1).max(200),
+	entityType: z.string().min(1).max(80).optional(),
+	displayName: z.string().min(1).max(200).optional(),
 	summary: z.string().max(4000).optional(),
 	metadata: z.unknown().optional()
 });
@@ -1616,7 +1631,7 @@ export const MEMORY_PATCH_JSON_SCHEMA = {
 			items: {
 				type: 'object',
 				additionalProperties: false,
-				required: ['entityKey', 'entityType', 'displayName'],
+				required: ['entityKey'],
 				properties: {
 					entityKey: { type: 'string', minLength: 1, maxLength: 200 },
 					entityType: { type: 'string', minLength: 1, maxLength: 80 },

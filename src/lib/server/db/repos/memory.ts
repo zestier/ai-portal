@@ -313,8 +313,8 @@ export interface MemorySnapshot {
 
 export interface UpsertEntityInput {
 	entityKey: string;
-	entityType: string;
-	displayName: string;
+	entityType?: string;
+	displayName?: string;
 	summary?: string;
 	metadata?: unknown;
 	sourceMessageId?: string | null;
@@ -418,8 +418,8 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 			    SET entity_type = ?, display_name = ?, summary = ?, metadata_json = ?, updated_at = ?
 			  WHERE id = ?`
 		).run(
-			input.entityType,
-			input.displayName,
+			input.entityType ?? existing.entity_type,
+			input.displayName ?? existing.display_name,
 			input.summary ?? existing.summary,
 			safeJson(input.metadata ?? parseJson(existing.metadata_json, {})),
 			now,
@@ -440,6 +440,10 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 		return rowToEntity(updated);
 	}
 	const id = ulid();
+	// On INSERT the caller is responsible for resolving entityType/displayName
+	// (the engine commit path derives them from the entityKey for a brand-new
+	// entity — see deriveEntityFromKey). The `?? ''` is only a type-level guard;
+	// legitimate new entities always arrive with both fields populated.
 	db.prepare(
 		`INSERT INTO memory_entities(
 		   id, conversation_id, entity_key, entity_type, display_name, summary, status,
@@ -449,8 +453,8 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 		id,
 		conversationId,
 		input.entityKey,
-		input.entityType,
-		input.displayName,
+		input.entityType ?? '',
+		input.displayName ?? '',
 		input.summary ?? '',
 		safeJson(input.metadata ?? {}),
 		now,
