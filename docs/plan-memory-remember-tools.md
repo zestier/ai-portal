@@ -26,14 +26,19 @@ making classification = tool selection and each tool's args flat and tiny.
 - remember_directive { rule, entityKey? }
 - remember_event     { eventType, summary, entityKey?, payload?, visibility?, confidence? }
 - remember_loop      { loopType, title, description?, priority?, relatedEntityKeys? }
-- remember_entity    { entityKey, entityType, displayName, summary?, metadata? }
 - keep_loops         { handles: string[] }
 - close_loop         { handle, status: 'resolved'|'dropped', reason? }
 
-NOTE: remember_entity was added during implementation (not in the original
-4-tool spec). Without it the new surface had no way to set an entity's
-entityType/displayName — facts auto-mint a bare entity from entityKey as a
-backstop, but explicit entity creation (esp. for story mode) needed a tool.
+NOTE: entity construction was merged INTO remember_attributes (the standalone
+remember_entity tool was removed). remember_attributes now accepts optional
+top-level entity metadata — { entityKey, entityType?, displayName?, summary?,
+metadata?, attributes? } — so a brand-new referent can be typed, named, and
+described in the same call as its first facts (or in a metadata-only call with
+no attributes). A call must supply attributes and/or entity metadata; the
+entity is a whole-call gate (present-but-invalid → nothing stages). Facts still
+auto-mint a bare entity from entityKey as a backstop when no metadata is given.
+This resolves the remember_entity / remember_attributes capability overlap by
+collapsing them to a single tool (see the "resolve the overlap" ticket).
 
 Read/maintenance tools unchanged: memory_search, memory_get_entity,
 memory_get_open_loops, memory_merge_entities.

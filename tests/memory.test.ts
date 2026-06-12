@@ -1507,7 +1507,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1)
-				return writeCall('e1', 'remember_entity', {
+				return writeCall('e1', 'remember_attributes', {
 					entityKey: 'character.mara',
 					entityType: 'character',
 					displayName: 'Mara'
@@ -1839,6 +1839,348 @@ describe('memory-backed sessions', () => {
 		// The single bad item was not staged.
 		expect(extraction.patch.facts ?? []).toHaveLength(0);
 		expect(extraction.patch.events ?? []).toHaveLength(0);
+	});
+
+	it('constructs the entity and its attributes in one remember_attributes call', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara is a tall woman with red hair.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					entityType: 'character',
+					displayName: 'Mara',
+					summary: 'A tall woman with red hair.',
+					attributes: [
+						{ predicate: 'build', value: 'tall' },
+						{ predicate: 'hair', value: 'red' }
+					]
+				});
+			}
+			return finishCall('Done.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-construct',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// One call stages both the entity (typed + named + summarized) and its
+		// two granular attribute facts.
+		expect(extraction.patch.entities).toEqual([
+			expect.objectContaining({
+				entityKey: 'character.mara',
+				entityType: 'character',
+				displayName: 'Mara',
+				summary: 'A tall woman with red hair.'
+			})
+		]);
+		expect(extraction.patch.facts).toHaveLength(2);
+
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsed = JSON.parse(ok!);
+		// The success envelope merges the entity metadata and the attribute items
+		// back into one clean echo, and reports the staged entity in `extra`.
+		expect(parsed.accepted).toEqual({
+			entityKey: 'character.mara',
+			entityType: 'character',
+			displayName: 'Mara',
+			summary: 'A tall woman with red hair.',
+			attributes: [
+				{ predicate: 'build', value: 'tall' },
+				{ predicate: 'hair', value: 'red' }
+			]
+		});
+		expect(parsed.entity).toMatchObject({ entityKey: 'character.mara', entityType: 'character' });
+	});
+
+	it('records entity metadata only (no attributes) via remember_attributes', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'The auth service is a component.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'component.auth_service',
+					entityType: 'component',
+					displayName: 'Auth Service'
+				});
+			}
+			return finishCall('Done.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-meta-only',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		expect(extraction.patch.entities).toHaveLength(1);
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
+
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsed = JSON.parse(ok!);
+		// No attributes were supplied, so the echo omits the `attributes` key.
+		expect(parsed.accepted).toEqual({
+			entityKey: 'component.auth_service',
+			entityType: 'component',
+			displayName: 'Auth Service'
+		});
+		expect(parsed.accepted).not.toHaveProperty('attributes');
+	});
+
+	it('omits the attributes echo for an explicit empty array alongside entity metadata', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'The auth service is a component.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'component.auth_service',
+					entityType: 'component',
+					displayName: 'Auth Service',
+					attributes: []
+				});
+			}
+			return finishCall('Done.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-empty-array-meta',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		expect(extraction.patch.entities).toHaveLength(1);
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
+
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsed = JSON.parse(ok!);
+		// An empty `attributes` array carries no trait items, so the echo matches a
+		// metadata-only call: the `attributes` key is omitted entirely.
+		expect(parsed.accepted).toEqual({
+			entityKey: 'component.auth_service',
+			entityType: 'component',
+			displayName: 'Auth Service'
+		});
+		expect(parsed.accepted).not.toHaveProperty('attributes');
+	});
+
+	it('rejects the whole remember_attributes call when entity metadata lacks entityKey', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Mara exists.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', {
+					entityType: 'character',
+					displayName: 'Mara',
+					attributes: [{ predicate: 'hair', value: 'red' }]
+				});
+			}
+			return finishCall('Done.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-no-key',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.issues[0].field).toBe('entityKey');
+		// Whole-call reject: neither the entity nor the attribute staged.
+		expect(extraction.patch.entities ?? []).toHaveLength(0);
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
+	});
+
+	it('rejects the whole remember_attributes call when entity metadata is incomplete', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Mara exists.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				// entityType without the required displayName: the entity is invalid,
+				// so the whole call (including the otherwise-valid attribute) rejects.
+				return writeCall('a1', 'remember_attributes', {
+					entityKey: 'character.mara',
+					entityType: 'character',
+					attributes: [{ predicate: 'hair', value: 'red' }]
+				});
+			}
+			return finishCall('Done.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-bad-entity',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.issues.some((issue: { field?: string }) => issue.field === 'displayName')).toBe(
+			true
+		);
+		// Whole-call reject: nothing staged, not even the valid attribute.
+		expect(extraction.patch.entities ?? []).toHaveLength(0);
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
+	});
+
+	it('rejects a remember_attributes call with neither attributes nor entity metadata', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'Nothing durable.' });
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			if (step === 1) {
+				return writeCall('a1', 'remember_attributes', { entityKey: 'character.mara' });
+			}
+			return finishCall('Done.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 5,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-empty',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		const parsed = JSON.parse(rejection!);
+		expect(parsed.issues[0].code).toBe('empty_call');
+		expect(extraction.patch.entities ?? []).toHaveLength(0);
+		expect(extraction.patch.facts ?? []).toHaveLength(0);
 	});
 
 	it('nudges the model when it repeats the exact same write call within a turn', async () => {
@@ -2377,11 +2719,6 @@ describe('memory-backed sessions', () => {
 		// internal { facts: [...] } / { entities: [...] } wrappers, single-item
 		// arrays, or renamed fields (e.g. directive's rule -> predicate/value).
 		const inputs: Record<string, Record<string, unknown>> = {
-			remember_entity: {
-				entityKey: 'character.mara',
-				entityType: 'character',
-				displayName: 'Mara'
-			},
 			remember_directive: { rule: 'Keep replies under 200 words.' },
 			remember_event: { eventType: 'deploy', summary: 'Shipped v1.2.' },
 			remember_loop: { loopType: 'task', title: 'Draft the changelog' },

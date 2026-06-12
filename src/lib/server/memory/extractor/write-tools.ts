@@ -66,8 +66,7 @@ interface WriteIssue {
 // is intentionally NOT here — attributes use the dedicated batch tool
 // `remember_attributes` (see below) because an entity naturally has many
 // attributes at once, and one-item-per-call would penalize the granularity we
-// want. keep_loops/close_loop/remember_entity/remember_attributes are handled
-// separately.
+// want. keep_loops/close_loop/remember_attributes are handled separately.
 const REMEMBER_TOOL_KINDS = {
 	remember_directive: 'directive',
 	remember_event: 'event',
@@ -77,7 +76,6 @@ type RememberToolName = keyof typeof REMEMBER_TOOL_KINDS;
 type WriteToolName =
 	| RememberToolName
 	| 'remember_attributes'
-	| 'remember_entity'
 	| 'keep_loops'
 	| 'close_loop'
 	| 'forget_attribute'
@@ -90,44 +88,6 @@ const REMEMBER_TOOL_DESCRIPTIONS: Record<RememberToolName, string> = {
 		'Record a point-in-time occurrence that belongs in a time-ordered log AND does not describe durable current state — e.g. a deploy shipped, a build/test failed, an approach was tried, a clue was revealed, a character moved. Append-only and recency-ranked. Most things are NOT events: if it is the current state of something (a value, status, preference, ownership, relationship), use remember_attributes instead. Test: would re-stating it later UPDATE a value (→ attribute) or ADD another log entry (→ event)?',
 	remember_loop:
 		'Open a NEW unresolved task, question, or thread to follow up on later. Use keep_loops/close_loop to maintain EXISTING loops; do not re-open one that already exists.'
-};
-
-// remember_entity establishes the durable referent (its type + display name)
-// that attributes/events/loops attach to via entityKey. Facts referencing an
-// unknown entityKey still auto-mint a bare entity on commit, but recording the
-// entity explicitly lets the model set a proper type and display name.
-const ENTITY_SCHEMA = {
-	type: 'object',
-	additionalProperties: false,
-	required: ['entityKey', 'entityType', 'displayName'],
-	properties: {
-		entityKey: {
-			type: 'string',
-			minLength: 1,
-			maxLength: 200,
-			description: 'Stable, namespaced key, e.g. character.mara or component.memory_extractor.'
-		},
-		entityType: {
-			type: 'string',
-			minLength: 1,
-			maxLength: 80,
-			description: 'The kind of referent, e.g. character, component, file, concept.'
-		},
-		displayName: {
-			type: 'string',
-			minLength: 1,
-			maxLength: 200,
-			description: 'Human-readable name for the referent.'
-		},
-		summary: { type: 'string', maxLength: 4000, description: 'Optional one-line description.' },
-		metadata: { description: 'Optional arbitrary JSON metadata.' }
-	}
-} as const;
-
-const ENTITY_EXAMPLE = {
-	entityKey: 'character.mara',
-	entityType: 'character',
-	displayName: 'Mara'
 };
 
 // keep_loops / close_loop act on EXISTING loops by handle, so their schemas are
@@ -276,30 +236,56 @@ const PAIRED_EVENT_PROPS = {
 // but no explicit `eventType`.
 const PAIRED_EVENT_DEFAULT_TYPE = 'change';
 
-// `remember_attributes` sets MANY attributes on ONE entity in a single call.
-// entityKey is hoisted to the top level (shared by every item, so a batch can't
-// straddle entities), and each item is a flat { predicate, value, … } object —
-// an array of homogeneous flat objects, which weak backends handle far better
-// than a union. Batching makes granularity cheap: the model splits a description
-// into one item per trait instead of collapsing them into a single mega-value.
+// `remember_attributes` sets MANY attributes on ONE entity in a single call AND
+// is the sole entity constructor: optional top-level `entityType`/`displayName`
+// (+ optional `summary`/`metadata`) record the durable referent in the SAME
+// call, so a brand-new entity can be typed, named, and described in one shot
+// instead of a separate create-then-update. entityKey is hoisted to the top
+// level (shared by every attribute item, so a batch can't straddle entities),
+// and each item is a flat { predicate, value, … } object — an array of
+// homogeneous flat objects, which weak backends handle far better than a union.
+// Batching makes granularity cheap: the model splits a description into one item
+// per trait instead of collapsing them into a single mega-value. `attributes` is
+// optional (a metadata-only call just establishes/updates the referent), but a
+// call must supply attributes and/or entity metadata.
 const ATTRIBUTES_BATCH_SCHEMA = {
 	type: 'object',
 	additionalProperties: false,
-	required: ['attributes'],
 	properties: {
 		entityKey: {
 			type: 'string',
 			minLength: 1,
 			maxLength: 200,
 			description:
-				'The referent ALL these attributes attach to (its canonical entityKey). Strongly preferred; omit only for a genuinely entity-less attribute.'
+				'The referent ALL these attributes attach to (its canonical entityKey). Strongly preferred; required when setting entity metadata (entityType/displayName/summary/metadata); omit only for a genuinely entity-less attribute.'
 		},
+		entityType: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 80,
+			description:
+				'Optional. The kind of referent, e.g. character, component, file, concept. Provide WITH displayName the first time you record this entity so it gets a proper type+name instead of a bare auto-minted stub. Requires entityKey.'
+		},
+		displayName: {
+			type: 'string',
+			minLength: 1,
+			maxLength: 200,
+			description:
+				'Optional. Human-readable name for the referent. Provide WITH entityType when first recording this entity. Requires entityKey.'
+		},
+		summary: {
+			type: 'string',
+			maxLength: 4000,
+			description:
+				'Optional one-line prose description (blurb) of the entity. Set it WITH entityType+displayName. A prose blurb belongs here, NOT as a discrete attribute item.'
+		},
+		metadata: { description: 'Optional arbitrary JSON metadata about the entity.' },
 		attributes: {
 			type: 'array',
 			minItems: 1,
 			maxItems: 100,
 			description:
-				'One item per DISTINCT trait or value. Split each detail into its own item — do not collapse several traits into one "description" value. Prose blurbs belong in the entity summary (remember_entity), not here.',
+				'Optional. One item per DISTINCT trait or value. Split each detail into its own item — do not collapse several traits into one "description" value. Prose blurbs belong in the entity `summary`, not here. May be omitted for a metadata-only call that just establishes/updates the entity referent.',
 			items: {
 				type: 'object',
 				additionalProperties: false,
@@ -323,6 +309,8 @@ const ATTRIBUTES_BATCH_SCHEMA = {
 
 const ATTRIBUTES_BATCH_EXAMPLE = {
 	entityKey: 'character.mara',
+	entityType: 'character',
+	displayName: 'Mara',
 	attributes: [
 		{ predicate: 'hair', value: 'red' },
 		{ predicate: 'build', value: 'tall' },
@@ -335,7 +323,6 @@ function writeToolParameters(tool: WriteToolName): Record<string, unknown> {
 	if (tool === 'close_loop') return CLOSE_LOOP_SCHEMA;
 	if (tool === 'forget_attribute') return FORGET_ATTRIBUTE_SCHEMA;
 	if (tool === 'forget_directive') return FORGET_DIRECTIVE_SCHEMA;
-	if (tool === 'remember_entity') return ENTITY_SCHEMA;
 	if (tool === 'remember_attributes') return ATTRIBUTES_BATCH_SCHEMA;
 	return stripKind(MEMORY_FACT_KIND_SCHEMAS[REMEMBER_TOOL_KINDS[tool]]);
 }
@@ -345,7 +332,6 @@ function writeToolExample(tool: WriteToolName): Record<string, unknown> {
 	if (tool === 'close_loop') return CLOSE_LOOP_EXAMPLE;
 	if (tool === 'forget_attribute') return FORGET_ATTRIBUTE_EXAMPLE;
 	if (tool === 'forget_directive') return FORGET_DIRECTIVE_EXAMPLE;
-	if (tool === 'remember_entity') return ENTITY_EXAMPLE;
 	if (tool === 'remember_attributes') return ATTRIBUTES_BATCH_EXAMPLE;
 	return stripKindExample(MEMORY_FACT_KIND_EXAMPLES[REMEMBER_TOOL_KINDS[tool]]);
 }
@@ -577,10 +563,11 @@ function writeError(
 
 /**
  * The durable-write tool specs advertised to the extractor: remember_attributes
- * (a batch of traits on one entity), the single-item remember_directive/event/
- * loop creators, remember_entity, and keep_loops/close_loop for open-loop
- * lifecycle. Each has a flat schema (at most an array of flat objects) so even
- * backends with weak tool-argument grammar enforcement can fill it — no union.
+ * (the entity constructor + a batch of traits on one entity), the single-item
+ * remember_directive/event/loop creators, and keep_loops/close_loop for
+ * open-loop lifecycle. Each has a flat schema (at most an array of flat objects)
+ * so even backends with weak tool-argument grammar enforcement can fill it — no
+ * union.
  */
 export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 	const remember = (Object.keys(REMEMBER_TOOL_KINDS) as RememberToolName[]).map((tool) => ({
@@ -598,17 +585,8 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 			function: {
 				name: 'remember_attributes',
 				description:
-					'Record durable things to KNOW about ONE entity — its current state, traits, values, relationships, preferences, constraints, ownership, roles, deadlines, or identifiers. Pass the shared entityKey once at the top level and an `attributes` array with ONE item per distinct trait. Always decompose: a description like "a tall woman with red hair who fears water" becomes separate items (build=tall, hair=red, fears=water), never one big "description" value — a prose blurb belongs in the entity summary instead. An item may carry an optional `event` summary (+ optional `eventType`) when that particular change is also a notable timeline occurrence.',
+					'Record a durable entity and/or things to KNOW about it in ONE call — its current state, traits, values, relationships, preferences, constraints, ownership, roles, deadlines, or identifiers. Pass the shared entityKey once at the top level. To FIRST record a new referent, also pass `entityType` + `displayName` (and optionally a one-line prose `summary`/`metadata`) so it gets a proper type and name instead of a bare auto-minted stub; for an existing referent just pass the changed `attributes`. Put discrete traits in the `attributes` array with ONE item per distinct trait — always decompose: "a tall woman with red hair who fears water" becomes separate items (build=tall, hair=red, fears=water), never one big "description" value (a prose blurb belongs in `summary`). `attributes` may be omitted for a metadata-only call that just establishes/updates the entity. An attribute item may carry an optional `event` summary (+ optional `eventType`) when that particular change is also a notable timeline occurrence.',
 				parameters: writeToolParameters('remember_attributes')
-			}
-		},
-		{
-			type: 'function',
-			function: {
-				name: 'remember_entity',
-				description:
-					'Establish a durable referent (its type and display name) that attributes, events, and loops attach to via entityKey. Record the entity before, or alongside, the first fact about a new referent so it gets a proper type and name instead of being auto-minted. Put a one-line prose blurb in `summary`; put discrete traits as separate items via remember_attributes.',
-				parameters: writeToolParameters('remember_entity')
 			}
 		},
 		{
@@ -748,35 +726,139 @@ export function createWriteToolHandlers(
 			);
 		};
 
-	// remember_attributes: set many granular attributes on ONE entity in a
-	// single call. entityKey is hoisted (shared by every item); each item is
-	// validated INDEPENDENTLY so one malformed trait can't sink the batch —
-	// valid items stage and invalid ones are reported by index (partial
-	// acceptance, like keep_loops). Each item may carry an optional paired
-	// event (`event` + optional `eventType`), staged as a sibling event fact.
+	// remember_attributes: the sole entity constructor AND the batch attribute
+	// writer. Optional top-level entity metadata (entityType/displayName/summary/
+	// metadata) records the durable referent in the SAME call; entityKey is
+	// hoisted (shared by every attribute item). The entity is a WHOLE-CALL gate:
+	// if metadata is present but invalid, nothing stages (including attributes).
+	// A valid entity stages, then each attribute item is validated INDEPENDENTLY
+	// so one malformed trait can't sink the batch — valid items stage and invalid
+	// ones are reported by index (partial acceptance, like keep_loops). Each item
+	// may carry an optional paired event (`event` + optional `eventType`), staged
+	// as a sibling event fact. `attributes` may be omitted for a metadata-only
+	// call; a call must supply attributes and/or entity metadata.
 	const handleRememberAttributes = async (rawArgs: unknown): Promise<string> => {
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
 		const topEntityKey = typeof args.entityKey === 'string' ? args.entityKey : undefined;
+		const hasEntityMeta =
+			args.entityType !== undefined ||
+			args.displayName !== undefined ||
+			args.summary !== undefined ||
+			args.metadata !== undefined;
 		const items = args.attributes;
-		if (!Array.isArray(items) || items.length === 0) {
+		const itemList = Array.isArray(items) ? items : [];
+
+		// `attributes`, if given, must be an array. A non-array (e.g. a string) is
+		// a schema error regardless of entity metadata.
+		if (items !== undefined && !Array.isArray(items)) {
 			deps.onReject();
 			return writeError(
 				'remember_attributes',
 				'validation',
 				'schema_invalid',
-				'`attributes` must be a non-empty array of { predicate, value } items.',
+				'`attributes` must be an array of { predicate, value } items.',
 				[
 					{
 						field: 'attributes',
 						code: 'invalid_attributes',
-						message: '`attributes` must be a non-empty array.',
+						message: '`attributes` must be an array.',
 						hint: 'Provide one item per distinct trait, each with a predicate and value.'
 					}
 				],
 				args,
 				stagedTotals(staged)
 			);
+		}
+
+		// A call must do something: stage at least one attribute and/or record
+		// entity metadata. An empty/absent attributes array with no metadata is a
+		// no-op the model should not be making.
+		if (itemList.length === 0 && !hasEntityMeta) {
+			deps.onReject();
+			return writeError(
+				'remember_attributes',
+				'validation',
+				'schema_invalid',
+				'Provide a non-empty `attributes` array and/or entity metadata (entityType + displayName).',
+				[
+					{
+						field: 'attributes',
+						code: 'empty_call',
+						message: 'Nothing to record: no attributes and no entity metadata.',
+						hint: 'Add attribute items, and/or set entityType + displayName to record the entity.'
+					}
+				],
+				args,
+				stagedTotals(staged)
+			);
+		}
+
+		// Entity metadata is a whole-call gate: validate it BEFORE staging any
+		// attribute so an invalid entity rejects the entire call (nothing staged).
+		// PatchEntitySchema requires entityType + displayName together; summary/
+		// metadata are optional. An entity needs a key to attach to.
+		let entityPatch: MemoryPatchProposal | undefined;
+		let entityCanonical: Record<string, unknown> | undefined;
+		if (hasEntityMeta) {
+			if (!topEntityKey) {
+				deps.onReject();
+				return writeError(
+					'remember_attributes',
+					'validation',
+					'schema_invalid',
+					'Entity metadata (entityType/displayName/summary/metadata) requires `entityKey`.',
+					[
+						{
+							field: 'entityKey',
+							code: 'missing_entity_key',
+							message: '`entityKey` is required when recording entity metadata.',
+							hint: 'Provide the referent\u2019s canonical entityKey (e.g. character.mara).'
+						}
+					],
+					args,
+					stagedTotals(staged)
+				);
+			}
+			const entityInput = {
+				entityKey: topEntityKey,
+				...(args.entityType !== undefined ? { entityType: args.entityType } : {}),
+				...(args.displayName !== undefined ? { displayName: args.displayName } : {}),
+				...(args.summary !== undefined ? { summary: args.summary } : {}),
+				...(args.metadata !== undefined ? { metadata: args.metadata } : {})
+			};
+			const parsed = MemoryPatchInputSchema.safeParse({ entities: [entityInput] });
+			if (!parsed.success) {
+				deps.onReject();
+				return writeError(
+					'remember_attributes',
+					'validation',
+					'schema_invalid',
+					'Entity metadata did not match its schema (entityType and displayName are both required to record the entity).',
+					zodToWriteIssues(parsed.error, 'entities.0.'),
+					args,
+					stagedTotals(staged)
+				);
+			}
+			const entityInternal = normalizeMemoryPatchInput(parsed.data);
+			const entityValidation = validatePatch(entityInternal, { conversationId, mode });
+			const entityErrors = entityValidation.issues.filter((issue) => issue.severity === 'error');
+			if (entityErrors.length) {
+				deps.onReject();
+				return writeError(
+					'remember_attributes',
+					'validation',
+					'semantic_invalid',
+					'Entity metadata is well-formed but not acceptable.',
+					semanticToWriteIssues(entityErrors),
+					args,
+					stagedTotals(staged)
+				);
+			}
+			entityPatch = entityInternal;
+			// Canonical echo of the entity, minus the hoisted entityKey (merged back
+			// into the top-level `accepted` shape alongside the attributes).
+			entityCanonical = dropKeys(parsed.data.entities![0], ['entityKey']);
 		}
 
 		const acceptedPatches: MemoryPatchProposal[] = [];
@@ -786,8 +868,8 @@ export function createWriteToolHandlers(
 		let pairedEvents = 0;
 		let redundantCount = 0;
 
-		for (let i = 0; i < items.length; i += 1) {
-			const raw = (items[i] ?? {}) as Record<string, unknown>;
+		for (let i = 0; i < itemList.length; i += 1) {
+			const raw = (itemList[i] ?? {}) as Record<string, unknown>;
 			const { event, eventType, ...attr } = raw;
 			const fail = (issues: WriteIssue[]) => {
 				results.push({ index: i, staged: false, issues });
@@ -893,8 +975,13 @@ export function createWriteToolHandlers(
 			results.push({ index: i, staged: true });
 		}
 
+		// Stage the entity first (it gated the whole call), then the accepted
+		// attribute patches. A whole-call rejection above returned before reaching
+		// here, so nothing partial is staged for an invalid entity.
+		if (entityPatch) staged.push(entityPatch);
 		for (const patch of acceptedPatches) staged.push(patch);
 		const extra: Record<string, unknown> = { results };
+		if (entityCanonical) extra.entity = { entityKey: topEntityKey, ...entityCanonical };
 		if (pairedEvents) extra.pairedEvents = pairedEvents;
 		if (redundantCount) extra.unchanged = redundantCount;
 
@@ -907,54 +994,43 @@ export function createWriteToolHandlers(
 				'remember_attributes',
 				'validation',
 				'batch_partial',
-				`${failed} of ${items.length} attribute(s) were not staged.`,
+				`${failed} of ${itemList.length} attribute(s) were not staged.`,
 				failureIssues,
 				args,
 				stagedTotals(staged),
 				extra,
-				`Staged the valid attribute(s); the items in \`results\` with "staged": false were NOT. Re-send ONLY those items (corrected) — do not resend the whole batch, or the already-staged items would be duplicated.`
+				`Staged the valid attribute(s)${entityCanonical ? ' and the entity' : ''}; the items in \`results\` with "staged": false were NOT. Re-send ONLY those items (corrected), without the entity metadata — do not resend the whole batch, or the already-staged items would be duplicated.`
 			);
 		}
-		// When every item was already stored unchanged, nothing was staged: return
-		// a clear "already stored" note instead of a plain success so the model
-		// learns to stop re-asserting values present in the initial packet.
+		// The merged canonical echo: the hoisted entityKey, any entity metadata, and
+		// the accepted attribute items, folded back into the single tool-input shape.
+		// Echo `attributes` only when the caller actually supplied trait items (a
+		// non-empty array) — a metadata-only call, or an empty `attributes: []`
+		// alongside entity metadata, omits the key entirely. (When items were sent
+		// but all proved redundant, acceptedItems is [] and we still echo [].)
+		const accepted: Record<string, unknown> = {
+			...(topEntityKey ? { entityKey: topEntityKey } : {}),
+			...(entityCanonical ?? {}),
+			...(itemList.length > 0 ? { attributes: acceptedItems } : {})
+		};
+		// When every attribute item was already stored unchanged (and no entity
+		// metadata was recorded), nothing was staged: return a clear "already
+		// stored" note instead of a plain success so the model learns to stop
+		// re-asserting values present in the initial packet.
 		const redundantNote = redundantCount
-			? acceptedItems.length === 0
+			? acceptedItems.length === 0 && !entityCanonical
 				? `Every attribute you sent is already stored with that exact value (see the initial packet) — nothing new was recorded. Do not re-assert unchanged values; record only new or changed facts, or stop if nothing durable remains.`
-				: `Staged the new/changed attribute(s). ${redundantCount} item(s) were already stored unchanged and were skipped — do not re-assert values already shown in the initial packet. Nothing commits until you finish.`
+				: `Staged the new/changed item(s). ${redundantCount} attribute(s) were already stored unchanged and were skipped — do not re-assert values already shown in the initial packet. Nothing commits until you finish.`
 			: undefined;
 		return writeSuccess(
 			'remember_attributes',
 			'created',
-			{ ...(topEntityKey ? { entityKey: topEntityKey } : {}), attributes: acceptedItems },
+			accepted,
 			stagedTotals(staged),
 			[],
 			extra,
 			redundantNote
 		);
-	};
-
-	// remember_entity: establish a durable referent. Validated via the input
-	// schema; the parsed entity is itself the canonical input shape.
-	const handleRememberEntity = async (rawArgs: unknown): Promise<string> => {
-		deps.onProposeCall();
-		const args = (rawArgs ?? {}) as Record<string, unknown>;
-		const parsed = MemoryPatchInputSchema.safeParse({ entities: [args] });
-		if (!parsed.success) {
-			deps.onReject();
-			return writeError(
-				'remember_entity',
-				'validation',
-				'schema_invalid',
-				'Arguments for remember_entity did not match its schema.',
-				zodToWriteIssues(parsed.error, 'entities.0.'),
-				args,
-				stagedTotals(staged)
-			);
-		}
-		staged.push(normalizeMemoryPatchInput(parsed.data));
-		const canonical = dropKeys(parsed.data.entities![0], []);
-		return writeSuccess('remember_entity', 'created', canonical, stagedTotals(staged), []);
 	};
 
 	// keep_loops: batch anti-aging reaffirm. Only handles for loops actually
@@ -1298,7 +1374,6 @@ export function createWriteToolHandlers(
 		'remember_attributes',
 		withDuplicateNudge('remember_attributes', handleRememberAttributes)
 	);
-	handlers.set('remember_entity', withDuplicateNudge('remember_entity', handleRememberEntity));
 	handlers.set('keep_loops', withDuplicateNudge('keep_loops', handleKeepLoops));
 	handlers.set('close_loop', withDuplicateNudge('close_loop', handleCloseLoop));
 	handlers.set('forget_attribute', withDuplicateNudge('forget_attribute', handleForgetAttribute));

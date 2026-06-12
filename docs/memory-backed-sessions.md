@@ -117,7 +117,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory.get_recent_events` | Fetch recent or relevant event-log entries with source turns. |
 | `memory.check_claims` | Validate proposed factual claims against known memory and return conflicts or unknowns. |
 | `memory.merge_entities` | Fold a duplicate entity into a canonical one — reassigning its facts, events, and open-loop links — to clean up two keys that denote the same referent (e.g. `character.firstname` vs `character.firstname_lastname`). |
-| `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` / `remember_entity` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
+| `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items, and optional top-level entity metadata to construct the referent); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
 | `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
 | `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Revertible; prefer supersede when the predicate is unchanged. |
 | `finish_extraction` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
@@ -499,11 +499,10 @@ flat tool per concept, where the tool name *is* the classification (there is no
 
 | Write tool | Meaning | Required fields |
 | --- | --- | --- |
-| `remember_attributes` | Things to KNOW about ONE entity: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` (+ optional top-level `entityKey`; per-item `event`, `eventType`) |
+| `remember_attributes` | Things to KNOW about ONE entity **and** the sole entity constructor: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). To record a brand-new referent, also pass top-level `entityType` + `displayName` (+ optional `summary`/`metadata`) in the same call so it is typed and named instead of auto-minted bare; for an existing referent just pass the changed `attributes`. `attributes` may be omitted for a metadata-only call (a call must supply attributes and/or entity metadata). Entity metadata is a whole-call gate — if it is present but invalid, nothing stages. Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` and/or entity metadata (`entityType`+`displayName`); optional top-level `entityKey` (required for entity metadata), `summary`, `metadata`; per-item `event`, `eventType` |
 | `remember_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). Captured whether the user issues the rule or the assistant declares it about its own role/operating behavior. | `rule` |
 | `remember_loop` | Open a NEW unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
 | `remember_event` | A point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, failed build, approach tried, clue revealed). Recency-ranked and capped, so used sparingly. | `eventType`, `summary` (+ optional `entityKey`) |
-| `remember_entity` | Establish a durable referent that facts attach to; prose blurb goes in `summary`. | `entityKey`, `entityType`, `displayName` |
 | `keep_loops` | Batch-reaffirm presented open loops that are still live. | `handles[]` |
 | `close_loop` | Retire one existing loop by handle. | `handle`, `status` (`resolved`/`dropped`) |
 | `forget_attribute` | Retire (tombstone) an existing **attribute** fact that has no natural supersede — the compound-split case (after breaking a non-specific attribute into granular facts under new predicates, forget the orphaned original) or a trait the user explicitly retracted. Prefer supersede (re-assert same `entityKey`+`predicate`) when the predicate is unchanged. | `handle` **or** `entityKey`+`predicate` |
@@ -842,14 +841,16 @@ Output:
 ### Durable-write tools (`remember_*`, `keep_loops`, `close_loop`, `forget_*`)
 
 The background extractor records durable memory by calling **per-kind write
-tools** — `remember_attributes`, `remember_directive`, `remember_event`,
-`remember_loop`, and `remember_entity`, plus `keep_loops`/`close_loop` for
-open-loop lifecycle and `forget_attribute`/`forget_directive` for retiring a
-stale attribute or directive that has no natural supersede. Each takes a small,
-flat argument object (`remember_attributes` takes a shared `entityKey` plus an
-array of flat trait items); the tool name *is* the classification (no `kind`
-discriminator). The server validates and stages each call, returning a uniform
-`{ ok, accepted | error, staged_totals, … }` envelope so a rejected call gives
+tools** — `remember_attributes` (also the entity constructor),
+`remember_directive`, `remember_event`, and `remember_loop`, plus
+`keep_loops`/`close_loop` for open-loop lifecycle and
+`forget_attribute`/`forget_directive` for retiring a stale attribute or
+directive that has no natural supersede. Each takes a small, flat argument
+object (`remember_attributes` takes a shared `entityKey`, optional entity
+metadata, plus an array of flat trait items); the tool name *is* the
+classification (no `kind` discriminator). The server validates and stages each
+call, returning a uniform `{ ok, accepted | error, staged_totals, … }` envelope
+so a rejected call gives
 targeted, per-tool feedback without discarding anything already staged.
 Everything staged across the turn commits once at the end. The model never
 writes directly to canonical memory.
