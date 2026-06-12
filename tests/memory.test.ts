@@ -889,6 +889,20 @@ describe('memory-backed sessions', () => {
 	it('builds fresh-context prompts with durable memory and recent transcript', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{
+						entityKey: 'character.mara',
+						entityType: 'character',
+						displayName: 'Mara',
+						summary: 'A wary scout.'
+					}
+				],
+				facts: [{ entityKey: 'character.mara', predicate: 'saw', value: 'the blue candle' }]
+			}
+		});
 		messages.append(conv.id, { role: 'user', content: 'Remember that Mara saw the blue candle.' });
 		messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
 		const userMsg = messages.append(conv.id, { role: 'user', content: 'What did Mara see?' });
@@ -904,6 +918,75 @@ describe('memory-backed sessions', () => {
 		expect(prompt).toContain('fresh model context');
 		expect(prompt).toContain('Mara saw the blue candle');
 		expect(prompt).toContain('What did Mara see?');
+	});
+
+	it('omits all memory framing when the durable store is empty', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'empty-memory', workdir: '/tmp', model: null });
+		messages.append(conv.id, { role: 'user', content: 'Hi there.' });
+		messages.append(conv.id, { role: 'assistant', content: 'Hello!' });
+		const userMsg = messages.append(conv.id, { role: 'user', content: 'What can you do?' });
+
+		const prompt = buildPromptWithMemory({
+			conversationId: conv.id,
+			mode: 'project',
+			userMsg,
+			userId: user.id,
+			includeRecentTranscript: true
+		});
+
+		// No packet, no "mandatory recall" guidance, no fresh-context framing — the
+		// model just answers instead of firing a recall tool against an empty store.
+		expect(prompt).not.toContain('<portal_memory_mode>');
+		expect(prompt).not.toContain('fresh model context');
+		expect(prompt).not.toContain('recall via:');
+		// Recent transcript and the user message are still carried through.
+		expect(prompt).toContain('<recent_transcript>');
+		expect(prompt).toContain('What can you do?');
+
+		// Once durable memory exists, the full framing returns on the next turn.
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'goal', value: 'Ship the memory short-circuit.' }] }
+		});
+		const nextMsg = messages.append(conv.id, { role: 'user', content: 'Where were we?' });
+		const nextPrompt = buildPromptWithMemory({
+			conversationId: conv.id,
+			mode: 'project',
+			userMsg: nextMsg,
+			userId: user.id,
+			includeRecentTranscript: true
+		});
+		expect(nextPrompt).toContain('<portal_memory_mode>');
+	});
+
+	it('keeps memory framing on an empty store when global memories exist', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'empty-with-global',
+			workdir: '/tmp',
+			model: null
+		});
+		memory.upsertGlobalMemory(user.id, {
+			kind: 'preference',
+			memoryKey: 'tone',
+			value: 'Prefer terse answers.'
+		});
+		const userMsg = messages.append(conv.id, { role: 'user', content: 'Help me out.' });
+
+		const prompt = buildPromptWithMemory({
+			conversationId: conv.id,
+			mode: 'project',
+			userMsg,
+			userId: user.id,
+			globalMemoryEnabled: true,
+			includeRecentTranscript: true
+		});
+
+		// Global memory is reachable via memory_global_search, so the recall
+		// guidance must survive even though the conversation-local store is empty.
+		expect(prompt).toContain('<portal_memory_mode>');
+		expect(prompt).toContain('recall via:');
 	});
 
 	it('memory tools read and write without permission prompts', async () => {

@@ -435,10 +435,27 @@ export function buildInitialPacket(
 	};
 }
 
+// A packet is "empty" when none of the durable primitives surfaced anything for
+// this turn — including the always-present entity index and the per-turn
+// auto-search hits, so a populated store with a non-matching query still counts
+// as non-empty via its index.
+function isPacketEmpty(packet: TurnMemoryPacket): boolean {
+	return (
+		packet.entities.length === 0 &&
+		packet.facts.length === 0 &&
+		packet.directives.length === 0 &&
+		packet.openLoops.length === 0 &&
+		packet.recentEvents.length === 0 &&
+		packet.entityIndex.length === 0 &&
+		packet.autoSearchHits.length === 0
+	);
+}
+
 export function buildPromptWithMemory(params: {
 	conversationId: string;
 	mode: MemoryMode;
 	userMsg: Message;
+	userId?: string;
 	includeRecentTranscript?: boolean;
 	globalMemoryEnabled?: boolean;
 	extractorPresent?: boolean;
@@ -452,6 +469,27 @@ export function buildPromptWithMemory(params: {
 		globalMemoryEnabled: params.globalMemoryEnabled,
 		query
 	});
+
+	// When there is nothing durable to surface, skip the entire memory framing.
+	// An empty packet paired with "mandatory recall via …" guidance just nudges
+	// the model to fire a recall tool against an empty store and end the turn
+	// (the classic first-turn "tool call then nothing" behavior). The post-turn
+	// extractor still runs regardless, so memory bootstraps from this same turn.
+	// Global memory is cross-conversation, so only short-circuit when it is off
+	// or genuinely empty; when we lack the userId to check, stay conservative.
+	const hasGlobalMemory =
+		params.globalMemoryEnabled === true &&
+		(params.userId ? memoryRepo.listGlobalMemories(params.userId, { limit: 1 }).length > 0 : true);
+	if (isPacketEmpty(packet) && !hasGlobalMemory) {
+		return [
+			recent ? `<recent_transcript>\n${recent}\n</recent_transcript>\n` : '',
+			'Final user message:',
+			params.userMsg.content
+		]
+			.filter(Boolean)
+			.join('\n');
+	}
+
 	const writeGuidance = params.extractorPresent
 		? 'A dedicated memory extractor reviews every turn after you respond and records durable memory on your behalf. You have no direct memory-write tool — do not attempt to write memory yourself. Concentrate on answering well and querying the recall tools as needed, and let the extractor capture what to remember.'
 		: 'Durable memory is captured automatically after each turn; you have no direct memory-write tool. Concentrate on answering well and use the recall tools to pull in anything you need.';

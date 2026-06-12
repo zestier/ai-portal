@@ -43,6 +43,7 @@ export async function startTurnFromUserMessage(
 				conversationId: conv.id,
 				mode: conv.memoryMode,
 				userMsg,
+				userId: conv.userId,
 				globalMemoryEnabled: conv.globalMemoryEnabled,
 				includeRecentTranscript: true,
 				extractorPresent: isModelBackedExtractorConfigured({
