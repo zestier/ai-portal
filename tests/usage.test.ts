@@ -5,7 +5,8 @@ import { makeFakeSession } from './helpers/fake-session';
 
 const acquireMock = vi.fn();
 vi.mock('../src/lib/server/copilot/pool', () => ({
-	acquire: (...args: unknown[]) => acquireMock(...args)
+	acquire: (...args: unknown[]) => acquireMock(...args),
+	registerKeepAlive: () => {}
 }));
 
 async function freshImports() {

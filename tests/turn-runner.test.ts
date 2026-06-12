@@ -7,7 +7,8 @@ import { makeFakeSession } from './helpers/fake-session';
 // Mock the session pool so turn-runner doesn't try to spin up the real SDK.
 const acquireMock = vi.fn();
 vi.mock('../src/lib/server/copilot/pool', () => ({
-	acquire: (...args: unknown[]) => acquireMock(...args)
+	acquire: (...args: unknown[]) => acquireMock(...args),
+	registerKeepAlive: () => {}
 }));
 
 async function freshImports() {

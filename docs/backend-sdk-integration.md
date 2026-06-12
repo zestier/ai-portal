@@ -143,11 +143,26 @@ export function startIdleReaper(idleMs: number) {
   setInterval(async () => {
     const now = Date.now();
     for (const [id, entry] of sessions) {
-      if (now - entry.lastUsed > idleMs) await release(id);
+      // Never reap a session with work outstanding (an open interactive
+      // prompt or an active turn) — see isProtected() below.
+      if (now - entry.lastUsed > idleMs && !isProtected(id)) await release(id);
     }
   }, 60_000).unref();
 }
 ```
+
+A session is **protected** from idle reaping / capacity eviction while it has
+work outstanding: an open interactive prompt (`interactiveRequests.hasPending`)
+or a running turn (the turn registry registers a keep-alive predicate via
+`pool.registerKeepAlive`). This stops the "leave a prompt open, come back,
+approve, tool never runs" failure where the SDK session backing a parked
+`onPermissionRequest` deferred was disposed out from under it. Under capacity
+pressure eviction prefers an unprotected session; if every session is busy it
+force-evicts the oldest and calls `interactiveRequests.expireConversation`,
+which settles the parked deferred with a distinct, non-deny "session expired —
+re-issue" outcome (audited `auto-expired`) so the agent unblocks. Forgotten
+prompts otherwise pin their session indefinitely — a deliberate trade-off
+mirroring `DEFAULT_TIMEOUT_MS = 0` ("a leak is better than a silent deny").
 
 Hard cap: when `clients.size >= MAX_CONCURRENT_SESSIONS`, refuse new sends
 with HTTP 429 unless the caller releases an existing one.

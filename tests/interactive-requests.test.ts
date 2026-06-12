@@ -8,6 +8,8 @@ import {
 	resolve,
 	cancel,
 	cancelConversation,
+	expireConversation,
+	hasPending,
 	newRequestId,
 	get,
 	defaultInteractiveResponse
@@ -221,6 +223,61 @@ describe('interactive request registry', () => {
 		expect(bGet()).toEqual({ kind: 'exit_plan_mode', approved: false });
 		expect(get(a)).toBeUndefined();
 		expect(get(b)).toBeUndefined();
+	});
+
+	it('hasPending reflects outstanding requests per conversation', () => {
+		expect(hasPending(conversationId)).toBe(false);
+		const requestId = newRequestId();
+		const { getResolved } = makePending('permission', permView(requestId), undefined);
+		expect(hasPending(conversationId)).toBe(true);
+		expect(hasPending('some-other-conversation')).toBe(false);
+		resolve(requestId, userId, { kind: 'permission', decision: 'allow-once' });
+		expect(getResolved()).toEqual({ kind: 'permission', decision: 'allow-once' });
+		expect(hasPending(conversationId)).toBe(false);
+	});
+
+	it('expireConversation settles prompts with a non-deny re-issue outcome (audited auto-expired)', async () => {
+		const settings = await import('../src/lib/server/db/repos/settings');
+		const events: PortalEvent[] = [];
+		const requestId = newRequestId();
+		const { getResolved } = makePending('permission', permView(requestId), (ev) => events.push(ev));
+
+		expireConversation(conversationId, 'capacity_evict');
+
+		// The deferred is settled (agent unblocks) with a permission reject that
+		// carries re-issue feedback — distinct from a plain user deny.
+		const outcome = getResolved() as { kind: string; decision: string; feedback?: string };
+		expect(outcome.kind).toBe('permission');
+		expect(outcome.decision).toBe('deny');
+		expect(outcome.feedback ?? '').toMatch(/re-issue/i);
+		expect(get(requestId)).toBeUndefined();
+		expect(hasPending(conversationId)).toBe(false);
+
+		// The resolved event marks it cancelled with the supplied reason.
+		expect(events[0]).toMatchObject({
+			type: 'interactive.resolved',
+			requestId,
+			kind: 'permission',
+			cancelled: true,
+			cancelReason: 'capacity_evict'
+		});
+
+		// Audited as `auto-expired`, NOT `auto-deny`.
+		const recent = settings.listRecentDecisionsForUser(userId, 5);
+		expect(recent[0].decision).toBe('auto-expired');
+		expect(recent[0].tool).toBe('shell');
+	});
+
+	it('expireConversation settles non-permission kinds with their neutral default', () => {
+		const requestId = newRequestId();
+		const { getResolved } = makePending(
+			'user_input',
+			{ requestId, kind: 'user_input', question: 'pick', allowFreeform: true },
+			undefined
+		);
+		expireConversation(conversationId, 'capacity_evict');
+		expect(getResolved()).toEqual({ kind: 'user_input', answer: '', wasFreeform: true });
+		expect(get(requestId)).toBeUndefined();
 	});
 
 	it('an emit callback that throws does not break resolution', () => {

@@ -8,6 +8,7 @@ import {
 	getOrCreateGlobalSingleton,
 	setGlobalSingletonValue
 } from '../global-singleton';
+import { hasPending, expireConversation } from './interactive-requests';
 import { log } from '../log';
 import {
 	getDefaultProviderId,
@@ -46,6 +47,44 @@ function getReaperTimer(): NodeJS.Timeout | null {
 }
 function setReaperTimer(t: NodeJS.Timeout | null) {
 	setGlobalSingletonValue(REAPER_KEYS, t);
+}
+
+// Keep-alive predicates: external signals that a conversation's session has
+// work outstanding and must not be silently disposed by the idle reaper or
+// capacity eviction. `interactive-requests` is consulted directly (see
+// `isProtected`); the turn registry registers itself here to avoid an import
+// cycle (turn-runner already imports this module). Keyed by a stable id so a
+// Vite HMR re-import re-registering its predicate replaces rather than
+// duplicates the entry. Stashed on globalThis for the same HMR reason as the
+// session map.
+type KeepAlivePredicate = (conversationId: string) => boolean;
+const KEEPALIVE_KEYS = appGlobalSymbols('pool.keepAlive');
+const keepAlive: Map<string, KeepAlivePredicate> = getOrCreateGlobalSingleton(
+	KEEPALIVE_KEYS,
+	() => new Map<string, KeepAlivePredicate>()
+);
+
+export function registerKeepAlive(id: string, fn: KeepAlivePredicate) {
+	keepAlive.set(id, fn);
+}
+
+/**
+ * True if the conversation's session has work outstanding (an open interactive
+ * prompt or an active turn) and therefore must not be reaped/evicted silently.
+ */
+function isProtected(conversationId: string): boolean {
+	if (hasPending(conversationId)) return true;
+	for (const fn of keepAlive.values()) {
+		try {
+			if (fn(conversationId)) return true;
+		} catch (err) {
+			log.warn('copilot.pool.keepalive_predicate_failed', {
+				conversationId,
+				err: err instanceof Error ? err.message : String(err)
+			});
+		}
+	}
+	return false;
 }
 
 async function disposeSession(
@@ -105,11 +144,27 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 	if (pending) return pending;
 	const cfg = loadConfig();
 	if (sessions.size >= cfg.MAX_CONCURRENT_SESSIONS) {
-		// Reap the oldest idle session if we can.
+		// Evict to make room. Prefer the oldest session with NO work
+		// outstanding so we never strand an open prompt / active turn. Only
+		// if every session is busy do we force-evict the oldest one — and
+		// then we expire its pending prompts with a distinct "session
+		// expired — re-issue" outcome so the parked agent unblocks instead
+		// of hanging on a deferred whose executor we just disposed.
 		const sorted = [...sessions.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-		const [oldestId, oldest] = sorted[0];
-		log.info('copilot.pool.evict', { conversationId: oldestId });
-		await disposeSession(oldest.session, { conversationId: oldestId, reason: 'capacity_evict' });
+		const unprotected = sorted.find(([cid]) => !isProtected(cid));
+		const [oldestId, oldest] = unprotected ?? sorted[0];
+		if (unprotected) {
+			log.info('copilot.pool.evict', { conversationId: oldestId });
+		} else {
+			log.warn('copilot.pool.evict_forced', { conversationId: oldestId });
+			// Settle the parked deferreds BEFORE disposing so the resolved
+			// event lands and the SDK callback's promise can't leak.
+			expireConversation(oldestId, 'capacity_evict');
+		}
+		await disposeSession(oldest.session, {
+			conversationId: oldestId,
+			reason: unprotected ? 'capacity_evict' : 'capacity_evict_forced'
+		});
 		sessions.delete(oldestId);
 	}
 	const openPromise = open(opts).then(
@@ -157,6 +212,16 @@ export function startIdleReaper() {
 		const now = Date.now();
 		for (const [id, entry] of sessions) {
 			if (now - entry.lastUsed > idleMs) {
+				// Never reap a session with work outstanding (an open prompt
+				// or an active turn). A forgotten prompt pins its session
+				// indefinitely — an accepted trade-off, mirroring the
+				// deliberate DEFAULT_TIMEOUT_MS=0 ("a leak is better than a
+				// silent deny"). Capacity pressure still has an escape hatch
+				// via the forced eviction in `acquire`.
+				if (isProtected(id)) {
+					log.info('copilot.pool.reap_skip_busy', { conversationId: id });
+					continue;
+				}
 				log.info('copilot.pool.reap', { conversationId: id });
 				sessions.delete(id);
 				await disposeSession(entry.session, { conversationId: id, reason: 'idle_reap' });

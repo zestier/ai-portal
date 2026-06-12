@@ -143,6 +143,16 @@ const TURNS_KEYS = appGlobalSymbols('turns');
 type TurnRegistry = Map<string, InternalTurn>;
 const turns: TurnRegistry = getOrCreateGlobalSingleton(TURNS_KEYS, () => new Map());
 
+// Tell the session pool that a conversation with a running turn is alive, so
+// the idle reaper / capacity eviction don't dispose its SDK session mid-turn
+// (e.g. while a long tool stream runs or while it's parked on a prompt — the
+// pool also checks pending prompts directly). Registered by stable id so an
+// HMR re-import replaces rather than duplicates the predicate. The optional
+// call keeps partially-mocked `pool` modules (some unit tests) working.
+pool.registerKeepAlive?.('turns.active', (conversationId) => {
+	return turns.get(conversationId)?.status === 'running';
+});
+
 // How long a finished turn lingers in the registry so that a slightly-late
 // subscriber (e.g., a page that reloaded just as the turn completed) can
 // still replay the full event log instead of missing it.

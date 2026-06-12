@@ -24,6 +24,7 @@
 
 import { ulid } from 'ulid';
 import * as settingsRepo from '../db/repos/settings';
+import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
 import { log } from '../log';
 import type {
 	InteractiveKind,
@@ -68,7 +69,22 @@ export interface PendingInteractive {
 }
 
 // Per-process map. Acceptable for single-instance deployment.
-const pending = new Map<string, PendingInteractive>();
+//
+// NOTE (multi-instance): this is still NOT multi-instance safe — a resolve
+// POST that lands on a different process can't see another process's pending
+// deferred. Out of scope for this ticket; flagged deliberately.
+//
+// Stashed on globalThis (mirroring pool.sessions and the turn registry) so a
+// Vite SSR HMR re-import of this module mid-prompt does not orphan a live
+// deferred in the old module's closure. Without this, an edit during an open
+// prompt would create a fresh empty map: the resolve route would 404,
+// listForConversation would return [] (dialog vanishes), and the original
+// deferred would never settle -> the turn hangs forever.
+const PENDING_KEYS = appGlobalSymbols('interactive.pending');
+const pending = getOrCreateGlobalSingleton(
+	PENDING_KEYS,
+	() => new Map<string, PendingInteractive>()
+);
 
 export function newRequestId(): string {
 	return ulid();
@@ -136,6 +152,19 @@ export function listForConversation(conversationId: string): InteractiveRequestV
  * request existed and was resolved. The response shape must match the
  * registered kind; mismatched responses are rejected with `kind_mismatch`.
  */
+/**
+ * True if any prompt is still outstanding for the conversation. Used by the
+ * session pool's idle reaper / capacity eviction so it never disposes the SDK
+ * session backing an open prompt (which would strand the deferred: the dialog
+ * stays answerable and the resolve POST 200s, but the tool can never run).
+ */
+export function hasPending(conversationId: string): boolean {
+	for (const p of pending.values()) {
+		if (p.conversationId === conversationId) return true;
+	}
+	return false;
+}
+
 export function resolve(requestId: string, userId: string, response: InteractiveResponse): boolean {
 	const p = pending.get(requestId);
 	if (!p) return false;
@@ -301,6 +330,76 @@ export function cancelConversation(conversationId: string, reason: string = 'tur
 	for (const [id, p] of pending) {
 		if (p.conversationId === conversationId) cancel(id, reason);
 	}
+}
+
+// Agent-facing feedback when a prompt's backing SDK session is reclaimed
+// (capacity eviction) before the user answered. Distinct from a user deny:
+// the request was never decided, so the agent should simply re-issue it.
+const SESSION_EXPIRED_FEEDBACK =
+	'The session backing this request was reclaimed (capacity pressure) before it was answered. ' +
+	'This is not a denial — re-issue the tool call to try again.';
+
+/**
+ * Settle every pending request for a conversation because its backing SDK
+ * session is being disposed out from under it (capacity eviction). Unlike
+ * `cancel`, this is NOT a deny: it resolves with a distinct "session expired —
+ * re-issue" outcome and audits it as `auto-expired` (not `auto-deny`) so the
+ * agent unblocks instead of hanging and the audit log makes the cause obvious.
+ *
+ * The idle reaper deliberately never calls this (it skips sessions with
+ * outstanding work entirely — "a leak is better than a silent deny"); only
+ * the capacity-pressure escape hatch in the pool does.
+ */
+export function expireConversation(conversationId: string, reason: string = 'session_expired') {
+	for (const [id, p] of pending) {
+		if (p.conversationId === conversationId) expire(id, reason);
+	}
+}
+
+function expire(requestId: string, reason: string) {
+	const p = pending.get(requestId);
+	if (!p) return;
+	pending.delete(requestId);
+	if (p.timeoutHandle) clearTimeout(p.timeoutHandle);
+
+	const outcome = expiredResponse(p.kind);
+	try {
+		p.emit?.({
+			type: 'interactive.resolved',
+			requestId: p.requestId,
+			kind: p.kind,
+			outcome,
+			cancelled: true,
+			cancelReason: reason
+		});
+	} catch {
+		/* non-fatal */
+	}
+	if (p.kind === 'permission' && p.view.kind === 'permission') {
+		try {
+			settingsRepo.recordDecision(
+				p.conversationId,
+				p.view.tool,
+				typeof p.view.summary === 'string' ? p.view.summary : '',
+				'auto-expired'
+			);
+		} catch (e) {
+			log.warn('interactive.expire_audit_failed', { requestId, err: String(e) });
+		}
+	}
+	log.warn('interactive.expired', { requestId, kind: p.kind, reason });
+	p.resolve(outcome);
+}
+
+// The "session expired" outcome by kind. For permission requests we attach
+// re-issue feedback so the agent (if its session somehow survives to read it)
+// learns this was a reclaim, not a deny. Other kinds fall back to their
+// neutral default response.
+function expiredResponse(kind: InteractiveKind): InteractiveResponse {
+	if (kind === 'permission') {
+		return { kind: 'permission', decision: 'deny', feedback: SESSION_EXPIRED_FEEDBACK };
+	}
+	return defaultInteractiveResponse(kind);
 }
 
 export { defaultInteractiveResponse };

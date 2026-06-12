@@ -807,7 +807,11 @@ export type PermissionDecision =
 	| 'deny-always'
 	| 'auto-allow'
 	| 'auto-deny'
-	| 'auto-prompt-required';
+	| 'auto-prompt-required'
+	// Recorded when the SDK session backing a still-open prompt was reclaimed
+	// (capacity eviction) before the user answered. Distinct from `auto-deny`
+	// so the audit shows the prompt was abandoned by the server, not denied.
+	| 'auto-expired';
 
 // --- File browser / git response shapes (shared by client & server) ---
 
