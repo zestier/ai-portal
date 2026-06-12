@@ -23,7 +23,7 @@ export function buildToolExtractorSystemPrompt(): string {
 			'Memory has two primitives:',
 			'- ENTITIES — the durable referents (a person, object, place, file, component, project concept) that facts attach to via a stable, namespaced `entityKey` (e.g. character.mara, object.attic_key, component.memory_extractor).',
 			'- FACTS — everything recorded about an entity. Every fact is exactly one kind, and the write tool you call IS its kind (there is no generic patch and no "kind" field to set):',
-			'  • memory_set_attributes — things to KNOW: durable current state (a value, status, preference, relationship, ownership, role, location, constraint, deadline, identifier). This is the default; most things are attributes. One call sets MANY attributes on one entity, and is ALSO the entity constructor: pass entityType + displayName (+ optional summary) in the same call to type and name a brand-new referent.',
+			'  • memory_set_attributes — things to KNOW: durable current state (a value, status, preference, relationship, ownership, role, location, constraint, deadline, identifier). This is the default; most things are attributes. One call sets MANY attributes on one entity, and is ALSO the entity constructor: pass entityType and/or displayName (each independently optional — an omitted one is derived from the entityKey for a new entity) in the same call to type and name a brand-new referent, or to rename/retype/re-summarize an existing one (omitted fields on an existing entity are left unchanged).',
 			'  • memory_add_directive — a standing rule for how YOU must behave going forward (conduct, style, format, process).',
 			'  • memory_open_loop — a NEW unresolved task, question, or thread to follow up on later.',
 			'  • memory_record_event — a point-in-time occurrence for the time-ordered log that is NOT current state (a deploy shipped, a build failed, an approach was tried, a clue was revealed). Use sparingly.'
@@ -32,7 +32,7 @@ export function buildToolExtractorSystemPrompt(): string {
 		[
 			'Work through the turn in this order:',
 			'1. SCAN every source — user message, assistant message, recent transcript, and tool calls — for anything that could matter after this turn ends: names, exact values, conditions, qualifiers. Over-capture: a detail you record and never need costs little; one you drop is gone. When in doubt, include it.',
-			'2. RETRIEVE before you write. A referent mentioned this turn is very often already stored under a different surface form. Call memory_search (by name AND by likely key) and memory_get_entity to confirm, then reuse the existing canonical entityKey. Treat short and long forms of a name as the SAME entity (a bare first name vs. character.firstname_lastname; "auth" vs. "auth_service"). Only mint a new entity — by passing entityType + displayName to memory_set_attributes, which types and names it in the same call as its first facts — for a genuinely new referent.',
+			'2. RETRIEVE before you write. A referent mentioned this turn is very often already stored under a different surface form. Call memory_search (by name AND by likely key) and memory_get_entity to confirm, then reuse the existing canonical entityKey. Treat short and long forms of a name as the SAME entity (a bare first name vs. character.firstname_lastname; "auth" vs. "auth_service"). Only mint a new entity — via memory_set_attributes, passing entityType and/or displayName (either, both, or neither: an omitted field is derived from the entityKey) to type and name it in the same call as its first facts — for a genuinely new referent.',
 			'3. WRITE granular facts. Put ONE distinct trait per attribute item — never collapse several into a single "description" value. "A tall woman with red hair who fears deep water" → build=tall, hair=red, fears=deep water. A one-line prose blurb, if any, goes in the entity\'s `summary` (a top-level field on memory_set_attributes), NOT as a fact. Granular facts are individually searchable, supersedable, and countable; a mega-description is none of those.',
 			'4. SKIP what is unchanged. The packet lists every fact already in memory with its current value. Record an attribute (or entity) only when it is genuinely NEW or its value has CHANGED versus the packet — a changed value must be re-asserted, since it supersedes the prior value in place. Re-asserting a predicate=value already shown records nothing (it is deduped) and only wastes your iteration budget; skip it.',
 			'5. MAINTAIN open loops. Call memory_get_open_loops. Pass every still-live loop\'s handle (its [id=...], e.g. loop.find_attic_key) to memory_keep_loops, and call memory_close_loop ("resolved" = done/answered, "dropped" = abandoned/superseded) for any the turn settled — e.g. when the user picked one of several offered options, drop the unchosen ones. A loop flagged "[expires in N passes unless kept]" must be reaffirmed or retired THIS turn; any loop you neither keep nor close is treated as stale and auto-dropped after a few passes. Use memory_open_loop only for genuinely NEW threads.',
@@ -49,6 +49,14 @@ export function buildToolExtractorSystemPrompt(): string {
 
 		'Each write tool takes a small flat object (e.g. memory_set_attributes: { entityKey, attributes: [{ predicate, value }] }; memory_add_directive: { rule }). Call tools as many times as you need; nothing commits until you finish, and a rejected call never loses what you already staged. A call returns ok:true when staged, or ok:false with `issues` (each carrying a `hint`) and an `expected.example` to copy — fix the named fields and call again. memory_set_attributes validates per item: valid items stage, and only the items listed in `results` with "staged": false need re-sending.',
 
+		[
+			'HANDLE EVERY REJECTED WRITE — do not ignore one and move on.',
+			'- A rejected call (ok:false) carries a short `failureId` (e.g. f1). The run is NOT allowed to end while any failureId is still outstanding.',
+			'- To RESOLVE a failure: call the same tool again with the issues fixed AND pass that id as `failureId`. On success the failure clears automatically (the result echoes `clearedFailureId`); if it fails again the SAME id comes back — keep fixing, do not invent a new attempt.',
+			'- To ABANDON a failure you genuinely cannot fix: list its id in memory_end_extraction\'s `acknowledgedFailures`. This is a deliberate "I am dropping this" — only use it when retrying is hopeless.',
+			'- If you call memory_end_extraction while any failureId is neither cleared nor acknowledged, it is REFUSED and the error names the ids; resolve or acknowledge them, then end the run.'
+		].join('\n'),
+
 		'Never store credentials, tokens, secrets, raw tool output, or current repository state as timeless truth.',
 
 		[
@@ -59,7 +67,7 @@ export function buildToolExtractorSystemPrompt(): string {
 			'4. If the search surfaced a stray person.raven for the same character → memory_merge_entities { from: "person.raven", into: "character.mara" }.'
 		].join('\n'),
 
-		'When you have recorded everything durable from this turn, stop calling tools and write a brief final message summarizing what you recorded (or noting that nothing durable needed storing). That closing message is shown as the extraction session summary.'
+		'memory_end_extraction ends the WHOLE run — it is NOT how you save a single memory (the write tools above already stage each fact). Call it exactly ONCE, at the very end, after you have staged everything durable from this turn (or immediately if nothing needed storing); never after each individual write. It stops staging, commits everything staged, and exits the turn. Pass an optional one-line `summary` and write a brief final message summarizing what you recorded (or noting nothing durable needed storing) — that closing message is shown as the extraction session summary. It also takes `acknowledgedFailures`: if any earlier write is still failing and you are deliberately giving up on it, list its `failureId` there, or the call will be refused.'
 	].join('\n\n');
 }
 

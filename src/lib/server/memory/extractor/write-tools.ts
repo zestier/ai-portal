@@ -184,6 +184,20 @@ const FORGET_DIRECTIVE_SCHEMA = {
 const FORGET_ATTRIBUTE_EXAMPLE = { entityKey: 'character.mara', predicate: 'description' };
 const FORGET_DIRECTIVE_EXAMPLE = { handle: '01J9Z0M5Q2K7V8N3B4C5D6E7F8' };
 
+// Optional threading field advertised on every write tool: the model passes a
+// prior rejection's `failureId` here when retrying that call. On success the id
+// is cleared (the loop drops it from the outstanding set); on a repeat failure
+// the SAME id is echoed back rather than minting a new one. Kept short (the id
+// is `f1`,`f2`,… per run) so the echoed schema/example stays well under the
+// tool-result truncation cap. Stripped from args before content validation, so
+// it never reaches a fact schema with `additionalProperties:false`.
+const FAILURE_ID_PROP = {
+	type: 'string',
+	maxLength: 40,
+	description:
+		"Optional. When this call retries a write that was previously rejected, pass that rejection's `failureId` here. If the retry succeeds the failure is cleared; if it fails again the same id is returned. Omit on a first attempt."
+} as const;
+
 // A remember_* tool advertises its fact kind's schema/example with the internal
 // `kind` discriminator stripped — the tool name already fixes the kind.
 function stripKind<T extends { properties: Record<string, unknown>; required?: readonly string[] }>(
@@ -264,20 +278,20 @@ const ATTRIBUTES_BATCH_SCHEMA = {
 			minLength: 1,
 			maxLength: 80,
 			description:
-				'Optional. The kind of referent, e.g. character, component, file, concept. Provide WITH displayName the first time you record this entity so it gets a proper type+name instead of a bare auto-minted stub. Requires entityKey.'
+				'Optional and independent of displayName. The kind of referent, e.g. character, component, file, concept. Supply it to type a new entity or to change an existing one. On a NEW entity an omitted type is derived from the entityKey (e.g. character.mara → character); on an EXISTING entity an omitted type leaves the stored value unchanged. Requires entityKey.'
 		},
 		displayName: {
 			type: 'string',
 			minLength: 1,
 			maxLength: 200,
 			description:
-				'Optional. Human-readable name for the referent. Provide WITH entityType when first recording this entity. Requires entityKey.'
+				'Optional and independent of entityType. Human-readable name for the referent. Supply it to name a new entity or to rename an existing one. On a NEW entity an omitted name is derived from the entityKey (e.g. character.mara → Mara); on an EXISTING entity an omitted name leaves the stored value unchanged. Requires entityKey.'
 		},
 		summary: {
 			type: 'string',
 			maxLength: 4000,
 			description:
-				'Optional one-line prose description (blurb) of the entity. Set it WITH entityType+displayName. A prose blurb belongs here, NOT as a discrete attribute item.'
+				'Optional one-line prose description (blurb) of the entity. Independent of entityType/displayName — you may set it alone on an existing entity. A prose blurb belongs here, NOT as a discrete attribute item.'
 		},
 		metadata: { description: 'Optional arbitrary JSON metadata about the entity.' },
 		attributes: {
@@ -334,6 +348,17 @@ function writeToolExample(tool: WriteToolName): Record<string, unknown> {
 	if (tool === 'memory_forget_directive') return FORGET_DIRECTIVE_EXAMPLE;
 	if (tool === 'memory_set_attributes') return ATTRIBUTES_BATCH_EXAMPLE;
 	return stripKindExample(MEMORY_FACT_KIND_EXAMPLES[SINGLE_FACT_WRITE_KINDS[tool]]);
+}
+
+// The parameters ADVERTISED to the model: the tool's own schema plus the
+// optional inbound `failureId` threading field. The base schemas are shared
+// module-level singletons, so clone before layering the field on (never mutate
+// them). The rejection envelope's `expected.schema` deliberately uses the bare
+// schema (no failureId) to keep that echoed payload lean under truncation.
+function advertisedWriteToolParameters(tool: WriteToolName): Record<string, unknown> {
+	const base = writeToolParameters(tool);
+	const baseProps = (base.properties ?? {}) as Record<string, unknown>;
+	return { ...base, properties: { ...baseProps, failureId: FAILURE_ID_PROP } };
 }
 
 // Map raw Zod issues to the model-facing WriteIssue shape, dropping a leading
@@ -576,7 +601,7 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 			function: {
 				name: tool,
 				description: SINGLE_FACT_WRITE_DESCRIPTIONS[tool],
-				parameters: writeToolParameters(tool)
+				parameters: advertisedWriteToolParameters(tool)
 			}
 		})
 	);
@@ -587,8 +612,8 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 			function: {
 				name: 'memory_set_attributes',
 				description:
-					'Record a durable entity and/or things to KNOW about it in ONE call — its current state, traits, values, relationships, preferences, constraints, ownership, roles, deadlines, or identifiers. Pass the shared entityKey once at the top level. To FIRST record a new referent, also pass `entityType` + `displayName` (and optionally a one-line prose `summary`/`metadata`) so it gets a proper type and name instead of a bare auto-minted stub; for an existing referent just pass the changed `attributes`. Put discrete traits in the `attributes` array with ONE item per distinct trait — always decompose: "a tall woman with red hair who fears water" becomes separate items (build=tall, hair=red, fears=water), never one big "description" value (a prose blurb belongs in `summary`). `attributes` may be omitted for a metadata-only call that just establishes/updates the entity. An attribute item may carry an optional `event` summary (+ optional `eventType`) when that particular change is also a notable timeline occurrence.',
-				parameters: writeToolParameters('memory_set_attributes')
+					'Record a durable entity and/or things to KNOW about it in ONE call — its current state, traits, values, relationships, preferences, constraints, ownership, roles, deadlines, or identifiers. Pass the shared entityKey once at the top level. `entityType` and `displayName` are each optional and INDEPENDENT — supply any subset. To record a new referent you may pass either, both, or neither: a field you omit is derived from the entityKey (character.mara → type character, name Mara), so the entity still gets a sensible type and name. For an existing referent, supply only the fields you are changing — an omitted field leaves the stored value unchanged (you can rename without re-sending the type, retype without re-sending the name, or update just the `summary`). Put discrete traits in the `attributes` array with ONE item per distinct trait — always decompose: "a tall woman with red hair who fears water" becomes separate items (build=tall, hair=red, fears=water), never one big "description" value (a prose blurb belongs in `summary`). `attributes` may be omitted for a metadata-only call that just establishes/updates the entity. An attribute item may carry an optional `event` summary (+ optional `eventType`) when that particular change is also a notable timeline occurrence.',
+				parameters: advertisedWriteToolParameters('memory_set_attributes')
 			}
 		},
 		{
@@ -597,7 +622,7 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 				name: 'memory_keep_loops',
 				description:
 					'Keep one or more EXISTING open loops alive (anti-aging) by handle. Pass the handle of every presented loop that is still live; any you omit ages out. Batch them in a single call.',
-				parameters: writeToolParameters('memory_keep_loops')
+				parameters: advertisedWriteToolParameters('memory_keep_loops')
 			}
 		},
 		{
@@ -606,7 +631,7 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 				name: 'memory_close_loop',
 				description:
 					'Retire one EXISTING open loop by handle: status "resolved" when done/answered, "dropped" when abandoned or superseded (e.g. an option the user did not choose).',
-				parameters: writeToolParameters('memory_close_loop')
+				parameters: advertisedWriteToolParameters('memory_close_loop')
 			}
 		},
 		{
@@ -615,7 +640,7 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 				name: 'memory_forget_attribute',
 				description:
 					'Retire (tombstone) an EXISTING attribute fact that has no natural supersede. Use ONLY in two cases: (a) after you split a compound attribute into granular facts under NEW predicates (e.g. a single description="tall, red hair, fears water" replaced by build/hair/fears) — forget the original compound predicate, which nothing superseded; or (b) the user EXPLICITLY retracted a trait with no replacement. Otherwise prefer supersede: re-asserting the same entityKey+predicate via memory_set_attributes retires the old value automatically — do NOT forget just to tidy. Target by `handle` (the fact\'s [id=...]) OR by `entityKey`+`predicate`.',
-				parameters: writeToolParameters('memory_forget_attribute')
+				parameters: advertisedWriteToolParameters('memory_forget_attribute')
 			}
 		},
 		{
@@ -624,7 +649,7 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
 				name: 'memory_forget_directive',
 				description:
 					'Retire (tombstone) an EXISTING directive the user EXPLICITLY retracted with no replacement, by its [id=...] handle. When the user instead OVERRIDES a rule, record the replacement with memory_add_directive rather than forgetting. Never forget a directive merely to tidy.',
-				parameters: writeToolParameters('memory_forget_directive')
+				parameters: advertisedWriteToolParameters('memory_forget_directive')
 			}
 		}
 	];
@@ -782,13 +807,13 @@ export function createWriteToolHandlers(
 				'memory_set_attributes',
 				'validation',
 				'schema_invalid',
-				'Provide a non-empty `attributes` array and/or entity metadata (entityType + displayName).',
+				'Provide a non-empty `attributes` array and/or entity metadata (entityType, displayName, summary, or metadata).',
 				[
 					{
 						field: 'attributes',
 						code: 'empty_call',
 						message: 'Nothing to record: no attributes and no entity metadata.',
-						hint: 'Add attribute items, and/or set entityType + displayName to record the entity.'
+						hint: 'Add attribute items, and/or set any of entityType, displayName, summary, or metadata to record the entity.'
 					}
 				],
 				args,
@@ -798,8 +823,10 @@ export function createWriteToolHandlers(
 
 		// Entity metadata is a whole-call gate: validate it BEFORE staging any
 		// attribute so an invalid entity rejects the entire call (nothing staged).
-		// PatchEntitySchema requires entityType + displayName together; summary/
-		// metadata are optional. An entity needs a key to attach to.
+		// entityType and displayName are each independently optional (an omitted
+		// field is derived from the key for a new entity, or preserved for an
+		// existing one); summary/metadata are optional too. An entity needs a key
+		// to attach to.
 		let entityPatch: MemoryPatchProposal | undefined;
 		let entityCanonical: Record<string, unknown> | undefined;
 		if (hasEntityMeta) {
@@ -836,7 +863,7 @@ export function createWriteToolHandlers(
 					'memory_set_attributes',
 					'validation',
 					'schema_invalid',
-					'Entity metadata did not match its schema (entityType and displayName are both required to record the entity).',
+					'Entity metadata did not match its schema.',
 					zodToWriteIssues(parsed.error, 'entities.0.'),
 					args,
 					stagedTotals(staged)
@@ -1380,23 +1407,60 @@ export function createWriteToolHandlers(
 			return count > 1 ? annotateDuplicateCall(result, tool, count) : result;
 		};
 
+	// Per-run failure-id minter. Each rejected write gets a stable, short id
+	// (`f1`,`f2`,…) the extractor loop tracks as outstanding; the model must
+	// either clear it with a successful threaded retry or acknowledge it at
+	// memory_end_extraction before the run can end cleanly.
+	let failureCounter = 0;
+	const nextFailureId = (): string => `f${(failureCounter += 1)}`;
+
+	// Outermost wrapper: thread an optional inbound `failureId` through a write.
+	// The field is stripped before the inner handler (and the duplicate-call
+	// signature) sees it, so it never reaches content validation and a retry
+	// carrying it still collapses against an identical earlier attempt. On
+	// failure the envelope gains a `failureId` — the inbound one when retrying,
+	// otherwise a fresh id. On success while retrying, the envelope echoes
+	// `clearedFailureId` so the loop can drop it from the outstanding set.
+	const withFailureId =
+		(handler: (args: unknown) => Promise<string>) =>
+		async (rawArgs: unknown): Promise<string> => {
+			const args = (rawArgs ?? {}) as Record<string, unknown>;
+			const inbound =
+				typeof args.failureId === 'string' && args.failureId.trim()
+					? args.failureId.trim()
+					: undefined;
+			const { failureId: _omit, ...rest } = args;
+			void _omit;
+			const result = await handler(rest);
+			let parsed: Record<string, unknown>;
+			try {
+				parsed = JSON.parse(result) as Record<string, unknown>;
+			} catch {
+				// Non-JSON envelope (shouldn't happen for write tools); leave as-is.
+				return result;
+			}
+			if (parsed.ok === false) {
+				parsed.failureId = inbound ?? nextFailureId();
+				return JSON.stringify(parsed);
+			}
+			if (parsed.ok === true && inbound) {
+				parsed.clearedFailureId = inbound;
+				return JSON.stringify(parsed);
+			}
+			return result;
+		};
+
+	const wrap = (tool: WriteToolName, handler: (args: unknown) => Promise<string>) =>
+		withFailureId(withDuplicateNudge(tool, handler));
+
 	const handlers = new Map<string, (args: unknown) => Promise<string>>();
 	for (const tool of Object.keys(SINGLE_FACT_WRITE_KINDS) as SingleFactWriteToolName[]) {
-		handlers.set(tool, withDuplicateNudge(tool, handleSingleFactWrite(tool)));
+		handlers.set(tool, wrap(tool, handleSingleFactWrite(tool)));
 	}
-	handlers.set(
-		'memory_set_attributes',
-		withDuplicateNudge('memory_set_attributes', handleSetAttributes)
-	);
-	handlers.set('memory_keep_loops', withDuplicateNudge('memory_keep_loops', handleKeepLoops));
-	handlers.set('memory_close_loop', withDuplicateNudge('memory_close_loop', handleCloseLoop));
-	handlers.set(
-		'memory_forget_attribute',
-		withDuplicateNudge('memory_forget_attribute', handleForgetAttribute)
-	);
-	handlers.set(
-		'memory_forget_directive',
-		withDuplicateNudge('memory_forget_directive', handleForgetDirective)
-	);
+	handlers.set('memory_set_attributes', wrap('memory_set_attributes', handleSetAttributes));
+	handlers.set('memory_keep_loops', wrap('memory_keep_loops', handleKeepLoops));
+	handlers.set('memory_close_loop', wrap('memory_close_loop', handleCloseLoop));
+	handlers.set('memory_forget_attribute', wrap('memory_forget_attribute', handleForgetAttribute));
+	handlers.set('memory_forget_directive', wrap('memory_forget_directive', handleForgetDirective));
 	return handlers;
 }

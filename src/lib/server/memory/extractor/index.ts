@@ -97,6 +97,12 @@ interface ToolCallingExtractorOptions {
 	 * budget). Defaults to unbounded when unset.
 	 */
 	maxWallClockMs?: number;
+	/**
+	 * How many times `memory_end_extraction` may be blocked for unacknowledged
+	 * write failures before the next attempt is force-accepted. Separate from the
+	 * empty-turn nudge budget. Defaults to 2 when unset (tests can override).
+	 */
+	maxFailedCallNudges?: number;
 	/** How the backend is told to pick tools ('auto' | 'required'). Default 'auto'. */
 	toolChoice?: 'auto' | 'required';
 	/** Test seam: drive the tool-calling loop without a live backend. */
@@ -119,21 +125,78 @@ const ASSISTANT_TRANSCRIPT_MAX_CHARS = 4_000;
 // toward an explicit finish before the loop gives up and stops on its own.
 // Reasoning models frequently end a step with chain-of-thought but no tool
 // call; rather than read that as "done" and stop (storing nothing), we re-prompt
-// the model to either keep recording or call `memory_finish`. Bounded so a
-// model that never emits a tool call still terminates well before the iteration
+// the model to either keep recording or call `memory_end_extraction`. Bounded so
+// a model that never emits a tool call still terminates well before the iteration
 // cap instead of burning the whole budget on empty rounds.
 const MAX_EMPTY_TURN_NUDGES = 2;
 
 // The corrective user message appended after an empty turn. Names the explicit
 // finish tool so the model ends deliberately rather than by falling silent.
 const EMPTY_TURN_NUDGE =
-	'You did not call any tool. If there is anything durable left to record from this turn, call the appropriate write tool now. If you have recorded everything (or nothing durable needed storing), call memory_finish to end — do not stop without calling it.';
+	'You did not call any tool. If there is anything durable left to record from this turn, call the appropriate write tool now. If you have recorded everything (or nothing durable needed storing), call memory_end_extraction to end the run — do not stop without calling it.';
 
 // Name of the explicit finish control-tool. It is not a write (it stages
 // nothing and is not advertised as a durable-write spec); the loop recognizes a
 // call with this name as a clean end signal and reads its optional `summary`
 // arg as the run summary.
-const FINISH_EXTRACTION_TOOL = 'memory_finish';
+const FINISH_EXTRACTION_TOOL = 'memory_end_extraction';
+
+// How many times memory_end_extraction may be refused because the model has
+// write failures it has neither fixed (via a threaded retry) nor acknowledged.
+// Independent of MAX_EMPTY_TURN_NUDGES. Default used when the option is unset;
+// the configured value (MEMORY_EXTRACTOR_MAX_FAILED_CALL_NUDGES) overrides it.
+const DEFAULT_MAX_FAILED_CALL_NUDGES = 2;
+
+// The tool-result error returned when memory_end_extraction is called while
+// write failures are still outstanding. The error IS the nudge: it names the
+// specific unacknowledged ids so the model can retry those writes (threading
+// each id) or list them in `acknowledgedFailures` to end deliberately.
+function buildUnackedFinishError(ids: string[]): string {
+	return JSON.stringify({
+		ok: false,
+		tool: FINISH_EXTRACTION_TOOL,
+		error: {
+			kind: 'gate',
+			code: 'unacknowledged_failures',
+			message: `Cannot finish: ${ids.length} earlier write call(s) were rejected and never resolved.`
+		},
+		unacknowledgedFailures: ids,
+		note: `Do NOT end the run yet. For each failure id [${ids.join(', ')}], either retry the write with the issues fixed (pass that id as \`failureId\` so it clears on success), or — if you are deliberately giving up on it — list it in memory_end_extraction's \`acknowledgedFailures\`. Every id must be cleared or acknowledged before the run can end.`
+	});
+}
+
+// The explicit finish control-tool, advertised so its acknowledgment contract
+// (the `acknowledgedFailures` array) is part of the schema the model sees. It
+// stages nothing; the loop recognizes a call by this name as the end signal and
+// reads its optional `summary`. `acknowledgedFailures` lets the model end the
+// run while deliberately abandoning still-failing writes.
+function buildFinishToolSpec(): ExtractorToolSpec {
+	return {
+		type: 'function',
+		function: {
+			name: FINISH_EXTRACTION_TOOL,
+			description:
+				'End the WHOLE extraction run — call this once, last, after you have staged every durable fact from this turn (or when nothing needed storing). This does NOT save a single memory; the individual write tools (memory_set_attributes, memory_add_directive, …) already staged those. Calling this is how you stop staging and exit the turn: it ends the loop and commits everything staged so far. Do NOT call it after each write — only when you are completely done. Provide an optional one-line `summary`. If any earlier write was rejected and you did not resolve it with a successful retry, you MUST list those `failureId`s in `acknowledgedFailures`, or the call is refused.',
+			parameters: {
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					summary: {
+						type: 'string',
+						maxLength: 1000,
+						description: 'Optional one-line summary of what you recorded this turn.'
+					},
+					acknowledgedFailures: {
+						type: 'array',
+						items: { type: 'string', maxLength: 40 },
+						description:
+							'The `failureId` of every rejected write you are deliberately leaving unresolved. Required to finish while any failure is outstanding. A failure already cleared by a successful retry need not be listed.'
+					}
+				}
+			}
+		}
+	};
+}
 
 /**
  * Agentic, tool-calling memory extractor. Instead of returning a single JSON
@@ -220,7 +283,8 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					parameters: tool.parameters
 				}
 			})),
-			...buildWriteToolSpecs()
+			...buildWriteToolSpecs(),
+			buildFinishToolSpec()
 		];
 
 		const userContent = truncate(
@@ -247,6 +311,17 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		let iterationsRun = 0;
 		let totalToolCalls = 0;
 		let emptyTurnNudges = 0;
+		// Write failures the model has not yet resolved (cleared via a threaded
+		// retry) or acknowledged at finish. Fully model-driven: ids are added when
+		// a write returns ok:false carrying a `failureId`, removed when a success
+		// echoes `clearedFailureId`, and subtracted by `acknowledgedFailures` at
+		// memory_end_extraction. A clean end requires this to be empty.
+		const outstandingFailures = new Set<string>();
+		// How many times memory_end_extraction has been refused for outstanding
+		// failures. Once it reaches the budget, the next call is force-accepted
+		// (staged work commits, a diagnostic records the still-unacked ids).
+		let failedCallNudges = 0;
+		const maxFailedCallNudges = this.opts.maxFailedCallNudges ?? DEFAULT_MAX_FAILED_CALL_NUDGES;
 		const deadline = Date.now() + (this.opts.maxWallClockMs ?? Number.POSITIVE_INFINITY);
 		for (let iteration = 0; iteration < this.opts.maxToolIterations; iteration += 1) {
 			// A user "stop" during background extraction aborts the turn's
@@ -326,9 +401,10 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					durationMs: Math.max(0, Date.now() - stepStartedAt)
 				});
 			}
-			// The explicit finish signal: a control-tool call, not a write. It ends
-			// the run cleanly (below) and its optional `summary` seeds the run
-			// summary. It also counts as "this turn spoke a final word", so the
+			// The explicit finish signal: a control-tool call, not a write. When
+			// accepted it ends the run (below) and its optional `summary` seeds the
+			// run summary; a finish refused by the failure gate is re-prompted
+			// instead. It also counts as "this turn spoke a final word", so the
 			// turn's visible text can still serve as the summary when no explicit
 			// `summary` arg is given.
 			const finishCall = turn.toolCalls.find((call) => call.name === FINISH_EXTRACTION_TOOL);
@@ -375,15 +451,26 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			// The model acted this turn; renew the empty-turn nudge budget so a
 			// later, separate stall is still given its full allowance.
 			emptyTurnNudges = 0;
+			// Whether this turn's finish call was accepted (clean or force-finish).
+			// Set inside the loop so a finish refused by the failure gate does NOT
+			// end the run — the loop continues so the model can resolve or
+			// acknowledge the outstanding failures.
+			let finishAccepted = false;
 			for (const call of turn.toolCalls) {
 				input.signal?.throwIfAborted();
-				// memory_finish is a control signal, not a write: it stages
+				// memory_end_extraction is a control signal, not a write: it stages
 				// nothing and is never dispatched to a write handler. We still
 				// surface it as a tool card so the run visibly ends on an explicit
 				// model decision rather than appearing to stop on its own. The run
 				// is ended after this turn's real tool calls are processed (so
-				// writes batched alongside finish still commit).
+				// writes batched alongside the end call still commit).
 				if (call.name === FINISH_EXTRACTION_TOOL) {
+					// Acknowledging an id clears it from the outstanding set even if
+					// the model never retried the write — an explicit "I'm dropping
+					// this" decision (acknowledge-ALL semantics).
+					for (const id of parseAcknowledgedFailures(call.arguments))
+						outstandingFailures.delete(id);
+					const remaining = [...outstandingFailures];
 					const finishActivityId = `mem_${ulid()}`;
 					input.onActivity?.({
 						type: 'tool.call',
@@ -391,6 +478,33 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 						tool: call.name,
 						args: parseActivityArgs(call.arguments)
 					});
+					// Finish gate: refuse to end cleanly while failures are neither
+					// cleared nor acknowledged, but only while the dedicated budget
+					// remains. The refusal's error IS the corrective nudge.
+					if (remaining.length > 0 && failedCallNudges < maxFailedCallNudges) {
+						failedCallNudges += 1;
+						const errorPayload = buildUnackedFinishError(remaining);
+						input.onActivity?.({
+							type: 'tool.result',
+							toolCallId: finishActivityId,
+							ok: false,
+							summary: `finish blocked — ${remaining.length} unacknowledged write failure(s)`,
+							output: errorPayload
+						});
+						// The assistant message already carried this finish tool_call,
+						// so a tool result for it must be fed back before the next
+						// request, and it doubles as the nudge.
+						messages.push({
+							role: 'tool',
+							tool_call_id: call.id,
+							content: truncate(errorPayload, TOOL_RESULT_MAX_CHARS)
+						});
+						continue;
+					}
+					// Accepted — either cleanly (no outstanding failures) or as a
+					// force-finish once the budget is spent. Force-finish salvages
+					// the run: staged work still commits; the still-unacknowledged
+					// ids are surfaced as a diagnostic after the loop.
 					const finishSummary = parseFinishSummary(call.arguments);
 					input.onActivity?.({
 						type: 'tool.result',
@@ -401,6 +515,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 							: 'extraction finished',
 						output: (call.arguments ?? '').trim() || '{}'
 					});
+					finishAccepted = true;
 					continue;
 				}
 				const activityId = `mem_${ulid()}`;
@@ -411,17 +526,30 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					args: parseActivityArgs(call.arguments)
 				});
 				const result = await dispatchExtractorToolCall(handlers, call);
-				// Tag rejections by tool + error code for telemetry (see rejectionTags).
 				if (!activityResultOk(result)) {
+					// Tag rejections by tool + error code for telemetry, and track the
+					// stable failureId so the finish gate can require it be resolved.
 					try {
 						const parsed = JSON.parse(result) as {
 							tool?: string;
 							error?: { code?: string };
+							failureId?: unknown;
 						};
 						const tag = `${parsed.tool ?? call.name}:${parsed.error?.code ?? 'unknown'}`;
 						rejectionTags[tag] = (rejectionTags[tag] ?? 0) + 1;
+						if (typeof parsed.failureId === 'string' && parsed.failureId)
+							outstandingFailures.add(parsed.failureId);
 					} catch {
 						// Non-JSON failure (e.g. thrown exception); ignore for tagging.
+					}
+				} else {
+					// A successful threaded retry clears the failure it resolved.
+					try {
+						const parsed = JSON.parse(result) as { clearedFailureId?: unknown };
+						if (typeof parsed.clearedFailureId === 'string' && parsed.clearedFailureId)
+							outstandingFailures.delete(parsed.clearedFailureId);
+					} catch {
+						// Non-JSON success; nothing to clear.
 					}
 				}
 				input.onActivity?.({
@@ -444,8 +572,9 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 				});
 			}
 			// The model explicitly ended the run this turn (after any writes it
-			// batched alongside the finish call were processed above).
-			if (finishCall) {
+			// batched alongside the finish call were processed above). A finish
+			// refused by the failure gate did not set this, so the loop continues.
+			if (finishAccepted) {
 				voluntaryStop = true;
 				break;
 			}
@@ -470,7 +599,9 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			redundantRewrites,
 			stagedProposals: staged.length,
 			hitIterationCap,
-			hitWallClockBudget
+			hitWallClockBudget,
+			failedCallNudges,
+			unacknowledgedFailures: outstandingFailures.size
 		});
 		diagnostics.push(...sanitized.diagnostics);
 		diagnostics.push({
@@ -510,6 +641,17 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 				severity: 'warning',
 				code: 'tool_iteration_cap',
 				message: `Extractor stopped after reaching the ${this.opts.maxToolIterations}-iteration tool cap.`
+			});
+		}
+		// Any write failure the model never cleared (via a threaded retry) nor
+		// acknowledged at finish is surfaced here so the drop is observable rather
+		// than silent. Covers the force-finish path (budget spent) as well as a
+		// silent stall, the empty-turn-nudge exhaustion, and the caps above.
+		if (outstandingFailures.size > 0) {
+			diagnostics.push({
+				severity: 'warning',
+				code: 'unacknowledged_write_failures',
+				message: `Extraction ended with ${outstandingFailures.size} unresolved write failure(s) the model never fixed or acknowledged: ${[...outstandingFailures].join(', ')}.`
 			});
 		}
 
@@ -572,7 +714,7 @@ function parseActivityArgs(raw: string): unknown {
 }
 
 /**
- * Pull the optional one-line `summary` out of a `memory_finish` call's
+ * Pull the optional one-line `summary` out of a `memory_end_extraction` call's
  * arguments. Tolerant of the malformed/partial JSON small models emit: returns
  * null when there is no usable string summary, so the caller falls back to the
  * turn's visible text.
@@ -587,6 +729,27 @@ function parseFinishSummary(raw: string): string | null {
 			: null;
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Pull the `acknowledgedFailures` id list out of a `memory_end_extraction`
+ * call's arguments. Tolerant of malformed/partial JSON (small models): returns
+ * an empty array when there is no usable string array, so a missing/garbled ack
+ * simply leaves outstanding failures unacknowledged (the finish gate then
+ * applies). Non-string and blank entries are dropped.
+ */
+function parseAcknowledgedFailures(raw: string): string[] {
+	const trimmed = (raw ?? '').trim();
+	if (!trimmed) return [];
+	try {
+		const parsed = JSON.parse(trimmed) as { acknowledgedFailures?: unknown };
+		if (!Array.isArray(parsed.acknowledgedFailures)) return [];
+		return parsed.acknowledgedFailures
+			.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+			.map((id) => id.trim());
+	} catch {
+		return [];
 	}
 }
 
@@ -725,6 +888,7 @@ export function createMemoryExtractor(
 					maxInputChars: cfg.MEMORY_EXTRACTOR_MAX_INPUT_CHARS,
 					maxToolIterations: cfg.MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS,
 					maxWallClockMs: cfg.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS,
+					maxFailedCallNudges: cfg.MEMORY_EXTRACTOR_MAX_FAILED_CALL_NUDGES,
 					toolChoice: cfg.MEMORY_EXTRACTOR_TOOL_CHOICE
 				});
 			}

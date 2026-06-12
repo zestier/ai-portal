@@ -78,6 +78,14 @@ const Schema = z
 		// per step (useful for ramble-prone local models that otherwise narrate
 		// without acting). Backends that ignore tool_choice are unaffected.
 		MEMORY_EXTRACTOR_TOOL_CHOICE: z.enum(['auto', 'required']).default('auto'),
+		// Tool-calling extractor: how many times `memory_end_extraction` may be
+		// blocked because the model has write failures it neither fixed (via a
+		// threaded retry) nor acknowledged. Independent of the empty-turn nudge
+		// budget. Once spent, the next call is accepted, staged work commits, and a
+		// diagnostic records the still-unacknowledged failure ids (salvage the
+		// run rather than loop forever). Kept small so the gate trips well before
+		// the iteration and wall-clock caps so force-finish actually fires.
+		MEMORY_EXTRACTOR_MAX_FAILED_CALL_NUDGES: z.coerce.number().int().min(0).default(2),
 		// Open-loop liveness: a presented-but-untouched loop is auto-dropped
 		// after this many consecutive model-backed extraction passes (higher
 		// priority loops get proportionally more grace). 0 disables aging.

@@ -85,14 +85,14 @@ function writeCall(id: string, name: string, args: unknown): ExtractorAssistantT
 }
 
 // Build the terminal assistant turn for the tool-calling extractor's
-// chatComplete double: an explicit memory_finish control call (the only
+// chatComplete double: an explicit memory_end_extraction control call (the only
 // clean way to end the run). The `summary` is carried both as the call's
 // argument and as visible content, so it surfaces as the extraction summary /
 // response exactly as a model's closing message would.
 function finishCall(summary: string, id = 'finish'): ExtractorAssistantTurn {
 	return {
 		content: summary,
-		toolCalls: [{ id, name: 'memory_finish', arguments: JSON.stringify({ summary }) }]
+		toolCalls: [{ id, name: 'memory_end_extraction', arguments: JSON.stringify({ summary }) }]
 	};
 }
 
@@ -1395,7 +1395,7 @@ describe('memory-backed sessions', () => {
 		// nested agent: a leading `input` event carries the context handed to
 		// the extractor, then thoughts (reasoning + <think>) and spoken content
 		// are separate threaded streams, interleaved with the staging tool call.
-		// The closing memory_finish also surfaces as a tool card.
+		// The closing memory_end_extraction also surfaces as a tool card.
 		expect(activity.map((event) => event.type)).toEqual([
 			'input',
 			'reasoning',
@@ -1546,7 +1546,7 @@ describe('memory-backed sessions', () => {
 		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
 	});
 
-	it('ends the run when the model calls memory_finish and uses its summary arg', async () => {
+	it('ends the run when the model calls memory_end_extraction and uses its summary arg', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -1570,12 +1570,12 @@ describe('memory-backed sessions', () => {
 					toolCalls: [
 						{
 							id: 'fin',
-							name: 'memory_finish',
+							name: 'memory_end_extraction',
 							arguments: JSON.stringify({ summary: 'Recorded that Mara owns the brass key.' })
 						}
 					]
 				};
-			// The loop must not request another completion after memory_finish.
+			// The loop must not request another completion after memory_end_extraction.
 			callsAfterFinish += 1;
 			return finishCall('should never run');
 		};
@@ -1605,15 +1605,16 @@ describe('memory-backed sessions', () => {
 		expect(callsAfterFinish).toBe(0);
 		// The attribute staged before finishing was committed.
 		expect(extraction.patch.facts).toHaveLength(1);
-		// memory_finish's `summary` arg seeds the session summary/response,
+		// memory_end_extraction's `summary` arg seeds the session summary/response,
 		// overriding the turn's visible text.
 		expect(extraction.summary).toBe('Recorded that Mara owns the brass key.');
 		expect(extraction.response).toBe('Recorded that Mara owns the brass key.');
-		// memory_finish stages nothing, but it IS surfaced as a tool card so
+		// memory_end_extraction stages nothing, but it IS surfaced as a tool card so
 		// the run visibly ends on an explicit model decision. The call card names
 		// the tool; its result echoes the finish summary.
 		const finishCallEvent = activity.find(
-			(event) => event.type === 'tool.call' && 'tool' in event && event.tool === 'memory_finish'
+			(event) =>
+				event.type === 'tool.call' && 'tool' in event && event.tool === 'memory_end_extraction'
 		);
 		expect(finishCallEvent).toBeDefined();
 		const finishCallId =
@@ -1676,12 +1677,218 @@ describe('memory-backed sessions', () => {
 		// Empty turns were nudged toward an explicit finish (bounded), not stopped
 		// on first sight — so the loop did NOT terminate at step 2.
 		expect(nudges.length).toBe(2);
-		expect(nudges[0]).toContain('memory_finish');
+		expect(nudges[0]).toContain('memory_end_extraction');
 		// It still terminates well before the iteration cap (1 write + 1 empty
 		// that ends the loop... + 2 nudged empties = 4 completions).
 		expect(step).toBe(4);
 		// Work staged before the stall is preserved.
 		expect(extraction.patch.facts).toHaveLength(1);
+	});
+
+	it('refuses memory_end_extraction while a write failure is unacknowledged, then ends once acknowledged', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Track a follow-up.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
+			step += 1;
+			// A write that is rejected (title too short) mints a failure id (f1).
+			if (step === 1) return writeCall('c1', 'memory_open_loop', { loopType: 'task', title: 'go' });
+			// Try to finish without dealing with the failure: must be refused.
+			if (step === 2) return finishCall('done', 'fin1');
+			// Acknowledge the outstanding id; the run may now end.
+			return {
+				content: 'done',
+				toolCalls: [
+					{
+						id: 'fin2',
+						name: 'memory_end_extraction',
+						arguments: JSON.stringify({ summary: 'done', acknowledgedFailures: ['f1'] })
+					}
+				]
+			};
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 10,
+			chatComplete
+		});
+
+		const activity: ExtractorActivity[] = [];
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-gate',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project'),
+			onActivity: (event) => activity.push(event)
+		});
+
+		// The rejected write carried a stable failure id.
+		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
+		expect(rejection).toBeDefined();
+		expect(JSON.parse(rejection!).failureId).toBe('f1');
+		// The first memory_end_extraction was refused: the error names the
+		// outstanding id, and the loop continued (it did not stop at step 2).
+		const blocked = feedback.find((entry) => entry.includes('unacknowledged_failures'));
+		expect(blocked).toBeDefined();
+		expect(JSON.parse(blocked!).unacknowledgedFailures).toEqual(['f1']);
+		// Three completions: write, refused finish, acknowledged finish.
+		expect(step).toBe(3);
+		// The refused finish surfaced as a NOT-ok tool card; the accepted one as ok.
+		const finishResults = activity.filter(
+			(event) => event.type === 'tool.result' && event.summary?.includes('finish')
+		);
+		expect(finishResults.map((event) => (event.type === 'tool.result' ? event.ok : null))).toEqual([
+			false,
+			true
+		]);
+		// Nothing durable was staged (the only write failed and was abandoned).
+		expect(extraction.patch.openLoops ?? []).toHaveLength(0);
+	});
+
+	it('clears an outstanding failure when a threaded retry (failureId) succeeds, then finishes cleanly', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Track a follow-up to inspect the cellar.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		const feedback: string[] = [];
+		let step = 0;
+		let blockedFinishes = 0;
+		const chatComplete = async (msgs: ExtractorChatMessage[]): Promise<ExtractorAssistantTurn> => {
+			for (const msg of msgs) {
+				if (msg.role === 'tool' && msg.content) {
+					feedback.push(msg.content);
+					if (msg.content.includes('unacknowledged_failures')) blockedFinishes += 1;
+				}
+			}
+			step += 1;
+			// Reject (title too short) -> failure id f1.
+			if (step === 1) return writeCall('c1', 'memory_open_loop', { loopType: 'task', title: 'go' });
+			// Retry the SAME logical write, corrected, threading the failure id.
+			if (step === 2)
+				return writeCall('c2', 'memory_open_loop', {
+					loopType: 'task',
+					title: 'Inspect the cellar',
+					failureId: 'f1'
+				});
+			// No outstanding failures remain, so this finish is accepted cleanly.
+			return finishCall('Stored one follow-up.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 10,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-retry-clear',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// The corrected retry succeeded and reported clearing its threaded id.
+		const cleared = feedback.find((entry) => entry.includes('"clearedFailureId"'));
+		expect(cleared).toBeDefined();
+		expect(JSON.parse(cleared!).clearedFailureId).toBe('f1');
+		// The failure was resolved, so memory_end_extraction was never refused.
+		expect(blockedFinishes).toBe(0);
+		expect(step).toBe(3);
+		// The corrected open loop survived; the failureId field never leaked into it.
+		expect(extraction.patch.openLoops).toEqual([
+			expect.objectContaining({ title: 'Inspect the cellar' })
+		]);
+		// No drop diagnostic — every failure was resolved.
+		expect(extraction.diagnostics.some((d) => d.code === 'unacknowledged_write_failures')).toBe(
+			false
+		);
+	});
+
+	it('force-finishes once the failed-call nudge budget is spent, committing staged work and flagging the drop', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const userMessage = messages.append(conv.id, {
+			role: 'user',
+			content: 'Mara owns the brass key; also track a follow-up.'
+		});
+		const assistantMessage = messages.append(conv.id, { role: 'assistant', content: 'Noted.' });
+
+		let step = 0;
+		const finishSteps: number[] = [];
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			// A valid write that stages durable work.
+			if (step === 1)
+				return writeCall('a1', 'memory_set_attributes', {
+					entityKey: 'character.mara',
+					attributes: [{ predicate: 'owns', value: 'brass key' }]
+				});
+			// A rejected write that mints an outstanding failure (f1).
+			if (step === 2) return writeCall('c1', 'memory_open_loop', { loopType: 'task', title: 'go' });
+			// Keep trying to finish without resolving the failure; with the budget
+			// set to 1, the first finish is refused and the second is force-accepted.
+			finishSteps.push(step);
+			return finishCall('giving up on the loop');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 10,
+			maxFailedCallNudges: 1,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'project',
+			turnId: 'turn-force-finish',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'project')
+		});
+
+		// Exactly one finish was refused (budget 1), the next was force-accepted —
+		// so the run ended after the second finish attempt (step 4).
+		expect(finishSteps).toEqual([3, 4]);
+		expect(step).toBe(4);
+		// Staged work committed despite the unresolved failure.
+		expect(extraction.patch.facts).toEqual([
+			expect.objectContaining({ entityKey: 'character.mara', predicate: 'owns' })
+		]);
+		// The dropped, never-acknowledged failure is surfaced as a diagnostic.
+		const diag = extraction.diagnostics.find((d) => d.code === 'unacknowledged_write_failures');
+		expect(diag).toBeDefined();
+		expect(diag?.severity).toBe('warning');
+		expect(diag?.message).toContain('f1');
 	});
 
 	it('stages a paired event when a memory_set_attributes item carries an event summary', async () => {
@@ -2058,7 +2265,7 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.facts ?? []).toHaveLength(0);
 	});
 
-	it('rejects the whole memory_set_attributes call when entity metadata is incomplete', async () => {
+	it('accepts a partial entity (only entityType) and derives the missing displayName on commit', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Mara exists.' });
@@ -2070,8 +2277,8 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				// entityType without the required displayName: the entity is invalid,
-				// so the whole call (including the otherwise-valid attribute) rejects.
+				// entityType without displayName: now valid. The entity stages and
+				// the missing displayName is derived from the key (Mara) at commit.
 				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					entityType: 'character',
@@ -2094,21 +2301,79 @@ describe('memory-backed sessions', () => {
 			conversationId: conv.id,
 			userId: user.id,
 			mode: 'project',
-			turnId: 'turn-bad-entity',
+			turnId: 'turn-partial-entity',
 			userMessage,
 			assistantMessage,
 			initialPacket: buildInitialPacket(conv.id, 'project')
 		});
 
-		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
-		expect(rejection).toBeDefined();
-		const parsed = JSON.parse(rejection!);
-		expect(parsed.issues.some((issue: { field?: string }) => issue.field === 'displayName')).toBe(
-			true
-		);
-		// Whole-call reject: nothing staged, not even the valid attribute.
-		expect(extraction.patch.entities ?? []).toHaveLength(0);
-		expect(extraction.patch.facts ?? []).toHaveLength(0);
+		// The partial entity is accepted (no rejection) and stages alongside the
+		// attribute.
+		const ok = feedback.find((entry) => entry.includes('"ok":true'));
+		expect(ok).toBeDefined();
+		const parsed = JSON.parse(ok!);
+		// The echo reflects only what the model literally sent — no derived name.
+		expect(parsed.accepted).toEqual({
+			entityKey: 'character.mara',
+			entityType: 'character',
+			attributes: [{ predicate: 'hair', value: 'red' }]
+		});
+		expect(parsed.accepted).not.toHaveProperty('displayName');
+		expect(extraction.patch.entities).toEqual([
+			expect.objectContaining({ entityKey: 'character.mara', entityType: 'character' })
+		]);
+		expect(extraction.patch.entities?.[0]).not.toHaveProperty('displayName');
+
+		// Committing the staged patch derives the omitted displayName from the key.
+		commitPatch({ conversationId: conv.id, patch: extraction.patch });
+		const stored = memory.getEntity(conv.id, 'character.mara');
+		expect(stored).toMatchObject({ entityType: 'character', displayName: 'Mara' });
+	});
+
+	it('preserves the stored type/name when an existing entity is updated with only a subset', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// Seed an existing entity with a full type + name + summary.
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [
+					{
+						entityKey: 'character.mara',
+						entityType: 'character',
+						displayName: 'Mara',
+						summary: 'A wary scout.'
+					}
+				]
+			}
+		});
+
+		// A partial update that only changes the displayName must leave the stored
+		// entityType (and untouched summary) intact rather than clobbering them.
+		commitPatch({
+			conversationId: conv.id,
+			patch: { entities: [{ entityKey: 'character.mara', displayName: 'Mara the Scout' }] }
+		});
+		let stored = memory.getEntity(conv.id, 'character.mara');
+		expect(stored).toMatchObject({
+			entityType: 'character',
+			displayName: 'Mara the Scout',
+			summary: 'A wary scout.'
+		});
+
+		// A partial update that only changes the entityType leaves the (renamed)
+		// displayName intact.
+		commitPatch({
+			conversationId: conv.id,
+			patch: { entities: [{ entityKey: 'character.mara', entityType: 'npc' }] }
+		});
+		stored = memory.getEntity(conv.id, 'character.mara');
+		expect(stored).toMatchObject({
+			entityType: 'npc',
+			displayName: 'Mara the Scout',
+			summary: 'A wary scout.'
+		});
 	});
 
 	it('rejects a memory_set_attributes call with neither attributes nor entity metadata', async () => {
@@ -3757,7 +4022,7 @@ describe('memory-backed sessions', () => {
 
 		// Step 1: reasoning streamed in two deltas; a <think> tag split across
 		// two content deltas; tool-call arguments split across two deltas.
-		// Step 2: a closing message plus an explicit memory_finish call ends
+		// Step 2: a closing message plus an explicit memory_end_extraction call ends
 		// the loop (the model finishes deliberately rather than falling silent).
 		const responses = [
 			sse([
@@ -3805,7 +4070,11 @@ describe('memory-backed sessions', () => {
 						{
 							delta: {
 								tool_calls: [
-									{ index: 0, id: 'fin', function: { name: 'memory_finish', arguments: '{}' } }
+									{
+										index: 0,
+										id: 'fin',
+										function: { name: 'memory_end_extraction', arguments: '{}' }
+									}
 								]
 							}
 						}

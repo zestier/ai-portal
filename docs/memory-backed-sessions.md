@@ -120,7 +120,7 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory_set_attributes` / `memory_add_directive` / `memory_record_event` / `memory_open_loop` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `memory_set_attributes`, a shared `entityKey` plus an array of flat trait items, and optional top-level entity metadata to construct the referent); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
 | `memory_keep_loops` / `memory_close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
 | `memory_forget_attribute` / `memory_forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Prefer supersede when the predicate is unchanged. |
-| `memory_finish` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
+| `memory_end_extraction` | Control tool (not a write) the extractor calls **once, at the end** to finish its run — it stops staging and ends the turn. It does NOT save an individual memory (the write tools do that); calling it after each write is a mistake. Takes an optional `summary` and an `acknowledgedFailures` array. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". The run is refused while any earlier write rejection is still outstanding (neither cleared by a threaded retry nor listed in `acknowledgedFailures`). Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
 
 These tools should be available to the model during the main response call for
 memory-backed sessions. The model should be instructed to call them whenever a
@@ -498,7 +498,7 @@ flat tool per concept, where the tool name *is* the classification (there is no
 
 | Write tool | Meaning | Required fields |
 | --- | --- | --- |
-| `memory_set_attributes` | Things to KNOW about ONE entity **and** the sole entity constructor: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). To record a brand-new referent, also pass top-level `entityType` + `displayName` (+ optional `summary`/`metadata`) in the same call so it is typed and named instead of auto-minted bare; for an existing referent just pass the changed `attributes`. `attributes` may be omitted for a metadata-only call (a call must supply attributes and/or entity metadata). Entity metadata is a whole-call gate — if it is present but invalid, nothing stages. Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` and/or entity metadata (`entityType`+`displayName`); optional top-level `entityKey` (required for entity metadata), `summary`, `metadata`; per-item `event`, `eventType` |
+| `memory_set_attributes` | Things to KNOW about ONE entity **and** the sole entity constructor: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). `entityType` and `displayName` are each **independently optional**: supply any subset to type/name a new referent or to rename/retype an existing one. On a **new** entity an omitted `entityType`/`displayName` is derived from the `entityKey` (e.g. `character.mara` → type `character`, name `Mara`); on an **existing** entity an omitted field is left **unchanged** (so you can update just the `summary`, just the name, or just the type). `attributes` may be omitted for a metadata-only call (a call must supply attributes and/or entity metadata). Entity metadata is a whole-call gate — if it is present but invalid, nothing stages. Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` and/or entity metadata (any subset of `entityType`/`displayName`/`summary`/`metadata`); optional top-level `entityKey` (required for entity metadata), `summary`, `metadata`; per-item `event`, `eventType` |
 | `memory_add_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). Captured whether the user issues the rule or the assistant declares it about its own role/operating behavior. | `rule` |
 | `memory_open_loop` | Open a NEW unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
 | `memory_record_event` | A point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, failed build, approach tried, clue revealed). Recency-ranked and capped, so used sparingly. | `eventType`, `summary` (+ optional `entityKey`) |
@@ -853,15 +853,42 @@ targeted, per-tool feedback without discarding anything already staged.
 Everything staged across the turn commits once at the end. The model never
 writes directly to canonical memory.
 
+**Failed-write acknowledgment gate.** A rejected write (`ok:false`) carries a
+short, stable `failureId` (`f1`, `f2`, … per run). The extractor loop tracks the
+set of outstanding ids and refuses to end the run cleanly while any remain
+unresolved, so a model can no longer have a write rejected and then silently fall
+silent or finish — dropping the failed write. There are two model-driven ways to
+clear an id, with no server-side retry matching:
+
+- **Threaded retry.** Every write tool accepts an optional inbound `failureId`.
+  When the model retries a rejected call with the issues fixed and passes that id,
+  a successful retry clears it (the success envelope echoes `clearedFailureId`); a
+  repeat failure echoes the **same** id back rather than minting a new one.
+- **Acknowledge at end.** `memory_end_extraction` takes an `acknowledgedFailures`
+  array; listing an id there deliberately abandons that failure (acknowledge-ALL
+  semantics — every emitted id must be cleared or acknowledged).
+
+If `memory_end_extraction` is called with ids still outstanding, it is refused and
+the tool-result error names the specific ids (the error *is* the nudge); the loop
+continues. This is bounded by `MEMORY_EXTRACTOR_MAX_FAILED_CALL_NUDGES` (default
+2), independent of the empty-turn nudge budget. Once that budget is spent and
+failures remain, the next call is **force-accepted**: staged work still commits
+and a `unacknowledged_write_failures` diagnostic records the still-unacknowledged
+ids, so the drop is observable rather than silent (and a perpetually-failing model
+can never burn the whole iteration / wall-clock budget).
+
 The extractor ends its run by calling a dedicated control tool,
-**`memory_finish`** (optional `summary`). This is the only clean way to
-stop: a completion that simply returns no tool call is **not** treated as
-"done" — reasoning models routinely close a step with chain-of-thought and no
-tool call, which would otherwise end the run prematurely (often at the second
-thinking block) having stored nothing. An empty turn is instead nudged toward
-either further writes or an explicit `memory_finish`, bounded by a small cap
+**`memory_end_extraction`** (optional `summary`), exactly once after it has
+staged everything. The name is deliberately scoped to the whole run, not a
+single write: it does not save one memory (the write tools do that) — it stops
+staging and exits the turn. This is the only clean way to stop: a completion that
+simply returns no tool call is **not** treated as "done" — reasoning models
+routinely close a step with chain-of-thought and no tool call, which would
+otherwise end the run prematurely (often at the second thinking block) having
+stored nothing. An empty turn is instead nudged toward either further writes or
+an explicit `memory_end_extraction`, bounded by a small cap
 (`MAX_EMPTY_TURN_NUDGES`) so a model that never cooperates still terminates well
-before the iteration/wall-clock budgets. `memory_finish` is a control
+before the iteration/wall-clock budgets. `memory_end_extraction` is a control
 signal, not a write: it stages nothing and is never dispatched to a write
 handler, but it _is_ surfaced as a tool card so the run visibly ends on an
 explicit model decision rather than appearing to stop on its own. Its optional
@@ -1048,7 +1075,7 @@ surfaces:
 - each **retrieval** (`memory_search`, `memory_get_entity`, …) and **write**
   (`memory_set_attributes`, `memory_keep_loops`, …) call, with its validation feedback, as a threaded
   child tool call; and
-- its **closing summary** — `memory_finish`'s `summary` arg, or the turn's
+- its **closing summary** — `memory_end_extraction`'s `summary` arg, or the turn's
   final visible text — as the parent tool result → the card's Response
   (`ExtractPatchResult.response`).
 
