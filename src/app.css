@@ -55,6 +55,11 @@
 	--space-5: 1.5rem;
 	--space-6: 2rem;
 
+	/* Horizontal inset that clears the fixed mobile hamburger (top-left at
+	   --space-2, a 2rem icon button) so page headers/tab strips don't sit
+	   underneath it at <=768px. */
+	--mobile-hamburger-inset: 2.75rem;
+
 	/* type scale (rem-based — root-relative, predictable) */
 	--fs-xs: 0.75rem;
 	--fs-sm: 0.8125rem;

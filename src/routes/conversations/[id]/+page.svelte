@@ -128,7 +128,7 @@
 	   inset the tab strip so it doesn't sit underneath. */
 	@media (max-width: 768px) {
 		.tabs {
-			padding-left: 2.75rem;
+			padding-left: var(--mobile-hamburger-inset);
 		}
 	}
 	.tabs button {

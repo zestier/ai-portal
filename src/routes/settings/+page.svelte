@@ -134,4 +134,11 @@
 		border-color: var(--success);
 		color: var(--success);
 	}
+	/* On mobile the sidebar toggle is a fixed-position hamburger at top-left;
+	   inset the header so it doesn't sit underneath. */
+	@media (max-width: 768px) {
+		.settings-header {
+			padding-left: var(--mobile-hamburger-inset);
+		}
+	}
 </style>
