@@ -1483,6 +1483,101 @@ export function deleteItem(conversationId: string, kind: string, id: string): bo
 	return false;
 }
 
+/**
+ * Undo a committed patch for the retry path: delete what it created, reopen the
+ * loops it resolved, restore the facts it forgot, then rebuild the projection so
+ * consolidation (supersede/dedupe) is re-derived from the surviving event
+ * stream rather than hand-maintained. Re-deriving the active set this way leaves
+ * the patch ROW itself intact (history is preserved — there is no 'reverted'
+ * status). Invoked by the deferred commit-time hook in `startExtractionRetryTurn`
+ * once a replacement patch validates, so a failed/aborted/needs_review retry
+ * never reaches it. Mutates durable state.
+ */
+export function revertCommittedPatch(conversationId: string, patchId: string): void {
+	const items = listPatchItems(conversationId, { patchId, limit: 1000 });
+	for (const item of items) {
+		if (item.action === 'create') {
+			deleteItem(conversationId, item.itemType, item.itemId);
+		} else if (item.action === 'resolve' && item.itemType === 'open_loop') {
+			updateOpenLoop(conversationId, item.itemId, { status: 'open' });
+		} else if (item.action === 'forget' && item.itemType === 'fact') {
+			updateFact(conversationId, item.itemId, { status: 'active' });
+		}
+	}
+	rebuildSessionMemoryProjection(conversationId);
+}
+
+/**
+ * The memory chain head as of just before `messageId` — i.e. the projection
+ * "commit" the turn that owns `messageId` branched from. Memory for a turn is
+ * appended pinned to its assistant message, so the most recent head among
+ * strictly-earlier messages is the state the turn started from. Null when no
+ * earlier message carries memory (the turn is the first memory-bearing one).
+ */
+function headBeforeMessage(
+	db: Database.Database,
+	conversationId: string,
+	messageId: string
+): string | null {
+	const row = db
+		.prepare(
+			`SELECT h.head_event_id
+			   FROM messages source
+			   JOIN messages m
+			     ON m.conversation_id = source.conversation_id
+			    AND (m.created_at < source.created_at OR (m.created_at = source.created_at AND m.id < source.id))
+			   JOIN memory_message_heads h
+			     ON h.conversation_id = m.conversation_id AND h.message_id = m.id
+			  WHERE source.conversation_id = ? AND source.id = ?
+			  ORDER BY m.created_at DESC, m.id DESC
+			  LIMIT 1`
+		)
+		.get(conversationId, messageId) as { head_event_id: string | null } | undefined;
+	return row?.head_event_id ?? null;
+}
+
+/**
+ * Run `read` against the projection as it was at the START of the turn that owns
+ * `assistantMessageId` — i.e. with that turn's own committed memory rolled away
+ * — then restore the live projection. This is the forward-replay model, not a
+ * backward undo: we re-root the projection at the turn's branch-point head and
+ * replay the event log forward to it (so supersede/dedupe are re-derived
+ * correctly), never appending any compensating "undo" events. The whole thing
+ * runs inside a SAVEPOINT that is rolled back, so the event log and live
+ * projection are left exactly as they were — only the transient read sees the
+ * pre-turn view.
+ *
+ * The extraction-retry path uses this so the re-extractor sees memory as it was
+ * before the turn ran, instead of its own prior committed output (which it would
+ * otherwise treat as already-recorded and skip). It is fully synchronous — the
+ * savepoint is opened, used, and rolled back within one call, never held across
+ * the async extraction — so it sidesteps the "transaction across awaits" problem.
+ *
+ * The savepoint name is per-call unique so a nested/re-entrant `read` (which
+ * would open its own savepoint of the same name) can't make this call's
+ * `ROLLBACK TO` target the inner savepoint instead of its own.
+ */
+let turnStartViewSavepointSeq = 0;
+export function readMemoryAtTurnStart<T>(
+	conversationId: string,
+	assistantMessageId: string,
+	read: () => T
+): T {
+	const db = getDb();
+	const savepoint = `memory_turn_start_view_${turnStartViewSavepointSeq++}`;
+	db.exec(`SAVEPOINT ${savepoint}`);
+	try {
+		const branchPoint = headBeforeMessage(db, conversationId, assistantMessageId);
+		rebuildSessionMemoryProjectionInTransaction(db, conversationId, branchPoint);
+		return read();
+	} finally {
+		// Discard the transient re-projection (and its head move); the materialized
+		// packet `read` returned is plain JS objects, so it survives the rollback.
+		db.exec(`ROLLBACK TO ${savepoint}`);
+		db.exec(`RELEASE ${savepoint}`);
+	}
+}
+
 export function upsertGlobalMemory(
 	userId: string,
 	input: {

@@ -901,6 +901,10 @@ interface MemoryExtractionCardOptions {
 	// `commitPatch`, which fires it once the replacement patch validates, so a
 	// failed/aborted/needs_review retry leaves the existing memory intact.
 	beforeCommit?: () => void;
+	// Retry path only: the prior committed patch from this turn, forwarded to the
+	// extractor so it builds its initial packet against the turn-start projection
+	// rather than the live state. See `ExtractPatchInput.priorPatchId`.
+	priorPatchId?: string | null;
 }
 
 /**
@@ -1072,6 +1076,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 				assistantMessage,
 				onActivity,
 				beforeCommit: o.beforeCommit,
+				priorPatchId: o.priorPatchId,
 				signal: extractionAc.signal
 			}),
 			{
@@ -1250,29 +1255,16 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 		// fails, times out, aborts, or yields a `needs_review` patch, this never
 		// runs and the existing committed memory is preserved.
 		//
-		// Rather than imperatively reasoning about consolidation, we append the
-		// inverse mutations for the prior patch's items (delete what it created,
-		// reopen what it resolved, restore what it forgot) and then rebuild the
-		// projection from the event log, so the active set is re-derived rather
-		// than hand-maintained.
+		// `revertCommittedPatch` deletes what the patch created, reopens the loops
+		// it resolved, restores the facts it forgot, then rebuilds the projection
+		// so the active set — including supersede/dedupe — is re-derived from the
+		// event log rather than hand-maintained. The patch row itself is left
+		// intact, preserving history. (The re-extraction's pre-run packet view is
+		// produced separately, by replaying the log forward to the turn's
+		// branch-point head — see `readMemoryAtTurnStart`.)
 		const priorPatchId = opts.memory.priorPatchId;
 		const beforeCommit = priorPatchId
-			? () => {
-					const items = memory.listPatchItems(opts.conversationId, {
-						patchId: priorPatchId,
-						limit: 1000
-					});
-					for (const item of items) {
-						if (item.action === 'create') {
-							memory.deleteItem(opts.conversationId, item.itemType, item.itemId);
-						} else if (item.action === 'resolve' && item.itemType === 'open_loop') {
-							memory.updateOpenLoop(opts.conversationId, item.itemId, { status: 'open' });
-						} else if (item.action === 'forget' && item.itemType === 'fact') {
-							memory.updateFact(opts.conversationId, item.itemId, { status: 'active' });
-						}
-					}
-					memory.rebuildSessionMemoryProjection(opts.conversationId);
-				}
+			? () => memory.revertCommittedPatch(opts.conversationId, priorPatchId)
 			: undefined;
 
 		try {
@@ -1295,7 +1287,8 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 				extractingSummary: 'Re-extracting durable memory updates.',
 				logPrefix: 'memory.retry',
 				cancelOutput: 'Cancelled.',
-				beforeCommit
+				beforeCommit,
+				priorPatchId
 			});
 		} finally {
 			try {

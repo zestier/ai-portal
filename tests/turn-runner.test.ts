@@ -1574,6 +1574,129 @@ describe('turn-runner', () => {
 		}
 	});
 
+	it('feeds the re-extractor memory as of turn start, not its own prior committed output', async () => {
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
+		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		const sseChunks = [
+			[
+				{
+					choices: [
+						{
+							delta: {
+								tool_calls: [
+									{
+										index: 0,
+										id: 'call-1',
+										function: {
+											name: 'memory_set_attributes',
+											arguments: JSON.stringify({
+												entityKey: 'migrations',
+												attributes: [
+													{ predicate: 'decision', value: 'Use append-only migrations.' }
+												]
+											})
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			],
+			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+		];
+		// Capture every request body sent to the model so we can inspect the
+		// rendered packet the extractor was actually handed.
+		const requestBodies: string[] = [];
+		let chatCall = 0;
+		const fetchMock = vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+			if (typeof init?.body === 'string') requestBodies.push(init.body);
+			const chunks = sseChunks[Math.min(chatCall, sseChunks.length - 1)];
+			chatCall += 1;
+			const text =
+				chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
+			return new Response(text, {
+				status: 200,
+				headers: { 'content-type': 'text/event-stream' }
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		try {
+			const { users, convs, turnRunner } = await freshImports();
+			const messages = await import('../src/lib/server/db/repos/messages');
+			const memory = await import('../src/lib/server/db/repos/memory');
+			const { commitPatch } = await import('../src/lib/server/memory/engine');
+			const user = users.ensureLocalUser();
+			const wd = makeTmpDir('portal-wd-');
+			const conv = convs.create(user.id, {
+				title: 'mem retry packet',
+				workdir: wd,
+				model: 'gpt-4'
+			});
+			const userMsg = messages.append(conv.id, {
+				role: 'user',
+				content: 'Remember we chose append-only migrations.'
+			});
+			const assistantMsg = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
+
+			// The latest turn's prior committed patch, pinned to this turn's
+			// assistant message. A naive re-extraction packet would surface this
+			// stale fact as already-recorded; the turn-start view must NOT.
+			const prior = commitPatch({
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-1',
+				sourceMessageId: assistantMsg.id,
+				patch: {
+					entities: [{ entityKey: 'migrations', entityType: 'topic', displayName: 'Migrations' }],
+					facts: [{ entityKey: 'migrations', predicate: 'decision', value: 'Stale decision.' }]
+				}
+			});
+			expect(prior.patch.status).toBe('committed');
+
+			const turn = await turnRunner.startExtractionRetryTurn({
+				conversationId: conv.id,
+				userId: user.id,
+				assistantMessageId: assistantMsg.id,
+				assistantContent: assistantMsg.content,
+				memory: {
+					mode: 'project',
+					userMessageId: userMsg.id,
+					userContent: userMsg.content,
+					patchTurnId: 'turn-1',
+					priorPatchId: prior.patch.id
+				}
+			});
+
+			const events: PortalEvent[] = [];
+			for await (const { event } of turn.subscribe()) {
+				events.push(event);
+				if (event.type === 'done') break;
+			}
+			expect(
+				events.find((e) => e.type === 'memory.status' && e.phase === 'committed')
+			).toBeTruthy();
+
+			// The extractor was prompted at least once, and NONE of those prompts
+			// contained the prior turn's committed output — it saw memory as of turn
+			// start, so it re-records the decision instead of skipping it.
+			expect(requestBodies.length).toBeGreaterThan(0);
+			expect(requestBodies.some((body) => body.includes('Stale decision.'))).toBe(false);
+
+			// And the rerun did re-record it (durable replacement landed).
+			expect(memory.listFacts(conv.id).map((f) => f.value)).toContain(
+				'Use append-only migrations.'
+			);
+		} finally {
+			delete process.env.MEMORY_EXTRACTOR_BACKEND;
+			delete process.env.MEMORY_EXTRACTOR_MODEL;
+			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it('on retry timeout surfaces needs_review (not cancelled) and preserves the prior patch', async () => {
 		process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS = '40';
 		process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS = '40';

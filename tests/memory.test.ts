@@ -5395,6 +5395,142 @@ describe('memory-backed sessions', () => {
 			expect(getMemoryProfile(mode).primitives).toContain('directive');
 		}
 	});
+
+	// Retry path (`POST /api/conversations/[id]/memory`): re-running extraction
+	// for the latest turn must show the re-extractor memory as it was at the START
+	// of that turn — otherwise it sees its own prior committed output as
+	// already-recorded, skips re-recording it, and the deferred commit-time undo
+	// then empties the durable store. `readMemoryAtTurnStart` provides that view
+	// by re-rooting the projection at the turn's branch-point head and replaying
+	// the event log forward to it (so supersede/dedupe are re-derived correctly),
+	// then rolling the transient re-projection back — no compensating events, no
+	// durable writes.
+	describe('retry-extraction turn-start view (readMemoryAtTurnStart)', () => {
+		function seedTwoTurns() {
+			const user = users.ensureLocalUser();
+			const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+			// Turn 1 (base): memory the rerun must preserve, pinned to its assistant
+			// message so its head is the branch-point the next turn commits from.
+			const baseAsst = messages.append(conv.id, { role: 'assistant', content: 'Base turn.' });
+			commitPatch({
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-base',
+				sourceMessageId: baseAsst.id,
+				patch: {
+					entities: [
+						{ entityKey: 'item.attic_key', entityType: 'item', displayName: 'Attic key' },
+						{ entityKey: 'item.lamp', entityType: 'item', displayName: 'Lamp' }
+					],
+					facts: [
+						{ entityKey: 'item.attic_key', predicate: 'location', value: 'drawer' },
+						{ entityKey: 'item.lamp', predicate: 'state', value: 'on' }
+					],
+					openLoops: [{ loopType: 'task', title: 'Find the attic key' }]
+				}
+			});
+
+			// Turn 2 (latest): the turn a rerun targets. It creates a new
+			// entity/fact, CHANGES a single-valued predicate (superseding the base
+			// `location=drawer`), resolves a base loop, and forgets a base fact — all
+			// pinned to this turn's assistant message.
+			const latestAsst = messages.append(conv.id, { role: 'assistant', content: 'Latest turn.' });
+			const prior = commitPatch({
+				conversationId: conv.id,
+				mode: 'project',
+				turnId: 'turn-latest',
+				sourceMessageId: latestAsst.id,
+				patch: {
+					entities: [{ entityKey: 'npc.guard', entityType: 'character', displayName: 'Guard' }],
+					facts: [
+						{ entityKey: 'npc.guard', predicate: 'role', value: 'sentry' },
+						{ entityKey: 'item.attic_key', predicate: 'location', value: 'attic' }
+					],
+					resolveOpenLoops: [
+						{ id: 'loop.find_the_attic_key', status: 'resolved', reason: 'found it' }
+					],
+					forgetFacts: [{ entityKey: 'item.lamp', predicate: 'state' }]
+				}
+			});
+			expect(prior.patch.status).toBe('committed');
+			return { conv, latestAsstId: latestAsst.id };
+		}
+
+		function locationOf(packet: ReturnType<typeof buildInitialPacket>): unknown {
+			return packet.facts.find((f) => f.predicate === 'location')?.value;
+		}
+
+		it('a normal packet reflects the latest turn (the polluting state)', () => {
+			const { conv } = seedTwoTurns();
+			const packet = buildInitialPacket(conv.id, 'project', { tokenBudget: 6000 });
+
+			// The latest turn's own output is live: its entity/fact present, the
+			// single-valued predicate at its new value, the base loop closed, the
+			// base fact forgotten.
+			expect(packet.entities.map((e) => e.entityKey)).toContain('npc.guard');
+			expect(packet.facts.some((f) => f.predicate === 'role' && f.value === 'sentry')).toBe(true);
+			expect(locationOf(packet)).toBe('attic');
+			expect(packet.openLoops.map((l) => l.loopKey)).not.toContain('loop.find_the_attic_key');
+			expect(packet.facts.some((f) => f.predicate === 'state')).toBe(false);
+		});
+
+		it('shows the projection as of turn start via readMemoryAtTurnStart', () => {
+			const { conv, latestAsstId } = seedTwoTurns();
+			const packet = memory.readMemoryAtTurnStart(conv.id, latestAsstId, () =>
+				buildInitialPacket(conv.id, 'project', { tokenBudget: 6000 })
+			);
+
+			// The latest turn's creates are gone: the re-extractor does not see its
+			// own prior output and will re-record it on the rerun.
+			expect(packet.entities.map((e) => e.entityKey)).not.toContain('npc.guard');
+			expect(packet.facts.some((f) => f.predicate === 'role')).toBe(false);
+
+			// Supersession re-derived by the forward replay: the base
+			// `location=drawer` is active again (NOT merely "predicate absent"),
+			// because the projection was replayed to the branch-point head without
+			// the latest turn's `attic` observation.
+			expect(locationOf(packet)).toBe('drawer');
+
+			// The base open loop is open again; the base fact is active again.
+			expect(packet.openLoops.find((l) => l.loopKey === 'loop.find_the_attic_key')?.status).toBe(
+				'open'
+			);
+			expect(packet.facts.find((f) => f.predicate === 'state')?.value).toBe('on');
+
+			// Base memory is intact.
+			expect(packet.entities.map((e) => e.entityKey)).toEqual(
+				expect.arrayContaining(['item.attic_key', 'item.lamp'])
+			);
+		});
+
+		it('performs no durable writes — the live projection is restored', () => {
+			const { conv, latestAsstId } = seedTwoTurns();
+			memory.readMemoryAtTurnStart(conv.id, latestAsstId, () =>
+				buildInitialPacket(conv.id, 'project', { tokenBudget: 6000 })
+			);
+
+			// After the rolled-back transient re-projection, durable state is exactly
+			// as the latest turn left it.
+			expect(memory.listEntities(conv.id).map((e) => e.entityKey)).toContain('npc.guard');
+			expect(
+				memory.listFacts(conv.id, { status: 'active' }).find((f) => f.predicate === 'location')
+					?.value
+			).toBe('attic');
+			expect(memory.listOpenLoops(conv.id).map((l) => l.loopKey)).not.toContain(
+				'loop.find_the_attic_key'
+			);
+			expect(
+				memory.listFacts(conv.id, { status: 'active' }).some((f) => f.predicate === 'state')
+			).toBe(false);
+		});
+
+		it('returns the read callback value', () => {
+			const { conv, latestAsstId } = seedTwoTurns();
+			const sentinel = memory.readMemoryAtTurnStart(conv.id, latestAsstId, () => 42);
+			expect(sentinel).toBe(42);
+		});
+	});
 });
 
 describe('extractor prompt directive guidance', () => {

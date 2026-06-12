@@ -954,10 +954,20 @@ export async function extractAndCommitMemory(
 	if (!input.initialPacket) {
 		const globalMemoryEnabled =
 			conversationsRepo.get(input.conversationId, input.userId)?.globalMemoryEnabled ?? false;
-		input.initialPacket = buildInitialPacket(input.conversationId, input.mode, {
-			query: input.userMessage.content,
-			globalMemoryEnabled
-		});
+		const build = () =>
+			buildInitialPacket(input.conversationId, input.mode, {
+				query: input.userMessage.content,
+				globalMemoryEnabled
+			});
+		// Retry path: a prior committed patch from THIS turn is already in durable
+		// memory. Building the packet against the live state would show the
+		// re-extractor its own prior output as already-recorded, so it would skip
+		// re-recording it. `readMemoryAtTurnStart` instead presents memory as of
+		// the turn's start (rolled back immediately, no durable writes) — see its
+		// docstring for the mechanism and failure-safety rationale.
+		input.initialPacket = input.priorPatchId
+			? memoryRepo.readMemoryAtTurnStart(input.conversationId, input.assistantMessage.id, build)
+			: build();
 	}
 	const presentedLoopIds = input.initialPacket.openLoops.map((loop) => loop.id);
 

@@ -60,6 +60,14 @@ export interface ExtractPatchInput {
 	 * retry never destroys the existing committed memory.
 	 */
 	beforeCommit?: () => void;
+	/**
+	 * Retry path only: the prior committed patch from THIS turn (its durable undo
+	 * is deferred to commit time via `beforeCommit`). When set, the initial packet
+	 * is built against the projection as of the START of this turn rather than the
+	 * live state — see `readMemoryAtTurnStart` for the why and how. Ignored when
+	 * the caller supplies its own `initialPacket`.
+	 */
+	priorPatchId?: string | null;
 }
 
 export interface ExtractPatchResult {
