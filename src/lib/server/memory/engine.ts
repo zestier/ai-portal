@@ -185,7 +185,7 @@ export function isDirectivePredicate(predicate: string): boolean {
  * accept (they share the reserved `directive` predicate and have no per-entity
  * key). The `entityKey` + `predicate` path is attribute-only in practice — a
  * directive's predicate is `directive` on the session entity — and the caller
- * (forget_attribute) additionally refuses a directive hit via `isDirective`.
+ * (memory_forget_attribute) additionally refuses a directive hit via `isDirective`.
  */
 export function resolveForgetTarget(
 	conversationId: string,
@@ -416,12 +416,12 @@ export function buildInitialPacket(
 				'memory_get_entity',
 				'memory_get_open_loops',
 				'memory_get_recent_events',
-				'memory_transcript_lookup',
+				'memory_get_transcript',
 				'memory_query_timeline',
 				'memory_query_clues',
 				'memory_get_character_knowledge',
 				'memory_check_claims',
-				...(opts.globalMemoryEnabled ? ['memory_global_remember', 'memory_global_search'] : [])
+				...(opts.globalMemoryEnabled ? ['memory_global_record', 'memory_global_search'] : [])
 			],
 			recallTriggers: [
 				'user asks about earlier details',

@@ -117,10 +117,10 @@ The first pass should therefore include a minimal, mandatory memory-tool surface
 | `memory.get_recent_events` | Fetch recent or relevant event-log entries with source turns. |
 | `memory.check_claims` | Validate proposed factual claims against known memory and return conflicts or unknowns. |
 | `memory.merge_entities` | Fold a duplicate entity into a canonical one — reassigning its facts, events, and open-loop links — to clean up two keys that denote the same referent (e.g. `character.firstname` vs `character.firstname_lastname`). |
-| `remember_attributes` / `remember_directive` / `remember_event` / `remember_loop` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `remember_attributes`, a shared `entityKey` plus an array of flat trait items, and optional top-level entity metadata to construct the referent); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
-| `keep_loops` / `close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
-| `forget_attribute` / `forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Prefer supersede when the predicate is unchanged. |
-| `finish_extraction` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
+| `memory_set_attributes` / `memory_add_directive` / `memory_record_event` / `memory_open_loop` | Durable-write tools used by the background extractor. Each takes a small, flat argument object (or, for `memory_set_attributes`, a shared `entityKey` plus an array of flat trait items, and optional top-level entity metadata to construct the referent); the tool name *is* the classification (no `kind` discriminator). The server validates and stages each call; everything staged across the turn commits once at the end. |
+| `memory_keep_loops` / `memory_close_loop` | Open-loop lifecycle: batch-reaffirm still-live loops (anti-aging) and retire a resolved/dropped loop by handle. |
+| `memory_forget_attribute` / `memory_forget_directive` | Retire (tombstone) a stale attribute or directive fact that has no natural supersede — the compound-split case or an explicit user retraction. Prefer supersede when the predicate is unchanged. |
+| `memory_finish` | Control tool (not a write) the extractor calls to end its run, with an optional `summary`. The only clean way to stop — a tool-call-free turn is nudged toward this rather than treated as "done". Stages nothing and is never dispatched to a write handler, but is surfaced as a tool card so the run visibly ends on an explicit model decision. |
 
 These tools should be available to the model during the main response call for
 memory-backed sessions. The model should be instructed to call them whenever a
@@ -379,7 +379,7 @@ Important fields:
 - `updated_at`
 
 Open loops are pruned, not just appended. The extractor retires a loop by
-calling `close_loop` — `{ handle, status: "resolved" | "dropped", reason? }` —
+calling `memory_close_loop` — `{ handle, status: "resolved" | "dropped", reason? }` —
 which flips an existing loop's `status` so superseded threads stop crowding the
 packet. This is how the extractor closes the unchosen options when the user
 picks one of several offered choices (`resolved` = done/answered, `dropped` =
@@ -388,8 +388,8 @@ description). Resolutions are recorded as `resolve` patch items for audit and
 per-item review.
 
 Attributes and directives can likewise be retired when no natural supersede
-applies. The extractor calls `forget_attribute` (`{ handle }` or
-`{ entityKey, predicate }`) or `forget_directive` (`{ handle }`) to **tombstone**
+applies. The extractor calls `memory_forget_attribute` (`{ handle }` or
+`{ entityKey, predicate }`) or `memory_forget_directive` (`{ handle }`) to **tombstone**
 an existing fact (`status='deleted'`). The motivating case is the *compound
 split*: when the extractor breaks a non-specific attribute
 (`description="tall, red hair, fears water"`) into granular facts under new
@@ -399,7 +399,7 @@ directive the user **explicitly retracted** with no replacement. Forgetting is
 recorded as a `forget` patch item for audit and per-item review; an unresolved
 target (a stale handle, or an `entityKey`+`predicate`
 with no active fact) is a blocking diagnostic rather than a silent no-op. Same
-predicate → prefer supersede (re-assert via `remember_attributes`); never forget
+predicate → prefer supersede (re-assert via `memory_set_attributes`); never forget
 merely to tidy.
 
 ### Open-loop liveness ("touch-to-keep")
@@ -409,7 +409,7 @@ notice that a thread is *no longer* live, and LLMs are far better at reacting to
 what is present than at detecting an absence — so historically loops accumulated
 forever. Liveness inverts the burden. Every model-backed extraction pass the
 extractor is shown all currently-open loops (each with its stable handle) and
-reaffirms the ones that are still live via `keep_loops`. A loop that
+reaffirms the ones that are still live via `memory_keep_loops`. A loop that
 was **presented but neither kept nor closed** accrues an idle turn, and once it
 has been ignored for
 `MEMORY_OPEN_LOOP_MAX_IDLE_TURNS + max(0, priority)` consecutive passes it is
@@ -436,7 +436,7 @@ never rewrites historical decay. The auto-drop itself flows through the normal
 open-loop projection, so it is audited and reversible like any other resolution.
 
 Because the tool-calling extractor may spread its keeps across several
-`keep_loops` calls, the kept handles are unioned when the staged proposals are
+`memory_keep_loops` calls, the kept handles are unioned when the staged proposals are
 collapsed, and liveness runs once on that collapsed patch (gated to
 a cleanly committed, model-backed pass — the heuristic extractor emits no keep
 signal, so it never ages loops). The extractor is always handed a freshly built
@@ -498,16 +498,16 @@ flat tool per concept, where the tool name *is* the classification (there is no
 
 | Write tool | Meaning | Required fields |
 | --- | --- | --- |
-| `remember_attributes` | Things to KNOW about ONE entity **and** the sole entity constructor: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). To record a brand-new referent, also pass top-level `entityType` + `displayName` (+ optional `summary`/`metadata`) in the same call so it is typed and named instead of auto-minted bare; for an existing referent just pass the changed `attributes`. `attributes` may be omitted for a metadata-only call (a call must supply attributes and/or entity metadata). Entity metadata is a whole-call gate — if it is present but invalid, nothing stages. Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` and/or entity metadata (`entityType`+`displayName`); optional top-level `entityKey` (required for entity metadata), `summary`, `metadata`; per-item `event`, `eventType` |
-| `remember_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). Captured whether the user issues the rule or the assistant declares it about its own role/operating behavior. | `rule` |
-| `remember_loop` | Open a NEW unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
-| `remember_event` | A point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, failed build, approach tried, clue revealed). Recency-ranked and capped, so used sparingly. | `eventType`, `summary` (+ optional `entityKey`) |
-| `keep_loops` | Batch-reaffirm presented open loops that are still live. | `handles[]` |
-| `close_loop` | Retire one existing loop by handle. | `handle`, `status` (`resolved`/`dropped`) |
-| `forget_attribute` | Retire (tombstone) an existing **attribute** fact that has no natural supersede — the compound-split case (after breaking a non-specific attribute into granular facts under new predicates, forget the orphaned original) or a trait the user explicitly retracted. Prefer supersede (re-assert same `entityKey`+`predicate`) when the predicate is unchanged. | `handle` **or** `entityKey`+`predicate` |
-| `forget_directive` | Retire (tombstone) an existing **directive** the user explicitly retracted with no replacement, by handle only (directives are global). When a rule is overridden, record the replacement with `remember_directive` instead. | `handle` |
+| `memory_set_attributes` | Things to KNOW about ONE entity **and** the sole entity constructor: durable current state — values, status, relationships, preferences, constraints, ownership, roles, deadlines, identifiers. Takes a shared top-level `entityKey` and an `attributes` array with one item per **distinct trait** (granular, never one collapsed "description"). To record a brand-new referent, also pass top-level `entityType` + `displayName` (+ optional `summary`/`metadata`) in the same call so it is typed and named instead of auto-minted bare; for an existing referent just pass the changed `attributes`. `attributes` may be omitted for a metadata-only call (a call must supply attributes and/or entity metadata). Entity metadata is a whole-call gate — if it is present but invalid, nothing stages. Each item may carry a thin paired event (`event` summary + optional `eventType`, default `"change"`). Items are validated independently (partial acceptance). | `attributes[]` of `{predicate, value}` and/or entity metadata (`entityType`+`displayName`); optional top-level `entityKey` (required for entity metadata), `summary`, `metadata`; per-item `event`, `eventType` |
+| `memory_add_directive` | A per-session standing rule for how the agent must behave going forward ("always do X", "from now on Y", "never Z"). Captured whether the user issues the rule or the assistant declares it about its own role/operating behavior. | `rule` |
+| `memory_open_loop` | Open a NEW unresolved task, promise, question, clue, or plot thread. | `loopType`, `title` |
+| `memory_record_event` | A point-in-time occurrence for the time-ordered log that is NOT current state (a deploy, failed build, approach tried, clue revealed). Recency-ranked and capped, so used sparingly. | `eventType`, `summary` (+ optional `entityKey`) |
+| `memory_keep_loops` | Batch-reaffirm presented open loops that are still live. | `handles[]` |
+| `memory_close_loop` | Retire one existing loop by handle. | `handle`, `status` (`resolved`/`dropped`) |
+| `memory_forget_attribute` | Retire (tombstone) an existing **attribute** fact that has no natural supersede — the compound-split case (after breaking a non-specific attribute into granular facts under new predicates, forget the orphaned original) or a trait the user explicitly retracted. Prefer supersede (re-assert same `entityKey`+`predicate`) when the predicate is unchanged. | `handle` **or** `entityKey`+`predicate` |
+| `memory_forget_directive` | Retire (tombstone) an existing **directive** the user explicitly retracted with no replacement, by handle only (directives are global). When a rule is overridden, record the replacement with `memory_add_directive` instead. | `handle` |
 
-`keep_loops.handles[]` and `close_loop.handle` are **loop handles**: each open
+`memory_keep_loops.handles[]` and `memory_close_loop.handle` are **loop handles**: each open
 loop carries a stable, human-legible `loop_key` (a slug of its title, e.g.
 `loop.find_attic_key`, unique within the conversation) that is rendered as its
 `[id=…]` in the extractor's packet. References resolve by key or by raw id, so
@@ -531,7 +531,7 @@ every state change as an event would both flood that window and lose the
 "current value" view that attributes provide. The extractor is therefore steered
 hard toward `attribute` as the default, with `event` reserved for genuine
 log-worthy occurrences. Because a state change is *also* often a notable
-occurrence, each `remember_attributes` item accepts an optional thin paired event
+occurrence, each `memory_set_attributes` item accepts an optional thin paired event
 (`event` summary + optional `eventType`, default `"change"`, inheriting the
 batch's `entityKey`): the model logs both in one deliberate call rather than
 choosing between current state and timeline, and the event stays model-gated so
@@ -541,7 +541,7 @@ Attributes are recorded in **batches** rather than one per call, for a structura
 reason: with one-item-per-call tools, granularity is *expensive* (six traits =
 six round-trips), so a model rationally collapses a character description into one
 big `description` value — defeating per-trait search, supersession, and counting.
-`remember_attributes` hoists `entityKey` to the top level and takes an
+`memory_set_attributes` hoists `entityKey` to the top level and takes an
 `attributes` array of flat `{predicate, value, …}` items, making granular cheap;
 the advertised example and prompt both demonstrate decomposition (a "tall woman
 with red hair who fears water" → `build=tall`, `hair=red`, `fears=water`), and the
@@ -587,7 +587,7 @@ a directive is an always-on behavioral instruction that is never dropped.
   existing per-conversation memory-copy path (pinned directive facts are carried
   over). Not user-global in v1.
 - **Creation:** automatic — the extractor captures durable, forward-looking
-  instructions via the `remember_directive` tool / commit flow, whether they are
+  instructions via the `memory_add_directive` tool / commit flow, whether they are
   issued by the user or declared by the assistant about its own role/behavior.
   Extraction guidance stays conservative (only standing instructions and role
   definitions, not one-off asks or transient self-talk).
@@ -700,7 +700,7 @@ different audiences, and the differences are a single explicit
   without ids (they are noise it cannot act on); the post-turn extractor enables
   them so it can reference items precisely. Open loops render their legible
   `loop_key` (e.g. `loop.find_attic_key`) in the `[id=...]` slot rather than a raw
-  ULID, and `keep_loops`/`close_loop` accept that key (or the id). Note that
+  ULID, and `memory_keep_loops`/`memory_close_loop` accept that key (or the id). Note that
   only open loops are *acted on* by handle — a fact is corrected by re-asserting
   an attribute with the same `entityKey`+`predicate`, which supersedes the prior
   value automatically (see [Source-side consolidation](#source-side-consolidation-event-derived)).
@@ -836,15 +836,15 @@ Output:
 - `unknown`
 - relevant source facts/events
 
-### Durable-write tools (`remember_*`, `keep_loops`, `close_loop`, `forget_*`)
+### Durable-write tools (`remember_*`, `memory_keep_loops`, `memory_close_loop`, `forget_*`)
 
 The background extractor records durable memory by calling **per-kind write
-tools** — `remember_attributes` (also the entity constructor),
-`remember_directive`, `remember_event`, and `remember_loop`, plus
-`keep_loops`/`close_loop` for open-loop lifecycle and
-`forget_attribute`/`forget_directive` for retiring a stale attribute or
+tools** — `memory_set_attributes` (also the entity constructor),
+`memory_add_directive`, `memory_record_event`, and `memory_open_loop`, plus
+`memory_keep_loops`/`memory_close_loop` for open-loop lifecycle and
+`memory_forget_attribute`/`memory_forget_directive` for retiring a stale attribute or
 directive that has no natural supersede. Each takes a small, flat argument
-object (`remember_attributes` takes a shared `entityKey`, optional entity
+object (`memory_set_attributes` takes a shared `entityKey`, optional entity
 metadata, plus an array of flat trait items); the tool name *is* the
 classification (no `kind` discriminator). The server validates and stages each
 call, returning a uniform `{ ok, accepted | error, staged_totals, … }` envelope
@@ -854,14 +854,14 @@ Everything staged across the turn commits once at the end. The model never
 writes directly to canonical memory.
 
 The extractor ends its run by calling a dedicated control tool,
-**`finish_extraction`** (optional `summary`). This is the only clean way to
+**`memory_finish`** (optional `summary`). This is the only clean way to
 stop: a completion that simply returns no tool call is **not** treated as
 "done" — reasoning models routinely close a step with chain-of-thought and no
 tool call, which would otherwise end the run prematurely (often at the second
 thinking block) having stored nothing. An empty turn is instead nudged toward
-either further writes or an explicit `finish_extraction`, bounded by a small cap
+either further writes or an explicit `memory_finish`, bounded by a small cap
 (`MAX_EMPTY_TURN_NUDGES`) so a model that never cooperates still terminates well
-before the iteration/wall-clock budgets. `finish_extraction` is a control
+before the iteration/wall-clock budgets. `memory_finish` is a control
 signal, not a write: it stages nothing and is never dispatched to a write
 handler, but it _is_ surfaced as a tool card so the run visibly ends on an
 explicit model decision rather than appearing to stop on its own. Its optional
@@ -1046,9 +1046,9 @@ surfaces:
 - its **spoken content** — as threaded child content blocks, interleaved with
   its thoughts and tools (see "Fully-featured nested agents" below);
 - each **retrieval** (`memory_search`, `memory_get_entity`, …) and **write**
-  (`remember_attributes`, `keep_loops`, …) call, with its validation feedback, as a threaded
+  (`memory_set_attributes`, `memory_keep_loops`, …) call, with its validation feedback, as a threaded
   child tool call; and
-- its **closing summary** — `finish_extraction`'s `summary` arg, or the turn's
+- its **closing summary** — `memory_finish`'s `summary` arg, or the turn's
   final visible text — as the parent tool result → the card's Response
   (`ExtractPatchResult.response`).
 
@@ -1739,7 +1739,7 @@ First production-capable slice:
   - `memory.get_open_loops`
   - `memory.get_recent_events`
   - `memory.check_claims`
-  - durable-write tools (extractor): `remember_*`, `keep_loops`, `close_loop`, `forget_attribute`, `forget_directive`
+  - durable-write tools (extractor): `remember_*`, `memory_keep_loops`, `memory_close_loop`, `memory_forget_attribute`, `memory_forget_directive`
 - post-turn extraction
 - patch validation
 - transactional commit

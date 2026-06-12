@@ -64,7 +64,7 @@ const MEMORY_CONTINUATION_NUDGE =
 	'You queried durable memory but have not yet answered me. A memory tool call is not a response, and I never see tool output directly. Using what you retrieved, respond to my message now. Do not end your turn without a substantive reply.';
 
 // Read-only memory recall tools exposed to the model. Deliberately excludes
-// write/mutation tools (memory_global_remember, memory_merge_entities): a turn
+// write/mutation tools (memory_global_record, memory_merge_entities): a turn
 // that *wrote* memory without answering is not the "recall then nothing"
 // failure this guard targets, so it must not be nudged. Keep in sync with the
 // recall tools advertised in memory/engine.ts.
@@ -73,7 +73,7 @@ const MEMORY_RECALL_TOOLS = new Set([
 	'memory_get_entity',
 	'memory_get_open_loops',
 	'memory_get_recent_events',
-	'memory_transcript_lookup',
+	'memory_get_transcript',
 	'memory_query_timeline',
 	'memory_query_clues',
 	'memory_get_character_knowledge',

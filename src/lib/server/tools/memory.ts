@@ -290,7 +290,7 @@ export function buildMemoryTools(opts: {
 			}
 		},
 		{
-			name: 'memory_transcript_lookup',
+			name: 'memory_get_transcript',
 			description:
 				'Search exact prior conversation wording. Use when phrasing, quotes, or an old user/assistant statement matters. ' +
 				VERBOSE_NOTE,
@@ -314,7 +314,7 @@ export function buildMemoryTools(opts: {
 				const summary = `${matches.length} message(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
-					toolName: 'memory_transcript_lookup',
+					toolName: 'memory_get_transcript',
 					arguments: parsed,
 					resultSummary: summary,
 					resultIds: matches.map((message) => message.id)
@@ -536,7 +536,7 @@ export function buildMemoryTools(opts: {
 			}
 		},
 		{
-			name: 'memory_global_remember',
+			name: 'memory_global_record',
 			description:
 				'Explicitly store a user-scoped global memory that may be recalled across conversations. Use only when the user asks to remember something beyond this session. ' +
 				VERBOSE_NOTE,
@@ -568,7 +568,7 @@ export function buildMemoryTools(opts: {
 				const summary = `Stored global ${row.kind}: ${row.memoryKey}`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
-					toolName: 'memory_global_remember',
+					toolName: 'memory_global_record',
 					arguments: parsed,
 					resultSummary: summary,
 					resultIds: [row.id]

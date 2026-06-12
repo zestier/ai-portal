@@ -119,7 +119,7 @@ const ASSISTANT_TRANSCRIPT_MAX_CHARS = 4_000;
 // toward an explicit finish before the loop gives up and stops on its own.
 // Reasoning models frequently end a step with chain-of-thought but no tool
 // call; rather than read that as "done" and stop (storing nothing), we re-prompt
-// the model to either keep recording or call `finish_extraction`. Bounded so a
+// the model to either keep recording or call `memory_finish`. Bounded so a
 // model that never emits a tool call still terminates well before the iteration
 // cap instead of burning the whole budget on empty rounds.
 const MAX_EMPTY_TURN_NUDGES = 2;
@@ -127,19 +127,19 @@ const MAX_EMPTY_TURN_NUDGES = 2;
 // The corrective user message appended after an empty turn. Names the explicit
 // finish tool so the model ends deliberately rather than by falling silent.
 const EMPTY_TURN_NUDGE =
-	'You did not call any tool. If there is anything durable left to record from this turn, call the appropriate write tool now. If you have recorded everything (or nothing durable needed storing), call finish_extraction to end — do not stop without calling it.';
+	'You did not call any tool. If there is anything durable left to record from this turn, call the appropriate write tool now. If you have recorded everything (or nothing durable needed storing), call memory_finish to end — do not stop without calling it.';
 
 // Name of the explicit finish control-tool. It is not a write (it stages
 // nothing and is not advertised as a durable-write spec); the loop recognizes a
 // call with this name as a clean end signal and reads its optional `summary`
 // arg as the run summary.
-const FINISH_EXTRACTION_TOOL = 'finish_extraction';
+const FINISH_EXTRACTION_TOOL = 'memory_finish';
 
 /**
  * Agentic, tool-calling memory extractor. Instead of returning a single JSON
  * patch, a dedicated background agent stores durable memory by *calling tools*:
  * it retrieves with the read-only memory tools as needed and stages writes via
- * the per-kind `remember_*` / `keep_loops` / `close_loop` write tools, receiving
+ * the per-kind `memory_*` / `memory_keep_loops` / `memory_close_loop` write tools, receiving
  * per-call validation feedback (e.g. "this fact is not attached to an entity but
  * must be") so it can self-correct with full turn context — context the
  * deterministic post-commit fixups never see.
@@ -377,7 +377,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			emptyTurnNudges = 0;
 			for (const call of turn.toolCalls) {
 				input.signal?.throwIfAborted();
-				// finish_extraction is a control signal, not a write: it stages
+				// memory_finish is a control signal, not a write: it stages
 				// nothing and is never dispatched to a write handler. We still
 				// surface it as a tool card so the run visibly ends on an explicit
 				// model decision rather than appearing to stop on its own. The run
@@ -532,7 +532,14 @@ async function dispatchExtractorToolCall(
 ): Promise<string> {
 	const handler = handlers.get(call.name);
 	if (!handler) {
-		return JSON.stringify({ error: `Unknown tool: ${call.name || '(missing name)'}` });
+		// Surface the exact callable names so a model that invented or mangled a
+		// tool name (e.g. dropping the verb to produce `memory_entity`) can
+		// self-correct on its next turn instead of hitting a dead end.
+		return JSON.stringify({
+			error: `Unknown tool: ${call.name || '(missing name)'}`,
+			hint: 'Call one of the valid tools, named exactly as listed.',
+			validTools: [...handlers.keys(), FINISH_EXTRACTION_TOOL].sort()
+		});
 	}
 	let args: unknown = {};
 	const trimmed = (call.arguments ?? '').trim();
@@ -565,7 +572,7 @@ function parseActivityArgs(raw: string): unknown {
 }
 
 /**
- * Pull the optional one-line `summary` out of a `finish_extraction` call's
+ * Pull the optional one-line `summary` out of a `memory_finish` call's
  * arguments. Tolerant of the malformed/partial JSON small models emit: returns
  * null when there is no usable string summary, so the caller falls back to the
  * turn's visible text.
@@ -669,7 +676,7 @@ function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposa
 	}
 	// Union the "keep alive" set across every staged proposal. A loop reaffirmed
 	// in ANY call counts as touched — the agent may spread keeps across several
-	// keep_loops calls, and liveness decay runs once on this collapsed
+	// memory_keep_loops calls, and liveness decay runs once on this collapsed
 	// patch, so a keep dropped here would let a still-live loop age out.
 	const keepOpenLoops = [...new Set(patches.flatMap((patch) => patch.keepOpenLoops ?? []))];
 	// De-dupe forget targets by their selector (handle, or entityKey+predicate)

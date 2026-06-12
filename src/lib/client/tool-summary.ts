@@ -57,11 +57,11 @@ const summaryHandlers: Record<string, SummaryHandler> = {
 	git_show_file: gitShowFileSummary,
 	memory_search: memoryQuerySummary,
 	memory_global_search: memoryQuerySummary,
-	memory_transcript_lookup: memoryQuerySummary,
+	memory_get_transcript: memoryQuerySummary,
 	memory_get_entity: entityIdSummary,
 	memory_get_character_knowledge: characterKnowledgeSummary,
 	memory_merge_entities: mergeEntitiesSummary,
-	memory_global_remember: globalRememberSummary,
+	memory_global_record: globalRecordSummary,
 	memory_get_recent_events: eventFilterSummary,
 	memory_query_timeline: eventFilterSummary,
 	memory_get_open_loops: loopTypeSummary,
@@ -238,7 +238,7 @@ function mergeEntitiesSummary(args: Record<string, unknown>): string | null {
 	return from ?? into ?? null;
 }
 
-function globalRememberSummary(args: Record<string, unknown>): string | null {
+function globalRecordSummary(args: Record<string, unknown>): string | null {
 	const kind = str(args.kind);
 	const key = str(args.key);
 	if (kind && key) return `${kind} · ${key}`;

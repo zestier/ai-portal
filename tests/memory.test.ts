@@ -79,20 +79,20 @@ function routeEvent(
 
 // Build a single-tool-call assistant turn for the tool-calling extractor's
 // chatComplete double. The new write surface is one tool per fact kind plus
-// keep_loops/close_loop, each taking a flat args object.
+// memory_keep_loops/memory_close_loop, each taking a flat args object.
 function writeCall(id: string, name: string, args: unknown): ExtractorAssistantTurn {
 	return { content: '', toolCalls: [{ id, name, arguments: JSON.stringify(args) }] };
 }
 
 // Build the terminal assistant turn for the tool-calling extractor's
-// chatComplete double: an explicit finish_extraction control call (the only
+// chatComplete double: an explicit memory_finish control call (the only
 // clean way to end the run). The `summary` is carried both as the call's
 // argument and as visible content, so it surfaces as the extraction summary /
 // response exactly as a model's closing message would.
 function finishCall(summary: string, id = 'finish'): ExtractorAssistantTurn {
 	return {
 		content: summary,
-		toolCalls: [{ id, name: 'finish_extraction', arguments: JSON.stringify({ summary }) }]
+		toolCalls: [{ id, name: 'memory_finish', arguments: JSON.stringify({ summary }) }]
 	};
 }
 
@@ -1019,18 +1019,18 @@ describe('memory-backed sessions', () => {
 			conversationId: conv.id,
 			mode: 'strict'
 		});
-		expect(sessionOnlyTools.map((tool) => tool.name)).not.toContain('memory_global_remember');
+		expect(sessionOnlyTools.map((tool) => tool.name)).not.toContain('memory_global_record');
 		const tools = buildMemoryTools({
 			userId: user.id,
 			conversationId: conv.id,
 			mode: 'strict',
 			globalMemoryEnabled: true
 		});
-		const transcript = tools.find((tool) => tool.name === 'memory_transcript_lookup')!;
+		const transcript = tools.find((tool) => tool.name === 'memory_get_transcript')!;
 		const timeline = tools.find((tool) => tool.name === 'memory_query_timeline')!;
 		const clues = tools.find((tool) => tool.name === 'memory_query_clues')!;
 		const knowledge = tools.find((tool) => tool.name === 'memory_get_character_knowledge')!;
-		const globalRemember = tools.find((tool) => tool.name === 'memory_global_remember')!;
+		const globalRemember = tools.find((tool) => tool.name === 'memory_global_record')!;
 		const globalSearch = tools.find((tool) => tool.name === 'memory_global_search')!;
 
 		expect(toolText(await transcript.handler({ query: 'blue candle' }))).toContain('half burned');
@@ -1355,7 +1355,7 @@ describe('memory-backed sessions', () => {
 					toolCalls: [
 						{
 							id: 'call-1',
-							name: 'remember_attributes',
+							name: 'memory_set_attributes',
 							arguments: JSON.stringify({
 								entityKey: 'character.mara',
 								attributes: [{ predicate: 'owns', value: 'brass key' }]
@@ -1390,12 +1390,12 @@ describe('memory-backed sessions', () => {
 
 		// The background agent is offered both read tools and the durable-write tools.
 		expect(seenToolNames).toContain('memory_search');
-		expect(seenToolNames).toContain('remember_attributes');
+		expect(seenToolNames).toContain('memory_set_attributes');
 		// Activity is surfaced so the extractor reads like a fully-featured
 		// nested agent: a leading `input` event carries the context handed to
 		// the extractor, then thoughts (reasoning + <think>) and spoken content
 		// are separate threaded streams, interleaved with the staging tool call.
-		// The closing finish_extraction also surfaces as a tool card.
+		// The closing memory_finish also surfaces as a tool card.
 		expect(activity.map((event) => event.type)).toEqual([
 			'input',
 			'reasoning',
@@ -1433,7 +1433,7 @@ describe('memory-backed sessions', () => {
 		expect(contentText).not.toContain('<think>');
 		const activityCall = activity.find((event) => event.type === 'tool.call');
 		const activityResult = activity.find((event) => event.type === 'tool.result');
-		expect(activityCall).toMatchObject({ type: 'tool.call', tool: 'remember_attributes' });
+		expect(activityCall).toMatchObject({ type: 'tool.call', tool: 'memory_set_attributes' });
 		expect(activityResult).toMatchObject({ type: 'tool.result', ok: true });
 		// The final spoken message is captured as the session response.
 		expect(extraction.response).toBe('Stored the migration decision and Mara key ownership.');
@@ -1477,21 +1477,23 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1)
-				return writeCall('e1', 'remember_attributes', {
+				return writeCall('e1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					entityType: 'character',
 					displayName: 'Mara'
 				});
 			if (step === 2)
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ predicate: 'owns', value: 'brass key' }]
 				});
-			if (step === 3) return writeCall('d1', 'remember_directive', { rule: 'Keep replies short.' });
+			if (step === 3)
+				return writeCall('d1', 'memory_add_directive', { rule: 'Keep replies short.' });
 			// A malformed event mid-stream must not drop the three already staged.
-			if (step === 4) return writeCall('x1', 'remember_event', { summary: 'missing eventType' });
+			if (step === 4)
+				return writeCall('x1', 'memory_record_event', { summary: 'missing eventType' });
 			if (step === 5)
-				return writeCall('l1', 'remember_loop', { loopType: 'task', title: 'Follow up later' });
+				return writeCall('l1', 'memory_open_loop', { loopType: 'task', title: 'Follow up later' });
 			return finishCall('Done.');
 		};
 
@@ -1519,7 +1521,7 @@ describe('memory-backed sessions', () => {
 		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
 		expect(rejection).toBeDefined();
 		const parsedRejection = JSON.parse(rejection!);
-		expect(parsedRejection.tool).toBe('remember_event');
+		expect(parsedRejection.tool).toBe('memory_record_event');
 		expect(parsedRejection.staged_totals).toMatchObject({ attributes: 1, directives: 1 });
 
 		// All valid items across the different tools made it into the merged patch;
@@ -1544,7 +1546,7 @@ describe('memory-backed sessions', () => {
 		expect(memory.listOpenLoops(conv.id, { limit: 10 })).toHaveLength(1);
 	});
 
-	it('ends the run when the model calls finish_extraction and uses its summary arg', async () => {
+	it('ends the run when the model calls memory_finish and uses its summary arg', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -1558,7 +1560,7 @@ describe('memory-backed sessions', () => {
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1)
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ predicate: 'owns', value: 'brass key' }]
 				});
@@ -1568,12 +1570,12 @@ describe('memory-backed sessions', () => {
 					toolCalls: [
 						{
 							id: 'fin',
-							name: 'finish_extraction',
+							name: 'memory_finish',
 							arguments: JSON.stringify({ summary: 'Recorded that Mara owns the brass key.' })
 						}
 					]
 				};
-			// The loop must not request another completion after finish_extraction.
+			// The loop must not request another completion after memory_finish.
 			callsAfterFinish += 1;
 			return finishCall('should never run');
 		};
@@ -1603,15 +1605,15 @@ describe('memory-backed sessions', () => {
 		expect(callsAfterFinish).toBe(0);
 		// The attribute staged before finishing was committed.
 		expect(extraction.patch.facts).toHaveLength(1);
-		// finish_extraction's `summary` arg seeds the session summary/response,
+		// memory_finish's `summary` arg seeds the session summary/response,
 		// overriding the turn's visible text.
 		expect(extraction.summary).toBe('Recorded that Mara owns the brass key.');
 		expect(extraction.response).toBe('Recorded that Mara owns the brass key.');
-		// finish_extraction stages nothing, but it IS surfaced as a tool card so
+		// memory_finish stages nothing, but it IS surfaced as a tool card so
 		// the run visibly ends on an explicit model decision. The call card names
 		// the tool; its result echoes the finish summary.
 		const finishCallEvent = activity.find(
-			(event) => event.type === 'tool.call' && 'tool' in event && event.tool === 'finish_extraction'
+			(event) => event.type === 'tool.call' && 'tool' in event && event.tool === 'memory_finish'
 		);
 		expect(finishCallEvent).toBeDefined();
 		const finishCallId =
@@ -1643,7 +1645,7 @@ describe('memory-backed sessions', () => {
 			if (last?.role === 'user' && last.content && msgs.length > 2) nudges.push(last.content);
 			step += 1;
 			if (step === 1)
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ predicate: 'owns', value: 'brass key' }]
 				});
@@ -1674,7 +1676,7 @@ describe('memory-backed sessions', () => {
 		// Empty turns were nudged toward an explicit finish (bounded), not stopped
 		// on first sight — so the loop did NOT terminate at step 2.
 		expect(nudges.length).toBe(2);
-		expect(nudges[0]).toContain('finish_extraction');
+		expect(nudges[0]).toContain('memory_finish');
 		// It still terminates well before the iteration cap (1 write + 1 empty
 		// that ends the loop... + 2 nudged empties = 4 completions).
 		expect(step).toBe(4);
@@ -1682,7 +1684,7 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.facts).toHaveLength(1);
 	});
 
-	it('stages a paired event when a remember_attributes item carries an event summary', async () => {
+	it('stages a paired event when a memory_set_attributes item carries an event summary', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -1699,7 +1701,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				// A state change that is also a notable occurrence: one item records
 				// both the attribute and a paired timeline event.
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [
 						{ predicate: 'owns', value: 'brass key', event: 'Mara picked up the brass key.' }
@@ -1763,7 +1765,7 @@ describe('memory-backed sessions', () => {
 		]);
 	});
 
-	it('rejects a remember_attributes item with eventType but no event summary', async () => {
+	it('rejects a memory_set_attributes item with eventType but no event summary', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Cloak is red.' });
@@ -1775,7 +1777,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'object.cloak',
 					attributes: [{ predicate: 'color', value: 'red', eventType: 'change' }]
 				});
@@ -1811,7 +1813,7 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.events ?? []).toHaveLength(0);
 	});
 
-	it('constructs the entity and its attributes in one remember_attributes call', async () => {
+	it('constructs the entity and its attributes in one memory_set_attributes call', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -1826,7 +1828,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					entityType: 'character',
 					displayName: 'Mara',
@@ -1889,7 +1891,7 @@ describe('memory-backed sessions', () => {
 		expect(parsed.entity).toMatchObject({ entityKey: 'character.mara', entityType: 'character' });
 	});
 
-	it('records entity metadata only (no attributes) via remember_attributes', async () => {
+	it('records entity metadata only (no attributes) via memory_set_attributes', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -1904,7 +1906,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'component.auth_service',
 					entityType: 'component',
 					displayName: 'Auth Service'
@@ -1962,7 +1964,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'component.auth_service',
 					entityType: 'component',
 					displayName: 'Auth Service',
@@ -2007,7 +2009,7 @@ describe('memory-backed sessions', () => {
 		expect(parsed.accepted).not.toHaveProperty('attributes');
 	});
 
-	it('rejects the whole remember_attributes call when entity metadata lacks entityKey', async () => {
+	it('rejects the whole memory_set_attributes call when entity metadata lacks entityKey', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Mara exists.' });
@@ -2019,7 +2021,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityType: 'character',
 					displayName: 'Mara',
 					attributes: [{ predicate: 'hair', value: 'red' }]
@@ -2056,7 +2058,7 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.facts ?? []).toHaveLength(0);
 	});
 
-	it('rejects the whole remember_attributes call when entity metadata is incomplete', async () => {
+	it('rejects the whole memory_set_attributes call when entity metadata is incomplete', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Mara exists.' });
@@ -2070,7 +2072,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				// entityType without the required displayName: the entity is invalid,
 				// so the whole call (including the otherwise-valid attribute) rejects.
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					entityType: 'character',
 					attributes: [{ predicate: 'hair', value: 'red' }]
@@ -2109,7 +2111,7 @@ describe('memory-backed sessions', () => {
 		expect(extraction.patch.facts ?? []).toHaveLength(0);
 	});
 
-	it('rejects a remember_attributes call with neither attributes nor entity metadata', async () => {
+	it('rejects a memory_set_attributes call with neither attributes nor entity metadata', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Nothing durable.' });
@@ -2121,7 +2123,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', { entityKey: 'character.mara' });
+				return writeCall('a1', 'memory_set_attributes', { entityKey: 'character.mara' });
 			}
 			return finishCall('Done.');
 		};
@@ -2174,13 +2176,13 @@ describe('memory-backed sessions', () => {
 			// three times in a row (key order shuffled the third time to prove the
 			// signature is order-independent) before finally stopping.
 			if (step === 1 || step === 2) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ predicate: 'hair', value: 'red' }]
 				});
 			}
 			if (step === 3) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					attributes: [{ value: 'red', predicate: 'hair' }],
 					entityKey: 'character.mara'
 				});
@@ -2213,7 +2215,7 @@ describe('memory-backed sessions', () => {
 		expect(parsed[0].duplicate).toBeUndefined();
 		expect(parsed[1].duplicate).toEqual({ repeatCount: 2 });
 		expect(parsed[2].duplicate).toEqual({ repeatCount: 3 });
-		expect(parsed[1].note).toContain('already made this exact remember_attributes call');
+		expect(parsed[1].note).toContain('already made this exact memory_set_attributes call');
 		// The nudge is purely advisory: the underlying writes still succeed (the
 		// duplicate fragments stage and are deduped later at commit time).
 		expect(parsed[1].ok).toBe(true);
@@ -2255,7 +2257,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [
 						{ predicate: 'hair', value: 'red' }, // unchanged -> redundant skip
@@ -2338,7 +2340,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ predicate: 'hair', value: 'red' }]
 				});
@@ -2409,7 +2411,7 @@ describe('memory-backed sessions', () => {
 				// Hoisted key is Mara, but the item overrides it to Bob. The
 				// signature must be computed against Bob (no stored hair=red), not
 				// Mara (which has one) — otherwise this genuinely-new fact is lost.
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ entityKey: 'character.bob', predicate: 'hair', value: 'red' }]
 				});
@@ -2477,7 +2479,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				// Same predicate+value, but promoted to hidden visibility — a real
 				// change that must NOT be skipped as redundant.
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [{ predicate: 'secret_word', value: 'rosebud', visibility: 'hidden' }]
 				});
@@ -2538,7 +2540,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				// Granular decomposition in ONE call, with one malformed item (no
 				// value) that must not sink the valid siblings.
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [
 						{ predicate: 'build', value: 'tall' },
@@ -2617,7 +2619,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('a1', 'remember_attributes', {
+				return writeCall('a1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [
 						{ predicate: 'build', value: 'tall' },
@@ -2670,7 +2672,7 @@ describe('memory-backed sessions', () => {
 	it('echoes accepted as a clean input echo for every single-item write tool', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
-		// Seed an open loop so close_loop has a real handle to retire.
+		// Seed an open loop so memory_close_loop has a real handle to retire.
 		const priorAssistant = messages.append(conv.id, {
 			role: 'assistant',
 			content: 'You could search the attic.'
@@ -2689,10 +2691,10 @@ describe('memory-backed sessions', () => {
 		// internal { facts: [...] } / { entities: [...] } wrappers, single-item
 		// arrays, or renamed fields (e.g. directive's rule -> predicate/value).
 		const inputs: Record<string, Record<string, unknown>> = {
-			remember_directive: { rule: 'Keep replies under 200 words.' },
-			remember_event: { eventType: 'deploy', summary: 'Shipped v1.2.' },
-			remember_loop: { loopType: 'task', title: 'Draft the changelog' },
-			close_loop: { handle: loop.id, status: 'resolved' }
+			memory_add_directive: { rule: 'Keep replies under 200 words.' },
+			memory_record_event: { eventType: 'deploy', summary: 'Shipped v1.2.' },
+			memory_open_loop: { loopType: 'task', title: 'Draft the changelog' },
+			memory_close_loop: { handle: loop.id, status: 'resolved' }
 		};
 		const order = Object.keys(inputs);
 
@@ -2757,7 +2759,7 @@ describe('memory-backed sessions', () => {
 			if (step === 1) {
 				// Raw input has surrounding whitespace (the directive schema trims)
 				// and an unknown extra field (the schema drops it).
-				return writeCall('d1', 'remember_directive', {
+				return writeCall('d1', 'memory_add_directive', {
 					rule: '   Keep replies short.   ',
 					bogus: 'should be dropped'
 				});
@@ -2815,11 +2817,14 @@ describe('memory-backed sessions', () => {
 			step += 1;
 			if (step === 1) {
 				// First attempt: an open loop with a too-short title -> error.
-				return writeCall('c1', 'remember_loop', { loopType: 'task', title: 'go' });
+				return writeCall('c1', 'memory_open_loop', { loopType: 'task', title: 'go' });
 			}
 			if (step === 2) {
 				// Correction: a valid title for the same loop.
-				return writeCall('c2', 'remember_loop', { loopType: 'task', title: 'Inspect the cellar' });
+				return writeCall('c2', 'memory_open_loop', {
+					loopType: 'task',
+					title: 'Inspect the cellar'
+				});
 			}
 			return finishCall('Stored one follow-up.');
 		};
@@ -2882,8 +2887,8 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				// remember_attributes item missing its required `value` -> schema failure.
-				return writeCall('c1', 'remember_attributes', {
+				// memory_set_attributes item missing its required `value` -> schema failure.
+				return writeCall('c1', 'memory_set_attributes', {
 					entityKey: 'object.cloak',
 					attributes: [{ predicate: 'color' }]
 				});
@@ -2914,7 +2919,7 @@ describe('memory-backed sessions', () => {
 		expect(rejection).toBeDefined();
 		const parsed = JSON.parse(rejection!);
 		expect(parsed.ok).toBe(false);
-		expect(parsed.tool).toBe('remember_attributes');
+		expect(parsed.tool).toBe('memory_set_attributes');
 		expect(parsed.error.kind).toBe('validation');
 		// The error is scoped to THIS tool and the offending item index: the field
 		// path, a hint, and only this tool's flat schema + example.
@@ -2928,7 +2933,7 @@ describe('memory-backed sessions', () => {
 		expect(typeof parsed.note).toBe('string');
 	});
 
-	it('reports an execution error when close_loop targets an unknown handle', async () => {
+	it('reports an execution error when memory_close_loop targets an unknown handle', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Done with that.' });
@@ -2940,7 +2945,10 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'close_loop', { handle: 'loop.does_not_exist', status: 'resolved' });
+				return writeCall('c1', 'memory_close_loop', {
+					handle: 'loop.does_not_exist',
+					status: 'resolved'
+				});
 			}
 			return finishCall('Done.');
 		};
@@ -2967,7 +2975,7 @@ describe('memory-backed sessions', () => {
 		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
 		expect(rejection).toBeDefined();
 		const parsed = JSON.parse(rejection!);
-		expect(parsed.tool).toBe('close_loop');
+		expect(parsed.tool).toBe('memory_close_loop');
 		// Unknown handle is an execution error (retrying the same args won't help),
 		// not a schema error — the hint redirects to memory_get_open_loops.
 		expect(parsed.error.kind).toBe('execution');
@@ -3016,14 +3024,14 @@ describe('memory-backed sessions', () => {
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'close_loop', {
+				return writeCall('c1', 'memory_close_loop', {
 					handle: keep.id,
 					status: 'resolved',
 					reason: 'Chosen.'
 				});
 			}
 			if (step === 2) {
-				return writeCall('c2', 'close_loop', { handle: drop.id, status: 'dropped' });
+				return writeCall('c2', 'memory_close_loop', { handle: drop.id, status: 'dropped' });
 			}
 			return finishCall('Pruned the unchosen option.');
 		};
@@ -3091,7 +3099,7 @@ describe('memory-backed sessions', () => {
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'close_loop', {
+				return writeCall('c1', 'memory_close_loop', {
 					handle: loop.id,
 					status: 'resolved',
 					reason: 'Replaced key sk_live_0123456789abcdefghij in the vault.'
@@ -3157,17 +3165,17 @@ describe('memory-backed sessions', () => {
 		const first = loops.find((l) => l.title.includes('one'))!;
 		const second = loops.find((l) => l.title.includes('two'))!;
 
-		// The agent reaffirms each live loop in a SEPARATE keep_loops call. Neither
+		// The agent reaffirms each live loop in a SEPARATE memory_keep_loops call. Neither
 		// call alone is the complete keep-set; the collapse must union them, or a
 		// loop kept early would be aged out.
 		let step = 0;
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'keep_loops', { handles: [first.id] });
+				return writeCall('c1', 'memory_keep_loops', { handles: [first.id] });
 			}
 			if (step === 2) {
-				return writeCall('c2', 'keep_loops', { handles: [second.id] });
+				return writeCall('c2', 'memory_keep_loops', { handles: [second.id] });
 			}
 			return finishCall('Kept both threads.');
 		};
@@ -3196,7 +3204,7 @@ describe('memory-backed sessions', () => {
 		);
 	});
 
-	it('keeps known handles but reports unknown ones in a keep_loops batch', async () => {
+	it('keeps known handles but reports unknown ones in a memory_keep_loops batch', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		commitPatch({
@@ -3212,7 +3220,7 @@ describe('memory-backed sessions', () => {
 			step += 1;
 			if (step === 1) {
 				// One real handle plus one hallucinated handle in the same batch.
-				return writeCall('c1', 'keep_loops', { handles: [live.id, 'loop.bogus'] });
+				return writeCall('c1', 'memory_keep_loops', { handles: [live.id, 'loop.bogus'] });
 			}
 			return finishCall('Done.');
 		};
@@ -3241,7 +3249,7 @@ describe('memory-backed sessions', () => {
 		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
 		expect(rejection).toBeDefined();
 		const parsed = JSON.parse(rejection!);
-		expect(parsed.tool).toBe('keep_loops');
+		expect(parsed.tool).toBe('memory_keep_loops');
 		expect(parsed.error.kind).toBe('execution');
 		expect(parsed.error.code).toBe('unknown_handles');
 		expect(parsed.results).toEqual([
@@ -3290,7 +3298,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'remember_attributes', {
+				return writeCall('c1', 'memory_set_attributes', {
 					entityKey: 'character.mara',
 					attributes: [
 						{ predicate: 'build', value: 'tall' },
@@ -3302,7 +3310,7 @@ describe('memory-backed sessions', () => {
 			if (step === 2) {
 				// The granular predicates are NEW, so nothing superseded the original
 				// "description"; forget it directly (by entityKey+predicate).
-				return writeCall('c2', 'forget_attribute', {
+				return writeCall('c2', 'memory_forget_attribute', {
 					entityKey: 'character.mara',
 					predicate: 'description'
 				});
@@ -3331,7 +3339,7 @@ describe('memory-backed sessions', () => {
 
 		// The forget call succeeded and staged the target.
 		const ok = feedback.find(
-			(entry) => entry.includes('"forget_attribute"') && entry.includes('"ok":true')
+			(entry) => entry.includes('"memory_forget_attribute"') && entry.includes('"ok":true')
 		);
 		expect(ok).toBeDefined();
 		expect(extraction.patch.forgetFacts).toEqual([
@@ -3387,7 +3395,7 @@ describe('memory-backed sessions', () => {
 		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'forget_attribute', { handle: fact.id });
+				return writeCall('c1', 'memory_forget_attribute', { handle: fact.id });
 			}
 			return finishCall('Removed the retracted attribute.');
 		};
@@ -3454,11 +3462,11 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				// Wrong tool: forget_attribute must refuse a directive handle.
-				return writeCall('c1', 'forget_attribute', { handle: directive.id });
+				// Wrong tool: memory_forget_attribute must refuse a directive handle.
+				return writeCall('c1', 'memory_forget_attribute', { handle: directive.id });
 			}
 			if (step === 2) {
-				return writeCall('c2', 'forget_directive', { handle: directive.id });
+				return writeCall('c2', 'memory_forget_directive', { handle: directive.id });
 			}
 			return finishCall('Retired the directive.');
 		};
@@ -3482,13 +3490,13 @@ describe('memory-backed sessions', () => {
 			initialPacket: buildInitialPacket(conv.id, 'project')
 		});
 
-		// forget_attribute refused the directive and redirected to forget_directive.
+		// memory_forget_attribute refused the directive and redirected to memory_forget_directive.
 		const refusal = feedback.find(
-			(entry) => entry.includes('"forget_attribute"') && entry.includes('"ok":false')
+			(entry) => entry.includes('"memory_forget_attribute"') && entry.includes('"ok":false')
 		);
 		expect(refusal).toBeDefined();
 		expect(JSON.parse(refusal!).error.code).toBe('is_directive');
-		// Only the forget_directive target was staged.
+		// Only the memory_forget_directive target was staged.
 		expect(extraction.patch.forgetFacts).toEqual([{ factId: directive.id }]);
 
 		const committed = commitPatch(
@@ -3506,7 +3514,7 @@ describe('memory-backed sessions', () => {
 		expect(memory.getFact(conv.id, directive.id)?.status).toBe('deleted');
 	});
 
-	it('rejects a forget_attribute whose target does not resolve to an active fact', async () => {
+	it('rejects a memory_forget_attribute whose target does not resolve to an active fact', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, { role: 'user', content: 'Forget that.' });
@@ -3518,7 +3526,7 @@ describe('memory-backed sessions', () => {
 			for (const msg of msgs) if (msg.role === 'tool' && msg.content) feedback.push(msg.content);
 			step += 1;
 			if (step === 1) {
-				return writeCall('c1', 'forget_attribute', { handle: 'fact.does_not_exist' });
+				return writeCall('c1', 'memory_forget_attribute', { handle: 'fact.does_not_exist' });
 			}
 			return finishCall('Done.');
 		};
@@ -3546,7 +3554,7 @@ describe('memory-backed sessions', () => {
 		const rejection = feedback.find((entry) => entry.includes('"ok":false'));
 		expect(rejection).toBeDefined();
 		const parsed = JSON.parse(rejection!);
-		expect(parsed.tool).toBe('forget_attribute');
+		expect(parsed.tool).toBe('memory_forget_attribute');
 		expect(parsed.error.kind).toBe('execution');
 		expect(parsed.error.code).toBe('unknown_fact');
 		expect(typeof parsed.issues[0].hint).toBe('string');
@@ -3692,7 +3700,7 @@ describe('memory-backed sessions', () => {
 				toolCalls: [
 					{
 						id: `c${calls}`,
-						name: 'remember_attributes',
+						name: 'memory_set_attributes',
 						arguments: JSON.stringify({
 							entityKey: 'object.door',
 							attributes: [{ predicate: 'state', value: 'open' }]
@@ -3749,7 +3757,7 @@ describe('memory-backed sessions', () => {
 
 		// Step 1: reasoning streamed in two deltas; a <think> tag split across
 		// two content deltas; tool-call arguments split across two deltas.
-		// Step 2: a closing message plus an explicit finish_extraction call ends
+		// Step 2: a closing message plus an explicit memory_finish call ends
 		// the loop (the model finishes deliberately rather than falling silent).
 		const responses = [
 			sse([
@@ -3765,7 +3773,7 @@ describe('memory-backed sessions', () => {
 									{
 										index: 0,
 										id: 'c1',
-										function: { name: 'remember_attributes', arguments: '{"entityKey":"mig' }
+										function: { name: 'memory_set_attributes', arguments: '{"entityKey":"mig' }
 									}
 								]
 							}
@@ -3797,7 +3805,7 @@ describe('memory-backed sessions', () => {
 						{
 							delta: {
 								tool_calls: [
-									{ index: 0, id: 'fin', function: { name: 'finish_extraction', arguments: '{}' } }
+									{ index: 0, id: 'fin', function: { name: 'memory_finish', arguments: '{}' } }
 								]
 							}
 						}

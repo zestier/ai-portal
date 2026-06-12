@@ -62,35 +62,35 @@ interface WriteIssue {
 	hint?: string;
 }
 
-// The single-item per-kind write tools handled generically. `remember_attribute`
-// is intentionally NOT here — attributes use the dedicated batch tool
-// `remember_attributes` (see below) because an entity naturally has many
+// The single-item per-kind write tools handled generically. Per-item attribute
+// writes are intentionally NOT here — attributes use the dedicated batch tool
+// `memory_set_attributes` (see below) because an entity naturally has many
 // attributes at once, and one-item-per-call would penalize the granularity we
-// want. keep_loops/close_loop/remember_attributes are handled separately.
-const REMEMBER_TOOL_KINDS = {
-	remember_directive: 'directive',
-	remember_event: 'event',
-	remember_loop: 'open_loop'
+// want. memory_keep_loops/memory_close_loop/memory_set_attributes are handled separately.
+const SINGLE_FACT_WRITE_KINDS = {
+	memory_add_directive: 'directive',
+	memory_record_event: 'event',
+	memory_open_loop: 'open_loop'
 } as const satisfies Record<string, MemoryFactKind>;
-type RememberToolName = keyof typeof REMEMBER_TOOL_KINDS;
+type SingleFactWriteToolName = keyof typeof SINGLE_FACT_WRITE_KINDS;
 type WriteToolName =
-	| RememberToolName
-	| 'remember_attributes'
-	| 'keep_loops'
-	| 'close_loop'
-	| 'forget_attribute'
-	| 'forget_directive';
+	| SingleFactWriteToolName
+	| 'memory_set_attributes'
+	| 'memory_keep_loops'
+	| 'memory_close_loop'
+	| 'memory_forget_attribute'
+	| 'memory_forget_directive';
 
-const REMEMBER_TOOL_DESCRIPTIONS: Record<RememberToolName, string> = {
-	remember_directive:
+const SINGLE_FACT_WRITE_DESCRIPTIONS: Record<SingleFactWriteToolName, string> = {
+	memory_add_directive:
 		'Record a standing rule for how you (the agent) must behave going forward — conduct, style, format, or process. Any durable behavioural policy counts, however phrased ("always …", "never …", or a plain declarative rule). One-off work for this turn is NOT a directive.',
-	remember_event:
-		'Record a point-in-time occurrence that belongs in a time-ordered log AND does not describe durable current state — e.g. a deploy shipped, a build/test failed, an approach was tried, a clue was revealed, a character moved. Append-only and recency-ranked. Most things are NOT events: if it is the current state of something (a value, status, preference, ownership, relationship), use remember_attributes instead. Test: would re-stating it later UPDATE a value (→ attribute) or ADD another log entry (→ event)?',
-	remember_loop:
-		'Open a NEW unresolved task, question, or thread to follow up on later. Use keep_loops/close_loop to maintain EXISTING loops; do not re-open one that already exists.'
+	memory_record_event:
+		'Record a point-in-time occurrence that belongs in a time-ordered log AND does not describe durable current state — e.g. a deploy shipped, a build/test failed, an approach was tried, a clue was revealed, a character moved. Append-only and recency-ranked. Most things are NOT events: if it is the current state of something (a value, status, preference, ownership, relationship), use memory_set_attributes instead. Test: would re-stating it later UPDATE a value (→ attribute) or ADD another log entry (→ event)?',
+	memory_open_loop:
+		'Open a NEW unresolved task, question, or thread to follow up on later. Use memory_keep_loops/memory_close_loop to maintain EXISTING loops; do not re-open one that already exists.'
 };
 
-// keep_loops / close_loop act on EXISTING loops by handle, so their schemas are
+// memory_keep_loops / memory_close_loop act on EXISTING loops by handle, so their schemas are
 // hand-written rather than derived from a fact kind.
 const KEEP_LOOPS_SCHEMA = {
 	type: 'object',
@@ -131,7 +131,7 @@ const CLOSE_LOOP_SCHEMA = {
 const KEEP_LOOPS_EXAMPLE = { handles: ['loop.find_attic_key'] };
 const CLOSE_LOOP_EXAMPLE = { handle: 'loop.find_attic_key', status: 'resolved' };
 
-// forget_attribute / forget_directive retire an EXISTING fact (tombstone it) when
+// memory_forget_attribute / memory_forget_directive retire an EXISTING fact (tombstone it) when
 // no natural supersede applies — e.g. after splitting a compound attribute into
 // granular facts under new predicates the original predicate is never superseded,
 // or the user explicitly retracted a trait/rule with no replacement. Targets are
@@ -210,10 +210,10 @@ function stripKindExample(example: Record<string, unknown>): Record<string, unkn
 	return rest;
 }
 
-// Optional paired-event fields layered onto each `remember_attributes` *item*
+// Optional paired-event fields layered onto each `memory_set_attributes` *item*
 // (not the underlying attribute fact schema): when a state change is also a
 // notable point-in-time occurrence, the model can log it in the same call
-// instead of reaching for a separate remember_event (and losing the current
+// instead of reaching for a separate memory_record_event (and losing the current
 // state). These exist only at the tool boundary; the handler splits them off
 // before validating the attribute, then stages a paired event fact.
 const PAIRED_EVENT_PROPS = {
@@ -236,7 +236,7 @@ const PAIRED_EVENT_PROPS = {
 // but no explicit `eventType`.
 const PAIRED_EVENT_DEFAULT_TYPE = 'change';
 
-// `remember_attributes` sets MANY attributes on ONE entity in a single call AND
+// `memory_set_attributes` sets MANY attributes on ONE entity in a single call AND
 // is the sole entity constructor: optional top-level `entityType`/`displayName`
 // (+ optional `summary`/`metadata`) record the durable referent in the SAME
 // call, so a brand-new entity can be typed, named, and described in one shot
@@ -319,21 +319,21 @@ const ATTRIBUTES_BATCH_EXAMPLE = {
 };
 
 function writeToolParameters(tool: WriteToolName): Record<string, unknown> {
-	if (tool === 'keep_loops') return KEEP_LOOPS_SCHEMA;
-	if (tool === 'close_loop') return CLOSE_LOOP_SCHEMA;
-	if (tool === 'forget_attribute') return FORGET_ATTRIBUTE_SCHEMA;
-	if (tool === 'forget_directive') return FORGET_DIRECTIVE_SCHEMA;
-	if (tool === 'remember_attributes') return ATTRIBUTES_BATCH_SCHEMA;
-	return stripKind(MEMORY_FACT_KIND_SCHEMAS[REMEMBER_TOOL_KINDS[tool]]);
+	if (tool === 'memory_keep_loops') return KEEP_LOOPS_SCHEMA;
+	if (tool === 'memory_close_loop') return CLOSE_LOOP_SCHEMA;
+	if (tool === 'memory_forget_attribute') return FORGET_ATTRIBUTE_SCHEMA;
+	if (tool === 'memory_forget_directive') return FORGET_DIRECTIVE_SCHEMA;
+	if (tool === 'memory_set_attributes') return ATTRIBUTES_BATCH_SCHEMA;
+	return stripKind(MEMORY_FACT_KIND_SCHEMAS[SINGLE_FACT_WRITE_KINDS[tool]]);
 }
 
 function writeToolExample(tool: WriteToolName): Record<string, unknown> {
-	if (tool === 'keep_loops') return KEEP_LOOPS_EXAMPLE;
-	if (tool === 'close_loop') return CLOSE_LOOP_EXAMPLE;
-	if (tool === 'forget_attribute') return FORGET_ATTRIBUTE_EXAMPLE;
-	if (tool === 'forget_directive') return FORGET_DIRECTIVE_EXAMPLE;
-	if (tool === 'remember_attributes') return ATTRIBUTES_BATCH_EXAMPLE;
-	return stripKindExample(MEMORY_FACT_KIND_EXAMPLES[REMEMBER_TOOL_KINDS[tool]]);
+	if (tool === 'memory_keep_loops') return KEEP_LOOPS_EXAMPLE;
+	if (tool === 'memory_close_loop') return CLOSE_LOOP_EXAMPLE;
+	if (tool === 'memory_forget_attribute') return FORGET_ATTRIBUTE_EXAMPLE;
+	if (tool === 'memory_forget_directive') return FORGET_DIRECTIVE_EXAMPLE;
+	if (tool === 'memory_set_attributes') return ATTRIBUTES_BATCH_EXAMPLE;
+	return stripKindExample(MEMORY_FACT_KIND_EXAMPLES[SINGLE_FACT_WRITE_KINDS[tool]]);
 }
 
 // Map raw Zod issues to the model-facing WriteIssue shape, dropping a leading
@@ -352,7 +352,7 @@ function zodToWriteIssues(error: ZodError, stripPrefix?: string): WriteIssue[] {
 	});
 }
 
-// One `remember_attributes` item validates an attribute fact (facts.0) plus,
+// One `memory_set_attributes` item validates an attribute fact (facts.0) plus,
 // when a paired event is present, an event fact (facts.1). Strip the `facts.<n>.`
 // prefix and rename the event fact's `summary` back to the item's `event` field
 // so issues name what the model actually sent.
@@ -562,67 +562,69 @@ function writeError(
 }
 
 /**
- * The durable-write tool specs advertised to the extractor: remember_attributes
+ * The durable-write tool specs advertised to the extractor: memory_set_attributes
  * (the entity constructor + a batch of traits on one entity), the single-item
- * remember_directive/event/loop creators, and keep_loops/close_loop for
+ * memory_add_directive/event/loop creators, and memory_keep_loops/memory_close_loop for
  * open-loop lifecycle. Each has a flat schema (at most an array of flat objects)
  * so even backends with weak tool-argument grammar enforcement can fill it — no
  * union.
  */
 export function buildWriteToolSpecs(): ExtractorToolSpec[] {
-	const remember = (Object.keys(REMEMBER_TOOL_KINDS) as RememberToolName[]).map((tool) => ({
-		type: 'function' as const,
-		function: {
-			name: tool,
-			description: REMEMBER_TOOL_DESCRIPTIONS[tool],
-			parameters: writeToolParameters(tool)
-		}
-	}));
+	const singleFactWrites = (Object.keys(SINGLE_FACT_WRITE_KINDS) as SingleFactWriteToolName[]).map(
+		(tool) => ({
+			type: 'function' as const,
+			function: {
+				name: tool,
+				description: SINGLE_FACT_WRITE_DESCRIPTIONS[tool],
+				parameters: writeToolParameters(tool)
+			}
+		})
+	);
 	return [
-		...remember,
+		...singleFactWrites,
 		{
 			type: 'function',
 			function: {
-				name: 'remember_attributes',
+				name: 'memory_set_attributes',
 				description:
 					'Record a durable entity and/or things to KNOW about it in ONE call — its current state, traits, values, relationships, preferences, constraints, ownership, roles, deadlines, or identifiers. Pass the shared entityKey once at the top level. To FIRST record a new referent, also pass `entityType` + `displayName` (and optionally a one-line prose `summary`/`metadata`) so it gets a proper type and name instead of a bare auto-minted stub; for an existing referent just pass the changed `attributes`. Put discrete traits in the `attributes` array with ONE item per distinct trait — always decompose: "a tall woman with red hair who fears water" becomes separate items (build=tall, hair=red, fears=water), never one big "description" value (a prose blurb belongs in `summary`). `attributes` may be omitted for a metadata-only call that just establishes/updates the entity. An attribute item may carry an optional `event` summary (+ optional `eventType`) when that particular change is also a notable timeline occurrence.',
-				parameters: writeToolParameters('remember_attributes')
+				parameters: writeToolParameters('memory_set_attributes')
 			}
 		},
 		{
 			type: 'function',
 			function: {
-				name: 'keep_loops',
+				name: 'memory_keep_loops',
 				description:
 					'Keep one or more EXISTING open loops alive (anti-aging) by handle. Pass the handle of every presented loop that is still live; any you omit ages out. Batch them in a single call.',
-				parameters: writeToolParameters('keep_loops')
+				parameters: writeToolParameters('memory_keep_loops')
 			}
 		},
 		{
 			type: 'function',
 			function: {
-				name: 'close_loop',
+				name: 'memory_close_loop',
 				description:
 					'Retire one EXISTING open loop by handle: status "resolved" when done/answered, "dropped" when abandoned or superseded (e.g. an option the user did not choose).',
-				parameters: writeToolParameters('close_loop')
+				parameters: writeToolParameters('memory_close_loop')
 			}
 		},
 		{
 			type: 'function',
 			function: {
-				name: 'forget_attribute',
+				name: 'memory_forget_attribute',
 				description:
-					'Retire (tombstone) an EXISTING attribute fact that has no natural supersede. Use ONLY in two cases: (a) after you split a compound attribute into granular facts under NEW predicates (e.g. a single description="tall, red hair, fears water" replaced by build/hair/fears) — forget the original compound predicate, which nothing superseded; or (b) the user EXPLICITLY retracted a trait with no replacement. Otherwise prefer supersede: re-asserting the same entityKey+predicate via remember_attributes retires the old value automatically — do NOT forget just to tidy. Target by `handle` (the fact\'s [id=...]) OR by `entityKey`+`predicate`.',
-				parameters: writeToolParameters('forget_attribute')
+					'Retire (tombstone) an EXISTING attribute fact that has no natural supersede. Use ONLY in two cases: (a) after you split a compound attribute into granular facts under NEW predicates (e.g. a single description="tall, red hair, fears water" replaced by build/hair/fears) — forget the original compound predicate, which nothing superseded; or (b) the user EXPLICITLY retracted a trait with no replacement. Otherwise prefer supersede: re-asserting the same entityKey+predicate via memory_set_attributes retires the old value automatically — do NOT forget just to tidy. Target by `handle` (the fact\'s [id=...]) OR by `entityKey`+`predicate`.',
+				parameters: writeToolParameters('memory_forget_attribute')
 			}
 		},
 		{
 			type: 'function',
 			function: {
-				name: 'forget_directive',
+				name: 'memory_forget_directive',
 				description:
-					'Retire (tombstone) an EXISTING directive the user EXPLICITLY retracted with no replacement, by its [id=...] handle. When the user instead OVERRIDES a rule, record the replacement with remember_directive rather than forgetting. Never forget a directive merely to tidy.',
-				parameters: writeToolParameters('forget_directive')
+					'Retire (tombstone) an EXISTING directive the user EXPLICITLY retracted with no replacement, by its [id=...] handle. When the user instead OVERRIDES a rule, record the replacement with memory_add_directive rather than forgetting. Never forget a directive merely to tidy.',
+				parameters: writeToolParameters('memory_forget_directive')
 			}
 		}
 	];
@@ -673,17 +675,17 @@ export function createWriteToolHandlers(
 	const isPresentedHandle = (handle: string): boolean =>
 		presentedLoops.some((loop) => loop.id === handle || loop.loopKey === handle);
 
-	// remember_directive / remember_event / remember_loop. Each maps to a single
+	// memory_add_directive / memory_record_event / memory_open_loop. Each maps to a single
 	// fact kind: build a one-item fragment with the kind injected, validate it
 	// with MemoryPatchInputSchema (canonical input), normalize that into the
 	// internal patch the commit path consumes (same code, no schema drift), and
 	// stage it. A bad call stages nothing, so a correction replaces it rather
 	// than duplicating. (Attributes use the dedicated batch handler below.)
-	const handleRemember =
-		(tool: RememberToolName) =>
+	const handleSingleFactWrite =
+		(tool: SingleFactWriteToolName) =>
 		async (rawArgs: unknown): Promise<string> => {
 			deps.onProposeCall();
-			const kind = REMEMBER_TOOL_KINDS[tool];
+			const kind = SINGLE_FACT_WRITE_KINDS[tool];
 			const args = (rawArgs ?? {}) as Record<string, unknown>;
 			const parsed = MemoryPatchInputSchema.safeParse({ facts: [{ kind, ...args }] });
 			if (!parsed.success) {
@@ -726,18 +728,18 @@ export function createWriteToolHandlers(
 			);
 		};
 
-	// remember_attributes: the sole entity constructor AND the batch attribute
+	// memory_set_attributes: the sole entity constructor AND the batch attribute
 	// writer. Optional top-level entity metadata (entityType/displayName/summary/
 	// metadata) records the durable referent in the SAME call; entityKey is
 	// hoisted (shared by every attribute item). The entity is a WHOLE-CALL gate:
 	// if metadata is present but invalid, nothing stages (including attributes).
 	// A valid entity stages, then each attribute item is validated INDEPENDENTLY
 	// so one malformed trait can't sink the batch — valid items stage and invalid
-	// ones are reported by index (partial acceptance, like keep_loops). Each item
+	// ones are reported by index (partial acceptance, like memory_keep_loops). Each item
 	// may carry an optional paired event (`event` + optional `eventType`), staged
 	// as a sibling event fact. `attributes` may be omitted for a metadata-only
 	// call; a call must supply attributes and/or entity metadata.
-	const handleRememberAttributes = async (rawArgs: unknown): Promise<string> => {
+	const handleSetAttributes = async (rawArgs: unknown): Promise<string> => {
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
 		const topEntityKey = typeof args.entityKey === 'string' ? args.entityKey : undefined;
@@ -754,7 +756,7 @@ export function createWriteToolHandlers(
 		if (items !== undefined && !Array.isArray(items)) {
 			deps.onReject();
 			return writeError(
-				'remember_attributes',
+				'memory_set_attributes',
 				'validation',
 				'schema_invalid',
 				'`attributes` must be an array of { predicate, value } items.',
@@ -777,7 +779,7 @@ export function createWriteToolHandlers(
 		if (itemList.length === 0 && !hasEntityMeta) {
 			deps.onReject();
 			return writeError(
-				'remember_attributes',
+				'memory_set_attributes',
 				'validation',
 				'schema_invalid',
 				'Provide a non-empty `attributes` array and/or entity metadata (entityType + displayName).',
@@ -804,7 +806,7 @@ export function createWriteToolHandlers(
 			if (!topEntityKey) {
 				deps.onReject();
 				return writeError(
-					'remember_attributes',
+					'memory_set_attributes',
 					'validation',
 					'schema_invalid',
 					'Entity metadata (entityType/displayName/summary/metadata) requires `entityKey`.',
@@ -831,7 +833,7 @@ export function createWriteToolHandlers(
 			if (!parsed.success) {
 				deps.onReject();
 				return writeError(
-					'remember_attributes',
+					'memory_set_attributes',
 					'validation',
 					'schema_invalid',
 					'Entity metadata did not match its schema (entityType and displayName are both required to record the entity).',
@@ -846,7 +848,7 @@ export function createWriteToolHandlers(
 			if (entityErrors.length) {
 				deps.onReject();
 				return writeError(
-					'remember_attributes',
+					'memory_set_attributes',
 					'validation',
 					'semantic_invalid',
 					'Entity metadata is well-formed but not acceptable.',
@@ -991,7 +993,7 @@ export function createWriteToolHandlers(
 			// purpose — so exclude them from the "not staged" failure count.
 			const failed = results.filter((result) => !result.staged && !result.unchanged).length;
 			return writeError(
-				'remember_attributes',
+				'memory_set_attributes',
 				'validation',
 				'batch_partial',
 				`${failed} of ${itemList.length} attribute(s) were not staged.`,
@@ -1023,7 +1025,7 @@ export function createWriteToolHandlers(
 				: `Staged the new/changed item(s). ${redundantCount} attribute(s) were already stored unchanged and were skipped — do not re-assert values already shown in the initial packet. Nothing commits until you finish.`
 			: undefined;
 		return writeSuccess(
-			'remember_attributes',
+			'memory_set_attributes',
 			'created',
 			accepted,
 			stagedTotals(staged),
@@ -1033,7 +1035,7 @@ export function createWriteToolHandlers(
 		);
 	};
 
-	// keep_loops: batch anti-aging reaffirm. Only handles for loops actually
+	// memory_keep_loops: batch anti-aging reaffirm. Only handles for loops actually
 	// presented this turn are staged; unknown handles are reported per-handle so
 	// the model can correct them (partial success is first-class).
 	const handleKeepLoops = async (rawArgs: unknown): Promise<string> => {
@@ -1047,7 +1049,7 @@ export function createWriteToolHandlers(
 		) {
 			deps.onReject();
 			return writeError(
-				'keep_loops',
+				'memory_keep_loops',
 				'validation',
 				'schema_invalid',
 				'`handles` must be a non-empty array of open-loop handle strings.',
@@ -1079,7 +1081,7 @@ export function createWriteToolHandlers(
 		if (unknown.length) {
 			deps.onReject();
 			return writeError(
-				'keep_loops',
+				'memory_keep_loops',
 				'execution',
 				'unknown_handles',
 				`${unknown.length} of ${strHandles.length} handle(s) are not presented open loops.`,
@@ -1094,12 +1096,12 @@ export function createWriteToolHandlers(
 				{ results }
 			);
 		}
-		return writeSuccess('keep_loops', 'kept', { handles: known }, stagedTotals(staged), [], {
+		return writeSuccess('memory_keep_loops', 'kept', { handles: known }, stagedTotals(staged), [], {
 			results
 		});
 	};
 
-	// close_loop: retire one existing loop. Existence is checked via the same
+	// memory_close_loop: retire one existing loop. Existence is checked via the same
 	// key-or-id resolution validatePatch uses; an unresolved handle is surfaced
 	// as an execution error (not silently staged as a no-op).
 	const handleCloseLoop = async (rawArgs: unknown): Promise<string> => {
@@ -1114,10 +1116,10 @@ export function createWriteToolHandlers(
 				issue.field === 'id' ? { ...issue, field: 'handle' } : issue
 			);
 			return writeError(
-				'close_loop',
+				'memory_close_loop',
 				'validation',
 				'schema_invalid',
-				'Arguments for close_loop did not match its schema.',
+				'Arguments for memory_close_loop did not match its schema.',
 				issues,
 				args,
 				stagedTotals(staged)
@@ -1131,7 +1133,7 @@ export function createWriteToolHandlers(
 		if (unknown) {
 			deps.onReject();
 			return writeError(
-				'close_loop',
+				'memory_close_loop',
 				'execution',
 				'unknown_loop',
 				`No open loop matches handle "${String(args.handle)}".`,
@@ -1151,10 +1153,10 @@ export function createWriteToolHandlers(
 		if (errors.length) {
 			deps.onReject();
 			return writeError(
-				'close_loop',
+				'memory_close_loop',
 				'validation',
 				'semantic_invalid',
-				'close_loop arguments are well-formed but not acceptable.',
+				'memory_close_loop arguments are well-formed but not acceptable.',
 				semanticToWriteIssues(errors),
 				args,
 				stagedTotals(staged)
@@ -1167,7 +1169,7 @@ export function createWriteToolHandlers(
 		const canonical: Record<string, unknown> = { handle: cl.id, status: cl.status };
 		if (cl.reason !== undefined) canonical.reason = cl.reason;
 		return writeSuccess(
-			'close_loop',
+			'memory_close_loop',
 			'closed',
 			canonical,
 			stagedTotals(staged),
@@ -1175,13 +1177,13 @@ export function createWriteToolHandlers(
 		);
 	};
 
-	// forget_attribute: retire an existing ATTRIBUTE fact, addressed by handle
+	// memory_forget_attribute: retire an existing ATTRIBUTE fact, addressed by handle
 	// ([id=...]) or by entityKey+predicate. Resolution runs against committed
 	// memory the same way commitPatch resolves it (re-checked again at commit, so
 	// a handle a sibling call deletes this turn is skipped there too). Two
 	// guardrails keep it attribute-only: a `predicate` of `directive` is refused
 	// up front, and a handle that resolves to a directive fact is refused with a
-	// redirect to forget_directive.
+	// redirect to memory_forget_directive.
 	const handleForgetAttribute = async (rawArgs: unknown): Promise<string> => {
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -1198,7 +1200,7 @@ export function createWriteToolHandlers(
 		if (!handle && !(entityKey && predicate)) {
 			deps.onReject();
 			return writeError(
-				'forget_attribute',
+				'memory_forget_attribute',
 				'validation',
 				'schema_invalid',
 				"Provide either `handle` (the fact's [id=...]) or BOTH `entityKey` and `predicate`.",
@@ -1217,7 +1219,7 @@ export function createWriteToolHandlers(
 		if (predicate && isDirectivePredicate(predicate)) {
 			deps.onReject();
 			return writeError(
-				'forget_attribute',
+				'memory_forget_attribute',
 				'execution',
 				'is_directive',
 				'That predicate names a directive, not an attribute.',
@@ -1225,8 +1227,8 @@ export function createWriteToolHandlers(
 					{
 						field: 'predicate',
 						code: 'is_directive',
-						message: 'Directives are retired with forget_directive.',
-						hint: "Call forget_directive with the directive's [id=...] handle instead."
+						message: 'Directives are retired with memory_forget_directive.',
+						hint: "Call memory_forget_directive with the directive's [id=...] handle instead."
 					}
 				],
 				args,
@@ -1238,7 +1240,7 @@ export function createWriteToolHandlers(
 		if (!resolved) {
 			deps.onReject();
 			return writeError(
-				'forget_attribute',
+				'memory_forget_attribute',
 				'execution',
 				'unknown_fact',
 				handle
@@ -1259,7 +1261,7 @@ export function createWriteToolHandlers(
 		if (resolved.isDirective) {
 			deps.onReject();
 			return writeError(
-				'forget_attribute',
+				'memory_forget_attribute',
 				'execution',
 				'is_directive',
 				'That handle points to a directive, not an attribute.',
@@ -1267,8 +1269,8 @@ export function createWriteToolHandlers(
 					{
 						field: 'handle',
 						code: 'is_directive',
-						message: 'Directives are retired with forget_directive.',
-						hint: 'Call forget_directive with this [id=...] handle instead.'
+						message: 'Directives are retired with memory_forget_directive.',
+						hint: 'Call memory_forget_directive with this [id=...] handle instead.'
 					}
 				],
 				args,
@@ -1277,13 +1279,19 @@ export function createWriteToolHandlers(
 		}
 		staged.push({ forgetFacts: [target] });
 		const canonical: Record<string, unknown> = handle ? { handle } : { entityKey, predicate };
-		return writeSuccess('forget_attribute', 'forgotten', canonical, stagedTotals(staged), []);
+		return writeSuccess(
+			'memory_forget_attribute',
+			'forgotten',
+			canonical,
+			stagedTotals(staged),
+			[]
+		);
 	};
 
-	// forget_directive: retire an existing DIRECTIVE fact by handle only
+	// memory_forget_directive: retire an existing DIRECTIVE fact by handle only
 	// (directives are global, sharing the reserved `directive` predicate, so the
 	// [id=...] handle is the sole selector). A handle that resolves to a
-	// non-directive fact is refused with a redirect to forget_attribute.
+	// non-directive fact is refused with a redirect to memory_forget_attribute.
 	const handleForgetDirective = async (rawArgs: unknown): Promise<string> => {
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -1292,7 +1300,7 @@ export function createWriteToolHandlers(
 		if (!handle) {
 			deps.onReject();
 			return writeError(
-				'forget_directive',
+				'memory_forget_directive',
 				'validation',
 				'schema_invalid',
 				"`handle` is required — the directive fact's [id=...] handle.",
@@ -1312,7 +1320,7 @@ export function createWriteToolHandlers(
 		if (!resolved) {
 			deps.onReject();
 			return writeError(
-				'forget_directive',
+				'memory_forget_directive',
 				'execution',
 				'unknown_fact',
 				`No active fact matches handle "${handle}".`,
@@ -1331,7 +1339,7 @@ export function createWriteToolHandlers(
 		if (!resolved.isDirective) {
 			deps.onReject();
 			return writeError(
-				'forget_directive',
+				'memory_forget_directive',
 				'execution',
 				'not_directive',
 				'That handle points to an attribute, not a directive.',
@@ -1339,8 +1347,8 @@ export function createWriteToolHandlers(
 					{
 						field: 'handle',
 						code: 'not_directive',
-						message: 'Attributes are retired with forget_attribute.',
-						hint: 'Call forget_attribute with this handle (or entityKey+predicate) instead.'
+						message: 'Attributes are retired with memory_forget_attribute.',
+						hint: 'Call memory_forget_attribute with this handle (or entityKey+predicate) instead.'
 					}
 				],
 				args,
@@ -1348,7 +1356,13 @@ export function createWriteToolHandlers(
 			);
 		}
 		staged.push({ forgetFacts: [{ factId: handle }] });
-		return writeSuccess('forget_directive', 'forgotten', { handle }, stagedTotals(staged), []);
+		return writeSuccess(
+			'memory_forget_directive',
+			'forgotten',
+			{ handle },
+			stagedTotals(staged),
+			[]
+		);
 	};
 
 	// Per-run signature -> times-seen counter. A tool-calling extractor can get
@@ -1367,16 +1381,22 @@ export function createWriteToolHandlers(
 		};
 
 	const handlers = new Map<string, (args: unknown) => Promise<string>>();
-	for (const tool of Object.keys(REMEMBER_TOOL_KINDS) as RememberToolName[]) {
-		handlers.set(tool, withDuplicateNudge(tool, handleRemember(tool)));
+	for (const tool of Object.keys(SINGLE_FACT_WRITE_KINDS) as SingleFactWriteToolName[]) {
+		handlers.set(tool, withDuplicateNudge(tool, handleSingleFactWrite(tool)));
 	}
 	handlers.set(
-		'remember_attributes',
-		withDuplicateNudge('remember_attributes', handleRememberAttributes)
+		'memory_set_attributes',
+		withDuplicateNudge('memory_set_attributes', handleSetAttributes)
 	);
-	handlers.set('keep_loops', withDuplicateNudge('keep_loops', handleKeepLoops));
-	handlers.set('close_loop', withDuplicateNudge('close_loop', handleCloseLoop));
-	handlers.set('forget_attribute', withDuplicateNudge('forget_attribute', handleForgetAttribute));
-	handlers.set('forget_directive', withDuplicateNudge('forget_directive', handleForgetDirective));
+	handlers.set('memory_keep_loops', withDuplicateNudge('memory_keep_loops', handleKeepLoops));
+	handlers.set('memory_close_loop', withDuplicateNudge('memory_close_loop', handleCloseLoop));
+	handlers.set(
+		'memory_forget_attribute',
+		withDuplicateNudge('memory_forget_attribute', handleForgetAttribute)
+	);
+	handlers.set(
+		'memory_forget_directive',
+		withDuplicateNudge('memory_forget_directive', handleForgetDirective)
+	);
 	return handlers;
 }

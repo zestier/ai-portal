@@ -838,7 +838,7 @@ describe('turn-runner', () => {
 										index: 0,
 										id: 'call-1',
 										function: {
-											name: 'remember_attributes',
+											name: 'memory_set_attributes',
 											arguments: JSON.stringify({
 												entityKey: 'migrations',
 												attributes: [
@@ -933,7 +933,7 @@ describe('turn-runner', () => {
 			expect(parent?.backgroundAgentStatus).toBe('completed');
 			expect(parent?.backgroundAgentId).toBeTruthy();
 			const child = assistant?.toolCalls?.find(
-				(t) => t.parentToolCallId === parent?.id && t.tool === 'remember_attributes'
+				(t) => t.parentToolCallId === parent?.id && t.tool === 'memory_set_attributes'
 			);
 			expect(child).toBeTruthy();
 			expect(child?.status).toBe('ok');
@@ -1082,14 +1082,14 @@ describe('turn-runner', () => {
 				workingDirectory: wd,
 				async *send(): AsyncIterable<PortalEvent> {
 					sendCount += 1;
-					// A write tool (memory_global_remember) with no user-facing
+					// A write tool (memory_global_record) with no user-facing
 					// text is NOT the recall-then-nothing failure mode, so the
 					// guard must leave it alone.
 					yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
 					yield {
 						type: 'tool.call',
 						toolCallId: 'w-1',
-						tool: 'memory_global_remember',
+						tool: 'memory_global_record',
 						args: { text: 'user prefers metric units' }
 					};
 					yield {
@@ -1352,7 +1352,7 @@ describe('turn-runner', () => {
 										index: 0,
 										id: 'call-1',
 										function: {
-											name: 'remember_attributes',
+											name: 'memory_set_attributes',
 											arguments: JSON.stringify({
 												entityKey: 'migrations',
 												attributes: [
@@ -1474,7 +1474,7 @@ describe('turn-runner', () => {
 										index: 0,
 										id: 'call-1',
 										function: {
-											name: 'remember_attributes',
+											name: 'memory_set_attributes',
 											arguments: JSON.stringify({
 												entityKey: 'migrations',
 												attributes: [
