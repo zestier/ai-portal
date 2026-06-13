@@ -37,20 +37,30 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		throw error(403, 'Redeploy requires an authorized redeploy admin.');
 	}
 	if (inFlight) throw error(409, 'A redeploy is already in progress.');
-
-	const { pull } = await parseBody(request, Body, { allowEmpty: true });
-
-	const steps: Step[] = pull ? [...PULL_STEPS, ...BUILD_STEPS] : BUILD_STEPS;
+	// Claim the guard synchronously, before any `await`, so a second concurrent
+	// POST can't slip past the check above while we're parsing the body.
 	inFlight = true;
-	log.info('redeploy.start', { userId, pull });
 
-	async function* withInFlightReset() {
-		try {
-			yield* runRedeploy(steps);
-		} finally {
-			inFlight = false;
+	try {
+		const { pull } = await parseBody(request, Body, { allowEmpty: true });
+
+		const steps: Step[] = pull ? [...PULL_STEPS, ...BUILD_STEPS] : BUILD_STEPS;
+		log.info('redeploy.start', { userId, pull });
+
+		async function* withInFlightReset() {
+			try {
+				yield* runRedeploy(steps);
+			} finally {
+				inFlight = false;
+			}
 		}
-	}
 
-	return sseResponse(withInFlightReset());
+		return sseResponse(withInFlightReset());
+	} catch (err) {
+		// If anything throws before the generator starts iterating (e.g. body
+		// parse error, or a synchronous throw from sseResponse), release the
+		// guard here — otherwise the flag would stick true until restart.
+		inFlight = false;
+		throw err;
+	}
 };
