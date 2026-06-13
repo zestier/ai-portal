@@ -14,6 +14,7 @@ import {
 	type ProviderStatusSnapshot
 } from '$lib/server/providers/status';
 import { providerAuthToken } from '$lib/server/providers/auth';
+import { resolveAndValidate } from '$lib/server/workdir';
 import { loadConfig } from '$lib/server/config';
 import { getDeployMetadata } from '$lib/server/deploy';
 import { log } from '$lib/server/log';
@@ -181,6 +182,16 @@ export const actions: Actions = {
 				error: parsed.error.issues[0]?.message ?? 'Invalid settings',
 				formId: 'save'
 			};
+		}
+		if (parsed.data.defaultWorkdir) {
+			const res = resolveAndValidate(parsed.data.defaultWorkdir);
+			if (!res.ok) {
+				return {
+					ok: false,
+					error: `Invalid default working directory: ${res.reason}`,
+					formId: 'save'
+				};
+			}
 		}
 		const next: UserSettings = {
 			defaultProvider: normalizeBackendProvider(parsed.data.defaultProvider),
