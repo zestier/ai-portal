@@ -19,6 +19,7 @@ import {
 import { MemoryExtractorHttpError, readJsonResponse } from './streaming';
 import { sanitizePatch } from './sanitize';
 import { buildExtractorPrompt } from './prompts';
+import { log } from '$lib/server/log';
 import type { ExtractPatchInput, ExtractPatchResult, Diagnostic, MemoryExtractor } from './types';
 
 interface OpenAICompatibleExtractorOptions {
@@ -143,7 +144,10 @@ function parseEnvelope(raw: unknown): ModelEnvelope {
 		if (!json) return {};
 		try {
 			return JSON.parse(json) as ModelEnvelope;
-		} catch {
+		} catch (error) {
+			log.warn('memory.extractor.single_shot_json_parse_failed', {
+				error: error instanceof Error ? error.message : String(error)
+			});
 			return {};
 		}
 	}
@@ -168,9 +172,35 @@ function extractJsonObject(text: string): string | null {
 	const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
 	const candidate = fenced?.[1] ?? text;
 	const start = candidate.indexOf('{');
-	const end = candidate.lastIndexOf('}');
-	if (start === -1 || end === -1 || end <= start) return null;
-	return candidate.slice(start, end + 1);
+	if (start === -1) return null;
+	// Depth-counting scan from the first `{` to its matching `}`, so trailing
+	// prose after the JSON object (e.g. `{...} Let me know if...`) is ignored.
+	// Track string state and escapes so braces inside string values don't count.
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let i = start; i < candidate.length; i++) {
+		const char = candidate[i];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (char === '\\') {
+				escaped = true;
+			} else if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+		} else if (char === '{') {
+			depth++;
+		} else if (char === '}') {
+			depth--;
+			if (depth === 0) return candidate.slice(start, i + 1);
+		}
+	}
+	return null;
 }
 
 async function requestOpenAICompatibleJson(
