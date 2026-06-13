@@ -155,6 +155,11 @@ describe('shell predicate — flag deny', () => {
 		expect(match(rule, 'git --work-tree=/tmp status')).toBe(false);
 	});
 
+	it('rejects denied short option in compact form', () => {
+		expect(match(rule, 'git -C/etc status')).toBe(false);
+		expect(match(rule, 'git -C/other/dir status')).toBe(false);
+	});
+
 	it('still inspects flags that appear before the subcommand', () => {
 		expect(match(rule, 'git --no-pager status -sb')).toBe(true);
 		expect(match(rule, 'git --no-pager -C /etc status')).toBe(false);

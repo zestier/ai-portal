@@ -192,6 +192,7 @@ function matchesDeniedOption(tok: string, denied: readonly string[] | undefined)
 	if (!denied) return false;
 	for (const name of denied) {
 		if (tok === name || tok.startsWith(name + '=')) return true;
+		if (/^-[^-]$/.test(name) && tok.startsWith(name)) return true;
 	}
 	return false;
 }
