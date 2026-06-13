@@ -74,11 +74,18 @@ front if you need rate limiting.
 
 ### `none`
 
-Disables auth. **Only** honored when `HOST=127.0.0.1` (or `0.0.0.0`) *and*
-an explicit `I_KNOW_THIS_IS_LOCAL=1` is set. Refuses to start otherwise.
-Use `0.0.0.0` only when reachability is fenced off some other way — e.g.
-a container with no published port, a private network, or an
-authenticating reverse proxy in front.
+Disables auth. Refuses to start unless the bind address carries its
+matching acknowledgement:
+
+- `HOST=127.0.0.1` (loopback, the safe default) requires `I_KNOW_THIS_IS_LOCAL=1`.
+- `HOST=0.0.0.0` (every interface) requires `I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1`.
+  This is the stronger acknowledgement and stands on its own — you do **not**
+  also set `I_KNOW_THIS_IS_LOCAL`.
+
+Any other `HOST` is rejected. Use `0.0.0.0` only when reachability is fenced
+off some other way — e.g. a container with no published port, a private
+network, or an authenticating reverse proxy / tunnel (Cloudflare Access) in
+front.
 
 ## Session cookies
 

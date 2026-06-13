@@ -13,6 +13,7 @@ const baseCfg: AppConfig = {
 	SESSION_SECRET: 'x'.repeat(32),
 	ENCRYPTION_KEY: undefined,
 	I_KNOW_THIS_IS_LOCAL: false,
+	I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: false,
 	GITHUB_CLIENT_ID: 'client',
 	GITHUB_CLIENT_SECRET: 'secret',
 	ALLOWED_GITHUB_LOGINS: ['alice', 'bob'],

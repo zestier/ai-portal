@@ -269,8 +269,8 @@ pnpm run dev                     # SvelteKit dev server on :5173
 
 For dev, use a separate GitHub OAuth app pointing at
 `http://127.0.0.1:5173/auth/callback`. Set `AUTH_MODE=shared-secret` or
-`AUTH_MODE=none` (with `HOST=127.0.0.1` + `I_KNOW_THIS_IS_LOCAL=1`) for
-faster iteration.
+`AUTH_MODE=none` (loopback dev: `HOST=127.0.0.1` + `I_KNOW_THIS_IS_LOCAL=1`)
+for faster iteration.
 
 For agent-driven exploratory testing, use `pnpm run dev:isolated` so
 the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).

@@ -40,6 +40,15 @@ const Schema = z
 			.string()
 			.optional()
 			.transform((v) => v === '1' || v === 'true'),
+		// Opt-in required to bind every interface (HOST=0.0.0.0) under
+		// AUTH_MODE=none. Binding all interfaces with zero auth is far riskier
+		// than loopback, so it demands its own unmistakable acknowledgement.
+		// It is the *stronger* assertion and stands alone — operators on
+		// 0.0.0.0 set this instead of (not in addition to) I_KNOW_THIS_IS_LOCAL.
+		I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: z
+			.string()
+			.optional()
+			.transform((v) => v === '1' || v === 'true'),
 
 		GITHUB_CLIENT_ID: z.string().optional(),
 		GITHUB_CLIENT_SECRET: z.string().optional(),
@@ -118,16 +127,37 @@ const Schema = z
 	})
 	.superRefine((cfg, ctx) => {
 		if (cfg.AUTH_MODE === 'none') {
-			// 127.0.0.1: loopback-only, the safe default.
-			// 0.0.0.0: every interface — only acceptable when the operator
-			// has fenced the listener off some other way (container with no
-			// published port, private network, authenticating reverse proxy).
-			// Still gated on the explicit I_KNOW_THIS_IS_LOCAL opt-in.
-			const allowedHosts = new Set(['127.0.0.1', '0.0.0.0']);
-			if (!cfg.I_KNOW_THIS_IS_LOCAL || !allowedHosts.has(cfg.HOST)) {
+			// Each bind address has exactly one acknowledgement flag:
+			//   127.0.0.1 (loopback, the safe default) -> I_KNOW_THIS_IS_LOCAL
+			//   0.0.0.0   (every interface)             -> I_KNOW_THIS_IS_NETWORK_ACCESSIBLE
+			// The network flag is the stronger assertion and stands on its own
+			// (no need to also set I_KNOW_THIS_IS_LOCAL). 0.0.0.0 is only
+			// acceptable when reachability is fenced off some other way — a
+			// container with no published port, a private network, or an
+			// authenticating reverse proxy in front. Any other HOST is rejected.
+			if (cfg.HOST === '0.0.0.0') {
+				if (!cfg.I_KNOW_THIS_IS_NETWORK_ACCESSIBLE) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message:
+							'AUTH_MODE=none with HOST=0.0.0.0 binds every interface with no auth; ' +
+							'set I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1 to acknowledge, or use ' +
+							'HOST=127.0.0.1 with I_KNOW_THIS_IS_LOCAL=1 for loopback-only access.'
+					});
+				}
+			} else if (cfg.HOST === '127.0.0.1') {
+				if (!cfg.I_KNOW_THIS_IS_LOCAL) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: 'AUTH_MODE=none (loopback, no auth) requires I_KNOW_THIS_IS_LOCAL=1.'
+					});
+				}
+			} else {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: 'AUTH_MODE=none requires HOST=127.0.0.1 (or 0.0.0.0) and I_KNOW_THIS_IS_LOCAL=1.'
+					message:
+						'AUTH_MODE=none requires HOST=127.0.0.1 (with I_KNOW_THIS_IS_LOCAL=1) ' +
+						'or HOST=0.0.0.0 (with I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1).'
 				});
 			}
 		} else {
