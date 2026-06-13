@@ -103,9 +103,29 @@ async function disposeSession(
 }
 
 export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSession> {
-	const existing = sessions.get(opts.conversationId);
+	// Coalesce concurrent acquires for the same conversation. Checked
+	// before the `existing` branch (and before any `await`) so two racing
+	// acquires for the same conversation — including a pair that both see a
+	// session mismatch — can't both dispose the cached session and both
+	// open a fresh one. Without this, the loser's session is orphaned (its
+	// subprocess stays alive but nothing references it).
+	const pending = inflight.get(opts.conversationId);
+	if (pending) return pending;
+
 	const requestedProvider = opts.provider ?? getDefaultProviderId();
 	const requestedProviderSessionId = opts.providerSessionId ?? opts.conversationId;
+
+	// Sessions to tear down once the new open is in flight. Map mutations
+	// (claiming the stale entry / eviction victim) happen synchronously
+	// below so a concurrent acquire can never observe — and re-dispose —
+	// something we've already claimed; the awaited disconnect runs inside
+	// the coalesced open promise.
+	const toDispose: Array<{
+		session: ProviderSession;
+		context: { conversationId: string; reason: string };
+	}> = [];
+
+	const existing = sessions.get(opts.conversationId);
 	if (existing) {
 		const cachedProvider = existing.session.provider ?? getDefaultProviderId();
 		const cachedProviderSessionId =
@@ -130,20 +150,20 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 			cachedProviderSessionId,
 			requestedProviderSessionId
 		});
-		await disposeSession(existing.session, {
-			conversationId: opts.conversationId,
-			reason: 'session_mismatch'
-		});
+		// Claim the stale entry synchronously, then dispose it inside the
+		// coalesced open below.
 		sessions.delete(opts.conversationId);
+		toDispose.push({
+			session: existing.session,
+			context: { conversationId: opts.conversationId, reason: 'session_mismatch' }
+		});
 	}
-	// Coalesce concurrent acquires for the same conversation. Without
-	// this, two callers can both miss the cache, both await open(), and
-	// the loser's session is orphaned (its subprocess stays alive but
-	// nothing references it).
-	const pending = inflight.get(opts.conversationId);
-	if (pending) return pending;
+
 	const cfg = loadConfig();
-	if (sessions.size >= cfg.MAX_CONCURRENT_SESSIONS) {
+	// Count in-flight opens alongside live sessions: each pending open will
+	// become a live session, so ignoring them lets N concurrent opens for N
+	// new conversations all pass the guard and blow past the cap.
+	if (sessions.size + inflight.size >= cfg.MAX_CONCURRENT_SESSIONS) {
 		// Evict to make room. Prefer the oldest session with NO work
 		// outstanding so we never strand an open prompt / active turn. Only
 		// if every session is busy do we force-evict the oldest one — and
@@ -152,32 +172,47 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 		// of hanging on a deferred whose executor we just disposed.
 		const sorted = [...sessions.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 		const unprotected = sorted.find(([cid]) => !isProtected(cid));
-		const [oldestId, oldest] = unprotected ?? sorted[0];
-		if (unprotected) {
-			log.info('copilot.pool.evict', { conversationId: oldestId });
-		} else {
-			log.warn('copilot.pool.evict_forced', { conversationId: oldestId });
-			// Settle the parked deferreds BEFORE disposing so the resolved
-			// event lands and the SDK callback's promise can't leak.
-			expireConversation(oldestId, 'capacity_evict');
+		const picked = unprotected ?? sorted[0];
+		// `picked` can be undefined when every slot is consumed by in-flight
+		// opens (nothing live left to evict); there's nothing we can do but
+		// let this open proceed.
+		if (picked) {
+			const [oldestId, oldest] = picked;
+			// Claim the victim synchronously so a concurrent eviction can't
+			// pick the same oldest session and double-dispose it.
+			sessions.delete(oldestId);
+			if (unprotected) {
+				log.info('copilot.pool.evict', { conversationId: oldestId });
+			} else {
+				log.warn('copilot.pool.evict_forced', { conversationId: oldestId });
+				// Settle the parked deferreds BEFORE disposing so the resolved
+				// event lands and the SDK callback's promise can't leak.
+				expireConversation(oldestId, 'capacity_evict');
+			}
+			toDispose.push({
+				session: oldest.session,
+				context: {
+					conversationId: oldestId,
+					reason: unprotected ? 'capacity_evict' : 'capacity_evict_forced'
+				}
+			});
 		}
-		await disposeSession(oldest.session, {
-			conversationId: oldestId,
-			reason: unprotected ? 'capacity_evict' : 'capacity_evict_forced'
-		});
-		sessions.delete(oldestId);
 	}
-	const openPromise = open(opts).then(
-		(session) => {
+
+	const openPromise = (async () => {
+		try {
+			// Disconnect the claimed sessions before opening, preserving the
+			// original ordering (stale session first, then eviction victim).
+			for (const { session, context } of toDispose) {
+				await disposeSession(session, context);
+			}
+			const session = await open(opts);
 			sessions.set(opts.conversationId, { session, lastUsed: Date.now() });
-			inflight.delete(opts.conversationId);
 			return session;
-		},
-		(err) => {
+		} finally {
 			inflight.delete(opts.conversationId);
-			throw err;
 		}
-	);
+	})();
 	inflight.set(opts.conversationId, openPromise);
 	return openPromise;
 }
