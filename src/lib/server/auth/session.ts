@@ -1,7 +1,7 @@
 // Session cookie: HMAC-SHA256-signed compact JSON.
 // Format: base64url(JSON({sub, iat, exp})).base64url(HMAC).
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Cookies } from '@sveltejs/kit';
 import { loadConfig } from '../config';
 
@@ -22,14 +22,33 @@ function b64uDecode(s: string): Buffer {
 	return Buffer.from(s, 'base64url');
 }
 
+// HKDF parameters for deriving the session signing key. The fixed `info`
+// string provides domain separation and a versioned anchor for future key
+// rotation. Changing it invalidates all existing session cookies.
+const HKDF_INFO = 'portal-session-v1';
+const HKDF_SALT = Buffer.alloc(0);
+const SIGNING_KEY_LEN = 32;
+
+// Memoize the derived key per source secret so that test config resets (which
+// swap SESSION_SECRET) re-derive, while normal operation derives only once.
+let cachedKey: { secret: string; key: Buffer } | null = null;
+
 function getSecret(): Buffer {
 	const cfg = loadConfig();
+	let ikm: string;
 	if (cfg.AUTH_MODE === 'none') {
 		// Stable but uniqueless; only used to sign the local-user cookie.
-		return Buffer.from('local-dev-session-key-not-secure-do-not-expose');
+		ikm = 'local-dev-session-key-not-secure-do-not-expose';
+	} else {
+		if (!cfg.SESSION_SECRET) throw new Error('SESSION_SECRET not configured');
+		ikm = cfg.SESSION_SECRET;
 	}
-	if (!cfg.SESSION_SECRET) throw new Error('SESSION_SECRET not configured');
-	return Buffer.from(cfg.SESSION_SECRET, 'utf8');
+	if (cachedKey && cachedKey.secret === ikm) return cachedKey.key;
+	const key = Buffer.from(
+		hkdfSync('sha256', Buffer.from(ikm, 'utf8'), HKDF_SALT, HKDF_INFO, SIGNING_KEY_LEN)
+	);
+	cachedKey = { secret: ikm, key };
+	return key;
 }
 
 export function sign(claims: Claims): string {
