@@ -537,8 +537,17 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 						};
 						const tag = `${parsed.tool ?? call.name}:${parsed.error?.code ?? 'unknown'}`;
 						rejectionTags[tag] = (rejectionTags[tag] ?? 0) + 1;
-						if (typeof parsed.failureId === 'string' && parsed.failureId)
-							outstandingFailures.add(parsed.failureId);
+						if (typeof parsed.failureId === 'string' && parsed.failureId) {
+							// Cap the model-supplied id to bound the in-memory Set,
+							// mirroring the `acknowledgedFailures` schema (maxLength: 40).
+							if (parsed.failureId.length <= 40) {
+								outstandingFailures.add(parsed.failureId);
+							} else {
+								log.warn('memory.extractor.failure_id_too_long', {
+									length: parsed.failureId.length
+								});
+							}
+						}
 					} catch {
 						// Non-JSON failure (e.g. thrown exception); ignore for tagging.
 					}
