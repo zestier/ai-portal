@@ -1,3 +1,4 @@
+import { getDb } from '$lib/server/db';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
@@ -143,15 +144,22 @@ function rerunFromUserMessage(
 	const targetIdx = all.findIndex((m) => m.id === userMessage.id);
 
 	cancelPendingInteractive(conv.id, cancelReason);
-	memoryRepo.rewindSessionMemoryLogToMessagePrefix(conv.id, {
-		messageIds: new Set(all.slice(0, targetIdx + 1).map((message) => message.id)),
-		createdBefore: all[targetIdx + 1]?.createdAt
-	});
-	const updated = messages.truncateAfterAndUpdateUserMessage(conv.id, userMessage.id, content);
-	if (!updated) throw new InlineEditRejected('message_not_found');
-	usage.remove(conv.id);
-	const providerSessionId = convs.rotateProviderSession(conv.id, userId);
-	if (!providerSessionId) throw new InlineEditRejected('conversation_not_found');
+	const updated = getDb().transaction(() => {
+		memoryRepo.rewindSessionMemoryLogToMessagePrefix(conv.id, {
+			messageIds: new Set(all.slice(0, targetIdx + 1).map((message) => message.id)),
+			createdBefore: all[targetIdx + 1]?.createdAt
+		});
+		const updatedMessage = messages.truncateAfterAndUpdateUserMessage(
+			conv.id,
+			userMessage.id,
+			content
+		);
+		if (!updatedMessage) throw new InlineEditRejected('message_not_found');
+		usage.remove(conv.id);
+		const providerSessionId = convs.rotateProviderSession(conv.id, userId);
+		if (!providerSessionId) throw new InlineEditRejected('conversation_not_found');
+		return updatedMessage;
+	})();
 
 	const refreshed = convs.get(conv.id, userId);
 	if (!refreshed) throw new InlineEditRejected('conversation_not_found');
