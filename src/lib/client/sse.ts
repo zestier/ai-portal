@@ -44,8 +44,8 @@ export async function* streamSse<T>(url: string, init: StreamSseInit = {}): Asyn
 				const payload = dataLines.join('\n');
 				try {
 					yield JSON.parse(payload) as T;
-				} catch {
-					/* ignore malformed */
+				} catch (err) {
+					console.warn('streamSse: discarding malformed SSE payload', payload, err);
 				}
 			}
 		}
