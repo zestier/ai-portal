@@ -412,4 +412,23 @@ describe('url predicate', () => {
 		expect(urlScopeMatches(scope, { url: 'https://api.github.com/a' })).toBe(true);
 		expect(urlScopeMatches(scope, { url: 'https://evilgithub.com/a' })).toBe(false);
 	});
+
+	it('host rule with mixed-case legacy value still matches lowercased runtime host', () => {
+		const scope = {
+			kind: 'url' as const,
+			rule: { kind: 'host' as const, host: 'API.GitHub.Com' }
+		};
+		expect(urlScopeMatches(scope, { url: 'https://api.github.com/a/b' })).toBe(true);
+		expect(urlScopeMatches(scope, { url: 'https://example.com/x' })).toBe(false);
+	});
+
+	it('host-suffix rule with mixed-case legacy value still matches', () => {
+		const scope = {
+			kind: 'url' as const,
+			rule: { kind: 'host-suffix' as const, suffix: 'GitHub.Com' }
+		};
+		expect(urlScopeMatches(scope, { url: 'https://github.com/a' })).toBe(true);
+		expect(urlScopeMatches(scope, { url: 'https://api.github.com/a' })).toBe(true);
+		expect(urlScopeMatches(scope, { url: 'https://evilgithub.com/a' })).toBe(false);
+	});
 });

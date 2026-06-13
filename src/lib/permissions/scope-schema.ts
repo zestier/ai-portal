@@ -131,8 +131,20 @@ export const FsScopeSchema = z
 
 const UrlRuleSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('exact'), url: z.string().min(1).url() }),
-	z.object({ kind: z.literal('host'), host: z.string().min(1) }),
-	z.object({ kind: z.literal('host-suffix'), suffix: z.string().min(1) })
+	z.object({
+		kind: z.literal('host'),
+		host: z
+			.string()
+			.min(1)
+			.transform((s) => s.toLowerCase())
+	}),
+	z.object({
+		kind: z.literal('host-suffix'),
+		suffix: z
+			.string()
+			.min(1)
+			.transform((s) => s.toLowerCase())
+	})
 ]);
 
 const UrlScopeSchema = z.object({

@@ -166,6 +166,30 @@ describe('GrantInputSchema — valid shapes', () => {
 		expect(parsed.decision).toBe('prompt');
 		expect(parsed.denyReason).toBe('Human approval required for npm scripts.');
 	});
+
+	it('lowercases url host scopes at store time', () => {
+		const parsed = GrantInputSchema.parse({
+			tool: 'url',
+			decision: 'allow',
+			scope: { kind: 'url', rule: { kind: 'host', host: 'API.GitHub.Com' } }
+		});
+		expect(parsed.scope.kind).toBe('url');
+		if (parsed.scope.kind === 'url' && parsed.scope.rule.kind === 'host') {
+			expect(parsed.scope.rule.host).toBe('api.github.com');
+		}
+	});
+
+	it('lowercases url host-suffix scopes at store time', () => {
+		const parsed = GrantInputSchema.parse({
+			tool: 'url',
+			decision: 'allow',
+			scope: { kind: 'url', rule: { kind: 'host-suffix', suffix: 'GitHub.Com' } }
+		});
+		expect(parsed.scope.kind).toBe('url');
+		if (parsed.scope.kind === 'url' && parsed.scope.rule.kind === 'host-suffix') {
+			expect(parsed.scope.rule.suffix).toBe('github.com');
+		}
+	});
 });
 
 describe('GrantInputSchema — rejections', () => {

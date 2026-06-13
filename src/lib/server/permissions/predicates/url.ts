@@ -13,12 +13,15 @@ export function urlScopeMatches(scope: UrlScope, ctx: UrlMatchContext): boolean 
 			return ctx.url === rule.url;
 		case 'host': {
 			const host = hostOf(ctx.url);
-			return host !== null && host === rule.host;
+			// Normalize the stored rule host too, so legacy grants persisted
+			// before store-time lowercasing (e.g. "GitHub.com") still match.
+			return host !== null && host === rule.host.toLowerCase();
 		}
 		case 'host-suffix': {
 			const host = hostOf(ctx.url);
 			if (host === null) return false;
-			return host === rule.suffix || host.endsWith('.' + rule.suffix);
+			const suffix = rule.suffix.toLowerCase();
+			return host === suffix || host.endsWith('.' + suffix);
 		}
 	}
 }
