@@ -26,6 +26,9 @@ export function getOrCreateGlobalSingleton<T>(keys: readonly symbol[], create: (
 
 export function setGlobalSingletonValue<T>(keys: readonly symbol[], value: T): void {
 	const globals = globalThis as unknown as GlobalSlot;
+	for (const key of keys.slice(1)) {
+		delete globals[key];
+	}
 	globals[keys[0]] = value;
 }
 
