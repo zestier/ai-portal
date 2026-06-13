@@ -149,61 +149,71 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// other in-flight work. The per-turn snapshot ref is still in the repo
 	// (`refs/portal/turns/{pre,post}/<msgId>`) for manual `git diff` /
 	// inspection if the user wants to compare states.
+	// Wrap the entire clone — conversation row, message prefix, memory replay,
+	// and the trailing user append — in a single transaction so a throw in any
+	// later step rolls back the conversation row. Without this, a failure after
+	// `convs.create()` would leave an orphaned, empty fork visible to the user.
+	// All of these helpers are synchronous better-sqlite3 calls (no `await`),
+	// and better-sqlite3 promotes the nested `.transaction()` calls inside
+	// `cloneMessagePrefix` / the repos to SAVEPOINTs, so nesting is safe.
 	const newId = convs.newId();
-	const newConv = convs.create(input.userId, {
-		id: newId,
-		title: source.title,
-		workdir: source.workdir,
-		provider: source.provider,
-		model: source.model,
-		mode: source.mode,
-		memoryMode: source.memoryMode,
-		memoryExtractorModel: source.memoryExtractorModel,
-		memoryExtractorBackend: source.memoryExtractorBackend,
-		globalMemoryEnabled: source.globalMemoryEnabled,
-		forkedFromConversationId: source.id,
-		forkedFromMessageId: target.id,
-		draftPrompt
+	const tx = getDb().transaction((): ForkResult => {
+		const newConv = convs.create(input.userId, {
+			id: newId,
+			title: source.title,
+			workdir: source.workdir,
+			provider: source.provider,
+			model: source.model,
+			mode: source.mode,
+			memoryMode: source.memoryMode,
+			memoryExtractorModel: source.memoryExtractorModel,
+			memoryExtractorBackend: source.memoryExtractorBackend,
+			globalMemoryEnabled: source.globalMemoryEnabled,
+			forkedFromConversationId: source.id,
+			forkedFromMessageId: target.id,
+			draftPrompt
+		});
+
+		// Edit mode clones strictly before the target (so the new user message
+		// replaces it). Retry mode clones up to AND including the target
+		// assistant message (so its reply is preserved as context, and the
+		// user picks up by typing the next prompt).
+		const prefixEnd = mode === 'edit' ? targetIdx : targetIdx + 1;
+		const prefix = all.slice(0, prefixEnd);
+		const messageIdMap = cloneMessagePrefix(newConv.id, prefix);
+
+		// Rebuild durable session memory from the append-only log, scoped to the
+		// cloned prefix. Log entries linked to kept source messages are replayed
+		// with message/item ids remapped to the fork, while rewound suffix entries
+		// are left behind.
+		const firstDiscarded = all[prefixEnd];
+		const memoryCounts = memoryRepo.replaySessionMemoryLogForFork(source.id, newConv.id, {
+			messageIdMap,
+			createdBefore: firstDiscarded ? firstDiscarded.createdAt : Number.POSITIVE_INFINITY
+		});
+
+		let userMessage: Message | null = null;
+		// Only an idle-source edit-fork auto-starts: append the user row so the
+		// caller kicks off the turn. A deferred edit-fork (busy source) leaves the
+		// prefix untouched and relies on the persisted draft_prompt seeded above.
+		if (mode === 'edit' && !deferred) {
+			userMessage = messages.append(newConv.id, { role: 'user', content: input.newContent! });
+		}
+
+		const refreshed = convs.get(newConv.id, input.userId);
+		if (!refreshed) throw new Error('fork: created conversation disappeared');
+		log.info('fork.created', {
+			mode,
+			source: source.id,
+			newId: newConv.id,
+			messageId: target.id,
+			prefix: prefix.length,
+			memory: memoryCounts,
+			deferred
+		});
+		return { conversation: refreshed, userMessage, deferred };
 	});
-
-	// Edit mode clones strictly before the target (so the new user message
-	// replaces it). Retry mode clones up to AND including the target
-	// assistant message (so its reply is preserved as context, and the
-	// user picks up by typing the next prompt).
-	const prefixEnd = mode === 'edit' ? targetIdx : targetIdx + 1;
-	const prefix = all.slice(0, prefixEnd);
-	const messageIdMap = cloneMessagePrefix(newConv.id, prefix);
-
-	// Rebuild durable session memory from the append-only log, scoped to the
-	// cloned prefix. Log entries linked to kept source messages are replayed
-	// with message/item ids remapped to the fork, while rewound suffix entries
-	// are left behind.
-	const firstDiscarded = all[prefixEnd];
-	const memoryCounts = memoryRepo.replaySessionMemoryLogForFork(source.id, newConv.id, {
-		messageIdMap,
-		createdBefore: firstDiscarded ? firstDiscarded.createdAt : Number.POSITIVE_INFINITY
-	});
-
-	let userMessage: Message | null = null;
-	// Only an idle-source edit-fork auto-starts: append the user row so the
-	// caller kicks off the turn. A deferred edit-fork (busy source) leaves the
-	// prefix untouched and relies on the persisted draft_prompt seeded above.
-	if (mode === 'edit' && !deferred) {
-		userMessage = messages.append(newConv.id, { role: 'user', content: input.newContent! });
-	}
-
-	const refreshed = convs.get(newConv.id, input.userId);
-	if (!refreshed) throw new Error('fork: created conversation disappeared');
-	log.info('fork.created', {
-		mode,
-		source: source.id,
-		newId: newConv.id,
-		messageId: target.id,
-		prefix: prefix.length,
-		memory: memoryCounts,
-		deferred
-	});
-	return { conversation: refreshed, userMessage, deferred };
+	return tx();
 }
 
 function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string, string> {
