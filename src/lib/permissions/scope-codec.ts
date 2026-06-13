@@ -213,7 +213,7 @@ function stableJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
 	if (value && typeof value === 'object') {
 		const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-			a.localeCompare(b)
+			a < b ? -1 : a > b ? 1 : 0
 		);
 		return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`;
 	}
