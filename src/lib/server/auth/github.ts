@@ -51,7 +51,10 @@ export async function fetchProfile(token: string): Promise<GithubProfile> {
 	const p = (await res.json()) as GithubProfile;
 	return {
 		id: p.id,
-		login: p.login,
+		// GitHub logins are case-insensitive for identity. Normalize to lowercase at
+		// receipt so stored login and allow-list/lookup comparisons stay consistent.
+		// Display casing is preserved separately via `name`.
+		login: p.login.toLowerCase(),
 		name: p.name ?? null,
 		avatar_url: p.avatar_url ?? null
 	};
