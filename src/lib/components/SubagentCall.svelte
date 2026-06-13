@@ -205,6 +205,7 @@
 	// ticking, no frozen number); the final duration still shows on completion.
 	let reducedMotion = $state(false);
 	$effect(() => {
+		if (typeof window === 'undefined') return;
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		reducedMotion = mq.matches;
 		const handler = (e: MediaQueryListEvent) => (reducedMotion = e.matches);
