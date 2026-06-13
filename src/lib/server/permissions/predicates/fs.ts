@@ -129,7 +129,9 @@ function canonicalRelativePath(target: string, root: string): string | null {
 /**
  * Token-aware glob over `/`-separated paths:
  *   `*`  matches characters within a single segment
- *   `**` matches any number of full segments (including zero)
+ *   `**` matches any number of full segments (including zero) when it begins
+ *        the pattern or immediately follows `/`; otherwise (e.g. `project**`)
+ *        it is treated as a single-segment `*` and does not cross `/`
  * Everything else is literal.
  */
 export function tokenGlobMatches(glob: string, path: string): boolean {
@@ -146,8 +148,11 @@ function globToRegex(glob: string): RegExp {
 				if (glob[i + 2] === '/') {
 					re += '(?:.*/)?';
 					i += 3;
-				} else {
+				} else if (i === 0 || glob[i - 1] === '/') {
 					re += '.*';
+					i += 2;
+				} else {
+					re += '[^/]*';
 					i += 2;
 				}
 			} else {

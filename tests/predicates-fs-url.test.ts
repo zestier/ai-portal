@@ -370,6 +370,17 @@ describe('tokenGlobMatches', () => {
 		expect(tokenGlobMatches('**/foo.ts', 'foo.ts')).toBe(true);
 		expect(tokenGlobMatches('**/foo.ts', 'a/b/foo.ts')).toBe(true);
 	});
+
+	it('trailing ** after / crosses directory boundaries', () => {
+		expect(tokenGlobMatches('/data/project/**', '/data/project/secret.key')).toBe(true);
+		expect(tokenGlobMatches('/data/project/**', '/data/project/a/b/secret.key')).toBe(true);
+	});
+
+	it('trailing ** not preceded by / stays within a single segment', () => {
+		expect(tokenGlobMatches('/data/project**', '/data/project-evil/secret.key')).toBe(false);
+		expect(tokenGlobMatches('/data/project**', '/data/project-x')).toBe(true);
+		expect(tokenGlobMatches('/data/project**', '/data/project')).toBe(true);
+	});
 });
 
 describe('url predicate', () => {
