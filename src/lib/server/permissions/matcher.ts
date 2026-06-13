@@ -306,6 +306,7 @@ function scopeMatches(pattern: string | null, scopeKey: string | null): boolean 
 }
 
 const GLOB_CACHE = new Map<string, RegExp>();
+const GLOB_CACHE_MAX = 512;
 
 /**
  * Tiny glob → RegExp. `*` matches any run of characters (including
@@ -314,10 +315,19 @@ const GLOB_CACHE = new Map<string, RegExp>();
  * and URLs, and users want simple "starts with" patterns like
  * `git status*`, `./src/*`, `https://api.github.com/*`. A richer
  * minimatch-style grammar can come later if there's demand.
+ *
+ * The cache is bounded to `GLOB_CACHE_MAX` entries with LRU eviction so
+ * that arbitrary `scopePattern` strings (e.g. from the grants table)
+ * can't grow it without bound. `Map` preserves insertion order, so the
+ * first key is the least-recently-used entry.
  */
 export function globToRegex(pattern: string): RegExp {
 	const cached = GLOB_CACHE.get(pattern);
-	if (cached) return cached;
+	if (cached) {
+		GLOB_CACHE.delete(pattern);
+		GLOB_CACHE.set(pattern, cached);
+		return cached;
+	}
 	let re = '^';
 	for (const ch of pattern) {
 		if (ch === '*') re += '.*';
@@ -325,6 +335,10 @@ export function globToRegex(pattern: string): RegExp {
 	}
 	re += '$';
 	const r = new RegExp(re);
+	if (GLOB_CACHE.size >= GLOB_CACHE_MAX) {
+		const oldest = GLOB_CACHE.keys().next().value;
+		if (oldest !== undefined) GLOB_CACHE.delete(oldest);
+	}
 	GLOB_CACHE.set(pattern, r);
 	return r;
 }
