@@ -48,6 +48,56 @@ import { isFilesystemPermissionKind } from '$lib/permissions/metadata';
 // Callers can still pass an explicit `timeoutMs` if they want one.
 const DEFAULT_TIMEOUT_MS = 0;
 
+/**
+ * Brand keyed in the global symbol registry so the guard below works even
+ * when the module is evaluated more than once (Vite SSR HMR, test
+ * `vi.resetModules()`), where a plain `instanceof` would fail because each
+ * evaluation produces a distinct class identity.
+ */
+const CANCELLED_BRAND = Symbol.for('copilot-portal.interactive.prompt-cancelled');
+
+/**
+ * Thrown to settle a pending interactive deferred when the prompt is
+ * abandoned by the server (turn abort, timeout, browser disconnect, or
+ * capacity-pressure session eviction) rather than answered by the user.
+ *
+ * We reject — not resolve — so consumers can tell a server-side
+ * cancellation apart from a real user decision. A resolved fallback would
+ * be indistinguishable from a genuine "deny", which is exactly the
+ * misleading behaviour this exists to avoid: the SDK would log a tool
+ * denial and the audit would show a deny the user never made.
+ *
+ * `auditDecision` lets the cancel/expire callers tag the permission audit
+ * row appropriately (`auto-cancelled` for abort/timeout, `auto-expired`
+ * for capacity eviction).
+ */
+export class InteractivePromptCancelledError extends Error {
+	readonly [CANCELLED_BRAND] = true;
+	readonly reason: string;
+	readonly auditDecision: 'auto-cancelled' | 'auto-expired';
+	constructor(reason: string, auditDecision: 'auto-cancelled' | 'auto-expired') {
+		super(reason);
+		this.name = 'InteractivePromptCancelledError';
+		this.reason = reason;
+		this.auditDecision = auditDecision;
+	}
+}
+
+/**
+ * True if `err` is an {@link InteractivePromptCancelledError}. Prefer this
+ * over `instanceof` at module boundaries — it matches on a global-symbol
+ * brand, so it stays correct across duplicate module evaluations.
+ */
+export function isInteractivePromptCancelledError(
+	err: unknown
+): err is InteractivePromptCancelledError {
+	return (
+		typeof err === 'object' &&
+		err !== null &&
+		(err as Record<symbol, unknown>)[CANCELLED_BRAND] === true
+	);
+}
+
 export interface PendingInteractive {
 	requestId: string;
 	conversationId: string;
@@ -276,15 +326,17 @@ export function resolve(requestId: string, userId: string, response: Interactive
 }
 
 /**
- * Cancel a pending request, defaulting to a "deny / decline" response
- * appropriate for the kind. Used when the turn is aborted or times out.
+ * Cancel a pending request. Used when the turn is aborted or times out.
  *
- * The `interactive.resolved` event carries `cancelled: true` + the
- * provided `reason` so the UI / audit log can distinguish a cancel
- * (timeout, turn-abort, browser disconnect) from a user-driven deny. For
- * permission requests we also write an `auto-deny` audit row so it shows
- * up on the settings page; the SDK still sees `{ kind: 'reject' }` either
- * way, but downstream debugging is much cleaner.
+ * The deferred is **rejected** (not resolved with a deny fallback) so the
+ * waiting handler can tell this apart from a real user denial: a resolved
+ * "deny" would make the SDK log a tool denial and pollute the audit with a
+ * decision the user never made. The `interactive.resolved` event still
+ * carries `cancelled: true` + the provided `reason` (with a neutral
+ * default outcome for display) so the UI can clear the dialog, and for
+ * permission requests we write an `auto-cancelled` audit row — distinct
+ * from `auto-deny` — so the settings page shows the prompt was abandoned,
+ * not denied.
  */
 export function cancel(requestId: string, reason: string = 'cancelled') {
 	const p = pending.get(requestId);
@@ -311,14 +363,14 @@ export function cancel(requestId: string, reason: string = 'cancelled') {
 				p.conversationId,
 				p.view.tool,
 				typeof p.view.summary === 'string' ? p.view.summary : '',
-				'auto-deny'
+				'auto-cancelled'
 			);
 		} catch (e) {
 			log.warn('interactive.cancel_audit_failed', { requestId, err: String(e) });
 		}
 	}
 	log.info('interactive.cancelled', { requestId, kind: p.kind, reason });
-	p.resolve(fallback);
+	p.reject(new InteractivePromptCancelledError(reason, 'auto-cancelled'));
 }
 
 /**
@@ -388,7 +440,7 @@ function expire(requestId: string, reason: string) {
 		}
 	}
 	log.warn('interactive.expired', { requestId, kind: p.kind, reason });
-	p.resolve(outcome);
+	p.reject(new InteractivePromptCancelledError(reason, 'auto-expired'));
 }
 
 // The "session expired" outcome by kind. For permission requests we attach

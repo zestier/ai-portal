@@ -102,6 +102,11 @@
 		border-color: var(--border);
 		font-style: italic;
 	}
+	.decision-tag.auto-cancelled {
+		color: var(--text-muted);
+		border-color: var(--border);
+		font-style: italic;
+	}
 	.decision-tag.auto-prompt-required {
 		color: var(--warning, var(--text-muted));
 		border-color: var(--border);

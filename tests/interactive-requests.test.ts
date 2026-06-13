@@ -12,7 +12,8 @@ import {
 	hasPending,
 	newRequestId,
 	get,
-	defaultInteractiveResponse
+	defaultInteractiveResponse,
+	InteractivePromptCancelledError
 } from '../src/lib/server/runtime/interactive-requests';
 import { createInteractiveCallbacks } from '../src/lib/server/copilot/interactive-adapter';
 import * as users from '../src/lib/server/db/repos/users';
@@ -119,6 +120,7 @@ describe('interactive request registry', () => {
 	) {
 		const requestId = view.requestId;
 		let resolved: InteractiveResponse | null = null;
+		let rejected: unknown = null;
 		register({
 			requestId,
 			conversationId,
@@ -127,13 +129,19 @@ describe('interactive request registry', () => {
 			resolve: (r) => {
 				resolved = r;
 			},
-			reject: () => {},
+			reject: (e) => {
+				rejected = e;
+			},
 			emit,
 			// Disable the default 10-minute timer so the test process can exit
 			// cleanly without dangling timers.
 			timeoutMs: 0
 		});
-		return { requestId, getResolved: () => resolved };
+		return {
+			requestId,
+			getResolved: () => resolved,
+			getRejected: () => rejected
+		};
 	}
 
 	function permView(requestId: string): InteractiveRequestView {
@@ -183,7 +191,7 @@ describe('interactive request registry', () => {
 		expect(get(requestId)).toBeDefined();
 	});
 
-	it('cancel emits a kind-appropriate default denial', () => {
+	it('cancel rejects the deferred and emits a cancelled event with a neutral outcome', () => {
 		const events: PortalEvent[] = [];
 		const requestId = newRequestId();
 		const view: InteractiveRequestView = {
@@ -191,23 +199,44 @@ describe('interactive request registry', () => {
 			kind: 'auto_mode_switch',
 			errorCode: 'rate_limited'
 		};
-		const { getResolved } = makePending('auto_mode_switch', view, (ev) => events.push(ev));
-		cancel(requestId);
+		const { getResolved, getRejected } = makePending('auto_mode_switch', view, (ev) =>
+			events.push(ev)
+		);
+		cancel(requestId, 'turn_aborted');
+		// The event log still carries a neutral default outcome (for UI display)
+		// plus the cancellation markers, so a replayed log can clear the dialog.
 		expect(events[0]).toMatchObject({
 			type: 'interactive.resolved',
 			requestId,
 			kind: 'auto_mode_switch',
-			outcome: { kind: 'auto_mode_switch', decision: 'no' }
+			outcome: { kind: 'auto_mode_switch', decision: 'no' },
+			cancelled: true,
+			cancelReason: 'turn_aborted'
 		});
-		expect(getResolved()).toEqual({ kind: 'auto_mode_switch', decision: 'no' });
+		// The deferred is REJECTED, not resolved, so a waiting handler can tell
+		// this apart from a genuine user denial.
+		expect(getResolved()).toBeNull();
+		expect(getRejected()).toBeInstanceOf(InteractivePromptCancelledError);
+		expect((getRejected() as InteractivePromptCancelledError).reason).toBe('turn_aborted');
 		expect(get(requestId)).toBeUndefined();
+	});
+
+	it('cancel audits a permission prompt as auto-cancelled, not auto-deny', async () => {
+		const settings = await import('../src/lib/server/db/repos/settings');
+		const requestId = newRequestId();
+		const { getRejected } = makePending('permission', permView(requestId), undefined);
+		cancel(requestId, 'turn_aborted');
+		expect(getRejected()).toBeInstanceOf(InteractivePromptCancelledError);
+		const recent = settings.listRecentDecisionsForUser(userId, 5);
+		expect(recent[0].decision).toBe('auto-cancelled');
+		expect(recent[0].tool).toBe('shell');
 	});
 
 	it('cancelConversation rejects every pending request for a conversation', () => {
 		const a = newRequestId();
 		const b = newRequestId();
-		const aGet = makePending('permission', permView(a), undefined).getResolved;
-		const bGet = makePending(
+		const aPending = makePending('permission', permView(a), undefined);
+		const bPending = makePending(
 			'exit_plan_mode',
 			{
 				requestId: b,
@@ -217,10 +246,12 @@ describe('interactive request registry', () => {
 				recommendedAction: 'execute'
 			},
 			undefined
-		).getResolved;
+		);
 		cancelConversation(conversationId, 'turn_aborted');
-		expect(aGet()).toEqual({ kind: 'permission', decision: 'deny' });
-		expect(bGet()).toEqual({ kind: 'exit_plan_mode', approved: false });
+		expect(aPending.getResolved()).toBeNull();
+		expect(bPending.getResolved()).toBeNull();
+		expect(aPending.getRejected()).toBeInstanceOf(InteractivePromptCancelledError);
+		expect(bPending.getRejected()).toBeInstanceOf(InteractivePromptCancelledError);
 		expect(get(a)).toBeUndefined();
 		expect(get(b)).toBeUndefined();
 	});
@@ -236,24 +267,25 @@ describe('interactive request registry', () => {
 		expect(hasPending(conversationId)).toBe(false);
 	});
 
-	it('expireConversation settles prompts with a non-deny re-issue outcome (audited auto-expired)', async () => {
+	it('expireConversation rejects prompts and audits them as auto-expired', async () => {
 		const settings = await import('../src/lib/server/db/repos/settings');
 		const events: PortalEvent[] = [];
 		const requestId = newRequestId();
-		const { getResolved } = makePending('permission', permView(requestId), (ev) => events.push(ev));
+		const { getResolved, getRejected } = makePending('permission', permView(requestId), (ev) =>
+			events.push(ev)
+		);
 
 		expireConversation(conversationId, 'capacity_evict');
 
-		// The deferred is settled (agent unblocks) with a permission reject that
-		// carries re-issue feedback — distinct from a plain user deny.
-		const outcome = getResolved() as { kind: string; decision: string; feedback?: string };
-		expect(outcome.kind).toBe('permission');
-		expect(outcome.decision).toBe('deny');
-		expect(outcome.feedback ?? '').toMatch(/re-issue/i);
+		// The deferred is REJECTED (agent unblocks via the SDK's
+		// `user-not-available` path) — distinct from a plain user deny.
+		expect(getResolved()).toBeNull();
+		expect(getRejected()).toBeInstanceOf(InteractivePromptCancelledError);
 		expect(get(requestId)).toBeUndefined();
 		expect(hasPending(conversationId)).toBe(false);
 
-		// The resolved event marks it cancelled with the supplied reason.
+		// The resolved event marks it cancelled with the supplied reason and
+		// carries the re-issue outcome for display.
 		expect(events[0]).toMatchObject({
 			type: 'interactive.resolved',
 			requestId,
@@ -261,6 +293,12 @@ describe('interactive request registry', () => {
 			cancelled: true,
 			cancelReason: 'capacity_evict'
 		});
+		const outcome = (
+			events[0] as { outcome?: { kind: string; decision: string; feedback?: string } }
+		).outcome as { kind: string; decision: string; feedback?: string };
+		expect(outcome.kind).toBe('permission');
+		expect(outcome.decision).toBe('deny');
+		expect(outcome.feedback ?? '').toMatch(/re-issue/i);
 
 		// Audited as `auto-expired`, NOT `auto-deny`.
 		const recent = settings.listRecentDecisionsForUser(userId, 5);
@@ -268,15 +306,16 @@ describe('interactive request registry', () => {
 		expect(recent[0].tool).toBe('shell');
 	});
 
-	it('expireConversation settles non-permission kinds with their neutral default', () => {
+	it('expireConversation rejects non-permission kinds too', () => {
 		const requestId = newRequestId();
-		const { getResolved } = makePending(
+		const { getResolved, getRejected } = makePending(
 			'user_input',
 			{ requestId, kind: 'user_input', question: 'pick', allowFreeform: true },
 			undefined
 		);
 		expireConversation(conversationId, 'capacity_evict');
-		expect(getResolved()).toEqual({ kind: 'user_input', answer: '', wasFreeform: true });
+		expect(getResolved()).toBeNull();
+		expect(getRejected()).toBeInstanceOf(InteractivePromptCancelledError);
 		expect(get(requestId)).toBeUndefined();
 	});
 

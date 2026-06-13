@@ -11,7 +11,8 @@ import type {
 import {
 	newRequestId,
 	register as registerInteractive,
-	decideByPolicy
+	decideByPolicy,
+	isInteractivePromptCancelledError
 } from './interactive-requests';
 import * as settingsRepo from '../db/repos/settings';
 import { deriveScopeKey } from '../permissions/matcher';
@@ -82,7 +83,11 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		});
 	}
 
-	const onPermissionRequest = async (req: PermissionRequestLike) => {
+	// Inner decision logic. Wrapped by `onPermissionRequest` (below) so a
+	// prompt that is cancelled out from under us (turn abort, timeout, client
+	// disconnect, or capacity eviction) is reported to the SDK as
+	// "user-not-available" rather than a user denial.
+	const decidePermission = async (req: PermissionRequestLike) => {
 		const tool = req.toolName ?? req.kind ?? 'unknown';
 		const permissionKind = req.kind ?? 'unknown';
 		const summary = summarizePermissionRequest(req, tool);
@@ -339,21 +344,46 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		return { kind: 'approve-once' } as const;
 	};
 
+	const onPermissionRequest = async (req: PermissionRequestLike) => {
+		try {
+			return await decidePermission(req);
+		} catch (err) {
+			if (isInteractivePromptCancelledError(err)) {
+				// The prompt was abandoned (turn aborted, timed out, client
+				// disconnected, or the backing session was evicted) before the
+				// user answered. `user-not-available` tells the SDK the user
+				// could not be reached — it is NOT a denial, so the SDK does not
+				// log a tool rejection. The cancellation is already audited
+				// (`auto-cancelled` / `auto-expired`) and broadcast as an
+				// `interactive.resolved` event by the registry.
+				return { kind: 'user-not-available' } as const;
+			}
+			throw err;
+		}
+	};
+
 	const onUserInputRequest = async (req: {
 		question?: string;
 		choices?: string[];
 		allowFreeform?: boolean;
 	}) => {
-		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'user_input' }>>(
-			'user_input',
-			{
-				kind: 'user_input',
-				question: req.question ?? 'The agent is requesting input.',
-				choices: req.choices,
-				allowFreeform: req.allowFreeform ?? true
+		try {
+			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'user_input' }>>(
+				'user_input',
+				{
+					kind: 'user_input',
+					question: req.question ?? 'The agent is requesting input.',
+					choices: req.choices,
+					allowFreeform: req.allowFreeform ?? true
+				}
+			);
+			return { answer: response.answer, wasFreeform: response.wasFreeform ?? true };
+		} catch (err) {
+			if (isInteractivePromptCancelledError(err)) {
+				return { answer: '', wasFreeform: true };
 			}
-		);
-		return { answer: response.answer, wasFreeform: response.wasFreeform ?? true };
+			throw err;
+		}
 	};
 
 	const onElicitationRequest = async (ctx: {
@@ -363,21 +393,28 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		url?: string;
 		elicitationSource?: string;
 	}) => {
-		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'elicitation' }>>(
-			'elicitation',
-			{
-				kind: 'elicitation',
-				message: ctx.message ?? '',
-				mode: ctx.mode ?? 'form',
-				url: ctx.url,
-				requestedSchema: ctx.requestedSchema as ElicitationSchema | undefined,
-				elicitationSource: ctx.elicitationSource
+		try {
+			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'elicitation' }>>(
+				'elicitation',
+				{
+					kind: 'elicitation',
+					message: ctx.message ?? '',
+					mode: ctx.mode ?? 'form',
+					url: ctx.url,
+					requestedSchema: ctx.requestedSchema as ElicitationSchema | undefined,
+					elicitationSource: ctx.elicitationSource
+				}
+			);
+			if (response.action === 'accept') {
+				return { action: 'accept' as const, content: response.content ?? {} };
 			}
-		);
-		if (response.action === 'accept') {
-			return { action: 'accept' as const, content: response.content ?? {} };
+			return { action: response.action };
+		} catch (err) {
+			if (isInteractivePromptCancelledError(err)) {
+				return { action: 'cancel' as const };
+			}
+			throw err;
 		}
-		return { action: response.action };
 	};
 
 	const onExitPlanMode = async (req: {
@@ -387,32 +424,45 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		recommendedAction?: string;
 	}) => {
 		const actions = req.actions ?? ['continue'];
-		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'exit_plan_mode' }>>(
-			'exit_plan_mode',
-			{
+		try {
+			const response = await askInteractive<
+				Extract<InteractiveResponse, { kind: 'exit_plan_mode' }>
+			>('exit_plan_mode', {
 				kind: 'exit_plan_mode',
 				summary: req.summary ?? 'Exit plan mode and continue?',
 				planContent: req.planContent,
 				actions,
 				recommendedAction: req.recommendedAction ?? actions[0] ?? 'continue'
+			});
+			return {
+				approved: response.approved,
+				selectedAction: response.selectedAction,
+				feedback: response.feedback
+			};
+		} catch (err) {
+			if (isInteractivePromptCancelledError(err)) {
+				return { approved: false };
 			}
-		);
-		return {
-			approved: response.approved,
-			selectedAction: response.selectedAction,
-			feedback: response.feedback
-		};
+			throw err;
+		}
 	};
 
 	const onAutoModeSwitch = async (req: { errorCode?: string; retryAfterSeconds?: number }) => {
-		const response = await askInteractive<
-			Extract<InteractiveResponse, { kind: 'auto_mode_switch' }>
-		>('auto_mode_switch', {
-			kind: 'auto_mode_switch',
-			errorCode: req.errorCode,
-			retryAfterSeconds: req.retryAfterSeconds
-		});
-		return response.decision;
+		try {
+			const response = await askInteractive<
+				Extract<InteractiveResponse, { kind: 'auto_mode_switch' }>
+			>('auto_mode_switch', {
+				kind: 'auto_mode_switch',
+				errorCode: req.errorCode,
+				retryAfterSeconds: req.retryAfterSeconds
+			});
+			return response.decision;
+		} catch (err) {
+			if (isInteractivePromptCancelledError(err)) {
+				return 'no' as const;
+			}
+			throw err;
+		}
 	};
 
 	return {

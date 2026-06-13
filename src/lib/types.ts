@@ -808,6 +808,11 @@ export type PermissionDecision =
 	| 'auto-allow'
 	| 'auto-deny'
 	| 'auto-prompt-required'
+	// Recorded when a still-open prompt was abandoned because the turn was
+	// aborted (or the prompt timed out / the client disconnected) before the
+	// user answered. Distinct from `auto-deny` so the audit shows the prompt
+	// was cancelled, not denied.
+	| 'auto-cancelled'
 	// Recorded when the SDK session backing a still-open prompt was reclaimed
 	// (capacity eviction) before the user answered. Distinct from `auto-deny`
 	// so the audit shows the prompt was abandoned by the server, not denied.

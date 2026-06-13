@@ -63,7 +63,12 @@ function registerPrompt(
 	kind: 'permission' | 'user_input' = 'permission'
 ) {
 	usedConvs.add(conversationId);
-	const result: { settled: boolean; outcome: unknown } = { settled: false, outcome: null };
+	const result: { settled: boolean; outcome: unknown; rejected: unknown; events: unknown[] } = {
+		settled: false,
+		outcome: null,
+		rejected: null,
+		events: []
+	};
 	const view =
 		kind === 'permission'
 			? {
@@ -91,7 +96,12 @@ function registerPrompt(
 			result.settled = true;
 			result.outcome = r;
 		},
-		reject: () => {}
+		reject: (e) => {
+			result.rejected = e;
+		},
+		emit: (ev) => {
+			result.events.push(ev);
+		}
 	});
 	return result;
 }
@@ -262,14 +272,23 @@ describe('pool does not strand sessions with outstanding work', () => {
 		expect(pool.getActive('conv-only')).toBeNull();
 		expect(pool.getActive('conv-next')).toBe(fresh);
 
-		// The deferred settled (agent no longer hangs)...
-		expect(result.settled).toBe(true);
-		// ...with a distinct, non-deny "re-issue" outcome (the feedback marks it
-		// as a reclaim, not a user denial).
-		const outcome = result.outcome as { kind: string; decision: string; feedback?: string };
-		expect(outcome.kind).toBe('permission');
-		expect(outcome.feedback ?? '').toMatch(/re-issue/i);
-		expect(outcome.feedback ?? '').not.toMatch(/denied/i);
+		// The deferred settled by REJECTION (agent no longer hangs; the SDK maps
+		// this to `user-not-available`, not a user denial).
+		expect(result.settled).toBe(false);
+		const rejected = result.rejected as { name?: string; auditDecision?: string } | null;
+		expect(rejected?.name).toBe('InteractivePromptCancelledError');
+		expect(rejected?.auditDecision).toBe('auto-expired');
+
+		// The broadcast `interactive.resolved` event still carries the distinct,
+		// non-deny "re-issue" outcome (feedback marks it as a reclaim, not a
+		// user denial) so a replayed event log shows the real cause.
+		const resolvedEvent = result.events.find(
+			(e) => (e as { type?: string }).type === 'interactive.resolved'
+		) as { cancelled?: boolean; outcome?: { kind: string; feedback?: string } } | undefined;
+		expect(resolvedEvent?.cancelled).toBe(true);
+		expect(resolvedEvent?.outcome?.kind).toBe('permission');
+		expect(resolvedEvent?.outcome?.feedback ?? '').toMatch(/re-issue/i);
+		expect(resolvedEvent?.outcome?.feedback ?? '').not.toMatch(/denied/i);
 		// And the request is cleared from the pending map.
 		expect(interactive.get('REQ_ONLY')).toBeUndefined();
 		expect(interactive.hasPending('conv-only')).toBe(false);

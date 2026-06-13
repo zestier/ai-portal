@@ -493,6 +493,7 @@ export interface PermissionDecisionRecord {
 		| 'auto-allow'
 		| 'auto-deny'
 		| 'auto-prompt-required'
+		| 'auto-cancelled'
 		| 'auto-expired';
 	decidedAt: number;
 }

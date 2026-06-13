@@ -61,6 +61,8 @@ export function decisionLabel(d: PermissionDecision['decision']): string {
 			return 'Auto-deny';
 		case 'auto-prompt-required':
 			return 'Auto prompt-required';
+		case 'auto-cancelled':
+			return 'Auto-cancelled';
 		case 'auto-expired':
 			return 'Auto-expired';
 	}
