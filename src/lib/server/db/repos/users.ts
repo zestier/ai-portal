@@ -43,35 +43,48 @@ export interface UpsertGithubInput {
 
 export function upsertGithub(input: UpsertGithubInput): User {
 	const db = getDb();
-	const existing = db
-		.prepare('SELECT * FROM users WHERE github_id = ? OR github_login = ?')
-		.get(input.githubId, input.githubLogin) as UserRow | undefined;
-	const now = Date.now();
-	if (existing) {
+	return db.transaction((): User => {
+		// Match on github_id alone: it is stable and never recycled, whereas a
+		// github_login can be vacated and reclaimed by a different account. Using
+		// the login in the lookup would let a new user be merged onto the row of an
+		// unrelated user who once held that username (account takeover).
+		const existing = db.prepare('SELECT * FROM users WHERE github_id = ?').get(input.githubId) as
+			| UserRow
+			| undefined;
+		const now = Date.now();
+		if (existing) {
+			db.prepare(
+				`UPDATE users SET github_login = ?, github_id = ?, display_name = ?, avatar_url = ?, last_login_at = ? WHERE id = ?`
+			).run(
+				input.githubLogin,
+				input.githubId,
+				input.displayName,
+				input.avatarUrl,
+				now,
+				existing.id
+			);
+			return rowToUser({
+				...existing,
+				github_login: input.githubLogin,
+				github_id: input.githubId,
+				display_name: input.displayName,
+				avatar_url: input.avatarUrl,
+				last_login_at: now
+			});
+		}
+		const id = ulid();
 		db.prepare(
-			`UPDATE users SET github_login = ?, github_id = ?, display_name = ?, avatar_url = ?, last_login_at = ? WHERE id = ?`
-		).run(input.githubLogin, input.githubId, input.displayName, input.avatarUrl, now, existing.id);
-		return rowToUser({
-			...existing,
-			github_login: input.githubLogin,
-			github_id: input.githubId,
-			display_name: input.displayName,
-			avatar_url: input.avatarUrl,
-			last_login_at: now
-		});
-	}
-	const id = ulid();
-	db.prepare(
-		`INSERT INTO users(id, github_login, github_id, display_name, avatar_url, created_at, last_login_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, input.githubLogin, input.githubId, input.displayName, input.avatarUrl, now, now);
-	ensureSeedGrantsForUser(id);
-	return {
-		id,
-		githubLogin: input.githubLogin,
-		displayName: input.displayName,
-		avatarUrl: input.avatarUrl
-	};
+			`INSERT INTO users(id, github_login, github_id, display_name, avatar_url, created_at, last_login_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run(id, input.githubLogin, input.githubId, input.displayName, input.avatarUrl, now, now);
+		ensureSeedGrantsForUser(id);
+		return {
+			id,
+			githubLogin: input.githubLogin,
+			displayName: input.displayName,
+			avatarUrl: input.avatarUrl
+		};
+	})();
 }
 
 /**
