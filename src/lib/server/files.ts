@@ -33,7 +33,10 @@ export function resolveWorkspaceRoot(root: string): string {
 	try {
 		real = realpathSync(abs);
 	} catch {
-		real = abs;
+		// realpath failed (path missing or transient I/O error): fall back to the
+		// lexical path without caching, so a future call retries the realpath
+		// resolution once the path exists.
+		return abs;
 	}
 	cachedRoots.set(abs, real);
 	return real;
