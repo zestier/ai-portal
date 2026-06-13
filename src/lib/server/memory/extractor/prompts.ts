@@ -133,6 +133,9 @@ function extractorInstructionSections(): string[] {
  * instructions differ.
  */
 export function extractorTurnData(input: ExtractPatchInput): string[] {
+	const recentTranscript = (input.recentTranscript ?? []).filter((message) =>
+		message.content.trim()
+	);
 	return [
 		`Memory mode: ${input.mode}`,
 		'Initial packet:',
@@ -168,6 +171,16 @@ export function extractorTurnData(input: ExtractPatchInput): string[] {
 				2
 			)
 		),
+		...(recentTranscript.length > 0
+			? [
+					'Recent transcript:',
+					redactSensitiveText(
+						recentTranscript
+							.map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
+							.join('\n\n')
+					)
+				]
+			: []),
 		'User message:',
 		redactSensitiveText(input.userMessage.content),
 		'Assistant message:',

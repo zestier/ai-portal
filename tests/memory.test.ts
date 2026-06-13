@@ -5566,6 +5566,30 @@ describe('extractor prompt directive guidance', () => {
 			expect(text).toContain('How would you like to begin?');
 		});
 	}
+
+	it('includes the recent transcript section when recentTranscript is provided', () => {
+		const input = {
+			conversationId: 'c1',
+			userId: 'u1',
+			mode: 'story',
+			turnId: 't1',
+			userMessage: { role: 'user', content: 'What did Mara see?' },
+			assistantMessage: { role: 'assistant', content: 'She saw the blue candle.' },
+			recentTranscript: [
+				{ role: 'user', content: 'Tell me about Mara.' },
+				{ role: 'assistant', content: 'Mara is a wary scout.' }
+			]
+		} as unknown as ExtractPatchInput;
+		const prompt = buildExtractorPrompt(input, 100_000);
+		expect(prompt).toContain('Recent transcript:');
+		expect(prompt).toContain('Tell me about Mara.');
+		expect(prompt).toContain('Mara is a wary scout.');
+	});
+
+	it('omits the recent transcript section when recentTranscript is absent', () => {
+		const prompt = singleShotPrompt();
+		expect(prompt).not.toContain('Recent transcript:');
+	});
 });
 
 describe('memory extractor backend defaults + override resolution', () => {
