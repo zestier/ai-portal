@@ -169,6 +169,15 @@ export const DIRECTIVE_PREDICATE = 'directive';
  */
 export const MAX_DIRECTIVES = 50;
 
+/**
+ * Token budget for the always-on standing-directives block. Directives bypass
+ * the variable-body token budget, so the raw char/count caps alone (50 rules ×
+ * 4000 chars) let a CJK-heavy set quietly blow the context window. This bounds
+ * their cumulative *token* cost; sized to the largest packet body budget so the
+ * always-on header can never dwarf the budgeted body. The newest directives win.
+ */
+export const DIRECTIVE_TOKEN_BUDGET = 2000;
+
 export function isDirectivePredicate(predicate: string): boolean {
 	return predicate.trim().toLowerCase() === DIRECTIVE_PREDICATE;
 }
@@ -262,7 +271,11 @@ function packetTokenBudget(mode: MemoryMode): number {
 }
 
 function estimateTokens(text: string): number {
-	return Math.ceil(text.length / 4);
+	// UTF-16 length / 4 assumes ASCII English (~4 chars/token) and badly
+	// underestimates multibyte text: CJK chars are ~1 UTF-16 unit but cost 1-2
+	// tokens, so length-based estimates run 2-4x low and can silently blow the
+	// budget. UTF-8 byte length tracks token cost far more closely across scripts.
+	return Math.ceil(Buffer.byteLength(text, 'utf8') / 4);
 }
 
 /**
@@ -296,9 +309,26 @@ export function buildInitialPacket(
 	// exist or where they fall in the relevance-ranked fact pool. listFacts orders
 	// by updated_at DESC, so capping the load keeps the most recently asserted
 	// directives if a pathological conversation exceeds MAX_DIRECTIVES.
-	const directives = memoryRepo
-		.listFacts(conversationId, { predicate: DIRECTIVE_PREDICATE, limit: MAX_DIRECTIVES })
-		.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+	const loadedDirectives = memoryRepo.listFacts(conversationId, {
+		predicate: DIRECTIVE_PREDICATE,
+		limit: MAX_DIRECTIVES
+	});
+	// Directives bypass the variable-body token budget, so apply a real token
+	// budget here too — a count/char cap alone lets multibyte rules overflow the
+	// context window. listFacts orders by updated_at DESC, so accumulating in load
+	// order keeps the most recently asserted directives and drops older ones once
+	// the budget is spent. Always keep at least one so a lone oversized rule shows.
+	const budgetedDirectives: memoryRepo.MemoryFact[] = [];
+	let directiveTokens = 0;
+	for (const directive of loadedDirectives) {
+		const cost = estimateTokens(formatMemoryValue(directive.value));
+		if (budgetedDirectives.length && directiveTokens + cost > DIRECTIVE_TOKEN_BUDGET) break;
+		budgetedDirectives.push(directive);
+		directiveTokens += cost;
+	}
+	const directives = budgetedDirectives.sort(
+		(a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)
+	);
 	const factPool = allFacts.filter((fact) => !isDirectivePredicate(fact.predicate));
 	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
 	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
