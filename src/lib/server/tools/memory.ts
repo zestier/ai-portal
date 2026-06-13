@@ -32,10 +32,18 @@ const SEARCH_HIT_KEEP = ['itemType', 'itemId', 'text'] as const;
 const MESSAGE_KEEP = ['id', 'role', 'content'] as const;
 const GLOBAL_MEMORY_KEEP = ['id', 'kind', 'memoryKey', 'value', 'status'] as const;
 
-// Neutral, non-imperative copy reused across tool descriptions and the
-// `verbose` parameter docs so the capability is discoverable without nudging
-// models to reflexively opt into the larger payload.
-const VERBOSE_NOTE = 'Pass verbose:true to return the full payload including omitted fields.';
+// Copy reused across tool descriptions and the `verbose` parameter docs. The
+// earlier wording only said *how* to opt in, which models read as an invitation
+// to do so reflexively. This version names *what* the larger payload actually
+// adds — internal bookkeeping that is almost never needed to read or reason
+// about the data — and frames the compact default as sufficient, so the
+// capability stays discoverable without nudging models into pointless verbose
+// re-calls. The per-call `_omitted` marker still lists the concrete fields a
+// given result dropped, so a model that genuinely needs one can see it there.
+const VERBOSE_NOTE =
+	"Compact default already has what's needed to read and reason about this data. " +
+	'Set verbose:true only to recover internal bookkeeping (ids, timestamps, raw payloads, ' +
+	'confidence/visibility) you specifically need.';
 
 const Verbose = z.boolean().optional().default(false);
 

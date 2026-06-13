@@ -8,6 +8,14 @@ import { project, withOmitted } from './project';
 // the compact default and recoverable via verbose:true.
 const TICKET_KEEP = ['id', 'title', 'body', 'status'] as const;
 
+// Shared `verbose` copy. Names what the larger payload adds (internal
+// bookkeeping the model almost never needs) and frames the compact default as
+// sufficient, rather than just advertising how to opt in — which models
+// otherwise read as an invitation to do so reflexively.
+const VERBOSE_NOTE =
+	"Compact default already has what's needed to read and reason about a ticket. " +
+	'Set verbose:true only to recover internal bookkeeping (ids, timestamps) you specifically need.';
+
 const Status = z.enum(['open', 'done', 'archived']);
 
 const AddArgs = z.object({
@@ -111,8 +119,7 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_get',
-			description:
-				'Read one durable workspace ticket by id. Pass verbose:true to return the full payload including omitted fields.',
+			description: 'Read one durable workspace ticket by id. ' + VERBOSE_NOTE,
 			argsSchema: GetArgs,
 			parameters: {
 				type: 'object',
@@ -120,7 +127,7 @@ export function buildTicketTools(opts: {
 					id: { type: 'string', description: 'Ticket id.' },
 					verbose: {
 						type: 'boolean',
-						description: 'Pass verbose:true to return the full payload including omitted fields.'
+						description: VERBOSE_NOTE
 					}
 				},
 				required: ['id'],
