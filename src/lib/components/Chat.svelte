@@ -926,6 +926,7 @@
 	}
 
 	$effect(() => {
+		void messages.length;
 		scrollToBottom();
 	});
 
