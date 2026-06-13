@@ -7,7 +7,27 @@
  */
 import type { Diagnostic } from './types';
 import type { MemoryPatchProposal, TurnMemoryPacket } from '../engine';
-import { containsSensitiveText } from './utils';
+import { containsSensitiveText, redactSensitiveText } from './utils';
+
+/**
+ * Identity/anchor fields that must survive the secret filter so an entity (and
+ * any fact/event/loop that references it) keeps a stable key. Redacting these
+ * would orphan the referencing facts — or mint a minimal placeholder entity at
+ * commit — which is exactly what we're avoiding: free-text/value fields tripping
+ * the credential filter shouldn't take the structural record down with them.
+ * Reference fields are never free text, so a match here is spurious; leave them.
+ */
+const STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
+	'entityKey',
+	'entityType',
+	'displayName',
+	'predicate',
+	'eventType',
+	'loopType',
+	'relatedEntityKeys',
+	'id',
+	'factId'
+]);
 export function sanitizePatch(
 	patch: MemoryPatchProposal,
 	initialPacket?: TurnMemoryPacket
@@ -17,14 +37,20 @@ export function sanitizePatch(
 } {
 	const diagnostics: Diagnostic[] = [];
 	let removed = 0;
+	// Redact secret-looking *values* in place rather than dropping the whole
+	// item. Dropping an entity because one free-text field (a URL in metadata, a
+	// summary) trips the credential filter strips its entityKey/entityType/
+	// displayName too, orphaning every fact that referenced it (or forcing a
+	// minimal placeholder entity at commit). Keeping the structural record while
+	// nulling just the offending field preserves the anchor.
 	const keep = <T>(items: T[] | undefined): T[] | undefined => {
 		if (!items) return undefined;
-		const filtered = items.filter((item) => {
-			const safe = !containsSensitiveValue(item);
-			if (!safe) removed++;
-			return safe;
+		const cleaned = items.map((item) => {
+			const { value, redacted } = redactSensitiveFields(item);
+			if (redacted) removed++;
+			return value;
 		});
-		return filtered.length > 0 ? filtered : undefined;
+		return cleaned.length > 0 ? cleaned : undefined;
 	};
 	const keepResolutions = (
 		resolutions: MemoryPatchProposal['resolveOpenLoops']
@@ -101,7 +127,7 @@ export function sanitizePatch(
 		diagnostics.push({
 			severity: 'warning',
 			code: 'sensitive_memory_items_removed',
-			message: `${removed} proposed memory item(s) were removed because they looked like secrets or credentials.`
+			message: `${removed} proposed memory item(s) had secret-like values redacted or were removed because they looked like secrets or credentials.`
 		});
 	}
 	return { patch: nextPatch, diagnostics };
@@ -232,4 +258,35 @@ function normalizedName(raw: string | undefined): string {
 function containsSensitiveValue(value: unknown): boolean {
 	const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
 	return containsSensitiveText(text);
+}
+
+/**
+ * Return a deep copy of `item` with any free-text string value that matches a
+ * known credential shape redacted in place (recursing into nested objects and
+ * arrays like `metadata`/`payload`/`value`). Structural identity/anchor fields
+ * (see {@link STRUCTURAL_KEYS}) are never redacted — their values are opaque
+ * keys/ids, not secrets, and nulling them would orphan referencing facts. The
+ * returned `redacted` flag is set when at least one value was rewritten.
+ */
+function redactSensitiveFields<T>(item: T): { value: T; redacted: boolean } {
+	let redacted = false;
+	const walk = (value: unknown, isStructural: boolean): unknown => {
+		if (typeof value === 'string') {
+			if (isStructural || !containsSensitiveText(value)) return value;
+			redacted = true;
+			return redactSensitiveText(value);
+		}
+		if (Array.isArray(value)) {
+			return value.map((entry) => walk(entry, isStructural));
+		}
+		if (value && typeof value === 'object') {
+			const out: Record<string, unknown> = {};
+			for (const [key, val] of Object.entries(value)) {
+				out[key] = walk(val, isStructural || STRUCTURAL_KEYS.has(key));
+			}
+			return out;
+		}
+		return value;
+	};
+	return { value: walk(item, false) as T, redacted };
 }
