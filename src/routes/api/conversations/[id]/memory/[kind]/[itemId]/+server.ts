@@ -11,6 +11,27 @@ const OpenLoopStatus = z.enum(['open', 'resolved', 'closed', 'deleted']);
 const Visibility = z.enum(['session', 'global', 'private', 'hidden', 'gm']);
 const GlobalKind = z.enum(['preference', 'decision', 'fact', 'style', 'constraint']);
 
+// Known memory-kind path segments accepted by this route. Mirrors the aliases
+// handled by the memory repo's normalizeKind (entity/fact/open_loop) plus the
+// special-cased globalMemories. Unknown kinds are rejected with 400 before
+// dispatch rather than falling through to a misleading 404.
+const MemoryKindParam = z.enum([
+	'globalMemories',
+	'entities',
+	'entity',
+	'facts',
+	'fact',
+	'openLoops',
+	'open-loops',
+	'open_loop'
+]);
+
+function assertKnownKind(kind: string): void {
+	if (!MemoryKindParam.safeParse(kind).success) {
+		throw error(400, `Unknown memory kind: ${kind}`);
+	}
+}
+
 const EntityPatch = z
 	.object({
 		displayName: z.string().trim().min(1).max(200).optional(),
@@ -52,6 +73,7 @@ const GlobalMemoryPatch = z
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	assertKnownKind(params.kind);
 	const body = await parseBody(request, RawPatchBody);
 	const updated = updateMemoryItem(conv.id, conv.userId, params.kind, params.itemId, body);
 	if (!updated) throw error(404, 'Memory item not found.');
@@ -60,6 +82,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 
 export const DELETE: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	assertKnownKind(params.kind);
 	const deleted =
 		params.kind === 'globalMemories'
 			? memory.deleteGlobalMemory(conv.userId, params.itemId)
