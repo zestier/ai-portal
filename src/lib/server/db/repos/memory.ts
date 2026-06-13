@@ -409,68 +409,66 @@ export function listSnapshot(
 export function upsertEntity(conversationId: string, input: UpsertEntityInput): MemoryEntity {
 	const db = getDb();
 	const now = Date.now();
-	const existing = db
-		.prepare('SELECT * FROM memory_entities WHERE conversation_id = ? AND entity_key = ?')
-		.get(conversationId, input.entityKey) as EntityRow | undefined;
-	if (existing) {
-		db.prepare(
-			`UPDATE memory_entities
-			    SET entity_type = ?, display_name = ?, summary = ?, metadata_json = ?, updated_at = ?
-			  WHERE id = ?`
-		).run(
-			input.entityType ?? existing.entity_type,
-			input.displayName ?? existing.display_name,
-			input.summary ?? existing.summary,
-			safeJson(input.metadata ?? parseJson(existing.metadata_json, {})),
-			now,
-			existing.id
+	// Read + write must live in the SAME transaction: a read outside the write
+	// lets two concurrent callers (extraction retry, fork replay) both observe
+	// existing=undefined for the same (conversation_id, entity_key) and race to
+	// INSERT. The UNIQUE(conversation_id, entity_key) constraint (migration 025)
+	// lets us collapse the read-derived values into a single atomic
+	// INSERT ... ON CONFLICT DO UPDATE so the loser updates instead of throwing.
+	const tx = db.transaction((): MemoryEntity => {
+		const existing = db
+			.prepare('SELECT * FROM memory_entities WHERE conversation_id = ? AND entity_key = ?')
+			.get(conversationId, input.entityKey) as EntityRow | undefined;
+		// On INSERT the caller is responsible for resolving entityType/displayName
+		// (the engine commit path derives them from the entityKey for a brand-new
+		// entity — see deriveEntityFromKey). The `?? ''` is only a type-level guard;
+		// legitimate new entities always arrive with both fields populated. On
+		// UPDATE we fall back to the existing row's values when the input omits a
+		// field, preserving the prior SELECT-then-UPDATE semantics.
+		const id = existing?.id ?? ulid();
+		const entityType = input.entityType ?? existing?.entity_type ?? '';
+		const displayName = input.displayName ?? existing?.display_name ?? '';
+		const summary = input.summary ?? existing?.summary ?? '';
+		const metadataJson = safeJson(
+			input.metadata ?? (existing ? parseJson(existing.metadata_json, {}) : {})
 		);
-		const updated = db
-			.prepare('SELECT * FROM memory_entities WHERE id = ?')
-			.get(existing.id) as EntityRow;
-		indexItem(db, conversationId, 'entity', existing.id, entityIndexText(updated));
+		db.prepare(
+			`INSERT INTO memory_entities(
+			   id, conversation_id, entity_key, entity_type, display_name, summary, status,
+			   metadata_json, created_at, updated_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+			 ON CONFLICT(conversation_id, entity_key) DO UPDATE SET
+			   entity_type = excluded.entity_type,
+			   display_name = excluded.display_name,
+			   summary = excluded.summary,
+			   metadata_json = excluded.metadata_json,
+			   updated_at = excluded.updated_at`
+		).run(
+			id,
+			conversationId,
+			input.entityKey,
+			entityType,
+			displayName,
+			summary,
+			metadataJson,
+			now,
+			now
+		);
+		const row = db
+			.prepare('SELECT * FROM memory_entities WHERE conversation_id = ? AND entity_key = ?')
+			.get(conversationId, input.entityKey) as EntityRow;
+		indexItem(db, conversationId, 'entity', row.id, entityIndexText(row));
 		appendSessionMemoryLog(db, conversationId, {
-			eventKind: 'entity.update',
+			eventKind: existing ? 'entity.update' : 'entity.create',
 			itemType: 'entity',
-			itemId: existing.id,
+			itemId: row.id,
 			sourceMessageId: input.sourceMessageId ?? null,
 			turnId: input.turnId ?? null,
-			payload: { item: rowToEntity(updated) }
+			payload: { item: rowToEntity(row) }
 		});
-		return rowToEntity(updated);
-	}
-	const id = ulid();
-	// On INSERT the caller is responsible for resolving entityType/displayName
-	// (the engine commit path derives them from the entityKey for a brand-new
-	// entity — see deriveEntityFromKey). The `?? ''` is only a type-level guard;
-	// legitimate new entities always arrive with both fields populated.
-	db.prepare(
-		`INSERT INTO memory_entities(
-		   id, conversation_id, entity_key, entity_type, display_name, summary, status,
-		   metadata_json, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`
-	).run(
-		id,
-		conversationId,
-		input.entityKey,
-		input.entityType ?? '',
-		input.displayName ?? '',
-		input.summary ?? '',
-		safeJson(input.metadata ?? {}),
-		now,
-		now
-	);
-	const row = db.prepare('SELECT * FROM memory_entities WHERE id = ?').get(id) as EntityRow;
-	indexItem(db, conversationId, 'entity', id, entityIndexText(row));
-	appendSessionMemoryLog(db, conversationId, {
-		eventKind: 'entity.create',
-		itemType: 'entity',
-		itemId: id,
-		sourceMessageId: input.sourceMessageId ?? null,
-		turnId: input.turnId ?? null,
-		payload: { item: rowToEntity(row) }
+		return rowToEntity(row);
 	});
-	return rowToEntity(row);
+	return tx();
 }
 
 export function getEntity(conversationId: string, entityKeyOrId: string): MemoryEntity | null {
