@@ -19,6 +19,7 @@ export type RuntimeSessionMode = 'interactive' | 'plan' | 'autopilot';
 
 export interface SdkEventSource {
 	on(event: string, listener: (e: unknown) => void): void;
+	off?(event: string, listener: (e: unknown) => void): void;
 }
 
 interface EventAdapterContext {
@@ -229,36 +230,63 @@ export class SdkEventAdapter {
 	private readonly childContent = new Map<string, string>();
 	private readonly trackedInfoIds = new Map<string, string>();
 
+	private attachedSession: SdkEventSource | null = null;
+	private readonly registrations: Array<{
+		event: string;
+		handler: (e: unknown) => void;
+	}> = [];
+
 	constructor(private readonly ctx: EventAdapterContext) {}
 
 	attach(sdkSession: SdkEventSource) {
-		sdkSession.on('assistant.message_delta', this.onDelta);
-		sdkSession.on('assistant.reasoning_delta', this.onReasoningDelta);
-		sdkSession.on('assistant.message', this.onAssistantMessage);
-		sdkSession.on('tool.execution_start', this.onToolStart);
-		sdkSession.on('tool.execution_complete', this.onToolComplete);
-		sdkSession.on('tool.execution_partial_result', this.onToolPartialResult);
-		sdkSession.on('tool.execution_progress', this.onToolProgress);
-		sdkSession.on('subagent.started', this.onSubagentStarted);
-		sdkSession.on('subagent.completed', this.onSubagentCompleted);
-		sdkSession.on('subagent.failed', this.onSubagentFailed);
-		sdkSession.on('session.idle', this.onSessionIdle);
-		sdkSession.on('session.usage_info', this.onUsageInfo);
-		sdkSession.on('session.compaction_start', this.onCompactionStart);
-		sdkSession.on('session.compaction_complete', this.onCompactionComplete);
-		sdkSession.on('sampling.requested', this.onSamplingRequested);
-		sdkSession.on('sampling.completed', this.onSamplingCompleted);
-		sdkSession.on('mcp.oauth_required', this.onMcpOauthRequired);
-		sdkSession.on('mcp.oauth_completed', this.onMcpOauthCompleted);
-		sdkSession.on('external_tool.requested', this.onExternalToolRequested);
-		sdkSession.on('external_tool.completed', this.onExternalToolCompleted);
-		sdkSession.on('mode.changed', this.onModeChanged);
+		this.registrations.length = 0;
+		const register = (event: string, handler: (e: unknown) => void) => {
+			sdkSession.on(event, handler);
+			this.registrations.push({ event, handler });
+		};
+		register('assistant.message_delta', this.onDelta);
+		register('assistant.reasoning_delta', this.onReasoningDelta);
+		register('assistant.message', this.onAssistantMessage);
+		register('tool.execution_start', this.onToolStart);
+		register('tool.execution_complete', this.onToolComplete);
+		register('tool.execution_partial_result', this.onToolPartialResult);
+		register('tool.execution_progress', this.onToolProgress);
+		register('subagent.started', this.onSubagentStarted);
+		register('subagent.completed', this.onSubagentCompleted);
+		register('subagent.failed', this.onSubagentFailed);
+		register('session.idle', this.onSessionIdle);
+		register('session.usage_info', this.onUsageInfo);
+		register('session.compaction_start', this.onCompactionStart);
+		register('session.compaction_complete', this.onCompactionComplete);
+		register('sampling.requested', this.onSamplingRequested);
+		register('sampling.completed', this.onSamplingCompleted);
+		register('mcp.oauth_required', this.onMcpOauthRequired);
+		register('mcp.oauth_completed', this.onMcpOauthCompleted);
+		register('external_tool.requested', this.onExternalToolRequested);
+		register('external_tool.completed', this.onExternalToolCompleted);
+		register('mode.changed', this.onModeChanged);
+		this.attachedSession = sdkSession;
+	}
+
+	detach() {
+		const session = this.attachedSession;
+		if (session) {
+			for (const { event, handler } of this.registrations) {
+				session.off?.(event, handler);
+			}
+		}
+		this.registrations.length = 0;
+		this.attachedSession = null;
 	}
 
 	resetTurn() {
 		this.currentMessageId = null;
 		this.currentReasoningSegmentId = null;
 		this.currentReasoningStartedAt = 0;
+		this.subagentParentByAgentId.clear();
+		this.childReasoning.clear();
+		this.childContent.clear();
+		this.trackedInfoIds.clear();
 	}
 
 	private get activeQueue(): AsyncQueue<PortalEvent> | null {

@@ -379,6 +379,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			}
 		},
 		async dispose() {
+			eventAdapter.detach();
 			try {
 				await sdkSession.disconnect();
 			} catch (e) {
