@@ -176,30 +176,35 @@ export async function snapshot(
 	kind: SnapshotKind
 ): Promise<SnapshotRow | null> {
 	const db = getDb();
-	const existing = db
-		.prepare('SELECT * FROM turn_snapshots WHERE message_id = ? AND kind = ?')
-		.get(messageId, kind) as
-		| {
-				message_id: string;
-				kind: SnapshotKind;
-				git_ref: string;
-				commit_sha: string;
-				tree_sha: string;
-				created_at: number;
-		  }
-		| undefined;
-	if (existing) {
-		return {
-			messageId: existing.message_id,
-			kind: existing.kind,
-			gitRef: existing.git_ref,
-			commitSha: existing.commit_sha,
-			treeSha: existing.tree_sha,
-			createdAt: existing.created_at
-		};
-	}
 
 	return withLock(workdir, async () => {
+		// Existence check runs inside the per-workdir lock so that
+		// check-then-insert is atomic: concurrent callers for the same
+		// (messageId, kind) cannot both read NULL and both attempt the
+		// INSERT, which would violate the (message_id, kind) primary key.
+		const existing = db
+			.prepare('SELECT * FROM turn_snapshots WHERE message_id = ? AND kind = ?')
+			.get(messageId, kind) as
+			| {
+					message_id: string;
+					kind: SnapshotKind;
+					git_ref: string;
+					commit_sha: string;
+					tree_sha: string;
+					created_at: number;
+			  }
+			| undefined;
+		if (existing) {
+			return {
+				messageId: existing.message_id,
+				kind: existing.kind,
+				gitRef: existing.git_ref,
+				commitSha: existing.commit_sha,
+				treeSha: existing.tree_sha,
+				createdAt: existing.created_at
+			};
+		}
+
 		if (!(await isSnapshotRepo(workdir))) return null;
 		const ref = refFor(messageId, kind);
 		// Use a private index file so the user's staging area (if any) is
