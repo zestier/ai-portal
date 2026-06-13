@@ -4541,6 +4541,32 @@ describe('memory-backed sessions', () => {
 		expect(memory.listFacts(conv.id, { predicate: 'trait', status: 'active' })).toHaveLength(0);
 	});
 
+	it('revertCommittedPatch atomically undoes a patch and rebuilds the projection', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'revert-atomic', workdir: '/tmp', model: null });
+		const committed = commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }],
+				facts: [
+					{ entityKey: 'character.mara', predicate: 'location', value: 'the cellar' },
+					{ entityKey: 'character.mara', predicate: 'trait', value: 'brave' }
+				]
+			}
+		});
+
+		expect(memory.listFacts(conv.id, { status: 'active' }).length).toBeGreaterThanOrEqual(2);
+
+		memory.revertCommittedPatch(conv.id, committed.patch.id);
+
+		// Every fact the patch created is gone, and a fresh rebuild from the
+		// surviving event stream yields the same (empty) active set — proving the
+		// projection was rebuilt as part of the revert, not left half-applied.
+		expect(memory.listFacts(conv.id, { status: 'active' })).toHaveLength(0);
+		memory.rebuildSessionMemoryProjection(conv.id);
+		expect(memory.listFacts(conv.id, { status: 'active' })).toHaveLength(0);
+	});
+
 	it('un-supersedes a single-valued fact when the overriding patch is dropped', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'revert-supersede', workdir: '/tmp', model: null });

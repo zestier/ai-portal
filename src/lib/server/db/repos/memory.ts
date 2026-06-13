@@ -1495,16 +1495,25 @@ export function deleteItem(conversationId: string, kind: string, id: string): bo
  */
 export function revertCommittedPatch(conversationId: string, patchId: string): void {
 	const items = listPatchItems(conversationId, { patchId, limit: 1000 });
-	for (const item of items) {
-		if (item.action === 'create') {
-			deleteItem(conversationId, item.itemType, item.itemId);
-		} else if (item.action === 'resolve' && item.itemType === 'open_loop') {
-			updateOpenLoop(conversationId, item.itemId, { status: 'open' });
-		} else if (item.action === 'forget' && item.itemType === 'fact') {
-			updateFact(conversationId, item.itemId, { status: 'active' });
+	const db = getDb();
+	// Apply every item AND rebuild the projection inside one transaction so a
+	// crash mid-loop can't leave a half-reverted state (some facts restored,
+	// others deleted, projection stale). The helpers below open their own
+	// db.transaction(...); better-sqlite3 nests these as savepoints, so the
+	// whole revert commits or rolls back atomically.
+	const tx = db.transaction(() => {
+		for (const item of items) {
+			if (item.action === 'create') {
+				deleteItem(conversationId, item.itemType, item.itemId);
+			} else if (item.action === 'resolve' && item.itemType === 'open_loop') {
+				updateOpenLoop(conversationId, item.itemId, { status: 'open' });
+			} else if (item.action === 'forget' && item.itemType === 'fact') {
+				updateFact(conversationId, item.itemId, { status: 'active' });
+			}
 		}
-	}
-	rebuildSessionMemoryProjection(conversationId);
+		rebuildSessionMemoryProjection(conversationId);
+	});
+	tx();
 }
 
 /**
