@@ -1852,30 +1852,33 @@ export function search(
 	const query = opts.query.trim();
 	if (!query) return [];
 	const limit = opts.limit ?? 20;
+	const types = opts.types ?? [];
+	// Push the type filter into SQL so LIMIT applies after filtering, avoiding
+	// starvation when the top-ranked FTS hits are all of an unwanted type.
+	const typeFilter =
+		types.length > 0 ? `AND item_type IN (${types.map(() => '?').join(', ')})` : '';
 	const rows = getDb()
 		.prepare(
 			`SELECT item_type, item_id, text
 			   FROM memory_search_index
 			  WHERE conversation_id = ?
 			    AND memory_search_index MATCH ?
+			    ${typeFilter}
 			  ORDER BY rank
 			  LIMIT ?`
 		)
-		.all(conversationId, ftsQuery(query), limit) as {
+		.all(conversationId, ftsQuery(query), ...types, limit) as {
 		item_type: string;
 		item_id: string;
 		text: string;
 	}[];
-	const types = new Set(opts.types ?? []);
-	return rows
-		.filter((row) => types.size === 0 || types.has(row.item_type))
-		.map((row, index) => ({
-			itemType: row.item_type,
-			itemId: row.item_id,
-			text: row.text,
-			score: limit - index,
-			sources: ['fts']
-		}));
+	return rows.map((row, index) => ({
+		itemType: row.item_type,
+		itemId: row.item_id,
+		text: row.text,
+		score: limit - index,
+		sources: ['fts']
+	}));
 }
 
 export function wipe(conversationId: string): void {
