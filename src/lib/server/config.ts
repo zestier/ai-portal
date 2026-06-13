@@ -46,7 +46,7 @@ const Schema = z
 		ALLOWED_GITHUB_LOGINS: commaList,
 		REDEPLOY_ADMIN_GITHUB_LOGINS: commaList,
 
-		SHARED_SECRET: z.string().optional(),
+		SHARED_SECRET: z.string().min(32).optional(),
 
 		COPILOT_GITHUB_TOKEN: z.string().optional(),
 		DEFAULT_BACKEND_PROVIDER: z.enum(BACKEND_PROVIDER_IDS).default('copilot'),

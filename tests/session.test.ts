@@ -27,7 +27,7 @@ describe('session signing', () => {
 	beforeEach(() => {
 		process.env.HOST = '127.0.0.1';
 		process.env.AUTH_MODE = 'shared-secret';
-		process.env.SHARED_SECRET = 'x';
+		process.env.SHARED_SECRET = 'x'.repeat(32);
 		process.env.SESSION_SECRET = randomBytes(48).toString('base64');
 		process.env.ENCRYPTION_KEY = randomBytes(32).toString('base64');
 		resetConfigForTests();
@@ -58,7 +58,7 @@ describe('session cookie read/clear', () => {
 	beforeEach(() => {
 		process.env.HOST = '127.0.0.1';
 		process.env.AUTH_MODE = 'shared-secret';
-		process.env.SHARED_SECRET = 'x';
+		process.env.SHARED_SECRET = 'x'.repeat(32);
 		process.env.SESSION_SECRET = randomBytes(48).toString('base64');
 		process.env.ENCRYPTION_KEY = randomBytes(32).toString('base64');
 		resetConfigForTests();

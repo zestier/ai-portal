@@ -25,7 +25,7 @@ export async function setupAuthedEnv(prefix = 'portal-test-'): Promise<string> {
 	process.env.DATA_DIR = dir;
 	process.env.HOST = '127.0.0.1';
 	process.env.AUTH_MODE = 'shared-secret';
-	process.env.SHARED_SECRET = 'test-secret';
+	process.env.SHARED_SECRET = 'test-secret-0123456789-abcdef-0123456789';
 	process.env.SESSION_SECRET = randomBytes(48).toString('base64');
 	process.env.ENCRYPTION_KEY = randomBytes(32).toString('base64');
 	delete process.env.I_KNOW_THIS_IS_LOCAL;

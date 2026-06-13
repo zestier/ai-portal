@@ -1,14 +1,34 @@
 import { redirect } from '@sveltejs/kit';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { PageServerLoad, Actions } from './$types';
 import { loadConfig } from '$lib/server/config';
 import { authorizeUrl } from '$lib/server/auth/github';
 import { issue } from '$lib/server/auth/session';
+import { FixedWindowRateLimiter } from '$lib/server/rate-limit';
 
+// Random per-process key so the digests below can't be precomputed offline.
+const SECRET_COMPARE_KEY = randomBytes(32);
+
+/**
+ * Constant-time shared-secret comparison. Both inputs are run through HMAC-SHA256
+ * first, yielding fixed 32-byte digests, so `timingSafeEqual` never sees unequal
+ * lengths and the comparison time can't leak the secret's byte length. Both
+ * branches perform identical work regardless of whether the secret matches.
+ */
 function sharedSecretMatches(input: string, expected: string): boolean {
-	const inputBytes = Buffer.from(input);
-	const expectedBytes = Buffer.from(expected);
-	return inputBytes.length === expectedBytes.length && timingSafeEqual(inputBytes, expectedBytes);
+	const inputMac = createHmac('sha256', SECRET_COMPARE_KEY).update(input).digest();
+	const expectedMac = createHmac('sha256', SECRET_COMPARE_KEY).update(expected).digest();
+	return timingSafeEqual(inputMac, expectedMac);
+}
+
+// Per-IP brute-force throttle: at most 10 failed attempts per 15 minutes.
+const loginRateLimiter = new FixedWindowRateLimiter({ windowMs: 15 * 60_000, max: 10 });
+
+// Fixed delay applied to every failed attempt to blunt timing/brute-force probing.
+const FAILURE_DELAY_MS = 500;
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export const load: PageServerLoad = ({ locals, cookies, url }) => {
@@ -33,16 +53,24 @@ export const load: PageServerLoad = ({ locals, cookies, url }) => {
 };
 
 export const actions: Actions = {
-	default: async ({ request, cookies, url, locals }) => {
+	default: async ({ request, cookies, url, locals, getClientAddress }) => {
 		const cfg = loadConfig();
 		if (cfg.AUTH_MODE !== 'shared-secret') {
 			return { ok: false, error: 'Shared-secret login is disabled' };
 		}
+		const ip = getClientAddress();
+		if (loginRateLimiter.check(ip).limited) {
+			await delay(FAILURE_DELAY_MS);
+			return { ok: false, error: 'Too many attempts. Please try again later.' };
+		}
 		const data = await request.formData();
 		const secret = String(data.get('secret') ?? '');
 		if (!secret || !cfg.SHARED_SECRET || !sharedSecretMatches(secret, cfg.SHARED_SECRET)) {
+			loginRateLimiter.record(ip);
+			await delay(FAILURE_DELAY_MS);
 			return { ok: false, error: 'Invalid secret' };
 		}
+		loginRateLimiter.reset(ip);
 		// Use the local user as the principal in shared-secret mode.
 		const { ensureLocalUser } = await import('$lib/server/db/repos/users');
 		const user = ensureLocalUser();
