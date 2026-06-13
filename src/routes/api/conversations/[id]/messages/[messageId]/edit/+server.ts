@@ -5,6 +5,7 @@ import { inlineEditMessage, InlineEditRejected } from '$lib/server/message-edit'
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
+import { authorizeConversation } from '$lib/server/conversation-auth';
 
 const Body = z.object({ content: z.string().trim().min(1).max(64_000) });
 
@@ -17,6 +18,7 @@ const REJECT_STATUS: Record<string, number> = {
 };
 
 export const POST: RequestHandler = async ({ params, locals, request }) => {
+	authorizeConversation(params.id, locals.userId);
 	const userId = requireUserId(locals);
 	const { content } = await parseBody(request, Body);
 

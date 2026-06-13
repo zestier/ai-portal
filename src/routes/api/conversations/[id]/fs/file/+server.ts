@@ -9,6 +9,7 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 	const relPath = url.searchParams.get('path');
 	if (!relPath) throw error(400, 'path is required');
 	const ref = url.searchParams.get('ref');
+	if (ref && ref.length > 200) throw error(400, 'ref is too long');
 
 	if (ref) {
 		try {

@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { regenerateFromAssistant, InlineEditRejected } from '$lib/server/message-edit';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { requireUserId } from '$lib/server/auth/require';
+import { authorizeConversation } from '$lib/server/conversation-auth';
 
 const REJECT_STATUS: Record<string, number> = {
 	conversation_not_found: 404,
@@ -22,6 +23,7 @@ const REJECT_STATUS: Record<string, number> = {
  * symmetrically with the inline-edit flow.
  */
 export const POST: RequestHandler = async ({ params, locals }) => {
+	authorizeConversation(params.id, locals.userId);
 	const userId = requireUserId(locals);
 
 	try {

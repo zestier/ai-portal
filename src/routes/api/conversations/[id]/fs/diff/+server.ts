@@ -11,6 +11,8 @@ const VALID_TARGETS = new Set([
 	'commit-vs-parent'
 ]);
 
+const SHA_RE = /^[0-9a-f]{4,64}$/;
+
 export const GET: RequestHandler = async ({ params, locals, url }) => {
 	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
 	const targetKind = url.searchParams.get('target') ?? 'worktree-vs-head';
@@ -20,7 +22,8 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 
 	let target: DiffTarget;
 	if (targetKind === 'commit' || targetKind === 'commit-vs-parent') {
-		if (!sha) throw error(400, 'sha required for commit targets');
+		if (!sha) throw error(422, 'sha required for commit targets');
+		if (!SHA_RE.test(sha)) throw error(400, 'invalid sha');
 		target = { kind: targetKind, sha };
 	} else {
 		target = { kind: targetKind } as DiffTarget;

@@ -9,7 +9,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	const code = url.searchParams.get('code');
 	const state = url.searchParams.get('state');
 	const expectedState = cookies.get('oauth_state');
-	cookies.delete('oauth_state', { path: '/' });
+	cookies.delete('oauth_state', { path: '/', secure: url.protocol === 'https:' });
 
 	if (!code || !state || !expectedState || state !== expectedState) {
 		log.warn('oauth.state_mismatch');

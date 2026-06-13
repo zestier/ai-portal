@@ -678,18 +678,20 @@
 				if (m && m.role === 'assistant') {
 					m.status = 'error';
 					m.errorCode = ev.code;
-					m.content += `\n\n_Error: ${ev.message}_`;
-				} else {
-					messages.push({
-						id: `err-${Date.now()}`,
-						conversationId: conversation.id,
-						role: 'system',
-						content: `Error: ${ev.message}`,
-						status: 'error',
-						errorCode: ev.code,
-						createdAt: Date.now()
-					});
 				}
+				// Always surface the error as a separate system message rather
+				// than appending the server/agent-supplied text into the
+				// assistant body, where adversarial Markdown (headings, tables,
+				// HRs) could visually corrupt the thread.
+				messages.push({
+					id: `err-${Date.now()}`,
+					conversationId: conversation.id,
+					role: 'system',
+					content: `Error: ${ev.message}`,
+					status: 'error',
+					errorCode: ev.code,
+					createdAt: Date.now()
+				});
 				break;
 			}
 			case 'conversation.update': {
