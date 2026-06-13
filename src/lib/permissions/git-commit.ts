@@ -14,18 +14,23 @@ export function gitCommitPreview(args: unknown): GitCommitPreview | null {
 	const paths = Array.isArray(args.paths) ? args.paths.map(String) : null;
 	const body = typeof args.body === 'string' && args.body.length > 0 ? args.body : null;
 	const trailers = gitCommitTrailers(args);
+	// Only the canonical primitive string `'all'` means "every workspace change".
+	// An array such as `['all']` is intentionally treated as an explicit path
+	// list containing a single literal path named "all", not as the all-changes
+	// sentinel. Exotic coercible objects (e.g. `{ toString() { return 'all' } }`)
+	// are likewise NOT treated as the sentinel — the `===` comparison is strict.
+	const isAllChanges = args.paths === 'all';
 	return {
 		subject,
 		paths,
 		body,
 		bodyLineCount: body ? body.split(/\r\n|\r|\n/).length : 0,
 		trailers,
-		targetSummary:
-			args.paths === 'all'
-				? 'All tracked, staged, unstaged, deleted, and untracked workspace changes'
-				: paths
-					? `${paths.length} selected ${paths.length === 1 ? 'path' : 'paths'}`
-					: 'Selected paths'
+		targetSummary: isAllChanges
+			? 'All tracked, staged, unstaged, deleted, and untracked workspace changes'
+			: paths
+				? `${paths.length} selected ${paths.length === 1 ? 'path' : 'paths'}`
+				: 'Selected paths'
 	};
 }
 
@@ -43,11 +48,7 @@ export function summarizeGitCommitPermission(args: unknown): string | null {
 		for (const path of preview.paths.slice(0, 10)) lines.push(`- ${path}`);
 		if (preview.paths.length > 10) lines.push(`- ...and ${preview.paths.length - 10} more`);
 	} else {
-		lines.push(
-			preview.targetSummary.startsWith('All tracked')
-				? 'Target: all current workspace changes'
-				: 'Target: selected paths'
-		);
+		lines.push(`Target: ${preview.targetSummary}`);
 	}
 	if (preview.bodyLineCount > 0) {
 		lines.push(`Body: ${preview.bodyLineCount} ${preview.bodyLineCount === 1 ? 'line' : 'lines'}`);
