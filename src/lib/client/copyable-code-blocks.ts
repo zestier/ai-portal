@@ -21,6 +21,26 @@ const COPY_ICON =
 const CHECK_ICON =
 	'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0L2.72 8.03a.75.75 0 0 1 1.06-1.06L7 10.19l5.72-5.97a.75.75 0 0 1 1.06 0z"/></svg>';
 
+// Parse each compile-time SVG constant into a DOM node once, then hand out
+// clones. This avoids assigning innerHTML on dynamically created nodes.
+let copyIconNode: SVGElement | null = null;
+let checkIconNode: SVGElement | null = null;
+
+function parseSvg(svg: string): SVGElement {
+	return new DOMParser().parseFromString(svg, 'image/svg+xml')
+		.documentElement as unknown as SVGElement;
+}
+
+function setIcon(btn: HTMLElement, which: 'copy' | 'check'): void {
+	if (which === 'copy') {
+		copyIconNode ??= parseSvg(COPY_ICON);
+		btn.replaceChildren(copyIconNode.cloneNode(true));
+	} else {
+		checkIconNode ??= parseSvg(CHECK_ICON);
+		btn.replaceChildren(checkIconNode.cloneNode(true));
+	}
+}
+
 const STYLE_ID = 'copyable-code-blocks-styles';
 
 const STYLE = `
@@ -126,11 +146,11 @@ export function copyableCodeBlocks(node: HTMLElement) {
 		btn.type = 'button';
 		btn.className = 'copy-code-btn';
 		btn.setAttribute('aria-label', 'Copy code');
-		btn.innerHTML = COPY_ICON;
+		setIcon(btn, 'copy');
 
 		const reset = (): void => {
 			delete btn.dataset.state;
-			btn.innerHTML = COPY_ICON;
+			setIcon(btn, 'copy');
 			btn.setAttribute('aria-label', 'Copy code');
 			status.textContent = '';
 		};
@@ -144,7 +164,7 @@ export function copyableCodeBlocks(node: HTMLElement) {
 			void writeClipboard(text).then((ok) => {
 				if (ok) {
 					btn.dataset.state = 'copied';
-					btn.innerHTML = CHECK_ICON;
+					setIcon(btn, 'check');
 					btn.setAttribute('aria-label', 'Copied');
 					status.textContent = '';
 					announce('Copied');
