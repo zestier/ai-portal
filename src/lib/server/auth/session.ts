@@ -100,12 +100,25 @@ export function issue(cookies: Cookies, userId: string, secure = true): string {
 	return token;
 }
 
-export function clear(cookies: Cookies, secure = true) {
-	cookies.delete(cookieName(secure), { path: '/' });
+export function clear(cookies: Cookies, _secure = true) {
+	void _secure;
+	// Delete both cookie names unconditionally so logout is effective regardless
+	// of the secure flag (read() must not be able to fall back to a surviving
+	// cookie under either name). The `__Host-` cookie must be deleted with
+	// `secure: true` and `path: '/'`: per the cookie-prefix spec a Set-Cookie for
+	// a `__Host-`-prefixed name without Secure is rejected by the browser, which
+	// would leave the session cookie alive and make logout ineffective.
+	cookies.delete(COOKIE_NAME, { path: '/', secure: true });
+	cookies.delete(DEV_COOKIE_NAME, { path: '/' });
 }
 
 export function read(cookies: Cookies, secure = true): Claims | null {
-	const v = cookies.get(cookieName(secure)) ?? cookies.get(cookieName(!secure));
+	// In secure (HTTPS) mode only accept the `__Host-` cookie. Falling back to
+	// the non-`__Host-` dev cookie would let a stale/dev-key-signed cookie
+	// authenticate over HTTPS. In non-secure (dev/http) mode, accept either.
+	const v = secure
+		? cookies.get(COOKIE_NAME)
+		: (cookies.get(cookieName(secure)) ?? cookies.get(cookieName(!secure)));
 	if (!v) return null;
 	return verify(v);
 }
