@@ -10,21 +10,28 @@ type HandleEvent = Parameters<Handle>[0]['event'];
  * invariant.
  */
 
-function makeEvent(opts: { path: string; method?: string; origin?: string }): HandleEvent {
+function makeEvent(opts: {
+	path: string;
+	method?: string;
+	origin?: string;
+	csrfHeader?: string;
+	csrfCookie?: string;
+}): HandleEvent {
 	const url = new URL(`http://127.0.0.1${opts.path}`);
 	const headers = new Headers();
 	if (opts.origin) headers.set('origin', opts.origin);
+	if (opts.csrfHeader !== undefined) headers.set('x-csrf-token', opts.csrfHeader);
 	const request = new Request(url, {
 		method: opts.method ?? 'GET',
 		headers
 	});
 	// Cast through unknown — we only populate the fields the `handle` hook
-	// actually reads.
+	// actually reads. The non-secure (http) CSRF cookie name is `portal_csrf`.
 	return {
 		url,
 		request,
 		cookies: {
-			get: () => undefined,
+			get: (name: string) => (name === 'portal_csrf' ? (opts.csrfCookie ?? undefined) : undefined),
 			getAll: () => [],
 			set: () => {},
 			delete: () => {},
@@ -113,5 +120,58 @@ describe('hooks auth gate', () => {
 			resolve: async () => new Response('should not reach handler', { status: 200 })
 		});
 		expect(res.status).toBe(403);
+	});
+
+	it('rejects same-origin mutating /api/* without a matching CSRF token', async () => {
+		await setupLocalEnv('portal-hooks-test-');
+
+		const handle = await loadHandle();
+		const event = makeEvent({
+			path: '/api/conversations',
+			method: 'POST',
+			origin: 'http://127.0.0.1',
+			csrfCookie: 'cookie-token',
+			csrfHeader: 'mismatched-token'
+		});
+		const res = await handle({
+			event,
+			resolve: async () => new Response('should not reach handler', { status: 200 })
+		});
+		expect(res.status).toBe(403);
+	});
+
+	it('rejects same-origin mutating /api/* when the CSRF header is missing', async () => {
+		await setupLocalEnv('portal-hooks-test-');
+
+		const handle = await loadHandle();
+		const event = makeEvent({
+			path: '/api/conversations',
+			method: 'POST',
+			origin: 'http://127.0.0.1',
+			csrfCookie: 'cookie-token'
+		});
+		const res = await handle({
+			event,
+			resolve: async () => new Response('should not reach handler', { status: 200 })
+		});
+		expect(res.status).toBe(403);
+	});
+
+	it('allows same-origin mutating /api/* when the CSRF token matches the cookie', async () => {
+		await setupLocalEnv('portal-hooks-test-');
+
+		const handle = await loadHandle();
+		const event = makeEvent({
+			path: '/api/conversations',
+			method: 'POST',
+			origin: 'http://127.0.0.1',
+			csrfCookie: 'matching-token',
+			csrfHeader: 'matching-token'
+		});
+		const res = await handle({
+			event,
+			resolve: async () => new Response('ok', { status: 200 })
+		});
+		expect(res.status).toBe(200);
 	});
 });

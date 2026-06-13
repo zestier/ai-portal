@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/fixtures';
 import { createConversation, uniqueTitle, waitForAssistantMessage } from './helpers/conversations';
 
 test('streamed assistant reply (stubbed) appears and persists across reloads', async ({

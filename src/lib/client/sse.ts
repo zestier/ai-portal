@@ -7,6 +7,8 @@
 //                including heartbeat comments. Useful for stall detection
 //                since heartbeats are otherwise swallowed silently.
 
+import { csrfToken } from './csrf';
+
 export interface StreamSseInit extends RequestInit {
 	signal?: AbortSignal;
 	onStatus?: (status: number) => void;
@@ -15,6 +17,19 @@ export interface StreamSseInit extends RequestInit {
 
 export async function* streamSse<T>(url: string, init: StreamSseInit = {}): AsyncIterable<T> {
 	const { onStatus, onActivity, ...fetchInit } = init;
+	// This transport uses fetch (not native EventSource), so custom headers
+	// work — mutating SSE requests must carry the CSRF token like any other
+	// state-changing fetch. The global interceptor also covers this, but we
+	// set it explicitly here for the non-GET SSE entrypoint.
+	const method = (fetchInit.method ?? 'GET').toUpperCase();
+	if (method !== 'GET') {
+		const headers = new Headers(fetchInit.headers);
+		if (!headers.has('x-csrf-token')) {
+			const token = csrfToken();
+			if (token) headers.set('x-csrf-token', token);
+		}
+		fetchInit.headers = headers;
+	}
 	const res = await fetch(url, fetchInit);
 	onStatus?.(res.status);
 	if (!res.ok) {
@@ -56,10 +71,4 @@ export async function* streamSse<T>(url: string, init: StreamSseInit = {}): Asyn
 			/* ignore */
 		}
 	}
-}
-
-export function csrfToken(): string {
-	if (typeof document === 'undefined') return '';
-	const m = document.querySelector('meta[name="csrf-token"]');
-	return m?.getAttribute('content') ?? '';
 }

@@ -126,3 +126,46 @@ export function read(cookies: Cookies, secure = true): Claims | null {
 export function generateCsrfToken(): string {
 	return randomBytes(24).toString('base64url');
 }
+
+// CSRF double-submit cookie. The same token is pinned here and exposed to
+// client JS via the <meta name="csrf-token"> tag; the server compares the
+// X-CSRF-Token request header against this cookie on mutating requests. The
+// cookie is httpOnly (JS reads the token from the meta tag, never the cookie)
+// so neither a cross-site attacker (cannot read the cookie or the same-origin
+// DOM) can forge a matching header.
+const CSRF_COOKIE_NAME = '__Host-portal_csrf';
+const DEV_CSRF_COOKIE_NAME = 'portal_csrf'; // when not over HTTPS, drop __Host-
+
+function csrfCookieName(secure: boolean): string {
+	return secure ? CSRF_COOKIE_NAME : DEV_CSRF_COOKIE_NAME;
+}
+
+export function readCsrfCookie(cookies: Cookies, secure = true): string | null {
+	// Mirror the session cookie policy: in secure mode only accept the
+	// `__Host-` cookie; in dev/http mode accept either name.
+	const v = secure
+		? cookies.get(CSRF_COOKIE_NAME)
+		: (cookies.get(csrfCookieName(secure)) ?? cookies.get(csrfCookieName(!secure)));
+	return v ?? null;
+}
+
+export function issueCsrfCookie(cookies: Cookies, token: string, secure = true): void {
+	cookies.set(csrfCookieName(secure), token, {
+		path: '/',
+		httpOnly: true,
+		sameSite: 'lax',
+		secure,
+		maxAge: THIRTY_DAYS
+	});
+}
+
+export function csrfTokensMatch(
+	provided: string | null | undefined,
+	expected: string | null | undefined
+): boolean {
+	if (!provided || !expected) return false;
+	const a = Buffer.from(provided, 'utf8');
+	const b = Buffer.from(expected, 'utf8');
+	if (a.length !== b.length) return false;
+	return timingSafeEqual(a, b);
+}

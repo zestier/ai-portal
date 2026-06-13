@@ -4,7 +4,13 @@ import { log } from '$lib/server/log';
 import { getDb } from '$lib/server/db';
 import * as users from '$lib/server/db/repos/users';
 import * as settings from '$lib/server/db/repos/settings';
-import { read as readSession, generateCsrfToken } from '$lib/server/auth/session';
+import {
+	read as readSession,
+	generateCsrfToken,
+	readCsrfCookie,
+	issueCsrfCookie,
+	csrfTokensMatch
+} from '$lib/server/auth/session';
 import { apiErrorResponse } from '$lib/server/http';
 import { startIdleReaper } from '$lib/server/runtime/pool';
 import * as messages from '$lib/server/db/repos/messages';
@@ -37,7 +43,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Default locals
 	event.locals.userId = null;
 	event.locals.user = null;
-	event.locals.csrfToken = generateCsrfToken();
+
+	// CSRF double-submit token: reuse the value already pinned in the browser's
+	// cookie so the token rendered into the <meta> tag (and echoed back by the
+	// client in the X-CSRF-Token header) matches what we validate below. Mint +
+	// set it on first contact.
+	let csrf = readCsrfCookie(event.cookies, secure);
+	if (!csrf) {
+		csrf = generateCsrfToken();
+		issueCsrfCookie(event.cookies, csrf, secure);
+	}
+	event.locals.csrfToken = csrf;
 
 	// AUTH_MODE=none: auto-login the local user.
 	if (cfg.AUTH_MODE === 'none') {
@@ -78,6 +94,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 			(referer && referer.startsWith(expectedOrigin + '/'));
 		if (!ok) {
 			return apiErrorResponse(403, 'bad_origin');
+		}
+
+		// CSRF double-submit validation (defense in depth alongside the Origin
+		// check above). The client echoes the cookie-pinned token — exposed via
+		// the <meta name="csrf-token"> tag — in this header. A cross-site
+		// attacker can neither read that token nor set a custom header on a
+		// forged request, so a matching header proves same-origin intent.
+		const headerToken = event.request.headers.get('x-csrf-token');
+		if (!csrfTokensMatch(headerToken, csrf)) {
+			return apiErrorResponse(403, 'bad_csrf');
 		}
 	}
 

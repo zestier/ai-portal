@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/fixtures';
 import { uniqueTitle } from './helpers/conversations';
 
 test('conversation CRUD via API matches sidebar state', async ({ page, request }) => {

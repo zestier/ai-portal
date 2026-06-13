@@ -1,4 +1,5 @@
-import { test, expect, type Route } from '@playwright/test';
+import { test, expect } from './helpers/fixtures';
+import type { Route } from '@playwright/test';
 import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
