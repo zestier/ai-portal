@@ -29,6 +29,7 @@ import { buildMemoryTools } from '../tools/memory';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { wrapToolsForStreaming } from './tool-streaming';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
+import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
 
 // One CopilotClient per portal user. Sharing a single process-wide
 // client would cause the SDK subprocess spawned for whichever user
@@ -36,8 +37,20 @@ import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 // silently re-attributes Copilot API calls (billing, audit trail) to
 // the wrong GitHub identity. With the documented multi-user allowlist
 // (`ALLOWED_GITHUB_LOGINS`) that's a real cross-user bleed.
-const clients = new Map<string, CopilotClient>();
-const starting = new Map<string, Promise<CopilotClient>>();
+// Stashed on globalThis so Vite HMR re-imports of this module in dev don't
+// orphan the live CopilotClient subprocesses in the old module's closure,
+// which would let getClient() spawn duplicate clients. Same pattern as the
+// session/inflight maps in pool.ts and the turn/pending registries.
+const CLIENTS_KEYS = appGlobalSymbols('copilot-provider.clients');
+const STARTING_KEYS = appGlobalSymbols('copilot-provider.starting');
+const clients: Map<string, CopilotClient> = getOrCreateGlobalSingleton(
+	CLIENTS_KEYS,
+	() => new Map<string, CopilotClient>()
+);
+const starting: Map<string, Promise<CopilotClient>> = getOrCreateGlobalSingleton(
+	STARTING_KEYS,
+	() => new Map<string, Promise<CopilotClient>>()
+);
 
 export async function getClient(
 	userId: string,

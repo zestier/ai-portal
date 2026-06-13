@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { appGlobalSymbols, clearGlobalSingletonValues } from '../src/lib/server/global-singleton';
 
 // Shared mock SDK client/session instances. These are mutated per test.
 const sdkSessionStub = {
@@ -55,6 +56,12 @@ vi.mock('@github/copilot-sdk', () => {
 async function importBridge() {
 	vi.resetModules();
 	clientCtor.mockClear();
+	// copilot-provider stashes its per-user `clients`/`starting` maps on
+	// globalThis (so Vite HMR re-imports don't orphan live subprocesses), and
+	// those survive vi.resetModules(). Clear them here so each fresh import
+	// starts with an empty client cache, matching this suite's isolation.
+	clearGlobalSingletonValues(appGlobalSymbols('copilot-provider.clients'));
+	clearGlobalSingletonValues(appGlobalSymbols('copilot-provider.starting'));
 	return await import('../src/lib/server/copilot/bridge');
 }
 
