@@ -26,9 +26,13 @@ export function sseResponse<T>(
 ): Response {
 	const { extractId, extractData } = opts;
 	const encoder = new TextEncoder();
+	// Shared across start/cancel so a client disconnect can stop the heartbeat
+	// and break the consuming loop promptly instead of waiting on `finally`.
+	let heartbeat: ReturnType<typeof setInterval> | undefined;
+	const abort = new AbortController();
 	const stream = new ReadableStream<Uint8Array>({
 		async start(controller) {
-			const heartbeat = setInterval(() => {
+			heartbeat = setInterval(() => {
 				try {
 					controller.enqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
 				} catch {
@@ -38,6 +42,7 @@ export function sseResponse<T>(
 			(heartbeat as { unref?: () => void }).unref?.();
 			try {
 				for await (const item of events) {
+					if (abort.signal.aborted) break;
 					const id = extractId?.(item);
 					const data = extractData ? extractData(item) : item;
 					let frame = '';
@@ -46,16 +51,24 @@ export function sseResponse<T>(
 					controller.enqueue(encoder.encode(frame));
 				}
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				controller.enqueue(
-					encoder.encode(
-						`data: ${JSON.stringify({ type: 'error', code: 'stream_failed', message })}\n\n`
-					)
-				);
+				if (!abort.signal.aborted) {
+					const message = err instanceof Error ? err.message : String(err);
+					controller.enqueue(
+						encoder.encode(
+							`data: ${JSON.stringify({ type: 'error', code: 'stream_failed', message })}\n\n`
+						)
+					);
+				}
 			} finally {
 				clearInterval(heartbeat);
-				controller.close();
+				heartbeat = undefined;
+				if (!abort.signal.aborted) controller.close();
 			}
+		},
+		cancel() {
+			clearInterval(heartbeat);
+			heartbeat = undefined;
+			abort.abort();
 		}
 	});
 	return new Response(stream, {
