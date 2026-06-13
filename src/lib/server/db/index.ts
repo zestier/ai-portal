@@ -121,9 +121,13 @@ function runMigrations(db: Database.Database) {
 	);
 
 	const dir = migrationsDir();
+	const leadingVersion = (f: string) => {
+		const m = f.match(/^(\d+)_/);
+		return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+	};
 	const files = readdirSync(dir)
 		.filter((f) => f.endsWith('.sql'))
-		.sort();
+		.sort((a, b) => leadingVersion(a) - leadingVersion(b));
 	for (const file of files) {
 		const m = file.match(/^(\d+)_/);
 		if (!m) continue;
