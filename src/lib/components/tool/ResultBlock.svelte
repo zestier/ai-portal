@@ -13,6 +13,24 @@
 	const markdownHtml = $derived(
 		block.kind === 'text' && markdown ? renderMarkdown(block.text) : null
 	);
+
+	function safeHref(uri: string): string | null {
+		const trimmed = uri.trim();
+		if (trimmed.startsWith('#')) return trimmed;
+		try {
+			const scheme = new URL(trimmed).protocol.toLowerCase();
+			if (scheme === 'http:' || scheme === 'https:' || scheme === 'mailto:') {
+				return trimmed;
+			}
+		} catch {
+			/* not a parseable absolute URL */
+		}
+		return null;
+	}
+
+	const linkHref = $derived(
+		block.kind === 'resource_link' || block.kind === 'resource' ? safeHref(block.uri) : null
+	);
 </script>
 
 {#if block.kind === 'terminal'}
@@ -27,12 +45,22 @@
 {:else if block.kind === 'audio'}
 	<audio controls src={`data:${block.mimeType};base64,${block.data}`}></audio>
 {:else if block.kind === 'resource_link'}
-	<a class="resource-link" href={block.uri} target="_blank" rel="noopener noreferrer">
-		{block.name}{block.description ? ` — ${block.description}` : ''}
-	</a>
+	{#if linkHref}
+		<a class="resource-link" href={linkHref} target="_blank" rel="noopener noreferrer">
+			{block.name}{block.description ? ` — ${block.description}` : ''}
+		</a>
+	{:else}
+		<span class="resource-link">
+			{block.name}{block.description ? ` — ${block.description}` : ''} (<code>{block.uri}</code>)
+		</span>
+	{/if}
 {:else if block.kind === 'resource'}
 	<div class="resource">
-		<a href={block.uri} target="_blank" rel="noopener noreferrer"><code>{block.uri}</code></a>
+		{#if linkHref}
+			<a href={linkHref} target="_blank" rel="noopener noreferrer"><code>{block.uri}</code></a>
+		{:else}
+			<code>{block.uri}</code>
+		{/if}
 		{#if block.text}<div use:copyableCodeBlocks><pre><code>{block.text}</code></pre></div>{/if}
 	</div>
 {:else}
