@@ -36,6 +36,14 @@
 
 	async function wipe() {
 		if (wiping) return;
+		if (
+			typeof window !== 'undefined' &&
+			!window.confirm(
+				'This permanently deletes all memory for this conversation. This action cannot be undone. Continue?'
+			)
+		) {
+			return;
+		}
 		wiping = true;
 		error = null;
 		try {
