@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { loadConfig } from '$lib/server/config';
 import { log } from '$lib/server/log';
 import { requireUserId } from '$lib/server/auth/require';
+import { parseBody } from '$lib/server/validate';
 import { sseResponse } from '$lib/server/sse';
 import {
 	BUILD_STEPS,
@@ -37,21 +38,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 	if (inFlight) throw error(409, 'A redeploy is already in progress.');
 
-	let pull = true;
-	const text = await request.text();
-	if (text.trim()) {
-		let json: unknown;
-		try {
-			json = JSON.parse(text);
-		} catch {
-			throw error(400, 'Request body must be valid JSON.');
-		}
-		const parsed = Body.safeParse(json);
-		if (!parsed.success) {
-			throw error(400, parsed.error.issues[0]?.message ?? 'Invalid redeploy request.');
-		}
-		pull = parsed.data.pull;
-	}
+	const { pull } = await parseBody(request, Body, { allowEmpty: true });
 
 	const steps: Step[] = pull ? [...PULL_STEPS, ...BUILD_STEPS] : BUILD_STEPS;
 	inFlight = true;
