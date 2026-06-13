@@ -31,7 +31,12 @@ function buildDiff(
 	return lines.join('\n');
 }
 
+// Returns the parsed changes, an empty array if the input is recognized as
+// apply_patch format but is malformed/unparseable, or null if the input is not
+// apply_patch format at all. Distinguishing [] from null lets callers debug
+// malformed patches instead of silently treating them as "no diffs".
 export function parseApplyPatch(input: string): ApplyPatchChange[] | null {
+	// Not apply_patch format: missing the envelope markers entirely.
 	if (!input.includes('*** Begin Patch') || !input.includes('*** End Patch')) return null;
 	const lines = input.split(/\r?\n/);
 	if (lines[0] !== '*** Begin Patch') return null;
@@ -113,8 +118,12 @@ export function parseApplyPatch(input: string): ApplyPatchChange[] | null {
 			continue;
 		}
 
-		return null;
+		// Recognized as apply_patch (had Begin/End markers) but hit an
+		// unrecognized line: malformed. Return [] so callers can tell this
+		// apart from "not apply_patch format" (null).
+		return [];
 	}
 
-	return null;
+	// Ran off the end of input without seeing '*** End Patch': malformed.
+	return [];
 }

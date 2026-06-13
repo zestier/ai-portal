@@ -11,6 +11,26 @@ export function looksLikeShellOptionToken(tok: string | undefined): boolean {
 	return typeof tok === 'string' && tok.startsWith('-') && tok !== '-';
 }
 
+/**
+ * Resolves the index of the first positional (subcommand) token in `argv`,
+ * skipping over recognized leading options.
+ *
+ * UI/DISPLAY ONLY — DO NOT USE FOR SECURITY OR PERMISSION DECISIONS.
+ *
+ * This helper treats `--` as a hard terminator: on encountering `--` it stops
+ * and returns `subcommandIndex: null`, reporting that no subcommand was found.
+ *
+ * This DIFFERS intentionally from `commandPathMatches` in
+ * `src/lib/server/permissions/predicates/shell.ts`, which treats `--` as the
+ * conventional "end of options" marker: it sets `afterDoubleDash = true` and
+ * CONTINUES consuming the remaining tokens as positionals.
+ *
+ * Because the two functions disagree on `--` semantics, using
+ * `resolveSubcommandIndex` to pre-screen or reason about commands for security
+ * purposes would draw conclusions that diverge from the actual permission
+ * predicate (`commandPathMatches`). Keep this function confined to UI/display
+ * concerns; route all security-relevant matching through `commandPathMatches`.
+ */
 export function resolveSubcommandIndex(
 	argv: string[],
 	allowedOptions: readonly ShellOptionSpec[]

@@ -27,12 +27,70 @@
 			busy = false;
 		}
 	}
+
+	const FOCUSABLE_SELECTOR = [
+		'a[href]',
+		'button:not([disabled])',
+		'input:not([disabled])',
+		'select:not([disabled])',
+		'textarea:not([disabled])',
+		'[tabindex]:not([tabindex="-1"])'
+	].join(',');
+
+	function getFocusable(node: HTMLElement): HTMLElement[] {
+		return Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+			(el) => el.offsetParent !== null || el === document.activeElement
+		);
+	}
+
+	// Focus management for the modal dialog: move focus into the dialog on
+	// appearance, trap Tab/Shift+Tab within it, and restore focus on destroy.
+	function focusTrap(node: HTMLElement) {
+		const previouslyFocused = document.activeElement as HTMLElement | null;
+
+		const focusable = getFocusable(node);
+		(focusable[0] ?? node).focus();
+
+		function handleKeydown(event: KeyboardEvent) {
+			if (event.key !== 'Tab') return;
+
+			const items = getFocusable(node);
+			if (items.length === 0) {
+				event.preventDefault();
+				node.focus();
+				return;
+			}
+
+			const first = items[0];
+			const last = items[items.length - 1];
+			const active = document.activeElement;
+
+			if (event.shiftKey) {
+				if (active === first || active === node || !node.contains(active)) {
+					event.preventDefault();
+					last.focus();
+				}
+			} else if (active === last || active === node || !node.contains(active)) {
+				event.preventDefault();
+				first.focus();
+			}
+		}
+
+		node.addEventListener('keydown', handleKeydown);
+
+		return {
+			destroy() {
+				node.removeEventListener('keydown', handleKeydown);
+				previouslyFocused?.focus?.();
+			}
+		};
+	}
 </script>
 
 {#if request.kind === 'permission'}
 	<InteractivePermissionRequest {request} onRespond={pick} />
 {:else}
-	<div class="interactive" role="alertdialog" aria-modal="true" tabindex="-1">
+	<div class="interactive" role="alertdialog" aria-modal="true" tabindex="-1" use:focusTrap>
 		{#if request.kind === 'auto_mode_switch'}
 			<InteractiveAutoModeSwitchRequest {request} {busy} onRespond={pick} />
 		{:else if request.kind === 'user_input'}
