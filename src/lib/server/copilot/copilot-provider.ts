@@ -323,12 +323,12 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			});
 		}
 	}
-	// Fire-and-forget: callers don't need to await initialization. A turn
-	// posted before these resolve will still see the cached `approveAllTools`
-	// value (we set it synchronously above) and a worst-case slightly-late
-	// mode change which the agent will pick up on the next message.
-	if (currentMode !== 'interactive') void applyMode(currentMode);
-	if (approveAllTools) void applyApproveAll(true);
+	// Await initialization before returning so the first turn cannot call
+	// `session.send()` before `rpc.mode.set` / `setApproveAll` complete and
+	// run in the wrong mode. Both helpers swallow their own errors (best-effort
+	// via log.warn), so awaiting here does not change open()'s error semantics.
+	if (currentMode !== 'interactive') await applyMode(currentMode);
+	if (approveAllTools) await applyApproveAll(true);
 
 	const session: ConversationSession = {
 		provider: 'copilot',
