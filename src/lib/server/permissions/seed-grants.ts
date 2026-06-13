@@ -80,6 +80,21 @@ const FS_READ_TOOLS = [
 	'sha256sum'
 ];
 
+/**
+ * Read-only search tools. Like the fs-read tools, their positionals are
+ * locked to the workspace by default; an explicit opt-in prompt seed
+ * covers searching outside it. Command-running / file-mutating options are
+ * denied outright.
+ */
+const SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
+	{ token: 'rg', options: { deny: ['--pre', '--pre-glob', '--hostname-bin', '--no-config'] } },
+	{ token: 'grep' },
+	{
+		token: 'find',
+		options: { deny: ['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprintf'] }
+	}
+];
+
 const GIT_STRUCTURED_TOOLS = [
 	'git_status',
 	'git_diff',
@@ -277,34 +292,31 @@ export function defaultSeedGrants(): SeedSpec[] {
 		);
 	}
 
-	// rg / grep / find: read-only by default, but their command-running
-	// options must be denied. We don't constrain positionals because users
-	// commonly search for patterns whose syntax overlaps with paths.
-	seeds.push(
-		shellGrant({
-			command: [
-				{ token: 'rg', options: { deny: ['--pre', '--pre-glob', '--hostname-bin', '--no-config'] } }
-			]
-		})
-	);
-	seeds.push(
-		shellGrant({
-			command: [{ token: 'grep' }],
-			positionals: { kind: 'any' }
-		})
-	);
-	seeds.push(
-		shellGrant({
-			command: [
-				{
-					token: 'find',
-					options: {
-						deny: ['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprintf']
-					}
-				}
-			]
-		})
-	);
+	// rg / grep / find: read-only search tools. Their command-running
+	// options are denied, and — like the fs-read tools — their positionals
+	// are locked to the workspace so `rg secret /etc/shadow`,
+	// `grep -r password /`, and `find / -name '*.pem'` don't auto-approve
+	// and leak data outside the workspace boundary. Searching anywhere is
+	// still possible via the explicit opt-in prompt seeds below.
+	for (const { token, options } of SEARCH_TOOLS) {
+		seeds.push(shellGrant(shellCommand(token, { kind: 'workspace-paths' }, options)));
+		seeds.push(shellGrant(shellCommand(token, { kind: 'session-workspace-paths' }, options)));
+	}
+
+	// "Search anywhere" opt-in: a clearly-labeled prompt seed per search
+	// tool. Because allow seeds outrank prompt seeds, in-workspace searches
+	// still auto-approve via the grants above; only searches that escape the
+	// workspace land here and require an explicit human approval (or the
+	// user can add their own allow grant). This keeps the capability without
+	// silently auto-approving out-of-workspace reads.
+	for (const { token, options } of SEARCH_TOOLS) {
+		seeds.push(
+			shellPrompt(
+				shellCommand(token, { kind: 'any' }, options),
+				`\`${token}\` searching outside the workspace requires approval (opt-in "search anywhere"). In-workspace searches are auto-approved; approve to allow searching other paths this once, or add your own grant to always allow it.`
+			)
+		);
+	}
 
 	// Prompt only when no allow seed also covers the command.
 	for (const { argv0, reason } of PROMPT_SEEDS) {

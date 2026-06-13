@@ -250,4 +250,24 @@ describe('seed grants — runtime behaviour', () => {
 		// so nothing matches — same as before prompt-nudge seeds existed.
 		expect(shellMatch('find . -exec rm {} ;')).toBe('none');
 	});
+
+	it('auto-approves rg/grep/find searches confined to the workspace', () => {
+		expect(shellMatch('rg secret .', '/tmp')).toBe('allow');
+		expect(shellMatch('rg secret src', '/tmp')).toBe('allow');
+		expect(shellMatch('grep -r password .', '/tmp')).toBe('allow');
+		expect(shellMatch('find . -name foo', '/tmp')).toBe('allow');
+	});
+
+	it('does not auto-approve rg/grep/find escaping the workspace (opt-in prompt instead)', () => {
+		expect(shellMatch('rg secret /etc/shadow', '/tmp')).toBe('prompt');
+		expect(shellMatch('grep -r password /', '/tmp')).toBe('prompt');
+		expect(shellMatch('find / -name foo', '/tmp')).toBe('prompt');
+		expect(shellMatch('rg secret ../etc/passwd', '/tmp')).toBe('prompt');
+	});
+
+	it('auto-approves rg/grep/find searches confined to the session workspace', () => {
+		const session = mkdtempSync(join(tmpdir(), 'portal-seed-search-'));
+		expect(shellMatch(`rg secret ${session}`, null, session)).toBe('allow');
+		expect(shellMatch(`grep -r token ${session}`, null, session)).toBe('allow');
+	});
 });
