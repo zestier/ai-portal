@@ -876,6 +876,7 @@
 					/* ignore */
 				}
 				streaming = false;
+				if (!composer) composer = text;
 				applyEvent({ type: 'error', code: 'start_failed', message: msg });
 				return;
 			}
@@ -896,6 +897,7 @@
 			attachStream(turnId);
 		} catch (e) {
 			streaming = false;
+			if (!composer) composer = text;
 			applyEvent({
 				type: 'error',
 				code: 'network',
