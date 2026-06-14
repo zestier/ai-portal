@@ -94,6 +94,17 @@ describe('parseShellCommand — fd-dup redirection carve-out', () => {
 		expect(segs[0].argv[1]).not.toContain('>&');
 	});
 
+	it('does not drop a caller token that matches the old fixed sentinel literal', () => {
+		// The elision marker is now a per-parse random nonce that is
+		// guaranteed absent from the command, so a caller passing the old
+		// fixed literal `__ZAP_SAFE_REDIR__` keeps it as a normal argv
+		// token — the matched argv can never have a caller token silently
+		// dropped.
+		expect(ok('echo __ZAP_SAFE_REDIR__')).toEqual([
+			{ argv: ['echo', '__ZAP_SAFE_REDIR__'], followingOp: null }
+		]);
+	});
+
 	it('refuses multi-digit fds rather than mis-eliding them', () => {
 		// `12>&1` — preceding char of `2>&1` is `1`, not whitespace. No
 		// elision. The `>` op then surfaces → refused.

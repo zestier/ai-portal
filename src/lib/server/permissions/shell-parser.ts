@@ -19,8 +19,8 @@
 //      Writes are discarded; reads yield EOF. No FS effect.
 //
 // Both must be bounded by whitespace (or string start/end) on each
-// side. We elide by regex-replacing each match with a sentinel string
-// that:
+// side. We elide by regex-replacing each match with a per-parse
+// sentinel string that:
 //
 //   1. Contains no shell-meaningful characters (alphanumerics + `_`
 //      only), so the substitution cannot perturb shell-quote's view of
@@ -29,6 +29,14 @@
 //      token. Inside a quoted string the sentinel just changes the
 //      string contents from "...2>&1..." to "...SENTINEL..."; the
 //      altered argv element is data either way.
+//   3. Is a fresh random nonce per parse, generated so that it does not
+//      already occur anywhere in the command (see makeRedirSentinel).
+//      That makes the drop step below provably exact: the only tokens
+//      equal to the sentinel are the ones we just inserted, so no
+//      caller-supplied token can ever be the thing we drop. (Not a
+//      known exploit — dropping the old fixed literal only ever hid that
+//      same harmless literal — but it removes a whole category of
+//      "could the matched argv desync from what runs?" reasoning.)
 //
 // After parsing, we drop any argv element exactly equal to the
 // sentinel. Substrings of larger string tokens (the in-quotes case)
@@ -42,6 +50,7 @@
 // segment is a plain argv (string[]); callers can then check whether
 // every segment is safe according to a safe-list.
 
+import { randomBytes } from 'node:crypto';
 import { parse as shellQuoteParse } from 'shell-quote';
 
 export type SequencingOp = '&&' | '||' | ';' | '|';
@@ -68,7 +77,8 @@ const VAR_SENTINEL = (name: string) => ({ op: '@' as const, pattern: name });
 const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 export function parseShellCommand(command: string): ParseResult {
-	const trimmed = elideSafeRedirections(command).trim();
+	const sentinel = makeRedirSentinel(command);
+	const trimmed = elideSafeRedirections(command, sentinel).trim();
 	if (trimmed === '') return { kind: 'unsafe', reason: 'empty command' };
 
 	let tokens: unknown[];
@@ -83,7 +93,7 @@ export function parseShellCommand(command: string): ParseResult {
 
 	for (const tok of tokens) {
 		if (typeof tok === 'string') {
-			if (tok === SAFE_REDIR_SENTINEL) continue;
+			if (tok === sentinel) continue;
 			const verdict = classifyStringToken(tok, current.length === 0);
 			if (verdict !== 'ok') return { kind: 'unsafe', reason: verdict };
 			current.push(tok);
@@ -174,16 +184,27 @@ function unsafeOpReason(op: string): string {
 // redirect operator and the path so that `> /dev/null` is matched the
 // same as `>/dev/null`; both forms are equivalent in bash.
 //
-// The sentinel matches `[A-Za-z_][A-Za-z0-9_]*` — no shell
-// metacharacters — so the substitution cannot perturb shell-quote's
-// view of where strings begin or end. If a caller really passes a
-// command containing this exact identifier, parsing treats it as the
-// elided marker; acceptable for an obviously-internal token.
-const SAFE_REDIR_SENTINEL = '__ZAP_SAFE_REDIR__';
+// The sentinel is a per-parse random nonce (see makeRedirSentinel) made
+// of `[A-Za-z0-9_]` only — no shell metacharacters — so the substitution
+// cannot perturb shell-quote's view of where strings begin or end.
+const SAFE_REDIR_SENTINEL_PREFIX = '__ZAP_SAFE_REDIR_';
 const SAFE_REDIR_RE = /(?<=\s|^)(?:\d?>&(?:\d|-)|(?:\d?>>?|&>|\d?<)\s*\/dev\/null)(?=\s|$)/g;
 
-function elideSafeRedirections(input: string): string {
-	return input.replace(SAFE_REDIR_RE, SAFE_REDIR_SENTINEL);
+// Build the elision marker for a single parse: a fixed prefix plus a
+// fresh random suffix, rerolled until it does not occur anywhere in the
+// command. Guaranteeing absence means the only argv tokens that can equal
+// the sentinel after substitution are the ones we inserted, so the drop
+// step in parseShellCommand can never remove a caller-supplied token. The
+// loop effectively never iterates more than once (64 random bits).
+function makeRedirSentinel(command: string): string {
+	for (;;) {
+		const sentinel = `${SAFE_REDIR_SENTINEL_PREFIX}${randomBytes(8).toString('hex')}__`;
+		if (!command.includes(sentinel)) return sentinel;
+	}
+}
+
+function elideSafeRedirections(input: string, sentinel: string): string {
+	return input.replace(SAFE_REDIR_RE, sentinel);
 }
 
 // Hardcoded shell misuse: shapes that are unambiguously the wrong tool
