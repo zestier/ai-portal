@@ -3340,6 +3340,72 @@ describe('memory-backed sessions', () => {
 		expect(memory.getOpenLoop(conv.id, drop.id)?.status).toBe('dropped');
 	});
 
+	it('dedupes a loop closed by both loop_key and raw id across calls to a single resolution', async () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const priorAssistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'You could open the door.'
+		});
+		commitPatch({
+			conversationId: conv.id,
+			sourceMessageId: priorAssistantMessage.id,
+			patch: { openLoops: [{ loopType: 'choice', title: 'Option A: open the door' }] }
+		});
+		const loop = memory.listOpenLoops(conv.id)[0];
+		// The loop carries both a stable loop_key and a raw ULID id; the model can
+		// address it by either form.
+		expect(loop.loopKey).not.toBe('');
+		expect(loop.loopKey).not.toBe(loop.id);
+
+		const userMessage = messages.append(conv.id, { role: 'user', content: 'I open the door.' });
+		const assistantMessage = messages.append(conv.id, {
+			role: 'assistant',
+			content: 'The door creaks open.'
+		});
+
+		let step = 0;
+		const chatComplete = async (): Promise<ExtractorAssistantTurn> => {
+			step += 1;
+			// Same loop, referenced first by its raw ULID and then by its loop_key.
+			if (step === 1) {
+				return writeCall('c1', 'memory_close_loop', { handle: loop.id, status: 'resolved' });
+			}
+			if (step === 2) {
+				return writeCall('c2', 'memory_close_loop', { handle: loop.loopKey, status: 'resolved' });
+			}
+			return finishCall('Closed the chosen loop.');
+		};
+
+		const extractor = new ToolCallingMemoryExtractor({
+			baseUrl: 'http://127.0.0.1:9/v1',
+			model: 'tool-extractor',
+			timeoutMs: 1_000,
+			maxInputChars: 8_000,
+			maxToolIterations: 4,
+			chatComplete
+		});
+
+		const extraction = await extractor.extractPatch({
+			conversationId: conv.id,
+			userId: user.id,
+			mode: 'story',
+			turnId: 'turn-dedupe',
+			userMessage,
+			assistantMessage,
+			initialPacket: buildInitialPacket(conv.id, 'story')
+		});
+
+		// Both references collapse to the canonical loop id, so the merged patch
+		// emits a single resolution instead of triggering the duplicate warning.
+		expect(extraction.patch.resolveOpenLoops).toHaveLength(1);
+
+		const validation = validatePatch(extraction.patch, { conversationId: conv.id, mode: 'story' });
+		expect(
+			validation.issues.find((issue) => issue.code === 'open_loop_resolution_duplicate')
+		).toBeUndefined();
+	});
+
 	it('strips a secret-bearing resolution reason but still prunes the loop', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });

@@ -589,7 +589,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			}
 		}
 
-		const merged = mergePatchProposals(staged);
+		const merged = mergePatchProposals(staged, input.conversationId);
 		const sanitized = sanitizePatch(merged, input.initialPacket);
 		// The loop ran to the iteration cap only if the model neither stopped on
 		// its own nor ran out of wall-clock budget.
@@ -830,21 +830,32 @@ function activityResultSummary(toolName: string, result: string): string {
 	return singleLine.length > 120 ? `${singleLine.slice(0, 117)}...` : singleLine || '(no output)';
 }
 
-function mergePatchProposals(patches: MemoryPatchProposal[]): MemoryPatchProposal {
+function mergePatchProposals(
+	patches: MemoryPatchProposal[],
+	conversationId?: string
+): MemoryPatchProposal {
 	const merged: MemoryPatchProposal = {};
 	const entities = patches.flatMap((patch) => patch.entities ?? []);
 	const events = patches.flatMap((patch) => patch.events ?? []);
 	const facts = patches.flatMap((patch) => patch.facts ?? []);
 	const openLoops = patches.flatMap((patch) => patch.openLoops ?? []);
-	// De-dupe resolutions by id (last write wins) so a loop the model staged
-	// twice across calls is only resolved once.
+	// De-dupe resolutions by canonical loop id (last write wins) so a loop the
+	// model staged twice across calls is only resolved once. The model may
+	// reference the same loop by both its stable loop_key and its raw ULID;
+	// resolve each to the canonical id (mirroring validatePatch) so both forms
+	// collapse to one entry instead of emitting an open_loop_resolution_duplicate.
 	const resolutionById = new Map<
 		string,
 		NonNullable<MemoryPatchProposal['resolveOpenLoops']>[number]
 	>();
 	for (const patch of patches) {
-		for (const resolution of patch.resolveOpenLoops ?? [])
-			resolutionById.set(resolution.id, resolution);
+		for (const resolution of patch.resolveOpenLoops ?? []) {
+			const loopId = conversationId
+				? memoryRepo.resolveOpenLoopId(conversationId, resolution.id)
+				: null;
+			const dedupeKey = loopId ?? resolution.id;
+			resolutionById.set(dedupeKey, resolution);
+		}
 	}
 	// Union the "keep alive" set across every staged proposal. A loop reaffirmed
 	// in ANY call counts as touched — the agent may spread keeps across several
