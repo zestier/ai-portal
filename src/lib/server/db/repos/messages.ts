@@ -600,6 +600,12 @@ export function recoverInterruptedInFlight(now: number = Date.now()): {
 				 WHERE status = 'pending'`
 			)
 			.run(now);
+		db.prepare(
+			`UPDATE background_agent_lifecycles
+			    SET status = 'failed',
+			        ended_at = COALESCE(ended_at, ?)
+			  WHERE status = 'running'`
+		).run(now);
 		return { messages: msg.changes, toolCalls: tools.changes };
 	});
 	return tx();
