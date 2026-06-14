@@ -43,18 +43,22 @@ export class AsyncQueue<T> {
 				if (this.error) throw this.error;
 				return;
 			}
-			yield await new Promise<T>((resolve, reject) => {
-				this.waiters.push({
-					resolve: (r) => {
-						if (r.done) reject(new _Done());
-						else resolve(r.value);
-					},
-					reject
+			try {
+				const value = await new Promise<T>((resolve, reject) => {
+					this.waiters.push({
+						resolve: (r) => {
+							if (r.done) reject(new _Done());
+							else resolve(r.value);
+						},
+						reject
+					});
 				});
-			}).catch((e) => {
-				if (e instanceof _Done) return Promise.reject(new _Done());
+				yield value;
+			} catch (e) {
+				if (e instanceof _Done) return;
 				throw e;
-			});
+			}
+			continue;
 		}
 	}
 }
