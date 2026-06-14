@@ -68,7 +68,7 @@ interface ReasoningRow {
 export function ensureBackgroundAgentLifecycleTable(db: Database.Database = getDb()) {
 	db.prepare(
 		`CREATE TABLE IF NOT EXISTS background_agent_lifecycles (
-		   tool_call_id TEXT PRIMARY KEY,
+		   tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
 		   agent_id     TEXT NOT NULL,
 		   status       TEXT NOT NULL,
 		   started_at   INTEGER NOT NULL,
