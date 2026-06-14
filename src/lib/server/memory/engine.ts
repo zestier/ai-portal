@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getDb } from '$lib/server/db';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import { getMemoryProfile } from './profiles';
@@ -838,300 +839,313 @@ export function commitPatch(
 		mode: input.mode
 	});
 	const status = validation.ok ? 'committed' : 'needs_review';
-	const patchRecord = memoryRepo.createPatch(input.conversationId, {
-		turnId: input.turnId ?? null,
-		sourceMessageId: input.sourceMessageId ?? null,
-		status,
-		summary: input.summary ?? summarizePatch(input.patch),
-		rawPatch: input.patch,
-		validationResult: {
-			...validation,
-			extractor: extractor ?? null
-		},
-		extractorKind: extractor?.extractorKind,
-		extractorModel: extractor?.extractorModel,
-		extractorConfidence: extractor?.extractorConfidence,
-		extractorDiagnostics: extractor?.extractorDiagnostics,
-		committedAt: validation.ok ? Date.now() : null
-	});
-	for (const issue of validation.issues) {
-		memoryRepo.addIssue(input.conversationId, { patchId: patchRecord.id, ...issue });
-	}
-	if (!validation.ok) {
+
+	// The patch header, its issue rows, and — when the patch validated — the
+	// full set of applied items (entities, events, facts, open loops,
+	// resolutions, forgets, and their patch-item audit rows) all commit inside a
+	// single better-sqlite3 transaction, so the whole commit is atomic. A crash
+	// or exception mid-application can't leave a `committed` patch with only a
+	// partial (or empty) set of items: the header rolls back along with the
+	// items. better-sqlite3 nests transactions via SAVEPOINTs, so the inner
+	// db.transaction() calls inside createPatch/upsertEntity/addFact/etc. become
+	// savepoints under this outer transaction rather than throwing. The whole
+	// body is synchronous (no awaits), which db.transaction() requires.
+	return getDb().transaction(() => {
+		const patchRecord = memoryRepo.createPatch(input.conversationId, {
+			turnId: input.turnId ?? null,
+			sourceMessageId: input.sourceMessageId ?? null,
+			status,
+			summary: input.summary ?? summarizePatch(input.patch),
+			rawPatch: input.patch,
+			validationResult: {
+				...validation,
+				extractor: extractor ?? null
+			},
+			extractorKind: extractor?.extractorKind,
+			extractorModel: extractor?.extractorModel,
+			extractorConfidence: extractor?.extractorConfidence,
+			extractorDiagnostics: extractor?.extractorDiagnostics,
+			committedAt: validation.ok ? Date.now() : null
+		});
+		for (const issue of validation.issues) {
+			memoryRepo.addIssue(input.conversationId, { patchId: patchRecord.id, ...issue });
+		}
+		if (!validation.ok) {
+			return {
+				patch: patchRecord,
+				counts: {
+					entities: 0,
+					events: 0,
+					facts: 0,
+					openLoops: 0,
+					resolvedOpenLoops: 0,
+					forgottenFacts: 0,
+					issues: validation.issues.length
+				}
+			};
+		}
+
+		// The patch validated and is about to be applied: now — and only now — is it
+		// safe to run the caller's pre-commit hook (the retry path's undo of the
+		// prior patch). A `needs_review` patch returns above without reaching this,
+		// so a failed retry leaves the existing committed memory intact. Running it
+		// here, immediately before the upserts below, also means the new patch's
+		// entity-key reuse operates on clean pre-turn state.
+		input.beforeCommit?.();
+
+		const entityIdsByKey = new Map<string, string>();
+		for (const entity of input.patch.entities ?? []) {
+			// entityType/displayName are independently optional. For a brand-new
+			// entity, fill whichever the caller omitted from the key (the single
+			// derive site shared with ensureEntityForKey below). For an EXISTING
+			// entity, leave the omitted field undefined so upsertEntity preserves the
+			// stored value instead of clobbering it.
+			const existing = memoryRepo.getEntity(input.conversationId, entity.entityKey);
+			let resolved = entity;
+			if (!existing && (entity.entityType === undefined || entity.displayName === undefined)) {
+				const derived = deriveEntityFromKey(entity.entityKey);
+				resolved = {
+					...entity,
+					entityType: entity.entityType ?? derived.entityType,
+					displayName: entity.displayName ?? derived.displayName
+				};
+			}
+			const row = memoryRepo.upsertEntity(input.conversationId, {
+				...resolved,
+				sourceMessageId: input.sourceMessageId ?? null,
+				turnId: input.turnId ?? null
+			});
+			entityIdsByKey.set(entity.entityKey, row.id);
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'entity',
+				itemId: row.id,
+				action: 'create'
+			});
+		}
+		for (const key of collectEntityKeys(input.patch)) {
+			if (!entityIdsByKey.has(key)) {
+				const existing = memoryRepo.getEntity(input.conversationId, key);
+				if (existing) entityIdsByKey.set(key, existing.id);
+			}
+		}
+
+		let eventCount = 0;
+		for (const event of input.patch.events ?? []) {
+			const row = memoryRepo.addEvent(input.conversationId, {
+				turnId: input.turnId,
+				eventType: event.eventType,
+				summary: event.summary,
+				payload: event.payload,
+				visibility: event.visibility,
+				confidence: event.confidence,
+				sourceMessageId: input.sourceMessageId ?? null,
+				targetEntityId: event.entityKey ? (entityIdsByKey.get(event.entityKey) ?? null) : null
+			});
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'event',
+				itemId: row.id,
+				action: 'create'
+			});
+			eventCount++;
+		}
+
+		// Facts are always anchored to an entity so memory stays organized and
+		// injects coherently. A referenced-but-unknown key mints a minimal entity
+		// from the key itself; a fact with no key at all is attached to the
+		// per-conversation session entity (created lazily, only when needed).
+		// Record a freshly minted entity as a patch item so it participates in
+		// undo/review just like an explicitly-declared entity. Pre-existing
+		// entities are reused silently and must NOT be recorded, or undoing this
+		// patch would delete an entity that other patches rely on.
+		const recordMintedEntity = (entityId: string) => {
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'entity',
+				itemId: entityId,
+				action: 'create'
+			});
+		};
+		let sessionEntityId: string | null = null;
+		const ensureSessionEntity = (): string => {
+			if (sessionEntityId) return sessionEntityId;
+			const cached = entityIdsByKey.get(SESSION_ENTITY_KEY);
+			if (cached) {
+				sessionEntityId = cached;
+				return cached;
+			}
+			const existing = memoryRepo.getEntity(input.conversationId, SESSION_ENTITY_KEY);
+			if (existing) {
+				entityIdsByKey.set(SESSION_ENTITY_KEY, existing.id);
+				sessionEntityId = existing.id;
+				return existing.id;
+			}
+			const row = memoryRepo.upsertEntity(input.conversationId, {
+				entityKey: SESSION_ENTITY_KEY,
+				entityType: 'session',
+				displayName: 'Session',
+				summary: 'Catch-all for session-scoped facts not tied to a specific entity.',
+				sourceMessageId: input.sourceMessageId ?? null,
+				turnId: input.turnId ?? null
+			});
+			entityIdsByKey.set(SESSION_ENTITY_KEY, row.id);
+			sessionEntityId = row.id;
+			recordMintedEntity(row.id);
+			return row.id;
+		};
+		const ensureEntityForKey = (key: string): string => {
+			const known = entityIdsByKey.get(key);
+			if (known) return known;
+			// Reaching here means the key was absent from input.patch.entities and
+			// from the DB (collectEntityKeys already resolved existing keys above),
+			// so this is a genuinely new entity.
+			const { entityType, displayName } = deriveEntityFromKey(key);
+			const row = memoryRepo.upsertEntity(input.conversationId, {
+				entityKey: key,
+				entityType,
+				displayName,
+				sourceMessageId: input.sourceMessageId ?? null,
+				turnId: input.turnId ?? null
+			});
+			entityIdsByKey.set(key, row.id);
+			recordMintedEntity(row.id);
+			return row.id;
+		};
+
+		let factCount = 0;
+		// Fact ids created by THIS patch. A forget that re-resolves to one of these
+		// (e.g. a forget-by-entityKey+predicate aimed at a predicate the same patch
+		// also re-asserted — supersede already retired the old value, leaving the
+		// fresh one active under that selector) must be skipped, otherwise the forget
+		// would tombstone the just-written value and wipe the predicate entirely.
+		const createdFactIds = new Set<string>();
+		for (const fact of input.patch.facts ?? []) {
+			const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
+			// Directives are always-on standing rules: force them pinned so they
+			// inherit the never-dropped guarantee in the packet builder, and store the
+			// predicate in its canonical form so the (case-sensitive) directive load
+			// query, the case-insensitive fact-pool filter, and consolidation grouping
+			// all agree. Without normalizing, a "Directive"/" directive" predicate
+			// would be excluded from the generic facts list yet missed by the directive
+			// query — silently dropped from the packet.
+			const isDirective = isDirectivePredicate(fact.predicate);
+			const predicate = isDirective ? DIRECTIVE_PREDICATE : fact.predicate;
+			const pinned = isDirective ? true : undefined;
+			const row = memoryRepo.addFact(input.conversationId, {
+				entityId,
+				predicate,
+				value: fact.value,
+				visibility: fact.visibility,
+				confidence: fact.confidence,
+				pinned,
+				sourceMessageId: input.sourceMessageId ?? null
+			});
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'fact',
+				itemId: row.id,
+				action: 'create'
+			});
+			createdFactIds.add(row.id);
+			factCount++;
+		}
+
+		// Legacy decisions: any `decisions` array on a historical/foreign patch is
+		// silently ignored — the primitive has been retired (settled choices live on
+		// as facts/attributes or directives).
+		for (const loop of input.patch.openLoops ?? []) {
+			const row = memoryRepo.addOpenLoop(input.conversationId, {
+				loopType: loop.loopType,
+				title: loop.title,
+				description: loop.description,
+				priority: loop.priority,
+				relatedEntityIds: (loop.relatedEntityKeys ?? [])
+					.map((key) => entityIdsByKey.get(key))
+					.filter((id): id is string => !!id),
+				sourceMessageId: input.sourceMessageId ?? null
+			});
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'open_loop',
+				itemId: row.id,
+				action: 'create'
+			});
+		}
+		let resolvedOpenLoops = 0;
+		for (const resolution of input.patch.resolveOpenLoops ?? []) {
+			// Accept either the stable loop key or the raw id; resolve to canonical id.
+			const loopId = memoryRepo.resolveOpenLoopId(input.conversationId, resolution.id);
+			const existing = loopId ? memoryRepo.getOpenLoop(input.conversationId, loopId) : null;
+			// Skip unknown references (already warned in validation) so a hallucinated
+			// id doesn't abort the rest of the commit.
+			if (!loopId || !existing) continue;
+			// Re-resolving an already-closed loop to the same status is a no-op:
+			// skip it so we don't append the reason again (unbounded description
+			// growth) or record a duplicate 'resolve' audit item across turns.
+			if (existing.status !== 'open' && existing.status === resolution.status) continue;
+			// Only annotate the description on the first resolution (while the loop
+			// is still open). A later status change updates status only, again to
+			// avoid the description growing without bound.
+			const description =
+				existing.status === 'open' && resolution.reason?.trim()
+					? `${existing.description}${existing.description ? '\n' : ''}[${resolution.status}] ${resolution.reason.trim()}`
+					: existing.description;
+			const updated = memoryRepo.updateOpenLoop(input.conversationId, loopId, {
+				status: resolution.status,
+				description
+			});
+			if (!updated) continue;
+			resolvedOpenLoops += 1;
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'open_loop',
+				itemId: loopId,
+				action: 'resolve'
+			});
+		}
+
+		// Forget: tombstone each targeted active fact. Resolution is re-checked here
+		// (not just at tool-call time) so a handle superseded/deleted by an earlier
+		// item in THIS patch is skipped rather than mis-deleting whatever now sits
+		// under that id. Recorded as a `forget` patch item so the delete is
+		// auditable and visible in the inspector (and reviewable per item).
+		let forgottenFacts = 0;
+		for (const target of input.patch.forgetFacts ?? []) {
+			const resolved = resolveForgetTarget(input.conversationId, target);
+			// Unresolved targets were already flagged in validation; skip so a stale
+			// handle doesn't abort the rest of the commit.
+			if (!resolved) continue;
+			// Never forget a fact this same patch just created: a forget-by-predicate
+			// re-resolves to the freshly-superseding value, so tombstoning it would
+			// undo the supersede and drop the predicate. Prefer the supersede.
+			if (createdFactIds.has(resolved.factId)) continue;
+			const updated = memoryRepo.updateFact(input.conversationId, resolved.factId, {
+				status: 'deleted'
+			});
+			if (!updated) continue;
+			forgottenFacts += 1;
+			memoryRepo.recordPatchItem(input.conversationId, {
+				patchId: patchRecord.id,
+				itemType: 'fact',
+				itemId: resolved.factId,
+				action: 'forget'
+			});
+		}
+
 		return {
 			patch: patchRecord,
 			counts: {
-				entities: 0,
-				events: 0,
-				facts: 0,
-				openLoops: 0,
-				resolvedOpenLoops: 0,
-				forgottenFacts: 0,
+				entities: input.patch.entities?.length ?? 0,
+				events: eventCount,
+				facts: factCount,
+				openLoops: input.patch.openLoops?.length ?? 0,
+				resolvedOpenLoops,
+				forgottenFacts,
 				issues: validation.issues.length
 			}
 		};
-	}
-
-	// The patch validated and is about to be applied: now — and only now — is it
-	// safe to run the caller's pre-commit hook (the retry path's undo of the
-	// prior patch). A `needs_review` patch returns above without reaching this,
-	// so a failed retry leaves the existing committed memory intact. Running it
-	// here, immediately before the upserts below, also means the new patch's
-	// entity-key reuse operates on clean pre-turn state.
-	input.beforeCommit?.();
-
-	const entityIdsByKey = new Map<string, string>();
-	for (const entity of input.patch.entities ?? []) {
-		// entityType/displayName are independently optional. For a brand-new
-		// entity, fill whichever the caller omitted from the key (the single
-		// derive site shared with ensureEntityForKey below). For an EXISTING
-		// entity, leave the omitted field undefined so upsertEntity preserves the
-		// stored value instead of clobbering it.
-		const existing = memoryRepo.getEntity(input.conversationId, entity.entityKey);
-		let resolved = entity;
-		if (!existing && (entity.entityType === undefined || entity.displayName === undefined)) {
-			const derived = deriveEntityFromKey(entity.entityKey);
-			resolved = {
-				...entity,
-				entityType: entity.entityType ?? derived.entityType,
-				displayName: entity.displayName ?? derived.displayName
-			};
-		}
-		const row = memoryRepo.upsertEntity(input.conversationId, {
-			...resolved,
-			sourceMessageId: input.sourceMessageId ?? null,
-			turnId: input.turnId ?? null
-		});
-		entityIdsByKey.set(entity.entityKey, row.id);
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'entity',
-			itemId: row.id,
-			action: 'create'
-		});
-	}
-	for (const key of collectEntityKeys(input.patch)) {
-		if (!entityIdsByKey.has(key)) {
-			const existing = memoryRepo.getEntity(input.conversationId, key);
-			if (existing) entityIdsByKey.set(key, existing.id);
-		}
-	}
-
-	let eventCount = 0;
-	for (const event of input.patch.events ?? []) {
-		const row = memoryRepo.addEvent(input.conversationId, {
-			turnId: input.turnId,
-			eventType: event.eventType,
-			summary: event.summary,
-			payload: event.payload,
-			visibility: event.visibility,
-			confidence: event.confidence,
-			sourceMessageId: input.sourceMessageId ?? null,
-			targetEntityId: event.entityKey ? (entityIdsByKey.get(event.entityKey) ?? null) : null
-		});
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'event',
-			itemId: row.id,
-			action: 'create'
-		});
-		eventCount++;
-	}
-
-	// Facts are always anchored to an entity so memory stays organized and
-	// injects coherently. A referenced-but-unknown key mints a minimal entity
-	// from the key itself; a fact with no key at all is attached to the
-	// per-conversation session entity (created lazily, only when needed).
-	// Record a freshly minted entity as a patch item so it participates in
-	// undo/review just like an explicitly-declared entity. Pre-existing
-	// entities are reused silently and must NOT be recorded, or undoing this
-	// patch would delete an entity that other patches rely on.
-	const recordMintedEntity = (entityId: string) => {
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'entity',
-			itemId: entityId,
-			action: 'create'
-		});
-	};
-	let sessionEntityId: string | null = null;
-	const ensureSessionEntity = (): string => {
-		if (sessionEntityId) return sessionEntityId;
-		const cached = entityIdsByKey.get(SESSION_ENTITY_KEY);
-		if (cached) {
-			sessionEntityId = cached;
-			return cached;
-		}
-		const existing = memoryRepo.getEntity(input.conversationId, SESSION_ENTITY_KEY);
-		if (existing) {
-			entityIdsByKey.set(SESSION_ENTITY_KEY, existing.id);
-			sessionEntityId = existing.id;
-			return existing.id;
-		}
-		const row = memoryRepo.upsertEntity(input.conversationId, {
-			entityKey: SESSION_ENTITY_KEY,
-			entityType: 'session',
-			displayName: 'Session',
-			summary: 'Catch-all for session-scoped facts not tied to a specific entity.',
-			sourceMessageId: input.sourceMessageId ?? null,
-			turnId: input.turnId ?? null
-		});
-		entityIdsByKey.set(SESSION_ENTITY_KEY, row.id);
-		sessionEntityId = row.id;
-		recordMintedEntity(row.id);
-		return row.id;
-	};
-	const ensureEntityForKey = (key: string): string => {
-		const known = entityIdsByKey.get(key);
-		if (known) return known;
-		// Reaching here means the key was absent from input.patch.entities and
-		// from the DB (collectEntityKeys already resolved existing keys above),
-		// so this is a genuinely new entity.
-		const { entityType, displayName } = deriveEntityFromKey(key);
-		const row = memoryRepo.upsertEntity(input.conversationId, {
-			entityKey: key,
-			entityType,
-			displayName,
-			sourceMessageId: input.sourceMessageId ?? null,
-			turnId: input.turnId ?? null
-		});
-		entityIdsByKey.set(key, row.id);
-		recordMintedEntity(row.id);
-		return row.id;
-	};
-
-	let factCount = 0;
-	// Fact ids created by THIS patch. A forget that re-resolves to one of these
-	// (e.g. a forget-by-entityKey+predicate aimed at a predicate the same patch
-	// also re-asserted — supersede already retired the old value, leaving the
-	// fresh one active under that selector) must be skipped, otherwise the forget
-	// would tombstone the just-written value and wipe the predicate entirely.
-	const createdFactIds = new Set<string>();
-	for (const fact of input.patch.facts ?? []) {
-		const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
-		// Directives are always-on standing rules: force them pinned so they
-		// inherit the never-dropped guarantee in the packet builder, and store the
-		// predicate in its canonical form so the (case-sensitive) directive load
-		// query, the case-insensitive fact-pool filter, and consolidation grouping
-		// all agree. Without normalizing, a "Directive"/" directive" predicate
-		// would be excluded from the generic facts list yet missed by the directive
-		// query — silently dropped from the packet.
-		const isDirective = isDirectivePredicate(fact.predicate);
-		const predicate = isDirective ? DIRECTIVE_PREDICATE : fact.predicate;
-		const pinned = isDirective ? true : undefined;
-		const row = memoryRepo.addFact(input.conversationId, {
-			entityId,
-			predicate,
-			value: fact.value,
-			visibility: fact.visibility,
-			confidence: fact.confidence,
-			pinned,
-			sourceMessageId: input.sourceMessageId ?? null
-		});
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'fact',
-			itemId: row.id,
-			action: 'create'
-		});
-		createdFactIds.add(row.id);
-		factCount++;
-	}
-
-	// Legacy decisions: any `decisions` array on a historical/foreign patch is
-	// silently ignored — the primitive has been retired (settled choices live on
-	// as facts/attributes or directives).
-	for (const loop of input.patch.openLoops ?? []) {
-		const row = memoryRepo.addOpenLoop(input.conversationId, {
-			loopType: loop.loopType,
-			title: loop.title,
-			description: loop.description,
-			priority: loop.priority,
-			relatedEntityIds: (loop.relatedEntityKeys ?? [])
-				.map((key) => entityIdsByKey.get(key))
-				.filter((id): id is string => !!id),
-			sourceMessageId: input.sourceMessageId ?? null
-		});
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'open_loop',
-			itemId: row.id,
-			action: 'create'
-		});
-	}
-	let resolvedOpenLoops = 0;
-	for (const resolution of input.patch.resolveOpenLoops ?? []) {
-		// Accept either the stable loop key or the raw id; resolve to canonical id.
-		const loopId = memoryRepo.resolveOpenLoopId(input.conversationId, resolution.id);
-		const existing = loopId ? memoryRepo.getOpenLoop(input.conversationId, loopId) : null;
-		// Skip unknown references (already warned in validation) so a hallucinated
-		// id doesn't abort the rest of the commit.
-		if (!loopId || !existing) continue;
-		// Re-resolving an already-closed loop to the same status is a no-op:
-		// skip it so we don't append the reason again (unbounded description
-		// growth) or record a duplicate 'resolve' audit item across turns.
-		if (existing.status !== 'open' && existing.status === resolution.status) continue;
-		// Only annotate the description on the first resolution (while the loop
-		// is still open). A later status change updates status only, again to
-		// avoid the description growing without bound.
-		const description =
-			existing.status === 'open' && resolution.reason?.trim()
-				? `${existing.description}${existing.description ? '\n' : ''}[${resolution.status}] ${resolution.reason.trim()}`
-				: existing.description;
-		const updated = memoryRepo.updateOpenLoop(input.conversationId, loopId, {
-			status: resolution.status,
-			description
-		});
-		if (!updated) continue;
-		resolvedOpenLoops += 1;
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'open_loop',
-			itemId: loopId,
-			action: 'resolve'
-		});
-	}
-
-	// Forget: tombstone each targeted active fact. Resolution is re-checked here
-	// (not just at tool-call time) so a handle superseded/deleted by an earlier
-	// item in THIS patch is skipped rather than mis-deleting whatever now sits
-	// under that id. Recorded as a `forget` patch item so the delete is
-	// auditable and visible in the inspector (and reviewable per item).
-	let forgottenFacts = 0;
-	for (const target of input.patch.forgetFacts ?? []) {
-		const resolved = resolveForgetTarget(input.conversationId, target);
-		// Unresolved targets were already flagged in validation; skip so a stale
-		// handle doesn't abort the rest of the commit.
-		if (!resolved) continue;
-		// Never forget a fact this same patch just created: a forget-by-predicate
-		// re-resolves to the freshly-superseding value, so tombstoning it would
-		// undo the supersede and drop the predicate. Prefer the supersede.
-		if (createdFactIds.has(resolved.factId)) continue;
-		const updated = memoryRepo.updateFact(input.conversationId, resolved.factId, {
-			status: 'deleted'
-		});
-		if (!updated) continue;
-		forgottenFacts += 1;
-		memoryRepo.recordPatchItem(input.conversationId, {
-			patchId: patchRecord.id,
-			itemType: 'fact',
-			itemId: resolved.factId,
-			action: 'forget'
-		});
-	}
-
-	return {
-		patch: patchRecord,
-		counts: {
-			entities: input.patch.entities?.length ?? 0,
-			events: eventCount,
-			facts: factCount,
-			openLoops: input.patch.openLoops?.length ?? 0,
-			resolvedOpenLoops,
-			forgottenFacts,
-			issues: validation.issues.length
-		}
-	};
+	})();
 }
 
 export interface AgeOpenLoopsResult {
