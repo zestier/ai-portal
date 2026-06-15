@@ -27,6 +27,7 @@ so this is both faster and less noisy for the user.
 | Run unit tests    | `pnpm test`                     | `pnpm exec vitest run`         |
 | Run a single test | `pnpm test <path>`              | `pnpm exec vitest run <path>`  |
 | E2E tests         | `pnpm test:e2e`                 | `pnpm exec playwright test`    |
+| Run the full gate | `pnpm run verify`               | running each phase by hand     |
 | Dev server        | `pnpm dev:isolated` (see below) | `pnpm dev`                     |
 
 If you genuinely need a flag the script doesn't pass through, it's fine to fall
