@@ -947,6 +947,30 @@ export function isModelBackedExtractorConfigured(
 	return createMemoryExtractor(opts).kind !== 'heuristic';
 }
 
+/**
+ * Acquire the per-conversation extraction lock, polling until it is free, the
+ * timeout elapses, or the turn aborts. Returns whether the lock is now held;
+ * callers that fail to acquire still proceed (the commitPatch dedupe is the
+ * authoritative backstop) but lose the serialization benefit, so a false return
+ * is logged rather than fatal.
+ */
+async function acquireExtractionLock(
+	conversationId: string,
+	holder: string,
+	opts: { ttlMs: number; timeoutMs: number; pollMs?: number; signal?: AbortSignal }
+): Promise<boolean> {
+	const pollMs = opts.pollMs ?? 100;
+	const deadline = Date.now() + opts.timeoutMs;
+	for (;;) {
+		if (memoryRepo.tryAcquireExtractionLock(conversationId, holder, { ttlMs: opts.ttlMs })) {
+			return true;
+		}
+		if (opts.signal?.aborted) return false;
+		if (Date.now() >= deadline) return false;
+		await new Promise((resolve) => setTimeout(resolve, pollMs));
+	}
+}
+
 export async function extractAndCommitMemory(
 	input: ExtractPatchInput
 ): Promise<
@@ -965,7 +989,42 @@ export async function extractAndCommitMemory(
 		model: extractor.model ?? null,
 		emitsActivity: extractor.kind === 'openai-compatible-tools'
 	});
-	// Foundation for entity-key reuse, loop pruning, and loop liveness: the
+	// Serialize extractions for one conversation. Two simultaneous passes (rapid
+	// sends, or a retry firing while the background extractor still runs) would
+	// otherwise each snapshot the same pre-commit state below and both commit —
+	// appending duplicate events/open loops. Hold the lock across the whole
+	// snapshot -> commit window. The TTL outlives the extractor's wall-clock +
+	// watchdog budget so a crashed holder is reaped rather than wedging the
+	// conversation; acquisition waits up to the same budget for an in-flight pass
+	// to finish. Failing to acquire is non-fatal (commitPatch dedupe backstops).
+	const cfg = loadConfig();
+	const lockTtlMs =
+		cfg.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS + cfg.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS + 30_000;
+	const lockHolder = ulid();
+	const lockHeld = await acquireExtractionLock(input.conversationId, lockHolder, {
+		ttlMs: lockTtlMs,
+		timeoutMs: lockTtlMs,
+		signal: input.signal
+	});
+	if (!lockHeld) {
+		log.warn('memory.extractor.lock_unavailable', {
+			conversationId: input.conversationId,
+			turnId: input.turnId ?? null
+		});
+	}
+	try {
+		return await runExtractionAndCommit(input, extractor);
+	} finally {
+		if (lockHeld) memoryRepo.releaseExtractionLock(input.conversationId, lockHolder);
+	}
+}
+
+async function runExtractionAndCommit(
+	input: ExtractPatchInput,
+	extractor: MemoryExtractor
+): Promise<
+	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
+> {
 	// extractor must see the existing durable state — crucially the open-loop
 	// ids — to reuse keys and to keep/close loops by id. Callers (tests) may
 	// supply their own packet; production does not, so build one here keyed on

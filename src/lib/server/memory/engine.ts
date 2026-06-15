@@ -931,7 +931,24 @@ export function commitPatch(
 		}
 
 		let eventCount = 0;
+		// Ids this patch itself created, so the concurrent-dedupe check below only
+		// suppresses events appended by a DIFFERENT (racing) patch and still lets a
+		// single patch intentionally carry repeats.
+		const createdEventIds = new Set<string>();
 		for (const event of input.patch.events ?? []) {
+			// Concurrent extractions for the same conversation can each snapshot the
+			// same pre-commit state and propose the identical event; `addEvent` is
+			// append-only, so without this both commits would land a permanent
+			// duplicate. Skip an event whose (turnId, eventType, summary) identity is
+			// already present from another patch.
+			const dupEvent = memoryRepo.findDuplicateEvent(input.conversationId, {
+				turnId: input.turnId ?? null,
+				eventType: event.eventType,
+				summary: event.summary
+			});
+			if (dupEvent && !createdEventIds.has(dupEvent.id)) {
+				continue;
+			}
 			const row = memoryRepo.addEvent(input.conversationId, {
 				turnId: input.turnId,
 				eventType: event.eventType,
@@ -949,6 +966,7 @@ export function commitPatch(
 				action: 'create'
 			});
 			eventCount++;
+			createdEventIds.add(row.id);
 		}
 
 		// Facts are always anchored to an entity so memory stays organized and
@@ -1054,7 +1072,24 @@ export function commitPatch(
 		// Legacy decisions: any `decisions` array on a historical/foreign patch is
 		// silently ignored — the primitive has been retired (settled choices live on
 		// as facts/attributes or directives).
+		let openLoopCount = 0;
+		// Ids this patch created, so the concurrent-dedupe check only suppresses
+		// loops appended by a DIFFERENT (racing) patch — a single patch may still
+		// intentionally carry two same-title loops (they get distinct loop keys).
+		const createdOpenLoopIds = new Set<string>();
 		for (const loop of input.patch.openLoops ?? []) {
+			// Same concurrent-extraction hazard as events: `addOpenLoop` is
+			// append-only, so two racing commits would both append the identical
+			// loop. Skip a loop whose (loopType, title) already exists as an open
+			// loop from another patch. Resolved/dropped loops don't match, so a
+			// deliberately re-raised thread still creates a fresh loop.
+			const dupLoop = memoryRepo.findDuplicateOpenLoop(input.conversationId, {
+				loopType: loop.loopType,
+				title: loop.title
+			});
+			if (dupLoop && !createdOpenLoopIds.has(dupLoop.id)) {
+				continue;
+			}
 			const row = memoryRepo.addOpenLoop(input.conversationId, {
 				loopType: loop.loopType,
 				title: loop.title,
@@ -1071,6 +1106,8 @@ export function commitPatch(
 				itemId: row.id,
 				action: 'create'
 			});
+			openLoopCount++;
+			createdOpenLoopIds.add(row.id);
 		}
 		let resolvedOpenLoops = 0;
 		for (const resolution of input.patch.resolveOpenLoops ?? []) {
@@ -1139,7 +1176,7 @@ export function commitPatch(
 				entities: input.patch.entities?.length ?? 0,
 				events: eventCount,
 				facts: factCount,
-				openLoops: input.patch.openLoops?.length ?? 0,
+				openLoops: openLoopCount,
 				resolvedOpenLoops,
 				forgottenFacts,
 				issues: validation.issues.length

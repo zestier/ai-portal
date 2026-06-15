@@ -545,6 +545,36 @@ export function addEvent(conversationId: string, input: AddEventInput): MemoryEv
 	return rowToEvent(row);
 }
 
+/**
+ * Find an existing event sharing this concurrent-dedupe key — the natural
+ * identity of an extracted event: the turn it belongs to, its type, and its
+ * summary text. `addEvent` is unconditionally append-only, so two extractions
+ * racing on the same conversation (each working from the same pre-commit
+ * snapshot) would otherwise both insert the identical event. commitPatch
+ * consults this before inserting and skips the write when a match exists.
+ *
+ * turn_id participates with NULL-safe equality so two turn-less events with the
+ * same type+summary still collapse, while events from different turns stay
+ * distinct.
+ */
+export function findDuplicateEvent(
+	conversationId: string,
+	key: { turnId: string | null; eventType: string; summary: string }
+): MemoryEvent | null {
+	const turnId = key.turnId ?? null;
+	const row = getDb()
+		.prepare(
+			`SELECT * FROM memory_events
+			  WHERE conversation_id = ?
+			    AND event_type = ?
+			    AND summary = ?
+			    AND ((turn_id IS NULL AND ? IS NULL) OR turn_id = ?)
+			  ORDER BY created_at ASC LIMIT 1`
+		)
+		.get(conversationId, key.eventType, key.summary, turnId, turnId) as EventRow | undefined;
+	return row ? rowToEvent(row) : null;
+}
+
 export function listEvents(
 	conversationId: string,
 	opts: { limit?: number; entityId?: string; eventType?: string } = {}
@@ -830,6 +860,29 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 	return rowToOpenLoop(row);
 }
 
+/**
+ * Find an existing OPEN loop sharing this concurrent-dedupe key — loop type +
+ * title. `addOpenLoop` is unconditionally append-only, so two extractions
+ * racing on the same conversation (each from the same pre-commit snapshot)
+ * would otherwise both insert the identical loop. commitPatch consults this
+ * before inserting and skips the write when a still-open match exists. Only
+ * `open` loops match so a loop legitimately re-raised after being resolved or
+ * dropped is not silently suppressed.
+ */
+export function findDuplicateOpenLoop(
+	conversationId: string,
+	key: { loopType: string; title: string }
+): MemoryOpenLoop | null {
+	const row = getDb()
+		.prepare(
+			`SELECT * FROM memory_open_loops
+			  WHERE conversation_id = ? AND loop_type = ? AND title = ? AND status = 'open'
+			  ORDER BY created_at ASC LIMIT 1`
+		)
+		.get(conversationId, key.loopType, key.title) as OpenLoopRow | undefined;
+	return row ? rowToOpenLoop(row) : null;
+}
+
 export function getOpenLoop(conversationId: string, id: string): MemoryOpenLoop | null {
 	const row = getDb()
 		.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
@@ -877,6 +930,53 @@ export function listOpenLoops(
 				)
 				.all(conversationId, status, limit) as OpenLoopRow[]);
 	return rows.map(rowToOpenLoop);
+}
+
+/**
+ * Per-conversation extraction semaphore. Best-effort, single-holder advisory
+ * lock backing the snapshot->commit window of memory extraction so concurrent
+ * extractions for one conversation serialize rather than each snapshotting the
+ * same pre-commit state and both appending. Returns true when the caller now
+ * holds the lock.
+ *
+ * Acquisition is a single SQLite transaction: reap any expired holder (a
+ * crashed/aborted extraction whose `expires_at` has passed), then attempt an
+ * INSERT OR IGNORE and report whether the surviving row is ours. `ttlMs` bounds
+ * how long a held lock survives without an explicit release so a conversation
+ * can never deadlock forever.
+ */
+export function tryAcquireExtractionLock(
+	conversationId: string,
+	holder: string,
+	opts: { ttlMs: number; now?: number }
+): boolean {
+	const now = opts.now ?? Date.now();
+	const expiresAt = now + opts.ttlMs;
+	const db = getDb();
+	return db.transaction(() => {
+		db.prepare(
+			'DELETE FROM memory_extraction_locks WHERE conversation_id = ? AND expires_at <= ?'
+		).run(conversationId, now);
+		db.prepare(
+			`INSERT OR IGNORE INTO memory_extraction_locks(conversation_id, holder, acquired_at, expires_at)
+			 VALUES (?, ?, ?, ?)`
+		).run(conversationId, holder, now, expiresAt);
+		const row = db
+			.prepare('SELECT holder FROM memory_extraction_locks WHERE conversation_id = ?')
+			.get(conversationId) as { holder: string } | undefined;
+		return row?.holder === holder;
+	})();
+}
+
+/**
+ * Release a lock previously taken with {@link tryAcquireExtractionLock}. Scoped
+ * to the holder token so a caller can never drop a lock another holder took
+ * over after its own row expired.
+ */
+export function releaseExtractionLock(conversationId: string, holder: string): void {
+	getDb()
+		.prepare('DELETE FROM memory_extraction_locks WHERE conversation_id = ? AND holder = ?')
+		.run(conversationId, holder);
 }
 
 export function createPatch(conversationId: string, input: CreatePatchInput): MemoryPatch {

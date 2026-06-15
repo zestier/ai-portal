@@ -604,6 +604,82 @@ describe('memory-backed sessions', () => {
 		expect(memory.getOpenLoop(conv.id, first.id)?.description).toContain('found it');
 	});
 
+	it('dedupes events and open loops across racing patches but keeps intra-patch repeats', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// Two concurrent extractions for the same turn each work from the same
+		// pre-commit snapshot and commit the identical event + open loop. Without
+		// dedupe both append-only writes would land, leaving permanent duplicates.
+		const patch = {
+			events: [{ eventType: 'decision', summary: 'Chose append-only migrations' }],
+			openLoops: [{ loopType: 'task', title: 'Wire up the migration' }]
+		};
+		commitPatch({ conversationId: conv.id, turnId: 'turn-race', patch });
+		commitPatch({ conversationId: conv.id, turnId: 'turn-race', patch });
+
+		expect(memory.listEvents(conv.id, { eventType: 'decision' })).toHaveLength(1);
+		expect(
+			memory.listOpenLoops(conv.id).filter((l) => l.title === 'Wire up the migration')
+		).toHaveLength(1);
+
+		// A different turn is a distinct event identity, so it is NOT deduped.
+		commitPatch({ conversationId: conv.id, turnId: 'turn-other', patch });
+		expect(memory.listEvents(conv.id, { eventType: 'decision' })).toHaveLength(2);
+
+		// Intra-patch repeats are intentional and must survive: a single patch
+		// carrying the same event/loop twice still records both.
+		const conv2 = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv2.id,
+			turnId: 'turn-single',
+			patch: {
+				events: [
+					{ eventType: 'decision', summary: 'Same summary' },
+					{ eventType: 'decision', summary: 'Same summary' }
+				],
+				openLoops: [
+					{ loopType: 'task', title: 'Same title' },
+					{ loopType: 'task', title: 'Same title' }
+				]
+			}
+		});
+		expect(memory.listEvents(conv2.id, { eventType: 'decision' })).toHaveLength(2);
+		expect(memory.listOpenLoops(conv2.id).filter((l) => l.title === 'Same title')).toHaveLength(2);
+	});
+
+	it('serializes the per-conversation extraction lock and reaps an expired holder', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+
+		// First holder claims the conversation; a second holder is refused while it
+		// is live, then takes over once the first holder's TTL has elapsed.
+		expect(memory.tryAcquireExtractionLock(conv.id, 'holder-a', { ttlMs: 1_000, now: 1_000 })).toBe(
+			true
+		);
+		expect(memory.tryAcquireExtractionLock(conv.id, 'holder-b', { ttlMs: 1_000, now: 1_500 })).toBe(
+			false
+		);
+		// Re-entrant acquire by the current holder still reports ownership. Note
+		// INSERT OR IGNORE leaves the original lease intact — it does not extend it.
+		expect(memory.tryAcquireExtractionLock(conv.id, 'holder-a', { ttlMs: 1_000, now: 1_600 })).toBe(
+			true
+		);
+		// holder-a's original lease (1_000 + 1_000 = 2_000) has expired; holder-b reaps and claims.
+		expect(memory.tryAcquireExtractionLock(conv.id, 'holder-b', { ttlMs: 1_000, now: 3_000 })).toBe(
+			true
+		);
+		// A stale holder cannot release a lease another holder now owns.
+		memory.releaseExtractionLock(conv.id, 'holder-a');
+		expect(memory.tryAcquireExtractionLock(conv.id, 'holder-c', { ttlMs: 1_000, now: 3_100 })).toBe(
+			false
+		);
+		memory.releaseExtractionLock(conv.id, 'holder-b');
+		expect(memory.tryAcquireExtractionLock(conv.id, 'holder-c', { ttlMs: 1_000, now: 3_200 })).toBe(
+			true
+		);
+	});
+
 	it('keeps a loop alive via liveness when reaffirmed by key', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
