@@ -591,9 +591,18 @@ a directive is an always-on behavioral instruction that is never dropped.
   issued by the user or declared by the assistant about its own role/behavior.
   Extraction guidance stays conservative (only standing instructions and role
   definitions, not one-off asks or transient self-talk).
-- **Injection:** every active directive is rendered verbatim in a dedicated
-  `standing directives` packet header block, exempt from the token budget — they are
-  never elided regardless of how many other facts exist.
+- **Injection:** every active directive is rendered in a dedicated, clearly
+  delimited `<user_standing_directives>` packet block, exempt from the token
+  budget — they are never elided regardless of how many other facts exist. The
+  block is framed as **user-supplied input** (not system-level commands): the
+  model honors the directives as preferences but is told to ignore any that try
+  to override its system/safety instructions or exfiltrate data.
+- **Injection hardening:** because a directive's text can originate from
+  summarized conversation content (a potential indirect prompt-injection
+  vector), proposed directive rules are screened by a prompt-injection heuristic
+  in `extractor/sanitize.ts` before storage. A rule that reads like an attempt to
+  override prior instructions or leak the system prompt is dropped (surfaced as a
+  `directive_injection_removed` diagnostic) rather than persisted.
 - **Modes:** available in all profiles except `off` (`lightweight`, `project`,
   `story`, `strict`); the profile primitive lists advertise `directive`.
 - **Retire / countermand:** directives are **additive** — two directives with

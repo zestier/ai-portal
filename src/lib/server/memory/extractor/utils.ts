@@ -24,6 +24,42 @@ export const SENSITIVE_PATTERNS: ReadonlyArray<{ regex: RegExp; replacement: str
 	}
 ];
 
+/**
+ * Heuristic patterns for instruction-injection phrasing — attempts to override,
+ * disable, or exfiltrate the system/developer prompt and safety rules. Unlike
+ * {@link SENSITIVE_PATTERNS} (which match credential *shapes*), these match
+ * *instruction text*. They exist so a directive rule (which renders into the
+ * always-on standing-rules block and re-injects every turn) can't smuggle a
+ * persistent prompt-injection payload from summarized/indirect content. Patterns
+ * are intentionally narrow — they require an imperative verb *and* a target like
+ * "previous instructions" / "system prompt" / a secret — so ordinary behavioural
+ * directives ("Keep replies short.", "Never reveal the villain before chapter
+ * three.") don't trip them. Non-`g` so `.test()` needs no `lastIndex` reset.
+ */
+export const PROMPT_INJECTION_PATTERNS: ReadonlyArray<RegExp> = [
+	/\b(?:ignore|disregard|forget|override|bypass|skip|drop)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|all|any|the|your|these|those)\b[^.\n]{0,40}\b(?:instruction|instructions|direction|directions|prompt|prompts|rule|rules|guideline|guidelines|constraint|constraints|context|memory|memories)\b/i,
+	/\b(?:from now on|starting now|going forward)\b[^.\n]{0,30}\byou(?:'re| are| will| must| should| now)/i,
+	/\byou are now\b/i,
+	/\b(?:act|behave|respond|pretend|roleplay|operate)\s+as\s+(?:if\s+)?(?:you\s+are\s+)?(?:an?\s+)?(?:dan|developer\s*mode|jailbroken|unrestricted|unfiltered|no[\s-]?restrictions?)/i,
+	/\b(?:system|developer)\s+(?:prompt|message|instructions?)\b/i,
+	/\b(?:reveal|print|show|output|repeat|disclose|leak|exfiltrate|send|email|post)\b[^.\n]{0,40}\b(?:system\s+prompt|hidden\s+instructions?|api[_-]?key|password|passwd|secret|credentials?|token)/i,
+	/<\/?\s*(?:system|assistant|developer|instructions?)\s*>/i,
+	/\[\/?\s*(?:system|inst|instructions?)\s*\]/i,
+	/\bdo anything now\b/i,
+	/\bdeveloper mode\b/i,
+	/\bdisregard\b[^.\n]{0,30}\b(?:safety|content|moderation)\b[^.\n]{0,20}\b(?:polic|guideline|rule|filter)/i
+];
+
+/**
+ * Whether `text` reads like an attempt to override or exfiltrate the system
+ * prompt / safety rules (see {@link PROMPT_INJECTION_PATTERNS}). Used to reject
+ * such text from persistent, high-authority storage (standing directives).
+ */
+export function looksLikePromptInjection(text: string): boolean {
+	if (!text) return false;
+	return PROMPT_INJECTION_PATTERNS.some((regex) => regex.test(text));
+}
+
 /** Whether `text` matches any known secret shape (see {@link SENSITIVE_PATTERNS}). */
 export function containsSensitiveText(text: string): boolean {
 	if (!text) return false;

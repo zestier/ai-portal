@@ -7,7 +7,13 @@
  */
 import type { Diagnostic } from './types';
 import type { MemoryPatchProposal, TurnMemoryPacket } from '../engine';
-import { containsSensitiveText, redactSensitiveText } from './utils';
+import { isDirectivePredicate } from '../engine';
+import {
+	containsSensitiveText,
+	looksLikePromptInjection,
+	redactSensitiveText,
+	stringifyUnknown
+} from './utils';
 
 /**
  * Identity/anchor fields that must survive the secret filter so an entity (and
@@ -37,6 +43,15 @@ export function sanitizePatch(
 } {
 	const diagnostics: Diagnostic[] = [];
 	let removed = 0;
+	// Standing directives render into the highest-authority "always in effect"
+	// block and re-inject every turn, so a directive rule that smuggles
+	// instruction-injection text ("ignore previous instructions: …", "reveal the
+	// system prompt") would persist as a high-trust command. Drop such directives
+	// before storage — independent of the credential filter, which only catches
+	// secret *shapes*, not instruction text. Only directive facts are screened
+	// this way; ordinary fact values are data, not instructions to obey.
+	const directiveScan = stripInjectionDirectives(patch.facts);
+	const injectionDirectivesRemoved = directiveScan.removed;
 	// Redact secret-looking *values* in place rather than dropping the whole
 	// item. Dropping an entity because one free-text field (a URL in metadata, a
 	// summary) trips the credential filter strips its entityKey/entityType/
@@ -80,7 +95,7 @@ export function sanitizePatch(
 		{
 			entities: keep(patch.entities),
 			events: keep(patch.events),
-			facts: keep(patch.facts),
+			facts: keep(directiveScan.facts),
 			openLoops: keep(patch.openLoops),
 			forgetFacts: patch.forgetFacts
 		},
@@ -123,6 +138,13 @@ export function sanitizePatch(
 			return safe;
 		})
 	};
+	if (injectionDirectivesRemoved > 0) {
+		diagnostics.push({
+			severity: 'warning',
+			code: 'directive_injection_removed',
+			message: `${injectionDirectivesRemoved} proposed standing directive(s) were dropped because the rule text looked like a prompt-injection attempt (e.g. overriding instructions or exfiltrating the system prompt).`
+		});
+	}
 	if (removed > 0) {
 		diagnostics.push({
 			severity: 'warning',
@@ -131,6 +153,34 @@ export function sanitizePatch(
 		});
 	}
 	return { patch: nextPatch, diagnostics };
+}
+
+/**
+ * Drop proposed directive facts whose rule text reads like a prompt-injection
+ * attempt (see {@link looksLikePromptInjection}). Directives are stored pinned
+ * and rendered into the always-on standing-rules block, so unlike ordinary
+ * facts — whose values are inert data — a malicious directive becomes a durable,
+ * high-authority instruction that re-injects every turn. Screening here (before
+ * storage) closes the indirect-injection vector where summarized content coaxes
+ * the extractor into recording "Ignore previous instructions: …" as a directive.
+ * Non-directive facts pass through untouched.
+ */
+function stripInjectionDirectives(facts: MemoryPatchProposal['facts']): {
+	facts: MemoryPatchProposal['facts'];
+	removed: number;
+} {
+	if (!facts) return { facts: undefined, removed: 0 };
+	let removed = 0;
+	const kept = facts.filter((fact) => {
+		if (!isDirectivePredicate(fact.predicate)) return true;
+		const text = typeof fact.value === 'string' ? fact.value : stringifyUnknown(fact.value);
+		if (looksLikePromptInjection(text)) {
+			removed++;
+			return false;
+		}
+		return true;
+	});
+	return { facts: kept.length > 0 ? kept : undefined, removed };
 }
 
 function canonicalizeEntityKeys(
