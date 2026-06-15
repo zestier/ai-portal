@@ -500,44 +500,6 @@ describe('db migrations + repos', () => {
 		});
 	});
 
-	it('self-heals the background lifecycle table if a cached DB handle missed the migration', () => {
-		const db = getDb();
-		db.prepare('DROP TABLE background_agent_lifecycles').run();
-
-		const u = users.ensureLocalUser();
-		const c = convs.create(u.id, {
-			title: 'subagent lifecycle heal',
-			workdir: '/tmp',
-			model: null
-		});
-		const assistant = messages.append(c.id, {
-			role: 'assistant',
-			content: '',
-			status: 'complete'
-		});
-		messages.insertToolCall(assistant.id, {
-			id: 'task-heal',
-			tool: 'task',
-			argsJson: JSON.stringify({ mode: 'background' }),
-			resultJson: null,
-			status: 'ok',
-			startedAt: 100,
-			endedAt: 110,
-			textOffset: 0,
-			parentToolCallId: null
-		});
-
-		messages.updateBackgroundAgentLifecycle('task-heal', 'agent-heal', 'completed', 140);
-
-		const reloaded = messages.listByConversation(c.id).find((m) => m.id === assistant.id);
-		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 'task-heal',
-			backgroundAgentStatus: 'completed',
-			backgroundAgentId: 'agent-heal',
-			backgroundAgentEndedAt: 140
-		});
-	});
-
 	it('handles conversations whose id lists exceed the SQLite variable limit', () => {
 		// More ids than SQLITE_MAX_VARIABLE_NUMBER (often 999): a single
 		// IN (?, ...) list would throw SQLITE_RANGE without batching.

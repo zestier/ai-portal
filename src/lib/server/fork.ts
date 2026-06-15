@@ -218,7 +218,6 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 
 function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string, string> {
 	const db = getDb();
-	messages.ensureBackgroundAgentLifecycleTable(db);
 	const baseTs = Date.now() - prefix.length - 1;
 	const messageIdMap = new Map<string, string>();
 	const insertMsg = db.prepare(

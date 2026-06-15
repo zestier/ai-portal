@@ -114,22 +114,6 @@ function runInBatches(
 	}
 }
 
-export function ensureBackgroundAgentLifecycleTable(db: Database.Database = getDb()) {
-	db.prepare(
-		`CREATE TABLE IF NOT EXISTS background_agent_lifecycles (
-		   tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
-		   agent_id     TEXT NOT NULL,
-		   status       TEXT NOT NULL,
-		   started_at   INTEGER NOT NULL,
-		   ended_at     INTEGER
-		 )`
-	).run();
-	db.prepare(
-		`CREATE INDEX IF NOT EXISTS idx_background_agent_lifecycles_agent
-		   ON background_agent_lifecycles(agent_id)`
-	).run();
-}
-
 function rowToMessage(r: MsgRow): Message {
 	return {
 		id: r.id,
@@ -144,7 +128,6 @@ function rowToMessage(r: MsgRow): Message {
 
 export function listByConversation(conversationId: string): Message[] {
 	const db = getDb();
-	ensureBackgroundAgentLifecycleTable(db);
 	const rows = db
 		.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC')
 		.all(conversationId) as MsgRow[];
@@ -309,7 +292,6 @@ export function truncateAfterAndUpdateUserMessage(
 	content: string
 ): Message | null {
 	const db = getDb();
-	ensureBackgroundAgentLifecycleTable(db);
 	const tx = db.transaction(() => {
 		const target = db
 			.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
@@ -381,7 +363,6 @@ function deleteMessagesAfter(db: Database.Database, conversationId: string, targ
 
 export function truncateAfterMessage(conversationId: string, messageId: string): boolean {
 	const db = getDb();
-	ensureBackgroundAgentLifecycleTable(db);
 	const tx = db.transaction(() => {
 		const target = db
 			.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
@@ -493,7 +474,6 @@ export function updateBackgroundAgentLifecycle(
 	now: number = Date.now()
 ) {
 	const db = getDb();
-	ensureBackgroundAgentLifecycleTable(db);
 	db.prepare(
 		`INSERT INTO background_agent_lifecycles(
 		   tool_call_id, agent_id, status, started_at, ended_at
@@ -522,7 +502,6 @@ export function getToolCallForConversation(
 	toolCallId: string
 ): ToolCallWithConversation | null {
 	const db = getDb();
-	ensureBackgroundAgentLifecycleTable(db);
 	const row = db
 		.prepare(
 			`SELECT tc.*,

@@ -3,7 +3,6 @@
 // migration and the `TurnInput` type for the contract.
 
 import { getDb } from '../index';
-import type Database from 'better-sqlite3';
 import type { TurnInput, ProviderInitialMessagePreview } from '$lib/types';
 
 interface TurnInputRow {
@@ -19,25 +18,6 @@ interface TurnInputRow {
 	memory_mode: string | null;
 	initial_messages: string | null;
 	created_at: number;
-}
-
-export function ensureTable(db: Database.Database = getDb()) {
-	db.prepare(
-		`CREATE TABLE IF NOT EXISTS turn_inputs (
-		   message_id       TEXT PRIMARY KEY,
-		   conversation_id  TEXT NOT NULL,
-		   turn_id          TEXT,
-		   full_input       TEXT NOT NULL,
-		   prompt_body      TEXT NOT NULL,
-		   prelude          TEXT NOT NULL DEFAULT '',
-		   provider         TEXT,
-		   model            TEXT,
-		   mode             TEXT,
-		   memory_mode      TEXT,
-		   initial_messages TEXT,
-		   created_at       INTEGER NOT NULL
-		 )`
-	).run();
 }
 
 export interface RecordTurnInput {
@@ -56,7 +36,6 @@ export interface RecordTurnInput {
 
 export function record(input: RecordTurnInput): void {
 	const db = getDb();
-	ensureTable(db);
 	db.prepare(
 		`INSERT INTO turn_inputs(
 		   message_id, conversation_id, turn_id, full_input, prompt_body, prelude,
@@ -93,7 +72,6 @@ export function record(input: RecordTurnInput): void {
 
 export function get(conversationId: string, messageId: string): TurnInput | null {
 	const db = getDb();
-	ensureTable(db);
 	const row = db
 		.prepare('SELECT * FROM turn_inputs WHERE conversation_id = ? AND message_id = ?')
 		.get(conversationId, messageId) as TurnInputRow | undefined;
