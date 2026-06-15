@@ -2,6 +2,16 @@
 
 Notes for AI coding agents (Copilot CLI, Claude, etc.) working in this repo.
 
+## Before you change code — read CONTRIBUTING once per session
+
+The first time in a session that you're about to create or modify a file, read
+[CONTRIBUTING.md](CONTRIBUTING.md) if you haven't already. It is the canonical
+source for this repo's conventions — testing expectations (add/update tests with
+behavior changes), how unit vs e2e tests are structured, style/formatting, and
+the `pnpm run verify` quality gate. You don't need to re-read it on every edit;
+once per session is enough. The essentials you need constantly are inlined below;
+CONTRIBUTING.md is the detail for the long tail.
+
 ## Common commands — prefer the package scripts
 
 Always reach for the `package.json` scripts instead of invoking the underlying
@@ -21,6 +31,11 @@ so this is both faster and less noisy for the user.
 
 If you genuinely need a flag the script doesn't pass through, it's fine to fall
 back to `pnpm exec` — but check `package.json` first; the script usually exists.
+
+When you change behavior, add or update tests in the same change, then run
+`pnpm test <path>` for the file you touched and `pnpm run verify` before
+declaring the work done. See [CONTRIBUTING.md](CONTRIBUTING.md) for unit-vs-e2e
+conventions, fixtures, and the process-isolation setup.
 
 ## Local testing — use an isolated data dir
 

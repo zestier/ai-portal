@@ -151,6 +151,9 @@ host-sandbox guarantee. See [docs/auth-and-security.md](docs/auth-and-security.m
    OpenAI-compatible backend setup, settings, and feature differences.
 9. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
 
+See also [CONTRIBUTING.md](CONTRIBUTING.md) for testing, style, and the quality
+gate, and [AGENTS.md](AGENTS.md) for agent-specific guidance.
+
 ## TL;DR architecture
 
 ```
