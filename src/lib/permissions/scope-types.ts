@@ -19,6 +19,38 @@ export interface ShellScope {
 	rule: ShellRule;
 }
 
+/**
+ * Option constraints for one command-path step.
+ *
+ * The two lists combine into three meaningfully different shapes — be
+ * deliberate about which one you author, because the open-allow case is
+ * easy to reach by accident:
+ *
+ *   allow only         — allow-list: an option token is permitted only if
+ *                        it matches a spec; everything else is rejected.
+ *   allow + deny       — deny wins. A token matching `deny` is rejected
+ *                        even if it also matches `allow`.
+ *   deny only          — DENY-LIST ("allow all except"): on the FINAL
+ *                        command step, every option NOT on the deny list
+ *                        falls through and is permitted. This is intentional
+ *                        for broad read-only tools like `rg` / `find` where
+ *                        enumerating every safe flag is impractical, but it
+ *                        means a newly-added exec-capable flag is auto-approved
+ *                        until the deny list is updated. Prefer an allow-list
+ *                        when you can enumerate the safe options; reach for
+ *                        deny-only only when you knowingly want "everything
+ *                        except these".
+ *
+ * Asymmetry to watch for: the "allow all except" fall-through only applies
+ * to the final step's options (which interleave with positionals). On a
+ * non-final (intermediate) step, options are matched while scanning toward
+ * the next command-path token, so a token there must satisfy the allow-list
+ * to be accepted — a deny-only rule on an intermediate step rejects every
+ * option rather than permitting the un-denied ones.
+ *
+ * Omitting both (an absent `options`) permits no options at all on that
+ * step — the matcher treats any option token as unrecognised and rejects.
+ */
 export interface ShellOptionRules {
 	allow?: ShellOptionSpec[];
 	deny?: string[];

@@ -150,6 +150,14 @@
 							autocomplete="off"
 						/>
 					</label>
+					{#if i === shellCommandTokens.length - 1 && (shellStepOptions[i]?.deny ?? '').trim() && !(shellStepOptions[i]?.allow ?? '').trim()}
+						<p class="step-option-warning">
+							⚠️ Deny-only on the final step means <strong>“allow all except”</strong>: every option
+							that isn't on the deny list is permitted. New (possibly exec-capable) flags on this
+							tool will be auto-approved until you add them to the deny list. If you can enumerate
+							the safe options, prefer filling in the allow list instead.
+						</p>
+					{/if}
 				</fieldset>
 			{/each}
 		</div>
@@ -276,6 +284,17 @@
 	}
 	.step-option-fields legend {
 		grid-column: 1 / -1;
+	}
+	.step-option-warning {
+		grid-column: 1 / -1;
+		margin: 0;
+		padding: 0.4rem 0.6rem;
+		border: 1px solid var(--warning);
+		border-radius: 6px;
+		background: var(--warning-bg);
+		color: var(--text);
+		font-size: var(--fs-md);
+		line-height: 1.4;
 	}
 	.small {
 		font-size: var(--fs-md);

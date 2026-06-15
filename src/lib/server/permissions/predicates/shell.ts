@@ -137,6 +137,11 @@ function commandPathMatches(
 				if (matched.consumedNextToken) i += 1;
 				continue;
 			}
+			// Deny-only (or no option rules at all): with no allow-list to
+			// satisfy, any option that survived the deny check above falls
+			// through as permitted. This is the "allow all except" deny-list
+			// design — see ShellOptionRules in scope-types.ts. New flags on the
+			// covered tool are auto-approved until the deny list catches up.
 			continue;
 		}
 		positionals.push(tok);
@@ -173,6 +178,11 @@ function consumeStepOptionsUntilToken(
 		if (tok === nextToken) return { tokenIndex: i, ignoredOptionIndexes };
 		if (tok === '--' || !looksLikeShellOptionToken(tok)) return null;
 		if (matchesDeniedOption(tok, options?.deny)) return null;
+		// Intermediate steps have no "allow all except" fall-through: an
+		// option here must satisfy the allow-list to be accepted. A deny-only
+		// rule on a non-final step therefore rejects every option (the open
+		// deny-list semantics only apply to the final step — see
+		// ShellOptionRules in scope-types.ts).
 		if (!options?.allow) return null;
 		const matched = matchShellOptionToken(tok, argv[i + 1], options.allow);
 		if (!matched) return null;
