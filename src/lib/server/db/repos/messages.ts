@@ -65,6 +65,55 @@ interface ReasoningRow {
 	parent_tool_call_id: string | null;
 }
 
+// SQLite is built with a cap on bound parameters per statement
+// (`SQLITE_MAX_VARIABLE_NUMBER`, often 999 in bundled builds). Conversations
+// can accumulate more message / tool-call ids than that, so any `IN (?, ...)`
+// list built from such an array has to be split into batches well under the
+// limit to avoid `SQLITE_RANGE`.
+const ID_BATCH_SIZE = 500;
+
+function batchIds<T>(ids: readonly T[], size = ID_BATCH_SIZE): T[][] {
+	const batches: T[][] = [];
+	for (let i = 0; i < ids.length; i += size) {
+		batches.push(ids.slice(i, i + size));
+	}
+	return batches;
+}
+
+// Runs a `SELECT ... IN (<placeholders>) ...` statement once per id batch and
+// concatenates the rows. `buildSql` receives the comma-separated placeholder
+// list for the current batch. Rows whose grouping key lives entirely within a
+// single batch (e.g. all tool_calls for a given message_id) keep their relative
+// order, since each id appears in exactly one batch.
+function selectInBatches<R>(
+	db: Database.Database,
+	ids: readonly string[],
+	buildSql: (placeholders: string) => string
+): R[] {
+	const rows: R[] = [];
+	for (const batch of batchIds(ids)) {
+		const placeholders = batch.map(() => '?').join(',');
+		// Append element-by-element rather than spreading: a batch is capped at
+		// 500 ids, but the rows it returns are not, and `push(...rows)` would hit
+		// the JS argument limit for very large result sets.
+		for (const row of db.prepare(buildSql(placeholders)).all(...batch) as R[]) {
+			rows.push(row);
+		}
+	}
+	return rows;
+}
+
+function runInBatches(
+	db: Database.Database,
+	ids: readonly string[],
+	buildSql: (placeholders: string) => string
+): void {
+	for (const batch of batchIds(ids)) {
+		const placeholders = batch.map(() => '?').join(',');
+		db.prepare(buildSql(placeholders)).run(...batch);
+	}
+}
+
 export function ensureBackgroundAgentLifecycleTable(db: Database.Database = getDb()) {
 	db.prepare(
 		`CREATE TABLE IF NOT EXISTS background_agent_lifecycles (
@@ -103,33 +152,32 @@ export function listByConversation(conversationId: string): Message[] {
 	if (msgs.length === 0) return msgs;
 
 	const ids = msgs.map((m) => m.id);
-	const placeholders = ids.map(() => '?').join(',');
-	const toolRows = db
-		.prepare(
+	const toolRows = selectInBatches<ToolRow>(
+		db,
+		ids,
+		(placeholders) =>
 			`SELECT * FROM tool_calls WHERE message_id IN (${placeholders}) ORDER BY started_at ASC`
-		)
-		.all(...ids) as ToolRow[];
+	);
 	const toolIds = toolRows.map((t) => t.id);
-	const lifecycleRows =
-		toolIds.length > 0
-			? (db
-					.prepare(
-						`SELECT * FROM background_agent_lifecycles
-						  WHERE tool_call_id IN (${toolIds.map(() => '?').join(',')})`
-					)
-					.all(...toolIds) as BackgroundAgentLifecycleRow[])
-			: [];
+	const lifecycleRows = selectInBatches<BackgroundAgentLifecycleRow>(
+		db,
+		toolIds,
+		(placeholders) =>
+			`SELECT * FROM background_agent_lifecycles WHERE tool_call_id IN (${placeholders})`
+	);
 	const lifecycleByTool = new Map(lifecycleRows.map((r) => [r.tool_call_id, r]));
-	const editRows = db
-		.prepare(
+	const editRows = selectInBatches<EditRow>(
+		db,
+		ids,
+		(placeholders) =>
 			`SELECT * FROM file_edits WHERE message_id IN (${placeholders}) ORDER BY created_at ASC`
-		)
-		.all(...ids) as EditRow[];
-	const reasoningRows = db
-		.prepare(
+	);
+	const reasoningRows = selectInBatches<ReasoningRow>(
+		db,
+		ids,
+		(placeholders) =>
 			`SELECT * FROM reasoning_blocks WHERE message_id IN (${placeholders}) ORDER BY segment_index ASC`
-		)
-		.all(...ids) as ReasoningRow[];
+	);
 
 	const byMsgT: Record<string, ToolCallRecord[]> = {};
 	for (const t of toolRows) {
@@ -298,22 +346,37 @@ function deleteMessagesAfter(db: Database.Database, conversationId: string, targ
 		.all(conversationId, target.created_at, target.created_at, target.id) as { id: string }[];
 	const laterIds = later.map((r) => r.id);
 	if (laterIds.length === 0) return;
-	const msgPlaceholders = laterIds.map(() => '?').join(',');
-	const toolIds = db
-		.prepare(`SELECT id FROM tool_calls WHERE message_id IN (${msgPlaceholders})`)
-		.all(...laterIds) as { id: string }[];
-	if (toolIds.length > 0) {
-		const toolPlaceholders = toolIds.map(() => '?').join(',');
-		db.prepare(
-			`DELETE FROM background_agent_lifecycles WHERE tool_call_id IN (${toolPlaceholders})`
-		).run(...toolIds.map((r) => r.id));
-	}
-	db.prepare(`DELETE FROM reasoning_blocks WHERE message_id IN (${msgPlaceholders})`).run(
-		...laterIds
+	const toolIds = selectInBatches<{ id: string }>(
+		db,
+		laterIds,
+		(placeholders) => `SELECT id FROM tool_calls WHERE message_id IN (${placeholders})`
+	).map((r) => r.id);
+	runInBatches(
+		db,
+		toolIds,
+		(placeholders) =>
+			`DELETE FROM background_agent_lifecycles WHERE tool_call_id IN (${placeholders})`
 	);
-	db.prepare(`DELETE FROM file_edits WHERE message_id IN (${msgPlaceholders})`).run(...laterIds);
-	db.prepare(`DELETE FROM tool_calls WHERE message_id IN (${msgPlaceholders})`).run(...laterIds);
-	db.prepare(`DELETE FROM messages WHERE id IN (${msgPlaceholders})`).run(...laterIds);
+	runInBatches(
+		db,
+		laterIds,
+		(placeholders) => `DELETE FROM reasoning_blocks WHERE message_id IN (${placeholders})`
+	);
+	runInBatches(
+		db,
+		laterIds,
+		(placeholders) => `DELETE FROM file_edits WHERE message_id IN (${placeholders})`
+	);
+	runInBatches(
+		db,
+		laterIds,
+		(placeholders) => `DELETE FROM tool_calls WHERE message_id IN (${placeholders})`
+	);
+	runInBatches(
+		db,
+		laterIds,
+		(placeholders) => `DELETE FROM messages WHERE id IN (${placeholders})`
+	);
 }
 
 export function truncateAfterMessage(conversationId: string, messageId: string): boolean {

@@ -537,4 +537,60 @@ describe('db migrations + repos', () => {
 			backgroundAgentEndedAt: 140
 		});
 	});
+
+	it('handles conversations whose id lists exceed the SQLite variable limit', () => {
+		// More ids than SQLITE_MAX_VARIABLE_NUMBER (often 999): a single
+		// IN (?, ...) list would throw SQLITE_RANGE without batching.
+		const total = 2100;
+		const u = users.ensureLocalUser();
+		const c = convs.create(u.id, {
+			title: 'huge conversation',
+			workdir: '/tmp',
+			model: null
+		});
+
+		const created: string[] = [];
+		for (let i = 0; i < total; i++) {
+			const m = messages.append(c.id, {
+				role: i % 2 === 0 ? 'user' : 'assistant',
+				content: `msg ${i}`,
+				status: 'complete'
+			});
+			created.push(m.id);
+			messages.insertToolCall(m.id, {
+				id: `tool-${i}`,
+				tool: 'task',
+				argsJson: '{}',
+				resultJson: null,
+				status: 'ok',
+				startedAt: i,
+				endedAt: i,
+				textOffset: 0,
+				parentToolCallId: null
+			});
+			messages.insertReasoningBlock(m.id, {
+				id: `reason-${i}`,
+				segmentIndex: 0,
+				text: 'thinking',
+				kind: 'reasoning',
+				textOffset: 0,
+				startedAt: i,
+				durationMs: 1,
+				parentToolCallId: null
+			});
+		}
+
+		const loaded = messages.listByConversation(c.id);
+		expect(loaded).toHaveLength(total);
+		expect(loaded.every((m) => m.toolCalls?.length === 1)).toBe(true);
+		expect(loaded.every((m) => m.reasoningBlocks?.length === 1)).toBe(true);
+
+		// Truncating after the very first message must delete every later row
+		// (also exceeding the variable limit) without throwing.
+		const ok = messages.truncateAfterMessage(c.id, created[0]);
+		expect(ok).toBe(true);
+		const afterTruncate = messages.listByConversation(c.id);
+		expect(afterTruncate).toHaveLength(1);
+		expect(afterTruncate[0].id).toBe(created[0]);
+	});
 });
