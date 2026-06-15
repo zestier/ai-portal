@@ -24,7 +24,9 @@
 	} from '$lib/client/ticket-tool-refresh';
 	import {
 		CHAT_STREAM_STALL_TIMEOUT_MS,
-		streamRefreshAction
+		streamRefreshAction,
+		streamIsLive,
+		shouldResumeStream
 	} from '$lib/client/chat-stream-recovery';
 	import { decideArmedFlush, decideComposerAction } from '$lib/client/composer-arming';
 	import { reviewStore } from '$lib/client/review.svelte';
@@ -185,6 +187,30 @@
 			closeStream();
 			clearCompactionTimer();
 			clearInteractiveRevealTimers();
+		};
+	});
+
+	// Foreground/network resume listeners. Registered once for the component's
+	// lifetime (independent of which conversation is loaded) so a tab that was
+	// frozen during a screen lock re-syncs the moment it comes back, instead of
+	// stranding the user on stale content until they manually refresh.
+	//
+	// We listen on `visibilitychange` (not `focus`) deliberately: browsers only
+	// freeze tabs that go *hidden*, and `visibilitychange` fires reliably on
+	// screen lock/unlock and tab switch — exactly when recovery is needed. A
+	// raw `focus` listener also fires when refocusing an already-visible window
+	// (which was never frozen), which would churn a healthy stream by dropping
+	// and reattaching it on every refocus. `online` covers network restoration.
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		const onVisibility = () => {
+			if (!document.hidden) handleStreamResume();
+		};
+		document.addEventListener('visibilitychange', onVisibility);
+		window.addEventListener('online', handleStreamResume);
+		return () => {
+			document.removeEventListener('visibilitychange', onVisibility);
+			window.removeEventListener('online', handleStreamResume);
 		};
 	});
 
@@ -358,6 +384,40 @@
 		streaming = false;
 	}
 
+	// A `null` socket is obviously gone, but a non-null one is not
+	// necessarily healthy: after a tab freeze (screen lock, backgrounded
+	// tab) the browser can leave the EventSource in a CLOSED state without
+	// ever firing `onerror`, or as a "zombie" that reports OPEN while no
+	// data flows. `streamIsLive` (in chat-stream-recovery) treats a CLOSED
+	// socket as dead so recovery reattaches instead of waiting out another
+	// full stall window. Callers that want to force past a zombie close the
+	// socket themselves before refetching.
+
+	// Drop the current socket without tearing down `activeTurnId`/`streaming`
+	// so a subsequent `refreshMessages()` reattaches a fresh stream when the
+	// server still has the turn in flight.
+	function dropZombieStream() {
+		clearStreamStallTimeout();
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+	}
+
+	// Re-sync when the page returns to the foreground (after a screen lock or
+	// tab switch) or the network comes back. While a tab is frozen the
+	// browser suspends our stall watchdog AND can silently kill or zombify
+	// the EventSource, so neither auto-reconnect nor the stall timer reliably
+	// recovers — the user would otherwise have to refresh by hand. If a turn
+	// is in flight, drop the possibly-dead socket and refetch authoritative
+	// state, which reattaches a fresh stream as needed.
+	function handleStreamResume() {
+		const documentHidden = typeof document !== 'undefined' && document.hidden;
+		if (!shouldResumeStream({ documentHidden, activeTurnId })) return;
+		dropZombieStream();
+		void refreshMessages();
+	}
+
 	function clearStreamStallTimeout() {
 		if (streamStallTimer) {
 			clearTimeout(streamStallTimer);
@@ -413,7 +473,7 @@
 			const action = streamRefreshAction({
 				currentTurnId: activeTurnId,
 				refreshedActiveTurnId: data.activeTurnId,
-				hasEventSource: eventSource !== null
+				hasEventSource: streamIsLive(eventSource)
 			});
 			if (action === 'finish') {
 				closeStream();

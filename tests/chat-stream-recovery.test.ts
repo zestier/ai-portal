@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	CHAT_STREAM_STALL_TIMEOUT_MS,
+	EVENT_SOURCE_CLOSED,
+	shouldResumeStream,
+	streamIsLive,
 	streamRefreshAction
 } from '../src/lib/client/chat-stream-recovery';
 
@@ -97,5 +100,40 @@ describe('chat stream recovery', () => {
 				hasEventSource: true
 			})
 		).toBe('stay-attached');
+	});
+});
+
+describe('streamIsLive', () => {
+	it('treats a null handle as dead', () => {
+		expect(streamIsLive(null)).toBe(false);
+	});
+
+	it('treats a CLOSED socket as dead so recovery reattaches', () => {
+		// Regression guard: a frozen tab can leave the socket CLOSED without
+		// ever firing `onerror`. Reporting it as live made recovery choose
+		// `stay-attached` and strand the user until a manual refresh.
+		expect(streamIsLive({ readyState: EVENT_SOURCE_CLOSED })).toBe(false);
+	});
+
+	it('treats a CONNECTING socket as live (browser is auto-reconnecting)', () => {
+		expect(streamIsLive({ readyState: 0 })).toBe(true);
+	});
+
+	it('treats an OPEN socket as live', () => {
+		expect(streamIsLive({ readyState: 1 })).toBe(true);
+	});
+});
+
+describe('shouldResumeStream', () => {
+	it('resumes when visible with an active turn (the screen-lock case)', () => {
+		expect(shouldResumeStream({ documentHidden: false, activeTurnId: 'turn-1' })).toBe(true);
+	});
+
+	it('does not resume while the page is still hidden/frozen', () => {
+		expect(shouldResumeStream({ documentHidden: true, activeTurnId: 'turn-1' })).toBe(false);
+	});
+
+	it('does not resume when there is no active turn to recover', () => {
+		expect(shouldResumeStream({ documentHidden: false, activeTurnId: null })).toBe(false);
 	});
 });
