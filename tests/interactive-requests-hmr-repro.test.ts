@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
-type IR = typeof import('../src/lib/server/copilot/interactive-requests');
+type IR = typeof import('../src/lib/server/runtime/interactive-requests');
 
 const CONV = 'conv-repro';
 
@@ -39,7 +39,7 @@ function makeView(requestId: string) {
 describe('interactive pending map survives module reload (HMR)', () => {
 	it('keeps the deferred reachable + resolvable across a module re-instantiation', async () => {
 		vi.resetModules();
-		const modA: IR = await import('../src/lib/server/copilot/interactive-requests');
+		const modA: IR = await import('../src/lib/server/runtime/interactive-requests');
 
 		const requestId = 'REQ_HMR_1';
 		let settled = false;
@@ -64,7 +64,7 @@ describe('interactive pending map survives module reload (HMR)', () => {
 		// --- Simulate Vite SSR HMR: a brand-new module record. The resolve
 		// route / conversation GET re-import and bind to THIS one. ---
 		vi.resetModules();
-		const modB: IR = await import('../src/lib/server/copilot/interactive-requests');
+		const modB: IR = await import('../src/lib/server/runtime/interactive-requests');
 		expect(modB).not.toBe(modA);
 
 		// The new module instance still sees the deferred (globalThis-backed)...

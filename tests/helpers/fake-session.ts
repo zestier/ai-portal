@@ -1,5 +1,5 @@
 import type { PortalEvent } from '../../src/lib/types';
-import type { ConversationSession } from '../../src/lib/server/copilot/bridge';
+import type { ConversationSession } from '../../src/lib/server/copilot/copilot-provider';
 
 /**
  * Build a fake ConversationSession whose `send()` yields a fixed sequence

@@ -13,8 +13,7 @@ import {
 	cancel as cancelInteractive,
 	newRequestId,
 	register as registerInteractive
-} from './interactive-requests';
-
+} from '../runtime/interactive-requests';
 export type RuntimeSessionMode = 'interactive' | 'plan' | 'autopilot';
 
 export interface SdkEventSource {

@@ -120,7 +120,7 @@ discriminated `{ kind, ... }` body. The legacy
   common single-user deployment there is exactly one entry.
 - **One provider session per conversation**, kept alive until idle for N
   minutes (configurable, default 15) or explicitly closed. Held in a
-  small in-memory `Map<conversationId, Session>` (`copilot/pool.ts`).
+  small in-memory `Map<conversationId, Session>` (`runtime/pool.ts`).
 - **Concurrency is scoped by conversation id, not workdir.** The turns API
   rejects a second running turn for the same conversation, but two different
   conversations that reference the same `workdir` can run at the same time and

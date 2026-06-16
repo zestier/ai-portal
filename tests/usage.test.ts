@@ -4,7 +4,7 @@ import { setupLocalEnv } from './helpers/env';
 import { makeFakeSession } from './helpers/fake-session';
 
 const acquireMock = vi.fn();
-vi.mock('../src/lib/server/copilot/pool', () => ({
+vi.mock('../src/lib/server/runtime/pool', () => ({
 	acquire: (...args: unknown[]) => acquireMock(...args),
 	registerKeepAlive: () => {}
 }));

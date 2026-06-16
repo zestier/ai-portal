@@ -77,7 +77,7 @@ that are easy to miss otherwise:
   settings audit panel records it as `auto-deny` — check there before
   assuming the user actually denied something.
 - **There is no default timeout on prompts.** `DEFAULT_TIMEOUT_MS = 0`
-  in `src/lib/server/copilot/interactive-requests.ts`; pending prompts
+  in `src/lib/server/runtime/interactive-requests.ts`; pending prompts
   wait indefinitely until the user answers or the turn is aborted. If a
   tool call appears to hang, the user simply hasn't clicked yet — don't
   chase it as a bug.

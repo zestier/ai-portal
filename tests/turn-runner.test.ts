@@ -6,7 +6,7 @@ import { makeFakeSession } from './helpers/fake-session';
 
 // Mock the session pool so turn-runner doesn't try to spin up the real SDK.
 const acquireMock = vi.fn();
-vi.mock('../src/lib/server/copilot/pool', () => ({
+vi.mock('../src/lib/server/runtime/pool', () => ({
 	acquire: (...args: unknown[]) => acquireMock(...args),
 	registerKeepAlive: () => {}
 }));
@@ -176,7 +176,7 @@ describe('turn-runner', () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const turnInputs = await import('../src/lib/server/db/repos/turn-inputs');
 		const messages = await import('../src/lib/server/db/repos/messages');
-		const { PORTAL_PRELUDE } = await import('../src/lib/server/copilot/portal-prelude');
+		const { PORTAL_PRELUDE } = await import('../src/lib/server/runtime/portal-prelude');
 		const user = users.ensureLocalUser();
 		const wd = makeTmpDir('portal-wd-');
 		const conv = convs.create(user.id, { title: 'Custom title', workdir: wd, model: 'gpt-4' });

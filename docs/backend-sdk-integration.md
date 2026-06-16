@@ -10,8 +10,8 @@ agent sessions.
 ## Provider boundary
 
 The turn runner and pool depend on the provider interfaces in
-`$lib/server/copilot/provider.ts`, not on Copilot-specific SDK objects. Copilot
-is registered as the default provider via `$lib/server/copilot/providers.ts`;
+`$lib/server/providers/provider.ts`, not on Copilot-specific SDK objects. Copilot
+is registered as the default provider via `$lib/server/providers/index.ts`;
 OpenAI-compatible backends use the same registry behind the
 `openai-compatible` provider id.
 
@@ -127,7 +127,7 @@ Per-call telemetry (`assistant.usage` — input/output/cache/reasoning tokens an
 CAPI cost) is intentionally **not** forwarded today; revisit if a per-turn cost
 view is needed.
 
-## Module: `$lib/server/copilot/pool.ts`
+## Module: `$lib/server/runtime/pool.ts`
 
 ```ts
 // Singleton, per-process. Tracks per-conversation sessions on top of
@@ -167,7 +167,7 @@ mirroring `DEFAULT_TIMEOUT_MS = 0` ("a leak is better than a silent deny").
 Hard cap: when `clients.size >= MAX_CONCURRENT_SESSIONS`, refuse new sends
 with HTTP 429 unless the caller releases an existing one.
 
-## Module: `$lib/server/copilot/interactive-requests.ts`
+## Module: `$lib/server/runtime/interactive-requests.ts`
 
 Generic interactive-request flow (covers permission, auto_mode_switch,
 user_input, elicitation, exit_plan_mode, plus informational

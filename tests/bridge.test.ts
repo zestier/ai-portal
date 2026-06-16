@@ -62,7 +62,7 @@ async function importBridge() {
 	// starts with an empty client cache, matching this suite's isolation.
 	clearGlobalSingletonValues(appGlobalSymbols('copilot-provider.clients'));
 	clearGlobalSingletonValues(appGlobalSymbols('copilot-provider.starting'));
-	return await import('../src/lib/server/copilot/bridge');
+	return await import('../src/lib/server/copilot/copilot-provider');
 }
 
 const baseOpts = {

@@ -13,7 +13,7 @@ import {
 	register as registerInteractive,
 	decideByPolicy,
 	isInteractivePromptCancelledError
-} from './interactive-requests';
+} from '../runtime/interactive-requests';
 import * as settingsRepo from '../db/repos/settings';
 import { deriveScopeKey } from '../permissions/matcher';
 import {
