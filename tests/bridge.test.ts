@@ -1265,3 +1265,51 @@ describe('bridge.open() per-user CopilotClient caching', () => {
 		expect(secondArgs.gitHubToken).toBe('tok-B');
 	});
 });
+
+describe('bridge.open() remote CLI (COPILOT_CLI_URL) construction', () => {
+	beforeEach(() => {
+		delete process.env.COPILOT_CLI_URL;
+		delete process.env.COPILOT_CONNECTION_TOKEN;
+	});
+
+	it('forwards COPILOT_CONNECTION_TOKEN to the SDK as tcpConnectionToken', async () => {
+		process.env.COPILOT_CLI_URL = '127.0.0.1:9000';
+		process.env.COPILOT_CONNECTION_TOKEN = 'shared-handshake-secret';
+		// Re-read config so the new env vars take effect.
+		const { resetConfigForTests } = await import('../src/lib/server/config');
+		resetConfigForTests();
+
+		const { open } = await importBridge();
+		await open(baseOpts);
+
+		expect(clientCtor).toHaveBeenCalledTimes(1);
+		const args = clientCtor.mock.calls[0][0] as {
+			cliUrl?: string;
+			tcpConnectionToken?: string;
+			gitHubToken?: string;
+			useLoggedInUser?: boolean;
+		};
+		expect(args.cliUrl).toBe('127.0.0.1:9000');
+		expect(args.tcpConnectionToken).toBe('shared-handshake-secret');
+		// cliUrl mode must NOT pass gitHubToken/useLoggedInUser — the SDK
+		// rejects them as mutually exclusive with cliUrl.
+		expect(args.gitHubToken).toBeUndefined();
+		expect(args.useLoggedInUser).toBeUndefined();
+	});
+
+	it('omits tcpConnectionToken when COPILOT_CONNECTION_TOKEN is unset', async () => {
+		process.env.COPILOT_CLI_URL = '127.0.0.1:9000';
+		const { resetConfigForTests } = await import('../src/lib/server/config');
+		resetConfigForTests();
+
+		const { open } = await importBridge();
+		await open(baseOpts);
+
+		const args = clientCtor.mock.calls[0][0] as {
+			cliUrl?: string;
+			tcpConnectionToken?: string;
+		};
+		expect(args.cliUrl).toBe('127.0.0.1:9000');
+		expect('tcpConnectionToken' in args).toBe(false);
+	});
+});

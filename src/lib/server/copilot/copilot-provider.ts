@@ -62,10 +62,20 @@ export async function getClient(
 	if (inflight) return inflight;
 	const p = (async () => {
 		const cliUrl = process.env.COPILOT_CLI_URL?.trim();
+		// Forward the configured connection token to a token-protected remote
+		// CLI. The SDK's `connect` handshake sends `tcpConnectionToken`; for
+		// `cliUrl` connections it does NOT fall back to the
+		// COPILOT_CONNECTION_TOKEN environment variable, so without this the
+		// handshake authenticates as `undefined` and the server rejects it.
+		const connectionToken = cliUrl ? loadConfig().COPILOT_CONNECTION_TOKEN : undefined;
 		const client = isStubMode()
 			? (new StubCopilotClient() as unknown as CopilotClient)
 			: cliUrl
-				? new CopilotClient({ cliUrl, autoStart: false })
+				? new CopilotClient({
+						cliUrl,
+						autoStart: false,
+						...(connectionToken ? { tcpConnectionToken: connectionToken } : {})
+					})
 				: new CopilotClient({
 						useStdio: true,
 						autoStart: false,

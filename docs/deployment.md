@@ -183,24 +183,40 @@ COPILOT_CLI_URL=host.docker.internal:9000   # portal in Docker, CLI on host
 When `COPILOT_CLI_URL` is set, `copilot-provider.ts` constructs the SDK client
 with `{ cliUrl, autoStart: false }` and does NOT pass `gitHubToken` or
 `useLoggedInUser` — those are mutually exclusive with `cliUrl`, and the
-remote CLI manages its own auth.
+remote CLI manages its own auth. If `COPILOT_CONNECTION_TOKEN` is set (see
+below) it is forwarded as the SDK's `tcpConnectionToken`.
 
 ### Caveats
 
-- **No auth on the JSON-RPC port.** The CLI prints a warning at
-  startup:
+- **Optional auth on the JSON-RPC port.** Without a token the CLI prints
+  this warning at startup:
 
   > Warning: No COPILOT_CONNECTION_TOKEN was set, so connections will
   > be accepted from any client
 
   Setting `COPILOT_CONNECTION_TOKEN` on the CLI side makes it require
-  clients to include a matching token in the handshake.
-  `@github/copilot-sdk@0.3.0` does not yet expose an option to send
-  that token, so **the portal cannot connect to a token-protected
-  CLI today**. Until the SDK adds it, keep the headless port bound to
-  loopback (or an otherwise-trusted private network). Anything that
-  can reach the port can drive the agent, including running shell
-  commands.
+  clients to include a matching token in the handshake. Set the **same**
+  value as `COPILOT_CONNECTION_TOKEN` on the portal side — the portal
+  forwards it to the SDK as `tcpConnectionToken` so the connect handshake
+  authenticates:
+
+  ```bash
+  # CLI side
+  COPILOT_CONNECTION_TOKEN=<shared-secret> copilot --headless --port 9000
+  # portal side (.env)
+  COPILOT_CONNECTION_TOKEN=<shared-secret>
+  ```
+
+  > Note: `@github/copilot-sdk@1.0.0-beta.4` only reads the token from the
+  > explicit `tcpConnectionToken` option for `cliUrl` connections — it does
+  > NOT fall back to the `COPILOT_CONNECTION_TOKEN` environment variable the
+  > way earlier SDK builds did. The portal bridges that gap by reading the
+  > env var and passing it through; if you omit it on the portal side, a
+  > token-protected CLI rejects the connection.
+
+  If you leave the token unset on both sides, keep the headless port bound
+  to loopback (or an otherwise-trusted private network). Anything that can
+  reach the port can drive the agent, including running shell commands.
 - **Per-conversation working directories don't transfer.** The portal
   passes `workingDirectory` to `createSession`, but the remote CLI
   must already have file access to that path (start it with `-C` and

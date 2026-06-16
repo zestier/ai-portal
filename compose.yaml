@@ -33,6 +33,9 @@ services:
       # Optional: connect to an externally-run `copilot --headless --port N`
       # instead of spawning the bundled CLI. See docs/deployment.md.
       COPILOT_CLI_URL: ${COPILOT_CLI_URL:-}
+      # Optional: token for a token-protected remote CLI. Must match the
+      # COPILOT_CONNECTION_TOKEN set on the `copilot --headless` server.
+      COPILOT_CONNECTION_TOKEN: ${COPILOT_CONNECTION_TOKEN:-}
       DEFAULT_BACKEND_PROVIDER: ${DEFAULT_BACKEND_PROVIDER:-copilot}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-claude-sonnet-4.5}
       OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}

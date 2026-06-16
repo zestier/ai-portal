@@ -161,6 +161,7 @@ invalid config.
 | `SHARED_SECRET`           | —                        | If `AUTH_MODE=shared-secret`.        |
 | `COPILOT_GITHUB_TOKEN`    | —                        | Optional: forwarded to the SDK.      |
 | `COPILOT_CLI_URL`         | —                        | If set, connect to an external `copilot --headless --port N` instead of spawning the bundled CLI. See `docs/deployment.md` Topology C. |
+| `COPILOT_CONNECTION_TOKEN`| —                        | Token for a token-protected remote CLI (`COPILOT_CLI_URL`). Must match the CLI's `COPILOT_CONNECTION_TOKEN`; forwarded to the SDK as `tcpConnectionToken`. |
 | `DEFAULT_BACKEND_PROVIDER`| `copilot`                | Default backend for new conversations: `copilot` \| `openai-compatible` \| `lm-studio`. |
 | `DEFAULT_MODEL`           | `claude-sonnet-4.5`      | Default model id for new conversations, stored separately from the provider id. |
 | `OPENAI_COMPATIBLE_BASE_URL` | —                     | Trusted operator-configured base `/v1` URL for an OpenAI-compatible backend; may intentionally be hosted, local, or private. |

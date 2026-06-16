@@ -58,6 +58,17 @@ const Schema = z
 		SHARED_SECRET: z.string().min(32).optional(),
 
 		COPILOT_GITHUB_TOKEN: z.string().optional(),
+		// Connection token for a token-protected remote CLI reached via
+		// COPILOT_CLI_URL. Must match the COPILOT_CONNECTION_TOKEN set on the
+		// `copilot --headless` server. Forwarded to the SDK as
+		// `tcpConnectionToken`; the SDK no longer reads this from the
+		// environment for `cliUrl` connections, so the portal must pass it
+		// explicitly or the connect handshake is rejected.
+		COPILOT_CONNECTION_TOKEN: z
+			.string()
+			.trim()
+			.optional()
+			.transform((v) => (v ? v : undefined)),
 		DEFAULT_BACKEND_PROVIDER: z.enum(BACKEND_PROVIDER_IDS).default('copilot'),
 		DEFAULT_MODEL: z.string().default('claude-sonnet-4.5'),
 		OPENAI_COMPATIBLE_BASE_URL: optionalUrl,
