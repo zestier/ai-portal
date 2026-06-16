@@ -337,6 +337,7 @@ describe('db migrations + repos', () => {
 			defaultConversationMode: 'best-effort',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
+			accent: 'violet',
 			defaultMemoryExtractorModel: 'harvester-x',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools'
 		});
@@ -347,6 +348,7 @@ describe('db migrations + repos', () => {
 			defaultConversationMode: 'best-effort',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
+			accent: 'violet',
 			defaultMemoryExtractorModel: 'harvester-x',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools'
 		});
@@ -358,6 +360,7 @@ describe('db migrations + repos', () => {
 			defaultConversationMode: 'best-effort',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
+			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null
 		});
@@ -374,6 +377,7 @@ describe('db migrations + repos', () => {
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'prompt',
 			theme: 'dark',
+			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null
 		});

@@ -5,6 +5,7 @@ import {
 	normalizeBackendProvider,
 	normalizeMemoryExtractorBackend,
 	normalizeSessionMode,
+	normalizeThemeAccent,
 	type UserSettings,
 	type PermissionPolicy
 } from '$lib/types';
@@ -17,6 +18,7 @@ interface SettingsRow {
 	default_mode: string | null;
 	default_policy: string;
 	theme: string;
+	accent: string;
 	default_memory_extractor_model: string | null;
 	default_memory_extractor_backend: string | null;
 	updated_at: number;
@@ -35,6 +37,7 @@ function rowToSettings(r: SettingsRow): UserSettings {
 		defaultConversationMode: normalizeSessionMode(r.default_mode),
 		defaultPolicy: policy,
 		theme: r.theme === 'light' ? 'light' : r.theme === 'system' ? 'system' : 'dark',
+		accent: normalizeThemeAccent(r.accent),
 		defaultMemoryExtractorModel: r.default_memory_extractor_model ?? null,
 		defaultMemoryExtractorBackend: normalizeMemoryExtractorBackend(
 			r.default_memory_extractor_backend
@@ -62,6 +65,7 @@ export function defaults(): UserSettings {
 		defaultConversationMode: 'interactive',
 		defaultPolicy: 'prompt',
 		theme: 'system',
+		accent: 'default',
 		defaultMemoryExtractorModel: null,
 		defaultMemoryExtractorBackend: null
 	};
@@ -71,10 +75,10 @@ export function save(userId: string, s: UserSettings) {
 	getDb()
 		.prepare(
 			`INSERT INTO user_settings(
-			   user_id, default_provider, default_model, default_workdir, default_mode, default_policy, theme,
+			   user_id, default_provider, default_model, default_workdir, default_mode, default_policy, theme, accent,
 			   default_memory_extractor_model, default_memory_extractor_backend, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
 			   default_provider = excluded.default_provider,
 			   default_model = excluded.default_model,
@@ -82,6 +86,7 @@ export function save(userId: string, s: UserSettings) {
 			   default_mode = excluded.default_mode,
 			   default_policy = excluded.default_policy,
 			   theme = excluded.theme,
+			   accent = excluded.accent,
 			   default_memory_extractor_model = excluded.default_memory_extractor_model,
 			   default_memory_extractor_backend = excluded.default_memory_extractor_backend,
 			   updated_at = excluded.updated_at`
@@ -94,6 +99,7 @@ export function save(userId: string, s: UserSettings) {
 			s.defaultConversationMode,
 			s.defaultPolicy,
 			s.theme,
+			s.accent,
 			s.defaultMemoryExtractorModel,
 			s.defaultMemoryExtractorBackend,
 			Date.now()

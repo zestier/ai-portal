@@ -14,6 +14,7 @@ import {
 import { apiErrorResponse } from '$lib/server/http';
 import { startIdleReaper } from '$lib/server/runtime/pool';
 import * as messages from '$lib/server/db/repos/messages';
+import { faviconDataUri, normalizeThemeAccent, type ThemeAccent } from '$lib/types';
 
 // One-time bootstrap.
 let booted = false;
@@ -115,15 +116,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event, {
 		transformPageChunk: ({ html }) => {
 			let themeMode: 'dark' | 'light' | 'system' = 'system';
+			let accent: ThemeAccent = 'default';
 			if (event.locals.userId) {
 				const s = settings.get(event.locals.userId);
-				if (s) themeMode = s.theme;
+				if (s) {
+					themeMode = s.theme;
+					accent = normalizeThemeAccent(s.accent);
+				}
 			}
 			const initialTheme = themeMode === 'light' ? 'light' : 'dark';
 			return html
 				.replace('%csrf.token%', event.locals.csrfToken)
 				.replace('%theme.initial%', initialTheme)
-				.replace('%theme.mode%', themeMode);
+				.replace('%theme.mode%', themeMode)
+				.replace('%theme.accent%', accent)
+				.replace('%theme.favicon%', faviconDataUri(accent));
 		}
 	});
 

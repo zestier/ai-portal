@@ -348,6 +348,7 @@ describe('interactive request registry', () => {
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'deny-all',
 			theme: 'dark',
+			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null
 		});
@@ -476,6 +477,7 @@ describe('interactive request registry', () => {
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'deny-all',
 			theme: 'dark',
+			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null
 		});

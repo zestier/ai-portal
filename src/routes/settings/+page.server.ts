@@ -25,8 +25,10 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
 import {
 	normalizeBackendProvider,
+	normalizeThemeAccent,
 	BACKEND_PROVIDER_IDS,
 	MEMORY_EXTRACTOR_BACKEND_IDS,
+	THEME_ACCENT_IDS,
 	type PermissionPolicy,
 	type SessionMode,
 	type UserSettings
@@ -101,6 +103,7 @@ const SaveSchema = z.object({
 	defaultConversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']),
 	defaultPolicy: z.enum(['prompt', 'allow-all', 'deny-all']),
 	theme: z.enum(['dark', 'light', 'system']),
+	accent: z.enum(THEME_ACCENT_IDS as unknown as [string, ...string[]]),
 	defaultMemoryExtractorModel: z.string().optional(),
 	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional()
 });
@@ -172,6 +175,7 @@ export const actions: Actions = {
 			defaultConversationMode: data.get('defaultConversationMode'),
 			defaultPolicy: data.get('defaultPolicy'),
 			theme: data.get('theme'),
+			accent: data.get('accent'),
 			defaultMemoryExtractorModel: (data.get('defaultMemoryExtractorModel') as string) || undefined,
 			defaultMemoryExtractorBackend:
 				(data.get('defaultMemoryExtractorBackend') as string) || undefined
@@ -200,6 +204,7 @@ export const actions: Actions = {
 			defaultConversationMode: parsed.data.defaultConversationMode as SessionMode,
 			defaultPolicy: parsed.data.defaultPolicy as PermissionPolicy,
 			theme: parsed.data.theme,
+			accent: normalizeThemeAccent(parsed.data.accent),
 			defaultMemoryExtractorModel: parsed.data.defaultMemoryExtractorModel ?? null,
 			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null
 		};

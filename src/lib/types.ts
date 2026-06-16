@@ -192,6 +192,56 @@ export function normalizeMemoryExtractorBackend(
 		: null;
 }
 
+// Selectable accent palettes. Orthogonal to the dark/light/system *mode*:
+// the accent only re-tints `--accent`/`--accent-text` (and the tints derived
+// from them) so a portal instance can be made visually distinct at a glance —
+// handy when running several copies for different projects. `default` keeps
+// the per-mode blue defined in app.css. Single source of truth shared by the
+// settings save schema, the repo normalizer, and the UI selector.
+//
+// `hex` is the representative accent colour, also used to tint the favicon
+// (see faviconDataUri). These MUST stay in sync with the `[data-accent='…']`
+// blocks in src/app.css — CSS can't import this module, so the values are
+// duplicated there by necessity. `default`'s hex matches the dark-mode
+// `--accent` (#1f6feb).
+export const THEME_ACCENTS = [
+	{ value: 'default', label: 'Blue (default)', hex: '#1f6feb' },
+	{ value: 'violet', label: 'Violet', hex: '#8957e5' },
+	{ value: 'teal', label: 'Teal', hex: '#1f9c9c' },
+	{ value: 'green', label: 'Green', hex: '#2da44e' },
+	{ value: 'amber', label: 'Amber', hex: '#bb8009' },
+	{ value: 'rose', label: 'Rose', hex: '#d6336c' },
+	{ value: 'crimson', label: 'Crimson', hex: '#cf222e' }
+] as const;
+export type ThemeAccent = (typeof THEME_ACCENTS)[number]['value'];
+export const THEME_ACCENT_IDS = THEME_ACCENTS.map((a) => a.value) as readonly ThemeAccent[];
+
+export function normalizeThemeAccent(raw: string | null | undefined): ThemeAccent {
+	return THEME_ACCENT_IDS.includes(raw as ThemeAccent) ? (raw as ThemeAccent) : 'default';
+}
+
+export function themeAccentHex(accent: ThemeAccent): string {
+	return (THEME_ACCENTS.find((a) => a.value === accent) ?? THEME_ACCENTS[0]).hex;
+}
+
+/**
+ * The portal favicon as an `data:image/svg+xml` URI, tinted with the given
+ * accent. An SVG favicon can't read the page's CSS variables, so the colour
+ * is baked in server-side and injected into <link rel="icon"> (see
+ * hooks.server.ts). This is the sole source of the favicon artwork; the
+ * `default` accent (#1f6feb) is its untinted blue. Allowed by the
+ * `img-src 'self' data:` CSP directive.
+ */
+export function faviconDataUri(accent: ThemeAccent): string {
+	const color = themeAccentHex(accent);
+	const svg =
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">` +
+		`<rect width="32" height="32" rx="6" fill="${color}"/>` +
+		`<path fill="#fff" d="M8 12c0-2 1.5-3 3-3h10c1.5 0 3 1 3 3v6c0 4-4 6-8 6s-8-2-8-6v-6Zm5 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"/>` +
+		`</svg>`;
+	return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
 export const BACKEND_PROVIDER_IDS = ['copilot', 'openai-compatible', 'lm-studio'] as const;
 export type BackendProviderId = (typeof BACKEND_PROVIDER_IDS)[number];
 
@@ -391,6 +441,8 @@ export interface UserSettings {
 	defaultConversationMode: SessionMode;
 	defaultPolicy: PermissionPolicy;
 	theme: 'dark' | 'light' | 'system';
+	/** Accent palette, applied on top of the dark/light mode (see ThemeAccent). */
+	accent: ThemeAccent;
 	/**
 	 * Seed-only defaults for the memory extractor, copied onto each newly
 	 * created conversation. NULL = "use server default" (env). Changing these

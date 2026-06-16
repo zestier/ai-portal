@@ -8,6 +8,7 @@
 	} from './settings-types';
 	import {
 		BACKEND_PROVIDER_IDS,
+		THEME_ACCENTS,
 		type BackendProviderId,
 		type MemoryExtractorBackend,
 		type ProviderRuntimeFeatureStatus,
@@ -363,6 +364,18 @@
 				<option value="dark">Dark</option>
 				<option value="light">Light</option>
 			</select>
+		</label>
+		<label>
+			Accent color
+			<select name="accent" value={settings.accent}>
+				{#each THEME_ACCENTS as accent (accent.value)}
+					<option value={accent.value}>{accent.label}</option>
+				{/each}
+			</select>
+			<span class="muted small">
+				Tints buttons, links, highlights and the favicon. Handy for telling apart multiple portal
+				copies at a glance. Applies on top of the light/dark theme.
+			</span>
 		</label>
 
 		<div class="form-actions">

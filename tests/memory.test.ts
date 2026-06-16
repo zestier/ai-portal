@@ -5857,6 +5857,7 @@ describe('memory extractor backend defaults + override resolution', () => {
 			defaultConversationMode: 'interactive',
 			defaultPolicy: 'prompt',
 			theme: 'dark',
+			accent: 'default',
 			defaultMemoryExtractorModel: 'seeded-harvester',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools'
 		});

@@ -136,6 +136,37 @@
 	--shadow-2: 0 4px 14px rgb(31 35 40 / 0.12);
 }
 
+/* Accent palettes (orthogonal to dark/light mode). Each overrides only the
+   accent token + its readable foreground; derived tints (--accent-bg, focus
+   ring, primary buttons, links) cascade automatically. 'default' deliberately
+   has no block so the per-mode blue above stays in effect. Hues are chosen to
+   read acceptably on both dark and light surfaces. Placed after the light
+   block so equal-specificity selectors resolve in this rule's favour. */
+[data-accent='violet'] {
+	--accent: #8957e5;
+	--accent-text: #ffffff;
+}
+[data-accent='teal'] {
+	--accent: #1f9c9c;
+	--accent-text: #ffffff;
+}
+[data-accent='green'] {
+	--accent: #2da44e;
+	--accent-text: #ffffff;
+}
+[data-accent='amber'] {
+	--accent: #bb8009;
+	--accent-text: #ffffff;
+}
+[data-accent='rose'] {
+	--accent: #d6336c;
+	--accent-text: #ffffff;
+}
+[data-accent='crimson'] {
+	--accent: #cf222e;
+	--accent-text: #ffffff;
+}
+
 * {
 	box-sizing: border-box;
 }
