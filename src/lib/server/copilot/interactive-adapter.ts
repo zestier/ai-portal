@@ -30,6 +30,7 @@ import {
 	isFilesystemPermissionKind
 } from '$lib/permissions/metadata';
 import { summarizeGitCommitPermission } from '$lib/permissions/git-commit';
+import type { ToolPermissionRequest } from '../tools/types';
 
 interface PermissionRequestLike {
 	kind?: string;
@@ -60,6 +61,11 @@ interface InteractiveAdapterOptions {
 	getSessionWorkspacePath(): string | null;
 	getPermissionBehavior(tool: string): 'normal' | 'always-prompt' | 'never-prompt';
 	validateCustomToolArgs?(toolName: string, args: unknown): { feedback: string } | null;
+	// Optional hook letting a portal tool's permission be evaluated as a
+	// filesystem request (e.g. a `write` on a derived path) instead of the
+	// default `custom-tool` request, so it reuses the existing fs grants/seeds.
+	// Returns null to keep the default custom-tool evaluation.
+	derivePermissionRequest?(toolName: string, args: unknown): ToolPermissionRequest | null;
 }
 
 export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
@@ -89,9 +95,22 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 	// "user-not-available" rather than a user denial.
 	const decidePermission = async (req: PermissionRequestLike) => {
 		const tool = req.toolName ?? req.kind ?? 'unknown';
-		const permissionKind = req.kind ?? 'unknown';
-		const summary = summarizePermissionRequest(req, tool);
-		const scopeKey = deriveScopeKey(permissionKind, req);
+		// A tool may declare that its permission should be evaluated as a
+		// filesystem request on a derived path (see `derivePermissionRequest`).
+		// When it does, the grant matcher tool + kind become the fs permission
+		// (e.g. `write`, so the request matches the standard fs-write seed whose
+		// grant `tool` is `write`) and the derived path is injected so scope-key
+		// derivation and the fs matcher read the same target. Display/audit keep
+		// the real tool name.
+		const override =
+			req.toolName && opts.derivePermissionRequest
+				? opts.derivePermissionRequest(req.toolName, req.args)
+				: null;
+		const permissionKind = override ? override.permissionKind : (req.kind ?? 'unknown');
+		const matchTool = override ? override.permissionKind : tool;
+		const scopeRequest: PermissionRequestLike = override ? { ...req, path: override.path } : req;
+		const summary = summarizePermissionRequest(scopeRequest, tool);
+		const scopeKey = deriveScopeKey(permissionKind, scopeRequest);
 		const hash = hashPermissionArgs(req);
 		const alwaysPrompt = opts.getPermissionBehavior(tool) === 'always-prompt';
 		const neverPrompt = opts.getPermissionBehavior(tool) === 'never-prompt';
@@ -178,7 +197,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			return settingsRepo.matchGrantDetailed(
 				opts.userId,
 				opts.conversationId,
-				tool,
+				matchTool,
 				permissionKind,
 				scopeKey,
 				{

@@ -3,8 +3,15 @@ import { loadConfig } from '../config';
 import { log } from '../log';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 import { buildGitTools, type PortalTool, type ToolStreamContext } from '../tools/git';
-import { err, deriveToolResultViews, parseEnvelopeJson, type ToolResult } from '../tools/types';
+import {
+	err,
+	deriveToolResultViews,
+	parseEnvelopeJson,
+	buildPermissionRequestResolver,
+	type ToolResult
+} from '../tools/types';
 import { buildPermissionTools } from '../tools/permissions';
+import { buildFilesystemTools } from '../tools/filesystem';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
 import { buildMemoryTools } from '../tools/memory';
@@ -422,8 +429,12 @@ export function openOpenAICompatibleSession(
 		emit,
 		getApproveAll: () => approveAllTools,
 		getMode: () => currentMode,
-		getSessionWorkspacePath: () => null,
-		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal'
+		// An openai-compatible provider has no separate SDK session workspace;
+		// its working directory IS the session workspace, so align it with the
+		// root the fs-write seed matches (`session-workspace`).
+		getSessionWorkspacePath: () => opts.workingDirectory,
+		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
+		derivePermissionRequest: buildPermissionRequestResolver(tools)
 	});
 
 	const openAITools = tools.map((tool) => ({
@@ -823,6 +834,7 @@ function buildOpenAITools(opts: {
 }): PortalTool[] {
 	return [
 		...buildGitTools(opts.opts.workingDirectory),
+		...buildFilesystemTools(opts.opts.workingDirectory),
 		...buildTicketTools({
 			userId: opts.opts.userId,
 			workspaceKey: ticketWorkspaceFromConversation(opts.opts.workingDirectory),

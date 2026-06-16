@@ -26,6 +26,8 @@ import { buildGitTools } from '../tools/git';
 import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
+import { buildFilesystemTools } from '../tools/filesystem';
+import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { wrapToolsForStreaming } from './tool-streaming';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
@@ -200,6 +202,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	});
 	const portalTools = [
 		...buildGitTools(opts.workingDirectory),
+		...buildFilesystemTools(opts.workingDirectory),
 		...buildTicketTools({
 			userId: opts.userId,
 			workspaceKey: ticketWorkspaceFromConversation(opts.workingDirectory),
@@ -219,6 +222,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		})
 	];
 	const validateCustomToolArgs = buildToolArgsValidator(portalTools);
+	const derivePermissionRequest = buildPermissionRequestResolver(portalTools);
 	const {
 		onPermissionRequest,
 		onUserInputRequest,
@@ -235,7 +239,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		getMode: () => currentMode,
 		getSessionWorkspacePath: () => sessionWorkspacePath,
 		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
-		validateCustomToolArgs
+		validateCustomToolArgs,
+		derivePermissionRequest
 	});
 
 	let existingMetadata: unknown;

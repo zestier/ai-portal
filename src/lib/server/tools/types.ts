@@ -41,13 +41,48 @@ export type ToolResult =
 	| { ok: true; summary?: string; result?: unknown; followUpHint?: string }
 	| { ok: false; summary?: string; error: ToolError };
 
+// A tool's declaration that its permission check should be evaluated as a
+// filesystem request on a derived path instead of the default `custom-tool`
+// request. The provider/permission layer substitutes `permissionKind` (e.g.
+// `write`) and `path` so the request reuses the existing fs grants/seeds — an
+// in-workspace `create_directory`, for instance, is covered by the standard
+// session-workspace fs-write seed without needing a bespoke per-tool seed.
+export interface ToolPermissionRequest {
+	permissionKind: 'read' | 'write' | 'edit';
+	// The derived filesystem target. Read by the scope-key derivation exactly
+	// as a native fs request's `path` would be, so prefer an absolute,
+	// symlink-resolved path so the matcher and the dialog agree on the target.
+	path: string;
+}
+
 export interface PortalTool {
 	name: string;
 	description: string;
 	parameters: Record<string, unknown>;
 	argsSchema?: z.ZodTypeAny;
 	permissionBehavior?: 'normal' | 'always-prompt' | 'never-prompt';
+	// Optional, pure (no IO) hook: when present and it returns a request, the
+	// tool's permission is evaluated as that fs request rather than the default
+	// `custom-tool` request. Returning null falls back to the custom-tool
+	// request. It only inspects `args` to derive the target path.
+	derivePermissionRequest?(args: unknown): ToolPermissionRequest | null;
 	handler(args: unknown, ctx?: ToolStreamContext): Promise<ToolResult>;
+}
+
+// Build a resolver keyed by tool name that surfaces a tool's
+// `derivePermissionRequest` hook to the shared permission gateway. Returns null
+// for unknown tools or tools without the hook so the gateway proceeds with the
+// default custom-tool request. Mirrors `buildToolArgsValidator`.
+export function buildPermissionRequestResolver(
+	tools: PortalTool[]
+): (toolName: string, args: unknown) => ToolPermissionRequest | null {
+	const byName = new Map<string, PortalTool>();
+	for (const t of tools) byName.set(t.name, t);
+	return (toolName, args) => {
+		const tool = byName.get(toolName);
+		if (!tool?.derivePermissionRequest) return null;
+		return tool.derivePermissionRequest(args);
+	};
 }
 
 // Build a success envelope. `result` is the tool's domain payload (any
