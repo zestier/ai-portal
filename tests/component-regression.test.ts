@@ -470,6 +470,32 @@ describe('Svelte component regression coverage', () => {
 		expect(withoutHint).not.toContain('remember to reconcile your tickets');
 	});
 
+	test('ToolCall injects <wbr> break points after slashes in a long path summary', () => {
+		const toolCall = {
+			id: 'tc-wrap',
+			messageId: 'm-1',
+			tool: 'view',
+			argsJson: JSON.stringify({
+				path: '/workspaces/copilot-portal/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
+			}),
+			resultJson: null,
+			status: 'pending' as const,
+			startedAt: 0,
+			endedAt: null,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		const cleaned = body.replace(/<!--.*?-->/g, '');
+		// Wrapping prefers '/' boundaries: a break opportunity is emitted after
+		// each separator rather than letting the path overflow its container.
+		expect(cleaned).toMatch(/messages\/<wbr[^>]*>/);
+		expect(cleaned).toMatch(/\[messageId\]\/<wbr[^>]*>/);
+		expect(cleaned).toMatch(/edit\/<wbr[^>]*>/);
+		// No stray break opportunity mid-segment.
+		expect(cleaned).not.toMatch(/copilot-<wbr/);
+	});
+
 	test('FileBrowser renders safe empty states without client fetch data', () => {
 		const body = render(FileBrowser, {
 			props: { conversationId: 'conv-1', pane: 'changes' }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseGitToolResult } from '../src/lib/client/git-tool-result';
-import { summarizeToolCall } from '../src/lib/client/tool-summary';
+import { summarizeToolCall, splitSummaryForWrap } from '../src/lib/client/tool-summary';
 import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '../src/lib/client/tool-result';
 import {
 	getBackgroundAgentId,
@@ -133,6 +133,42 @@ describe('summarizeToolCall', () => {
 				JSON.stringify({ permissionKind: 'url', toolName: 'url_fetcher' })
 			)
 		).toBe('url · url_fetcher');
+	});
+});
+
+describe('splitSummaryForWrap', () => {
+	it('breaks a deep path into chunks that each end at a slash', () => {
+		expect(
+			splitSummaryForWrap(
+				'/workspaces/copilot-portal/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
+			)
+		).toEqual([
+			'/',
+			'workspaces/',
+			'copilot-portal/',
+			'src/',
+			'routes/',
+			'api/',
+			'conversations/',
+			'[id]/',
+			'messages/',
+			'[messageId]/',
+			'edit/',
+			'+server.ts'
+		]);
+	});
+
+	it('keeps the separator attached so the break lands after the slash', () => {
+		expect(splitSummaryForWrap('a/b/c')).toEqual(['a/', 'b/', 'c']);
+	});
+
+	it('also breaks on backslash separators', () => {
+		expect(splitSummaryForWrap('a\\b\\c')).toEqual(['a\\', 'b\\', 'c']);
+	});
+
+	it('returns a single chunk and drops empties for separator-free or trailing-slash input', () => {
+		expect(splitSummaryForWrap('echo hi')).toEqual(['echo hi']);
+		expect(splitSummaryForWrap('src/')).toEqual(['src/']);
 	});
 });
 

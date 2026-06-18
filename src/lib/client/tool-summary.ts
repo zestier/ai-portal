@@ -78,6 +78,21 @@ const summaryHandlers: Record<string, SummaryHandler> = {
 	session_store_sql: sqlSummary
 };
 
+// Split a header summary into chunks that each end at a path separator
+// ('/' or '\'), keeping the separator attached to the preceding chunk. The
+// renderer inserts a `<wbr>` between chunks so a long path wraps *after* a
+// slash (e.g. ".../messages/" → "[messageId]/" → "edit/+server.ts") rather
+// than overflowing or snapping mid-segment. Pure + exported so it stays
+// unit-testable without spinning up Svelte.
+//
+// Implemented with a global match rather than a lookbehind split so it runs
+// on browsers without regex lookbehind support (e.g. Safari < 16.4): each
+// match is either a run of non-separators ending in a separator, or a final
+// trailing run with no separator.
+export function splitSummaryForWrap(summary: string): string[] {
+	return summary.match(/[^/\\]*[/\\]|[^/\\]+/g) ?? [];
+}
+
 export function summarizeToolCall(tool: string, argsJson: string): string | null {
 	const t = tool.toLowerCase();
 	if (t === 'apply_patch') {

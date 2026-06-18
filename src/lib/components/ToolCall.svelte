@@ -7,7 +7,7 @@
 	import Alert from './ui/Alert.svelte';
 	import { synthesizeDiffs } from '$lib/client/diff-synth';
 	import { parseGitToolResult } from '$lib/client/git-tool-result';
-	import { summarizeToolCall } from '$lib/client/tool-summary';
+	import { summarizeToolCall, splitSummaryForWrap } from '$lib/client/tool-summary';
 	import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '$lib/client/tool-result';
 
 	let {
@@ -153,7 +153,10 @@
 		<span class="emoji">{statusEmoji(toolCall.status)}</span>
 		<code>{toolCall.tool}</code>
 		{#if summary}
-			<span class="summary-text">{summary}</span>
+			<span class="summary-text"
+				>{#each splitSummaryForWrap(summary) as chunk, i (i)}{#if i > 0}<wbr
+						/>{/if}{chunk}{/each}</span
+			>
 		{:else}
 			<span class="muted">— {toolCall.status}</span>
 		{/if}
@@ -260,6 +263,8 @@
 	summary {
 		cursor: pointer;
 		list-style: none;
+		max-width: 100%;
+		overflow-wrap: anywhere;
 	}
 	summary::-webkit-details-marker {
 		display: none;
@@ -272,6 +277,11 @@
 		color: var(--text-muted);
 		font-family: var(--mono);
 		font-size: var(--fs-sm);
+		/* Long, unbroken tokens (deep file paths, URLs) must wrap inside the
+		   summary rather than pushing the chat column wide. The injected
+		   <wbr>s prefer '/' boundaries; this is the fallback for segments
+		   that have no separator yet are still too long for the row. */
+		overflow-wrap: anywhere;
 	}
 	.progress {
 		margin-left: 0.5rem;
