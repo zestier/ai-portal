@@ -7,27 +7,14 @@
 		type FormResult,
 		type PermissionGrant
 	} from './settings-types';
-	import type { ShellCommandStep } from '$lib/permissions/scope-types';
+	import type { GrantScope } from '$lib/permissions/scope-types';
 	import {
 		GRANT_TOOLS,
 		grantToolLabel,
 		isGrantTool,
 		type GrantTool
 	} from '$lib/permissions/metadata';
-	import {
-		buildGrantScopeJson,
-		defaultGrantScopeFormFields,
-		grantScopeToFormFields,
-		nextShellStepOptions,
-		type BuildResult,
-		type FsBehaviorKind,
-		type GrantScopeFormFields,
-		type ShellPipelineKind,
-		type ShellPositionalsKind,
-		type ShellStepOptionInput,
-		type UrlRuleKind
-	} from '$lib/permissions/grant-form';
-	import PermissionGrantScopeFields from './PermissionGrantScopeFields.svelte';
+	import GrantScopeEditor from '$lib/components/GrantScopeEditor.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
@@ -55,122 +42,21 @@
 	let expiryFilter = $state<'all' | 'never' | 'expiring' | 'expired'>('all');
 	let provenanceFilter = $state<'all' | PermissionGrant['source']>('all');
 
-	let shellArgv0 = $state('');
-	let shellSubcommands = $state('');
-	let shellPositionals = $state<ShellPositionalsKind>('unset');
-	let shellPipeline = $state<ShellPipelineKind>('unset');
-	let shellStepOptions = $state<ShellStepOptionInput[]>([{ allow: '', deny: '' }]);
-	let originalShellCommand = $state<ShellCommandStep[] | null>(null);
+	// Edited scope state, produced by the shared GrantScopeEditor. `seedScope` +
+	// `seedEpoch` push a scope INTO the editor (on edit / reset); `scopeJson` /
+	// `scopeError` read the editor's current build back out.
+	let seedScope = $state<GrantScope | null>(null);
+	let seedEpoch = $state(0);
+	let scopeJson = $state('');
+	let scopeError = $state<string | null>(null);
 
-	let fsRoot = $state<GrantScopeFormFields['fsRoot']>('workspace');
-	let fsBehavior = $state<FsBehaviorKind>('any');
-	let fsValue = $state('');
-
-	let urlRuleKind = $state<UrlRuleKind>('host');
-	let urlExact = $state('');
-	let urlHost = $state('');
-	let urlSuffix = $state('');
-
-	function grantScopeFormFields(): GrantScopeFormFields {
-		return {
-			shellArgv0,
-			shellSubcommands,
-			shellPositionals,
-			shellPipeline,
-			shellStepOptions,
-			fsRoot,
-			fsBehavior,
-			fsValue,
-			urlRuleKind,
-			urlExact,
-			urlHost,
-			urlSuffix
-		};
-	}
-
-	function applyGrantScopeFormFields(fields: GrantScopeFormFields) {
-		shellArgv0 = fields.shellArgv0;
-		shellSubcommands = fields.shellSubcommands;
-		shellPositionals = fields.shellPositionals;
-		shellPipeline = fields.shellPipeline;
-		shellStepOptions = fields.shellStepOptions;
-		fsRoot = fields.fsRoot;
-		fsBehavior = fields.fsBehavior;
-		fsValue = fields.fsValue;
-		urlRuleKind = fields.urlRuleKind;
-		urlExact = fields.urlExact;
-		urlHost = fields.urlHost;
-		urlSuffix = fields.urlSuffix;
-	}
-
-	const shellCommandTokens = $derived([
-		shellArgv0.trim(),
-		...shellSubcommands
-			.split(/\s+/)
-			.map((t) => t.trim())
-			.filter(Boolean)
-	]);
-
-	$effect(() => {
-		const next = nextShellStepOptions(shellCommandTokens, shellStepOptions, originalShellCommand);
-		const changed =
-			next.length !== shellStepOptions.length ||
-			next.some((entry, i) => entry !== shellStepOptions[i]);
-		if (changed) shellStepOptions = next;
-	});
-
-	function updateShellStepOption(index: number, field: keyof ShellStepOptionInput, value: string) {
-		shellStepOptions = shellStepOptions.map((entry, i) =>
-			i === index ? { ...entry, [field]: value } : entry
-		);
-	}
-
-	function buildScopeJson(): BuildResult {
-		return buildGrantScopeJson(newGrantTool, grantScopeFormFields());
-	}
-
-	const buildResult = $derived<BuildResult>(
-		(() => {
-			void newGrantTool;
-			void shellArgv0;
-			void shellSubcommands;
-			void shellPositionals;
-			void shellPipeline;
-			void shellStepOptions;
-			void fsRoot;
-			void fsBehavior;
-			void fsValue;
-			void urlRuleKind;
-			void urlExact;
-			void urlHost;
-			void urlSuffix;
-			return buildScopeJson();
-		})()
-	);
-	const scopeJsonPreview = $derived(buildResult.json ?? '');
 	let userTouched = $state(false);
-	const buildError = $derived(userTouched ? buildResult.error : null);
-
-	$effect(() => {
-		if (fsRoot === 'absolute' && fsBehavior === 'any') {
-			fsBehavior = 'exact';
-		}
-	});
+	const buildError = $derived(userTouched ? scopeError : null);
 
 	function onSubmitCreateGrant(e: SubmitEvent) {
-		const result = buildScopeJson();
-		if (!result.json) {
+		if (!scopeJson) {
 			userTouched = true;
 			e.preventDefault();
-			return;
-		}
-		const formEl = e.currentTarget as HTMLFormElement;
-		const hidden = formEl.elements.namedItem('scopeJson') as
-			| HTMLInputElement
-			| RadioNodeList
-			| null;
-		if (hidden && 'value' in hidden && !(hidden instanceof RadioNodeList)) {
-			(hidden as HTMLInputElement).value = result.json;
 		}
 	}
 
@@ -181,8 +67,8 @@
 		newGrantDecision = 'allow';
 		newGrantExpiry = '';
 		newGrantDenyReason = '';
-		applyGrantScopeFormFields(defaultGrantScopeFormFields());
-		originalShellCommand = null;
+		seedScope = null;
+		seedEpoch += 1;
 		userTouched = false;
 	}
 
@@ -207,9 +93,8 @@
 			newGrantTool = g.tool;
 		}
 
-		const editState = grantScopeToFormFields(g.scope);
-		applyGrantScopeFormFields(editState.fields);
-		originalShellCommand = editState.originalShellCommand;
+		seedScope = g.scope;
+		seedEpoch += 1;
 
 		detailsOpen = true;
 		queueMicrotask(() => {
@@ -535,30 +420,22 @@
 					<input type="hidden" name="denyReason" value="" />
 				{/if}
 
-				<PermissionGrantScopeFields
+				<GrantScopeEditor
 					tool={newGrantTool}
-					{shellCommandTokens}
-					bind:shellArgv0
-					bind:shellSubcommands
-					bind:shellPositionals
-					bind:shellPipeline
-					bind:shellStepOptions
-					bind:fsRoot
-					bind:fsBehavior
-					bind:fsValue
-					bind:urlRuleKind
-					bind:urlExact
-					bind:urlHost
-					bind:urlSuffix
-					{updateShellStepOption}
+					{seedScope}
+					{seedEpoch}
+					onChange={(r) => {
+						scopeJson = r.json;
+						scopeError = r.error;
+					}}
 				/>
 
-				<input type="hidden" name="scopeJson" value={scopeJsonPreview} />
+				<input type="hidden" name="scopeJson" value={scopeJson} />
 
-				{#if scopeJsonPreview}
+				{#if scopeJson}
 					<details class="scope-preview">
 						<summary>Preview JSON</summary>
-						<pre><code>{scopeJsonPreview}</code></pre>
+						<pre><code>{scopeJson}</code></pre>
 					</details>
 				{/if}
 				{#if buildError}
@@ -580,7 +457,7 @@
 				{/if}
 
 				<div class="form-actions">
-					<button class="btn primary" type="submit" disabled={!scopeJsonPreview}>
+					<button class="btn primary" type="submit" disabled={!scopeJson}>
 						{editingGrantId !== null ? 'Save changes' : 'Add grant'}
 					</button>
 					{#if editingGrantId !== null}

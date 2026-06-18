@@ -12,7 +12,48 @@ import {
 	FS_RULE_CONTAINER_ROOTS
 } from './scope-types';
 import { GRANT_TOOLS, expectedScopeKind, permissionKindForTool } from './metadata';
+import type { GrantTool } from './metadata';
 import type { GrantScope } from './scope-types';
+
+/**
+ * Shared zod `superRefine` check enforcing that a grant's structured `scope`
+ * is consistent with the `tool` it will be stored under: `scope.kind` must
+ * equal `expectedScopeKind(tool)`, and an fs scope's optional `perms` (when
+ * present) must include the chosen fs tool. The matcher relies on this
+ * alignment — a `tool='shell'` row with an fs-shaped scope would simply never
+ * match — so both the settings-form `GrantInputSchema` and the agent-facing
+ * `request_permission_grant` args validate through this one helper to stay in
+ * lockstep. Returns early after a kind mismatch so the perms check (which
+ * assumes an fs scope) doesn't run against the wrong shape.
+ */
+export function refineScopeToolAlignment(
+	val: { tool: GrantTool; scope: Exclude<GrantScope, { kind: 'any' }> },
+	ctx: z.RefinementCtx
+): void {
+	const expected = expectedScopeKind(val.tool);
+	if (val.scope.kind !== expected) {
+		ctx.addIssue({
+			code: 'custom',
+			path: ['scope', 'kind'],
+			message: `tool=${val.tool} requires scope.kind=${expected}, got ${val.scope.kind}`
+		});
+		return;
+	}
+
+	// fs: if the scope passes `perms`, ensure it includes the tool kind. We
+	// don't *require* perms (omitting it means "all three fs kinds"), but if
+	// it's set it must cover the tool the caller picked.
+	if (val.scope.kind === 'fs' && val.scope.perms && val.scope.perms.length > 0) {
+		const tool = val.tool as 'read' | 'write' | 'edit';
+		if (!val.scope.perms.includes(tool)) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['scope', 'perms'],
+				message: `perms must include "${tool}" (the chosen tool) or be omitted`
+			});
+		}
+	}
+}
 
 const ArgvToken = z
 	.string()
@@ -195,29 +236,7 @@ export const GrantInputSchema = z
 			.transform((v) => (v === undefined || v === null || v === '' ? null : v))
 	})
 	.superRefine((val, ctx) => {
-		const expected = expectedScopeKind(val.tool);
-		if (val.scope.kind !== expected) {
-			ctx.addIssue({
-				code: 'custom',
-				path: ['scope', 'kind'],
-				message: `tool=${val.tool} requires scope.kind=${expected}, got ${val.scope.kind}`
-			});
-			return;
-		}
-
-		// fs: if the form passes `perms`, ensure it includes the tool kind.
-		// We don't *require* perms (omitting it means "all three fs kinds"),
-		// but if it's set it must cover the tool the user picked.
-		if (val.scope.kind === 'fs' && val.scope.perms && val.scope.perms.length > 0) {
-			const tool = val.tool as 'read' | 'write' | 'edit';
-			if (!val.scope.perms.includes(tool)) {
-				ctx.addIssue({
-					code: 'custom',
-					path: ['scope', 'perms'],
-					message: `perms must include "${tool}" (the chosen tool) or be omitted`
-				});
-			}
-		}
+		refineScopeToolAlignment(val, ctx);
 
 		// Expiry sanity: must be in the future when provided.
 		if (val.expiresAt !== null && val.expiresAt !== undefined && val.expiresAt <= Date.now()) {

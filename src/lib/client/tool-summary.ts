@@ -72,6 +72,7 @@ const summaryHandlers: Record<string, SummaryHandler> = {
 	ticket_update: ticketUpdateSummary,
 	ticket_list: ticketListSummary,
 	permission_capabilities: permissionCapabilitiesSummary,
+	request_permission_grant: grantRequestSummary,
 	skill: skillSummary,
 	sql: sqlSummary,
 	session_store_sql: sqlSummary
@@ -289,4 +290,22 @@ function permissionCapabilitiesSummary(args: Record<string, unknown>): string | 
 	const tool = str(args.toolName);
 	if (kind && tool) return `${kind} · ${tool}`;
 	return kind ?? tool ?? null;
+}
+
+function grantRequestSummary(args: Record<string, unknown>): string | null {
+	const tool = str(args.tool);
+	const scope = args.scope;
+	let argv0: string | null = null;
+	if (scope && typeof scope === 'object') {
+		const rule = (scope as Record<string, unknown>).rule;
+		if (rule && typeof rule === 'object') {
+			const command = (rule as Record<string, unknown>).command;
+			if (Array.isArray(command) && command[0] && typeof command[0] === 'object') {
+				argv0 = str((command[0] as Record<string, unknown>).token);
+			}
+			argv0 ??= str((rule as Record<string, unknown>).host);
+		}
+	}
+	if (tool && argv0) return `${tool} · ${argv0}`;
+	return tool ?? null;
 }

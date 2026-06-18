@@ -530,6 +530,17 @@ export interface InteractivePermissionView {
 	 */
 	escalationReason?: string;
 	/**
+	 * Present when this dialog was raised by the `request_permission_grant`
+	 * tool: the agent is proposing a permanent, structured permission grant
+	 * for a human to review, narrow, or reject. Unlike an ordinary permission
+	 * dialog (which gates a single in-flight tool call), the *only* effect of
+	 * approving this is persisting the proposed grant — so the dialog renders
+	 * the proposed scope's full breadth and offers "Save grant" / "Deny"
+	 * rather than allow-once. The request always reaches a human; it is never
+	 * auto-approved by policy or the session approve-all toggle.
+	 */
+	grantRequest?: PermissionGrantRequest;
+	/**
 	 * Initial text for the deny feedback field. Prompt-required grants use
 	 * this to suggest the same feedback that would be sent on auto-deny.
 	 */
@@ -663,6 +674,23 @@ export type InteractiveResponse =
 	| { kind: 'sampling'; action: 'ack' }
 	| { kind: 'mcp_oauth'; action: 'ack' }
 	| { kind: 'external_tool'; action: 'ack' };
+
+/**
+ * The agent-proposed grant carried by a `request_permission_grant` dialog.
+ * `scope` is the structured grant the agent wants persisted; `permissionKind`
+ * is the matcher tool it will be stored under (e.g. `shell`, `write`). The
+ * proposal only *pre-fills* the human's decision — the human can deny it, and
+ * what gets persisted is whatever the dialog emits on approval, never this
+ * payload directly.
+ */
+export interface PermissionGrantRequest {
+	/** Human-readable reason the agent gave for needing this grant. */
+	reason: string;
+	/** The structured scope the agent proposes to be granted. */
+	scope: GrantScope;
+	/** Matcher tool / permission kind the grant will be stored under. */
+	permissionKind: string;
+}
 
 export interface PermissionGrantScope {
 	/** NULL/omitted = any permission kind for the requested tool. */

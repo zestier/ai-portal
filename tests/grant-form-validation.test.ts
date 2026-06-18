@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { z } from 'zod';
 import {
 	GrantInputSchema,
+	GrantScopeSchema,
 	expectedScopeKind,
-	permissionKindForTool
+	permissionKindForTool,
+	refineScopeToolAlignment
 } from '../src/lib/permissions/scope-schema';
 import { GRANT_TOOLS, grantToolLabel } from '../src/lib/permissions/metadata';
 import {
@@ -372,6 +375,58 @@ describe('GrantInputSchema — denyReason + pipeline', () => {
 		if (r.scope.kind === 'shell') {
 			expect(r.scope.rule.pipeline).toBe('must');
 		}
+	});
+});
+
+describe('refineScopeToolAlignment — shared by GrantInputSchema and request_permission_grant', () => {
+	// Minimal zod wrapper so the helper can be exercised in isolation, mirroring
+	// how both real schemas call it from their `superRefine`.
+	const Schema = z
+		.object({ tool: z.enum(GRANT_TOOLS), scope: GrantScopeSchema })
+		.superRefine(refineScopeToolAlignment);
+
+	it('accepts a scope whose kind matches the tool', () => {
+		expect(
+			Schema.safeParse({
+				tool: 'shell',
+				scope: { kind: 'shell', rule: shell('pnpm') }
+			}).success
+		).toBe(true);
+	});
+
+	it('rejects a scope kind that does not match the tool, citing scope.kind', () => {
+		const r = Schema.safeParse({
+			tool: 'shell',
+			scope: { kind: 'url', rule: { kind: 'host', host: 'example.com' } }
+		});
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'scope.kind')).toBe(true);
+		}
+	});
+
+	it('rejects fs perms that exclude the chosen tool, citing scope.perms', () => {
+		const r = Schema.safeParse({
+			tool: 'write',
+			scope: {
+				kind: 'fs',
+				perms: ['read'],
+				rule: { kind: 'path', root: 'workspace', behavior: 'any' }
+			}
+		});
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'scope.perms')).toBe(true);
+		}
+	});
+
+	it('accepts fs scope with omitted perms (covers all kinds)', () => {
+		expect(
+			Schema.safeParse({
+				tool: 'write',
+				scope: { kind: 'fs', rule: { kind: 'path', root: 'workspace', behavior: 'any' } }
+			}).success
+		).toBe(true);
 	});
 });
 

@@ -235,7 +235,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			userId: opts.userId,
 			conversationId: opts.conversationId,
 			policy: opts.policy,
-			getMode: () => currentMode
+			getMode: () => currentMode,
+			emit
 		}),
 		...buildMemoryTools({
 			userId: opts.userId,

@@ -4,6 +4,7 @@
 	import InteractiveAutoModeSwitchRequest from './InteractiveAutoModeSwitchRequest.svelte';
 	import InteractiveElicitationRequest from './InteractiveElicitationRequest.svelte';
 	import InteractiveExitPlanModeRequest from './InteractiveExitPlanModeRequest.svelte';
+	import InteractiveGrantRequest from './InteractiveGrantRequest.svelte';
 	import InteractiveInformationalRequest from './InteractiveInformationalRequest.svelte';
 	import InteractivePermissionRequest from './InteractivePermissionRequest.svelte';
 	import InteractiveUserInputRequest from './InteractiveUserInputRequest.svelte';
@@ -88,7 +89,11 @@
 </script>
 
 {#if request.kind === 'permission'}
-	<InteractivePermissionRequest {request} onRespond={pick} />
+	{#if request.grantRequest}
+		<InteractiveGrantRequest {request} onRespond={pick} />
+	{:else}
+		<InteractivePermissionRequest {request} onRespond={pick} />
+	{/if}
 {:else}
 	<div class="interactive" role="alertdialog" aria-modal="true" tabindex="-1" use:focusTrap>
 		{#if request.kind === 'auto_mode_switch'}

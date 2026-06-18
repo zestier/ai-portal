@@ -415,7 +415,8 @@ export function openOpenAICompatibleSession(
 
 	const tools = buildOpenAITools({
 		opts,
-		getMode: () => currentMode
+		getMode: () => currentMode,
+		emit
 	});
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 	const toolPermissionBehavior = new Map<string, 'normal' | 'always-prompt' | 'never-prompt'>(
@@ -831,6 +832,7 @@ function toolMessageContent(result: ToolExecutionResult): string {
 function buildOpenAITools(opts: {
 	opts: ProviderOpenOptions;
 	getMode: () => SessionMode;
+	emit: (ev: PortalEvent) => void;
 }): PortalTool[] {
 	return [
 		...buildGitTools(opts.opts.workingDirectory),
@@ -844,7 +846,8 @@ function buildOpenAITools(opts: {
 			userId: opts.opts.userId,
 			conversationId: opts.opts.conversationId,
 			policy: opts.opts.policy,
-			getMode: opts.getMode
+			getMode: opts.getMode,
+			emit: opts.emit
 		}),
 		...buildMemoryTools({
 			userId: opts.opts.userId,

@@ -208,6 +208,72 @@ describe('Svelte component regression coverage', () => {
 		expect(body).toMatch(/<button[^>]+class="btn primary"[^>]+disabled/);
 	});
 
+	test('InteractiveRequestDialog renders a grant request with proposed scope and save action', () => {
+		const request: InteractiveRequestView = {
+			requestId: 'grant-1',
+			kind: 'permission',
+			tool: 'shell',
+			permissionKind: 'shell',
+			summary: 'Grant request: shell (run a command) — shell command `pnpm`',
+			args: {
+				reason: 'Scaffolding needs pnpm to install dependencies.',
+				scope: { kind: 'shell', rule: { command: [{ token: 'pnpm' }] } }
+			},
+			userPolicy: 'prompt',
+			canPersistDecision: true,
+			grantRequest: {
+				reason: 'Scaffolding needs pnpm to install dependencies.',
+				permissionKind: 'shell',
+				scope: {
+					kind: 'shell',
+					rule: { command: [{ token: 'pnpm' }], positionals: { kind: 'workspace-paths' } }
+				}
+			}
+		};
+		const body = render(InteractiveRequestDialog, {
+			props: { request, onRespond: () => undefined }
+		}).body;
+		const text = textOf(body);
+
+		expect(body).toContain('Permission grant requested');
+		expect(text).toContain('Scaffolding needs pnpm to install dependencies.');
+		expect(body).toContain('Save grant');
+		expect(body).toContain('Every conversation (global)');
+		// The proposed scope seeds the editable grant form (shared with settings),
+		// so the argv0 field is pre-filled with the agent's requested command.
+		expect(body).toContain('value="pnpm"');
+		expect(body).toContain('argv0 (the bare command name)');
+		// It must NOT fall back to the ordinary permission scope picker.
+		expect(body).not.toContain('Allow once');
+	});
+
+	test('InteractiveRequestDialog disables Save grant for a deny-all policy', () => {
+		const request: InteractiveRequestView = {
+			requestId: 'grant-2',
+			kind: 'permission',
+			tool: 'write',
+			permissionKind: 'write',
+			summary: 'Grant request',
+			args: {},
+			userPolicy: 'deny-all',
+			canPersistDecision: true,
+			grantRequest: {
+				reason: 'Need to write generated scaffolding files into the workspace.',
+				permissionKind: 'write',
+				scope: {
+					kind: 'fs',
+					perms: ['write'],
+					rule: { kind: 'path', root: 'workspace', behavior: 'any' }
+				}
+			}
+		};
+		const body = render(InteractiveRequestDialog, {
+			props: { request, onRespond: () => undefined }
+		}).body;
+		expect(body).toMatch(/<button[^>]+class="btn primary"[^>]+disabled/);
+		expect(body).toContain('Deny all');
+	});
+
 	test('InteractiveRequestDialog renders non-permission request families through focused children', () => {
 		const requests: Array<[InteractiveRequestView, string[]]> = [
 			[

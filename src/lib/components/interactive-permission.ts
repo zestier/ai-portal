@@ -10,6 +10,29 @@ import type {
 
 export type ScopeChoice = 'this-exact' | 'this-directory' | 'tool-kind' | 'tool-any' | 'everything';
 
+/** The persistent-grant TTL options offered by the permission dialogs. */
+export type ExpiryChoice = 'forever' | '1h' | '1d';
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * Map an {@link ExpiryChoice} to a TTL in milliseconds for an *-always grant.
+ * `forever` (and any unknown value) yields `undefined` — "never expires" —
+ * matching the `expiresInMs` contract on the permission `InteractiveResponse`.
+ */
+export function expiryChoiceToMs(choice: ExpiryChoice): number | undefined {
+	switch (choice) {
+		case '1h':
+			return HOUR_MS;
+		case '1d':
+			return DAY_MS;
+		case 'forever':
+		default:
+			return undefined;
+	}
+}
+
 export interface PermissionScopeContext {
 	isFsKind: boolean;
 	scopeKey: string | null;
@@ -127,7 +150,7 @@ export function previewPersistentPermission(
 	choice: ScopeChoice,
 	decision: 'allow-always' | 'deny-always',
 	appliesTo: 'this-conversation' | 'all-conversations',
-	expiryChoice: 'forever' | '1h' | '1d'
+	expiryChoice: ExpiryChoice
 ): string {
 	const verb = decision === 'allow-always' ? 'Allow' : 'Deny';
 	const tool = request.tool;

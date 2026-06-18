@@ -11,9 +11,11 @@
 		buildPermissionScopeContext,
 		buildShellOptions,
 		defaultScopeChoice,
+		expiryChoiceToMs,
 		operatorGloss,
 		previewPersistentPermission,
 		scopeOptionLabel,
+		type ExpiryChoice,
 		type ScopeChoice
 	} from './interactive-permission';
 	import Alert from './ui/Alert.svelte';
@@ -28,14 +30,11 @@
 
 	let busy = $state(false);
 	let scopeChoice = $state<ScopeChoice>('this-exact');
-	let expiryChoice = $state<'forever' | '1h' | '1d'>('forever');
+	let expiryChoice = $state<ExpiryChoice>('forever');
 	let appliesTo = $state<'this-conversation' | 'all-conversations'>('this-conversation');
 	let denialFeedback = $state(untrack(() => request.defaultDenyFeedback ?? ''));
 	let lastFeedbackRequestId = $state<string | null>(null);
 	let shellChecked = $state<Record<string, boolean>>({});
-
-	const HOUR_MS = 60 * 60 * 1000;
-	const DAY_MS = 24 * HOUR_MS;
 
 	async function pick(r: InteractiveResponse) {
 		if (busy) return;
@@ -116,18 +115,6 @@
 		pick(feedback ? { kind: 'permission', decision, feedback } : { kind: 'permission', decision });
 	}
 
-	function buildExpiry(): number | undefined {
-		switch (expiryChoice) {
-			case '1h':
-				return HOUR_MS;
-			case '1d':
-				return DAY_MS;
-			case 'forever':
-			default:
-				return undefined;
-		}
-	}
-
 	function previewShellAlways(decision: 'allow-always' | 'deny-always'): string {
 		const verb = decision === 'allow-always' ? 'Allow' : 'Deny';
 		const where =
@@ -157,7 +144,7 @@
 					permissionKind: 'shell',
 					scope: o.scope
 				})),
-				expiresInMs: buildExpiry(),
+				expiresInMs: expiryChoiceToMs(expiryChoice),
 				applyToAllConversations: appliesTo === 'all-conversations',
 				...(decision === 'deny-always' && denyFeedback() ? { feedback: denyFeedback() } : {})
 			});
@@ -167,7 +154,7 @@
 			kind: 'permission',
 			decision,
 			scope: buildPermissionGrantScope(request, permissionScopeContext, scopeChoice),
-			expiresInMs: buildExpiry(),
+			expiresInMs: expiryChoiceToMs(expiryChoice),
 			applyToAllConversations: appliesTo === 'all-conversations',
 			...(decision === 'deny-always' && denyFeedback() ? { feedback: denyFeedback() } : {})
 		});
@@ -414,10 +401,7 @@
 						<select
 							value={expiryChoice}
 							onchange={(e) =>
-								(expiryChoice = (e.currentTarget as HTMLSelectElement).value as
-									| 'forever'
-									| '1h'
-									| '1d')}
+								(expiryChoice = (e.currentTarget as HTMLSelectElement).value as ExpiryChoice)}
 						>
 							<option value="forever">Never</option>
 							<option value="1h">In 1 hour</option>

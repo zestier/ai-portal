@@ -253,6 +253,21 @@ textarea {
 	border-radius: var(--radius-sm);
 }
 
+/* Warning-panel interactive dialogs (permission prompts, grant requests, etc.)
+ * sit on a gold --warning-bg surface. Rebase the neutral palette tokens within
+ * that context so every nested control — embedded form inputs/fieldsets, dashed
+ * step groups, buttons, JSON/code previews — inherits borders and surfaces
+ * tuned against the gold background. Without this, the default grey --border is
+ * nearly invisible on gold. Custom properties inherit across Svelte component
+ * boundaries, so this reaches child components too. */
+.interactive {
+	--border: color-mix(in srgb, var(--warning) 35%, var(--text) 18%);
+	--surface: color-mix(in srgb, var(--warning) 8%, var(--bg));
+	--surface-2: color-mix(in srgb, var(--warning) 12%, var(--bg));
+	--code-bg: var(--surface-2);
+	--code-border: var(--border);
+}
+
 .btn {
 	display: inline-flex;
 	align-items: center;
