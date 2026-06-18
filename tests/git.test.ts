@@ -326,7 +326,7 @@ describe('structured git tools', () => {
 		// Pin the exact wording the ticket mandates so a typo in the shared
 		// constant can't silently change the agent-visible nudge.
 		expect(COMMIT_TICKET_FOLLOW_UP_HINT).toBe(
-			'If this commit completes or advances any workspace ticket, update it with ticket_update (or review open ones with ticket_list).'
+			'Now reconcile workspace tickets: review the open ones with ticket_list and, for any that this commit completes or advances, update them with ticket_update.'
 		);
 		const { tmp } = initRepo();
 		try {
