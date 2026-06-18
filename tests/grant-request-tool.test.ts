@@ -4,6 +4,11 @@ import type { InteractivePermissionDecision, PortalEvent, SessionMode } from '..
 import type { GrantScope } from '../src/lib/permissions/scope-types';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
+// A short, stable fragment of the forcePermissionPrompt nudge. Asserting on
+// this substring (not the exact prose) keeps the tests robust to wording tweaks
+// while still pinning the nudge BEHAVIOR per outcome.
+const NUDGE_MARKER = 'forcePermissionPrompt';
+
 // The `request_permission_grant` tool always raises a human permission dialog
 // (it is `never-prompt`, so the call site never gates it) and only persists a
 // grant when the human approves. These tests drive the tool handler directly,
@@ -74,6 +79,12 @@ const SHELL_SCOPE: GrantScope = {
 	rule: { command: [{ token: 'pnpm' }], positionals: { kind: 'workspace-paths' } }
 };
 
+// Extract the model-facing text from either envelope variant so nudge
+// assertions don't care whether the outcome was ok (summary) or err (message).
+function envelopeText(result: ToolResult): string {
+	return result.ok ? (result.summary ?? '') : result.error.message;
+}
+
 describe('request_permission_grant', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-grant-tool-');
@@ -100,6 +111,8 @@ describe('request_permission_grant', () => {
 		if (result.ok) {
 			expect(result.result).toMatchObject({ saved: true, tool: 'shell' });
 		}
+		// A successful allow-always save is the correct outcome — no nudge.
+		expect(envelopeText(result)).not.toContain(NUDGE_MARKER);
 
 		// The grant is persisted (conversation-scoped) by the interactive registry.
 		const grants = harness.settings
@@ -175,6 +188,8 @@ describe('request_permission_grant', () => {
 			expect(result.error.message).toContain('Use the structured tools instead.');
 			expect(result.error.code).toBe('grant_request_denied');
 		}
+		// Denied is one of the three nudge outcomes.
+		expect(envelopeText(result)).toContain(NUDGE_MARKER);
 		const grants = harness.settings
 			.listGrantsForUser(harness.user.id)
 			.filter((g) => g.source === 'prompt');
@@ -212,6 +227,28 @@ describe('request_permission_grant', () => {
 		const result = await resultPromise;
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.code).toBe('grant_request_cancelled');
+		// Cancellation is one of the three nudge outcomes.
+		expect(envelopeText(result)).toContain(NUDGE_MARKER);
+	});
+
+	it('nudges toward forcePermissionPrompt on an allow-once (approved-not-saved) outcome', async () => {
+		const harness = await makeHarness();
+		const { result } = await driveAndResolve(
+			harness,
+			{ tool: 'shell', reason: 'Request to run pnpm for scaffolding.', scope: SHELL_SCOPE },
+			'allow-once'
+		);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.result).toMatchObject({ saved: false, tool: 'shell' });
+		}
+		// Approved but not saved is a strong signal it should have been a one-off.
+		expect(envelopeText(result)).toContain(NUDGE_MARKER);
+		// Nothing is persisted on allow-once.
+		const grants = harness.settings
+			.listGrantsForUser(harness.user.id)
+			.filter((g) => g.source === 'prompt');
+		expect(grants.length).toBe(0);
 	});
 
 	it('rejects arguments whose scope shape does not match the tool', async () => {

@@ -21,7 +21,8 @@ export const PORTAL_PRELUDE = [
 	'Use git_status/git_diff/git_log/git_show_commit/git_show_file/git_commit instead of shell git.',
 	'Use ticket_add/ticket_list/ticket_update for durable workspace tickets and later-task stashes.',
 	'Use permission_capabilities to inspect allowed alternatives after permission rejections.',
-	'Use `forcePermissionPrompt` sparingly: only after verifying no allowed alternative',
-	'can complete the task, and include a concise reason.',
+	'Use `forcePermissionPrompt` sparingly for a one-off unblock: only after verifying no',
+	'allowed alternative works, and include a concise reason. Reserve `request_permission_grant`',
+	'for explicit persistence intent (a durable, saved rule) — not in-the-moment unblocks.',
 	'[/Portal context]'
 ].join('\n');

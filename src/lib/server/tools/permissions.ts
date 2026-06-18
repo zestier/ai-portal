@@ -112,6 +112,13 @@ export function buildPermissionTools(opts: {
 
 const GRANT_REQUEST_REASON_MIN = 20;
 
+// Appended to the grant-request response on denied / cancelled / allow-once
+// outcomes (NOT on a successful allow-always save). These outcomes signal the
+// grant may have been the wrong tool for a one-off need; remind the agent that
+// in-the-moment unblocks should use `forcePermissionPrompt` instead.
+const GRANT_REQUEST_NUDGE =
+	'If this was a one-off unblock, retry the blocked call with `forcePermissionPrompt` instead; `request_permission_grant` is only for durable, saved rules.';
+
 const GrantRequestArgs = z
 	.object({
 		tool: z.enum(GRANT_TOOLS),
@@ -142,7 +149,7 @@ function buildGrantRequestTool(opts: {
 	return {
 		name: GRANT_REQUEST_TOOL_NAME,
 		description:
-			'Ask the human to save a narrow, permanent permission grant so future matching tool calls are pre-approved. Useful when scaffolding a project needs a specific toolchain (e.g. running `pnpm`, `cargo`, or `npm`): request the NARROWEST scope that covers the need. This ALWAYS opens a human approval dialog and is never auto-approved, even with approvals bypassed; the human can narrow or deny it. Provide `tool` (the permission kind to grant), a structured `scope`, and a `reason`. Examples of `scope`: shell → {"kind":"shell","rule":{"command":[{"token":"pnpm"}],"positionals":{"kind":"workspace-paths"}}}; write → {"kind":"fs","perms":["write"],"rule":{"kind":"path","root":"workspace","behavior":"any"}}; url → {"kind":"url","rule":{"kind":"host","host":"registry.npmjs.org"}}.',
+			'Ask the human to save a narrow, PERMANENT permission grant that pre-approves ALL future matching tool calls. Use this ONLY when there is explicit persistence intent — the user or task wants a durable, saved rule that outlives the current moment. For a one-off or occasional in-the-moment unblock, do NOT use this tool: retry the blocked call with `forcePermissionPrompt` instead (a per-call escalation that saves nothing). When you do request a grant, request the NARROWEST scope that covers the need. This ALWAYS opens a human approval dialog and is never auto-approved, even with approvals bypassed; the human can narrow or deny it. Provide `tool` (the permission kind to grant), a structured `scope`, and a `reason`. Examples of `scope`: shell → {"kind":"shell","rule":{"command":[{"token":"pnpm"}],"positionals":{"kind":"workspace-paths"}}}; write → {"kind":"fs","perms":["write"],"rule":{"kind":"path","root":"workspace","behavior":"any"}}; url → {"kind":"url","rule":{"kind":"host","host":"registry.npmjs.org"}}.',
 		argsSchema: GrantRequestArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -211,7 +218,8 @@ function buildGrantRequestTool(opts: {
 			} catch (e) {
 				if (isInteractivePromptCancelledError(e)) {
 					return err(
-						'The permission grant request was dismissed before the human decided (turn aborted, timed out, or disconnected). This is not a denial — re-issue it if the grant is still needed.',
+						'The permission grant request was dismissed before the human decided (turn aborted, timed out, or disconnected). This is not a denial — re-issue it if the grant is still needed. ' +
+							GRANT_REQUEST_NUDGE,
 						{ code: 'grant_request_cancelled' }
 					);
 				}
@@ -252,15 +260,18 @@ function buildGrantRequestTool(opts: {
 			if (response.decision === 'allow-once') {
 				return ok(
 					{ saved: false, tool: parsed.tool },
-					'The human approved this request but chose not to save a permanent grant; the matching tool calls will still prompt.'
+					'The human approved this request but chose not to save a permanent grant; the matching tool calls will still prompt. ' +
+						GRANT_REQUEST_NUDGE
 				);
 			}
 
 			const feedback = typeof response.feedback === 'string' ? response.feedback.trim() : '';
 			return err(
-				feedback
+				(feedback
 					? `The human declined to save this grant: ${feedback}`
-					: 'The human declined to save this permission grant.',
+					: 'The human declined to save this permission grant.') +
+					' ' +
+					GRANT_REQUEST_NUDGE,
 				{ code: 'grant_request_denied' }
 			);
 		}
@@ -306,12 +317,12 @@ function permissionCapabilities(opts: {
 			forcePermissionPrompt: {
 				supported: true,
 				guidance:
-					'Use sparingly. Retry the blocked request with forcePermissionPrompt and a concise reason only after verifying no allowed alternative works.'
+					'The default for any in-the-moment / one-off unblock. Retry the blocked request with forcePermissionPrompt and a concise reason, after verifying no allowed alternative works. It escalates a single call to a human prompt and saves nothing.'
 			},
 			requestPermissionGrant: {
 				supported: true,
 				guidance:
-					'When a task needs repeated use of a capability (e.g. running a toolchain while scaffolding), call request_permission_grant with the narrowest structured scope to ask the human to save a permanent grant. It always raises a human dialog (in every mode, including best-effort) and is never auto-approved.'
+					'Use ONLY when there is explicit persistence intent — the user or task wants a durable, saved rule that pre-approves future matching calls. For a one-off unblock use forcePermissionPrompt instead. Call request_permission_grant with the narrowest structured scope; it always raises a human dialog (in every mode, including best-effort) and is never auto-approved.'
 			}
 		}
 	};
