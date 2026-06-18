@@ -339,7 +339,8 @@ describe('db migrations + repos', () => {
 			theme: 'light',
 			accent: 'violet',
 			defaultMemoryExtractorModel: 'harvester-x',
-			defaultMemoryExtractorBackend: 'openai-compatible-tools'
+			defaultMemoryExtractorBackend: 'openai-compatible-tools',
+			defaultContextTier: 'long_context'
 		});
 		expect(settings.get(u.id)).toEqual({
 			defaultProvider: 'openai-compatible',
@@ -350,7 +351,8 @@ describe('db migrations + repos', () => {
 			theme: 'light',
 			accent: 'violet',
 			defaultMemoryExtractorModel: 'harvester-x',
-			defaultMemoryExtractorBackend: 'openai-compatible-tools'
+			defaultMemoryExtractorBackend: 'openai-compatible-tools',
+			defaultContextTier: 'long_context'
 		});
 		// '(use server default)' round-trips as NULL for both extractor defaults.
 		settings.save(u.id, {
@@ -362,10 +364,12 @@ describe('db migrations + repos', () => {
 			theme: 'light',
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
-			defaultMemoryExtractorBackend: null
+			defaultMemoryExtractorBackend: null,
+			defaultContextTier: null
 		});
 		expect(settings.get(u.id)?.defaultMemoryExtractorModel).toBeNull();
 		expect(settings.get(u.id)?.defaultMemoryExtractorBackend).toBeNull();
+		expect(settings.get(u.id)?.defaultContextTier).toBeNull();
 	});
 
 	it('coerces a stale legacy allow-readonly policy row to prompt', () => {
@@ -379,7 +383,8 @@ describe('db migrations + repos', () => {
 			theme: 'dark',
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
-			defaultMemoryExtractorBackend: null
+			defaultMemoryExtractorBackend: null,
+			defaultContextTier: null
 		});
 		// Simulate a row that escaped migration 008.
 		getDb()

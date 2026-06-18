@@ -263,7 +263,7 @@ export class SdkEventAdapter {
 		register('mcp.oauth_completed', this.onMcpOauthCompleted);
 		register('external_tool.requested', this.onExternalToolRequested);
 		register('external_tool.completed', this.onExternalToolCompleted);
-		register('mode.changed', this.onModeChanged);
+		register('session.mode_changed', this.onModeChanged);
 		this.attachedSession = sdkSession;
 	}
 
@@ -590,6 +590,15 @@ export class SdkEventAdapter {
 		const d = ev.data;
 		if (!this.activeQueue || !d) return;
 		if (typeof d.currentTokens !== 'number' || typeof d.tokenLimit !== 'number') return;
+		// Log the window the CLI actually reports on the first usage event so a
+		// pinned `modelCapabilities` override can be confirmed (or shown to be
+		// ignored by an older CLI) against the value the runtime really uses.
+		if (d.isInitial) {
+			log.info('copilot.session.context_window_observed', {
+				conversationId: this.ctx.conversationId,
+				tokenLimit: d.tokenLimit
+			});
+		}
 		this.emit({
 			type: 'context.usage',
 			currentTokens: d.currentTokens,
@@ -705,7 +714,7 @@ export class SdkEventAdapter {
 	};
 
 	private readonly onModeChanged = (e: unknown) => {
-		const ev = parseSdkEvent('mode.changed', ModeChangedEvent, e);
+		const ev = parseSdkEvent('session.mode_changed', ModeChangedEvent, e);
 		if (!ev) return;
 		const raw = ev.data?.newMode;
 		const next = isRuntimeSessionMode(raw) ? raw : null;

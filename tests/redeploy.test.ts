@@ -20,6 +20,7 @@ const baseCfg: AppConfig = {
 	REDEPLOY_ADMIN_GITHUB_LOGINS: ['alice'],
 	SHARED_SECRET: undefined,
 	COPILOT_GITHUB_TOKEN: undefined,
+	COPILOT_CONTEXT_TIER: 'default',
 	DEFAULT_BACKEND_PROVIDER: 'copilot',
 	DEFAULT_MODEL: 'claude-sonnet-4.5',
 	OPENAI_COMPATIBLE_BASE_URL: undefined,

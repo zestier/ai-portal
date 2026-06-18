@@ -3,6 +3,7 @@ import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import {
 	normalizeBackendProvider,
+	normalizeContextTier,
 	normalizeMemoryExtractorBackend,
 	normalizeSessionMode,
 	normalizeThemeAccent,
@@ -21,6 +22,7 @@ interface SettingsRow {
 	accent: string;
 	default_memory_extractor_model: string | null;
 	default_memory_extractor_backend: string | null;
+	default_context_tier: string | null;
 	updated_at: number;
 }
 
@@ -41,7 +43,8 @@ function rowToSettings(r: SettingsRow): UserSettings {
 		defaultMemoryExtractorModel: r.default_memory_extractor_model ?? null,
 		defaultMemoryExtractorBackend: normalizeMemoryExtractorBackend(
 			r.default_memory_extractor_backend
-		)
+		),
+		defaultContextTier: normalizeContextTier(r.default_context_tier)
 	};
 }
 
@@ -67,7 +70,8 @@ export function defaults(): UserSettings {
 		theme: 'system',
 		accent: 'default',
 		defaultMemoryExtractorModel: null,
-		defaultMemoryExtractorBackend: null
+		defaultMemoryExtractorBackend: null,
+		defaultContextTier: null
 	};
 }
 
@@ -76,9 +80,9 @@ export function save(userId: string, s: UserSettings) {
 		.prepare(
 			`INSERT INTO user_settings(
 			   user_id, default_provider, default_model, default_workdir, default_mode, default_policy, theme, accent,
-			   default_memory_extractor_model, default_memory_extractor_backend, updated_at
+			   default_memory_extractor_model, default_memory_extractor_backend, default_context_tier, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
 			   default_provider = excluded.default_provider,
 			   default_model = excluded.default_model,
@@ -89,6 +93,7 @@ export function save(userId: string, s: UserSettings) {
 			   accent = excluded.accent,
 			   default_memory_extractor_model = excluded.default_memory_extractor_model,
 			   default_memory_extractor_backend = excluded.default_memory_extractor_backend,
+			   default_context_tier = excluded.default_context_tier,
 			   updated_at = excluded.updated_at`
 		)
 		.run(
@@ -102,6 +107,7 @@ export function save(userId: string, s: UserSettings) {
 			s.accent,
 			s.defaultMemoryExtractorModel,
 			s.defaultMemoryExtractorBackend,
+			s.defaultContextTier,
 			Date.now()
 		);
 }

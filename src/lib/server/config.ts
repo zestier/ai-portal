@@ -58,12 +58,18 @@ const Schema = z
 		SHARED_SECRET: z.string().min(32).optional(),
 
 		COPILOT_GITHUB_TOKEN: z.string().optional(),
+		// Pin the session context window tier. The 1M ("long_context") window is
+		// a premium, separately-billed tier that newer Copilot CLIs gate behind
+		// an explicit opt-in; sessions otherwise default to the standard (~200k)
+		// window. Set to "long_context" to request the large window on every
+		// session. Forwarded as the SDK's `contextTier` session-config field.
+		COPILOT_CONTEXT_TIER: z.enum(['default', 'long_context']).default('default'),
 		// Connection token for a token-protected remote CLI reached via
 		// COPILOT_CLI_URL. Must match the COPILOT_CONNECTION_TOKEN set on the
-		// `copilot --headless` server. Forwarded to the SDK as
-		// `tcpConnectionToken`; the SDK no longer reads this from the
-		// environment for `cliUrl` connections, so the portal must pass it
-		// explicitly or the connect handshake is rejected.
+		// `copilot --headless` server. Forwarded to the SDK as the
+		// `RuntimeConnection.forUri` connection token; the SDK does not read
+		// this from the environment for URI connections, so the portal must
+		// pass it explicitly or the connect handshake is rejected.
 		COPILOT_CONNECTION_TOKEN: z
 			.string()
 			.trim()

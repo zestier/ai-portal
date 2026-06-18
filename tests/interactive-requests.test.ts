@@ -350,7 +350,8 @@ describe('interactive request registry', () => {
 			theme: 'dark',
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
-			defaultMemoryExtractorBackend: null
+			defaultMemoryExtractorBackend: null,
+			defaultContextTier: null
 		});
 		const requestId = newRequestId();
 		makePending('permission', permView(requestId), undefined);
@@ -479,7 +480,8 @@ describe('interactive request registry', () => {
 			theme: 'dark',
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
-			defaultMemoryExtractorBackend: null
+			defaultMemoryExtractorBackend: null,
+			defaultContextTier: null
 		});
 		const requestId = newRequestId();
 		makePending('permission', permView(requestId), undefined);

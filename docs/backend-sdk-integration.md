@@ -66,7 +66,7 @@ A concrete Copilot provider implementation that:
 
 ```ts
 // $lib/server/copilot/copilot-provider.ts
-import { CopilotClient } from '@github/copilot-sdk';
+import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
 import type { PortalEvent } from '$lib/types';
 
 const clients = new Map<string, CopilotClient>();
@@ -75,8 +75,7 @@ async function getClient(userId: string, authToken?: string): Promise<CopilotCli
   const existing = clients.get(userId);
   if (existing) return existing;
   const client = new CopilotClient({
-    useStdio: true,
-    autoStart: false,
+    connection: RuntimeConnection.forStdio(),
     useLoggedInUser: true,
     gitHubToken: authToken
   });

@@ -5859,7 +5859,8 @@ describe('memory extractor backend defaults + override resolution', () => {
 			theme: 'dark',
 			accent: 'default',
 			defaultMemoryExtractorModel: 'seeded-harvester',
-			defaultMemoryExtractorBackend: 'openai-compatible-tools'
+			defaultMemoryExtractorBackend: 'openai-compatible-tools',
+			defaultContextTier: null
 		});
 
 		const seeded = await callCreate(POST, user.id, {});

@@ -291,6 +291,19 @@
 			</span>
 		</label>
 		<label>
+			Context window tier
+			<select name="defaultContextTier" value={settings.defaultContextTier ?? ''}>
+				<option value="">(use server default)</option>
+				<option value="default">Standard (~200k)</option>
+				<option value="long_context">Long context (1M)</option>
+			</select>
+			<span class="muted small">
+				Applies the next time a Copilot session opens, including existing conversations. Long
+				context is a premium, separately-billed tier and must also be enabled for your account;
+				newer Copilot CLIs only grant the large window when it is explicitly requested.
+			</span>
+		</label>
+		<label>
 			Default memory harvester backend
 			<select name="defaultMemoryExtractorBackend" bind:value={selectedExtractorBackend}>
 				<option value={DEFAULT_EXTRACTOR_OPTION}>(use server default)</option>

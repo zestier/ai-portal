@@ -2,10 +2,13 @@
 // client/session lifecycle; event normalization and interactive callbacks live
 // in sibling adapters.
 //
-// NOTE: Pinned to @github/copilot-sdk ^1.0.0-beta. The SDK is in preview; if
-// upgrading, audit this file plus sdk-events.ts / interactive-adapter.ts.
+// NOTE: Pinned to @github/copilot-sdk 1.0.1. The SDK connects via the
+// `RuntimeConnection` factory (forStdio/forUri) and gates the 1M window behind
+// the `contextTier` session field. If upgrading, audit this file plus
+// sdk-events.ts / interactive-adapter.ts (event names + handler field names).
 
-import { CopilotClient } from '@github/copilot-sdk';
+import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
+import type { ContextTier } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { createInteractiveCallbacks } from './interactive-adapter';
@@ -19,6 +22,7 @@ import type {
 } from '../providers/provider';
 import * as messagesRepo from '../db/repos/messages';
 import * as tokens from '../db/repos/tokens';
+import * as settingsRepo from '../db/repos/settings';
 import { loadConfig } from '../config';
 import { log } from '../log';
 import { StubCopilotClient, isStubMode } from './bridge-stub';
@@ -65,8 +69,8 @@ export async function getClient(
 	const p = (async () => {
 		const cliUrl = process.env.COPILOT_CLI_URL?.trim();
 		// Forward the configured connection token to a token-protected remote
-		// CLI. The SDK's `connect` handshake sends `tcpConnectionToken`; for
-		// `cliUrl` connections it does NOT fall back to the
+		// CLI. The SDK passes it as the `RuntimeConnection.forUri` connection
+		// token; for URI connections it does NOT fall back to the
 		// COPILOT_CONNECTION_TOKEN environment variable, so without this the
 		// handshake authenticates as `undefined` and the server rejects it.
 		const connectionToken = cliUrl ? loadConfig().COPILOT_CONNECTION_TOKEN : undefined;
@@ -74,13 +78,13 @@ export async function getClient(
 			? (new StubCopilotClient() as unknown as CopilotClient)
 			: cliUrl
 				? new CopilotClient({
-						cliUrl,
-						autoStart: false,
-						...(connectionToken ? { tcpConnectionToken: connectionToken } : {})
+						connection: RuntimeConnection.forUri(
+							cliUrl,
+							connectionToken ? { connectionToken } : undefined
+						)
 					})
 				: new CopilotClient({
-						useStdio: true,
-						autoStart: false,
+						connection: RuntimeConnection.forStdio(),
 						useLoggedInUser: true,
 						gitHubToken: providerAuthToken
 					});
@@ -135,6 +139,25 @@ export async function fetchModels(
 	const models = await client.listModels();
 	modelsCache.set(userId, { at: Date.now(), models });
 	return models;
+}
+
+// Resolve the context window tier to request for the session. The 1M window is
+// the SDK's `"long_context"` ContextTier — a premium, separately-billed tier
+// that newer Copilot CLIs gate behind an explicit opt-in (older CLIs defaulted
+// to the full window). Sessions otherwise run at the standard `"default"` tier
+// (~200k). We forward the tier on both the create and resume paths via the
+// SDK's `contextTier` session-config field; the model-advertised
+// `max_context_window_tokens` is NOT the knob that controls this.
+//
+// Source priority: the per-user setting wins when set (so a user can opt into
+// — or out of — the large window), falling back to the instance-wide
+// `COPILOT_CONTEXT_TIER` default when the user has expressed no preference.
+// Returns undefined for the default tier so we don't write an unnecessary
+// override.
+function resolveContextTier(userId: string): ContextTier | undefined {
+	const userTier = settingsRepo.get(userId)?.defaultContextTier ?? null;
+	const tier = userTier ?? loadConfig().COPILOT_CONTEXT_TIER;
+	return tier === 'long_context' ? 'long_context' : undefined;
 }
 
 export type BridgeOpenOptions = ProviderOpenOptions;
@@ -254,6 +277,19 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		});
 	}
 
+	// Pin the session context window tier so it doesn't inherit the standard
+	// (~200k) tier. Resolved before building the config so both the create and
+	// resume paths carry it. See resolveContextTier for why the 1M window is a
+	// tier opt-in rather than a model-capabilities override.
+	const contextTier = resolveContextTier(opts.userId);
+	if (contextTier) {
+		log.info('copilot.session.context_tier', {
+			conversationId: opts.conversationId,
+			model: opts.model,
+			contextTier
+		});
+	}
+
 	// Wrap each portal tool's handler so the SDK runtime — which invokes handlers
 	// with its own `ToolInvocation` (no streaming channel) — still lets custom
 	// tools stream. See `tool-streaming.ts`. `portalTools` is still used directly
@@ -262,12 +298,13 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		model: opts.model,
 		workingDirectory: opts.workingDirectory,
 		streaming: true,
+		...(contextTier ? { contextTier } : {}),
 		tools: wrapToolsForStreaming(portalTools, emit, () => currentTurnSignal),
 		onPermissionRequest,
 		onUserInputRequest,
 		onElicitationRequest,
-		onExitPlanMode,
-		onAutoModeSwitch
+		onExitPlanModeRequest: onExitPlanMode,
+		onAutoModeSwitchRequest: onAutoModeSwitch
 	};
 	for (const tool of portalTools) {
 		if (
@@ -280,6 +317,29 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	}
 
 	let sdkSession: SdkSession;
+	// Redacted snapshot of what we hand the SDK, so a connected-CLI session can
+	// be diffed against a managed one without exposing auth/tool internals. The
+	// auth token lives on the CopilotClient (construction time), never in
+	// sessionConfig, so it can't leak here; we still avoid logging tool arg
+	// schemas and handler bodies by reducing tools to their names.
+	const sessionConfigSummary = {
+		conversationId: opts.conversationId,
+		providerSessionId,
+		path: existingMetadata ? 'resume' : 'create',
+		model: sessionConfig.model,
+		workingDirectory: sessionConfig.workingDirectory,
+		streaming: sessionConfig.streaming,
+		contextTier: 'contextTier' in sessionConfig ? sessionConfig.contextTier : null,
+		toolNames: portalTools.map((t) => t.name),
+		handlers: {
+			onPermissionRequest: Boolean(sessionConfig.onPermissionRequest),
+			onUserInputRequest: Boolean(sessionConfig.onUserInputRequest),
+			onElicitationRequest: Boolean(sessionConfig.onElicitationRequest),
+			onExitPlanModeRequest: Boolean(sessionConfig.onExitPlanModeRequest),
+			onAutoModeSwitchRequest: Boolean(sessionConfig.onAutoModeSwitchRequest)
+		}
+	};
+	log.info('copilot.session.config', sessionConfigSummary);
 	if (existingMetadata) {
 		try {
 			sdkSession = (await client.resumeSession(

@@ -25,8 +25,10 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
 import {
 	normalizeBackendProvider,
+	normalizeContextTier,
 	normalizeThemeAccent,
 	BACKEND_PROVIDER_IDS,
+	CONTEXT_TIER_IDS,
 	MEMORY_EXTRACTOR_BACKEND_IDS,
 	THEME_ACCENT_IDS,
 	type PermissionPolicy,
@@ -105,7 +107,8 @@ const SaveSchema = z.object({
 	theme: z.enum(['dark', 'light', 'system']),
 	accent: z.enum(THEME_ACCENT_IDS as unknown as [string, ...string[]]),
 	defaultMemoryExtractorModel: z.string().optional(),
-	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional()
+	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
+	defaultContextTier: z.enum(CONTEXT_TIER_IDS).optional()
 });
 
 const PromptTemplateSchema = z
@@ -178,7 +181,8 @@ export const actions: Actions = {
 			accent: data.get('accent'),
 			defaultMemoryExtractorModel: (data.get('defaultMemoryExtractorModel') as string) || undefined,
 			defaultMemoryExtractorBackend:
-				(data.get('defaultMemoryExtractorBackend') as string) || undefined
+				(data.get('defaultMemoryExtractorBackend') as string) || undefined,
+			defaultContextTier: (data.get('defaultContextTier') as string) || undefined
 		});
 		if (!parsed.success) {
 			return {
@@ -206,7 +210,8 @@ export const actions: Actions = {
 			theme: parsed.data.theme,
 			accent: normalizeThemeAccent(parsed.data.accent),
 			defaultMemoryExtractorModel: parsed.data.defaultMemoryExtractorModel ?? null,
-			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null
+			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null,
+			defaultContextTier: normalizeContextTier(parsed.data.defaultContextTier ?? null)
 		};
 		settings.save(locals.userId, next);
 		return { ok: true, formId: 'save' };

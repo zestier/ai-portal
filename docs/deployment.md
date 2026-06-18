@@ -181,10 +181,10 @@ COPILOT_CLI_URL=host.docker.internal:9000   # portal in Docker, CLI on host
 ```
 
 When `COPILOT_CLI_URL` is set, `copilot-provider.ts` constructs the SDK client
-with `{ cliUrl, autoStart: false }` and does NOT pass `gitHubToken` or
-`useLoggedInUser` — those are mutually exclusive with `cliUrl`, and the
-remote CLI manages its own auth. If `COPILOT_CONNECTION_TOKEN` is set (see
-below) it is forwarded as the SDK's `tcpConnectionToken`.
+with `{ connection: RuntimeConnection.forUri(cliUrl, { connectionToken }) }` and
+does NOT pass `gitHubToken` or `useLoggedInUser` — the remote CLI manages its
+own auth. If `COPILOT_CONNECTION_TOKEN` is set (see below) it is forwarded as
+the `RuntimeConnection.forUri` connection token.
 
 ### Caveats
 
@@ -197,8 +197,8 @@ below) it is forwarded as the SDK's `tcpConnectionToken`.
   Setting `COPILOT_CONNECTION_TOKEN` on the CLI side makes it require
   clients to include a matching token in the handshake. Set the **same**
   value as `COPILOT_CONNECTION_TOKEN` on the portal side — the portal
-  forwards it to the SDK as `tcpConnectionToken` so the connect handshake
-  authenticates:
+  forwards it as the `RuntimeConnection.forUri` connection token so the
+  connect handshake authenticates:
 
   ```bash
   # CLI side
@@ -207,12 +207,12 @@ below) it is forwarded as the SDK's `tcpConnectionToken`.
   COPILOT_CONNECTION_TOKEN=<shared-secret>
   ```
 
-  > Note: `@github/copilot-sdk@1.0.0-beta.4` only reads the token from the
-  > explicit `tcpConnectionToken` option for `cliUrl` connections — it does
-  > NOT fall back to the `COPILOT_CONNECTION_TOKEN` environment variable the
-  > way earlier SDK builds did. The portal bridges that gap by reading the
-  > env var and passing it through; if you omit it on the portal side, a
-  > token-protected CLI rejects the connection.
+  > Note: `@github/copilot-sdk` only reads the token from the explicit
+  > `RuntimeConnection.forUri` connection-token option for URI connections —
+  > it does NOT fall back to the `COPILOT_CONNECTION_TOKEN` environment
+  > variable. The portal bridges that gap by reading the env var and passing
+  > it through; if you omit it on the portal side, a token-protected CLI
+  > rejects the connection.
 
   If you leave the token unset on both sides, keep the headless port bound
   to loopback (or an otherwise-trusted private network). Anything that can

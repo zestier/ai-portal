@@ -38,7 +38,7 @@ describe('wrapToolsForStreaming', () => {
 			() => null
 		);
 
-		const result = await wrapped.handler({}, fakeInvocation('call-abc'));
+		const result = await wrapped.handler!({}, fakeInvocation('call-abc'));
 
 		// The SDK adapter now returns a structured ToolResultObject: concise raw
 		// model text on `textResultForLlm`; the full envelope rides on both
@@ -74,7 +74,7 @@ describe('wrapToolsForStreaming', () => {
 			() => ac.signal
 		);
 
-		await wrapped.handler({}, fakeInvocation('call-xyz'));
+		await wrapped.handler!({}, fakeInvocation('call-xyz'));
 
 		expect(events).toEqual([]);
 	});
@@ -92,7 +92,7 @@ describe('wrapToolsForStreaming', () => {
 			() => ac.signal
 		);
 
-		await wrapped.handler({}, fakeInvocation('call-1'));
+		await wrapped.handler!({}, fakeInvocation('call-1'));
 
 		expect(seen).toBe(ac.signal);
 	});
@@ -110,7 +110,7 @@ describe('wrapToolsForStreaming', () => {
 			() => null
 		);
 
-		await wrapped.handler({}, fakeInvocation(undefined));
+		await wrapped.handler!({}, fakeInvocation(undefined));
 
 		expect(events).toEqual([]);
 	});

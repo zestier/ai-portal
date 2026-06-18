@@ -192,6 +192,24 @@ export function normalizeMemoryExtractorBackend(
 		: null;
 }
 
+// Context window tier for Copilot sessions. `long_context` is the large (e.g.
+// 1M-token) window — a premium, separately-billed tier that newer Copilot CLIs
+// gate behind an explicit opt-in; `default` is the standard (~200k) window.
+// Single source of truth shared by the config zod enum, the settings save
+// schema, the repo normalizer, and the UI selector so the set can't drift.
+export const CONTEXT_TIER_IDS = ['default', 'long_context'] as const;
+export type ContextTier = (typeof CONTEXT_TIER_IDS)[number];
+
+/**
+ * Normalizes a stored/posted context tier. NULL/unknown means "use the server
+ * default" (env `COPILOT_CONTEXT_TIER`), so a user who never picks a tier
+ * inherits the instance-wide setting. An explicit `default` lets a user pin the
+ * standard window even when the server default is `long_context`.
+ */
+export function normalizeContextTier(raw: string | null | undefined): ContextTier | null {
+	return raw === 'default' || raw === 'long_context' ? raw : null;
+}
+
 // Selectable accent palettes. Orthogonal to the dark/light/system *mode*:
 // the accent only re-tints `--accent`/`--accent-text` (and the tints derived
 // from them) so a portal instance can be made visually distinct at a glance —
@@ -450,6 +468,13 @@ export interface UserSettings {
 	 */
 	defaultMemoryExtractorModel: string | null;
 	defaultMemoryExtractorBackend: MemoryExtractorBackend | null;
+	/**
+	 * Per-user context window tier, consumed live when a Copilot session opens.
+	 * NULL = "use the server default" (env `COPILOT_CONTEXT_TIER`). Unlike the
+	 * seed-only defaults above, changing this affects subsequent session opens
+	 * for existing conversations too (the tier is resolved at open/resume time).
+	 */
+	defaultContextTier: ContextTier | null;
 }
 
 // 'prompt' is the default: auto-approves `url` requests and file-system

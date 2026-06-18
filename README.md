@@ -9,8 +9,8 @@ remote access from a phone or laptop.
 > **Status:** Phases 0–3 of the roadmap are implemented (single-user
 > local chat, tools/permissions/diffs, OAuth + Cloudflare Tunnel
 > deployment, plus a read-only git-aware file browser and edit/retry
-> forking). The Copilot SDK is pinned to `@github/copilot-sdk@1.0.0-beta.4`
-> (preview); see `package.json`.
+> forking). The Copilot SDK is pinned to `@github/copilot-sdk@1.0.1`;
+> see `package.json`.
 
 ## Quick start (local, no auth)
 

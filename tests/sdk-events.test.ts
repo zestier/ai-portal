@@ -203,7 +203,7 @@ describe('SdkEventAdapter zod event boundary', () => {
 		h.source.emit('session.usage_info', {
 			data: { currentTokens: '10', tokenLimit: 100, messagesLength: 2 }
 		});
-		h.source.emit('mode.changed', { data: { newMode: 123 } });
+		h.source.emit('session.mode_changed', { data: { newMode: 123 } });
 
 		expect(h.events).toEqual([]);
 		expect(h.mode).toBe('interactive');
@@ -212,8 +212,8 @@ describe('SdkEventAdapter zod event boundary', () => {
 	it('accepts mode changes only after payload validation and known mode filtering', () => {
 		const h = makeHarness();
 
-		h.source.emit('mode.changed', { data: { newMode: 'plan' } });
-		h.source.emit('mode.changed', { data: { newMode: 'unsupported' } });
+		h.source.emit('session.mode_changed', { data: { newMode: 'plan' } });
+		h.source.emit('session.mode_changed', { data: { newMode: 'unsupported' } });
 
 		expect(h.mode).toBe('plan');
 		expect(h.events).toHaveLength(1);

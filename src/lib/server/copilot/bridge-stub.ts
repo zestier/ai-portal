@@ -8,10 +8,10 @@
 // Test triggers: include any of the following tokens in the prompt to drive
 // interactive flows from a Playwright test without a real Copilot CLI:
 //   @trigger-permission         -> onPermissionRequest fires (shell tool)
-//   @trigger-auto-mode-switch   -> onAutoModeSwitch fires
+//   @trigger-auto-mode-switch   -> onAutoModeSwitchRequest fires
 //   @trigger-user-input         -> onUserInputRequest fires
 //   @trigger-elicitation        -> onElicitationRequest fires (simple form)
-//   @trigger-exit-plan-mode     -> onExitPlanMode fires
+//   @trigger-exit-plan-mode     -> onExitPlanModeRequest fires
 //   @trigger-sampling           -> emits sampling.requested + .completed
 //   @trigger-mcp-oauth          -> emits mcp.oauth_required + _completed
 //   @trigger-external-tool      -> emits external_tool.requested + .completed
@@ -27,8 +27,8 @@ interface StubHandlers {
 	onPermissionRequest?: (req: unknown) => Promise<unknown>;
 	onUserInputRequest?: (req: unknown) => Promise<unknown>;
 	onElicitationRequest?: (ctx: unknown) => Promise<unknown>;
-	onExitPlanMode?: (req: unknown) => Promise<unknown>;
-	onAutoModeSwitch?: (req: unknown) => Promise<unknown>;
+	onExitPlanModeRequest?: (req: unknown) => Promise<unknown>;
+	onAutoModeSwitchRequest?: (req: unknown) => Promise<unknown>;
 }
 
 class StubSession {
@@ -128,7 +128,7 @@ class StubSession {
 			});
 		}
 		if (prompt.includes('@trigger-exit-plan-mode')) {
-			await this.handlers.onExitPlanMode?.({
+			await this.handlers.onExitPlanModeRequest?.({
 				summary: 'Plan complete — ready to execute.',
 				planContent: '- Step 1\n- Step 2',
 				actions: ['execute', 'revise'],
@@ -136,7 +136,7 @@ class StubSession {
 			});
 		}
 		if (prompt.includes('@trigger-auto-mode-switch')) {
-			await this.handlers.onAutoModeSwitch?.({
+			await this.handlers.onAutoModeSwitchRequest?.({
 				errorCode: 'rate_limited',
 				retryAfterSeconds: 30
 			});
@@ -222,8 +222,8 @@ function pickHandlers(opts: StubSessionConfig): StubHandlers {
 		onPermissionRequest: opts.onPermissionRequest,
 		onUserInputRequest: opts.onUserInputRequest,
 		onElicitationRequest: opts.onElicitationRequest,
-		onExitPlanMode: opts.onExitPlanMode,
-		onAutoModeSwitch: opts.onAutoModeSwitch
+		onExitPlanModeRequest: opts.onExitPlanModeRequest,
+		onAutoModeSwitchRequest: opts.onAutoModeSwitchRequest
 	};
 }
 

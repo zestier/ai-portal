@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { setupLocalEnv } from './helpers/env';
+import { setupLocalEnv, resetServerSingletons } from './helpers/env';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { appGlobalSymbols, clearGlobalSingletonValues } from '../src/lib/server/global-singleton';
+import * as usersRepo from '../src/lib/server/db/repos/users';
+import * as settingsRepo from '../src/lib/server/db/repos/settings';
 
 // Shared mock SDK client/session instances. These are mutated per test.
 const sdkSessionStub = {
@@ -39,6 +41,26 @@ const clientStub = {
 // care about is how many distinct construction calls happened.
 const clientCtor = vi.fn();
 
+// Spy on the structured logger so tests can assert on diagnostic log payloads
+// (e.g. the redacted session.config line) without scraping stdout, which is
+// unreliable under vitest's fork pool. Mocking it also silences the warn-level
+// audit noise the bridge emits during these tests. Declared via vi.hoisted so
+// the spies exist before the (hoisted) vi.mock factory and before the top-level
+// repo imports below transitively evaluate the mocked log module.
+const { logInfoSpy, logWarnSpy } = vi.hoisted(() => ({
+	logInfoSpy: vi.fn(),
+	logWarnSpy: vi.fn()
+}));
+
+vi.mock('../src/lib/server/log', () => ({
+	log: {
+		debug: vi.fn(),
+		info: logInfoSpy,
+		warn: logWarnSpy,
+		error: vi.fn()
+	}
+}));
+
 vi.mock('@github/copilot-sdk', () => {
 	class CopilotClient {
 		constructor(...args: unknown[]) {
@@ -46,7 +68,22 @@ vi.mock('@github/copilot-sdk', () => {
 			return clientStub as unknown as CopilotClient;
 		}
 	}
-	return { CopilotClient };
+	const RuntimeConnection = {
+		forStdio: (opts?: { path?: string; args?: readonly string[] }) => ({
+			kind: 'stdio' as const,
+			...opts
+		}),
+		forTcp: (opts?: { port?: number; connectionToken?: string }) => ({
+			kind: 'tcp' as const,
+			...opts
+		}),
+		forUri: (url: string, opts?: { connectionToken?: string }) => ({
+			kind: 'uri' as const,
+			url,
+			connectionToken: opts?.connectionToken
+		})
+	};
+	return { CopilotClient, RuntimeConnection };
 });
 
 // Import after the mock is registered. The bridge module caches a
@@ -79,6 +116,8 @@ beforeEach(async () => {
 	const dataDir = await setupLocalEnv('portal-bridge-test-');
 	const sessionWorkspace = join(dataDir, 'session-workspace');
 	mkdirSync(sessionWorkspace, { recursive: true });
+	logInfoSpy.mockReset();
+	logWarnSpy.mockReset();
 	// Reset every stub so any test that re-implements one (e.g. the
 	// usage_info test below mutates sdkSessionStub.send) can't leak its
 	// implementation into the next test. Re-install default resolved
@@ -164,6 +203,89 @@ describe('bridge.open() session resume behavior', () => {
 		expect(clientStub.resumeSession).not.toHaveBeenCalled();
 		expect(clientStub.createSession).toHaveBeenCalledTimes(1);
 		expect(clientStub.createSession.mock.calls[0][0].sessionId).toBe('conv-123');
+	});
+});
+
+describe('bridge.open() context tier', () => {
+	it('omits contextTier by default (standard window)', async () => {
+		clientStub.getSessionMetadata.mockResolvedValue(undefined);
+		const { open } = await importBridge();
+
+		await open(baseOpts);
+
+		expect(clientStub.createSession.mock.calls[0][0]).not.toHaveProperty('contextTier');
+	});
+
+	it('pins contextTier to long_context when COPILOT_CONTEXT_TIER=long_context', async () => {
+		process.env.COPILOT_CONTEXT_TIER = 'long_context';
+		await resetServerSingletons();
+		clientStub.getSessionMetadata.mockResolvedValue(undefined);
+		const { open } = await importBridge();
+
+		await open(baseOpts);
+
+		expect(clientStub.createSession.mock.calls[0][0].contextTier).toBe('long_context');
+	});
+
+	it('forwards the long_context tier on the resume path too', async () => {
+		process.env.COPILOT_CONTEXT_TIER = 'long_context';
+		await resetServerSingletons();
+		clientStub.getSessionMetadata.mockResolvedValue({ sessionId: 'conv-123' });
+		const { open } = await importBridge();
+
+		await open(baseOpts);
+
+		expect(clientStub.resumeSession.mock.calls[0][1].contextTier).toBe('long_context');
+	});
+
+	it('logs a redacted session.config payload with contextTier and no auth token', async () => {
+		process.env.COPILOT_CONTEXT_TIER = 'long_context';
+		await resetServerSingletons();
+		clientStub.getSessionMetadata.mockResolvedValue(undefined);
+		const { open } = await importBridge();
+
+		await open({ ...baseOpts, providerAuthToken: 'super-secret-token' });
+
+		const call = logInfoSpy.mock.calls.find((c) => c[0] === 'copilot.session.config');
+		expect(call).toBeTruthy();
+		const payload = call![1] as Record<string, unknown>;
+		expect(payload.contextTier).toBe('long_context');
+		expect(payload.path).toBe('create');
+		expect((payload.handlers as Record<string, boolean>).onPermissionRequest).toBe(true);
+		// The auth token lives on the client, never in the session payload —
+		// guard against a future refactor leaking it into this diagnostic log.
+		expect(JSON.stringify(payload)).not.toContain('super-secret-token');
+	});
+
+	it("uses the user's defaultContextTier over the server env default", async () => {
+		// Env default is the standard tier; the per-user setting opts into 1M.
+		const user = usersRepo.ensureLocalUser();
+		settingsRepo.save(user.id, {
+			...settingsRepo.defaults(),
+			defaultContextTier: 'long_context'
+		});
+		clientStub.getSessionMetadata.mockResolvedValue(undefined);
+		const { open } = await importBridge();
+
+		await open({ ...baseOpts, userId: user.id });
+
+		expect(clientStub.createSession.mock.calls[0][0].contextTier).toBe('long_context');
+	});
+
+	it("lets a user's explicit default tier override a long_context server default", async () => {
+		process.env.COPILOT_CONTEXT_TIER = 'long_context';
+		await resetServerSingletons();
+		const user = usersRepo.ensureLocalUser();
+		settingsRepo.save(user.id, {
+			...settingsRepo.defaults(),
+			defaultContextTier: 'default'
+		});
+		clientStub.getSessionMetadata.mockResolvedValue(undefined);
+		const { open } = await importBridge();
+
+		await open({ ...baseOpts, userId: user.id });
+
+		expect(clientStub.createSession.mock.calls[0][0]).not.toHaveProperty('contextTier');
 	});
 });
 
@@ -1272,7 +1394,7 @@ describe('bridge.open() remote CLI (COPILOT_CLI_URL) construction', () => {
 		delete process.env.COPILOT_CONNECTION_TOKEN;
 	});
 
-	it('forwards COPILOT_CONNECTION_TOKEN to the SDK as tcpConnectionToken', async () => {
+	it('connects via RuntimeConnection.forUri with the COPILOT_CONNECTION_TOKEN', async () => {
 		process.env.COPILOT_CLI_URL = '127.0.0.1:9000';
 		process.env.COPILOT_CONNECTION_TOKEN = 'shared-handshake-secret';
 		// Re-read config so the new env vars take effect.
@@ -1284,20 +1406,20 @@ describe('bridge.open() remote CLI (COPILOT_CLI_URL) construction', () => {
 
 		expect(clientCtor).toHaveBeenCalledTimes(1);
 		const args = clientCtor.mock.calls[0][0] as {
-			cliUrl?: string;
-			tcpConnectionToken?: string;
+			connection?: { kind?: string; url?: string; connectionToken?: string };
 			gitHubToken?: string;
 			useLoggedInUser?: boolean;
 		};
-		expect(args.cliUrl).toBe('127.0.0.1:9000');
-		expect(args.tcpConnectionToken).toBe('shared-handshake-secret');
-		// cliUrl mode must NOT pass gitHubToken/useLoggedInUser — the SDK
-		// rejects them as mutually exclusive with cliUrl.
+		expect(args.connection?.kind).toBe('uri');
+		expect(args.connection?.url).toBe('127.0.0.1:9000');
+		expect(args.connection?.connectionToken).toBe('shared-handshake-secret');
+		// URI mode must NOT pass gitHubToken/useLoggedInUser — the remote CLI
+		// manages its own auth.
 		expect(args.gitHubToken).toBeUndefined();
 		expect(args.useLoggedInUser).toBeUndefined();
 	});
 
-	it('omits tcpConnectionToken when COPILOT_CONNECTION_TOKEN is unset', async () => {
+	it('omits the connection token when COPILOT_CONNECTION_TOKEN is unset', async () => {
 		process.env.COPILOT_CLI_URL = '127.0.0.1:9000';
 		const { resetConfigForTests } = await import('../src/lib/server/config');
 		resetConfigForTests();
@@ -1306,10 +1428,10 @@ describe('bridge.open() remote CLI (COPILOT_CLI_URL) construction', () => {
 		await open(baseOpts);
 
 		const args = clientCtor.mock.calls[0][0] as {
-			cliUrl?: string;
-			tcpConnectionToken?: string;
+			connection?: { kind?: string; url?: string; connectionToken?: string };
 		};
-		expect(args.cliUrl).toBe('127.0.0.1:9000');
-		expect('tcpConnectionToken' in args).toBe(false);
+		expect(args.connection?.kind).toBe('uri');
+		expect(args.connection?.url).toBe('127.0.0.1:9000');
+		expect(args.connection?.connectionToken).toBeUndefined();
 	});
 });
