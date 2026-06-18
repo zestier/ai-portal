@@ -9,6 +9,7 @@ import type {
 } from '$lib/types';
 import { log } from '../log';
 import { deriveEnvelopeSummary, parseEnvelopeJson } from '../tools/types';
+import { SELF_INTERACTIVE_TOOL_NAMES } from '../tools/self-interactive';
 import {
 	cancel as cancelInteractive,
 	newRequestId,
@@ -699,6 +700,10 @@ export class SdkEventAdapter {
 		if (!ev) return;
 		const d = ev.data;
 		if (!d?.requestId) return;
+		// Tools that raise their own interactive dialog (e.g. request_permission_grant)
+		// already show a dedicated prompt; skip the generic "waiting" box so the user
+		// doesn't see a redundant second prompt next to the tool's own dialog.
+		if (d.toolName && SELF_INTERACTIVE_TOOL_NAMES.has(d.toolName)) return;
 		this.emitInfoRequest('external_tool', d.requestId, {
 			kind: 'external_tool',
 			toolName: d.toolName ?? 'unknown',

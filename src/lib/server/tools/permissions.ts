@@ -18,6 +18,7 @@ import {
 	describeGrantScope
 } from '$lib/permissions/scope-summary';
 import { GrantScopeSchema, refineScopeToolAlignment } from '$lib/permissions/scope-schema';
+import { GRANT_REQUEST_TOOL_NAME } from './self-interactive';
 import {
 	isInteractivePromptCancelledError,
 	newRequestId,
@@ -139,7 +140,7 @@ function buildGrantRequestTool(opts: {
 	emit: (ev: PortalEvent) => void;
 }): PortalTool {
 	return {
-		name: 'request_permission_grant',
+		name: GRANT_REQUEST_TOOL_NAME,
 		description:
 			'Ask the human to save a narrow, permanent permission grant so future matching tool calls are pre-approved. Useful when scaffolding a project needs a specific toolchain (e.g. running `pnpm`, `cargo`, or `npm`): request the NARROWEST scope that covers the need. This ALWAYS opens a human approval dialog and is never auto-approved, even with approvals bypassed; the human can narrow or deny it. Provide `tool` (the permission kind to grant), a structured `scope`, and a `reason`. Examples of `scope`: shell → {"kind":"shell","rule":{"command":[{"token":"pnpm"}],"positionals":{"kind":"workspace-paths"}}}; write → {"kind":"fs","perms":["write"],"rule":{"kind":"path","root":"workspace","behavior":"any"}}; url → {"kind":"url","rule":{"kind":"host","host":"registry.npmjs.org"}}.',
 		argsSchema: GrantRequestArgs,

@@ -226,6 +226,35 @@ describe('SdkEventAdapter zod event boundary', () => {
 	});
 });
 
+describe('SdkEventAdapter external-tool waiting prompt', () => {
+	it('surfaces a waiting info prompt for ordinary external tools', () => {
+		const h = makeHarness();
+
+		h.source.emit('external_tool.requested', {
+			data: { requestId: 'ext-1', toolName: 'some_external_tool' }
+		});
+
+		const info = h.events.filter((e) => e.type === 'interactive.request');
+		expect(info).toHaveLength(1);
+		expect(info[0]).toMatchObject({
+			type: 'interactive.request',
+			request: { kind: 'external_tool', toolName: 'some_external_tool' }
+		});
+	});
+
+	it('suppresses the generic waiting prompt for self-interactive tools', () => {
+		const h = makeHarness();
+
+		// request_permission_grant raises its own dedicated dialog; the generic
+		// "Waiting for external tool ..." box would be a redundant second prompt.
+		h.source.emit('external_tool.requested', {
+			data: { requestId: 'ext-grant', toolName: 'request_permission_grant' }
+		});
+
+		expect(h.events.filter((e) => e.type === 'interactive.request')).toEqual([]);
+	});
+});
+
 describe('SdkEventAdapter portal tool-result carriers', () => {
 	const envelope = JSON.stringify({ ok: true, result: { files: ['a.txt'] } }, null, 2);
 

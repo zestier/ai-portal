@@ -858,8 +858,14 @@
 				scheduleStreamStallTimeout();
 				return;
 			}
-		} catch {
-			/* restore below */
+			// Non-OK (e.g. the server rejected the response body): restore the
+			// prompt below so the user can retry. Log the status so a wire-shape
+			// mismatch is diagnosable rather than silently "doing nothing".
+			console.warn(
+				`interactive resolve failed: ${r.status} ${r.statusText} (request ${requestId})`
+			);
+		} catch (e) {
+			console.warn('interactive resolve request errored', e);
 		}
 		addPendingInteractive(request, { revealImmediately: true });
 		scheduleStreamStallTimeout();
