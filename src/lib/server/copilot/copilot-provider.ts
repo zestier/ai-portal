@@ -318,6 +318,30 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	}
 
 	let sdkSession: SdkSession;
+	// Open a brand-new SDK session for `providerSessionId`. This is the path a
+	// rerun (inline edit / regenerate) always takes: rerunFromUserMessage
+	// rotates the provider session to a freshly-minted id the Copilot CLI has
+	// never seen, so `getSessionMetadata` above returns nothing and there's no
+	// session to resume. Wrap it so a genuine open failure surfaces a clear,
+	// safe message (naming the conversation) instead of a raw SDK error string
+	// — the turn runner forwards `Error.message` straight into the chat as the
+	// turn's error event, so an opaque message is what the user would otherwise
+	// see. The auth token lives on the client, never in this message.
+	const createFreshSession = async (): Promise<SdkSession> => {
+		try {
+			return (await client.createSession({
+				...sessionConfig,
+				sessionId: providerSessionId
+			})) as unknown as SdkSession;
+		} catch (e) {
+			throw new Error(
+				`Failed to open a GitHub Copilot session for conversation ${opts.conversationId}: ${
+					(e as Error).message
+				}`,
+				{ cause: e }
+			);
+		}
+	};
 	// Redacted snapshot of what we hand the SDK, so a connected-CLI session can
 	// be diffed against a managed one without exposing auth/tool internals. The
 	// auth token lives on the CopilotClient (construction time), never in
@@ -353,16 +377,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 				providerSessionId,
 				err: (e as Error).message
 			});
-			sdkSession = (await client.createSession({
-				...sessionConfig,
-				sessionId: providerSessionId
-			})) as unknown as SdkSession;
+			sdkSession = await createFreshSession();
 		}
 	} else {
-		sdkSession = (await client.createSession({
-			...sessionConfig,
-			sessionId: providerSessionId
-		})) as unknown as SdkSession;
+		sdkSession = await createFreshSession();
 	}
 	sessionWorkspacePath = normalizeSessionWorkspacePath(sdkSession.workspacePath);
 

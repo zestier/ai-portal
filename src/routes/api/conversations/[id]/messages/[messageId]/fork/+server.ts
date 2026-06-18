@@ -5,6 +5,7 @@ import { forkAtMessage, ForkRejected } from '$lib/server/fork';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
+import { throwRerunFailure } from '$lib/server/rerun-error';
 
 // `content` present => edit a user message with the new text.
 // `content` absent  => retry from an assistant message (uses post snapshot).
@@ -57,6 +58,6 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		if (e instanceof ForkRejected) {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
-		throw e;
+		throwRerunFailure({ route: 'message_fork', conversationId: sourceId, userId }, e);
 	}
 };

@@ -4,6 +4,7 @@ import { regenerateFromAssistant, InlineEditRejected } from '$lib/server/message
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { requireUserId } from '$lib/server/auth/require';
 import { authorizeConversation } from '$lib/server/conversation-auth';
+import { throwRerunFailure } from '$lib/server/rerun-error';
 
 const REJECT_STATUS: Record<string, number> = {
 	conversation_not_found: 404,
@@ -40,6 +41,6 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		if (e instanceof InlineEditRejected) {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
-		throw e;
+		throwRerunFailure({ route: 'message_regenerate', conversationId: params.id, userId }, e);
 	}
 };

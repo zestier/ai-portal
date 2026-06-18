@@ -6,6 +6,7 @@ import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
 import { authorizeConversation } from '$lib/server/conversation-auth';
+import { throwRerunFailure } from '$lib/server/rerun-error';
 
 const Body = z.object({ content: z.string().trim().min(1).max(64_000) });
 
@@ -37,6 +38,6 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		if (e instanceof InlineEditRejected) {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
-		throw e;
+		throwRerunFailure({ route: 'message_inline_edit', conversationId: params.id, userId }, e);
 	}
 };
