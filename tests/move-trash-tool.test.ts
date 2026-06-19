@@ -122,28 +122,31 @@ describe('move tool', () => {
 	});
 
 	describe('derivePermissionRequest', () => {
-		it('gates on the destination when both paths are in-workspace', () => {
+		it('gates on BOTH paths (source as primary, destination as additional) when in-workspace', () => {
 			const req = move.derivePermissionRequest?.({ source: 'a.txt', destination: 'sub/b.txt' });
 			expect(req?.permissionKind).toBe('write');
-			expect(req?.path).toBe(join(root, 'sub/b.txt'));
+			expect(req?.path).toBe(join(root, 'a.txt'));
+			expect(req?.additionalPaths).toEqual([join(root, 'sub/b.txt')]);
 		});
 
-		it('surfaces an out-of-workspace SOURCE so the gateway prompts', () => {
+		it('surfaces an out-of-workspace SOURCE so the gateway evaluates it', () => {
 			const outside = makeTmpDir('move-derive-src-');
 			const req = move.derivePermissionRequest?.({
 				source: join(outside, 'x'),
 				destination: 'b.txt'
 			});
 			expect(req?.path).toBe(join(outside, 'x'));
+			expect(req?.additionalPaths).toEqual([join(root, 'b.txt')]);
 		});
 
-		it('surfaces an out-of-workspace DESTINATION so the gateway prompts', () => {
+		it('surfaces an out-of-workspace DESTINATION so the gateway evaluates it', () => {
 			const outside = makeTmpDir('move-derive-dst-');
 			const req = move.derivePermissionRequest?.({
 				source: 'a.txt',
 				destination: join(outside, 'x')
 			});
-			expect(req?.path).toBe(join(outside, 'x'));
+			expect(req?.path).toBe(join(root, 'a.txt'));
+			expect(req?.additionalPaths).toEqual([join(outside, 'x')]);
 		});
 
 		it('returns null for invalid args', () => {

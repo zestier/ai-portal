@@ -188,18 +188,43 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			return { kind: 'approve-once' } as const;
 		};
 
-		// Grant matching is a side-effect-free lookup. Compute it lazily and
-		// memoize so the forced-escalation block can reuse a deny/prompt
-		// grant's feedback without paying for a second lookup on the main path.
-		const lookupGrant = () => {
-			const target = isFilesystemPermissionKind(permissionKind) ? scopeKey : null;
-			const url = permissionKind === 'url' ? scopeKey : null;
-			return settingsRepo.matchGrantDetailed(
+		// fs targets to evaluate. A tool may declare additional fs paths that
+		// must ALSO be permitted for the same invocation (e.g. `move`, which
+		// must satisfy write on BOTH its source and destination). Each target is
+		// checked against the real grants + policy and the per-target decisions
+		// are combined to the most restrictive result: a deny on ANY target
+		// denies the whole request, and an auto-allow requires EVERY target to
+		// be permitted. This is the honest generalization of the single-path
+		// check — it consults the same grants the user actually has rather than
+		// a hardcoded workspace test. Non-fs kinds (shell/url/custom) always
+		// have exactly one target (the scope key), so their behavior is
+		// unchanged.
+		const fsKind = isFilesystemPermissionKind(permissionKind);
+		const evalTargets: (string | null)[] =
+			override && fsKind ? [override.path, ...(override.additionalPaths ?? [])] : [scopeKey];
+		const isMultiTarget = evalTargets.length > 1;
+
+		// Per-target decision, distinguishing an explicit grant outcome (which
+		// the session approve-all toggle must NOT override) from a policy-level
+		// outcome (which it may). `prompt-grant` is also non-persistable.
+		type TargetEval =
+			| { kind: 'allow' }
+			| { kind: 'deny'; feedback?: string }
+			| { kind: 'prompt-grant'; feedback?: string }
+			| { kind: 'prompt-policy' };
+		const evalRank = { allow: 0, 'prompt-policy': 1, 'prompt-grant': 2, deny: 3 } as const;
+
+		// Mirrors the original single-path ordering exactly: explicit grant
+		// first (allow/deny/prompt), then the approve-all toggle, then policy.
+		const evaluateTarget = (key: string | null): TargetEval => {
+			const target = fsKind ? key : null;
+			const url = permissionKind === 'url' ? key : null;
+			const g = settingsRepo.matchGrantDetailed(
 				opts.userId,
 				opts.conversationId,
 				matchTool,
 				permissionKind,
-				scopeKey,
+				key,
 				{
 					shellSegments,
 					target,
@@ -209,9 +234,34 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					argsHash: hash
 				}
 			);
+			if (g.outcome === 'allow') return { kind: 'allow' };
+			if (g.outcome === 'deny') return { kind: 'deny', feedback: g.feedback ?? undefined };
+			if (g.outcome === 'prompt') {
+				return { kind: 'prompt-grant', feedback: g.feedback ?? undefined };
+			}
+			if (opts.getApproveAll()) return { kind: 'allow' };
+			const decision = decideByPolicy(opts.policy, 'permission', permissionKind, {
+				scopeKey: key,
+				workspaceRoot: opts.workingDirectory
+			});
+			if (decision === 'approved') return { kind: 'allow' };
+			if (decision === 'denied') return { kind: 'deny' };
+			return { kind: 'prompt-policy' };
 		};
-		let grantResult: ReturnType<typeof settingsRepo.matchGrantDetailed> | null = null;
-		const getGrant = () => (grantResult ??= lookupGrant());
+
+		// Combine per-target evaluations most-restrictively. Memoized so the
+		// forced-escalation block can reuse a deny/prompt feedback without
+		// paying for a second lookup on the main path.
+		const computeEval = (): TargetEval => {
+			let worst: TargetEval = { kind: 'allow' };
+			for (const key of evalTargets) {
+				const e = evaluateTarget(key);
+				if (evalRank[e.kind] > evalRank[worst.kind]) worst = e;
+			}
+			return worst;
+		};
+		let evalResult: TargetEval | null = null;
+		const getEval = () => (evalResult ??= computeEval());
 
 		// A present, valid `forcePermissionPrompt` is the strongest signal:
 		// it overrides every auto-allow and auto-deny path that follows —
@@ -236,9 +286,9 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				forcedDenyFeedback = shellMisuse.feedback;
 			}
 			if (!forcedDenyFeedback) {
-				const g = getGrant();
-				if (g.outcome === 'deny' || g.outcome === 'prompt') {
-					forcedDenyFeedback = g.feedback ?? undefined;
+				const e = getEval();
+				if (e.kind === 'deny' || e.kind === 'prompt-grant') {
+					forcedDenyFeedback = e.feedback;
 				}
 			}
 			const forced = await maybePromptForEscalation(forcedDenyFeedback, forcedDenyFeedback);
@@ -287,14 +337,14 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			audit('auto-allow');
 			return { kind: 'approve-once' } as const;
 		}
-		const grant = getGrant();
-		if (grant.outcome === 'allow') {
+		const evaluation = getEval();
+		if (evaluation.kind === 'allow') {
 			audit('auto-allow');
 			return { kind: 'approve-once' } as const;
 		}
-		if (grant.outcome === 'deny') {
+		if (evaluation.kind === 'deny') {
 			audit('auto-deny');
-			if (grant.feedback) return { kind: 'reject', feedback: grant.feedback } as const;
+			if (evaluation.feedback) return { kind: 'reject', feedback: evaluation.feedback } as const;
 			return { kind: 'reject' } as const;
 		}
 		let promptRequest: {
@@ -302,32 +352,21 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			bestEffortFeedback: string;
 			defaultDenyFeedback?: string;
 		};
-		if (grant.outcome === 'prompt') {
+		if (evaluation.kind === 'prompt-grant') {
 			promptRequest = {
 				canPersistDecision: false,
-				bestEffortFeedback: grant.feedback ?? bestEffortPromptGrantFeedback({ permissionKind }),
-				defaultDenyFeedback: grant.feedback ?? undefined
+				bestEffortFeedback:
+					evaluation.feedback ?? bestEffortPromptGrantFeedback({ permissionKind }),
+				defaultDenyFeedback: evaluation.feedback
 			};
 		} else {
-			if (opts.getApproveAll()) {
-				audit('auto-allow');
-				return { kind: 'approve-once' } as const;
-			}
-
-			const decision = decideByPolicy(opts.policy, 'permission', permissionKind, {
-				scopeKey,
-				workspaceRoot: opts.workingDirectory
-			});
-			if (decision === 'approved') {
-				audit('auto-allow');
-				return { kind: 'approve-once' } as const;
-			}
-			if (decision === 'denied') {
-				audit('auto-deny');
-				return { kind: 'reject' } as const;
-			}
+			// prompt-policy: the approve-all toggle (applied per-target in
+			// evaluateTarget) didn't short-circuit, so a human prompt is needed.
+			// A single-target policy prompt is persistable as a grant; a
+			// multi-target request can't be captured by one stored scope, so
+			// persistence is disabled.
 			promptRequest = {
-				canPersistDecision: true,
+				canPersistDecision: !isMultiTarget,
 				bestEffortFeedback: bestEffortPermissionFeedback({ permissionKind })
 			};
 		}

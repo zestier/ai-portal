@@ -53,6 +53,15 @@ export interface ToolPermissionRequest {
 	// as a native fs request's `path` would be, so prefer an absolute,
 	// symlink-resolved path so the matcher and the dialog agree on the target.
 	path: string;
+	// Additional fs targets that must ALSO be permitted for the same
+	// invocation. The gateway evaluates `path` and every `additionalPaths`
+	// entry against the user's grants + policy and combines the per-target
+	// outcomes MOST-RESTRICTIVELY: a deny on any target denies the request, and
+	// an auto-allow requires every target to be permitted. Used by two-path
+	// tools like `move`, which must satisfy write on both source and
+	// destination. A request with additional paths is never persistable from
+	// the prompt (one stored scope can't capture multiple targets).
+	additionalPaths?: string[];
 }
 
 export interface PortalTool {

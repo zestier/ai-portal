@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
@@ -118,6 +118,41 @@ describe('move permission wiring', () => {
 		);
 		expect(result).toMatchObject({ kind: 'reject' });
 		expect(harness.events.some((e) => e.type === 'interactive.request')).toBe(false);
+	});
+
+	it('blocks an in-workspace move when a write-DENY grant covers the SOURCE (most-restrictive)', async () => {
+		// Both paths are in-workspace, so the destination alone would auto-approve
+		// via the fs-write seed. Because move gates on BOTH paths, an explicit
+		// deny on the SOURCE must still reject the whole move — the gap the
+		// two-path gate closes (a single-path gate on the destination would have
+		// silently bypassed this deny).
+		const harness = await makeHarness('interactive');
+		const settings = await import('../src/lib/server/db/repos/settings');
+		writeFileSync(join(harness.workspaceRoot, 'secret.txt'), 'x');
+		const srcAbs = realpathSync(join(harness.workspaceRoot, 'secret.txt'));
+		settings.addGrant({
+			userId: harness.user.id,
+			conversationId: harness.conversationId,
+			tool: 'write',
+			permissionKind: 'write',
+			scope: {
+				kind: 'fs',
+				perms: ['write'],
+				rule: { kind: 'path', root: 'absolute', behavior: 'exact', value: srcAbs }
+			},
+			decision: 'deny',
+			denyReason: 'protected path'
+		});
+		const result = await harness.onPermissionRequest(
+			request('move', { source: 'secret.txt', destination: 'b.txt' })
+		);
+		expect(result).toMatchObject({ kind: 'reject' });
+		// A move NOT touching the protected source still auto-approves, proving
+		// the deny is path-specific and not a blanket block.
+		const ok = await harness.onPermissionRequest(
+			request('move', { source: 'other.txt', destination: 'c.txt' })
+		);
+		expect(ok).toEqual({ kind: 'approve-once' });
 	});
 });
 

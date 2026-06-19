@@ -75,25 +75,20 @@ function resolveAbsoluteTarget(workspaceRoot: string, rawPath: string): string |
 }
 
 // A `move` is a two-path operation, so it must be gated on BOTH the source and
-// the destination. The permission channel carries a single fs request, so we
-// surface whichever side ESCAPES the workspace first (forcing a prompt). When
-// both sides are in-workspace we return the destination, which the standard
-// fs-write seed auto-approves — the handler independently rejects either side
-// escaping the workspace, so an auto-approval can only ever stay in-workspace.
-function deriveMovePermissionPath(
+// the destination. Resolve each to an absolute, symlink-aware path (without
+// enforcing containment — the handler does that) so the permission layer can
+// evaluate BOTH against the user's real grants + policy and combine
+// most-restrictively. Returns null when either path can't be resolved so the
+// gateway falls back to its default custom-tool request.
+function resolveMoveTargets(
 	workspaceRoot: string,
 	source: string,
 	destination: string
-): string | null {
+): { source: string; destination: string } | null {
 	const src = resolveAbsoluteTarget(workspaceRoot, source);
 	const dst = resolveAbsoluteTarget(workspaceRoot, destination);
 	if (src === null || dst === null) return null;
-	const root = resolveWithParentFallback(resolve(workspaceRoot));
-	if (root !== null) {
-		if (!isPathInWorkspace(src, root)) return src;
-		if (!isPathInWorkspace(dst, root)) return dst;
-	}
-	return dst;
+	return { source: src, destination: dst };
 }
 
 // True when `rel` is the trash dir itself or anything nested inside it. Used to
@@ -179,13 +174,19 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 			derivePermissionRequest(args): ToolPermissionRequest | null {
 				const parsed = MoveArgs.safeParse(args);
 				if (!parsed.success) return null;
-				const path = deriveMovePermissionPath(
+				const targets = resolveMoveTargets(
 					workspaceRoot,
 					parsed.data.source,
 					parsed.data.destination
 				);
-				if (path === null) return null;
-				return { permissionKind: 'write', path };
+				if (targets === null) return null;
+				// Gate on BOTH paths: the gateway evaluates source + destination
+				// against the real grants and combines most-restrictively.
+				return {
+					permissionKind: 'write',
+					path: targets.source,
+					additionalPaths: [targets.destination]
+				};
 			},
 			async handler(args) {
 				const { source, destination, overwrite } = MoveArgs.parse(args);
