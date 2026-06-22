@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { err, ok, type PortalTool, type ToolPermissionRequest } from './types';
+import { scratchSubdir, ensureZapGitignore } from './zap-dir';
 
 const CreateDirectoryArgs = z
 	.object({
@@ -27,8 +28,16 @@ const TrashArgs = z
 // Workspace-relative directory the `trash` tool moves deleted entries into.
 // Keeping it inside the workspace is deliberate: the move that performs the
 // "delete" is itself an in-workspace write, so it is covered by the standard
-// fs-write seed (delete ⊆ write on the same path) and stays reversible.
-const TRASH_DIR = '.trash';
+// fs-write seed (delete ⊆ write on the same path) and stays reversible. It
+// lives under the portal's `.zap/scratch` area (see ./zap-dir) so a project
+// ignores one nested rule rather than a dot-dir per tool.
+//
+// Resolved lazily (per call, via `scratchSubdir`) rather than captured at
+// import time so a `ZAP_DIR` override stays consistent with
+// `ensureZapGitignore`, which also reads the env when invoked.
+function trashDir(): string {
+	return scratchSubdir('trash');
+}
 
 type ResolvedTarget = { ok: true; abs: string; rel: string } | { ok: false; message: string };
 
@@ -91,13 +100,17 @@ function resolveMoveTargets(
 	return { source: src, destination: dst };
 }
 
-// True when `rel` is the trash dir itself or anything nested inside it. Used to
-// stop the trash tool from trashing its own store (which would let an agent
-// recursively bury, or resurface, previously deleted entries).
-function isInTrash(rel: string): boolean {
-	if (rel === TRASH_DIR) return true;
-	const prefix = `${TRASH_DIR}/`;
-	return rel.startsWith(prefix);
+// Classifies how `rel` relates to the trash store so the trash tool can refuse
+// to bury or resurface its own state. Two distinct protections:
+//   - 'inside': `rel` is the store itself or nested within it. Trashing it would
+//     let an agent recursively bury, or resurface, previously deleted entries.
+//   - 'ancestor': `rel` is a parent of the store (e.g. `.zap`, `.zap/scratch`).
+//     Trashing it would drag the whole store along — and `rename` would anyway
+//     fail trying to move a directory into its own descendant.
+function trashRelation(rel: string, dir: string): 'inside' | 'ancestor' | null {
+	if (rel === dir || rel.startsWith(`${dir}/`)) return 'inside';
+	if (dir.startsWith(`${rel}/`)) return 'ancestor';
+	return null;
 }
 
 export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
@@ -229,7 +242,7 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 		{
 			name: 'trash',
 			description:
-				'Safely delete a file or directory by moving it into the workspace `.trash/` directory instead of unlinking it. Reversible: each entry is stored under `.trash/<entryId>/` alongside a `meta.json` recording its original path, so it can be restored or purged later. The path must be workspace-relative (absolute paths and `..` escapes are rejected), and the `.trash/` store itself cannot be trashed. Prefer this over `bash rm` — it never destroys data irrecoverably.',
+				'Safely delete a file or directory by moving it into the workspace `.zap/scratch/trash/` directory instead of unlinking it. Reversible: each entry is stored under `.zap/scratch/trash/<entryId>/` alongside a `meta.json` recording its original path, so it can be restored or purged later. The path must be workspace-relative (absolute paths and `..` escapes are rejected), and the trash store itself cannot be trashed. Prefer this over `bash rm` — it never destroys data irrecoverably.',
 			argsSchema: TrashArgs,
 			parameters: {
 				type: 'object',
@@ -258,19 +271,28 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 				if (target.rel === '.' || target.rel === '') {
 					return err('refusing to trash the workspace root');
 				}
-				if (isInTrash(target.rel)) {
-					return err('refusing to trash the .trash store itself');
+				const dir = trashDir();
+				const relation = trashRelation(target.rel, dir);
+				if (relation === 'inside') {
+					return err('refusing to trash the trash store itself');
+				}
+				if (relation === 'ancestor') {
+					return err(`refusing to trash ${target.rel}: it contains the trash store`);
 				}
 				try {
 					const targetStat = await stat(target.abs).catch(() => null);
 					if (!targetStat) return err(`path does not exist: ${target.rel}`);
 					const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-					const entryDirRel = `${TRASH_DIR}/${entryId}`;
+					const entryDirRel = `${dir}/${entryId}`;
 					const entryDir = resolveWorkspaceTarget(workspaceRoot, entryDirRel);
 					if (!entryDir.ok) return err(entryDir.message);
 					const name = basename(target.rel);
 					const trashedRel = `${entryDirRel}/${name}`;
 					const trashedAbs = resolve(entryDir.abs, name);
+					// Drop a self-contained .zap/.gitignore so the scratch tree
+					// (this trash store included) stays out of the host repo
+					// without us touching its root .gitignore.
+					await ensureZapGitignore(workspaceRoot);
 					await mkdir(entryDir.abs, { recursive: true });
 					await writeFile(
 						resolve(entryDir.abs, 'meta.json'),

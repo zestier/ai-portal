@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
+import { scratchSubdir } from '../src/lib/server/tools/zap-dir';
 import type { PortalEvent } from '../src/lib/types';
 
 // `move` and `trash` route their permission through the shared interactive
@@ -182,7 +183,7 @@ describe('trash permission wiring', () => {
 		expect(await resultPromise).toMatchObject({ kind: 'reject' });
 	});
 
-	it('the approved in-workspace trash, once run, moves the file into .trash', async () => {
+	it('the approved in-workspace trash, once run, moves the file into the trash dir', async () => {
 		const harness = await makeHarness('interactive');
 		writeFileSync(join(harness.workspaceRoot, 'a.txt'), 'bye');
 		const result = await harness.onPermissionRequest(request('trash', { path: 'a.txt' }));
@@ -191,7 +192,7 @@ describe('trash permission wiring', () => {
 		const run = await tool.handler({ path: 'a.txt' });
 		expect(run.ok).toBe(true);
 		expect(existsSync(join(harness.workspaceRoot, 'a.txt'))).toBe(false);
-		expect(existsSync(join(harness.workspaceRoot, '.trash'))).toBe(true);
+		expect(existsSync(join(harness.workspaceRoot, scratchSubdir('trash')))).toBe(true);
 	});
 
 	it('the approved in-workspace move, once run, relocates the file', async () => {

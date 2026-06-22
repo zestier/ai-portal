@@ -10,7 +10,10 @@ import {
 import { join } from 'node:path';
 import { makeTmpDir } from './helpers/tmp';
 import { buildFilesystemTools } from '../src/lib/server/tools/filesystem';
+import { scratchSubdir, scratchDir, zapDir } from '../src/lib/server/tools/zap-dir';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
+
+const TRASH_DIR = scratchSubdir('trash');
 
 function getTool(root: string, name: string): PortalTool {
 	const tool = buildFilesystemTools(root).find((t) => t.name === name);
@@ -165,25 +168,42 @@ describe('trash tool', () => {
 	});
 
 	function onlyTrashEntry(): string {
-		const entries = readdirSync(join(root, '.trash'));
+		const entries = readdirSync(join(root, TRASH_DIR));
 		expect(entries).toHaveLength(1);
 		return entries[0];
 	}
 
-	it('moves a file into .trash and removes it from its original location', async () => {
+	it('moves a file into the trash dir and removes it from its original location', async () => {
 		writeFileSync(join(root, 'a.txt'), 'bye');
 		const res = await trash.handler({ path: 'a.txt' });
 		const payload = expectOk<{ originalPath: string; entryId: string; trashPath: string }>(res);
 		expect(payload.originalPath).toBe('a.txt');
 		expect(existsSync(join(root, 'a.txt'))).toBe(false);
 		expect(readFileSync(join(root, payload.trashPath), 'utf-8')).toBe('bye');
+		expect(payload.trashPath.startsWith(`${TRASH_DIR}/`)).toBe(true);
+	});
+
+	it('drops a self-contained .zap/.gitignore ignoring the scratch tree', async () => {
+		writeFileSync(join(root, 'a.txt'), 'x');
+		await trash.handler({ path: 'a.txt' });
+		const ignorePath = join(root, zapDir(), '.gitignore');
+		expect(existsSync(ignorePath)).toBe(true);
+		expect(readFileSync(ignorePath, 'utf-8')).toContain('/scratch/');
+	});
+
+	it('never clobbers a pre-existing .zap/.gitignore', async () => {
+		mkdirSync(join(root, zapDir()), { recursive: true });
+		writeFileSync(join(root, zapDir(), '.gitignore'), '# custom\n/scratch/\n');
+		writeFileSync(join(root, 'a.txt'), 'x');
+		await trash.handler({ path: 'a.txt' });
+		expect(readFileSync(join(root, zapDir(), '.gitignore'), 'utf-8')).toBe('# custom\n/scratch/\n');
 	});
 
 	it('writes a restorable meta.json describing the original path', async () => {
 		writeFileSync(join(root, 'a.txt'), 'x');
 		await trash.handler({ path: 'a.txt' });
 		const entryId = onlyTrashEntry();
-		const meta = JSON.parse(readFileSync(join(root, '.trash', entryId, 'meta.json'), 'utf-8'));
+		const meta = JSON.parse(readFileSync(join(root, TRASH_DIR, entryId, 'meta.json'), 'utf-8'));
 		expect(meta.originalPath).toBe('a.txt');
 		expect(meta.name).toBe('a.txt');
 		expect(meta.type).toBe('file');
@@ -204,7 +224,7 @@ describe('trash tool', () => {
 		writeFileSync(join(root, 'b.txt'), '2');
 		await trash.handler({ path: 'a.txt' });
 		await trash.handler({ path: 'b.txt' });
-		expect(readdirSync(join(root, '.trash'))).toHaveLength(2);
+		expect(readdirSync(join(root, TRASH_DIR))).toHaveLength(2);
 	});
 
 	it('errors when the path does not exist', async () => {
@@ -217,17 +237,26 @@ describe('trash tool', () => {
 		expect(expectErr(res)).toMatch(/workspace root/i);
 	});
 
-	it('refuses to trash the .trash store itself', async () => {
-		mkdirSync(join(root, '.trash'));
-		const res = await trash.handler({ path: '.trash' });
-		expect(expectErr(res)).toMatch(/\.trash/i);
+	it('refuses to trash the trash store itself', async () => {
+		mkdirSync(join(root, TRASH_DIR), { recursive: true });
+		const res = await trash.handler({ path: TRASH_DIR });
+		expect(expectErr(res)).toMatch(/trash/i);
 	});
 
-	it('refuses to trash a path nested inside .trash', async () => {
-		mkdirSync(join(root, '.trash', 'old'), { recursive: true });
-		writeFileSync(join(root, '.trash/old/x'), 'x');
-		const res = await trash.handler({ path: '.trash/old/x' });
-		expect(expectErr(res)).toMatch(/\.trash/i);
+	it('refuses to trash a path nested inside the trash store', async () => {
+		mkdirSync(join(root, TRASH_DIR, 'old'), { recursive: true });
+		writeFileSync(join(root, TRASH_DIR, 'old/x'), 'x');
+		const res = await trash.handler({ path: `${TRASH_DIR}/old/x` });
+		expect(expectErr(res)).toMatch(/trash/i);
+	});
+
+	it('refuses to trash an ancestor of the trash store, leaving it intact', async () => {
+		mkdirSync(join(root, TRASH_DIR), { recursive: true });
+		for (const ancestor of [zapDir(), scratchDir()]) {
+			const res = await trash.handler({ path: ancestor });
+			expect(expectErr(res)).toMatch(/contains the trash store/i);
+			expect(existsSync(join(root, ancestor))).toBe(true);
+		}
 	});
 
 	it('rejects absolute paths without trashing anything', async () => {
