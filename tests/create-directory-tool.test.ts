@@ -11,9 +11,9 @@ function createDirectoryTool(root: string): PortalTool {
 	return tool;
 }
 
-function expectOk(result: ToolResult): { path: string; created: boolean } {
+function expectOk(result: ToolResult): { path: string; outcome: string } {
 	if (!result.ok) throw new Error(`expected ok, got error: ${result.error.message}`);
-	return result.result as { path: string; created: boolean };
+	return result.result as { path: string; outcome: string };
 }
 
 describe('create_directory tool', () => {
@@ -28,21 +28,25 @@ describe('create_directory tool', () => {
 	it('creates nested directories recursively and returns a workspace-relative path', async () => {
 		const res = await tool.handler({ path: 'a/b/c' });
 		const payload = expectOk(res);
-		expect(payload).toEqual({ path: 'a/b/c', created: true });
+		expect(payload).toEqual({ path: 'a/b/c', outcome: 'created' });
+		if (!res.ok) throw new Error('unreachable');
+		expect(res.summary).toBe('Created directory: a/b/c');
 		expect(statSync(join(root, 'a/b/c')).isDirectory()).toBe(true);
 	});
 
-	it('is idempotent: re-creating an existing directory succeeds with created=false', async () => {
+	it('is idempotent: re-creating an existing directory succeeds with outcome "already-present"', async () => {
 		await tool.handler({ path: 'data' });
 		const res = await tool.handler({ path: 'data' });
 		expect(res.ok).toBe(true);
-		expect(expectOk(res)).toEqual({ path: 'data', created: false });
+		expect(expectOk(res)).toEqual({ path: 'data', outcome: 'already-present' });
+		if (!res.ok) throw new Error('unreachable');
+		expect(res.summary).toBe('Directory already present: data');
 	});
 
-	it('reports created=false for a pre-existing directory created out of band', async () => {
+	it('reports outcome "already-present" for a pre-existing directory created out of band', async () => {
 		mkdirSync(join(root, 'preexisting'));
 		const res = await tool.handler({ path: 'preexisting' });
-		expect(expectOk(res)).toEqual({ path: 'preexisting', created: false });
+		expect(expectOk(res)).toEqual({ path: 'preexisting', outcome: 'already-present' });
 	});
 
 	it('errors when a path component is an existing file', async () => {
@@ -90,7 +94,7 @@ describe('create_directory tool', () => {
 
 	it('treats "." as the workspace root and is a no-op', async () => {
 		const res = await tool.handler({ path: '.' });
-		expect(expectOk(res)).toEqual({ path: '.', created: false });
+		expect(expectOk(res)).toEqual({ path: '.', outcome: 'already-present' });
 	});
 
 	describe('derivePermissionRequest', () => {

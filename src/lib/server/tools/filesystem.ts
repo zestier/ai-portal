@@ -105,7 +105,7 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 		{
 			name: 'create_directory',
 			description:
-				'Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`: missing parent directories are created and an already-existing directory is a successful no-op. The path must be workspace-relative (absolute paths and `..` escapes outside the workspace are rejected). Prefer this over `bash mkdir` so directory creation routes through the structured, auto-approved write path. The `create` file tool, by contrast, requires parent directories to already exist.',
+				"Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`: missing parent directories are created and an already-existing directory is a successful no-op. The path must be workspace-relative (absolute paths and `..` escapes outside the workspace are rejected). Prefer this over `bash mkdir` so directory creation routes through the structured, auto-approved write path. The `create` file tool, by contrast, requires parent directories to already exist. On success returns `{ path, outcome }` where `outcome` is `'created'` (the directory was newly made) or `'already-present'` (it already existed, so nothing was created).",
 			argsSchema: CreateDirectoryArgs,
 			parameters: {
 				type: 'object',
@@ -136,10 +136,16 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 						if (!existing.isDirectory()) {
 							return err(`path exists and is not a directory: ${resolved.rel}`);
 						}
-						return ok({ path: resolved.rel, created: false });
+						return ok(
+							{ path: resolved.rel, outcome: 'already-present' },
+							`Directory already present: ${resolved.rel}`
+						);
 					}
 					await mkdir(resolved.abs, { recursive: true });
-					return ok({ path: resolved.rel, created: true });
+					return ok(
+						{ path: resolved.rel, outcome: 'created' },
+						`Created directory: ${resolved.rel}`
+					);
 				} catch (e) {
 					return err(e instanceof Error ? e.message : String(e));
 				}
