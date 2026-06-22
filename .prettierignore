@@ -12,3 +12,4 @@ package-lock.json
 
 .devcontainer/devcontainer-lock.json
 docs/
+.trash/

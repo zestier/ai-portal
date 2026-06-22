@@ -30,17 +30,18 @@ describe('seed grants — installation', () => {
 		expect(all.every((g) => g.source === 'seed')).toBe(true);
 	});
 
-	it('installs hard-deny grants only for Git shell commands by default', () => {
+	it('installs hard-deny grants only for Git and wc shell commands by default', () => {
 		const denies = defaultSeedGrants().filter((g) => g.decision === 'deny');
 		expect(denies.length).toBeGreaterThan(0);
 		expect(
-			denies.every(
-				(g) =>
+			denies.every((g) => {
+				const token = g.scope?.kind === 'shell' ? g.scope.rule.command?.[0]?.token : undefined;
+				return (
 					g.tool === 'shell' &&
 					g.permissionKind === 'shell' &&
-					((g.scope?.kind === 'shell' && g.scope.rule.command?.[0]?.token === 'git') ||
-						g.scopePattern?.startsWith('git '))
-			)
+					(token === 'git' || token === 'wc' || g.scopePattern?.startsWith('git '))
+				);
+			})
 		).toBe(true);
 	});
 
@@ -74,11 +75,10 @@ describe('seed grants — installation', () => {
 		expect(
 			all
 				.filter((g) => g.decision === 'deny')
-				.every(
-					(g) =>
-						(g.scope?.kind === 'shell' && g.scope.rule.command?.[0]?.token === 'git') ||
-						g.scopePattern?.startsWith('git ')
-				)
+				.every((g) => {
+					const token = g.scope?.kind === 'shell' ? g.scope.rule.command?.[0]?.token : undefined;
+					return token === 'git' || token === 'wc' || g.scopePattern?.startsWith('git ');
+				})
 		).toBe(true);
 		const parsed = parseShellCommand('cat README.md');
 		expect(
@@ -193,6 +193,16 @@ describe('seed grants — runtime behaviour', () => {
 		expect(shellMatchDetailed('git log -n 5').feedback).toContain('git_log tool');
 		expect(shellMatchDetailed('git show HEAD').feedback).toContain('git_show_commit');
 		expect(shellMatchDetailed('git commit -m x').feedback).toContain('git_commit');
+	});
+
+	it('denies shell wc and steers to the grep tool', () => {
+		expect(shellMatch('wc -l README.md', '/tmp')).toBe('deny');
+		expect(shellMatch('wc -w README.md', '/tmp')).toBe('deny');
+		// Even confined to the workspace (no longer an fs-read allow seed).
+		expect(shellMatch('wc README.md', '/tmp')).toBe('deny');
+		// The hard-deny is checked across every pipeline segment.
+		expect(shellMatch('cat README.md | wc -l', '/tmp')).toBe('deny');
+		expect(shellMatchDetailed('wc -l README.md', '/tmp').feedback).toContain('grep');
 	});
 
 	it('requires prompts for mutating git subcommands instead of auto-approving them', () => {

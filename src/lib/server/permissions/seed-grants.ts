@@ -65,7 +65,6 @@ const FS_READ_TOOLS = [
 	'cat',
 	'head',
 	'tail',
-	'wc',
 	'file',
 	'stat',
 	'ls',
@@ -210,6 +209,15 @@ function gitStructuredSubcommandFeedback(subcommand: string, tools: string): str
 	return `Shell \`git ${subcommand}\` is denied. Use ${tools} ${toolNoun}.`;
 }
 
+// `wc` is denied by default and steered to the structured grep tool. The
+// dominant real use is `wc -l` (line count), which the grep tool covers via
+// `output_mode: 'count'` with the pattern `^` (every line matches once).
+// Word/byte counts are intentionally NOT offered a recipe: count mode counts
+// matching LINES, not occurrences, so it can't produce a word count — those
+// rare needs escalate via `forcePermissionPrompt`.
+const WC_SHELL_DENY_FEEDBACK =
+	'Shell `wc` is denied by default. To count lines use the grep tool with output_mode count and the pattern ^ (it matches every line). For word or byte counts, escalate sparingly with `forcePermissionPrompt` only if no structured tool fits.';
+
 /**
  * Terminal-usage prompt rules. Since regular allow grants outrank prompt
  * grants, these only affect invocations that are not also covered by an allow
@@ -291,6 +299,14 @@ export function defaultSeedGrants(): SeedSpec[] {
 			)
 		);
 	}
+
+	// `wc` is denied (any args, in or out of workspace) and steered to the
+	// structured grep tool for line counts. A bare-token rule with `any`
+	// positionals also covers `cat foo | wc -l`, since the matcher checks
+	// hard-denies across every pipeline segment first.
+	seeds.push(
+		shellDeny({ command: [{ token: 'wc' }], positionals: { kind: 'any' } }, WC_SHELL_DENY_FEEDBACK)
+	);
 
 	// rg / grep / find: read-only search tools. Their command-running
 	// options are denied, and — like the fs-read tools — their positionals
