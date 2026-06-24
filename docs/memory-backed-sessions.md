@@ -45,10 +45,11 @@ The portal now includes the full production-oriented foundation described here:
   an always-present entity-key index, and a server-side auto-search prestep
 - source-side consolidation as a projection derivation: each observation is one
   `fact.create` event, and a consolidation pass (run live and on every rebuild)
-  derives the active set — deduping re-observations and superseding single-valued
-  predicates. Supersession is never stored, so a rebuild re-derives the correct
-  active facts for free. A `pinned` flag plus confidence/recency form the
-  salience used to rank by durable importance instead of bare `updated_at`
+  derives the active set — superseding prior values of single-valued predicates
+  (the default) in place and deduping re-observations of collection predicates
+  (`trait`, `owns`, ...). Supersession is never stored, so a rebuild re-derives
+  the correct active facts for free. A `pinned` flag plus confidence/recency form
+  the salience used to rank by durable importance instead of bare `updated_at`
 
 ## Non-goals
 
@@ -522,8 +523,10 @@ an `attribute` (e.g. `predicate: "decision"`) or, when it is forward-looking, a
 Only open loops have an explicit lifecycle. `attribute` facts supersede in place
 — re-asserting one (same `entityKey`+`predicate`) retires the prior value
 automatically — and `directive`/`event` are append-only, so the extractor never
-"closes" anything except open loops. This asymmetry is stated explicitly to the
-model.
+"closes" anything except open loops. A small allowlist of **collection**
+predicates (`trait`, `owns`, ...) is the exception: their distinct values
+accumulate rather than supersede, so re-asserting one only dedupes an identical
+value. This asymmetry is stated explicitly to the model.
 
 Events are deliberately kept scarce: they feed a recency-ranked, hard-capped
 `recentEvents` window and never supersede, so an over-eager extractor that logged

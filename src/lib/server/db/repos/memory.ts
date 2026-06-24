@@ -346,15 +346,47 @@ export interface AddFactInput {
 }
 
 /**
- * Predicates that hold a single current value per entity. When a new fact for
- * one of these is committed, prior active facts with the same entity+predicate
- * are superseded instead of accumulating — this bounds memory growth at the
- * source for state-like facts (location, status, ...).
+ * Predicates whose values form a SET that accumulates — a character can have
+ * many `trait`s, `owns` many things, etc. — so distinct values coexist and only
+ * identical re-observations are deduped.
+ *
+ * Every OTHER predicate is single-valued: it holds one current value per entity,
+ * so re-asserting the same entity+predicate with a new value supersedes the
+ * prior one in place. This is the documented attribute contract ("attribute
+ * facts supersede in place — re-asserting one retires the prior value
+ * automatically", docs/memory-backed-sessions.md) and it bounds memory growth at
+ * the source for state-like facts (location, status, hair, mood, ...). Add a
+ * predicate here only when its values are genuinely a collection, not a single
+ * current value.
  */
-const SINGLE_VALUED_PREDICATES = new Set(['location', 'status', 'state', 'place', 'position']);
+const MULTI_VALUED_PREDICATES = new Set([
+	// Standing rules are append-only: distinct directives coexist (identical text
+	// is deduped). Keep in sync with engine's DIRECTIVE_PREDICATE.
+	'directive',
+	// Strict-mode mystery sessions accumulate many `clue` facts (one object per
+	// clue) on the session entity, queried as a set by memory_query_clues.
+	'clue',
+	'trait',
+	'owns',
+	'item',
+	'ability',
+	'skill',
+	'alias',
+	'relationship',
+	'knows',
+	'tag'
+]);
 
-function isSingleValuedPredicate(predicate: string): boolean {
-	return SINGLE_VALUED_PREDICATES.has(predicate.toLowerCase());
+// Per-character knowledge is stored under dynamic `knowledge:<entityKey>`
+// predicates (engine strict-mode validation + memory_get_character_knowledge),
+// and a character accumulates many distinct knowledge items under the same
+// predicate — so the whole family is collection-like, not single-valued.
+const MULTI_VALUED_PREDICATE_PREFIXES = ['knowledge:'];
+
+function isMultiValuedPredicate(predicate: string): boolean {
+	const normalized = predicate.toLowerCase();
+	if (MULTI_VALUED_PREDICATES.has(normalized)) return true;
+	return MULTI_VALUED_PREDICATE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 export interface AddOpenLoopInput {
@@ -661,10 +693,12 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
  * a fact (imperative writes, edits/deletes, and event-stream replay) so the same
  * rule is applied whether facts arrive live or are rebuilt from the log:
  *
- *   - single-valued predicates (location, status, ...): only the newest
- *     observation in the group stays active; older ones become `superseded`.
- *   - other predicates: the newest observation of each distinct value stays
- *     active; older identical observations become `superseded` (dedupe).
+ *   - multi-valued predicates (trait, owns, ...): the newest observation of each
+ *     distinct value stays active; older identical observations become
+ *     `superseded` (dedupe only — distinct values accumulate).
+ *   - every other predicate is single-valued: only the newest observation in the
+ *     group stays active and older ones become `superseded`, so re-asserting the
+ *     same entity+predicate with a new value supersedes the prior value in place.
  *
  * Because it operates purely on the projected rows (never emitting events), a
  * projection rebuilt from a stream that omits some observations — e.g. after the
@@ -688,13 +722,13 @@ function consolidateFactGroup(
 	if (rows.length === 0) return;
 
 	const activeIds = new Set<string>();
-	if (isSingleValuedPredicate(predicate)) {
-		activeIds.add(rows[rows.length - 1].id);
-	} else {
+	if (isMultiValuedPredicate(predicate)) {
 		// Newest row wins per distinct value (later rows overwrite the map entry).
 		const newestByValue = new Map<string, string>();
 		for (const row of rows) newestByValue.set(row.value_json, row.id);
 		for (const id of newestByValue.values()) activeIds.add(id);
+	} else {
+		activeIds.add(rows[rows.length - 1].id);
 	}
 
 	const now = Date.now();

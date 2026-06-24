@@ -4786,6 +4786,91 @@ describe('memory-backed sessions', () => {
 		);
 	});
 
+	it('supersedes a non-allowlisted predicate in place by default', () => {
+		// Regression: any predicate not in MULTI_VALUED_PREDICATES is single-valued,
+		// so re-asserting it with a new value retires the prior value automatically
+		// (the documented "attributes supersede in place" contract) rather than
+		// leaving both values active in the projection.
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'supersede-default',
+			workdir: '/tmp',
+			model: null
+		});
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		memory.addFact(conv.id, { entityId, predicate: 'hair', value: 'brown' });
+		memory.addFact(conv.id, { entityId, predicate: 'hair', value: 'black' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'hair', status: 'active' });
+		expect(active).toHaveLength(1);
+		expect(active[0].value).toBe('black');
+		expect(memory.listFacts(conv.id, { predicate: 'hair', status: 'superseded' })).toHaveLength(1);
+	});
+
+	it('keeps distinct values of an allowlisted collection predicate active', () => {
+		// The flip side of the default: collection predicates (trait, owns, ...)
+		// accumulate distinct values instead of superseding in place.
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'collection', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.mara', entityType: 'character', displayName: 'Mara' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.mara')!.id;
+
+		memory.addFact(conv.id, { entityId, predicate: 'owns', value: 'brass key' });
+		memory.addFact(conv.id, { entityId, predicate: 'owns', value: 'lantern' });
+
+		const active = memory.listFacts(conv.id, { predicate: 'owns', status: 'active' });
+		expect(active.map((f) => f.value).sort()).toEqual(['brass key', 'lantern']);
+		expect(memory.listFacts(conv.id, { predicate: 'owns', status: 'superseded' })).toHaveLength(0);
+	});
+
+	it('accumulates clue and knowledge facts under one entity+predicate group', () => {
+		// Regression: clue facts (one object per clue on the session entity) and
+		// dynamic knowledge:<entityKey> facts both accumulate as a set — they must
+		// not collapse to a single value under the supersede-by-default rule.
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'clue-knowledge', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: {
+				entities: [{ entityKey: 'character.elias', entityType: 'character', displayName: 'Elias' }]
+			}
+		});
+		const entityId = memory.getEntity(conv.id, 'character.elias')!.id;
+
+		memory.addFact(conv.id, {
+			predicate: 'clue',
+			value: { id: 'blue_candle', status: 'revealed' }
+		});
+		memory.addFact(conv.id, { predicate: 'clue', value: { id: 'torn_letter', status: 'hidden' } });
+		expect(memory.listFacts(conv.id, { predicate: 'clue', status: 'active' })).toHaveLength(2);
+
+		memory.addFact(conv.id, {
+			entityId,
+			predicate: 'knowledge:character.elias',
+			value: 'the vault code'
+		});
+		memory.addFact(conv.id, {
+			entityId,
+			predicate: 'knowledge:character.elias',
+			value: 'the alibi'
+		});
+		expect(
+			memory.listFacts(conv.id, { predicate: 'knowledge:character.elias', status: 'active' })
+		).toHaveLength(2);
+	});
+
 	it('treats single-valued predicates case-insensitively', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'case', workdir: '/tmp', model: null });
