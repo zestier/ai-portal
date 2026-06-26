@@ -1127,7 +1127,7 @@ describe('memory-backed sessions', () => {
 		expect(toolText(await globalSearch.handler({ query: 'noir' }))).toContain('story-tone');
 	});
 
-	it('returns compact memory rows by default and full rows under verbose', async () => {
+	it('returns compact memory rows by default and full rows under fields:"all"', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		commitPatch({
@@ -1163,14 +1163,37 @@ describe('memory-backed sessions', () => {
 		expect(compact._omitted).toContain('conversationId');
 		expect(compact._omitted).not.toContain('summary');
 
-		const verbose = toolData<{
+		const full = toolData<{
 			entity: Record<string, unknown>;
 			_omitted?: string[];
-		}>(await getEntity.handler({ id: 'character.elias', verbose: true }));
-		// Verbose restores the full payload and omits the marker.
-		expect(verbose.entity).toHaveProperty('createdAt');
-		expect(verbose.entity).toHaveProperty('conversationId');
-		expect(verbose._omitted).toBeUndefined();
+		}>(await getEntity.handler({ id: 'character.elias', fields: 'all' }));
+		// fields:"all" restores the full payload and omits the marker.
+		expect(full.entity).toHaveProperty('createdAt');
+		expect(full.entity).toHaveProperty('conversationId');
+		expect(full._omitted).toBeUndefined();
+
+		// An explicit field list returns exactly those columns (here a provenance
+		// field omitted by the compact view) and suppresses the _omitted marker.
+		const picked = toolData<{
+			entity: Record<string, unknown>;
+			_omitted?: string[];
+		}>(await getEntity.handler({ id: 'character.elias', fields: ['conversationId'] }));
+		expect(picked.entity).toHaveProperty('conversationId');
+		expect(picked.entity).not.toHaveProperty('displayName');
+		expect(picked._omitted).toBeUndefined();
+
+		// A field that exists only on the events sub-shape is accepted (validation
+		// is against the UNION of entity/facts/events), not rejected for being
+		// absent on the entity shape.
+		const eventField = toolData<{
+			events: Array<Record<string, unknown>>;
+		}>(await getEntity.handler({ id: 'character.elias', fields: ['eventType'] }));
+		expect(eventField.events[0]).toHaveProperty('eventType', 'timeline');
+
+		// A name on no sub-shape is rejected with a descriptive error.
+		await expect(
+			getEntity.handler({ id: 'character.elias', fields: ['definitelyNotAField'] })
+		).rejects.toThrow(/Unknown field/);
 	});
 
 	it('does not check missing entity claims against unrelated predicate facts', async () => {

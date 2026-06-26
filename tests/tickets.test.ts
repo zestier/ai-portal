@@ -163,6 +163,7 @@ describe('workspace tickets', () => {
 		const add = tools.find((t) => t.name === 'ticket_add')!;
 		const list = tools.find((t) => t.name === 'ticket_list')!;
 		const update = tools.find((t) => t.name === 'ticket_update')!;
+		const get = tools.find((t) => t.name === 'ticket_get')!;
 
 		await add.handler({ title: 'Remember this' });
 		const [ticket] = tickets.list(user.id, workspace);
@@ -172,5 +173,44 @@ describe('workspace tickets', () => {
 		const listed = await list.handler({ status: 'all' });
 		expect(listed.ok).toBe(true);
 		expect(listed.ok && listed.result).toContain('[done] Remember this');
+
+		// ticket_list with no fields keeps the dense hand-rendered string.
+		expect(typeof (listed.ok && listed.result)).toBe('string');
+
+		// "default" behaves like omitting fields -> same dense string.
+		const listedDefault = await list.handler({ status: 'all', fields: 'default' });
+		expect(listedDefault.ok && listedDefault.result).toBe(listed.ok && listed.result);
+
+		// An explicit `fields` selector switches ticket_list to a structured,
+		// projected array trimmed to the requested fields.
+		const listedFields = await list.handler({ status: 'all', fields: ['id', 'status'] });
+		const listedData = listedFields.ok && (listedFields.result as { tickets: unknown[] });
+		expect(Array.isArray(listedData && listedData.tickets)).toBe(true);
+		expect((listedData as { tickets: Record<string, unknown>[] }).tickets[0]).toEqual({
+			id: ticket.id,
+			status: 'done'
+		});
+
+		// ticket_get: compact default drops provenance/timestamps but lists them in
+		// _omitted; an explicit `fields` request recovers exactly what was asked for.
+		const compact = await get.handler({ id: ticket.id });
+		const compactData = compact.ok && (compact.result as Record<string, unknown>);
+		expect(compactData).toMatchObject({ id: ticket.id, title: 'Remember this' });
+		expect(compactData).not.toHaveProperty('createdAt');
+		expect((compactData as { _omitted?: string[] })._omitted).toContain('createdAt');
+
+		// "default" on ticket_get matches the omitted-fields compact result.
+		const compactDefault = await get.handler({ id: ticket.id, fields: 'default' });
+		expect(compactDefault.ok && compactDefault.result).toEqual(compactData);
+
+		const picked = await get.handler({ id: ticket.id, fields: ['createdAt'] });
+		const pickedData = picked.ok && (picked.result as Record<string, unknown>);
+		expect(pickedData).toHaveProperty('createdAt');
+		expect(pickedData).not.toHaveProperty('title');
+		expect(pickedData).not.toHaveProperty('_omitted');
+
+		const all = await get.handler({ id: ticket.id, fields: 'all' });
+		const allData = all.ok && (all.result as Record<string, unknown>);
+		expect(allData).toHaveProperty('workspaceKey', workspace);
 	});
 });
