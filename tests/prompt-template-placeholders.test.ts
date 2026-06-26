@@ -19,7 +19,8 @@ describe('placeholder registry', () => {
 		expect(placeholdersForType('ticket-action')).toEqual([
 			'ticket.title',
 			'ticket.id',
-			'ticket.body'
+			'ticket.body',
+			'ticket.plan'
 		]);
 	});
 
@@ -32,6 +33,7 @@ describe('placeholder registry', () => {
 
 	it('flags unknown placeholders per type', () => {
 		expect(findUnknownPlaceholders('{{ticket.body}}', 'ticket-action')).toEqual([]);
+		expect(findUnknownPlaceholders('{{ticket.plan}}', 'ticket-action')).toEqual([]);
 		expect(findUnknownPlaceholders('{{ticket.body}}', 'chat')).toEqual(['ticket.body']);
 		expect(findUnknownPlaceholders('{{ticket.nope}}', 'ticket-action')).toEqual(['ticket.nope']);
 	});
@@ -50,17 +52,26 @@ describe('interpolatePrompt', () => {
 	const values = ticketPlaceholderValues({
 		id: 'ticket-1',
 		title: 'Fix it',
-		body: 'Some details.'
+		body: 'Some details.',
+		plan: 'Step 1. Step 2.'
 	});
 
 	it('substitutes known placeholders', () => {
 		expect(
-			interpolatePrompt('Do this: {{ticket.title}} ({{ticket.id}})\n\n{{ticket.body}}', values)
-		).toBe('Do this: Fix it (ticket-1)\n\nSome details.');
+			interpolatePrompt(
+				'Do this: {{ticket.title}} ({{ticket.id}})\n\n{{ticket.body}}\n\n{{ticket.plan}}',
+				values
+			)
+		).toBe('Do this: Fix it (ticket-1)\n\nSome details.\n\nStep 1. Step 2.');
 	});
 
 	it('drops unknown placeholders and trims dangling blanks for an empty body', () => {
-		const empty = ticketPlaceholderValues({ id: 'ticket-1', title: 'Fix it', body: '   ' });
+		const empty = ticketPlaceholderValues({
+			id: 'ticket-1',
+			title: 'Fix it',
+			body: '   ',
+			plan: ''
+		});
 		expect(
 			interpolatePrompt(
 				'Do this: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',

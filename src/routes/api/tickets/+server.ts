@@ -33,6 +33,7 @@ export const GET: RequestHandler = ({ locals, url }) => {
 const CreateBody = z.object({
 	title: z.string().trim().min(1).max(200),
 	body: z.string().trim().max(8000).optional(),
+	plan: z.string().trim().max(100000).optional(),
 	workspace: z.string().min(1).optional(),
 	sourceConversationId: z.string().min(1).optional(),
 	sourceMessageId: z.string().min(1).optional()
@@ -61,6 +62,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		workspaceKey: workspace,
 		title: body.title,
 		body: body.body,
+		plan: body.plan,
 		sourceConversationId: body.sourceConversationId ?? null,
 		sourceMessageId: body.sourceMessageId ?? null
 	});

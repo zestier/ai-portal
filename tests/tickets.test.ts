@@ -212,5 +212,104 @@ describe('workspace tickets', () => {
 		const all = await get.handler({ id: ticket.id, fields: 'all' });
 		const allData = all.ok && (all.result as Record<string, unknown>);
 		expect(allData).toHaveProperty('workspaceKey', workspace);
+
+		// plan: settable via ticket_update, omitted from the compact view, and
+		// fetched on demand through the fields selector (the showcase use case).
+		await update.handler({ id: ticket.id, plan: '1. wire it\n2. test it' });
+		const compactNoPlan = await get.handler({ id: ticket.id });
+		expect(
+			compactNoPlan.ok && (compactNoPlan.result as Record<string, unknown>)
+		).not.toHaveProperty('plan');
+		const planOnly = await get.handler({ id: ticket.id, fields: ['plan'] });
+		const planData = planOnly.ok && (planOnly.result as Record<string, unknown>);
+		expect(planData).toEqual({ plan: '1. wire it\n2. test it' });
+	});
+
+	it('models ticket dependencies, blocks cycles, and surfaces blockers', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			id: 'conv-deps-test',
+			title: 'Deps',
+			workdir: workspace,
+			model: null
+		});
+		const otherWorkspace = mkdtempSync(join(tmpdir(), 'portal-ticket-deps-other-'));
+		const tools = buildTicketTools({
+			userId: user.id,
+			workspaceKey: workspace,
+			conversationId: conv.id
+		});
+		const list = tools.find((t) => t.name === 'ticket_list')!;
+		const get = tools.find((t) => t.name === 'ticket_get')!;
+		const block = tools.find((t) => t.name === 'ticket_block')!;
+		const unblock = tools.find((t) => t.name === 'ticket_unblock')!;
+
+		const api = tickets.create(user.id, { workspaceKey: workspace, title: 'Build API' });
+		const ui = tickets.create(user.id, { workspaceKey: workspace, title: 'Build UI' });
+		const foreign = tickets.create(user.id, { workspaceKey: otherWorkspace, title: 'Elsewhere' });
+
+		// UI depends on API: UI is blocked, API is not.
+		const blocked = await block.handler({ id: ui.id, blockedBy: api.id });
+		expect(blocked.ok).toBe(true);
+		expect(tickets.openBlockers(ui.id)).toEqual([api.id]);
+		expect(tickets.listDependents(api.id)).toEqual([ui.id]);
+
+		// Re-blocking is an idempotent no-op.
+		const again = await block.handler({ id: ui.id, blockedBy: api.id });
+		expect(again.ok && (again.result as { result: string }).result).toBe('exists');
+
+		// Self-edge and cycle are rejected.
+		expect((await block.handler({ id: ui.id, blockedBy: ui.id })).ok).toBe(false);
+		const cycle = await block.handler({ id: api.id, blockedBy: ui.id });
+		expect(cycle.ok).toBe(false);
+		expect(!cycle.ok && cycle.error.message).toMatch(/cycle/i);
+
+		// Cross-workspace pairing is rejected (foreign ticket isn't in this workspace).
+		expect((await block.handler({ id: ui.id, blockedBy: foreign.id })).ok).toBe(false);
+
+		// Dense ticket_list flags the blocked ticket inline.
+		const listed = await list.handler({});
+		expect(listed.ok && (listed.result as string)).toContain(`(blocked by: ${api.id})`);
+
+		// ticket_get exposes blockedBy/blocks via the fields selector.
+		const uiBlockers = await get.handler({ id: ui.id, fields: ['blockedBy'] });
+		expect(uiBlockers.ok && (uiBlockers.result as { blockedBy: string[] }).blockedBy).toEqual([
+			api.id
+		]);
+
+		// The compact ticket_get view shows blockers/dependents inline (no fields
+		// needed) when present: UI is blocked by API; API blocks UI.
+		const uiCompact = await get.handler({ id: ui.id });
+		expect(uiCompact.ok && (uiCompact.result as { blockedBy?: string[] }).blockedBy).toEqual([
+			api.id
+		]);
+		const apiCompact = await get.handler({ id: api.id });
+		expect(apiCompact.ok && (apiCompact.result as { blocks?: string[] }).blocks).toEqual([ui.id]);
+		// A ticket with no open blockers omits the empty list rather than showing [].
+		expect(apiCompact.ok && (apiCompact.result as Record<string, unknown>)).not.toHaveProperty(
+			'blockedBy'
+		);
+
+		// Completing the prerequisite clears the block (UI becomes ready).
+		tickets.update(api.id, user.id, { status: 'done' });
+		expect(tickets.openBlockers(ui.id)).toEqual([]);
+		const readyList = await list.handler({});
+		expect(readyList.ok && (readyList.result as string)).not.toContain('blocked by');
+		// UI now renders without a blockedBy entry in the compact view.
+		const uiReady = await get.handler({ id: ui.id });
+		expect(uiReady.ok && (uiReady.result as Record<string, unknown>)).not.toHaveProperty(
+			'blockedBy'
+		);
+
+		// Unblock removes the edge; a second unblock reports nothing to remove.
+		expect((await unblock.handler({ id: ui.id, blockedBy: api.id })).ok).toBe(true);
+		expect(tickets.listDependencies(ui.id)).toEqual([]);
+		expect((await unblock.handler({ id: ui.id, blockedBy: api.id })).ok).toBe(false);
+
+		rmSync(otherWorkspace, { recursive: true, force: true });
 	});
 });

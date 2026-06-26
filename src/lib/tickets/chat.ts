@@ -27,7 +27,7 @@ export function ticketActionConversationMode(
 /** Interpolate a ticket-action template's prompt with a ticket's values. */
 export function interpolateTicketPrompt(
 	template: Pick<ChatPromptTemplate, 'prompt'>,
-	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body'>
+	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body' | 'plan'>
 ): string {
 	return interpolatePrompt(template.prompt, ticketPlaceholderValues(ticket));
 }

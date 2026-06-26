@@ -10,12 +10,20 @@ const PatchBody = z
 	.object({
 		title: z.string().trim().min(1).max(200).optional(),
 		body: z.string().trim().max(8000).optional(),
+		plan: z.string().trim().max(100000).optional(),
 		status: z.enum(['open', 'done', 'archived']).optional(),
 		workspace: z.string().min(1).optional()
 	})
-	.refine((b) => b.title !== undefined || b.body !== undefined || b.status !== undefined, {
-		message: 'No fields to update'
-	});
+	.refine(
+		(b) =>
+			b.title !== undefined ||
+			b.body !== undefined ||
+			b.plan !== undefined ||
+			b.status !== undefined,
+		{
+			message: 'No fields to update'
+		}
+	);
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);

@@ -104,7 +104,7 @@ const PLACEHOLDER_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
 
 const PLACEHOLDERS_BY_TYPE: Record<PromptTemplateType, readonly string[]> = {
 	chat: [],
-	'ticket-action': ['ticket.title', 'ticket.id', 'ticket.body']
+	'ticket-action': ['ticket.title', 'ticket.id', 'ticket.body', 'ticket.plan']
 };
 
 export function placeholdersForType(type: PromptTemplateType): readonly string[] {
@@ -223,11 +223,12 @@ export function ticketActionDefaultId(userId: string, key: TicketActionDefault['
 
 /** Placeholder values for interpolating a ticket-action prompt. */
 export function ticketPlaceholderValues(
-	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body'>
+	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body' | 'plan'>
 ): Record<string, string> {
 	return {
 		'ticket.title': ticket.title,
 		'ticket.id': ticket.id,
-		'ticket.body': ticket.body.trim()
+		'ticket.body': ticket.body.trim(),
+		'ticket.plan': ticket.plan.trim()
 	};
 }

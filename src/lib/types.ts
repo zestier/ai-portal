@@ -89,6 +89,12 @@ export interface WorkspaceTicket {
 	workspaceKey: string;
 	title: string;
 	body: string;
+	/**
+	 * Durable, free-form implementation plan / design notes / checklist. Longer
+	 * than `body` and omitted from the agent tools' compact view (fetch it via
+	 * the `fields` selector). Empty string when unset.
+	 */
+	plan: string;
 	status: WorkspaceTicketStatus;
 	sourceConversationId: string | null;
 	sourceMessageId: string | null;
