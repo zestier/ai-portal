@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { appGlobalSymbols, clearGlobalSingletonValues } from '../src/lib/server/global-singleton';
 import * as usersRepo from '../src/lib/server/db/repos/users';
 import * as settingsRepo from '../src/lib/server/db/repos/settings';
+import { PORTAL_SYSTEM_GUIDANCE } from '../src/lib/server/runtime/system-guidance';
 
 // Shared mock SDK client/session instances. These are mutated per test.
 const sdkSessionStub = {
@@ -180,6 +181,25 @@ describe('bridge.open() session resume behavior', () => {
 		// would be a type error and confuse the SDK.
 		expect(cfg).not.toHaveProperty('sessionId');
 		expect(clientStub.createSession).not.toHaveBeenCalled();
+	});
+
+	it('appends portal system guidance on both the create and resume paths', async () => {
+		clientStub.getSessionMetadata.mockResolvedValue(undefined);
+		const { open } = await importBridge();
+		await open(baseOpts);
+		expect(clientStub.createSession.mock.calls[0][0].systemMessage).toEqual({
+			mode: 'append',
+			content: PORTAL_SYSTEM_GUIDANCE
+		});
+
+		clientStub.createSession.mockClear();
+		clientStub.getSessionMetadata.mockResolvedValue({ sessionId: 'conv-123' });
+		const { open: openAgain } = await importBridge();
+		await openAgain(baseOpts);
+		expect(clientStub.resumeSession.mock.calls[0][1].systemMessage).toEqual({
+			mode: 'append',
+			content: PORTAL_SYSTEM_GUIDANCE
+		});
 	});
 
 	it('falls back to createSession when resumeSession throws', async () => {

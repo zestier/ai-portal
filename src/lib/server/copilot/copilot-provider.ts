@@ -11,6 +11,7 @@ import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
 import type { ContextTier } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
+import { PORTAL_SYSTEM_GUIDANCE } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from './interactive-adapter';
 import { SdkEventAdapter, toRuntimeMode, type RuntimeSessionMode } from './sdk-events';
 import type {
@@ -299,6 +300,12 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		model: opts.model,
 		workingDirectory: opts.workingDirectory,
 		streaming: true,
+		// Append our standing guidance to the SDK-managed system prompt. `append`
+		// mode keeps every SDK guardrail/safety section intact and just adds ours;
+		// `replace` would drop those, so we never use it here. Set once at session
+		// establishment (carried on both the create and resume paths) so it costs
+		// system tokens once rather than being re-sent every turn like the prelude.
+		systemMessage: { mode: 'append' as const, content: PORTAL_SYSTEM_GUIDANCE },
 		...(contextTier ? { contextTier } : {}),
 		tools: wrapToolsForStreaming(portalTools, emit, () => currentTurnSignal),
 		onPermissionRequest,
@@ -355,6 +362,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		workingDirectory: sessionConfig.workingDirectory,
 		streaming: sessionConfig.streaming,
 		contextTier: 'contextTier' in sessionConfig ? sessionConfig.contextTier : null,
+		systemMessage: {
+			mode: sessionConfig.systemMessage.mode,
+			chars: sessionConfig.systemMessage.content.length
+		},
 		toolNames: portalTools.map((t) => t.name),
 		handlers: {
 			onPermissionRequest: Boolean(sessionConfig.onPermissionRequest),

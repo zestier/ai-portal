@@ -4,6 +4,9 @@ import { lmStudioProvider } from '../src/lib/server/providers/lm-studio-provider
 import type { ProviderOpenOptions } from '../src/lib/server/providers/provider';
 import type { PortalEvent } from '../src/lib/types';
 import { setupLocalEnv } from './helpers/env';
+import { PORTAL_SYSTEM_GUIDANCE } from '../src/lib/server/runtime/system-guidance';
+
+const systemGuidanceMsg = { role: 'system', content: PORTAL_SYSTEM_GUIDANCE };
 
 const baseOpts: ProviderOpenOptions = {
 	provider: 'lm-studio',
@@ -128,7 +131,7 @@ describe('lmStudioProvider', () => {
 			expect(href).toBe('http://127.0.0.1:1234/v1/chat/completions');
 			expect(JSON.parse(String(init?.body))).toMatchObject({
 				model: 'local-model',
-				messages: [{ role: 'user', content: 'hello' }],
+				messages: [systemGuidanceMsg, { role: 'user', content: 'hello' }],
 				tools: expect.arrayContaining([
 					expect.objectContaining({
 						type: 'function',
@@ -234,6 +237,7 @@ describe('lmStudioProvider', () => {
 		const chatCall = fetchMock.mock.calls.find(([, init]) => init?.body);
 		expect(JSON.parse(String(chatCall?.[1]?.body))).toMatchObject({
 			messages: [
+				systemGuidanceMsg,
 				{ role: 'user', content: 'remember alpha' },
 				{ role: 'assistant', content: 'alpha remembered' },
 				{ role: 'user', content: 'follow up' }

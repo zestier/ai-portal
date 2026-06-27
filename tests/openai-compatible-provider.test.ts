@@ -11,6 +11,9 @@ import type { ProviderOpenOptions } from '../src/lib/server/providers/provider';
 import type { PortalEvent } from '../src/lib/types';
 import { resolve as resolveInteractive } from '../src/lib/server/runtime/interactive-requests';
 import { setupLocalEnv } from './helpers/env';
+import { PORTAL_SYSTEM_GUIDANCE } from '../src/lib/server/runtime/system-guidance';
+
+const systemGuidanceMsg = { role: 'system', content: PORTAL_SYSTEM_GUIDANCE };
 
 const baseOpts: ProviderOpenOptions = {
 	provider: 'openai-compatible',
@@ -178,7 +181,7 @@ describe('openAICompatibleProvider', () => {
 		const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
 			expect(JSON.parse(String(init?.body))).toMatchObject({
 				model: 'local-model',
-				messages: [{ role: 'user', content: 'hello' }],
+				messages: [systemGuidanceMsg, { role: 'user', content: 'hello' }],
 				tools: expect.arrayContaining([
 					expect.objectContaining({
 						type: 'function',
@@ -216,6 +219,30 @@ describe('openAICompatibleProvider', () => {
 			'http://127.0.0.1:1234/v1/chat/completions',
 			expect.objectContaining({ method: 'POST' })
 		);
+	});
+
+	it('seeds exactly one leading system guidance message, not re-sent per turn', async () => {
+		const fetchMock = vi.fn(async () =>
+			sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n'])
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const session = await openAICompatibleProvider.openSession(baseOpts);
+
+		await collect(session.send('first', new AbortController().signal));
+		await collect(session.send('second', new AbortController().signal));
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		for (const call of fetchMock.mock.calls as unknown as Array<[unknown, RequestInit?]>) {
+			const sent = JSON.parse(String(call[1]?.body)).messages as Array<{
+				role: string;
+				content: string;
+			}>;
+			// One system message, always first — present each turn because the
+			// session keeps it at the head of the running message array, not because
+			// it's re-injected.
+			expect(sent.filter((m) => m.role === 'system')).toEqual([systemGuidanceMsg]);
+			expect(sent[0]).toEqual(systemGuidanceMsg);
+		}
 	});
 
 	it('sends configured OpenAI-compatible sampling controls with chat requests', async () => {
@@ -278,7 +305,7 @@ describe('openAICompatibleProvider', () => {
 			expect(requests).toHaveLength(1);
 			expect(requests[0]).toMatchObject({
 				model: 'local-model',
-				messages: [{ role: 'user', content: 'hello network' }],
+				messages: [systemGuidanceMsg, { role: 'user', content: 'hello network' }],
 				tools: expect.arrayContaining([
 					expect.objectContaining({
 						type: 'function',
@@ -323,6 +350,7 @@ describe('openAICompatibleProvider', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
 			messages: [
+				systemGuidanceMsg,
 				{ role: 'user', content: 'remember alpha' },
 				{ role: 'assistant', content: 'alpha remembered' },
 				{ role: 'user', content: 'what did I ask you to remember?' }
@@ -353,6 +381,7 @@ describe('openAICompatibleProvider', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
 			messages: [
+				systemGuidanceMsg,
 				{ role: 'user', content: 'remember alpha' },
 				{ role: 'assistant', content: 'alpha remembered' },
 				{ role: 'user', content: 'what did I ask you to remember?' }

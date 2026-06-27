@@ -18,6 +18,7 @@ import { buildMemoryTools } from '../tools/memory';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type { BackendProviderId, PortalEvent, SessionMode, ToolCallRecord } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
+import { PORTAL_SYSTEM_GUIDANCE } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from '../copilot/interactive-adapter';
 import type {
 	ModelBackendProvider,
@@ -399,7 +400,14 @@ export function openOpenAICompatibleSession(
 	let activeQueue: AsyncQueue<PortalEvent> | null = null;
 	let approveAllTools = opts.approveAllTools === true;
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
-	const messages: ChatMessage[] = restoreInitialMessages(cfg, opts);
+	// Seed our standing guidance as a single leading system message, once per
+	// session (before any restored history). Providers without a native system
+	// prompt channel — like this OpenAI-compatible/LM Studio path — carry it as
+	// the first conversation message rather than re-sending it each turn.
+	const messages: ChatMessage[] = [
+		{ role: 'system', content: PORTAL_SYSTEM_GUIDANCE },
+		...restoreInitialMessages(cfg, opts)
+	];
 
 	function emit(ev: PortalEvent) {
 		activeQueue?.push(ev);
