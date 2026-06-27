@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { safeResolve, listDir, readFileSafe } from '../src/lib/server/files';
+import { safeResolve, listDir, readFileSafe, readImageFileSafe } from '../src/lib/server/files';
 
 let root: string;
 let outside: string;
@@ -33,6 +33,13 @@ beforeAll(() => {
 	}
 	// Binary file.
 	writeFileSync(join(root, 'bin.dat'), Buffer.from([0, 1, 2, 3, 0, 5]));
+	// A real PNG (8-byte signature + a NUL so the binary probe also flags it).
+	writeFileSync(
+		join(root, 'pic.png'),
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02])
+	);
+	// A .png extension whose bytes are NOT an image (and contain a NUL).
+	writeFileSync(join(root, 'fake.png'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
 });
 
 afterAll(() => {
@@ -115,5 +122,44 @@ describe('readFileSafe', () => {
 	it('404s on missing', async () => {
 		const r = await readFileSafe(root, 'no.txt');
 		expect(r.ok).toBe(false);
+	});
+
+	it('flags a real image binary with its mime type', async () => {
+		const r = await readFileSafe(root, 'pic.png');
+		expect(r.ok).toBe(true);
+		if (r.ok && 'binary' in r && r.binary) {
+			expect(r.imageMimeType).toBe('image/png');
+		} else {
+			throw new Error('expected a binary image result');
+		}
+	});
+
+	it('does not flag a non-image binary (or mis-typed .png) as an image', async () => {
+		const bin = await readFileSafe(root, 'bin.dat');
+		if (bin.ok && 'binary' in bin && bin.binary) expect(bin.imageMimeType).toBeUndefined();
+		const fake = await readFileSafe(root, 'fake.png');
+		if (fake.ok && 'binary' in fake && fake.binary) expect(fake.imageMimeType).toBeUndefined();
+	});
+});
+
+describe('readImageFileSafe', () => {
+	it('returns bytes + mime for a real image', () => {
+		const r = readImageFileSafe(root, 'pic.png');
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.mimeType).toBe('image/png');
+			expect(r.data.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('404s for a non-image / mis-typed path', () => {
+		expect(readImageFileSafe(root, 'a.txt').ok).toBe(false);
+		expect(readImageFileSafe(root, 'fake.png').ok).toBe(false);
+	});
+
+	it('400s on an escape attempt and never serves out-of-root files', () => {
+		const r = readImageFileSafe(root, '../foo.png');
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.status).toBe(400);
 	});
 });

@@ -81,6 +81,9 @@ export interface FileResponseBinary {
 	path: string;
 	size?: number;
 	ref?: string;
+	// Present when the binary file is a renderable image; the browser fetches
+	// the bytes via `fs/file?path=…&raw=1` and shows it inline.
+	imageMimeType?: string;
 }
 export type FileResponse = FileResponseText | FileResponseBinary;
 

@@ -76,6 +76,48 @@ test('Files tab lists workspace contents and reads a file', async ({ page, reque
 	await expect(page.getByRole('button', { name: /hello\.txt/ })).toBeVisible();
 });
 
+// A minimal valid PNG (1x1) — written to the workspace so the file browser can
+// detect it as an image and render it inline instead of "Binary file".
+const TINY_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+test('Files tab renders an image file inline', async ({ page, request }) => {
+	const workdir = createWorkdir();
+	const { id } = await createConversation(request, workdir);
+	writeFileSync(join(workdir, 'pic.png'), TINY_PNG);
+
+	// API: the file is reported binary, but flagged as a renderable image, and
+	// the raw mode serves real PNG bytes.
+	const meta = await request.get(`/api/conversations/${id}/fs/file?path=pic.png`);
+	expect(meta.ok()).toBeTruthy();
+	const metaBody = await meta.json();
+	expect(metaBody.file.binary).toBe(true);
+	expect(metaBody.file.imageMimeType).toBe('image/png');
+
+	const raw = await request.get(`/api/conversations/${id}/fs/file?path=pic.png&raw=1`);
+	expect(raw.ok()).toBeTruthy();
+	expect(raw.headers()['content-type']).toContain('image/png');
+	expect((await raw.body()).length).toBe(TINY_PNG.length);
+
+	// A non-image path must NOT be served by the raw mode.
+	writeFileSync(join(workdir, 'notes.txt'), 'hello\n');
+	const rawText = await request.get(`/api/conversations/${id}/fs/file?path=notes.txt&raw=1`);
+	expect(rawText.status()).toBe(404);
+
+	// UI: selecting the image shows an <img>, not the binary placeholder.
+	await page.goto(`/conversations/${id}`);
+	await page.getByRole('tab', { name: 'Files' }).click();
+	await page.getByRole('button', { name: /pic\.png/ }).click();
+	const img = page.locator('.image-preview img');
+	await expect(img).toBeVisible();
+	await expect(img).toHaveAttribute('src', /raw=1/);
+	// The caption surfaces the natural dimensions so tiny (e.g. 1×1) images are
+	// obviously present rather than looking like an empty pane.
+	await expect(page.locator('.image-caption')).toContainText('1 × 1 px');
+});
+
 test('Files tab ignores stale content responses after rapid selection changes', async ({
 	page,
 	request

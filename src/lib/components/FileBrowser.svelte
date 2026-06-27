@@ -268,6 +268,26 @@
 			: []
 	);
 
+	// URL for an inline image preview of the selected worktree file. Only set
+	// when the server flagged the binary file as a renderable image; the bytes
+	// are served (authed) by the `fs/file?raw=1` mode.
+	const imageSrc = $derived.by(() => {
+		if (!fileData || !fileData.binary || !fileData.imageMimeType || !selectedPath) return null;
+		const params = new URLSearchParams({ path: selectedPath, raw: '1' });
+		return `/api/conversations/${conversationId}/fs/file?${params}`;
+	});
+
+	// Natural pixel dimensions of the previewed image, read from the <img> once
+	// it loads. Surfaced in a caption so tiny images (e.g. a 1×1) are obviously
+	// present rather than looking like an empty pane.
+	let imageDims = $state<{ w: number; h: number } | null>(null);
+	$effect(() => {
+		// Reset whenever the previewed source changes so the caption never shows
+		// stale dimensions from a previously selected image.
+		void imageSrc;
+		imageDims = null;
+	});
+
 	function startComment(location: ReviewLocation) {
 		draft = location;
 		draftBody = '';
@@ -431,10 +451,29 @@
 					{:else if fileError}
 						<div class="error-wrap"><Alert kind="error">{fileError}</Alert></div>
 					{:else if fileData?.binary}
-						<EmptyState
-							size="sm"
-							description={`Binary file (${fmtSize((fileData as { size?: number }).size ?? null)}).`}
-						/>
+						{#if imageSrc}
+							<div class="image-preview">
+								<img
+									src={imageSrc}
+									alt={selectedPath ?? 'image preview'}
+									onload={(e) => {
+										const el = e.currentTarget as HTMLImageElement;
+										imageDims = { w: el.naturalWidth, h: el.naturalHeight };
+									}}
+								/>
+								<div class="image-caption">
+									{#if imageDims}{imageDims.w} × {imageDims.h} px ·
+									{/if}{(fileData as { imageMimeType?: string })
+										.imageMimeType}{#if (fileData as { size?: number }).size != null}
+										· {fmtSize((fileData as { size?: number }).size ?? null)}{/if}
+								</div>
+							</div>
+						{:else}
+							<EmptyState
+								size="sm"
+								description={`Binary file (${fmtSize((fileData as { size?: number }).size ?? null)}).`}
+							/>
+						{/if}
 					{:else if fileData}
 						{#if contentLines.length > 0}
 							<div class="file-view commentable" role="table" aria-label="file lines">
@@ -729,6 +768,34 @@
 		padding: var(--space-2) var(--space-3);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
+	}
+	.image-preview {
+		flex: 1;
+		min-height: 0;
+		overflow: auto;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-start;
+		gap: var(--space-2);
+		padding: var(--space-3);
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+	}
+	.image-preview img {
+		max-width: 100%;
+		height: auto;
+		object-fit: contain;
+		image-rendering: auto;
+		background: repeating-conic-gradient(var(--surface-2) 0% 25%, transparent 0% 50%) 50% / 20px
+			20px;
+	}
+	.image-caption {
+		flex: none;
+		font-size: var(--fs-sm);
+		color: var(--text-muted);
+		text-align: center;
 	}
 	.file-view.commentable {
 		padding: var(--space-2) 0;

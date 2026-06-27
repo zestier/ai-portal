@@ -18,6 +18,12 @@ import {
 import { readFile } from 'node:fs/promises';
 import { resolve, join, relative, sep, isAbsolute, normalize } from 'node:path';
 import { effectiveWorkdir, projectRoot } from './workdir';
+import {
+	MAX_IMAGE_ATTACHMENT_BYTES,
+	detectImageMime,
+	readImageFile,
+	type CapturedImage
+} from './image-detect';
 
 /**
  * Resolve a workspace root to a stable absolute realpath, caching by the
@@ -219,6 +225,11 @@ export interface FileResultBinary {
 	ok: true;
 	binary: true;
 	size: number;
+	// When the binary file is an allowlisted, magic-byte-confirmed raster image
+	// within the size cap, its mime type — signals the client to render it
+	// inline (fetching the bytes via the `fs/file?raw=1` mode) rather than
+	// showing a "binary file" placeholder. Absent for non-image binaries.
+	imageMimeType?: string;
 }
 export interface FileResultErr {
 	ok: false;
@@ -258,7 +269,16 @@ export async function readFileSafe(root: string, rel: string): Promise<FileResul
 			closeSync(fd);
 		}
 		if (looksBinary(probe)) {
-			return { ok: true, binary: true, size };
+			// An allowlisted image confirmed by magic bytes is still "binary",
+			// but we surface its mime so the client can render it inline instead
+			// of showing a placeholder. The `probe` already holds the file head,
+			// so sniff from it rather than re-reading the file; cap at the same
+			// size the raw endpoint enforces so the flag stays consistent.
+			const imageMimeType =
+				size <= MAX_IMAGE_ATTACHMENT_BYTES
+					? (detectImageMime(r.abs, probe) ?? undefined)
+					: undefined;
+			return { ok: true, binary: true, size, imageMimeType };
 		}
 	}
 
@@ -273,4 +293,22 @@ export async function readFileSafe(root: string, rel: string): Promise<FileResul
 		size,
 		truncated
 	};
+}
+
+export type ImageBytesResult =
+	| { ok: true; mimeType: string; data: Buffer }
+	| { ok: false; reason: string; status?: number };
+
+/**
+ * Resolve `rel` under `root` (same symlink-safe containment as readFileSafe) and
+ * read it as an image, enforcing the allowlist + magic-byte sniff + size cap.
+ * Returns the bytes for serving inline, or a 4xx-ish error. Never reads files
+ * outside the root and never returns non-image bytes.
+ */
+export function readImageFileSafe(root: string, rel: string): ImageBytesResult {
+	const r = safeResolve(root, rel);
+	if (!r.ok) return { ok: false, reason: r.reason, status: 400 };
+	const img: CapturedImage | null = readImageFile(r.abs);
+	if (!img) return { ok: false, reason: 'not an image', status: 404 };
+	return { ok: true, mimeType: img.mimeType, data: img.data };
 }
