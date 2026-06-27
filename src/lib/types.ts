@@ -114,6 +114,17 @@ export interface TicketDependencyRef {
 	status: WorkspaceTicketStatus;
 }
 
+/**
+ * A workspace ticket enriched with its still-open prerequisites for the sidebar
+ * list. `blockers` is the subset of the ticket's prerequisites that are still
+ * `open` (and therefore actively blocking it); an empty array means the ticket
+ * is ready to start. Carries blocker titles so the sidebar can show a tooltip
+ * without cross-referencing the rendered window.
+ */
+export interface SidebarTicket extends WorkspaceTicket {
+	blockers: TicketDependencyRef[];
+}
+
 export type PromptTemplateStatus = 'open' | 'archived';
 
 /**

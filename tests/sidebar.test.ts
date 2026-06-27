@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { archiveWorkspaceTicket } from '../src/lib/client/ticket-archive';
-import { resolveInitialSidebarOpen } from '../src/lib/client/sidebar';
+import { resolveInitialSidebarOpen, orderSidebarTickets } from '../src/lib/client/sidebar';
 import {
 	interpolateTicketPrompt,
 	ticketActionChatTitle,
@@ -36,6 +36,41 @@ describe('resolveInitialSidebarOpen', () => {
 			false
 		);
 		expect(resolveInitialSidebarOpen({ getStored: () => '', isDesktop: () => true })).toBe(true);
+	});
+});
+
+describe('orderSidebarTickets', () => {
+	const t = (id: string, blockerIds: string[] = []) => ({
+		id,
+		blockers: blockerIds.map((bid) => ({ id: bid, title: bid, status: 'open' as const }))
+	});
+
+	it('sorts ready (unblocked) tickets ahead of blocked ones', () => {
+		const ordered = orderSidebarTickets([t('a', ['x']), t('b'), t('c', ['y']), t('d')]);
+		expect(ordered.map((o) => o.id)).toEqual(['b', 'd', 'a', 'c']);
+	});
+
+	it('preserves the incoming order within each group (stable partition)', () => {
+		const ordered = orderSidebarTickets([
+			t('a'),
+			t('b', ['x']),
+			t('c'),
+			t('d', ['y']),
+			t('e', ['z'])
+		]);
+		expect(ordered.map((o) => o.id)).toEqual(['a', 'c', 'b', 'd', 'e']);
+	});
+
+	it('returns tickets unchanged when none are blocked', () => {
+		const ordered = orderSidebarTickets([t('a'), t('b'), t('c')]);
+		expect(ordered.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('does not mutate the input array', () => {
+		const input = [t('a', ['x']), t('b')];
+		const snapshot = input.map((o) => o.id);
+		orderSidebarTickets(input);
+		expect(input.map((o) => o.id)).toEqual(snapshot);
 	});
 });
 

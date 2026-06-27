@@ -2,6 +2,8 @@ import type { LayoutServerLoad } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
+import { orderSidebarTickets } from '$lib/client/sidebar';
+import type { SidebarTicket } from '$lib/types';
 import {
 	defaultTicketWorkspace,
 	ticketWorkspaceFromConversation
@@ -24,13 +26,24 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 		promptTemplates.ensureTicketActionDefaults(locals.userId);
 		ticketActions = promptTemplates.list(locals.userId, { type: 'ticket-action', status: 'open' });
 	}
+	// Enrich the fetched window with each ticket's still-open prerequisites so the
+	// sidebar can flag blocked tickets (and tooltip their blocker titles) without
+	// a second round-trip, then order ready-before-blocked within the window.
+	const userId = locals.userId;
+	let sidebarTickets: SidebarTicket[] = [];
+	if (userId && ticketWorkspace) {
+		sidebarTickets = tickets
+			.list(userId, ticketWorkspace, { status: 'open', limit: 10 })
+			.map((ticket) => ({
+				...ticket,
+				blockers: tickets.dependencyRefs(ticket.id, userId).filter((ref) => ref.status === 'open')
+			}));
+		sidebarTickets = orderSidebarTickets(sidebarTickets);
+	}
 	return {
 		user: locals.user,
 		conversations,
-		tickets:
-			locals.userId && ticketWorkspace
-				? tickets.list(locals.userId, ticketWorkspace, { status: 'open', limit: 10 })
-				: [],
+		tickets: sidebarTickets,
 		ticketCount:
 			locals.userId && ticketWorkspace ? tickets.count(locals.userId, ticketWorkspace) : 0,
 		ticketWorkspace,

@@ -1,8 +1,15 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { tick } from 'svelte';
-	import type { ChatPromptTemplate, Conversation, User, WorkspaceTicket } from '$lib/types';
+	import type {
+		ChatPromptTemplate,
+		Conversation,
+		SidebarTicket,
+		User,
+		WorkspaceTicket
+	} from '$lib/types';
 	import Alert from '$lib/components/ui/Alert.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 	import PromptTemplateLauncher from '$lib/components/PromptTemplateLauncher.svelte';
 	import {
 		interpolateTicketPrompt,
@@ -22,7 +29,7 @@
 		onnavigate
 	}: {
 		conversations: Conversation[];
-		tickets: WorkspaceTicket[];
+		tickets: SidebarTicket[];
 		ticketCount: number;
 		ticketWorkspace: string | null;
 		ticketActions: ChatPromptTemplate[];
@@ -483,6 +490,19 @@
 										>
 										<span class="ticket-title">{ticket.title}</span>
 									</button>
+									{#if ticket.blockers.length}
+										<span
+											class="ticket-blocked"
+											title={`Blocked by: ${ticket.blockers.map((b) => b.title).join(', ')}`}
+										>
+											<Pill tone="warning">
+												<span aria-hidden="true">Blocked</span>
+												<span class="sr-only"
+													>Blocked by {ticket.blockers.map((b) => b.title).join(', ')}</span
+												>
+											</Pill>
+										</span>
+									{/if}
 								</div>
 								{#if isTicketExpanded(ticket.id)}
 									<div class="ticket-expanded" id={`ticket-details-${ticket.id}`}>
@@ -908,6 +928,21 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		font-size: var(--fs-sm);
+	}
+	.ticket-blocked {
+		flex-shrink: 0;
+		display: inline-flex;
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 	.ticket-expanded {
 		min-width: 0;
