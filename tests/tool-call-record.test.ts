@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	findToolCallRecord,
-	shouldRefreshTicketsAfterToolResult
-} from '../src/lib/client/ticket-tool-refresh';
+import { findToolCallRecord } from '../src/lib/client/tool-call-record';
 import type { Message, ToolCallRecord } from '../src/lib/types';
 
 function toolCall(id: string, tool: string): ToolCallRecord {
@@ -24,7 +21,7 @@ function message(id: string, toolCalls: ToolCallRecord[] = []): Pick<Message, 't
 	return { toolCalls: toolCalls.map((tc) => ({ ...tc, messageId: id })) };
 }
 
-describe('ticket tool refresh helpers', () => {
+describe('findToolCallRecord', () => {
 	it('finds tool calls across prior messages', () => {
 		const ticketUpdate = toolCall('ticket-update-1', 'ticket_update');
 		const messages = [
@@ -35,19 +32,8 @@ describe('ticket tool refresh helpers', () => {
 		expect(findToolCallRecord(messages, 'ticket-update-1')?.tool).toBe('ticket_update');
 	});
 
-	it('only refreshes after successful ticket mutations', () => {
-		expect(shouldRefreshTicketsAfterToolResult(toolCall('add-1', 'ticket_add'), { ok: true })).toBe(
-			true
-		);
-		expect(
-			shouldRefreshTicketsAfterToolResult(toolCall('update-1', 'ticket_update'), { ok: true })
-		).toBe(true);
-		expect(
-			shouldRefreshTicketsAfterToolResult(toolCall('update-2', 'ticket_update'), { ok: false })
-		).toBe(false);
-		expect(
-			shouldRefreshTicketsAfterToolResult(toolCall('read-1', 'ticket_get'), { ok: true })
-		).toBe(false);
-		expect(shouldRefreshTicketsAfterToolResult(undefined, { ok: true })).toBe(false);
+	it('returns undefined when no record matches', () => {
+		const messages = [message('message-1', [toolCall('bash-1', 'bash')])];
+		expect(findToolCallRecord(messages, 'missing')).toBeUndefined();
 	});
 });

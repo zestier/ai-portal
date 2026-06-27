@@ -1,5 +1,6 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
+import { notifyTicketMutation } from '../ticket-mutations';
 import type { TicketDependencyRef, WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
 
 interface TicketRow {
@@ -145,9 +146,15 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 				now,
 				now
 			);
-		for (const blockerId of new Set(input.blockedBy ?? [])) addDependency(userId, id, blockerId);
-		for (const blockedId of new Set(input.blocks ?? [])) addDependency(userId, blockedId, id);
+		for (const blockerId of new Set(input.blockedBy ?? []))
+			addDependencyUnnotified(userId, id, blockerId);
+		for (const blockedId of new Set(input.blocks ?? []))
+			addDependencyUnnotified(userId, blockedId, id);
 	})();
+	// One notification per logical mutation, after the transaction commits — so a
+	// subscriber that re-reads sees the committed row, and the internal edge
+	// inserts above don't each fan out a redundant signal.
+	notifyTicketMutation({ userId, workspaceKey: input.workspaceKey, ticketId: id });
 	return {
 		id,
 		userId,
@@ -212,6 +219,7 @@ export function update(id: string, userId: string, patch: UpdateInput): Workspac
 		if (patch.blockedBy !== undefined) reconcileEdges(userId, id, patch.blockedBy, 'blockedBy');
 		if (patch.blocks !== undefined) reconcileEdges(userId, id, patch.blocks, 'blocks');
 	})();
+	notifyTicketMutation({ userId, workspaceKey: current.workspaceKey, ticketId: id });
 	return get(id, userId);
 }
 
@@ -231,20 +239,24 @@ function reconcileEdges(
 	const currentSet = new Set(current);
 	for (const other of current) {
 		if (desired.has(other)) continue;
-		if (side === 'blockedBy') removeDependency(userId, id, other);
-		else removeDependency(userId, other, id);
+		if (side === 'blockedBy') removeDependencyUnnotified(userId, id, other);
+		else removeDependencyUnnotified(userId, other, id);
 	}
 	for (const other of desired) {
 		if (currentSet.has(other)) continue;
-		if (side === 'blockedBy') addDependency(userId, id, other);
-		else addDependency(userId, other, id);
+		if (side === 'blockedBy') addDependencyUnnotified(userId, id, other);
+		else addDependencyUnnotified(userId, other, id);
 	}
 }
 
 export function remove(id: string, userId: string): boolean {
+	const existing = get(id, userId);
 	const r = getDb()
 		.prepare('DELETE FROM workspace_tickets WHERE id = ? AND user_id = ?')
 		.run(id, userId);
+	if (r.changes > 0) {
+		notifyTicketMutation({ userId, workspaceKey: existing?.workspaceKey, ticketId: id });
+	}
 	return r.changes > 0;
 }
 
@@ -325,6 +337,23 @@ export type AddDepResult = 'added' | 'exists';
  * the edge is already present.
  */
 export function addDependency(userId: string, ticketId: string, dependsOn: string): AddDepResult {
+	const result = addDependencyUnnotified(userId, ticketId, dependsOn);
+	// Only an actually-added edge changes the sidebar (badges / ordering); an
+	// 'exists' no-op leaves the graph untouched, so don't fan out a signal.
+	if (result === 'added') notifyTicketMutation({ userId, ticketId });
+	return result;
+}
+
+/**
+ * Edge insert without the mutation notification. Used by `create` and
+ * `reconcileEdges`, which emit a single coalesced signal for the whole logical
+ * mutation once their transaction commits.
+ */
+function addDependencyUnnotified(
+	userId: string,
+	ticketId: string,
+	dependsOn: string
+): AddDepResult {
 	if (ticketId === dependsOn) throw new Error('a ticket cannot depend on itself');
 	const ticket = get(ticketId, userId);
 	if (!ticket) throw new Error(`ticket not found: ${ticketId}`);
@@ -350,6 +379,13 @@ export function addDependency(userId: string, ticketId: string, dependsOn: strin
 
 /** Remove a dependency edge. Returns false when no such edge existed. */
 export function removeDependency(userId: string, ticketId: string, dependsOn: string): boolean {
+	const removed = removeDependencyUnnotified(userId, ticketId, dependsOn);
+	if (removed) notifyTicketMutation({ userId, ticketId });
+	return removed;
+}
+
+/** Edge delete without the mutation notification (see `addDependencyUnnotified`). */
+function removeDependencyUnnotified(userId: string, ticketId: string, dependsOn: string): boolean {
 	// Scope the delete to edges whose dependent ticket belongs to the user.
 	const owns = get(ticketId, userId);
 	if (!owns) return false;

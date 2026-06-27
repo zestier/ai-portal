@@ -20,10 +20,7 @@
 	import { addInteractive, removeInteractive } from '$lib/client/interactive-queue';
 	import { isBlockingKind } from '$lib/interactive/request-registry';
 	import { setAwaitingInput, clearAwaitingInput } from '$lib/client/awaiting-input';
-	import {
-		findToolCallRecord,
-		shouldRefreshTicketsAfterToolResult
-	} from '$lib/client/ticket-tool-refresh';
+	import { findToolCallRecord } from '$lib/client/tool-call-record';
 	import {
 		CHAT_STREAM_STALL_TIMEOUT_MS,
 		streamRefreshAction,
@@ -689,9 +686,6 @@
 					if (ev.attachments && ev.attachments.length > 0) {
 						tc.attachments = ev.attachments;
 					}
-				}
-				if (shouldRefreshTicketsAfterToolResult(tc, ev)) {
-					void invalidateAll();
 				}
 				break;
 			}

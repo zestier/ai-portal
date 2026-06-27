@@ -14,6 +14,7 @@ import {
 import { apiErrorResponse } from '$lib/server/http';
 import { startIdleReaper } from '$lib/server/runtime/pool';
 import { startMemoryMaintenance } from '$lib/server/runtime/memory-maintenance';
+import { startTicketEventBridge } from '$lib/server/runtime/ticket-events';
 import * as messages from '$lib/server/db/repos/messages';
 import { faviconDataUri, normalizeThemeAccent, type ThemeAccent } from '$lib/types';
 
@@ -27,6 +28,7 @@ function boot() {
 	messages.recoverInterruptedInFlight();
 	startIdleReaper();
 	startMemoryMaintenance();
+	startTicketEventBridge();
 	log.info('boot.ok');
 }
 boot();

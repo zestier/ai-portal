@@ -137,3 +137,24 @@ test('sidebar links to the full tickets page', async ({ page, request }) => {
 	await page.waitForURL(/\/tickets$/);
 	await expect(page.getByRole('heading', { name: 'Tickets' })).toBeVisible();
 });
+
+test('sidebar drops a ticket marked done live, without navigation', async ({ page, request }) => {
+	// Unique title so the row locator is unambiguous in the shared workspace.
+	const title = `live-done-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+	const created = await request.post('/api/tickets', { data: { title } }).then((r) => r.json());
+	const id: string = created.ticket.id;
+
+	await page.goto('/');
+	await page.getByRole('button', { name: /Tickets \(/ }).click();
+	const row = page.getByRole('button', { name: title });
+	await expect(row).toBeVisible();
+
+	// Mark done via the REST endpoint — as another tab/origin would. No
+	// navigation here: the global `/api/events` feed delivers `tickets.changed`,
+	// which the app shell debounces into an `invalidateAll()` that re-runs the
+	// layout `load` and drops the done ticket from the open sidebar list.
+	const patched = await request.patch(`/api/tickets/${id}`, { data: { status: 'done' } });
+	expect(patched.ok()).toBe(true);
+
+	await expect(row).toHaveCount(0);
+});

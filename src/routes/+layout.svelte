@@ -3,8 +3,10 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SidebarRail from '$lib/components/SidebarRail.svelte';
 	import { page } from '$app/stores';
+	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { setAwaitingInput } from '$lib/client/awaiting-input';
+	import { createTrailingDebounce } from '$lib/client/ticket-refresh';
 	import type { AppEvent } from '$lib/types';
 	import {
 		resolveInitialSidebarOpen,
@@ -75,6 +77,9 @@
 	// here simply takes precedence (see `isAwaitingInput`).
 	onMount(() => {
 		if (!data.user) return;
+		// Coalesce bursts of ticket mutations (an agent can emit several per turn)
+		// into a single sidebar refresh on the trailing edge.
+		const refreshTickets = createTrailingDebounce(() => void invalidateAll());
 		const source = new EventSource('/api/events');
 		source.onmessage = (e) => {
 			let ev: AppEvent;
@@ -83,13 +88,21 @@
 			} catch {
 				return;
 			}
-			if (ev && ev.type === 'awaiting.changed') {
+			if (!ev) return;
+			if (ev.type === 'awaiting.changed') {
 				setAwaitingInput(ev.conversationId, ev.awaiting);
+			} else if (ev.type === 'tickets.changed') {
+				// Re-run the layout `load` so the sidebar ticket list/count reflects
+				// the change — regardless of which page or conversation is focused.
+				refreshTickets.trigger();
 			}
 		};
 		// EventSource auto-reconnects (resending Last-Event-ID); nothing to do
 		// on transient errors. Closed explicitly on unmount.
-		return () => source.close();
+		return () => {
+			refreshTickets.cancel();
+			source.close();
+		};
 	});
 </script>
 

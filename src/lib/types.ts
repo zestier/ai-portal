@@ -947,16 +947,24 @@ export type PortalEvent =
 // conversations. Kept as its own discriminated union (not an extension of
 // `PortalEvent`) so the two channels evolve independently.
 //
-// First (and currently only) member: a conversation's "awaiting user input"
-// state changed — emitted on the transition into/out of having ≥1 outstanding
-// blocking interactive prompt (see `isBlockingKind`). The channel is designed
-// to carry further cross-conversation signals later (turn-finished, title
-// updates, memory status, ticket changes, …).
-export type AppEvent = {
-	type: 'awaiting.changed';
-	conversationId: string;
-	awaiting: boolean;
-};
+// First member: a conversation's "awaiting user input" state changed — emitted
+// on the transition into/out of having ≥1 outstanding blocking interactive
+// prompt (see `isBlockingKind`). Second: any of the user's workspace tickets
+// changed (add/update/status/block/unblock/remove, from a tool or the REST
+// endpoints) — a content-free nudge for the app shell to re-fetch the sidebar
+// ticket list. The channel is designed to carry further cross-conversation
+// signals later (turn-finished, title updates, memory status, …).
+export type AppEvent =
+	| {
+			type: 'awaiting.changed';
+			conversationId: string;
+			awaiting: boolean;
+	  }
+	// Content-free: it carries no ticket/workspace id because the client refresh
+	// is user-global (`invalidateAll()` re-runs the layout `load`). The repo
+	// notifier does pass a `ticketId`/`workspaceKey` for future filtering, but
+	// the feed deliberately doesn't expose them yet.
+	| { type: 'tickets.changed' };
 
 // Latest context-window snapshot persisted per conversation. Mirrors the
 // shape of the `context.usage` PortalEvent (sans the `type` and `isInitial`
