@@ -2,8 +2,20 @@
 	import type { PageData } from './$types';
 	import type { WorkspaceTicketStatus } from '$lib/types';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import { renderMarkdown } from '$lib/client/markdown';
+	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
+	import { onMount } from 'svelte';
 
 	let { data }: { data: PageData } = $props();
+
+	// `renderMarkdown` relies on DOMPurify, which needs a real DOM, so it only
+	// runs in the browser. Rendering markdown after mount keeps SSR output and
+	// the first client render identical (both show the plain-text fallback),
+	// avoiding a hydration mismatch — the same approach the chat view uses.
+	let mounted = $state(false);
+	onMount(() => {
+		mounted = true;
+	});
 
 	const ticket = $derived(data.ticket);
 
@@ -61,7 +73,12 @@
 	<section class="card">
 		<h2 class="eyebrow">Details</h2>
 		{#if ticket.body.trim()}
-			<p class="body">{ticket.body}</p>
+			{#if mounted}
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+				<div class="markdown" use:copyableCodeBlocks>{@html renderMarkdown(ticket.body)}</div>
+			{:else}
+				<p class="fallback">{ticket.body}</p>
+			{/if}
 		{:else}
 			<p class="empty muted">No details.</p>
 		{/if}
@@ -70,7 +87,12 @@
 	<section class="card">
 		<h2 class="eyebrow">Plan</h2>
 		{#if ticket.plan.trim()}
-			<pre class="plan">{ticket.plan}</pre>
+			{#if mounted}
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+				<div class="markdown" use:copyableCodeBlocks>{@html renderMarkdown(ticket.plan)}</div>
+			{:else}
+				<p class="fallback">{ticket.plan}</p>
+			{/if}
 		{:else}
 			<p class="empty muted">No plan recorded.</p>
 		{/if}
@@ -197,23 +219,35 @@
 	.card h2 {
 		margin: 0;
 	}
-	.body {
+	.fallback {
 		margin: 0;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		line-height: 1.5;
 	}
-	.plan {
+	.markdown {
 		margin: 0;
-		padding: var(--space-3);
-		background: var(--surface-2);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		font-family: var(--mono);
-		font-size: var(--fs-md);
 		line-height: 1.5;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.markdown :global(> :first-child) {
+		margin-top: 0;
+	}
+	.markdown :global(> :last-child) {
+		margin-bottom: 0;
+	}
+	.markdown :global(.contains-task-list) {
+		list-style: none;
+		padding-left: 0;
+	}
+	.markdown :global(.task-list-item) {
+		list-style: none;
+	}
+	.markdown :global(.task-list-item input) {
+		margin-right: var(--space-1);
 	}
 	.empty {
 		margin: 0;
