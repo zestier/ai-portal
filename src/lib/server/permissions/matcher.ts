@@ -133,7 +133,7 @@ function matchHardDeny(rows: GrantRow[], q: MatchQuery): DetailedMatchOutcome | 
 			for (const r of rows) {
 				if (r.decision !== 'deny') continue;
 				if (!grantApplies(r, q)) continue;
-				if (!rowMatchesShellSegment(r, seg, q, ctx)) continue;
+				if (!rowMatchesShellSegment(r, seg, ctx)) continue;
 				return withFeedback('deny', r.denyReason);
 			}
 		}
@@ -184,7 +184,7 @@ function matchShellSegments(
 			if (r.decision === 'force-allow') continue;
 			if (r.argsHash) continue;
 			if (!grantApplies(r, q)) continue;
-			if (!rowMatchesShellSegment(r, seg, q, ctx)) continue;
+			if (!rowMatchesShellSegment(r, seg, ctx)) continue;
 			segMatched = true;
 			if (r.decision === 'prompt') {
 				sawPrompt = true;
@@ -236,7 +236,6 @@ function grantApplies(r: GrantRow, q: MatchQuery): boolean {
 function rowMatchesShellSegment(
 	r: GrantRow,
 	seg: ParsedSegment,
-	q: MatchQuery,
 	ctx: {
 		workspaceRoot: string | null;
 		sessionWorkspaceRoot: string | null;

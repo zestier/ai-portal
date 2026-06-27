@@ -2063,7 +2063,7 @@ export function replaySessionMemoryLogForFork(
 		for (const row of copied) {
 			const payload = parseJson(row.payload_json, {});
 			const transformed = remap(row.item_type, payload);
-			const targetItemId = remapIdForPayload(row.item_type, row.item_id, transformed);
+			const targetItemId = remapIdForPayload(row.item_id, transformed);
 			appendSessionMemoryLog(db, targetConversationId, {
 				eventKind: row.event_kind,
 				itemType: row.item_type,
@@ -2887,11 +2887,7 @@ function createForkMemoryRemapper(
 	};
 }
 
-function remapIdForPayload(
-	itemType: SessionMemoryLogItemType,
-	sourceItemId: string,
-	payload: unknown
-): string {
+function remapIdForPayload(sourceItemId: string, payload: unknown): string {
 	const record = payloadObject(payload);
 	const value = (record.item ?? record.patch ?? record.issue ?? record.toolCall) as
 		| { id?: unknown }
