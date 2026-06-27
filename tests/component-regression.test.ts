@@ -10,6 +10,7 @@ import PromptTemplateLauncher from '../src/lib/components/PromptTemplateLauncher
 import ToolCall from '../src/lib/components/ToolCall.svelte';
 import PromptsSettings from '../src/routes/settings/PromptsSettings.svelte';
 import TicketPage from '../src/routes/tickets/[id]/+page.svelte';
+import TicketsIndexPage from '../src/routes/tickets/+page.svelte';
 import { MAX_RENDERABLE_DIFF_CHARS } from '../src/lib/client/diff-parser';
 import { listBuiltInPromptTemplates } from '../src/lib/prompt-templates';
 import type {
@@ -565,6 +566,72 @@ describe('Svelte component regression coverage', () => {
 		// All prerequisites satisfied -> ready; empty plan shows a placeholder.
 		expect(ready).toContain('Ready to start');
 		expect(ready).toContain('No plan recorded.');
+	});
+
+	test('Tickets index renders rows, status tabs, and a load-more affordance', () => {
+		const row = (id: string, title: string, status: 'open' | 'done' | 'archived') => ({
+			id,
+			userId: 'u1',
+			workspaceKey: '/ws',
+			title,
+			body: '',
+			plan: '',
+			status,
+			sourceConversationId: null,
+			sourceMessageId: null,
+			createdAt: 1,
+			updatedAt: 2,
+			closedAt: null
+		});
+		const body = render(TicketsIndexPage, {
+			props: {
+				data: {
+					ticketWorkspace: '/ws',
+					pageSize: 20,
+					initialStatus: 'open' as const,
+					initialTickets: [row('t-1', 'First ticket', 'open'), row('t-2', 'Second ticket', 'open')],
+					initialHasMore: true
+				}
+			}
+		} as never).body;
+		expect(body).toContain('First ticket');
+		expect(body).toContain('href="/tickets/t-1"');
+		// Status tabs are present.
+		expect(body).toContain('Open');
+		expect(body).toContain('Archived');
+		// A full first page surfaces the Load more control.
+		expect(body).toContain('Load more');
+	});
+
+	test('Tickets index degrades gracefully with no current workspace', () => {
+		const body = render(TicketsIndexPage, {
+			props: {
+				data: {
+					ticketWorkspace: null,
+					pageSize: 20,
+					initialStatus: 'open' as const,
+					initialTickets: [],
+					initialHasMore: false
+				}
+			}
+		} as never).body;
+		expect(body).toContain('No active workspace');
+		expect(body).not.toContain('Load more');
+	});
+
+	test('Tickets index shows a per-filter empty state', () => {
+		const body = render(TicketsIndexPage, {
+			props: {
+				data: {
+					ticketWorkspace: '/ws',
+					pageSize: 20,
+					initialStatus: 'open' as const,
+					initialTickets: [],
+					initialHasMore: false
+				}
+			}
+		} as never).body;
+		expect(body).toContain('No open tickets.');
 	});
 
 	test('Prompts settings lists built-ins and user-managed templates', () => {

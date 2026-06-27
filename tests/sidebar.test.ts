@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { archiveWorkspaceTicket } from '../src/lib/client/ticket-archive';
+import { fetchTicketsPage, ticketsPageUrl } from '../src/lib/client/tickets-list';
 import { resolveInitialSidebarOpen, orderSidebarTickets } from '../src/lib/client/sidebar';
 import { isAwaitingInput } from '../src/lib/client/awaiting-input';
 import {
@@ -179,5 +180,55 @@ describe('ticket archive helper', () => {
 		});
 
 		expect(result).toEqual({ ok: false, status: 404 });
+	});
+});
+
+describe('ticket list pagination helper', () => {
+	it('builds an /api/tickets URL with status, workspace, limit and offset', () => {
+		expect(
+			ticketsPageUrl({ status: 'done', workspace: '/ws with spaces', limit: 20, offset: 40 })
+		).toBe('/api/tickets?status=done&workspace=%2Fws+with+spaces&limit=20&offset=40');
+	});
+
+	it('omits the workspace param when there is no workspace', () => {
+		expect(ticketsPageUrl({ status: 'open', workspace: null, limit: 10, offset: 0 })).toBe(
+			'/api/tickets?status=open&limit=10&offset=0'
+		);
+	});
+
+	it('reports hasMore when a full page is returned', async () => {
+		const page = await fetchTicketsPage({
+			status: 'open',
+			workspace: '/ws',
+			limit: 2,
+			offset: 0,
+			fetcher: async (url) => {
+				expect(url).toBe('/api/tickets?status=open&workspace=%2Fws&limit=2&offset=0');
+				return Response.json({ tickets: [{ id: 'a' }, { id: 'b' }] });
+			}
+		});
+		expect(page.tickets.map((t) => t.id)).toEqual(['a', 'b']);
+		expect(page.hasMore).toBe(true);
+	});
+
+	it('reports no more when a partial page is returned', async () => {
+		const page = await fetchTicketsPage({
+			status: 'all',
+			limit: 5,
+			offset: 5,
+			fetcher: async () => Response.json({ tickets: [{ id: 'z' }] })
+		});
+		expect(page.hasMore).toBe(false);
+	});
+
+	it('throws on a failed response', async () => {
+		await expect(
+			fetchTicketsPage({
+				status: 'open',
+				limit: 5,
+				offset: 0,
+				fetcher: async () => new Response(null, { status: 500 })
+			})
+		).rejects.toThrow(/500/);
 	});
 });

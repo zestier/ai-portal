@@ -27,7 +27,11 @@ export const GET: RequestHandler = ({ locals, url }) => {
 		.max(200)
 		.catch(100)
 		.parse(url.searchParams.get('limit'));
-	return json({ tickets: tickets.list(userId, workspace, { status, limit }), workspace });
+	const offset = z.coerce.number().int().min(0).catch(0).parse(url.searchParams.get('offset'));
+	return json({
+		tickets: tickets.list(userId, workspace, { status, limit, offset }),
+		workspace
+	});
 };
 
 const CreateBody = z.object({

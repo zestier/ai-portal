@@ -47,6 +47,8 @@ function rowToTicket(r: TicketRow): WorkspaceTicket {
 export interface ListOptions {
 	status?: WorkspaceTicketStatus | 'all';
 	limit?: number;
+	/** Number of rows to skip for pagination. Defaults to 0. */
+	offset?: number;
 }
 
 export function list(
@@ -55,6 +57,7 @@ export function list(
 	opts: ListOptions = {}
 ): WorkspaceTicket[] {
 	const limit = opts.limit ?? 100;
+	const offset = opts.offset ?? 0;
 	const status = opts.status ?? 'open';
 	const rows =
 		status === 'all'
@@ -62,18 +65,18 @@ export function list(
 					.prepare(
 						`SELECT * FROM workspace_tickets
 						 WHERE user_id = ? AND workspace_key = ?
-						 ORDER BY status = 'open' DESC, updated_at DESC, created_at DESC
-						 LIMIT ?`
+						 ORDER BY status = 'open' DESC, updated_at DESC, created_at DESC, id DESC
+						 LIMIT ? OFFSET ?`
 					)
-					.all(userId, workspaceKey, limit) as TicketRow[])
+					.all(userId, workspaceKey, limit, offset) as TicketRow[])
 			: (getDb()
 					.prepare(
 						`SELECT * FROM workspace_tickets
 						 WHERE user_id = ? AND workspace_key = ? AND status = ?
-						 ORDER BY updated_at DESC, created_at DESC
-						 LIMIT ?`
+						 ORDER BY updated_at DESC, created_at DESC, id DESC
+						 LIMIT ? OFFSET ?`
 					)
-					.all(userId, workspaceKey, status, limit) as TicketRow[]);
+					.all(userId, workspaceKey, status, limit, offset) as TicketRow[]);
 	return rows.map(rowToTicket);
 }
 

@@ -559,9 +559,11 @@
 							</div>
 						{/each}
 					</div>
-					{#if ticketCount > tickets.length}
-						<p class="muted ticket-more">Showing latest {tickets.length} open tickets.</p>
-					{/if}
+				{/if}
+				{#if ticketWorkspace}
+					<a class="ticket-all" href="/tickets" onclick={() => onnavigate?.()}>
+						View all tickets →
+					</a>
 				{/if}
 			</div>
 		{/if}
@@ -853,9 +855,15 @@
 		margin: var(--space-1) 0 var(--space-2);
 		font-size: var(--fs-sm);
 	}
-	.ticket-more {
+	.ticket-all {
+		display: inline-block;
 		margin: calc(-1 * var(--space-1)) 0 var(--space-2);
 		font-size: var(--fs-xs);
+		color: var(--text-muted);
+		text-decoration: none;
+	}
+	.ticket-all:hover {
+		color: var(--accent);
 	}
 	.ticket-list {
 		display: flex;

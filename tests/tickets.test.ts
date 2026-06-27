@@ -506,4 +506,106 @@ describe('workspace tickets', () => {
 		}
 		expect(status).toBe(404);
 	});
+
+	it('repo list paginates with limit + offset', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		for (let i = 0; i < 5; i++) {
+			tickets.create(user.id, { workspaceKey: workspace, title: `T${i}` });
+		}
+
+		// The full ordered list is the source of truth; paging must return the same
+		// rows in the same order, just windowed — robust to whatever the (updated_at
+		// DESC, created_at DESC) order resolves to under same-millisecond creates.
+		const full = tickets.list(user.id, workspace, { status: 'open', limit: 100, offset: 0 });
+		expect(full.length).toBe(5);
+
+		expect(tickets.list(user.id, workspace, { limit: 2, offset: 0 }).map((t) => t.id)).toEqual(
+			full.slice(0, 2).map((t) => t.id)
+		);
+		expect(tickets.list(user.id, workspace, { limit: 2, offset: 2 }).map((t) => t.id)).toEqual(
+			full.slice(2, 4).map((t) => t.id)
+		);
+		expect(tickets.list(user.id, workspace, { limit: 2, offset: 4 }).map((t) => t.id)).toEqual(
+			full.slice(4).map((t) => t.id)
+		);
+
+		// Offset past the end yields nothing.
+		expect(tickets.list(user.id, workspace, { limit: 2, offset: 10 })).toEqual([]);
+
+		// status: 'all' also paginates against its own full ordering.
+		const fullAll = tickets.list(user.id, workspace, { status: 'all', limit: 100, offset: 0 });
+		expect(
+			tickets.list(user.id, workspace, { status: 'all', limit: 3, offset: 0 }).map((t) => t.id)
+		).toEqual(fullAll.slice(0, 3).map((t) => t.id));
+	});
+
+	it('GET /api/tickets honors the offset query param', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { GET } = await import('../src/routes/api/tickets/+server');
+		const user = users.ensureLocalUser();
+
+		for (let i = 0; i < 3; i++) {
+			tickets.create(user.id, { workspaceKey: workspace, title: `Api${i}` });
+		}
+		const ws = encodeURIComponent(workspace);
+		const fullRes = (await GET(
+			event({
+				url: `http://localhost/api/tickets?status=open&limit=100&offset=0&workspace=${ws}`,
+				userId: user.id
+			}) as never
+		)) as Response;
+		const full = (await fullRes.json()) as { tickets: { id: string }[] };
+
+		const res = (await GET(
+			event({
+				url: `http://localhost/api/tickets?status=open&limit=2&offset=1&workspace=${ws}`,
+				userId: user.id
+			}) as never
+		)) as Response;
+		const body = (await res.json()) as { tickets: { id: string }[] };
+		expect(body.tickets.map((t) => t.id)).toEqual(full.tickets.slice(1, 3).map((t) => t.id));
+	});
+
+	it('/tickets page load returns the first page for the current workspace', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { load } = await import('../src/routes/tickets/+page.server');
+		const { TICKETS_PAGE_SIZE } = await import('../src/lib/client/tickets-list');
+		const user = users.ensureLocalUser();
+
+		for (let i = 0; i < TICKETS_PAGE_SIZE + 5; i++) {
+			tickets.create(user.id, { workspaceKey: workspace, title: `Page${i}` });
+		}
+
+		const data = (await load({
+			locals: { userId: user.id },
+			parent: async () => ({ ticketWorkspace: workspace })
+		} as never)) as {
+			ticketWorkspace: string | null;
+			initialTickets: { id: string }[];
+			initialHasMore: boolean;
+			initialStatus: string;
+		};
+		expect(data.ticketWorkspace).toBe(workspace);
+		expect(data.initialStatus).toBe('open');
+		expect(data.initialTickets.length).toBe(TICKETS_PAGE_SIZE);
+		expect(data.initialHasMore).toBe(true);
+
+		// No current workspace degrades to an empty list rather than erroring.
+		const empty = (await load({
+			locals: { userId: user.id },
+			parent: async () => ({ ticketWorkspace: null })
+		} as never)) as {
+			ticketWorkspace: string | null;
+			initialTickets: unknown[];
+			initialHasMore: boolean;
+		};
+		expect(empty.ticketWorkspace).toBeNull();
+		expect(empty.initialTickets).toEqual([]);
+		expect(empty.initialHasMore).toBe(false);
+	});
 });
