@@ -85,17 +85,20 @@ function cookieName(secure: boolean): string {
 	return secure ? COOKIE_NAME : DEV_COOKIE_NAME;
 }
 
-const THIRTY_DAYS = 60 * 60 * 24 * 30;
+function sessionTtlSeconds(): number {
+	return loadConfig().SESSION_TTL_SECONDS;
+}
 
 export function issue(cookies: Cookies, userId: string, secure = true): string {
 	const now = Math.floor(Date.now() / 1000);
-	const token = sign({ sub: userId, iat: now, exp: now + THIRTY_DAYS });
+	const ttl = sessionTtlSeconds();
+	const token = sign({ sub: userId, iat: now, exp: now + ttl });
 	cookies.set(cookieName(secure), token, {
 		path: '/',
 		httpOnly: true,
 		sameSite: 'lax',
 		secure,
-		maxAge: THIRTY_DAYS
+		maxAge: ttl
 	});
 	return token;
 }
@@ -124,7 +127,7 @@ export function read(cookies: Cookies, secure = true): Claims | null {
 }
 
 export function generateCsrfToken(): string {
-	return randomBytes(24).toString('base64url');
+	return randomBytes(32).toString('base64url');
 }
 
 // CSRF double-submit cookie. The same token is pinned here and exposed to
@@ -155,7 +158,7 @@ export function issueCsrfCookie(cookies: Cookies, token: string, secure = true):
 		httpOnly: true,
 		sameSite: 'lax',
 		secure,
-		maxAge: THIRTY_DAYS
+		maxAge: sessionTtlSeconds()
 	});
 }
 

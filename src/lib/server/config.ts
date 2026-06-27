@@ -35,6 +35,15 @@ const Schema = z
 
 		AUTH_MODE: z.enum(['github', 'shared-secret', 'none']).default('none'),
 		SESSION_SECRET: z.string().min(32).optional(),
+		// Lifetime of an issued session cookie, in seconds. Security-sensitive
+		// deployments can shorten this; the default is 30 days. Existing cookies
+		// carry their own `exp` claim, so changing this only affects newly issued
+		// sessions and never invalidates already-valid cookies early.
+		SESSION_TTL_SECONDS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(60 * 60 * 24 * 30),
 		ENCRYPTION_KEY: z.string().optional(), // base64, 32 bytes raw
 		I_KNOW_THIS_IS_LOCAL: z
 			.string()

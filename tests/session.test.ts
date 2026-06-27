@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { resetConfigForTests } from '../src/lib/server/config';
-import { sign, verify, issue, read, clear } from '../src/lib/server/auth/session';
+import {
+	sign,
+	verify,
+	issue,
+	read,
+	clear,
+	generateCsrfToken
+} from '../src/lib/server/auth/session';
 import type { Cookies } from '@sveltejs/kit';
 
 function makeCookies(initial: Record<string, string> = {}) {
@@ -109,5 +116,63 @@ describe('session cookie read/clear', () => {
 		expect(read(cookies, true)?.sub).toBe('u1');
 		clear(cookies, true);
 		expect(read(cookies, true)).toBeNull();
+	});
+});
+
+function decodeExp(token: string): number {
+	const [payload] = token.split('.');
+	const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+	return claims.exp;
+}
+
+describe('session TTL config', () => {
+	beforeEach(() => {
+		process.env.HOST = '127.0.0.1';
+		process.env.AUTH_MODE = 'shared-secret';
+		process.env.SHARED_SECRET = 'x'.repeat(32);
+		process.env.SESSION_SECRET = randomBytes(48).toString('base64');
+		process.env.ENCRYPTION_KEY = randomBytes(32).toString('base64');
+		delete process.env.SESSION_TTL_SECONDS;
+		resetConfigForTests();
+	});
+
+	it('defaults to a 30-day session lifetime', () => {
+		const { cookies } = makeCookies();
+		const now = Math.floor(Date.now() / 1000);
+		const tok = issue(cookies, 'u1', true);
+		expect(decodeExp(tok)).toBeCloseTo(now + 60 * 60 * 24 * 30, -1);
+	});
+
+	it('honors SESSION_TTL_SECONDS for newly issued sessions', () => {
+		process.env.SESSION_TTL_SECONDS = '3600';
+		resetConfigForTests();
+		const { cookies } = makeCookies();
+		const now = Math.floor(Date.now() / 1000);
+		const tok = issue(cookies, 'u1', true);
+		expect(decodeExp(tok)).toBeCloseTo(now + 3600, -1);
+	});
+
+	it('does not invalidate existing cookies with a longer exp when TTL is shortened', () => {
+		const now = Math.floor(Date.now() / 1000);
+		const existing = sign({ sub: 'u1', iat: now, exp: now + 60 * 60 * 24 * 30 });
+		process.env.SESSION_TTL_SECONDS = '3600';
+		resetConfigForTests();
+		expect(verify(existing)?.sub).toBe('u1');
+	});
+});
+
+describe('CSRF token entropy', () => {
+	beforeEach(() => {
+		process.env.HOST = '127.0.0.1';
+		process.env.AUTH_MODE = 'shared-secret';
+		process.env.SHARED_SECRET = 'x'.repeat(32);
+		process.env.SESSION_SECRET = randomBytes(48).toString('base64');
+		process.env.ENCRYPTION_KEY = randomBytes(32).toString('base64');
+		resetConfigForTests();
+	});
+
+	it('generates 32 bytes (256 bits) of entropy', () => {
+		const tok = generateCsrfToken();
+		expect(Buffer.from(tok, 'base64url').length).toBe(32);
 	});
 });

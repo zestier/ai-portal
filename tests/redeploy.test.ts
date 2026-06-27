@@ -11,6 +11,7 @@ const baseCfg: AppConfig = {
 	LOG_LEVEL: 'info',
 	AUTH_MODE: 'github',
 	SESSION_SECRET: 'x'.repeat(32),
+	SESSION_TTL_SECONDS: 60 * 60 * 24 * 30,
 	ENCRYPTION_KEY: undefined,
 	I_KNOW_THIS_IS_LOCAL: false,
 	I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: false,
