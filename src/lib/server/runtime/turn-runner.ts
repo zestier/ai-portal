@@ -30,7 +30,7 @@ import { loadConfig } from '../config';
 import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
 import type { MemoryExtractorBackend, MemoryMode } from '$lib/types';
-import type { ProviderOpenOptions } from '../providers';
+import type { ProviderOpenOptions, ProviderSession } from '../providers';
 import type { PortalEvent } from '$lib/types';
 
 interface PendingTool {
@@ -193,6 +193,52 @@ export interface StartTurnOptions {
 		| undefined;
 }
 
+// Tear down a session in response to a user Stop. `abort()` asks the SDK to
+// unwind its active stream gracefully, but a subprocess wedged in I/O can leave
+// that promise pending forever. We race it against TURN_ABORT_FINALIZE_DEADLINE_MS
+// and, on timeout, escalate to `dispose()` (force kill the subprocess) so a
+// wedged session can't be orphaned. Fire-and-forget by design: the turn already
+// finalizes off the abort signal regardless of how this settles, so all failure
+// paths only log.
+async function abortSessionWithDeadline(
+	session: Pick<ProviderSession, 'abort' | 'dispose'>,
+	conversationId: string
+): Promise<void> {
+	const deadlineMs = loadConfig().TURN_ABORT_FINALIZE_DEADLINE_MS;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<'timeout'>((resolve) => {
+		timer = setTimeout(() => resolve('timeout'), deadlineMs);
+		(timer as { unref?: () => void }).unref?.();
+	});
+	const aborted = session.abort().then(
+		() => 'aborted' as const,
+		(err) => {
+			log.warn('turn.session.abort_failed', {
+				conversationId,
+				err: err instanceof Error ? err.message : String(err)
+			});
+			return 'aborted' as const;
+		}
+	);
+	try {
+		const outcome = await Promise.race([aborted, timedOut]);
+		if (outcome === 'timeout') {
+			log.warn('turn.session.abort_timeout', { conversationId, deadlineMs });
+			try {
+				await session.dispose();
+				log.info('turn.session.force_disposed', { conversationId });
+			} catch (err) {
+				log.warn('turn.session.dispose_failed', {
+					conversationId,
+					err: err instanceof Error ? err.message : String(err)
+				});
+			}
+		}
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	const existing = turns.get(opts.conversationId);
 	if (existing && existing.status === 'running') {
@@ -248,17 +294,14 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			// it unwinds. Aborting the turn signal already tears down the active
 			// stream and arms the extraction watchdog, so the turn is guaranteed
 			// to finalize regardless of how long the session takes to settle.
-			// We still surface a failed teardown: the turn finalizes either way,
-			// but a rejecting abort now points at a leaked/wedged SDK session
-			// instead of vanishing silently.
-			void Promise.resolve()
-				.then(() => session?.abort())
-				.catch((err) => {
-					log.warn('turn.session.abort_failed', {
-						conversationId: opts.conversationId,
-						err: err instanceof Error ? err.message : String(err)
-					});
-				});
+			// The fire-and-forget teardown races abort() against a deadline and
+			// escalates to a force-dispose if abort() hangs, so a wedged SDK
+			// subprocess can't be orphaned (leaking fds/memory) while the turn
+			// finalizes as if it had succeeded.
+			const sessionToAbort = session;
+			if (sessionToAbort) {
+				void abortSessionWithDeadline(sessionToAbort, opts.conversationId);
+			}
 		}
 	};
 

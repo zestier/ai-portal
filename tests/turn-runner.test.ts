@@ -404,6 +404,83 @@ describe('turn-runner', () => {
 		expect(done).toMatchObject({ type: 'done', status: 'interrupted' });
 	});
 
+	it('force-disposes the session when abort() hangs past the finalize deadline', async () => {
+		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '50';
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'wedged abort', workdir: wd, model: 'gpt-4' });
+
+		let disposed = false;
+		let resolveDisposed: () => void = () => {};
+		const disposedCalled = new Promise<void>((resolve) => {
+			resolveDisposed = resolve;
+		});
+
+		// A session whose abort() never settles (subprocess wedged in I/O). The
+		// turn must still escalate to dispose() to avoid orphaning the session.
+		acquireMock.mockResolvedValue({
+			conversationId: conv.id,
+			providerSessionId: conv.id,
+			workingDirectory: wd,
+			model: 'test-model',
+			async *send(_prompt: string, signal?: AbortSignal): AsyncIterable<PortalEvent> {
+				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+				await new Promise<void>((resolve) => {
+					if (signal?.aborted) return resolve();
+					signal?.addEventListener('abort', () => resolve(), { once: true });
+				});
+			},
+			abort() {
+				// Never resolves: simulate a wedged SDK subprocess.
+				return new Promise<void>(() => {});
+			},
+			async dispose() {
+				disposed = true;
+				resolveDisposed();
+			},
+			async setMode() {},
+			async setApproveAll() {},
+			async resetSessionApprovals() {},
+			lastUsed: Date.now()
+		});
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'message.start') {
+				void turn.abort();
+				break;
+			}
+		}
+
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+		// The turn finalizes regardless of the wedged abort()...
+		expect(done).toMatchObject({ type: 'done', status: 'interrupted' });
+		// ...and the hung abort() is escalated to a force-dispose so the wedged
+		// subprocess isn't orphaned.
+		await disposedCalled;
+		expect(disposed).toBe(true);
+
+		delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
+	});
+
 	it('emits persisted assistant message ids for streamed assistant events', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const messages = await import('../src/lib/server/db/repos/messages');
