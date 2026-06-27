@@ -232,10 +232,25 @@ export async function snapshot(
 				treeSha: tree,
 				createdAt: Date.now()
 			};
-			db.prepare(
-				`INSERT INTO turn_snapshots(message_id, kind, git_ref, commit_sha, tree_sha, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?)`
-			).run(row.messageId, row.kind, row.gitRef, row.commitSha, row.treeSha, row.createdAt);
+			// Atomicity: the git ref now exists. Insert the DB row that
+			// points at it, and if that INSERT fails roll the ref back so
+			// git state and DB metadata can't diverge. We create the ref
+			// first (rather than the row first) so there is never a DB row
+			// referencing a ref that doesn't exist — a dangling row would
+			// break restore, whereas a momentarily orphaned ref is inert.
+			try {
+				db.prepare(
+					`INSERT INTO turn_snapshots(message_id, kind, git_ref, commit_sha, tree_sha, created_at)
+					 VALUES (?, ?, ?, ?, ?, ?)`
+				).run(row.messageId, row.kind, row.gitRef, row.commitSha, row.treeSha, row.createdAt);
+			} catch (err) {
+				// Best-effort cleanup of the ref we just created. If this
+				// also fails the worst case is an orphaned, invisible ref
+				// (no DB row points at it); we still surface the original
+				// INSERT failure to the caller.
+				await run(['update-ref', '-d', ref, commit], { cwd: workdir });
+				throw err;
+			}
 			return row;
 		} finally {
 			try {

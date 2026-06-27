@@ -160,6 +160,29 @@ describe('snapshots', () => {
 		expect(existsSync(join(dst, 'late.txt'))).toBe(false);
 	});
 
+	it('rolls back the git ref when the metadata INSERT fails', async () => {
+		const { users, convs, snapshots } = await freshImports();
+		const u = users.ensureLocalUser();
+		// Intentionally do NOT create a message row. The git ref name only
+		// requires a syntactically valid id, but the turn_snapshots row has
+		// a FK to messages(id) (foreign_keys = ON), so the INSERT will fail
+		// after the ref has been created — exercising the cleanup path.
+		convs.create(u.id, { title: 't', workdir, model: null });
+		const orphanId = 'no-such-message-id';
+
+		initGitRepo(workdir);
+		writeFileSync(join(workdir, 'a.txt'), 'one\n');
+
+		await expect(snapshots.snapshot(workdir, orphanId, 'pre')).rejects.toThrow();
+
+		// No DB row, and crucially no orphaned git ref left behind.
+		expect(snapshots.getSnapshot(orphanId, 'pre')).toBeNull();
+		const refs = execFileSync('git', ['for-each-ref', '--format=%(refname)', 'refs/portal/turns'], {
+			cwd: workdir
+		}).toString();
+		expect(refs.trim()).toBe('');
+	});
+
 	it('does not pollute the workdir staging area', async () => {
 		const { users, convs, messages, snapshots } = await freshImports();
 		const u = users.ensureLocalUser();
