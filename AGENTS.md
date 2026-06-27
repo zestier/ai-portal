@@ -2,6 +2,29 @@
 
 Notes for AI coding agents (Copilot CLI, Claude, etc.) working in this repo.
 
+## Ticket-first workflow
+
+This repo runs a **ticket-first** workflow, and the portal nudges every agent the
+same way (see `PORTAL_SYSTEM_GUIDANCE` in
+[`src/lib/server/runtime/system-guidance.ts`](src/lib/server/runtime/system-guidance.ts)).
+Two layers are in play:
+
+- **Portal layer (universal):** durable work belongs in tickets
+  (`ticket_add` / `ticket_list` / `ticket_update`), with the plan and checklist in
+  the ticket `plan` field — not a scratch markdown file. Start a non-trivial task
+  by checking `ticket_list` and resuming the matching ticket before re-planning;
+  file follow-up work as new tickets and link them with `ticket_block`. The
+  session `todos` table is within-session scratch that mirrors the active ticket,
+  not the source of truth.
+- **Repo layer (this repo tightens it):** **every commit should map to a ticket.**
+  Before you commit, make sure the work traces to one — resume an existing ticket
+  or open one first, reference it in the ticket's plan checklist, and mark items
+  done as you land them. Discovered work gets its own linked ticket rather than
+  scope-creeping the current commit.
+
+The payoff is durability: tickets outlive sessions, so the same work item can be
+picked up across many sessions without reconstructing context from a dead one.
+
 ## Before you change code — read CONTRIBUTING once per session
 
 The first time in a session that you're about to create or modify a file, read
