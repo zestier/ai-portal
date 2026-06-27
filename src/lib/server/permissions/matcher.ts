@@ -287,6 +287,11 @@ function structuredScopeMatches(scope: GrantScope, q: MatchQuery): boolean {
 			if (q.permissionKind !== 'url') return false;
 			if (!q.url) return false;
 			return urlScopeMatches(scope, { url: q.url });
+		default: {
+			const _exhaustive: never = scope;
+			void _exhaustive;
+			return false;
+		}
 	}
 }
 

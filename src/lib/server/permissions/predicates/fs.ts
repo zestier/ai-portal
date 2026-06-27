@@ -22,6 +22,11 @@ function fsRuleMatches(rule: FsRule, ctx: FsMatchContext): boolean {
 	switch (rule.kind) {
 		case 'path':
 			return pathRuleMatches(rule, ctx);
+		default: {
+			const _exhaustive: never = rule.kind;
+			void _exhaustive;
+			return false;
+		}
 	}
 }
 
