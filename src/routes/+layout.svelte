@@ -4,6 +4,8 @@
 	import SidebarRail from '$lib/components/SidebarRail.svelte';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { setAwaitingInput } from '$lib/client/awaiting-input';
+	import type { AppEvent } from '$lib/types';
 	import {
 		resolveInitialSidebarOpen,
 		SIDEBAR_DESKTOP_MIN_WIDTH,
@@ -38,6 +40,32 @@
 		if (hydrated) {
 			localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarOpen));
 		}
+	});
+
+	// Single per-user global event feed for the whole app shell. Unlike the
+	// per-turn stream (which only covers the open conversation), this keeps the
+	// sidebar "awaiting input" indicator live for *every* conversation — a
+	// background session that starts/stops awaiting input updates in place
+	// without waiting for the next navigation/load. Layered over the server
+	// `load` set + the open conversation's own turn-stream signal: an override
+	// here simply takes precedence (see `isAwaitingInput`).
+	onMount(() => {
+		if (!data.user) return;
+		const source = new EventSource('/api/events');
+		source.onmessage = (e) => {
+			let ev: AppEvent;
+			try {
+				ev = JSON.parse(e.data) as AppEvent;
+			} catch {
+				return;
+			}
+			if (ev && ev.type === 'awaiting.changed') {
+				setAwaitingInput(ev.conversationId, ev.awaiting);
+			}
+		};
+		// EventSource auto-reconnects (resending Last-Event-ID); nothing to do
+		// on transient errors. Closed explicitly on unmount.
+		return () => source.close();
 	});
 </script>
 

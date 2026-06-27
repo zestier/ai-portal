@@ -83,6 +83,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			registerInteractive({
 				requestId,
 				conversationId: opts.conversationId,
+				userId: opts.userId,
 				kind,
 				view: full,
 				resolve: (r) => resolve(r as R),

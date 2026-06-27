@@ -938,6 +938,26 @@ export type PortalEvent =
 	| { type: 'heartbeat' }
 	| { type: 'done'; status?: 'complete' | 'interrupted' };
 
+// --- App-level (cross-conversation) event feed ---
+//
+// `PortalEvent` is scoped to a single turn's stream — a client only hears
+// about the one conversation/turn it has open. `AppEvent` is the envelope for
+// the per-user *global* feed (`GET /api/events`): lightweight signals that the
+// app shell subscribes to once and that may concern *any* of the user's
+// conversations. Kept as its own discriminated union (not an extension of
+// `PortalEvent`) so the two channels evolve independently.
+//
+// First (and currently only) member: a conversation's "awaiting user input"
+// state changed — emitted on the transition into/out of having ≥1 outstanding
+// blocking interactive prompt (see `isBlockingKind`). The channel is designed
+// to carry further cross-conversation signals later (turn-finished, title
+// updates, memory status, ticket changes, …).
+export type AppEvent = {
+	type: 'awaiting.changed';
+	conversationId: string;
+	awaiting: boolean;
+};
+
 // Latest context-window snapshot persisted per conversation. Mirrors the
 // shape of the `context.usage` PortalEvent (sans the `type` and `isInitial`
 // transport fields) so the UI can seed its meter from page load.

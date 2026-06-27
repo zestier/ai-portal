@@ -18,6 +18,7 @@ import {
 } from '../src/lib/server/runtime/interactive-requests';
 import { createInteractiveCallbacks } from '../src/lib/server/copilot/interactive-adapter';
 import { isBlockingKind } from '../src/lib/interactive/request-registry';
+import { getAppEventBus } from '../src/lib/server/runtime/app-events';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as settings from '../src/lib/server/db/repos/settings';
@@ -25,7 +26,8 @@ import type {
 	InteractiveKind,
 	InteractiveResponse,
 	InteractiveRequestView,
-	PortalEvent
+	PortalEvent,
+	AppEvent
 } from '../src/lib/types';
 import { setupLocalEnv } from './helpers/env';
 
@@ -341,6 +343,93 @@ describe('interactive request registry', () => {
 		expect(awaitingInputConversationIds().has(conversationId)).toBe(true);
 		expireConversation(conversationId, 'capacity_evict');
 		expect(awaitingInputConversationIds().has(conversationId)).toBe(false);
+	});
+
+	it('publishes awaiting.changed to the user feed on enter/leave, deduped per conversation', async () => {
+		const bus = getAppEventBus();
+		const ac = new AbortController();
+		const events: AppEvent[] = [];
+		const drained = (async () => {
+			for await (const e of bus.subscribe(userId, { signal: ac.signal })) {
+				events.push(e.event);
+			}
+		})();
+		// Let the subscriber register before we publish.
+		await Promise.resolve();
+
+		const a = newRequestId();
+		const b = newRequestId();
+
+		// An info-only kind must not flip awaiting (no event).
+		register({
+			requestId: newRequestId(),
+			conversationId,
+			userId,
+			kind: 'sampling',
+			view: { requestId: newRequestId(), kind: 'sampling', summary: 's' },
+			resolve: () => {},
+			reject: () => {},
+			timeoutMs: 0
+		});
+
+		// First blocking prompt -> entering awaiting (one event).
+		register({
+			requestId: a,
+			conversationId,
+			userId,
+			kind: 'user_input',
+			view: { requestId: a, kind: 'user_input', question: 'q', allowFreeform: true },
+			resolve: () => {},
+			reject: () => {},
+			timeoutMs: 0
+		});
+		// Second blocking prompt -> already awaiting, deduped (no event).
+		register({
+			requestId: b,
+			conversationId,
+			userId,
+			kind: 'permission',
+			view: permView(b),
+			resolve: () => {},
+			reject: () => {},
+			timeoutMs: 0
+		});
+		// Resolve one while another remains -> still awaiting (no leave event).
+		resolve(a, userId, { kind: 'user_input', answer: 'x', wasFreeform: true });
+		// Last blocking prompt cleared -> leaving awaiting (one event).
+		cancel(b, 'turn_aborted');
+
+		await new Promise((r) => setTimeout(r, 20));
+		ac.abort();
+		await drained;
+
+		expect(events).toEqual([
+			{ type: 'awaiting.changed', conversationId, awaiting: true },
+			{ type: 'awaiting.changed', conversationId, awaiting: false }
+		]);
+	});
+
+	it('does not publish awaiting transitions when no userId was threaded', async () => {
+		const bus = getAppEventBus();
+		const ac = new AbortController();
+		const events: AppEvent[] = [];
+		const drained = (async () => {
+			for await (const e of bus.subscribe(userId, { signal: ac.signal })) {
+				events.push(e.event);
+			}
+		})();
+		await Promise.resolve();
+
+		// makePending registers without a userId -> nothing published.
+		const a = newRequestId();
+		makePending('permission', permView(a), undefined);
+		cancel(a, 'turn_aborted');
+
+		await new Promise((r) => setTimeout(r, 20));
+		ac.abort();
+		await drained;
+
+		expect(events).toEqual([]);
 	});
 
 	it('expireConversation rejects prompts and audits them as auto-expired', async () => {

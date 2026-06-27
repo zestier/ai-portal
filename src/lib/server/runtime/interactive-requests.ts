@@ -36,6 +36,7 @@ import type {
 } from '$lib/types';
 import { defaultInteractiveResponse, isBlockingKind } from '$lib/interactive/request-registry';
 import { isFilesystemPermissionKind } from '$lib/permissions/metadata';
+import { publishAppEvent } from './app-events';
 
 // Default = no timeout. We used to default to 10 minutes "so a forgotten
 // dialog doesn't pin the session forever", but in headless mode (where
@@ -101,6 +102,13 @@ export function isInteractivePromptCancelledError(
 export interface PendingInteractive {
 	requestId: string;
 	conversationId: string;
+	/**
+	 * Owner of the conversation. Needed to publish awaiting-input transitions
+	 * to the right per-user global feed when this prompt is registered or
+	 * cleared. Optional because some non-user-facing call sites (and older
+	 * tests) register without it; transitions are simply not published then.
+	 */
+	userId?: string;
 	kind: InteractiveKind;
 	view: InteractiveRequestView;
 	resolve: (response: InteractiveResponse) => void;
@@ -143,6 +151,8 @@ export function newRequestId(): string {
 export interface RegisterOptions {
 	requestId: string;
 	conversationId: string;
+	/** Conversation owner; enables awaiting-input feed transitions (see above). */
+	userId?: string;
 	kind: InteractiveKind;
 	view: InteractiveRequestView;
 	resolve: (response: InteractiveResponse) => void;
@@ -151,11 +161,60 @@ export interface RegisterOptions {
 	timeoutMs?: number;
 }
 
+/**
+ * True if `conversationId` currently has ≥1 outstanding prompt whose kind
+ * blocks on the user. Drives the awaiting-input transition dedup below:
+ * we only publish `awaiting.changed` when this answer flips for a
+ * conversation, not once per prompt.
+ */
+function conversationHasBlocking(conversationId: string): boolean {
+	for (const p of pending.values()) {
+		if (p.conversationId === conversationId && isBlockingKind(p.kind)) return true;
+	}
+	return false;
+}
+
+/**
+ * Publish an awaiting-input transition to the conversation owner's global
+ * feed. No-op when the userId is unknown (call site didn't thread it) — the
+ * sidebar still reconciles from layout `load` in that case. Non-fatal: a feed
+ * hiccup must never break prompt registration/resolution.
+ */
+function publishAwaitingChanged(
+	userId: string | undefined,
+	conversationId: string,
+	awaiting: boolean
+): void {
+	if (!userId) return;
+	try {
+		publishAppEvent(userId, { type: 'awaiting.changed', conversationId, awaiting });
+	} catch {
+		/* non-fatal */
+	}
+}
+
+/**
+ * After a blocking prompt `p` has been removed from `pending`, publish the
+ * leaving transition iff it was the conversation's *last* blocking prompt.
+ * Call AFTER `pending.delete(...)` so `conversationHasBlocking` reflects the
+ * post-removal state. No-op for info-only kinds (they never set awaiting).
+ */
+function maybePublishLeft(p: PendingInteractive): void {
+	if (!isBlockingKind(p.kind)) return;
+	if (conversationHasBlocking(p.conversationId)) return;
+	publishAwaitingChanged(p.userId, p.conversationId, false);
+}
+
 export function register(opts: RegisterOptions) {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	// Snapshot the transition BEFORE inserting: was this conversation already
+	// blocking on the user? If not and this prompt blocks, it's entering the
+	// awaiting-input state and we publish once.
+	const wasBlocking = conversationHasBlocking(opts.conversationId);
 	const entry: PendingInteractive = {
 		requestId: opts.requestId,
 		conversationId: opts.conversationId,
+		userId: opts.userId,
 		kind: opts.kind,
 		view: opts.view,
 		resolve: opts.resolve,
@@ -176,6 +235,9 @@ export function register(opts: RegisterOptions) {
 		entry.timeoutHandle = t;
 	}
 	pending.set(opts.requestId, entry);
+	if (isBlockingKind(opts.kind) && !wasBlocking) {
+		publishAwaitingChanged(opts.userId, opts.conversationId, true);
+	}
 	log.info('interactive.registered', { requestId: opts.requestId, kind: opts.kind });
 }
 
@@ -248,6 +310,7 @@ export function resolve(requestId: string, userId: string, response: Interactive
 	response = normalizeResponse(response);
 	pending.delete(requestId);
 	if (p.timeoutHandle) clearTimeout(p.timeoutHandle);
+	maybePublishLeft(p);
 
 	// Permission-specific bookkeeping: audit + grants.
 	if (response.kind === 'permission' && p.view.kind === 'permission') {
@@ -362,6 +425,7 @@ export function cancel(requestId: string, reason: string = 'cancelled') {
 	if (!p) return;
 	pending.delete(requestId);
 	if (p.timeoutHandle) clearTimeout(p.timeoutHandle);
+	maybePublishLeft(p);
 
 	const fallback = defaultInteractiveResponse(p.kind);
 	try {
@@ -432,6 +496,7 @@ function expire(requestId: string, reason: string) {
 	if (!p) return;
 	pending.delete(requestId);
 	if (p.timeoutHandle) clearTimeout(p.timeoutHandle);
+	maybePublishLeft(p);
 
 	const outcome = expiredResponse(p.kind);
 	try {
