@@ -11,12 +11,7 @@
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import PromptTemplateLauncher from '$lib/components/PromptTemplateLauncher.svelte';
-	import {
-		interpolateTicketPrompt,
-		ticketActionChatTitle,
-		ticketActionConversationMode
-	} from '$lib/client/tickets';
-	import { createTicketDraftChat } from '$lib/client/ticket-chat-launch';
+	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
 	import { awaitingInputOverrides, isAwaitingInput } from '$lib/client/awaiting-input';
 
@@ -148,48 +143,25 @@
 	async function launchTicketChat(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
 		if (ticketLaunchId || ticketArchiveId === ticket.id) return;
 		ticketLaunchId = ticket.id;
-		let conversationId: string | null = null;
 		try {
-			const convRes = await fetch('/api/conversations', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					title: ticketActionChatTitle(ticket),
-					workdir: ticketWorkspace ?? undefined,
-					mode: ticketActionConversationMode(action)
-				})
+			const result = await createTicketLaunchChat({
+				ticket,
+				template: action,
+				workdir: ticketWorkspace,
+				fetcher: fetch
 			});
-			if (!convRes.ok) {
-				flashError(`Could not create chat (${convRes.status})`);
-				return;
-			}
-			const body = await convRes.json();
-			conversationId = body.conversation.id;
-			const turnRes = await fetch(`/api/conversations/${conversationId}/turns`, {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ content: interpolateTicketPrompt(action, ticket) })
-			});
-			if (!turnRes.ok) {
-				await api(
-					`/api/conversations/${conversationId}`,
-					{ method: 'DELETE' },
-					'Clean up failed ticket chat'
+			if (!result.ok) {
+				flashError(
+					result.stage === 'create'
+						? `Could not create chat (${result.status})`
+						: `Could not launch ticket chat (${result.status})`
 				);
-				flashError(`Could not launch ticket chat (${turnRes.status})`);
 				return;
 			}
 			await invalidateAll();
 			onnavigate?.();
-			location.href = `/conversations/${conversationId}`;
+			location.href = result.href;
 		} catch {
-			if (conversationId) {
-				await api(
-					`/api/conversations/${conversationId}`,
-					{ method: 'DELETE' },
-					'Clean up failed ticket chat'
-				);
-			}
 			flashError('Could not launch ticket chat');
 		} finally {
 			ticketLaunchId = null;

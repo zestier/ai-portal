@@ -1,9 +1,15 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { WorkspaceTicketStatus } from '$lib/types';
+	import type { ChatPromptTemplate, WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import Alert from '$lib/components/ui/Alert.svelte';
+	import Modal from '$lib/components/ui/Modal.svelte';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
+	import { invalidateAll } from '$app/navigation';
+	import { ticketStatusActions, type TicketStatusAction } from '$lib/tickets/actions';
+	import { patchTicketStatus } from '$lib/client/ticket-status';
+	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
 	import { onMount } from 'svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -33,6 +39,99 @@
 
 	const blocked = $derived(data.dependsOn.some((d) => d.status === 'open'));
 
+	// Status buttons re-derive from the current status, so an in-place refresh
+	// (invalidateAll) after a transition swaps the toolbar to the new matrix.
+	const statusActions = $derived(ticketStatusActions(ticket.status));
+
+	let busy = $state(false);
+	let errorMsg = $state<string | null>(null);
+	let archiveOpen = $state(false);
+
+	function flashError(msg: string) {
+		errorMsg = msg;
+	}
+
+	async function applyStatus(target: WorkspaceTicketStatus) {
+		if (busy) return;
+		busy = true;
+		errorMsg = null;
+		try {
+			const result = await patchTicketStatus({
+				ticketId: ticket.id,
+				status: target,
+				fetcher: fetch
+			});
+			if (!result.ok) {
+				flashError(`Could not update ticket (${result.status ?? 'network'})`);
+				return;
+			}
+			await invalidateAll();
+		} catch {
+			flashError('Could not update ticket');
+		} finally {
+			busy = false;
+		}
+	}
+
+	function runStatusAction(action: TicketStatusAction) {
+		if (busy) return;
+		if (action.confirm) {
+			archiveOpen = true;
+			return;
+		}
+		void applyStatus(action.target);
+	}
+
+	function confirmArchive() {
+		archiveOpen = false;
+		void applyStatus('archived');
+	}
+
+	function cancelArchive() {
+		archiveOpen = false;
+	}
+
+	async function runChatAction(action: ChatPromptTemplate) {
+		if (busy) return;
+		busy = true;
+		errorMsg = null;
+		try {
+			if (action.launchBehavior === 'draft') {
+				const result = await createTicketDraftChat({
+					ticket: ticket as WorkspaceTicket,
+					template: action,
+					workdir: ticket.workspaceKey,
+					fetcher: fetch
+				});
+				if (!result.ok) {
+					flashError(`Could not create chat (${result.status ?? 'network'})`);
+					return;
+				}
+				location.href = result.href;
+			} else {
+				const result = await createTicketLaunchChat({
+					ticket: ticket as WorkspaceTicket,
+					template: action,
+					workdir: ticket.workspaceKey,
+					fetcher: fetch
+				});
+				if (!result.ok) {
+					flashError(
+						result.stage === 'create'
+							? `Could not create chat (${result.status})`
+							: `Could not launch ticket chat (${result.status})`
+					);
+					return;
+				}
+				location.href = result.href;
+			}
+		} catch {
+			flashError('Could not launch ticket chat');
+		} finally {
+			busy = false;
+		}
+	}
+
 	function fmtDate(ms: number): string {
 		return new Date(ms).toLocaleString();
 	}
@@ -50,6 +149,34 @@
 		</div>
 		<Pill tone={statusTone[ticket.status]}>{statusLabel[ticket.status]}</Pill>
 	</header>
+
+	<div class="toolbar" role="group" aria-label="Ticket actions">
+		{#each statusActions as action (action.id)}
+			<button
+				class="btn sm"
+				class:primary={action.id === 'mark-done'}
+				class:danger={action.danger}
+				disabled={busy}
+				onclick={() => runStatusAction(action)}
+			>
+				{action.label}
+			</button>
+		{/each}
+		{#each data.ticketActions as action (action.id)}
+			<button
+				class="btn sm"
+				title={action.description || action.title}
+				disabled={busy}
+				onclick={() => runChatAction(action)}
+			>
+				{action.title}
+			</button>
+		{/each}
+	</div>
+
+	{#if errorMsg}
+		<Alert kind="error" dismissible ondismiss={() => (errorMsg = null)}>{errorMsg}</Alert>
+	{/if}
 
 	<dl class="meta">
 		<div>
@@ -140,6 +267,25 @@
 	</section>
 </div>
 
+<Modal
+	open={archiveOpen}
+	onClose={cancelArchive}
+	role="alertdialog"
+	ariaLabel="Archive ticket"
+	width="min(420px, 100%)"
+>
+	<div class="confirm">
+		<h2 class="confirm-title">Archive ticket?</h2>
+		<p class="confirm-body">
+			This hides the ticket from the open list. You can reopen it later from this page.
+		</p>
+		<div class="confirm-actions">
+			<button class="btn sm ghost" onclick={cancelArchive}>Cancel</button>
+			<button class="btn sm danger primary" onclick={confirmArchive}>Archive</button>
+		</div>
+	</div>
+</Modal>
+
 <style>
 	.wrap {
 		width: 100%;
@@ -180,6 +326,30 @@
 		   line-height keeps a long, multi-line title compact. Mobile shrinks it via
 		   a --fs-* token below so a long title doesn't dominate the viewport. */
 		line-height: 1.25;
+	}
+	.toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+	}
+	.confirm {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+	}
+	.confirm-title {
+		margin: 0;
+		font-size: var(--fs-lg);
+	}
+	.confirm-body {
+		margin: 0;
+		color: var(--text-muted);
+		line-height: 1.5;
+	}
+	.confirm-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-2);
 	}
 	.meta {
 		display: grid;

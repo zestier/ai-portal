@@ -38,6 +38,45 @@ test('ticket detail page renders directly', async ({ page, request }) => {
 	await expect(page.getByText('hello')).toBeVisible();
 });
 
+test('detail toolbar transitions status in place and confirms archive', async ({
+	page,
+	request
+}) => {
+	const created = await request
+		.post('/api/tickets', { data: { title: 'Toolbar ticket' } })
+		.then((r) => r.json());
+	const id: string = created.ticket.id;
+
+	await page.goto(`/tickets/${id}`);
+
+	const toolbar = page.getByRole('group', { name: 'Ticket actions' });
+
+	// Open ticket: Mark done + Archive available, no Reopen.
+	await expect(toolbar.getByRole('button', { name: 'Mark done' })).toBeVisible();
+	await expect(toolbar.getByRole('button', { name: 'Reopen' })).toHaveCount(0);
+
+	// Mark done fires instantly and refreshes in place: the pill and the toolbar
+	// re-derive (Reopen replaces Mark done) without a full navigation.
+	await toolbar.getByRole('button', { name: 'Mark done' }).click();
+	await expect(toolbar.getByRole('button', { name: 'Reopen' })).toBeVisible();
+	await expect(toolbar.getByRole('button', { name: 'Mark done' })).toHaveCount(0);
+
+	// Archive opens a confirmation dialog; cancelling makes no change.
+	await toolbar.getByRole('button', { name: 'Archive' }).click();
+	const dialog = page.getByRole('alertdialog');
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(toolbar.getByRole('button', { name: 'Archive' })).toBeVisible();
+
+	// Confirming archives the ticket; an archived ticket exposes only Reopen.
+	await toolbar.getByRole('button', { name: 'Archive' }).click();
+	await dialog.getByRole('button', { name: 'Archive' }).click();
+	await expect(toolbar.getByRole('button', { name: 'Reopen' })).toBeVisible();
+	await expect(toolbar.getByRole('button', { name: 'Archive' })).toHaveCount(0);
+	await expect(toolbar.getByRole('button', { name: 'Mark done' })).toHaveCount(0);
+});
+
 test('tickets index browses, filters by status, and paginates', async ({ page, request }) => {
 	// The e2e suite shares one server + DB + default workspace across all specs
 	// (and CI retries), so tag this run's tickets with a unique prefix to keep
