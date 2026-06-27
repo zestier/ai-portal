@@ -491,6 +491,15 @@
 											role="group"
 											aria-label={`Actions for ${ticket.title}`}
 										>
+											<a
+												class="ticket-action"
+												href={`/tickets/${ticket.id}`}
+												title="Open ticket page"
+												aria-label={`Open ticket page: ${ticket.title}`}
+												onclick={() => onnavigate?.()}
+											>
+												Open
+											</a>
 											{#each ticketActions as action (action.id)}
 												<button
 													class="ticket-action"
@@ -866,6 +875,10 @@
 		font-size: var(--fs-xs);
 		padding: 0.1rem 0.35rem;
 		flex-shrink: 0;
+	}
+	a.ticket-action {
+		text-decoration: none;
+		line-height: 1.35;
 	}
 	.ticket-action:hover,
 	.ticket-action:focus-visible {

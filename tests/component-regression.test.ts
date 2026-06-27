@@ -9,6 +9,7 @@ import InteractiveRequestDialog from '../src/lib/components/InteractiveRequestDi
 import PromptTemplateLauncher from '../src/lib/components/PromptTemplateLauncher.svelte';
 import ToolCall from '../src/lib/components/ToolCall.svelte';
 import PromptsSettings from '../src/routes/settings/PromptsSettings.svelte';
+import TicketPage from '../src/routes/tickets/[id]/+page.svelte';
 import { MAX_RENDERABLE_DIFF_CHARS } from '../src/lib/client/diff-parser';
 import { listBuiltInPromptTemplates } from '../src/lib/prompt-templates';
 import type {
@@ -518,6 +519,52 @@ describe('Svelte component regression coverage', () => {
 		expect(home).toContain('Use template');
 		expect(rail).toContain('aria-label="New blank chat"');
 		expect(rail).toContain('aria-label="New chat from template"');
+	});
+
+	test('Ticket detail page renders plan and dependency relationships', () => {
+		const base = {
+			id: 't-ui',
+			userId: 'u1',
+			workspaceKey: '/ws',
+			title: 'Build the UI',
+			body: 'Wire up the sidebar.',
+			plan: '1. scaffold\n2. style',
+			status: 'open' as const,
+			sourceConversationId: null,
+			sourceMessageId: null,
+			createdAt: 1,
+			updatedAt: 2,
+			closedAt: null
+		};
+		const blocked = render(TicketPage, {
+			props: {
+				data: {
+					ticket: base,
+					dependsOn: [{ id: 't-api', title: 'Build the API', status: 'open' as const }],
+					dependents: [{ id: 't-ship', title: 'Ship release', status: 'open' as const }]
+				}
+			}
+		} as never).body;
+		expect(blocked).toContain('Build the UI');
+		expect(blocked).toContain('1. scaffold');
+		expect(blocked).toContain('Wire up the sidebar.');
+		expect(blocked).toContain('href="/tickets/t-api"');
+		expect(blocked).toContain('href="/tickets/t-ship"');
+		// An open prerequisite flags the ticket as blocked (via a status pill).
+		expect(blocked).toContain('Blocked');
+
+		const ready = render(TicketPage, {
+			props: {
+				data: {
+					ticket: { ...base, plan: '' },
+					dependsOn: [{ id: 't-api', title: 'Build the API', status: 'done' as const }],
+					dependents: []
+				}
+			}
+		} as never).body;
+		// All prerequisites satisfied -> ready; empty plan shows a placeholder.
+		expect(ready).toContain('Ready to start');
+		expect(ready).toContain('No plan recorded.');
 	});
 
 	test('Prompts settings lists built-ins and user-managed templates', () => {

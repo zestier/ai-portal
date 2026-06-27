@@ -14,14 +14,14 @@ import {
 
 // Model-relevant ticket fields; provenance ids and timestamps are dropped from
 // the compact default and recoverable via the `fields` selector. `blockedBy`
-// (open prerequisites) and `blocks` (dependents) are part of the compact view so
-// ordering is visible on a plain read — they are small, bounded id lists — but
-// `withDeps` only attaches them when non-empty, so a ticket with no edges shows
-// neither rather than empty arrays.
+// (open blockers) and `blocks` (the tickets this one blocks) are part of the
+// compact view so ordering is visible on a plain read — they are small, bounded
+// id lists — but `withDeps` only attaches them when non-empty, so a ticket with
+// no edges shows neither rather than empty arrays.
 const TICKET_KEEP = ['id', 'title', 'body', 'status', 'blockedBy', 'blocks'] as const;
 
-// Enrich a ticket with its dependency edges for the agent tools. `blockedBy` is
-// the actionable subset (prerequisites that are still open); `blocks` lists the
+// Enrich a ticket with its blocking edges for the agent tools. `blockedBy` is
+// the actionable subset (blockers that are still open); `blocks` lists the
 // tickets waiting on this one. Each is attached only when non-empty: an empty
 // edge list is omitted entirely rather than rendered as `[]`. Both names are in
 // TICKET_KEEP, so a `fields` request for either is always valid (never an
@@ -38,10 +38,15 @@ function withDeps(ticket: WorkspaceTicket) {
 
 const Status = z.enum(['open', 'done', 'archived']);
 
+// Edge id lists for `ticket_add`/`ticket_update`. A bounded array of ticket ids.
+const EdgeIds = z.array(z.string().trim().min(1)).max(100);
+
 const AddArgs = z.object({
 	title: z.string().trim().min(1).max(200),
 	body: z.string().trim().max(8000).optional(),
-	plan: z.string().trim().max(100000).optional()
+	plan: z.string().trim().max(100000).optional(),
+	blockedBy: EdgeIds.optional(),
+	blocks: EdgeIds.optional()
 });
 
 const ListArgs = z
@@ -59,14 +64,18 @@ const UpdateArgs = z
 		title: z.string().trim().min(1).max(200).optional(),
 		body: z.string().trim().max(8000).optional(),
 		plan: z.string().trim().max(100000).optional(),
-		status: Status.optional()
+		status: Status.optional(),
+		blockedBy: EdgeIds.optional(),
+		blocks: EdgeIds.optional()
 	})
 	.refine(
 		(args) =>
 			args.title !== undefined ||
 			args.body !== undefined ||
 			args.plan !== undefined ||
-			args.status !== undefined,
+			args.status !== undefined ||
+			args.blockedBy !== undefined ||
+			args.blocks !== undefined,
 		{
 			message: 'No fields to update'
 		}
@@ -109,6 +118,19 @@ export function buildTicketTools(opts: {
 							'Optional durable implementation plan / design notes / checklist. Use this ' +
 							'(not a scratch markdown file) to persist a worked-out plan with the ticket. ' +
 							'Supports `- [ ]` / `- [x]` checklist items for subtasks.'
+					},
+					blockedBy: {
+						type: 'array',
+						items: { type: 'string' },
+						description:
+							'Ids of existing tickets that block this one (must be done first). Lets you ' +
+							'create a ticket with its ordering in one call instead of a follow-up ticket_block.'
+					},
+					blocks: {
+						type: 'array',
+						items: { type: 'string' },
+						description:
+							'Ids of existing tickets that this new ticket blocks (the reverse direction).'
 					}
 				},
 				required: ['title'],
@@ -116,24 +138,30 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const parsed = AddArgs.parse(args);
-				const ticket = tickets.create(opts.userId, {
-					workspaceKey: opts.workspaceKey,
-					title: parsed.title,
-					body: parsed.body,
-					plan: parsed.plan,
-					sourceConversationId: opts.conversationId
-				});
-				return ok(
-					{ id: ticket.id, title: ticket.title, status: ticket.status },
-					`Added ticket ${ticket.id}: ${ticket.title}`
-				);
+				try {
+					const ticket = tickets.create(opts.userId, {
+						workspaceKey: opts.workspaceKey,
+						title: parsed.title,
+						body: parsed.body,
+						plan: parsed.plan,
+						blockedBy: parsed.blockedBy,
+						blocks: parsed.blocks,
+						sourceConversationId: opts.conversationId
+					});
+					return ok(
+						{ id: ticket.id, title: ticket.title, status: ticket.status },
+						`Added ticket ${ticket.id}: ${ticket.title}`
+					);
+				} catch (e) {
+					return err(e instanceof Error ? e.message : String(e));
+				}
 			}
 		},
 		{
 			name: 'ticket_list',
 			description:
 				'List durable workspace tickets for the current workspace. Defaults to open tickets. ' +
-				'Blocked tickets are annotated with the open prerequisites blocking them, so a ticket ' +
+				'Blocked tickets are annotated with the open tickets blocking them, so a ticket ' +
 				'with no such annotation is ready to start. ' +
 				FIELDS_NOTE,
 			argsSchema: ListArgs,
@@ -213,7 +241,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_update',
 			description:
-				'Update a durable workspace ticket title, body, plan, or status. Use status=done when a ticket has been completed, or archived when it should be hidden without completion. Use `plan` to persist a worked-out implementation plan or checklist with the ticket.',
+				'Update a durable workspace ticket title, body, plan, status, or its blocking edges. Use status=done when a ticket has been completed, or archived when it should be hidden without completion. Use `plan` to persist a worked-out implementation plan or checklist. `blockedBy`/`blocks` replace the complete set of edges on that side (omit to leave unchanged, [] to clear) — a declarative alternative to ticket_block/ticket_unblock.',
 			argsSchema: UpdateArgs,
 			parameters: {
 				type: 'object',
@@ -231,6 +259,19 @@ export function buildTicketTools(opts: {
 						type: 'string',
 						enum: ['open', 'done', 'archived'],
 						description: 'New ticket status.'
+					},
+					blockedBy: {
+						type: 'array',
+						items: { type: 'string' },
+						description:
+							'Replace the complete set of tickets this one is blocked by. Omit to leave ' +
+							'unchanged; pass [] to clear all blockers.'
+					},
+					blocks: {
+						type: 'array',
+						items: { type: 'string' },
+						description:
+							'Replace the complete set of tickets this one blocks (the reverse direction).'
 					}
 				},
 				required: ['id'],
@@ -242,26 +283,30 @@ export function buildTicketTools(opts: {
 				if (!current || current.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const updated = tickets.update(id, opts.userId, patch as UpdateInput);
-				if (!updated) return err(`Ticket not found: ${id}`);
-				return ok(
-					{ id: updated.id, title: updated.title, status: updated.status },
-					`Updated ticket ${updated.id}: ${updated.title} [${updated.status}]`
-				);
+				try {
+					const updated = tickets.update(id, opts.userId, patch as UpdateInput);
+					if (!updated) return err(`Ticket not found: ${id}`);
+					return ok(
+						{ id: updated.id, title: updated.title, status: updated.status },
+						`Updated ticket ${updated.id}: ${updated.title} [${updated.status}]`
+					);
+				} catch (e) {
+					return err(e instanceof Error ? e.message : String(e));
+				}
 			}
 		},
 		{
 			name: 'ticket_block',
 			description:
-				'Record that one ticket is blocked by another (a dependency / ordering edge): `id` should not be started until `blockedBy` is done. Use this to model the order work should happen in — ticket_list then flags what is blocked, and a ticket with no open blockers is ready to start. Rejects self-edges and cycles.',
+				'Record that one ticket is blocked by another (a blocking / ordering edge): `id` should not be started until `blockedBy` is done. Use this to model the order work should happen in — ticket_list then flags what is blocked, and a ticket with no open blockers is ready to start. Rejects self-edges and cycles.',
 			argsSchema: BlockArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					id: { type: 'string', description: 'The blocked (dependent) ticket id.' },
+					id: { type: 'string', description: 'The ticket that is blocked.' },
 					blockedBy: {
 						type: 'string',
-						description: 'The prerequisite ticket id that must be done first.'
+						description: 'The blocking ticket that must be done first.'
 					}
 				},
 				required: ['id', 'blockedBy'],
@@ -289,13 +334,13 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_unblock',
 			description:
-				'Remove a dependency edge added by ticket_block, so `id` is no longer blocked by `blockedBy`.',
+				'Remove a blocking edge added by ticket_block, so `id` is no longer blocked by `blockedBy`.',
 			argsSchema: UnblockArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					id: { type: 'string', description: 'The blocked (dependent) ticket id.' },
-					blockedBy: { type: 'string', description: 'The prerequisite ticket id to detach.' }
+					id: { type: 'string', description: 'The ticket that is blocked.' },
+					blockedBy: { type: 'string', description: 'The blocking ticket to detach.' }
 				},
 				required: ['id', 'blockedBy'],
 				additionalProperties: false
@@ -312,7 +357,7 @@ export function buildTicketTools(opts: {
 							{ id, blockedBy, result: 'removed' },
 							`Ticket ${id} no longer blocked by ${blockedBy}.`
 						)
-					: err(`No dependency from ${id} on ${blockedBy}.`);
+					: err(`Ticket ${id} is not blocked by ${blockedBy}.`);
 			}
 		}
 	];

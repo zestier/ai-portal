@@ -103,6 +103,17 @@ export interface WorkspaceTicket {
 	closedAt: number | null;
 }
 
+/**
+ * A lightweight reference to a ticket on the other end of a dependency edge,
+ * carrying just enough to render it (and link to it) without loading the full
+ * row. Used by the ticket detail page's dependency display.
+ */
+export interface TicketDependencyRef {
+	id: string;
+	title: string;
+	status: WorkspaceTicketStatus;
+}
+
 export type PromptTemplateStatus = 'open' | 'archived';
 
 /**

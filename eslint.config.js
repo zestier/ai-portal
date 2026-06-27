@@ -28,6 +28,7 @@ export default ts.config(
 			'build.prev/',
 			'coverage/',
 			'.svelte-kit/',
+			'.zap/',
 			'dist/',
 			'data/',
 			'e2e/.tmp-data/',

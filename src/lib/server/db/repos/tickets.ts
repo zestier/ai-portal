@@ -1,6 +1,6 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
-import type { WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
+import type { TicketDependencyRef, WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
 
 interface TicketRow {
 	id: string;
@@ -8,7 +8,9 @@ interface TicketRow {
 	workspace_key: string;
 	title: string;
 	body: string;
-	plan: string;
+	// May be undefined if read from a DB whose `plan` column is missing (see the
+	// defensive coercion in `rowToTicket`).
+	plan: string | undefined;
 	status: string;
 	source_conversation_id: string | null;
 	source_message_id: string | null;
@@ -28,7 +30,11 @@ function rowToTicket(r: TicketRow): WorkspaceTicket {
 		workspaceKey: r.workspace_key,
 		title: r.title,
 		body: r.body,
-		plan: r.plan,
+		// Defensive: `plan` was added by a later migration. If a DB somehow lacks
+		// the column (e.g. a migration-version collision left 048 skipped), the
+		// raw row has no `plan`, so coerce to '' rather than letting `undefined`
+		// reach `.trim()` callers and throw.
+		plan: r.plan ?? '',
 		status: normalizeStatus(r.status),
 		sourceConversationId: r.source_conversation_id,
 		sourceMessageId: r.source_message_id,
@@ -97,6 +103,10 @@ export interface CreateInput {
 	title: string;
 	body?: string;
 	plan?: string;
+	/** Ticket ids this new ticket is blocked by — blocking edges added on insert. */
+	blockedBy?: string[];
+	/** Ticket ids this new ticket blocks — blocking edges added on insert. */
+	blocks?: string[];
 	sourceConversationId?: string | null;
 	sourceMessageId?: string | null;
 }
@@ -108,25 +118,33 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 	const body = input.body?.trim() ?? '';
 	const plan = input.plan?.trim() ?? '';
 	if (!title) throw new Error('ticket title cannot be empty');
-	getDb()
-		.prepare(
-			`INSERT INTO workspace_tickets(
-			   id, user_id, workspace_key, title, body, plan, status,
-			   source_conversation_id, source_message_id, created_at, updated_at, closed_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
-		)
-		.run(
-			id,
-			userId,
-			input.workspaceKey,
-			title,
-			body,
-			plan,
-			input.sourceConversationId ?? null,
-			input.sourceMessageId ?? null,
-			now,
-			now
-		);
+	// Insert the row and any blocking edges atomically: edges are created after
+	// the row exists (so addDependency's existence/same-workspace/cycle checks see
+	// the new ticket), and any bad edge — unknown id, cross-workspace, or a cycle —
+	// throws and rolls the whole create back, so a ticket is never half-created.
+	getDb().transaction(() => {
+		getDb()
+			.prepare(
+				`INSERT INTO workspace_tickets(
+				   id, user_id, workspace_key, title, body, plan, status,
+				   source_conversation_id, source_message_id, created_at, updated_at, closed_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+			)
+			.run(
+				id,
+				userId,
+				input.workspaceKey,
+				title,
+				body,
+				plan,
+				input.sourceConversationId ?? null,
+				input.sourceMessageId ?? null,
+				now,
+				now
+			);
+		for (const blockerId of new Set(input.blockedBy ?? [])) addDependency(userId, id, blockerId);
+		for (const blockedId of new Set(input.blocks ?? [])) addDependency(userId, blockedId, id);
+	})();
 	return {
 		id,
 		userId,
@@ -148,6 +166,14 @@ export interface UpdateInput {
 	body?: string;
 	plan?: string;
 	status?: WorkspaceTicketStatus;
+	/**
+	 * Replace the complete set of tickets this one is blocked by. Reconciled as a
+	 * desired-state set (edges not listed are removed, new ones added). Omit to
+	 * leave blocking edges unchanged; pass `[]` to clear them.
+	 */
+	blockedBy?: string[];
+	/** Replace the complete set of tickets this one blocks (see `blockedBy`). */
+	blocks?: string[];
 }
 
 export function update(id: string, userId: string, patch: UpdateInput): WorkspaceTicket | null {
@@ -161,23 +187,55 @@ export function update(id: string, userId: string, patch: UpdateInput): Workspac
 	const closedAt =
 		nextStatus === 'done' || nextStatus === 'archived' ? (current.closedAt ?? now) : null;
 
-	getDb()
-		.prepare(
-			`UPDATE workspace_tickets
-			 SET title = ?, body = ?, plan = ?, status = ?, updated_at = ?, closed_at = ?
-			 WHERE id = ? AND user_id = ?`
-		)
-		.run(
-			patch.title?.trim() ?? current.title,
-			patch.body?.trim() ?? current.body,
-			patch.plan?.trim() ?? current.plan,
-			nextStatus,
-			now,
-			closedAt,
-			id,
-			userId
-		);
+	// Scalar update + edge reconciliation run atomically so a bad edge rolls the
+	// whole update back rather than leaving a partial change.
+	getDb().transaction(() => {
+		getDb()
+			.prepare(
+				`UPDATE workspace_tickets
+				 SET title = ?, body = ?, plan = ?, status = ?, updated_at = ?, closed_at = ?
+				 WHERE id = ? AND user_id = ?`
+			)
+			.run(
+				patch.title?.trim() ?? current.title,
+				patch.body?.trim() ?? current.body,
+				patch.plan?.trim() ?? current.plan,
+				nextStatus,
+				now,
+				closedAt,
+				id,
+				userId
+			);
+		if (patch.blockedBy !== undefined) reconcileEdges(userId, id, patch.blockedBy, 'blockedBy');
+		if (patch.blocks !== undefined) reconcileEdges(userId, id, patch.blocks, 'blocks');
+	})();
 	return get(id, userId);
+}
+
+// Reconcile one side of a ticket's blocking edges to a desired-state set: add
+// edges that are newly desired, remove those no longer present. `side` selects
+// the direction — `blockedBy` edges have this ticket as the blocked endpoint,
+// `blocks` edges have it as the blocker. addDependency enforces existence /
+// same-workspace / no-cycle on each added edge.
+function reconcileEdges(
+	userId: string,
+	id: string,
+	desiredRaw: string[],
+	side: 'blockedBy' | 'blocks'
+): void {
+	const desired = new Set(desiredRaw);
+	const current = side === 'blockedBy' ? listDependencies(id) : listDependents(id);
+	const currentSet = new Set(current);
+	for (const other of current) {
+		if (desired.has(other)) continue;
+		if (side === 'blockedBy') removeDependency(userId, id, other);
+		else removeDependency(userId, other, id);
+	}
+	for (const other of desired) {
+		if (currentSet.has(other)) continue;
+		if (side === 'blockedBy') addDependency(userId, id, other);
+		else addDependency(userId, other, id);
+	}
 }
 
 export function remove(id: string, userId: string): boolean {
@@ -290,4 +348,38 @@ export function removeDependency(userId: string, ticketId: string, dependsOn: st
 		.prepare('DELETE FROM ticket_deps WHERE ticket_id = ? AND depends_on = ?')
 		.run(ticketId, dependsOn);
 	return r.changes > 0;
+}
+
+/**
+ * Prerequisites of a ticket (the tickets it depends on / is blocked by), as
+ * display refs (id/title/status), regardless of their status. The status marker
+ * lets a detail view distinguish prerequisites that are still open (actively
+ * blocking) from ones already satisfied. Use `openBlockers` instead when only
+ * the actionable, still-blocking subset is needed.
+ *
+ * Scoped by `userId` for defense-in-depth: every edge is created same-user by
+ * `addDependency`, so this is belt-and-suspenders, but it means a read can never
+ * surface another user's title even if an edge were ever created off that path.
+ */
+export function dependencyRefs(ticketId: string, userId: string): TicketDependencyRef[] {
+	return getDb()
+		.prepare(
+			`SELECT t.id, t.title, t.status FROM ticket_deps d
+			 JOIN workspace_tickets t ON t.id = d.depends_on
+			 WHERE d.ticket_id = ? AND t.user_id = ?
+			 ORDER BY d.created_at DESC, t.title`
+		)
+		.all(ticketId, userId) as TicketDependencyRef[];
+}
+
+/** Dependents of a ticket (tickets it blocks), as display refs, any status. Scoped by `userId` (see `dependencyRefs`). */
+export function dependentRefs(ticketId: string, userId: string): TicketDependencyRef[] {
+	return getDb()
+		.prepare(
+			`SELECT t.id, t.title, t.status FROM ticket_deps d
+			 JOIN workspace_tickets t ON t.id = d.ticket_id
+			 WHERE d.depends_on = ? AND t.user_id = ?
+			 ORDER BY d.created_at DESC, t.title`
+		)
+		.all(ticketId, userId) as TicketDependencyRef[];
 }

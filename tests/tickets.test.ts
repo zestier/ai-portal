@@ -312,4 +312,198 @@ describe('workspace tickets', () => {
 
 		rmSync(otherWorkspace, { recursive: true, force: true });
 	});
+
+	it('ticket_add and ticket_update accept edges and surface bad ones as errors', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			id: 'conv-edge-tools',
+			title: 'Edge tools',
+			workdir: workspace,
+			model: null
+		});
+		const tools = buildTicketTools({
+			userId: user.id,
+			workspaceKey: workspace,
+			conversationId: conv.id
+		});
+		const add = tools.find((t) => t.name === 'ticket_add')!;
+		const update = tools.find((t) => t.name === 'ticket_update')!;
+
+		const api = tickets.create(user.id, { workspaceKey: workspace, title: 'API' });
+
+		// ticket_add with blockedBy creates the ticket and its edge in one call.
+		const added = await add.handler({ title: 'UI', blockedBy: [api.id] });
+		expect(added.ok).toBe(true);
+		const uiId = (added.ok && (added.result as { id: string }).id) as string;
+		expect(tickets.openBlockers(uiId)).toEqual([api.id]);
+
+		// ticket_update replaces the blocker set declaratively (here, clear it).
+		const cleared = await update.handler({ id: uiId, blockedBy: [] });
+		expect(cleared.ok).toBe(true);
+		expect(tickets.openBlockers(uiId)).toEqual([]);
+
+		// A bad edge id comes back as a clean error envelope (not a thrown crash).
+		const bad = await add.handler({ title: 'Broken', blockedBy: ['nope'] });
+		expect(bad.ok).toBe(false);
+		expect(!bad.ok && bad.error.message).toMatch(/not found/i);
+		// And the failed add left no ticket behind.
+		expect(
+			tickets.list(user.id, workspace, { status: 'all' }).some((t) => t.title === 'Broken')
+		).toBe(false);
+	});
+
+	it('dependencyRefs and dependentRefs return display refs with status', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		const api = tickets.create(user.id, { workspaceKey: workspace, title: 'Build API' });
+		const ui = tickets.create(user.id, { workspaceKey: workspace, title: 'Build UI' });
+		tickets.addDependency(user.id, ui.id, api.id);
+
+		// UI depends on API; API is depended on by UI. Refs carry title + status.
+		expect(tickets.dependencyRefs(ui.id, user.id)).toEqual([
+			{ id: api.id, title: 'Build API', status: 'open' }
+		]);
+		expect(tickets.dependentRefs(ui.id, user.id)).toEqual([]);
+		expect(tickets.dependentRefs(api.id, user.id)).toEqual([
+			{ id: ui.id, title: 'Build UI', status: 'open' }
+		]);
+		expect(tickets.dependencyRefs(api.id, user.id)).toEqual([]);
+
+		// Unlike openBlockers, dependencyRefs keeps satisfied prerequisites visible,
+		// carrying the updated status so the detail page can mark them satisfied.
+		tickets.update(api.id, user.id, { status: 'done' });
+		expect(tickets.dependencyRefs(ui.id, user.id)).toEqual([
+			{ id: api.id, title: 'Build API', status: 'done' }
+		]);
+		// openBlockers (ids, open-only) drops the now-satisfied prerequisite.
+		expect(tickets.openBlockers(ui.id)).toEqual([]);
+
+		// Scoped by user: another user sees none of these edges' refs.
+		const other = users.upsertGithub({
+			githubLogin: 'deps-rival',
+			githubId: 717,
+			displayName: null,
+			avatarUrl: null
+		});
+		expect(tickets.dependencyRefs(ui.id, other.id)).toEqual([]);
+		expect(tickets.dependentRefs(api.id, other.id)).toEqual([]);
+	});
+
+	it('create and update set blocking edges from either side, atomically', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		const api = tickets.create(user.id, { workspaceKey: workspace, title: 'API' });
+		const infra = tickets.create(user.id, { workspaceKey: workspace, title: 'Infra' });
+
+		// create() can set both sides at once: ui is blocked by api, and blocks ship.
+		const ui = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'UI',
+			blockedBy: [api.id]
+		});
+		const ship = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Ship',
+			blockedBy: [ui.id]
+		});
+		expect(tickets.dependencyRefs(ui.id, user.id).map((r) => r.id)).toEqual([api.id]);
+		expect(tickets.dependentRefs(ui.id, user.id).map((r) => r.id)).toEqual([ship.id]);
+
+		// update() reconciles a side as a desired-state set: replace ui's blockers
+		// with [api, infra] (adds infra, keeps api), and clear ship's via [].
+		tickets.update(ui.id, user.id, { blockedBy: [api.id, infra.id] });
+		expect(
+			tickets
+				.dependencyRefs(ui.id, user.id)
+				.map((r) => r.id)
+				.sort()
+		).toEqual([api.id, infra.id].sort());
+		// `blocks` from the reverse side: make ui also block ship explicitly stays,
+		// then clear ui's dependents.
+		tickets.update(ui.id, user.id, { blocks: [] });
+		expect(tickets.dependentRefs(ui.id, user.id)).toEqual([]);
+
+		// Atomicity + validation: a create whose edge would cycle throws and rolls
+		// back — no orphan ticket is left behind.
+		const before = tickets.list(user.id, workspace, { status: 'all' }).length;
+		expect(() =>
+			tickets.create(user.id, {
+				workspaceKey: workspace,
+				title: 'Cyclic',
+				blockedBy: [api.id],
+				blocks: [api.id] // api blocked by new AND new blocked by api -> cycle
+			})
+		).toThrow(/cycle/i);
+		expect(tickets.list(user.id, workspace, { status: 'all' }).length).toBe(before);
+
+		// A bad edge id on update throws and leaves edges unchanged.
+		expect(() => tickets.update(ui.id, user.id, { blockedBy: ['does-not-exist'] })).toThrow(
+			/not found/i
+		);
+		expect(
+			tickets
+				.dependencyRefs(ui.id, user.id)
+				.map((r) => r.id)
+				.sort()
+		).toEqual([api.id, infra.id].sort());
+	});
+
+	it('ticket detail page load returns the ticket with its dependency refs', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { load } = await import('../src/routes/tickets/[id]/+page.server');
+		const user = users.ensureLocalUser();
+
+		const api = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Build API',
+			plan: '1. design\n2. implement'
+		});
+		const ui = tickets.create(user.id, { workspaceKey: workspace, title: 'Build UI' });
+		tickets.addDependency(user.id, ui.id, api.id);
+
+		const data = (await load({
+			params: { id: ui.id },
+			locals: { userId: user.id }
+		} as never)) as {
+			ticket: { id: string; plan: string };
+			dependsOn: { id: string; status: string }[];
+			dependents: { id: string }[];
+		};
+		expect(data.ticket.id).toBe(ui.id);
+		expect(data.dependsOn).toEqual([{ id: api.id, title: 'Build API', status: 'open' }]);
+		expect(data.dependents).toEqual([]);
+
+		// The prerequisite's own page sees the dependent and carries its plan.
+		const apiData = (await load({
+			params: { id: api.id },
+			locals: { userId: user.id }
+		} as never)) as { ticket: { plan: string }; dependents: { id: string }[] };
+		expect(apiData.ticket.plan).toBe('1. design\n2. implement');
+		expect(apiData.dependents).toEqual([{ id: ui.id, title: 'Build UI', status: 'open' }]);
+
+		// A ticket the user doesn't own 404s. `load` is sync and `error()` throws
+		// synchronously, so assert via a direct catch rather than `.rejects`.
+		const other = users.upsertGithub({
+			githubLogin: 'page-rival',
+			githubId: 909,
+			displayName: null,
+			avatarUrl: null
+		});
+		let status = 0;
+		try {
+			load({ params: { id: ui.id }, locals: { userId: other.id } } as never);
+		} catch (e) {
+			status = (e as { status?: number }).status ?? 0;
+		}
+		expect(status).toBe(404);
+	});
 });
