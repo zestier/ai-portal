@@ -295,19 +295,25 @@ export function openBlockers(ticketId: string): string[] {
 }
 
 // Would adding `ticketId depends_on dependsOn` create a cycle? It does iff
-// `dependsOn` already (transitively) depends on `ticketId`. Walk the existing
-// dependency graph from `dependsOn` and see if `ticketId` is reachable.
+// `dependsOn` already (transitively) depends on `ticketId`. A single recursive
+// CTE walks the existing dependency graph from `fromId` and checks whether
+// `toId` is reachable, instead of issuing one SELECT per visited node. The CTE
+// is UNION (not UNION ALL), so already-visited nodes are deduplicated and any
+// pre-existing cycle in the data terminates the walk.
 function dependencyPathExists(fromId: string, toId: string): boolean {
-	const seen = new Set<string>();
-	const stack = [fromId];
-	while (stack.length) {
-		const node = stack.pop()!;
-		if (node === toId) return true;
-		if (seen.has(node)) continue;
-		seen.add(node);
-		for (const next of listDependencies(node)) stack.push(next);
-	}
-	return false;
+	if (fromId === toId) return true;
+	const row = getDb()
+		.prepare(
+			`WITH RECURSIVE reachable(id) AS (
+			   SELECT depends_on FROM ticket_deps WHERE ticket_id = ?
+			   UNION
+			   SELECT d.depends_on FROM ticket_deps d
+			   JOIN reachable r ON d.ticket_id = r.id
+			 )
+			 SELECT 1 AS hit FROM reachable WHERE id = ? LIMIT 1`
+		)
+		.get(fromId, toId) as { hit: number } | undefined;
+	return row !== undefined;
 }
 
 export type AddDepResult = 'added' | 'exists';
