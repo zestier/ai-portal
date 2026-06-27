@@ -1,4 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
+import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { exchangeCode, fetchProfile, isAllowed } from '$lib/server/auth/github';
 import { upsertGithub } from '$lib/server/db/repos/users';
@@ -11,7 +12,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	const expectedState = cookies.get('oauth_state');
 	cookies.delete('oauth_state', { path: '/', secure: url.protocol === 'https:' });
 
-	if (!code || !state || !expectedState || state !== expectedState) {
+	if (!code || !state || !expectedState || !statesMatch(state, expectedState)) {
 		log.warn('oauth.state_mismatch');
 		throw error(400, { message: 'OAuth state mismatch', code: 'oauth_state_mismatch' });
 	}
@@ -44,3 +45,10 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	issue(cookies, user.id, url.protocol === 'https:');
 	throw redirect(303, '/');
 };
+
+function statesMatch(provided: string, expected: string): boolean {
+	const a = Buffer.from(provided, 'utf8');
+	const b = Buffer.from(expected, 'utf8');
+	if (a.length !== b.length) return false;
+	return timingSafeEqual(a, b);
+}
