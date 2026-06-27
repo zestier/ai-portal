@@ -5856,6 +5856,152 @@ describe('memory-backed sessions', () => {
 	});
 });
 
+describe('memory_event_log retention + maintenance', () => {
+	beforeEach(async () => {
+		await setupLocalEnv();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	function eventCount(conversationId: string): number {
+		return (
+			getDb()
+				.prepare('SELECT COUNT(*) AS n FROM memory_event_log WHERE conversation_id = ?')
+				.get(conversationId) as { n: number }
+		).n;
+	}
+
+	function rootCount(conversationId: string): number {
+		return (
+			getDb()
+				.prepare(
+					'SELECT COUNT(*) AS n FROM memory_event_log WHERE conversation_id = ? AND parent_id IS NULL'
+				)
+				.get(conversationId) as { n: number }
+		).n;
+	}
+
+	function seedCommits(conversationId: string, count: number): void {
+		for (let i = 0; i < count; i++) {
+			const a = messages.append(conversationId, { role: 'assistant', content: `turn ${i}` });
+			commitPatch({
+				conversationId,
+				mode: 'project',
+				sourceMessageId: a.id,
+				patch: {
+					entities: [{ entityKey: `topic.t${i}`, entityType: 'topic', displayName: `Topic ${i}` }],
+					facts: [{ entityKey: `topic.t${i}`, predicate: 'state', value: `kept${i}` }]
+				}
+			});
+		}
+	}
+
+	function entityKeys(conversationId: string): string[] {
+		return memory
+			.listEntities(conversationId)
+			.map((e) => e.entityKey)
+			.sort();
+	}
+
+	it('caps the event log to whole recent commits and re-roots the chain', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'retain',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		seedCommits(conv.id, 12);
+
+		const before = eventCount(conv.id);
+		const perCommit = before / 12;
+		expect(Number.isInteger(perCommit)).toBe(true);
+		const cap = perCommit * 3; // keep the three most recent commits
+
+		const trimmed = memory.compactSessionMemoryLog(conv.id, cap);
+		expect(trimmed).toBe(before - cap);
+		expect(eventCount(conv.id)).toBe(cap);
+		// Re-rooted into a single clean root (no dangling parent pointer).
+		expect(rootCount(conv.id)).toBe(1);
+
+		const survivors = entityKeys(conv.id);
+		expect(survivors).toEqual(['topic.t10', 'topic.t11', 'topic.t9']);
+	});
+
+	it('keeps the projection rebuildable and the FTS index consistent after a trim', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'rebuild',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		seedCommits(conv.id, 10);
+		const before = eventCount(conv.id);
+		const perCommit = before / 10;
+		const cap = perCommit * 2;
+
+		memory.compactSessionMemoryLog(conv.id, cap);
+		const afterCompact = entityKeys(conv.id);
+
+		// A fresh fold over the capped chain reproduces exactly the same projection.
+		memory.rebuildSessionMemoryProjection(conv.id);
+		expect(entityKeys(conv.id)).toEqual(afterCompact);
+
+		// The FTS index tracks the trim: surviving items are searchable, trimmed
+		// ones are gone.
+		expect(memory.search(conv.id, { query: 'kept9' }).length).toBeGreaterThan(0);
+		expect(memory.search(conv.id, { query: 'kept0' })).toHaveLength(0);
+	});
+
+	it('runMemoryRetention sweeps only conversations over the cap', () => {
+		const user = users.ensureLocalUser();
+		const small = convs.create(user.id, {
+			title: 'small',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		const big = convs.create(user.id, {
+			title: 'big',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		seedCommits(small.id, 1);
+		const cap = eventCount(small.id); // small sits exactly at the cap, not over it
+		seedCommits(big.id, 8);
+		const bigBefore = eventCount(big.id);
+		expect(bigBefore).toBeGreaterThan(cap);
+
+		const res = memory.runMemoryRetention({ maxEvents: cap });
+		expect(res.conversations).toBe(1);
+		expect(res.trimmed).toBe(bigBefore - cap);
+		expect(eventCount(big.id)).toBe(cap);
+		expect(eventCount(small.id)).toBe(cap);
+	});
+
+	it('treats a non-positive cap as disabled (unbounded)', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			title: 'disabled',
+			workdir: '/tmp',
+			model: null,
+			memoryMode: 'project'
+		});
+		seedCommits(conv.id, 6);
+		const before = eventCount(conv.id);
+
+		expect(memory.compactSessionMemoryLog(conv.id, 0)).toBe(0);
+		expect(memory.compactSessionMemoryLog(conv.id, -5)).toBe(0);
+		expect(memory.runMemoryRetention({ maxEvents: 0 }).trimmed).toBe(0);
+		expect(eventCount(conv.id)).toBe(before);
+	});
+});
+
 describe('extractor prompt directive guidance', () => {
 	function singleShotPrompt(): string {
 		const input = {

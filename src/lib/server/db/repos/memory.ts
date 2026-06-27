@@ -2051,6 +2051,102 @@ export function wipe(conversationId: string): void {
 	tx();
 }
 
+// Retention: cap the per-conversation `memory_event_log` (and the FTS index it
+// feeds) by trimming the oldest events on the reachable chain.
+//
+// The log is append-only and the live projection is a full fold over the chain;
+// crucially each event payload carries a *full snapshot* of its item, not a
+// delta. So keeping only the most recent `maxEvents` events and re-rooting the
+// chain at the oldest survivor (parent_id -> NULL) yields a projection rebuild
+// that still reconstructs every surviving item's latest state — the only thing
+// lost is "cold" history (items whose sole observation aged out), which is
+// exactly the intent of a retention sweep. Returns the number of events trimmed.
+export function compactSessionMemoryLog(conversationId: string, maxEvents: number): number {
+	if (!Number.isFinite(maxEvents) || maxEvents <= 0) return 0;
+	const cap = Math.floor(maxEvents);
+	const db = getDb();
+	let trimmed = 0;
+	const tx = db.transaction(() => {
+		const head = getCurrentMemoryHead(db, conversationId);
+		const chain = chainRowsForHead(db, conversationId, head); // root -> head
+		if (chain.length <= cap) return;
+		const purged = chain.slice(0, chain.length - cap);
+		const newRoot = chain[chain.length - cap];
+
+		const deleteEvent = db.prepare(
+			'DELETE FROM memory_event_log WHERE conversation_id = ? AND id = ?'
+		);
+		const deleteRefBySource = db.prepare('DELETE FROM memory_refs WHERE source_key = ?');
+		const deleteRefByTarget = db.prepare(
+			'DELETE FROM memory_refs WHERE conversation_id = ? AND target_event_id = ?'
+		);
+		const deleteMessageHead = db.prepare(
+			'DELETE FROM memory_message_heads WHERE conversation_id = ? AND head_event_id = ?'
+		);
+		for (const row of purged) {
+			deleteRefBySource.run(row.id);
+			deleteRefByTarget.run(conversationId, row.id);
+			deleteMessageHead.run(conversationId, row.id);
+			deleteEvent.run(conversationId, row.id);
+		}
+
+		// Re-root: the oldest survivor's parent has just been removed, so detach it
+		// and drop its now-dangling outgoing parent reference. chainRowsForHead then
+		// terminates cleanly at this event on the next rebuild.
+		db.prepare(
+			'UPDATE memory_event_log SET parent_id = NULL WHERE conversation_id = ? AND id = ?'
+		).run(conversationId, newRoot.id);
+		deleteRefBySource.run(newRoot.id);
+
+		// Rebuild the projection + FTS index from the capped chain so the live state
+		// (and search) reflect exactly the retained events.
+		rebuildSessionMemoryProjectionInTransaction(db, conversationId);
+		trimmed = purged.length;
+	});
+	tx();
+	return trimmed;
+}
+
+// Sweep every conversation whose event log exceeds `maxEvents` and compact it.
+// `maxEvents <= 0` disables retention (no-op). Returns how many conversations
+// were trimmed and the total events removed.
+export function runMemoryRetention(opts: { maxEvents: number }): {
+	conversations: number;
+	trimmed: number;
+} {
+	if (!Number.isFinite(opts.maxEvents) || opts.maxEvents <= 0) {
+		return { conversations: 0, trimmed: 0 };
+	}
+	const cap = Math.floor(opts.maxEvents);
+	const db = getDb();
+	const rows = db
+		.prepare(
+			`SELECT conversation_id AS id
+			   FROM memory_event_log
+			  GROUP BY conversation_id
+			 HAVING COUNT(*) > ?`
+		)
+		.all(cap) as { id: string }[];
+	let conversations = 0;
+	let trimmed = 0;
+	for (const row of rows) {
+		const removed = compactSessionMemoryLog(row.id, cap);
+		if (removed > 0) {
+			conversations += 1;
+			trimmed += removed;
+		}
+	}
+	return { conversations, trimmed };
+}
+
+// Reclaim the disk pages freed by retention (and any other deletes). VACUUM
+// rewrites the database file, so it runs outside any transaction and is reserved
+// for the periodic maintenance task rather than the hot path.
+export function vacuumMemoryDatabase(): void {
+	const db = getDb();
+	db.exec('VACUUM');
+}
+
 export function replaySessionMemoryLogForFork(
 	sourceConversationId: string,
 	targetConversationId: string,

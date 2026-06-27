@@ -126,6 +126,15 @@ const Schema = z
 		// priority loops get proportionally more grace). 0 disables aging.
 		MEMORY_OPEN_LOOP_MAX_IDLE_TURNS: z.coerce.number().int().min(0).default(6),
 
+		// Retention for the append-only memory_event_log + FTS index. Caps the
+		// number of events kept per conversation; the periodic maintenance sweep
+		// trims the oldest events beyond this and VACUUMs reclaimed pages. 0
+		// disables retention (unbounded growth).
+		MEMORY_LOG_RETENTION_MAX_EVENTS: z.coerce.number().int().min(0).default(5000),
+		// How often the memory maintenance task (retention sweep + vacuum) runs,
+		// in minutes. Must be positive.
+		MEMORY_MAINTENANCE_INTERVAL_MIN: z.coerce.number().int().positive().default(720),
+
 		IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(15),
 		MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(4),
 		// After a user Stop, the turn must reach a terminal state and free the

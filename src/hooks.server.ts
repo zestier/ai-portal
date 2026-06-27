@@ -13,6 +13,7 @@ import {
 } from '$lib/server/auth/session';
 import { apiErrorResponse } from '$lib/server/http';
 import { startIdleReaper } from '$lib/server/runtime/pool';
+import { startMemoryMaintenance } from '$lib/server/runtime/memory-maintenance';
 import * as messages from '$lib/server/db/repos/messages';
 import { faviconDataUri, normalizeThemeAccent, type ThemeAccent } from '$lib/types';
 
@@ -25,6 +26,7 @@ function boot() {
 	getDb(); // opens + migrates
 	messages.recoverInterruptedInFlight();
 	startIdleReaper();
+	startMemoryMaintenance();
 	log.info('boot.ok');
 }
 boot();
