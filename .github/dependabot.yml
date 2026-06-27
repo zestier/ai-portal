@@ -1,0 +1,37 @@
+version: 2
+
+# Dependabot opens the remediation PRs that the non-blocking `audit` job in
+# ci.yml only surfaces. Two ecosystems are watched:
+#
+#   - npm: the application's JS dependencies (resolved via pnpm-lock.yaml).
+#   - github-actions: the SHA-pinned actions in .github/workflows/*. Pinning
+#     to a SHA freezes you on a vulnerable version until something bumps it;
+#     Dependabot is that something. See `pnpm run release:bump-actions` for
+#     the manual path.
+#
+# Updates are grouped to keep PR volume sane: one PR for routine version
+# bumps per ecosystem. Security updates are not throttled by the open-PR
+# limit, so urgent CVE fixes still land promptly.
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      npm-dependencies:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns:
+          - '*'

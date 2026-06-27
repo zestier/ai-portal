@@ -22,6 +22,7 @@ concurrency:
 #           -> test
 #           -> e2e
 #   docker (independent, starts immediately)
+#   audit  (independent, starts immediately)
 #
 # `install` populates a `node_modules` cache (keyed on the lockfile) plus
 # the pnpm store cache that actions/setup-node manages. Downstream jobs
@@ -227,6 +228,38 @@ jobs:
           # step inside `test:e2e` failed), neither directory exists.
           # Don't warn the run as a result.
           if-no-files-found: ignore
+
+  # Scan dependencies for known vulnerabilities. `pnpm audit` resolves the
+  # lockfile against the registry advisory DB, so it needs neither the
+  # node_modules cache nor a full install -- it runs standalone and starts
+  # at t=0 alongside docker.
+  #
+  # Non-blocking by design (`continue-on-error`): a freshly disclosed CVE in
+  # a transitive dep -- often with no fix available yet -- should surface in
+  # the run summary without wedging every unrelated PR. Dependabot
+  # (.github/dependabot.yml) opens the actual remediation PRs; this job is
+  # the visibility tripwire.
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+
+      - name: pnpm audit
+        continue-on-error: true
+        run: pnpm audit --audit-level=moderate
 
   # Exercise the same multi-arch Docker build that release.yml publishes,
   # but without pushing. This catches arch-specific Dockerfile/base-image
