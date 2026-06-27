@@ -198,6 +198,18 @@
 		</div>
 		<pre>{request.summary}</pre>
 
+		{#if request.imagePreview}
+			<div class="image-preview">
+				<div class="muted small">
+					Preview ({Math.round(request.imagePreview.byteSize / 1024)} KB)
+				</div>
+				<img
+					src={`data:${request.imagePreview.mimeType};base64,${request.imagePreview.dataBase64}`}
+					alt="file preview"
+				/>
+			</div>
+		{/if}
+
 		{#if isShellWithAnalysis && shellAnalysis && shellAnalysis.kind === 'parsed'}
 			<div class="shell-breakdown" aria-label="Pipeline breakdown">
 				<div class="muted small">
@@ -559,6 +571,17 @@
 		margin-top: 0.5rem;
 		border-radius: var(--radius-sm);
 		font-size: var(--fs-md);
+	}
+	.image-preview {
+		margin-top: 0.5rem;
+	}
+	.image-preview img {
+		display: block;
+		margin-top: 0.25rem;
+		max-width: 100%;
+		max-height: 18em;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
 	}
 	.shell-breakdown,
 	.git-commit-preview {

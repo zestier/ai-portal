@@ -670,6 +670,9 @@
 					// Drop ephemeral streaming state — final result supersedes it.
 					tc.partialOutput = undefined;
 					tc.progressMessage = undefined;
+					if (ev.attachments && ev.attachments.length > 0) {
+						tc.attachments = ev.attachments;
+					}
 				}
 				if (shouldRefreshTicketsAfterToolResult(tc, ev)) {
 					void invalidateAll();

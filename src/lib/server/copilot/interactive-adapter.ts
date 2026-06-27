@@ -1,5 +1,6 @@
 import type {
 	ElicitationSchema,
+	ImagePreview,
 	InteractiveKind,
 	InteractiveRequestView,
 	InteractiveRequestViewBody,
@@ -8,6 +9,9 @@ import type {
 	PortalEvent,
 	SessionMode
 } from '$lib/types';
+import { isAbsolute, resolve as resolvePath } from 'node:path';
+import { captureImageAttachment, MAX_IMAGE_PREVIEW_BYTES } from './image-attachment';
+import { bufferAttachment, dropAttachment, pathKey, toolCallKey } from './tool-attachment-buffer';
 import {
 	newRequestId,
 	register as registerInteractive,
@@ -89,11 +93,49 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		});
 	}
 
+	// Eagerly capture a readable image the agent is about to `view` so it can
+	// be previewed before approval and rendered in the resolved card. The bytes
+	// are staged in an in-memory buffer keyed by toolCallId / (conversation +
+	// path) and flushed to `tool_attachments` once the owning tool_calls row
+	// exists (on execution_start). Capture is strictly limited to read requests
+	// (view is read-only), so this never executes or mutates anything.
+	const maybeCaptureImage = (
+		req: PermissionRequestLike
+	): { keys: string[]; imagePreview?: ImagePreview } | null => {
+		if (req.kind !== 'read') return null;
+		if (typeof req.path !== 'string' || req.path.length === 0) return null;
+		const absPath = isAbsolute(req.path)
+			? resolvePath(req.path)
+			: resolvePath(opts.workingDirectory || process.cwd(), req.path);
+		const captured = captureImageAttachment(absPath);
+		if (!captured) return null;
+		const keys = [pathKey(opts.conversationId, absPath)];
+		if (typeof req.toolCallId === 'string' && req.toolCallId.length > 0) {
+			keys.push(toolCallKey(req.toolCallId));
+		}
+		bufferAttachment(keys, {
+			kind: 'image',
+			mimeType: captured.mimeType,
+			data: captured.data,
+			sourcePath: absPath,
+			bufferedAt: Date.now()
+		});
+		const imagePreview: ImagePreview | undefined =
+			captured.data.length <= MAX_IMAGE_PREVIEW_BYTES
+				? {
+						mimeType: captured.mimeType,
+						dataBase64: captured.data.toString('base64'),
+						byteSize: captured.data.length
+					}
+				: undefined;
+		return { keys, imagePreview };
+	};
+
 	// Inner decision logic. Wrapped by `onPermissionRequest` (below) so a
 	// prompt that is cancelled out from under us (turn abort, timeout, client
 	// disconnect, or capacity eviction) is reported to the SDK as
 	// "user-not-available" rather than a user denial.
-	const decidePermission = async (req: PermissionRequestLike) => {
+	const decideCore = async (req: PermissionRequestLike, imagePreview?: ImagePreview) => {
 		const tool = req.toolName ?? req.kind ?? 'unknown';
 		// A tool may declare that its permission should be evaluated as a
 		// filesystem request on a derived path (see `derivePermissionRequest`).
@@ -177,7 +219,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					canPersistDecision: false,
 					escalationReason: forceEscalationReason,
 					defaultDenyFeedback,
-					shellAnalysis
+					shellAnalysis,
+					imagePreview
 				}
 			);
 			if (response.decision === 'deny' || response.decision === 'deny-always') {
@@ -328,7 +371,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					args: req.args ?? null,
 					userPolicy: opts.policy,
 					canPersistDecision: false,
-					shellAnalysis
+					shellAnalysis,
+					imagePreview
 				}
 			);
 			if (response.decision === 'deny' || response.decision === 'deny-always') {
@@ -393,13 +437,30 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				userPolicy: opts.policy,
 				canPersistDecision: promptRequest.canPersistDecision,
 				defaultDenyFeedback: promptRequest.defaultDenyFeedback,
-				shellAnalysis
+				shellAnalysis,
+				imagePreview
 			}
 		);
 		if (response.decision === 'deny' || response.decision === 'deny-always') {
 			return rejectWithFeedback(response);
 		}
 		return { kind: 'approve-once' } as const;
+	};
+
+	// Capture-then-decide wrapper. Stages any viewable image before the
+	// decision (so a prompt can preview it), threads the preview into
+	// `decideCore`, and drops the staged bytes if the read is rejected or
+	// cancelled — only an approved read goes on to flush at execution_start.
+	const decidePermission = async (req: PermissionRequestLike) => {
+		const capture = maybeCaptureImage(req);
+		try {
+			const result = await decideCore(req, capture?.imagePreview);
+			if (capture && result.kind === 'reject') dropAttachment(capture.keys);
+			return result;
+		} catch (err) {
+			if (capture) dropAttachment(capture.keys);
+			throw err;
+		}
 	};
 
 	const onPermissionRequest = async (req: PermissionRequestLike) => {

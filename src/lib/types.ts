@@ -428,6 +428,19 @@ export interface ToolCallRecord {
 	// running. Not persisted: server-side rehydrations leave these unset.
 	partialOutput?: string;
 	progressMessage?: string;
+	// Binary artifacts side-stored for this tool call (currently images
+	// captured for a native `view`). Metadata only — the bytes are served
+	// lazily through an authed endpoint. Populated on conversation load and
+	// on the live `tool.result` event; absent while the tool is still running.
+	attachments?: ToolAttachmentMeta[];
+}
+
+export interface ToolAttachmentMeta {
+	id: string;
+	toolCallId: string;
+	kind: 'image';
+	mimeType: string;
+	byteSize: number;
 }
 
 export interface FileEditRecord {
@@ -572,6 +585,21 @@ export interface InteractivePermissionView {
 	 * user and downgrades the grant picker. Omitted for non-shell kinds.
 	 */
 	shellAnalysis?: ShellAnalysisView;
+	/**
+	 * A bounded inline preview of an image the agent is about to `view`. The
+	 * portal captures readable image bytes at permission (read) time so the
+	 * user can see what they're approving before deciding. Only present when
+	 * the read prompts (in-workspace reads are typically auto-allowed with no
+	 * dialog), the target is an allowlisted image type, and the bytes are
+	 * small enough to embed. `dataBase64` is the raw base64 (no data: prefix).
+	 */
+	imagePreview?: ImagePreview;
+}
+
+export interface ImagePreview {
+	mimeType: string;
+	dataBase64: string;
+	byteSize: number;
 }
 
 export type ShellAnalysisView =
@@ -835,6 +863,7 @@ export type PortalEvent =
 			summary: string;
 			output?: unknown;
 			parentToolCallId?: string;
+			attachments?: ToolAttachmentMeta[];
 	  }
 	// Ephemeral live-streaming events from the SDK during a tool's execution.
 	// Forwarded to subscribers but intentionally NOT appended to the turn's

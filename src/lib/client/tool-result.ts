@@ -15,7 +15,7 @@
 export type ResultBlock =
 	| { kind: 'text'; text: string }
 	| { kind: 'terminal'; text: string; exitCode?: number; cwd?: string }
-	| { kind: 'image'; data: string; mimeType: string }
+	| { kind: 'image'; data?: string; mimeType: string; src?: string }
 	| { kind: 'audio'; data: string; mimeType: string }
 	| { kind: 'resource_link'; name: string; uri: string; description?: string }
 	| { kind: 'resource'; uri: string; mimeType?: string; text?: string };

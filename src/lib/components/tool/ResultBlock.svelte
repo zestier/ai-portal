@@ -41,7 +41,11 @@
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 	<div class="markdown-result" use:copyableCodeBlocks>{@html markdownHtml}</div>
 {:else if block.kind === 'image'}
-	<img class="image" src={`data:${block.mimeType};base64,${block.data}`} alt="tool output" />
+	<img
+		class="image"
+		src={block.src ?? `data:${block.mimeType};base64,${block.data}`}
+		alt="tool output"
+	/>
 {:else if block.kind === 'audio'}
 	<audio controls src={`data:${block.mimeType};base64,${block.data}`}></audio>
 {:else if block.kind === 'resource_link'}

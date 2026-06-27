@@ -15,11 +15,26 @@
 //   @trigger-sampling           -> emits sampling.requested + .completed
 //   @trigger-mcp-oauth          -> emits mcp.oauth_required + _completed
 //   @trigger-external-tool      -> emits external_tool.requested + .completed
+//   @trigger-view-image         -> writes a PNG, fires a read permission for it,
+//                                  then runs the native `view` tool over it so
+//                                  the captured image attachment renders inline.
+//                                  Add `-autoallow` to skip the permission
+//                                  callback (mirrors the SDK auto-allowing an
+//                                  in-workspace read), exercising the
+//                                  execution_start direct-capture fallback.
 //   @trigger-slow-start         -> delays the first delta so the pre-message
 //                                  "thinking" state is observable by tests
 
 import { ulid } from 'ulid';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadConfig } from '../config';
+
+// A minimal valid 1x1 PNG. Written to the working directory by the
+// `@trigger-view-image` flow so the real interactive adapter can capture it as
+// an image attachment (extension allowlist + magic-byte sniff both pass).
+const TINY_PNG_BASE64 =
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 type Listener = (e: unknown) => void;
 
@@ -37,11 +52,18 @@ class StubSession {
 	private listeners = new Map<string, Set<Listener>>();
 	private aborted = false;
 	private handlers: StubHandlers;
+	private readonly workingDirectory: string;
+	// Staged `@trigger-view-image` lifecycle: the read permission (which lets
+	// the adapter capture the image) fires up front, but the tool start/complete
+	// events are emitted only after the assistant message has begun — matching
+	// the real SDK ordering (tools render under an existing message bubble).
+	private pendingViewImage: { toolCallId: string; imgPath: string } | null = null;
 
-	constructor(sessionId: string, model: string, handlers: StubHandlers) {
+	constructor(sessionId: string, model: string, handlers: StubHandlers, workingDirectory: string) {
 		this.sessionId = sessionId;
 		this.model = model;
 		this.handlers = handlers;
+		this.workingDirectory = workingDirectory;
 	}
 
 	setHandlers(handlers: StubHandlers) {
@@ -166,6 +188,51 @@ class StubSession {
 			await new Promise((r) => setTimeout(r, 20));
 			this.emit('external_tool.completed', { requestId });
 		}
+		if (prompt.includes('@trigger-view-image')) {
+			// Mirror the real native `view`-on-an-image lifecycle. By default the
+			// read permission fires now (exercising permission-time capture); the
+			// `@trigger-view-image-autoallow` variant SKIPS the permission callback
+			// to mirror the SDK auto-allowing an in-workspace read without invoking
+			// us, exercising the execution_start direct-capture fallback. Either
+			// way the tool start/complete events are deferred to `run()` until the
+			// assistant message bubble exists, since the live client only attaches
+			// tool calls to an existing message.
+			const autoAllow = prompt.includes('@trigger-view-image-autoallow');
+			const imgPath = join(this.workingDirectory, `view-image-${ulid()}.png`);
+			try {
+				writeFileSync(imgPath, Buffer.from(TINY_PNG_BASE64, 'base64'));
+			} catch {
+				// best-effort; if the write fails the read simply captures nothing
+			}
+			const toolCallId = ulid();
+			if (!autoAllow) {
+				await this.handlers.onPermissionRequest?.({
+					kind: 'read',
+					path: imgPath,
+					intention: 'view the screenshot',
+					toolCallId
+				});
+			}
+			this.pendingViewImage = { toolCallId, imgPath };
+		}
+	}
+
+	private async runPendingViewImage() {
+		const pending = this.pendingViewImage;
+		if (!pending) return;
+		this.pendingViewImage = null;
+		this.emit('tool.execution_start', {
+			toolCallId: pending.toolCallId,
+			toolName: 'view',
+			arguments: { path: pending.imgPath }
+		});
+		await new Promise((r) => setTimeout(r, 5));
+		this.emit('tool.execution_complete', {
+			toolCallId: pending.toolCallId,
+			toolName: 'view',
+			success: true,
+			result: { content: `Viewed image ${pending.imgPath}` }
+		});
 	}
 
 	private async run(prompt: string, reply: string) {
@@ -182,10 +249,17 @@ class StubSession {
 			if (this.aborted) return;
 		}
 		const chunks = reply.match(/.{1,16}/g) ?? [reply];
-		for (const chunk of chunks) {
+		for (let i = 0; i < chunks.length; i++) {
 			if (this.aborted) return;
-			this.emit('assistant.message_delta', { deltaContent: chunk });
+			this.emit('assistant.message_delta', { deltaContent: chunks[i] });
 			await new Promise((r) => setTimeout(r, 5));
+			// After the first chunk the client has an assistant bubble to attach
+			// to, so emit any staged `view` tool lifecycle now (realistic ordering:
+			// the model calls a tool partway through its response).
+			if (i === 0 && this.pendingViewImage) {
+				await this.runPendingViewImage();
+				if (this.aborted) return;
+			}
 		}
 		if (this.aborted) return;
 		this.emit('assistant.message', { content: reply });
@@ -257,7 +331,12 @@ export class StubCopilotClient {
 	}
 
 	async createSession(opts: StubSessionConfig) {
-		const s = new StubSession(opts.sessionId ?? ulid(), opts.model, pickHandlers(opts));
+		const s = new StubSession(
+			opts.sessionId ?? ulid(),
+			opts.model,
+			pickHandlers(opts),
+			opts.workingDirectory ?? process.cwd()
+		);
 		this.sessions.set(s.sessionId, s);
 		return s;
 	}
@@ -265,7 +344,12 @@ export class StubCopilotClient {
 	async resumeSession(sessionId: string, opts: StubSessionConfig) {
 		let s = this.sessions.get(sessionId);
 		if (!s) {
-			s = new StubSession(sessionId, opts.model, pickHandlers(opts));
+			s = new StubSession(
+				sessionId,
+				opts.model,
+				pickHandlers(opts),
+				opts.workingDirectory ?? process.cwd()
+			);
 			this.sessions.set(sessionId, s);
 		} else {
 			s.setHandlers(pickHandlers(opts));

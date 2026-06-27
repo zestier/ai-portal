@@ -23,6 +23,8 @@ import * as interactiveRequests from './interactive-requests';
 import { PORTAL_PRELUDE } from './portal-prelude';
 import { AsyncQueue } from './async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
+import { flushToolAttachment } from '../copilot/tool-attachment-flush';
+import * as toolAttachments from '../db/repos/tool-attachments';
 import { isEnabled } from '../memory/engine';
 import { loadConfig } from '../config';
 import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
@@ -379,8 +381,20 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				textOffset: tool.textOffset,
 				parentToolCallId: tool.parentToolCallId
 			});
+			// Now that the tool_calls row exists (the FK target), flush any image
+			// bytes captured for this call at permission time into the side store.
+			flushToolAttachment({
+				toolCallId: tool.toolCallId,
+				conversationId: opts.conversationId,
+				workingDirectory: opts.bridge.workingDirectory,
+				argsJson: tool.argsJson,
+				tool: tool.tool
+			});
 		} else if (ev.type === 'tool.result') {
-			emit(ev);
+			// Surface any image attachments captured + flushed for this call so
+			// the live card can render them without waiting for a reload.
+			const attachments = toolAttachments.listMetaForToolCall(ev.toolCallId);
+			emit(attachments.length > 0 ? { ...ev, attachments } : ev);
 			const tc = pendingTools.get(ev.toolCallId);
 			if (tc) {
 				tc.status = ev.ok ? 'ok' : 'error';
