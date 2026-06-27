@@ -8,7 +8,7 @@
 		block,
 		command,
 		markdown = false
-	}: { block: ResultBlock; command?: string; markdown?: boolean } = $props();
+	}: { block: ResultBlock; command?: string | undefined; markdown?: boolean } = $props();
 
 	const markdownHtml = $derived(
 		block.kind === 'text' && markdown ? renderMarkdown(block.text) : null

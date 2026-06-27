@@ -65,10 +65,10 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const ticket = tickets.create(userId, {
 		workspaceKey: workspace,
 		title: body.title,
-		body: body.body,
-		plan: body.plan,
 		sourceConversationId: body.sourceConversationId ?? null,
-		sourceMessageId: body.sourceMessageId ?? null
+		sourceMessageId: body.sourceMessageId ?? null,
+		...(body.body !== undefined ? { body: body.body } : {}),
+		...(body.plan !== undefined ? { plan: body.plan } : {})
 	});
 	return json({ ok: true, ticket }, { status: 201 });
 };

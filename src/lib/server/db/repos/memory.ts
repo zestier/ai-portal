@@ -308,41 +308,41 @@ export interface MemorySnapshot {
 	issues: MemoryValidationIssue[];
 	toolCalls: MemoryToolCall[];
 	patchItems: MemoryPatchItem[];
-	globalMemories?: GlobalMemory[];
+	globalMemories?: GlobalMemory[] | undefined;
 }
 
 export interface UpsertEntityInput {
 	entityKey: string;
-	entityType?: string;
-	displayName?: string;
-	summary?: string;
+	entityType?: string | undefined;
+	displayName?: string | undefined;
+	summary?: string | undefined;
 	metadata?: unknown;
-	sourceMessageId?: string | null;
-	turnId?: string | null;
+	sourceMessageId?: string | null | undefined;
+	turnId?: string | null | undefined;
 }
 
 export interface AddEventInput {
-	turnId?: string | null;
+	turnId?: string | null | undefined;
 	eventType: string;
 	summary: string;
 	payload?: unknown;
-	visibility?: string;
-	confidence?: number;
-	sourceMessageId?: string | null;
-	actorEntityId?: string | null;
-	targetEntityId?: string | null;
+	visibility?: string | undefined;
+	confidence?: number | undefined;
+	sourceMessageId?: string | null | undefined;
+	actorEntityId?: string | null | undefined;
+	targetEntityId?: string | null | undefined;
 }
 
 export interface AddFactInput {
-	entityId?: string | null;
+	entityId?: string | null | undefined;
 	predicate: string;
 	value: unknown;
-	visibility?: string;
-	confidence?: number;
-	sourceEventId?: string | null;
-	sourceMessageId?: string | null;
-	supersedesFactId?: string | null;
-	pinned?: boolean;
+	visibility?: string | undefined;
+	confidence?: number | undefined;
+	sourceEventId?: string | null | undefined;
+	sourceMessageId?: string | null | undefined;
+	supersedesFactId?: string | null | undefined;
+	pinned?: boolean | undefined;
 }
 
 /**
@@ -392,25 +392,25 @@ function isMultiValuedPredicate(predicate: string): boolean {
 export interface AddOpenLoopInput {
 	loopType: string;
 	title: string;
-	description?: string;
-	priority?: number;
-	relatedEntityIds?: string[];
-	sourceEventId?: string | null;
-	sourceMessageId?: string | null;
+	description?: string | undefined;
+	priority?: number | undefined;
+	relatedEntityIds?: string[] | undefined;
+	sourceEventId?: string | null | undefined;
+	sourceMessageId?: string | null | undefined;
 }
 
 export interface CreatePatchInput {
-	turnId?: string | null;
-	sourceMessageId?: string | null;
+	turnId?: string | null | undefined;
+	sourceMessageId?: string | null | undefined;
 	status: MemoryPatchStatus;
-	summary?: string;
+	summary?: string | undefined;
 	rawPatch?: unknown;
 	validationResult?: unknown;
-	extractorKind?: string;
-	extractorModel?: string;
-	extractorConfidence?: number;
+	extractorKind?: string | undefined;
+	extractorModel?: string | undefined;
+	extractorConfidence?: number | undefined;
 	extractorDiagnostics?: unknown;
-	committedAt?: number | null;
+	committedAt?: number | null | undefined;
 }
 
 export function getMode(conversationId: string): MemoryMode {
@@ -516,7 +516,11 @@ export function getEntity(conversationId: string, entityKeyOrId: string): Memory
 
 export function listEntities(
 	conversationId: string,
-	opts: { limit?: number; entityType?: string; status?: string } = {}
+	opts: {
+		limit?: number | undefined;
+		entityType?: string | undefined;
+		status?: string | undefined;
+	} = {}
 ): MemoryEntity[] {
 	const limit = opts.limit ?? 100;
 	const status = opts.status ?? 'active';
@@ -609,7 +613,11 @@ export function findDuplicateEvent(
 
 export function listEvents(
 	conversationId: string,
-	opts: { limit?: number; entityId?: string; eventType?: string } = {}
+	opts: {
+		limit?: number | undefined;
+		entityId?: string | undefined;
+		eventType?: string | undefined;
+	} = {}
 ): MemoryEvent[] {
 	const limit = opts.limit ?? 50;
 	let rows: EventRow[];
@@ -746,7 +754,12 @@ function consolidateFactGroup(
 
 export function listFacts(
 	conversationId: string,
-	opts: { limit?: number; entityId?: string; status?: string; predicate?: string } = {}
+	opts: {
+		limit?: number | undefined;
+		entityId?: string | undefined;
+		status?: string | undefined;
+		predicate?: string | undefined;
+	} = {}
 ): MemoryFact[] {
 	const limit = opts.limit ?? 100;
 	const status = opts.status ?? 'active';
@@ -926,7 +939,11 @@ export function getOpenLoop(conversationId: string, id: string): MemoryOpenLoop 
 
 export function listOpenLoops(
 	conversationId: string,
-	opts: { limit?: number; status?: string; loopType?: string } = {}
+	opts: {
+		limit?: number | undefined;
+		status?: string | undefined;
+		loopType?: string | undefined;
+	} = {}
 ): MemoryOpenLoop[] {
 	const limit = opts.limit ?? 50;
 	const status = opts.status ?? 'open';
@@ -1511,10 +1528,10 @@ export function recordOpenLoopLiveness(
 	conversationId: string,
 	input: {
 		presentedLoopIds: string[];
-		keptLoopIds?: string[];
+		keptLoopIds?: string[] | undefined;
 		baseThreshold: number;
-		sourceMessageId?: string | null;
-		turnId?: string | null;
+		sourceMessageId?: string | null | undefined;
+		turnId?: string | null | undefined;
 	}
 ): { dropped: string[] } {
 	const presented = [...new Set(input.presentedLoopIds)].filter(Boolean);
@@ -1725,8 +1742,8 @@ export function upsertGlobalMemory(
 		kind: string;
 		memoryKey: string;
 		value: unknown;
-		sourceConversationId?: string | null;
-		sourceMessageId?: string | null;
+		sourceConversationId?: string | null | undefined;
+		sourceMessageId?: string | null | undefined;
 	}
 ): GlobalMemory {
 	const db = getDb();
@@ -1790,8 +1807,8 @@ export function updateGlobalMemory(
 		kind: string;
 		memoryKey: string;
 		value: unknown;
-		sourceConversationId?: string | null;
-		sourceMessageId?: string | null;
+		sourceConversationId?: string | null | undefined;
+		sourceMessageId?: string | null | undefined;
 	}
 ): UpdateGlobalMemoryResult {
 	const db = getDb();
@@ -1933,11 +1950,11 @@ export function listIssues(
 export function recordToolCall(
 	conversationId: string,
 	input: {
-		turnId?: string | null;
+		turnId?: string | null | undefined;
 		toolName: string;
 		arguments: unknown;
 		resultSummary: string;
-		resultIds?: string[];
+		resultIds?: string[] | undefined;
 	}
 ): MemoryToolCall {
 	const id = ulid();
@@ -1988,7 +2005,7 @@ export function listToolCalls(
 
 export function search(
 	conversationId: string,
-	opts: { query: string; types?: string[]; limit?: number }
+	opts: { query: string; types?: string[] | undefined; limit?: number | undefined }
 ): Array<{ itemType: string; itemId: string; text: string; score?: number; sources?: string[] }> {
 	const query = opts.query.trim();
 	if (!query) return [];
@@ -2037,7 +2054,7 @@ export function wipe(conversationId: string): void {
 export function replaySessionMemoryLogForFork(
 	sourceConversationId: string,
 	targetConversationId: string,
-	opts: { messageIdMap: Map<string, string>; createdBefore?: number }
+	opts: { messageIdMap: Map<string, string>; createdBefore?: number | undefined }
 ): { entities: number; events: number; facts: number; openLoops: number } {
 	const db = getDb();
 	const included = new Set<string>();
@@ -2098,7 +2115,7 @@ export function replaySessionMemoryLogForFork(
 
 export function rewindSessionMemoryLogToMessagePrefix(
 	conversationId: string,
-	opts: { messageIds: Set<string>; createdBefore?: number }
+	opts: { messageIds: Set<string>; createdBefore?: number | undefined }
 ): { kept: number; removed: number } {
 	const db = getDb();
 	let kept = 0;
@@ -2339,7 +2356,7 @@ function headForMessagePrefix(
 	db: Database.Database,
 	conversationId: string,
 	messageIds: Iterable<string>,
-	opts: { createdBefore?: number } = {}
+	opts: { createdBefore?: number | undefined } = {}
 ): string | null {
 	const ids = new Set(messageIds);
 	let head: string | null = null;
@@ -2395,10 +2412,10 @@ function appendSessionMemoryLog(
 		eventKind: string;
 		itemType: SessionMemoryLogItemType;
 		itemId: string;
-		sourceMessageId?: string | null;
-		turnId?: string | null;
+		sourceMessageId?: string | null | undefined;
+		turnId?: string | null | undefined;
 		payload: unknown;
-		createdAt?: number;
+		createdAt?: number | undefined;
 	}
 ): void {
 	const now = input.createdAt ?? Date.now();

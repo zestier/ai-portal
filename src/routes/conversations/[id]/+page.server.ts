@@ -83,7 +83,9 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		providerModels = models.map((m) => ({
 			id: m.id,
 			name: m.name,
-			maxContextWindowTokens: m.capabilities?.limits?.max_context_window_tokens
+			...(m.capabilities?.limits?.max_context_window_tokens !== undefined
+				? { maxContextWindowTokens: m.capabilities.limits.max_context_window_tokens }
+				: {})
 		}));
 	} catch (e) {
 		providerModelsError = String(e);

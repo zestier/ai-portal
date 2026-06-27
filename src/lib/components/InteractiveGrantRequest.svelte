@@ -55,12 +55,13 @@
 
 	function save() {
 		if (!canSave || !editedScope) return;
+		const expiresInMs = expiryChoiceToMs(expiryChoice);
 		pick({
 			kind: 'permission',
 			decision: 'allow-always',
 			scope: { permissionKind: tool, scope: editedScope },
-			expiresInMs: expiryChoiceToMs(expiryChoice),
-			applyToAllConversations: appliesTo === 'all-conversations'
+			applyToAllConversations: appliesTo === 'all-conversations',
+			...(expiresInMs !== undefined ? { expiresInMs } : {})
 		});
 	}
 

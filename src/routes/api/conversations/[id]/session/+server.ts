@@ -77,8 +77,22 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		);
 	}
 
-	const persistedPatch = { ...body };
-	convs.updateSessionSettings(conv.id, conv.userId, body);
+	const persistedPatch = {
+		...(body.model !== undefined ? { model: body.model } : {}),
+		...(body.mode !== undefined ? { mode: body.mode } : {}),
+		...(body.memoryMode !== undefined ? { memoryMode: body.memoryMode } : {}),
+		...(body.memoryExtractorModel !== undefined
+			? { memoryExtractorModel: body.memoryExtractorModel }
+			: {}),
+		...(body.memoryExtractorBackend !== undefined
+			? { memoryExtractorBackend: body.memoryExtractorBackend }
+			: {}),
+		...(body.globalMemoryEnabled !== undefined
+			? { globalMemoryEnabled: body.globalMemoryEnabled }
+			: {}),
+		...(body.approveAllTools !== undefined ? { approveAllTools: body.approveAllTools } : {})
+	};
+	convs.updateSessionSettings(conv.id, conv.userId, persistedPatch);
 	if (
 		modelChanged ||
 		memoryChanged ||
@@ -124,10 +138,9 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		conversation: convs.get(conv.id, conv.userId),
 		capabilities: provider.capabilities,
 		unsupported: {
-			mode:
-				persistedPatch.mode !== undefined && !provider.capabilities.controls.mode
-					? provider.capabilities.features.modes.description
-					: undefined
+			...(persistedPatch.mode !== undefined && !provider.capabilities.controls.mode
+				? { mode: provider.capabilities.features.modes.description }
+				: {})
 		}
 	});
 };

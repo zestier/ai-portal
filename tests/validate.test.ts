@@ -5,8 +5,7 @@ import { parseBody } from '../src/lib/server/validate';
 function req(body: string | null, contentType = 'application/json'): Request {
 	return new Request('http://x/', {
 		method: 'POST',
-		headers: body !== null ? { 'content-type': contentType } : undefined,
-		body: body ?? undefined
+		...(body !== null ? { headers: { 'content-type': contentType }, body } : {})
 	});
 }
 

@@ -36,16 +36,16 @@ export class GitError extends Error {
 
 interface RunOptions {
 	cwd: string;
-	timeoutMs?: number;
-	maxBytes?: number;
+	timeoutMs?: number | undefined;
+	maxBytes?: number | undefined;
 	// Optional streaming hook. When provided, invoked with the full cumulative
 	// combined (stdout+stderr, in arrival order) snapshot each time child output
 	// arrives. The snapshot is bounded by `maxBytes`, so emission size stays
 	// capped. Callers that omit this stay fully buffered/silent (unchanged).
-	onData?: (snapshot: string) => void;
+	onData?: ((snapshot: string) => void) | undefined;
 	// Optional abort signal. When it fires, the child is SIGKILLed and no further
 	// `onData` snapshots are emitted (mirrors the existing timeout kill path).
-	signal?: AbortSignal;
+	signal?: AbortSignal | undefined;
 }
 
 // Streaming context for `commitChanges`. Structurally satisfied by the tool
@@ -54,7 +54,7 @@ interface RunOptions {
 export interface CommitProgress {
 	progress?(message: string): void;
 	partial?(snapshot: string): void;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 }
 
 function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
@@ -400,7 +400,12 @@ function isSafeRef(ref: string): boolean {
 
 export async function log(
 	cwd: string,
-	opts: { limit?: number; skip?: number; ref?: string; path?: string } = {}
+	opts: {
+		limit?: number | undefined;
+		skip?: number | undefined;
+		ref?: string | undefined;
+		path?: string | undefined;
+	} = {}
 ): Promise<LogEntry[]> {
 	const limit = Math.min(opts.limit ?? 20, 200);
 	const skip = Math.max(opts.skip ?? 0, 0);
@@ -586,8 +591,8 @@ export interface CommitTrailer {
 export interface CommitChangesOptions {
 	paths: 'all' | string[];
 	subject: string;
-	body?: string;
-	trailers?: CommitTrailer[];
+	body?: string | undefined;
+	trailers?: CommitTrailer[] | undefined;
 }
 
 export interface CommitChangesResult {
@@ -606,8 +611,8 @@ const TRAILER_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
 export function formatCommitMessage(opts: {
 	subject: string;
-	body?: string;
-	trailers?: CommitTrailer[];
+	body?: string | undefined;
+	trailers?: CommitTrailer[] | undefined;
 }): string {
 	if (!opts.subject.trim()) throw new GitError('commit subject is required', emptyResult());
 	if (hasControlCharacter(opts.subject)) {

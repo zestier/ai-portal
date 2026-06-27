@@ -26,7 +26,7 @@ export async function createPromptTemplateDraftChat({
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ title: template.title }),
-		signal
+		...(signal !== undefined ? { signal } : {})
 	});
 	if (!convRes.ok) return { ok: false, status: convRes.status };
 	const body = await convRes.json();

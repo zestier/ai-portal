@@ -55,8 +55,6 @@ export function buildPermissionScopeContext(
 	const isFsKind = isFilesystemPermissionKind(request.permissionKind);
 	const scopeKey =
 		deriveScopeKey(request.permissionKind, {
-			fullCommandText: undefined,
-			fileName: undefined,
 			args: request.args
 		}) ?? deriveFromSummary(request);
 	return {

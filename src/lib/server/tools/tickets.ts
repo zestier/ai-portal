@@ -142,10 +142,10 @@ export function buildTicketTools(opts: {
 					const ticket = tickets.create(opts.userId, {
 						workspaceKey: opts.workspaceKey,
 						title: parsed.title,
-						body: parsed.body,
-						plan: parsed.plan,
-						blockedBy: parsed.blockedBy,
-						blocks: parsed.blocks,
+						...(parsed.body !== undefined ? { body: parsed.body } : {}),
+						...(parsed.plan !== undefined ? { plan: parsed.plan } : {}),
+						...(parsed.blockedBy !== undefined ? { blockedBy: parsed.blockedBy } : {}),
+						...(parsed.blocks !== undefined ? { blocks: parsed.blocks } : {}),
 						sourceConversationId: opts.conversationId
 					});
 					return ok(
@@ -193,9 +193,10 @@ export function buildTicketTools(opts: {
 				// array (each row trimmed to the requested fields). Without one, keep
 				// the dense hand-rendered listing, which is more token-efficient and
 				// readable than a projected object array for the common case.
-				if (normalizeFieldSelector(parsed.fields) !== undefined) {
+				const fields = normalizeFieldSelector(parsed.fields);
+				if (fields !== undefined) {
 					const projected = project(rows.map(withDeps), {
-						fields: parsed.fields,
+						fields,
 						keep: TICKET_KEEP
 					});
 					return ok(withOmitted({ tickets: projected.value }, projected.omitted), summary);
@@ -224,12 +225,16 @@ export function buildTicketTools(opts: {
 				additionalProperties: false
 			},
 			async handler(args) {
-				const { id, fields } = GetArgs.parse(args);
+				const { id, fields: rawFields } = GetArgs.parse(args);
 				const ticket = tickets.get(id, opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const projected = project(withDeps(ticket), { fields, keep: TICKET_KEEP });
+				const fields = normalizeFieldSelector(rawFields);
+				const projected = project(withDeps(ticket), {
+					...(fields !== undefined ? { fields } : {}),
+					keep: TICKET_KEEP
+				});
 				return ok(
 					withOmitted(
 						{ ...(projected.value as unknown as Record<string, unknown>) },

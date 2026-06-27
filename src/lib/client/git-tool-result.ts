@@ -33,7 +33,7 @@ export interface GitCommitDetail {
 	body: string;
 	parents: string[];
 	files: GitNameStatusEntry[];
-	patch?: string;
+	patch?: string | undefined;
 }
 
 export interface GitCommitTrailer {
@@ -62,7 +62,7 @@ export type GitRenderedResult =
 			fileStats: GitFileStat[];
 			diffStat: { filesChanged: number; added: number; removed: number } | null;
 			remainingDirtyFiles: GitNameStatusEntry[];
-			followUpHint?: string;
+			followUpHint?: string | undefined;
 	  };
 
 function isRecord(v: unknown): v is JsonRecord {

@@ -24,11 +24,11 @@ import type { ExtractPatchInput, ExtractPatchResult, Diagnostic, MemoryExtractor
 
 interface OpenAICompatibleExtractorOptions {
 	baseUrl: string;
-	apiKey?: string | null;
+	apiKey?: string | null | undefined;
 	model: string;
 	timeoutMs: number;
 	maxInputChars: number;
-	completeJson?: (prompt: string) => Promise<unknown>;
+	completeJson?: ((prompt: string) => Promise<unknown>) | undefined;
 }
 
 // JSON Schema mirroring the model envelope ({ patch, summary, confidence,
@@ -229,7 +229,7 @@ async function requestOpenAICompatibleJson(
 				temperature: 0,
 				stream: false
 			}),
-			signal
+			...(signal !== undefined ? { signal } : {})
 		},
 		opts.timeoutMs
 	);

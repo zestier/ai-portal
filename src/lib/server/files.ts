@@ -229,7 +229,7 @@ export interface FileResultBinary {
 	// within the size cap, its mime type — signals the client to render it
 	// inline (fetching the bytes via the `fs/file?raw=1` mode) rather than
 	// showing a "binary file" placeholder. Absent for non-image binaries.
-	imageMimeType?: string;
+	imageMimeType?: string | undefined;
 }
 export interface FileResultErr {
 	ok: false;

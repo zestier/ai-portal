@@ -99,9 +99,11 @@ export function buildPermissionTools(opts: {
 						conversationId: opts.conversationId,
 						mode: opts.getMode(),
 						policy: opts.policy,
-						permissionKind: parsed.permissionKind,
-						toolName: parsed.toolName,
-						intent: parsed.intent
+						...(parsed.permissionKind !== undefined
+							? { permissionKind: parsed.permissionKind }
+							: {}),
+						...(parsed.toolName !== undefined ? { toolName: parsed.toolName } : {}),
+						...(parsed.intent !== undefined ? { intent: parsed.intent } : {})
 					})
 				);
 			}

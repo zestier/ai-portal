@@ -57,13 +57,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const providers = await Promise.all(
 		listProviders().map(async (provider): Promise<ProviderStatusSnapshot> => {
 			try {
+				const authToken = shouldProbeProviderStatus(provider, defaultProvider)
+					? providerAuthToken(provider.id, userId)
+					: undefined;
 				return await loadProviderStatus(provider, {
 					userId,
-					providerAuthToken: shouldProbeProviderStatus(provider, defaultProvider)
-						? providerAuthToken(provider.id, userId)
-						: undefined,
 					defaultProvider,
-					loader: { fetchAuthStatus, fetchModels }
+					loader: { fetchAuthStatus, fetchModels },
+					...(authToken !== undefined ? { providerAuthToken: authToken } : {})
 				});
 			} catch (e) {
 				log.warn('settings.provider_status_failed', { provider: provider.id, err: String(e) });
@@ -239,9 +240,17 @@ export const actions: Actions = {
 			});
 		}
 		promptTemplates.create(locals.userId, {
-			...parsed.data,
+			type: parsed.data.type,
+			title: parsed.data.title,
+			prompt: parsed.data.prompt,
 			conversationMode:
-				parsed.data.type === 'ticket-action' ? (parsed.data.conversationMode ?? null) : null
+				parsed.data.type === 'ticket-action' ? (parsed.data.conversationMode ?? null) : null,
+			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
+			...(parsed.data.launchBehavior !== undefined
+				? { launchBehavior: parsed.data.launchBehavior }
+				: {}),
+			...(parsed.data.pinned !== undefined ? { pinned: parsed.data.pinned } : {}),
+			...(parsed.data.orderIndex !== undefined ? { orderIndex: parsed.data.orderIndex } : {})
 		});
 		return { ok: true, formId: 'createPromptTemplate' };
 	},
@@ -270,9 +279,15 @@ export const actions: Actions = {
 		}
 		const { id, type: parsedType, ...patch } = parsed.data;
 		const updated = promptTemplates.update(id, locals.userId, {
-			...patch,
-			conversationMode:
-				parsedType === 'ticket-action' ? (patch.conversationMode ?? null) : undefined
+			title: patch.title,
+			prompt: patch.prompt,
+			...(patch.description !== undefined ? { description: patch.description } : {}),
+			...(patch.launchBehavior !== undefined ? { launchBehavior: patch.launchBehavior } : {}),
+			...(parsedType === 'ticket-action'
+				? { conversationMode: patch.conversationMode ?? null }
+				: {}),
+			...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+			...(patch.orderIndex !== undefined ? { orderIndex: patch.orderIndex } : {})
 		});
 		if (!updated)
 			return fail(404, {
@@ -335,9 +350,9 @@ export const actions: Actions = {
 			return fail(400, { ok: false, error: schema.error, formId: 'createMemoryProfile' });
 		memoryProfiles.createCustomProfile(locals.userId, {
 			name: parsed.data.name,
-			description: parsed.data.description,
 			instructions: parsed.data.instructions,
-			schema: schema.value
+			schema: schema.value,
+			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {})
 		});
 		return { ok: true, formId: 'createMemoryProfile' };
 	},
@@ -364,9 +379,9 @@ export const actions: Actions = {
 			return fail(400, { ok: false, error: schema.error, formId: 'updateMemoryProfile' });
 		const updated = memoryProfiles.updateCustomProfile(parsed.data.id, locals.userId, {
 			name: parsed.data.name,
-			description: parsed.data.description,
 			instructions: parsed.data.instructions,
-			schema: schema.value
+			schema: schema.value,
+			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {})
 		});
 		if (!updated)
 			return fail(404, {

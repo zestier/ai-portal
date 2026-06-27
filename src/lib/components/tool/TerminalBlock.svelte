@@ -14,9 +14,9 @@
 		streaming = false
 	}: {
 		text: string;
-		cwd?: string;
-		exitCode?: number;
-		command?: string;
+		cwd?: string | undefined;
+		exitCode?: number | undefined;
+		command?: string | undefined;
 		streaming?: boolean;
 	} = $props();
 

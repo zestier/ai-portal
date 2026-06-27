@@ -54,6 +54,15 @@ const CreateBody = z
 export const POST: RequestHandler = async ({ locals, request }) => {
 	const userId = requireUserId(locals);
 	const body = await parseBody(request, CreateBody);
-	const template = promptTemplates.create(userId, body);
+	const template = promptTemplates.create(userId, {
+		title: body.title,
+		prompt: body.prompt,
+		type: body.type,
+		...(body.description !== undefined ? { description: body.description } : {}),
+		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
+		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
+		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
+		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})
+	});
 	return json({ ok: true, template: { ...template, source: 'custom' } }, { status: 201 });
 };

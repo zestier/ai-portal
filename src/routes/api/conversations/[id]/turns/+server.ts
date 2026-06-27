@@ -39,10 +39,11 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	convs.touch(conv.id);
 
 	const title = tryRenameFromFirstUserMessage(conv, userMsg);
+	const initialEvents = title
+		? [{ type: 'conversation.update' as const, conversationId: conv.id, title }]
+		: undefined;
 	const turn = await startTurnFromUserMessage(conv, userMsg, {
-		initialEvents: title
-			? [{ type: 'conversation.update', conversationId: conv.id, title }]
-			: undefined
+		...(initialEvents !== undefined ? { initialEvents } : {})
 	});
 
 	return json({ turnId: turn.id, userMessageId: userMsg.id, title });

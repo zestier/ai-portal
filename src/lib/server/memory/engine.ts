@@ -52,35 +52,43 @@ export interface TurnMemoryPacket {
 }
 
 export interface MemoryPatchProposal {
-	entities?: Array<{
-		entityKey: string;
-		entityType?: string;
-		displayName?: string;
-		summary?: string;
-		metadata?: unknown;
-	}>;
-	events?: Array<{
-		eventType: string;
-		summary: string;
-		payload?: unknown;
-		visibility?: string;
-		confidence?: number;
-		entityKey?: string;
-	}>;
-	facts?: Array<{
-		entityKey?: string;
-		predicate: string;
-		value?: unknown;
-		visibility?: string;
-		confidence?: number;
-	}>;
-	openLoops?: Array<{
-		loopType: string;
-		title: string;
-		description?: string;
-		priority?: number;
-		relatedEntityKeys?: string[];
-	}>;
+	entities?:
+		| Array<{
+				entityKey: string;
+				entityType?: string | undefined;
+				displayName?: string | undefined;
+				summary?: string | undefined;
+				metadata?: unknown;
+		  }>
+		| undefined;
+	events?:
+		| Array<{
+				eventType: string;
+				summary: string;
+				payload?: unknown;
+				visibility?: string | undefined;
+				confidence?: number | undefined;
+				entityKey?: string | undefined;
+		  }>
+		| undefined;
+	facts?:
+		| Array<{
+				entityKey?: string | undefined;
+				predicate: string;
+				value?: unknown;
+				visibility?: string | undefined;
+				confidence?: number | undefined;
+		  }>
+		| undefined;
+	openLoops?:
+		| Array<{
+				loopType: string;
+				title: string;
+				description?: string | undefined;
+				priority?: number | undefined;
+				relatedEntityKeys?: string[] | undefined;
+		  }>
+		| undefined;
 	/**
 	 * Resolutions for *existing* open loops the latest turn closed, answered, or
 	 * abandoned — e.g. the user picked one of several offered options, so the
@@ -90,11 +98,13 @@ export interface MemoryPatchProposal {
 	 * memory_get_open_loops); `resolved` = completed/answered, `dropped` =
 	 * abandoned/superseded.
 	 */
-	resolveOpenLoops?: Array<{
-		id: string;
-		status: 'resolved' | 'dropped';
-		reason?: string;
-	}>;
+	resolveOpenLoops?:
+		| Array<{
+				id: string;
+				status: 'resolved' | 'dropped';
+				reason?: string | undefined;
+		  }>
+		| undefined;
 	/**
 	 * Ids of existing open loops the extractor is explicitly keeping alive this
 	 * turn. Not a commit action — `commitPatch` ignores it. It feeds open-loop
@@ -103,7 +113,7 @@ export interface MemoryPatchProposal {
 	 * accrues idle turns and is eventually auto-dropped, so dead threads stop
 	 * accumulating without the model having to notice their absence.
 	 */
-	keepOpenLoops?: string[];
+	keepOpenLoops?: string[] | undefined;
 	/**
 	 * Explicit retirements of existing *facts* (attributes or directives) the
 	 * extractor decided are stale and have no natural supersede — e.g. after
@@ -118,20 +128,22 @@ export interface MemoryPatchProposal {
 	 * predicate) whenever the predicate is unchanged; forgetting is for the cases
 	 * supersede cannot reach.
 	 */
-	forgetFacts?: Array<{
-		factId?: string;
-		entityKey?: string;
-		predicate?: string;
-	}>;
+	forgetFacts?:
+		| Array<{
+				factId?: string | undefined;
+				entityKey?: string | undefined;
+				predicate?: string | undefined;
+		  }>
+		| undefined;
 }
 
 export interface CommitMemoryPatchInput {
 	conversationId: string;
-	mode?: MemoryMode;
-	turnId?: string | null;
-	sourceMessageId?: string | null;
+	mode?: MemoryMode | undefined;
+	turnId?: string | null | undefined;
+	sourceMessageId?: string | null | undefined;
 	patch: MemoryPatchProposal;
-	summary?: string;
+	summary?: string | undefined;
 	/**
 	 * Optional hook invoked exactly once, only when the patch validates and is
 	 * about to be applied — after the (failed) early return for a `needs_review`
@@ -142,7 +154,7 @@ export interface CommitMemoryPatchInput {
 	 * applying the new items — also keeps entity-key reuse on clean pre-turn
 	 * state, avoiding double-counting.
 	 */
-	beforeCommit?: () => void;
+	beforeCommit?: (() => void) | undefined;
 }
 
 export function isEnabled(mode: MemoryMode): boolean {
@@ -199,7 +211,11 @@ export function isDirectivePredicate(predicate: string): boolean {
  */
 export function resolveForgetTarget(
 	conversationId: string,
-	target: { factId?: string; entityKey?: string; predicate?: string }
+	target: {
+		factId?: string | undefined;
+		entityKey?: string | undefined;
+		predicate?: string | undefined;
+	}
 ): { factId: string; isDirective: boolean } | null {
 	if (target.factId) {
 		const fact = memoryRepo.getFact(conversationId, target.factId);
@@ -224,11 +240,11 @@ export function resolveForgetTarget(
 }
 
 export interface BuildInitialPacketOptions {
-	globalMemoryEnabled?: boolean;
+	globalMemoryEnabled?: boolean | undefined;
 	/** Current turn text (user message + recent transcript) used to relevance-rank. */
-	query?: string;
+	query?: string | undefined;
 	/** Token budget for the variable portion of the packet. */
-	tokenBudget?: number;
+	tokenBudget?: number | undefined;
 }
 
 const PACKET_TOKEN_BUDGETS: Record<MemoryMode, number> = {
@@ -486,10 +502,10 @@ export function buildPromptWithMemory(params: {
 	conversationId: string;
 	mode: MemoryMode;
 	userMsg: Message;
-	userId?: string;
-	includeRecentTranscript?: boolean;
-	globalMemoryEnabled?: boolean;
-	extractorPresent?: boolean;
+	userId?: string | undefined;
+	includeRecentTranscript?: boolean | undefined;
+	globalMemoryEnabled?: boolean | undefined;
+	extractorPresent?: boolean | undefined;
 }): string {
 	const recent = params.includeRecentTranscript
 		? recentTranscript(params.conversationId, params.userMsg.id, 6)
@@ -544,7 +560,7 @@ export function buildPromptWithMemory(params: {
 
 export function validatePatch(
 	patch: MemoryPatchProposal,
-	opts: { conversationId?: string; mode?: MemoryMode } = {}
+	opts: { conversationId?: string | undefined; mode?: MemoryMode | undefined } = {}
 ): {
 	ok: boolean;
 	issues: Array<{ severity: 'info' | 'warning' | 'error'; code: string; message: string }>;
@@ -817,9 +833,9 @@ export function isHiddenVisibility(visibility: string | undefined): boolean {
 export function commitPatch(
 	input: CommitMemoryPatchInput,
 	extractor?: {
-		extractorKind?: string;
-		extractorModel?: string;
-		extractorConfidence?: number;
+		extractorKind?: string | undefined;
+		extractorModel?: string | undefined;
+		extractorConfidence?: number | undefined;
 		extractorDiagnostics?: unknown;
 	}
 ): {
@@ -1211,10 +1227,10 @@ export function ageOpenLoops(
 	conversationId: string,
 	opts: {
 		presentedLoopIds: Iterable<string>;
-		keptLoopIds?: Iterable<string>;
+		keptLoopIds?: Iterable<string> | undefined;
 		baseThreshold: number;
-		sourceMessageId?: string | null;
-		turnId?: string | null;
+		sourceMessageId?: string | null | undefined;
+		turnId?: string | null | undefined;
 	}
 ): AgeOpenLoopsResult {
 	return memoryRepo.recordOpenLoopLiveness(conversationId, {
@@ -1340,10 +1356,10 @@ const PatchCloseLoopSchema = z.object({
 export type MemoryPatchFactItem = z.infer<typeof PatchFactItemSchema>;
 
 export interface MemoryPatchInput {
-	entities?: z.infer<typeof PatchEntitySchema>[];
-	facts?: MemoryPatchFactItem[];
-	closeLoops?: z.infer<typeof PatchCloseLoopSchema>[];
-	keepOpenLoops?: string[];
+	entities?: z.infer<typeof PatchEntitySchema>[] | undefined;
+	facts?: MemoryPatchFactItem[] | undefined;
+	closeLoops?: z.infer<typeof PatchCloseLoopSchema>[] | undefined;
+	keepOpenLoops?: string[] | undefined;
 }
 
 /**
@@ -1830,7 +1846,10 @@ function factDetail(fact: memoryRepo.MemoryFact, includeId = false): string {
 function loopLine(
 	loop: memoryRepo.MemoryOpenLoop,
 	keyOf: (id: string | null) => string | null,
-	opts: { includeId?: boolean; expiry?: { baseThreshold: number; warnWithin?: number } } = {}
+	opts: {
+		includeId?: boolean | undefined;
+		expiry?: { baseThreshold: number; warnWithin?: number | undefined } | undefined;
+	} = {}
 ): string {
 	const related = loop.relatedEntityIds
 		.map((id) => keyOf(id))

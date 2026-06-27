@@ -51,7 +51,16 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 			throw error(400, unknownPlaceholderMessage(current.type, unknown));
 		}
 	}
-	const template = promptTemplates.update(params.id, userId, body);
+	const template = promptTemplates.update(params.id, userId, {
+		...(body.title !== undefined ? { title: body.title } : {}),
+		...(body.description !== undefined ? { description: body.description } : {}),
+		...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
+		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
+		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
+		...(body.status !== undefined ? { status: body.status } : {}),
+		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
+		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})
+	});
 	if (!template) throw error(404);
 	return json({ ok: true, template: { ...template, source: 'custom' } });
 };

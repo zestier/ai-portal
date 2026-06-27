@@ -41,7 +41,12 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		const workspace = ticketWorkspaceFromInput(body.workspace, userId);
 		if (current.workspaceKey !== workspace) throw error(404);
 	}
-	const ticket = tickets.update(params.id, userId, body);
+	const ticket = tickets.update(params.id, userId, {
+		...(body.title !== undefined ? { title: body.title } : {}),
+		...(body.body !== undefined ? { body: body.body } : {}),
+		...(body.plan !== undefined ? { plan: body.plan } : {}),
+		...(body.status !== undefined ? { status: body.status } : {})
+	});
 	if (!ticket) throw error(404);
 	return json({ ok: true, ticket });
 };

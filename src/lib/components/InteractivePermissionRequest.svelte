@@ -136,6 +136,8 @@
 			const checked = shellOptions.filter((o) => shellChecked[o.id]);
 			if (checked.length === 0) return;
 			const [first, ...rest] = checked;
+			const expiresInMs = expiryChoiceToMs(expiryChoice);
+			const feedback = denyFeedback();
 			pick({
 				kind: 'permission',
 				decision,
@@ -144,19 +146,22 @@
 					permissionKind: 'shell',
 					scope: o.scope
 				})),
-				expiresInMs: expiryChoiceToMs(expiryChoice),
 				applyToAllConversations: appliesTo === 'all-conversations',
-				...(decision === 'deny-always' && denyFeedback() ? { feedback: denyFeedback() } : {})
+				...(expiresInMs !== undefined ? { expiresInMs } : {}),
+				...(decision === 'deny-always' && feedback ? { feedback } : {})
 			});
 			return;
 		}
+		const scope = buildPermissionGrantScope(request, permissionScopeContext, scopeChoice);
+		const expiresInMs = expiryChoiceToMs(expiryChoice);
+		const feedback = denyFeedback();
 		pick({
 			kind: 'permission',
 			decision,
-			scope: buildPermissionGrantScope(request, permissionScopeContext, scopeChoice),
-			expiresInMs: expiryChoiceToMs(expiryChoice),
 			applyToAllConversations: appliesTo === 'all-conversations',
-			...(decision === 'deny-always' && denyFeedback() ? { feedback: denyFeedback() } : {})
+			...(scope !== undefined ? { scope } : {}),
+			...(expiresInMs !== undefined ? { expiresInMs } : {}),
+			...(decision === 'deny-always' && feedback ? { feedback } : {})
 		});
 	}
 

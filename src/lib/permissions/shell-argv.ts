@@ -3,8 +3,8 @@ import type { ShellOptionSpec } from './scope-types';
 export interface MatchedShellOption {
 	spec: ShellOptionSpec;
 	index: number;
-	value?: string;
-	valueIndex?: number;
+	value?: string | undefined;
+	valueIndex?: number | undefined;
 }
 
 export function looksLikeShellOptionToken(tok: string | undefined): boolean {

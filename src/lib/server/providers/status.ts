@@ -10,8 +10,13 @@ export type ProviderStatusSnapshot = {
 	id: BackendProviderId;
 	displayName: string;
 	ui: ProviderUiInfo;
-	auth: { isAuthenticated: boolean; authType?: string; login?: string; statusMessage?: string };
-	models: { id: string; name: string; maxContextWindowTokens?: number }[];
+	auth: {
+		isAuthenticated: boolean;
+		authType?: string | undefined;
+		login?: string | undefined;
+		statusMessage?: string | undefined;
+	};
+	models: { id: string; name: string; maxContextWindowTokens?: number | undefined }[];
 	capabilities: ProviderCapabilities;
 	statusChecked: boolean;
 	error?: string;

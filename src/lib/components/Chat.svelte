@@ -684,8 +684,8 @@
 					tc.resultJson = safeJson(ev.output ?? ev.summary);
 					tc.endedAt = Date.now();
 					// Drop ephemeral streaming state — final result supersedes it.
-					tc.partialOutput = undefined;
-					tc.progressMessage = undefined;
+					delete tc.partialOutput;
+					delete tc.progressMessage;
 					if (ev.attachments && ev.attachments.length > 0) {
 						tc.attachments = ev.attachments;
 					}
@@ -807,8 +807,8 @@
 			case 'context.compaction': {
 				if (ev.phase === 'complete') {
 					recentCompaction = {
-						tokensRemoved: ev.tokensRemoved,
-						messagesRemoved: ev.messagesRemoved
+						...(ev.tokensRemoved !== undefined ? { tokensRemoved: ev.tokensRemoved } : {}),
+						...(ev.messagesRemoved !== undefined ? { messagesRemoved: ev.messagesRemoved } : {})
 					};
 					if (compactionTimer) clearTimeout(compactionTimer);
 					compactionTimer = setTimeout(() => {

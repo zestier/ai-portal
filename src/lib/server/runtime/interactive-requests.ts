@@ -108,7 +108,7 @@ export interface PendingInteractive {
 	 * cleared. Optional because some non-user-facing call sites (and older
 	 * tests) register without it; transitions are simply not published then.
 	 */
-	userId?: string;
+	userId?: string | undefined;
 	kind: InteractiveKind;
 	view: InteractiveRequestView;
 	resolve: (response: InteractiveResponse) => void;
@@ -122,7 +122,7 @@ export interface PendingInteractive {
 	 * clear the prompt. Without this, the original `interactive.request`
 	 * event in the log would resurrect a dialog that was already answered.
 	 */
-	emit?: (ev: PortalEvent) => void;
+	emit?: ((ev: PortalEvent) => void) | undefined;
 	timeoutHandle?: ReturnType<typeof setTimeout>;
 }
 
@@ -152,13 +152,13 @@ export interface RegisterOptions {
 	requestId: string;
 	conversationId: string;
 	/** Conversation owner; enables awaiting-input feed transitions (see above). */
-	userId?: string;
+	userId?: string | undefined;
 	kind: InteractiveKind;
 	view: InteractiveRequestView;
 	resolve: (response: InteractiveResponse) => void;
 	reject: (err: unknown) => void;
-	emit?: (ev: PortalEvent) => void;
-	timeoutMs?: number;
+	emit?: ((ev: PortalEvent) => void) | undefined;
+	timeoutMs?: number | undefined;
 }
 
 /**

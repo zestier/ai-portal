@@ -54,7 +54,9 @@ export async function fetchTicketsPage({
 	offset: number;
 	fetcher?: TicketsFetch;
 }): Promise<TicketsPage> {
-	const res = await fetcher(ticketsPageUrl({ status, workspace, limit, offset }));
+	const res = await fetcher(
+		ticketsPageUrl({ status, limit, offset, ...(workspace !== undefined ? { workspace } : {}) })
+	);
 	if (!res.ok) throw new Error(`Failed to load tickets (${res.status})`);
 	const data = (await res.json()) as { tickets: WorkspaceTicket[] };
 	const tickets = data.tickets ?? [];

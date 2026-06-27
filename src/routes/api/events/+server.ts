@@ -28,8 +28,14 @@ export const GET: RequestHandler = ({ locals, request }) => {
 	const lastIdHeader = request.headers.get('last-event-id');
 	const sinceId = lastIdHeader && lastIdHeader.length > 0 ? lastIdHeader : undefined;
 
-	return sseResponse(getAppEventBus().subscribe(userId, { signal: request.signal, sinceId }), {
-		extractId: (item) => item.id,
-		extractData: (item) => item.event
-	});
+	return sseResponse(
+		getAppEventBus().subscribe(userId, {
+			signal: request.signal,
+			...(sinceId !== undefined ? { sinceId } : {})
+		}),
+		{
+			extractId: (item) => item.id,
+			extractData: (item) => item.event
+		}
+	);
 };

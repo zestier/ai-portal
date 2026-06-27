@@ -528,7 +528,7 @@ export function getToolCallForConversation(
 				conversation_user_id: string;
 				message_role: string;
 				background_agent_id: string | null;
-				background_agent_status: ToolCallRecord['backgroundAgentStatus'];
+				background_agent_status: 'running' | 'completed' | 'failed' | null;
 				background_agent_started_at: number | null;
 				background_agent_ended_at: number | null;
 		  })

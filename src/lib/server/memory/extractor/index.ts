@@ -85,7 +85,7 @@ export class HeuristicMemoryExtractor implements MemoryExtractor {
 
 interface ToolCallingExtractorOptions {
 	baseUrl: string;
-	apiKey?: string | null;
+	apiKey?: string | null | undefined;
 	model: string;
 	timeoutMs: number;
 	maxInputChars: number;
@@ -96,17 +96,17 @@ interface ToolCallingExtractorOptions {
 	 * requests could hold the turn open for minutes. Omitted in tests (no
 	 * budget). Defaults to unbounded when unset.
 	 */
-	maxWallClockMs?: number;
+	maxWallClockMs?: number | undefined;
 	/**
 	 * How many times `memory_end_extraction` may be blocked for unacknowledged
 	 * write failures before the next attempt is force-accepted. Separate from the
 	 * empty-turn nudge budget. Defaults to 2 when unset (tests can override).
 	 */
-	maxFailedCallNudges?: number;
+	maxFailedCallNudges?: number | undefined;
 	/** How the backend is told to pick tools ('auto' | 'required'). Default 'auto'. */
-	toolChoice?: 'auto' | 'required';
+	toolChoice?: 'auto' | 'required' | undefined;
 	/** Test seam: drive the tool-calling loop without a live backend. */
-	chatComplete?: ExtractorChatComplete;
+	chatComplete?: ExtractorChatComplete | undefined;
 }
 
 // Upper bound on a single tool result fed back to the extractor. Must comfortably
@@ -890,7 +890,10 @@ function mergePatchProposals(
  * extractor (logging why, so misconfiguration is diagnosable).
  */
 export function createMemoryExtractor(
-	opts: { model?: string | null; backend?: MemoryExtractorBackend | null } = {}
+	opts: {
+		model?: string | null | undefined;
+		backend?: MemoryExtractorBackend | null | undefined;
+	} = {}
 ): MemoryExtractor {
 	const cfg = loadConfig();
 	// Precedence: per-conversation backend override → server default env backend.
@@ -942,7 +945,10 @@ export function createMemoryExtractor(
  * durable memory for each turn; the main model has no direct memory write tool.
  */
 export function isModelBackedExtractorConfigured(
-	opts: { model?: string | null; backend?: MemoryExtractorBackend | null } = {}
+	opts: {
+		model?: string | null | undefined;
+		backend?: MemoryExtractorBackend | null | undefined;
+	} = {}
 ): boolean {
 	return createMemoryExtractor(opts).kind !== 'heuristic';
 }
@@ -957,7 +963,12 @@ export function isModelBackedExtractorConfigured(
 async function acquireExtractionLock(
 	conversationId: string,
 	holder: string,
-	opts: { ttlMs: number; timeoutMs: number; pollMs?: number; signal?: AbortSignal }
+	opts: {
+		ttlMs: number;
+		timeoutMs: number;
+		pollMs?: number | undefined;
+		signal?: AbortSignal | undefined;
+	}
 ): Promise<boolean> {
 	const pollMs = opts.pollMs ?? 100;
 	const deadline = Date.now() + opts.timeoutMs;

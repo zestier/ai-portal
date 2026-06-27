@@ -35,8 +35,8 @@ export const GET: RequestHandler = ({ params, locals, request, url }) => {
 	return sseResponse(
 		turn.subscribe({
 			signal: request.signal,
-			sinceId,
-			skipReplay: url.searchParams.get('replay') === '0'
+			skipReplay: url.searchParams.get('replay') === '0',
+			...(sinceId !== undefined ? { sinceId } : {})
 		}),
 		{
 			// Negative ids are sentinels for ephemeral events that aren't part

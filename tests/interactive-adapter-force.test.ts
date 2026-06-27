@@ -87,7 +87,7 @@ async function driveAndResolve(
 	const ok = harness.interactive.resolve(view.requestId, harness.user.id, {
 		kind: 'permission',
 		decision,
-		feedback
+		...(feedback !== undefined ? { feedback } : {})
 	});
 	expect(ok).toBe(true);
 

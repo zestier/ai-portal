@@ -14,11 +14,11 @@
 
 export type ResultBlock =
 	| { kind: 'text'; text: string }
-	| { kind: 'terminal'; text: string; exitCode?: number; cwd?: string }
+	| { kind: 'terminal'; text: string; exitCode?: number | undefined; cwd?: string | undefined }
 	| { kind: 'image'; data?: string; mimeType: string; src?: string }
 	| { kind: 'audio'; data: string; mimeType: string }
-	| { kind: 'resource_link'; name: string; uri: string; description?: string }
-	| { kind: 'resource'; uri: string; mimeType?: string; text?: string };
+	| { kind: 'resource_link'; name: string; uri: string; description?: string | undefined }
+	| { kind: 'resource'; uri: string; mimeType?: string | undefined; text?: string | undefined };
 
 export interface DecodedResult {
 	blocks: ResultBlock[];
@@ -29,7 +29,7 @@ export interface DecodedResult {
 	// Rendered as a muted note by the generic tool-result path in
 	// ToolCall.svelte. (Git cards read the hint off the envelope themselves via
 	// parseGitToolResult, so they don't go through this field.)
-	followUpHint?: string;
+	followUpHint?: string | undefined;
 }
 
 const markdownResultTools = new Set([

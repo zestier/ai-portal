@@ -92,6 +92,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		content: `Manual tool rerun: rerun failed tool call ${original.id} (${original.tool}) with its exact stored arguments.`,
 		status: 'complete'
 	});
+	const providerToken = providerAuthToken(conv.provider, conv.userId);
 	const turn = await startTurn({
 		conversationId: conv.id,
 		prompt,
@@ -107,7 +108,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			approveAllTools: conv.approveAllTools,
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,
-			providerAuthToken: providerAuthToken(conv.provider, conv.userId)
+			...(providerToken !== undefined ? { providerAuthToken: providerToken } : {})
 		},
 		memory: isEnabled(conv.memoryMode)
 			? {

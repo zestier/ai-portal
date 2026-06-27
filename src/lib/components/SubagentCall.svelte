@@ -26,12 +26,12 @@
 		childTools?: ToolCallRecord[];
 		childReasoning?: ReasoningBlockRecord[];
 		childEdits?: FileEditRecord[];
-		conversationId?: string;
+		conversationId?: string | undefined;
 		// True only for the latest assistant turn's extractor card while the
 		// conversation is idle; older turns' cards and a busy conversation
 		// disable the affordance (enforced server-side too).
 		canRetry?: boolean;
-		onRetryStarted?: (turnId: string) => void;
+		onRetryStarted?: ((turnId: string) => void) | undefined;
 	} = $props();
 
 	// Auto-expand while the subagent is running so the user sees activity,

@@ -112,32 +112,34 @@ function updateMemoryItem(
 	if (kind === 'entities' || kind === 'entity') {
 		const parsed = parsePatchBody(EntityPatch, body);
 		return memory.updateEntity(conversationId, itemId, {
-			displayName: parsed.displayName,
-			summary: parsed.summary,
-			status: parsed.status,
-			entityType: parsed.entityType,
-			metadata: parsed.metadata
+			...(parsed.displayName !== undefined ? { displayName: parsed.displayName } : {}),
+			...(parsed.summary !== undefined ? { summary: parsed.summary } : {}),
+			...(parsed.status !== undefined ? { status: parsed.status } : {}),
+			...(parsed.entityType !== undefined ? { entityType: parsed.entityType } : {}),
+			...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {})
 		});
 	}
 	if (kind === 'facts' || kind === 'fact') {
 		const parsed = parsePatchBody(FactPatch, body);
 		return memory.updateFact(conversationId, itemId, {
-			predicate: parsed.predicate,
-			value: parsed.value,
-			status: parsed.status,
-			visibility: parsed.visibility,
-			confidence: parsed.confidence
+			...(parsed.predicate !== undefined ? { predicate: parsed.predicate } : {}),
+			...(parsed.value !== undefined ? { value: parsed.value } : {}),
+			...(parsed.status !== undefined ? { status: parsed.status } : {}),
+			...(parsed.visibility !== undefined ? { visibility: parsed.visibility } : {}),
+			...(parsed.confidence !== undefined ? { confidence: parsed.confidence } : {})
 		});
 	}
 	if (kind === 'openLoops' || kind === 'open-loops' || kind === 'open_loop') {
 		const parsed = parsePatchBody(OpenLoopPatch, body);
 		return memory.updateOpenLoop(conversationId, itemId, {
-			loopType: parsed.loopType,
-			title: parsed.title,
-			description: parsed.description,
-			status: parsed.status,
-			priority: parsed.priority,
-			relatedEntityIds: parsed.relatedEntityIds
+			...(parsed.loopType !== undefined ? { loopType: parsed.loopType } : {}),
+			...(parsed.title !== undefined ? { title: parsed.title } : {}),
+			...(parsed.description !== undefined ? { description: parsed.description } : {}),
+			...(parsed.status !== undefined ? { status: parsed.status } : {}),
+			...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+			...(parsed.relatedEntityIds !== undefined
+				? { relatedEntityIds: parsed.relatedEntityIds }
+				: {})
 		});
 	}
 	return null;

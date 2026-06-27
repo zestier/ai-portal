@@ -28,7 +28,10 @@ async function take(
 	const timeoutMs = opts.timeoutMs ?? 1000;
 	const timer = setTimeout(() => ac.abort(), timeoutMs);
 	const iter = (async () => {
-		for await (const ev of bus.subscribe(userId, { signal: ac.signal, sinceId: opts.sinceId })) {
+		for await (const ev of bus.subscribe(userId, {
+			signal: ac.signal,
+			...(opts.sinceId !== undefined ? { sinceId: opts.sinceId } : {})
+		})) {
 			out.push(ev);
 			if (out.length >= count) {
 				ac.abort();
@@ -93,7 +96,7 @@ describe('app event bus', () => {
 		const userId = `u-${Math.random()}`;
 		bus.publish(userId, awaiting('c1', true)); // buffered
 
-		const got = await take(bus, userId, 2, { sinceId: undefined }, () => {
+		const got = await take(bus, userId, 2, {}, () => {
 			// Published after subscribe registered: arrives live, not via replay.
 			bus.publish(userId, awaiting('c1', false));
 		});

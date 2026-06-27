@@ -9,6 +9,7 @@ import {
 	combineOmitted,
 	withOmitted,
 	assertFieldsKnown,
+	type FieldSelector,
 	FieldsArg,
 	FIELDS_PARAM,
 	FIELDS_NOTE
@@ -40,6 +41,18 @@ const OPEN_LOOP_KEEP = [
 const SEARCH_HIT_KEEP = ['itemType', 'itemId', 'text'] as const;
 const MESSAGE_KEEP = ['id', 'role', 'content'] as const;
 const GLOBAL_MEMORY_KEEP = ['id', 'kind', 'memoryKey', 'value', 'status'] as const;
+
+function projectOptions<K extends readonly string[]>(
+	fields: FieldSelector | string | string[] | undefined,
+	keep: K,
+	validate?: boolean
+): { keep: K; fields?: FieldSelector | string; validate?: boolean } {
+	return {
+		keep,
+		...(fields !== undefined ? { fields } : {}),
+		...(validate !== undefined ? { validate } : {})
+	};
+}
 
 const SearchArgs = z.object({
 	query: z.string().trim().min(1).max(500),
@@ -179,7 +192,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: results.map((result) => result.itemId)
 				});
-				const projected = project(results, { fields: parsed.fields, keep: SEARCH_HIT_KEEP });
+				const projected = project(results, projectOptions(parsed.fields, SEARCH_HIT_KEEP));
 				return ok(withOmitted({ results: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -216,9 +229,9 @@ export function buildMemoryTools(opts: {
 					{ input: facts, keep: FACT_KEEP },
 					{ input: events, keep: EVENT_KEEP }
 				]);
-				const entityP = project(entity, { fields, keep: ENTITY_KEEP, validate: false });
-				const factsP = project(facts, { fields, keep: FACT_KEEP, validate: false });
-				const eventsP = project(events, { fields, keep: EVENT_KEEP, validate: false });
+				const entityP = project(entity, projectOptions(fields, ENTITY_KEEP, false));
+				const factsP = project(facts, projectOptions(fields, FACT_KEEP, false));
+				const eventsP = project(events, projectOptions(fields, EVENT_KEEP, false));
 				const result = withOmitted(
 					{ entity: entityP.value, facts: factsP.value, events: eventsP.value },
 					combineOmitted(entityP, factsP, eventsP)
@@ -260,7 +273,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: openLoops.map((loop) => loop.id)
 				});
-				const projected = project(openLoops, { fields: parsed.fields, keep: OPEN_LOOP_KEEP });
+				const projected = project(openLoops, projectOptions(parsed.fields, OPEN_LOOP_KEEP));
 				return ok(withOmitted({ openLoops: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -292,7 +305,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: events.map((event) => event.id)
 				});
-				const projected = project(events, { fields: parsed.fields, keep: EVENT_KEEP });
+				const projected = project(events, projectOptions(parsed.fields, EVENT_KEEP));
 				return ok(withOmitted({ events: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -326,7 +339,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: matches.map((message) => message.id)
 				});
-				const projected = project(matches, { fields: parsed.fields, keep: MESSAGE_KEEP });
+				const projected = project(matches, projectOptions(parsed.fields, MESSAGE_KEEP));
 				return ok(withOmitted({ messages: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -360,7 +373,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: events.map((event) => event.id)
 				});
-				const projected = project(events, { fields: parsed.fields, keep: EVENT_KEEP });
+				const projected = project(events, projectOptions(parsed.fields, EVENT_KEEP));
 				return ok(withOmitted({ events: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -408,16 +421,8 @@ export function buildMemoryTools(opts: {
 					{ input: loops, keep: OPEN_LOOP_KEEP },
 					{ input: clueFacts, keep: FACT_KEEP }
 				]);
-				const loopsP = project(loops, {
-					fields: parsed.fields,
-					keep: OPEN_LOOP_KEEP,
-					validate: false
-				});
-				const factsP = project(clueFacts, {
-					fields: parsed.fields,
-					keep: FACT_KEEP,
-					validate: false
-				});
+				const loopsP = project(loops, projectOptions(parsed.fields, OPEN_LOOP_KEEP, false));
+				const factsP = project(clueFacts, projectOptions(parsed.fields, FACT_KEEP, false));
 				const result = withOmitted(
 					{ openLoops: loopsP.value, facts: factsP.value },
 					combineOmitted(loopsP, factsP)
@@ -469,17 +474,9 @@ export function buildMemoryTools(opts: {
 					{ input: facts, keep: FACT_KEEP },
 					{ input: events, keep: EVENT_KEEP }
 				]);
-				const entityP = project(entity, {
-					fields: parsed.fields,
-					keep: ENTITY_KEEP,
-					validate: false
-				});
-				const factsP = project(facts, { fields: parsed.fields, keep: FACT_KEEP, validate: false });
-				const eventsP = project(events, {
-					fields: parsed.fields,
-					keep: EVENT_KEEP,
-					validate: false
-				});
+				const entityP = project(entity, projectOptions(parsed.fields, ENTITY_KEEP, false));
+				const factsP = project(facts, projectOptions(parsed.fields, FACT_KEEP, false));
+				const eventsP = project(events, projectOptions(parsed.fields, EVENT_KEEP, false));
 				const result = withOmitted(
 					{ entity: entityP.value, facts: factsP.value, events: eventsP.value },
 					combineOmitted(entityP, factsP, eventsP)
@@ -605,7 +602,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: [row.id]
 				});
-				const projected = project(row, { fields: parsed.fields, keep: GLOBAL_MEMORY_KEEP });
+				const projected = project(row, projectOptions(parsed.fields, GLOBAL_MEMORY_KEEP));
 				return ok(withOmitted({ memory: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -637,7 +634,7 @@ export function buildMemoryTools(opts: {
 					resultSummary: summary,
 					resultIds: results.map((result) => result.itemId)
 				});
-				const projected = project(results, { fields: parsed.fields, keep: SEARCH_HIT_KEEP });
+				const projected = project(results, projectOptions(parsed.fields, SEARCH_HIT_KEEP));
 				return ok(withOmitted({ results: projected.value }, projected.omitted), summary);
 			}
 		},
@@ -672,7 +669,7 @@ export function buildMemoryTools(opts: {
 
 function checkClaim(
 	conversationId: string,
-	claim: { entityKey?: string; predicate: string; value?: unknown }
+	claim: { entityKey?: string | undefined; predicate: string; value?: unknown }
 ) {
 	const entity = claim.entityKey ? memoryRepo.getEntity(conversationId, claim.entityKey) : null;
 	if (claim.entityKey && !entity) {

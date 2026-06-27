@@ -179,16 +179,18 @@ export interface StartTurnOptions {
 	// The user message that triggered this turn. When provided, the full
 	// assembled provider input (prelude + prompt) is captured against it so the
 	// UI can inspect "the guts" of the turn later.
-	userMessageId?: string;
-	beforeSend?: () => Promise<void>;
-	initialEvents?: PortalEvent[];
-	memory?: {
-		mode: MemoryMode;
-		userMessageId: string;
-		userContent: string;
-		extractorModel?: string | null;
-		extractorBackend?: MemoryExtractorBackend | null;
-	};
+	userMessageId?: string | undefined;
+	beforeSend?: (() => Promise<void>) | undefined;
+	initialEvents?: PortalEvent[] | undefined;
+	memory?:
+		| {
+				mode: MemoryMode;
+				userMessageId: string;
+				userContent: string;
+				extractorModel?: string | null | undefined;
+				extractorBackend?: MemoryExtractorBackend | null | undefined;
+		  }
+		| undefined;
 }
 
 export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
@@ -432,9 +434,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					currentTokens: ev.currentTokens,
 					tokenLimit: ev.tokenLimit,
 					messagesLength: ev.messagesLength,
-					systemTokens: ev.systemTokens,
-					conversationTokens: ev.conversationTokens,
-					toolDefinitionsTokens: ev.toolDefinitionsTokens
+					systemTokens: ev.systemTokens ?? null,
+					conversationTokens: ev.conversationTokens ?? null,
+					toolDefinitionsTokens: ev.toolDefinitionsTokens ?? null
 				});
 			} catch (usageErr) {
 				log.warn('turn.usage.persist_failed', {
@@ -909,8 +911,8 @@ interface MemoryExtractionCardOptions {
 	userMessageId: string;
 	userContent: string;
 	mode: MemoryMode;
-	extractorModel?: string | null;
-	extractorBackend?: MemoryExtractorBackend | null;
+	extractorModel?: string | null | undefined;
+	extractorBackend?: MemoryExtractorBackend | null | undefined;
 	turnId: string;
 	// Card label + "extracting" status copy — the only user-visible difference
 	// between a normal post-turn extraction and an explicit retry.
@@ -923,11 +925,11 @@ interface MemoryExtractionCardOptions {
 	// Retry path only: undo the prior committed patch. Forwarded to
 	// `commitPatch`, which fires it once the replacement patch validates, so a
 	// failed/aborted/needs_review retry leaves the existing memory intact.
-	beforeCommit?: () => void;
+	beforeCommit?: (() => void) | undefined;
 	// Retry path only: the prior committed patch from this turn, forwarded to the
 	// extractor so it builds its initial packet against the turn-start projection
 	// rather than the live state. See `ExtractPatchInput.priorPatchId`.
-	priorPatchId?: string | null;
+	priorPatchId?: string | null | undefined;
 }
 
 /**
@@ -1092,14 +1094,14 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 				conversationId: o.conversationId,
 				userId: o.userId,
 				mode: o.mode,
-				extractorModel: o.extractorModel,
-				extractorBackend: o.extractorBackend,
 				turnId: o.turnId,
 				userMessage,
 				assistantMessage,
 				onActivity,
-				beforeCommit: o.beforeCommit,
-				priorPatchId: o.priorPatchId,
+				...(o.extractorModel !== undefined ? { extractorModel: o.extractorModel } : {}),
+				...(o.extractorBackend !== undefined ? { extractorBackend: o.extractorBackend } : {}),
+				...(o.beforeCommit !== undefined ? { beforeCommit: o.beforeCommit } : {}),
+				...(o.priorPatchId !== undefined ? { priorPatchId: o.priorPatchId } : {}),
 				signal: extractionAc.signal
 			}),
 			{

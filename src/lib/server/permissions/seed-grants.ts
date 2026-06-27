@@ -167,7 +167,10 @@ function shellCommand(
 ): ShellRule {
 	const step: ShellCommandStep = { token };
 	if (options) step.options = options;
-	return { command: [step], positionals };
+	return {
+		command: [step],
+		...(positionals !== undefined ? { positionals } : {})
+	};
 }
 
 function shellPrompt(rule: ShellRule, reason: string): SeedSpec {

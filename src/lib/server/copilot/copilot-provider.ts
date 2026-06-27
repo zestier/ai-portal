@@ -87,7 +87,7 @@ export async function getClient(
 				: new CopilotClient({
 						connection: RuntimeConnection.forStdio(),
 						useLoggedInUser: true,
-						gitHubToken: providerAuthToken
+						...(providerAuthToken !== undefined ? { gitHubToken: providerAuthToken } : {})
 					});
 		await client.start();
 		clients.set(userId, client);
@@ -267,6 +267,14 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		validateCustomToolArgs,
 		derivePermissionRequest
 	});
+	const onExitPlanModeRequest = async (req: Parameters<typeof onExitPlanMode>[0]) => {
+		const response = await onExitPlanMode(req);
+		return {
+			approved: response.approved,
+			...(response.selectedAction !== undefined ? { selectedAction: response.selectedAction } : {}),
+			...(response.feedback !== undefined ? { feedback: response.feedback } : {})
+		};
+	};
 
 	let existingMetadata: unknown;
 	try {
@@ -311,7 +319,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		onPermissionRequest,
 		onUserInputRequest,
 		onElicitationRequest,
-		onExitPlanModeRequest: onExitPlanMode,
+		onExitPlanModeRequest,
 		onAutoModeSwitchRequest: onAutoModeSwitch
 	};
 	for (const tool of portalTools) {

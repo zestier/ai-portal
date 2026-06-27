@@ -56,10 +56,10 @@ function hintForIssue(issue: ZodIssue): string {
 // One field-scoped problem with a write-tool call, in the shape echoed back to
 // the model. `field` names the offending argument; `hint` says how to fix it.
 interface WriteIssue {
-	field?: string;
+	field?: string | undefined;
 	code: string;
 	message: string;
-	hint?: string;
+	hint?: string | undefined;
 }
 
 // The single-item per-kind write tools handled generically. Per-item attribute
@@ -497,8 +497,8 @@ export function factSignature(
 	entityKey: string | undefined,
 	predicate: string,
 	value: unknown,
-	visibility?: string,
-	confidence?: number
+	visibility?: string | undefined,
+	confidence?: number | undefined
 ): string {
 	let valueJson: string;
 	try {
@@ -673,7 +673,7 @@ export interface WriteToolDeps {
 	 * attribute handler flags it as redundant instead of returning a plain
 	 * success. Built via {@link buildStoredFactSignatures}; omit for no checking.
 	 */
-	storedFactSignatures?: Set<string>;
+	storedFactSignatures?: Set<string> | undefined;
 	/** Shared staging buffer; handlers push accepted normalized patch fragments. */
 	staged: MemoryPatchProposal[];
 	/** Invoked once per write-tool call (telemetry: total propose calls). */
@@ -685,7 +685,7 @@ export interface WriteToolDeps {
 	 * already stored unchanged (telemetry: redundant re-records). Lets the
 	 * extractor quantify wasted focus before/after the prompt + feedback nudges.
 	 */
-	onRedundant?: () => void;
+	onRedundant?: (() => void) | undefined;
 }
 
 /**

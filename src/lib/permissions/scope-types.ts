@@ -52,8 +52,8 @@ export interface ShellScope {
  * step — the matcher treats any option token as unrecognised and rejects.
  */
 export interface ShellOptionRules {
-	allow?: ShellOptionSpec[];
-	deny?: string[];
+	allow?: ShellOptionSpec[] | undefined;
+	deny?: string[] | undefined;
 }
 
 export type ShellOptionSpec =
@@ -64,7 +64,7 @@ export type ShellOptionValueRule = { kind: 'any' } | { kind: 'workspace-path' };
 
 export interface ShellCommandStep {
 	token: string;
-	options?: ShellOptionRules;
+	options?: ShellOptionRules | undefined;
 }
 
 export interface ShellRule {
@@ -86,7 +86,7 @@ export interface ShellRule {
 	 *   session-workspace-paths  — every positional must resolve to a path
 	 *                              inside the SDK session workspace
 	 */
-	positionals?: PositionalsRule;
+	positionals?: PositionalsRule | undefined;
 	/**
 	 * Whether this segment must / must not be part of a shell pipeline
 	 * (i.e. connected to a neighboring command by `|`). Omitted = no
@@ -96,7 +96,7 @@ export interface ShellRule {
 	 *   must    — this segment must be in a pipeline
 	 *   forbid  — this segment must NOT be in a pipeline
 	 */
-	pipeline?: 'must' | 'forbid';
+	pipeline?: 'must' | 'forbid' | undefined;
 }
 
 export type PositionalsRule =
@@ -109,7 +109,7 @@ export type PositionalsRule =
 export interface FsScope {
 	kind: 'fs';
 	/** Which kinds this grant covers. Empty = all three. */
-	perms?: FsPermission[];
+	perms?: FsPermission[] | undefined;
 	rule: FsRule;
 }
 

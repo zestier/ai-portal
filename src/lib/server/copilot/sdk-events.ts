@@ -297,7 +297,7 @@ export class SdkEventAdapter {
 		this.activeQueue?.push(ev);
 	}
 
-	private parentToolCallId(ev: { agentId?: string }): string | undefined {
+	private parentToolCallId(ev: { agentId?: string | undefined }): string | undefined {
 		const agentId = ev.agentId;
 		if (!agentId) return undefined;
 		return this.subagentParentByAgentId.get(agentId);
@@ -605,10 +605,12 @@ export class SdkEventAdapter {
 			currentTokens: d.currentTokens,
 			tokenLimit: d.tokenLimit,
 			messagesLength: d.messagesLength ?? 0,
-			systemTokens: d.systemTokens,
-			conversationTokens: d.conversationTokens,
-			toolDefinitionsTokens: d.toolDefinitionsTokens,
-			isInitial: d.isInitial
+			...(d.systemTokens !== undefined ? { systemTokens: d.systemTokens } : {}),
+			...(d.conversationTokens !== undefined ? { conversationTokens: d.conversationTokens } : {}),
+			...(d.toolDefinitionsTokens !== undefined
+				? { toolDefinitionsTokens: d.toolDefinitionsTokens }
+				: {}),
+			...(d.isInitial !== undefined ? { isInitial: d.isInitial } : {})
 		});
 	};
 
@@ -623,8 +625,10 @@ export class SdkEventAdapter {
 		this.emit({
 			type: 'context.compaction',
 			phase: 'complete',
-			tokensRemoved: ev?.data?.tokensRemoved,
-			messagesRemoved: ev?.data?.messagesRemoved
+			...(ev?.data?.tokensRemoved !== undefined ? { tokensRemoved: ev.data.tokensRemoved } : {}),
+			...(ev?.data?.messagesRemoved !== undefined
+				? { messagesRemoved: ev.data.messagesRemoved }
+				: {})
 		});
 	};
 
@@ -663,7 +667,7 @@ export class SdkEventAdapter {
 		if (!d?.requestId) return;
 		this.emitInfoRequest('sampling', d.requestId, {
 			kind: 'sampling',
-			mcpServerName: d.serverName,
+			...(d.serverName !== undefined ? { mcpServerName: d.serverName } : {}),
 			summary: `MCP server "${d.serverName ?? 'unknown'}" is requesting an LLM sampling call.`
 		});
 	};
@@ -682,8 +686,8 @@ export class SdkEventAdapter {
 		if (!d?.requestId) return;
 		this.emitInfoRequest('mcp_oauth', d.requestId, {
 			kind: 'mcp_oauth',
-			mcpServerName: d.serverName,
-			authorizationUrl: d.serverUrl,
+			...(d.serverName !== undefined ? { mcpServerName: d.serverName } : {}),
+			...(d.serverUrl !== undefined ? { authorizationUrl: d.serverUrl } : {}),
 			summary: `MCP server "${d.serverName ?? 'unknown'}" requires OAuth authentication. Complete the flow in your browser to continue.`
 		});
 	};

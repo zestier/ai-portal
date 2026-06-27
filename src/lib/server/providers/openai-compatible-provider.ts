@@ -290,10 +290,10 @@ function providerConfig(): OpenAICompatibleConfig {
 }
 
 export function openAICompatibleSamplingOptions(cfg: {
-	OPENAI_COMPATIBLE_TEMPERATURE?: number;
-	OPENAI_COMPATIBLE_TOP_P?: number;
-	OPENAI_COMPATIBLE_PRESENCE_PENALTY?: number;
-	OPENAI_COMPATIBLE_FREQUENCY_PENALTY?: number;
+	OPENAI_COMPATIBLE_TEMPERATURE?: number | undefined;
+	OPENAI_COMPATIBLE_TOP_P?: number | undefined;
+	OPENAI_COMPATIBLE_PRESENCE_PENALTY?: number | undefined;
+	OPENAI_COMPATIBLE_FREQUENCY_PENALTY?: number | undefined;
 }): OpenAICompatibleSamplingOptions {
 	return {
 		...(cfg.OPENAI_COMPATIBLE_TEMPERATURE !== undefined
@@ -464,6 +464,7 @@ export function openOpenAICompatibleSession(
 		messages.push({ role: 'user', content: prompt });
 		for (let iteration = 0; iteration < cfg.maxToolIterations; iteration += 1) {
 			const messagesLength = messages.length;
+			const signal = activeAbortController?.signal;
 			const res = await fetchWithTimeout(
 				endpoint(cfg.baseUrl!, '/chat/completions'),
 				{
@@ -478,7 +479,7 @@ export function openOpenAICompatibleSession(
 						...cfg.sampling,
 						...(cfg.includeUsage ? { stream_options: { include_usage: true } } : {})
 					}),
-					signal: activeAbortController?.signal
+					...(signal !== undefined ? { signal } : {})
 				},
 				CHAT_RESPONSE_TIMEOUT_MS
 			);

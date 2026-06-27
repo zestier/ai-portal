@@ -39,11 +39,11 @@ const TINY_PNG_BASE64 =
 type Listener = (e: unknown) => void;
 
 interface StubHandlers {
-	onPermissionRequest?: (req: unknown) => Promise<unknown>;
-	onUserInputRequest?: (req: unknown) => Promise<unknown>;
-	onElicitationRequest?: (ctx: unknown) => Promise<unknown>;
-	onExitPlanModeRequest?: (req: unknown) => Promise<unknown>;
-	onAutoModeSwitchRequest?: (req: unknown) => Promise<unknown>;
+	onPermissionRequest?: ((req: unknown) => Promise<unknown>) | undefined;
+	onUserInputRequest?: ((req: unknown) => Promise<unknown>) | undefined;
+	onElicitationRequest?: ((ctx: unknown) => Promise<unknown>) | undefined;
+	onExitPlanModeRequest?: ((req: unknown) => Promise<unknown>) | undefined;
+	onAutoModeSwitchRequest?: ((req: unknown) => Promise<unknown>) | undefined;
 }
 
 class StubSession {

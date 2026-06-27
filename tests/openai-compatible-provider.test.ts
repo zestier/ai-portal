@@ -96,7 +96,7 @@ async function persistedOpts(
 		title: 'OpenAI-compatible test',
 		workdir: baseOpts.workingDirectory,
 		model: baseOpts.model,
-		provider: baseOpts.provider
+		...(baseOpts.provider !== undefined ? { provider: baseOpts.provider } : {})
 	});
 	return { ...baseOpts, userId: user.id, ...overrides };
 }

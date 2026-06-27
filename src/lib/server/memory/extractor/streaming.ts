@@ -27,10 +27,10 @@ import type {
  * the tool-calling extractor options, so the extractor can pass its opts as-is). */
 export interface ChatRequestOptions {
 	baseUrl: string;
-	apiKey?: string | null;
+	apiKey?: string | null | undefined;
 	model: string;
 	timeoutMs: number;
-	toolChoice?: 'auto' | 'required';
+	toolChoice?: 'auto' | 'required' | undefined;
 }
 
 export class MemoryExtractorHttpError extends Error {
@@ -206,7 +206,7 @@ export async function requestOpenAICompatibleChat(
 				temperature: 0,
 				stream: true
 			}),
-			signal
+			...(signal !== undefined ? { signal } : {})
 		},
 		opts.timeoutMs
 	);

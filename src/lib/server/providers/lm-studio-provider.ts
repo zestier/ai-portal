@@ -164,7 +164,7 @@ export const lmStudioProvider: ModelBackendProvider = {
 			}
 			return {
 				isAuthenticated: false,
-				authType: cfg.apiKey ? 'api-token' : undefined,
+				...(cfg.apiKey ? { authType: 'api-token' } : {}),
 				statusMessage: `${displayName} returned ${res.status}: ${res.statusText}`
 			};
 		} catch (e) {
@@ -202,10 +202,9 @@ export const lmStudioProvider: ModelBackendProvider = {
 					return {
 						id: loadedId ?? model.key!,
 						name: model.display_name ?? model.key!,
-						capabilities:
-							typeof maxContext === 'number'
-								? { limits: { max_context_window_tokens: maxContext } }
-								: undefined
+						...(typeof maxContext === 'number'
+							? { capabilities: { limits: { max_context_window_tokens: maxContext } } }
+							: {})
 					};
 				});
 		} catch (e) {

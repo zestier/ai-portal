@@ -54,6 +54,11 @@ export async function startTurnFromUserMessage(
 		: promptIncludesPriorMessages
 			? buildPromptWithPriorMessages(conv.id, userMsg)
 			: userMsg.content;
+	const authToken = providerAuthToken(conv.provider, conv.userId);
+	const initialMessages =
+		!memoryEnabled && !promptIncludesPriorMessages && !provider.capabilities.session.resume
+			? buildProviderInitialMessages(conv.id, userMsg)
+			: undefined;
 	const turn = await startTurn({
 		conversationId: conv.id,
 		prompt,
@@ -70,11 +75,8 @@ export async function startTurnFromUserMessage(
 			approveAllTools: conv.approveAllTools,
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,
-			providerAuthToken: providerAuthToken(conv.provider, conv.userId),
-			initialMessages:
-				!memoryEnabled && !promptIncludesPriorMessages && !provider.capabilities.session.resume
-					? buildProviderInitialMessages(conv.id, userMsg)
-					: undefined,
+			...(authToken !== undefined ? { providerAuthToken: authToken } : {}),
+			...(initialMessages !== undefined ? { initialMessages } : {}),
 			onProviderSessionIdChange: (providerSessionId) => {
 				const updated = convs.setProviderSessionId(conv.id, conv.userId, providerSessionId);
 				if (!updated) {
@@ -149,6 +151,6 @@ export function buildProviderInitialMessages(
 			role: m.role,
 			content: m.content,
 			status: m.status,
-			toolCalls: m.toolCalls
+			...(m.toolCalls !== undefined ? { toolCalls: m.toolCalls } : {})
 		}));
 }

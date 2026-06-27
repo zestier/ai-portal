@@ -585,7 +585,7 @@ export interface InteractivePermissionView {
 	 * Initial text for the deny feedback field. Prompt-required grants use
 	 * this to suggest the same feedback that would be sent on auto-deny.
 	 */
-	defaultDenyFeedback?: string;
+	defaultDenyFeedback?: string | undefined;
 	/**
 	 * For `shell` permissions: the server-side parser's verdict on the
 	 * command. `parsed` means we tokenized it into segments split on
@@ -595,7 +595,7 @@ export interface InteractivePermissionView {
 	 * to model; structured grants can't apply, so the dialog warns the
 	 * user and downgrades the grant picker. Omitted for non-shell kinds.
 	 */
-	shellAnalysis?: ShellAnalysisView;
+	shellAnalysis?: ShellAnalysisView | undefined;
 	/**
 	 * A bounded inline preview of an image the agent is about to `view`. The
 	 * portal captures readable image bytes at permission (read) time so the
@@ -604,7 +604,7 @@ export interface InteractivePermissionView {
 	 * dialog), the target is an allowlisted image type, and the bytes are
 	 * small enough to embed. `dataBase64` is the raw base64 (no data: prefix).
 	 */
-	imagePreview?: ImagePreview;
+	imagePreview?: ImagePreview | undefined;
 }
 
 export interface ImagePreview {
@@ -627,14 +627,14 @@ export interface ShellAnalysisSegment {
 
 export interface InteractiveAutoModeSwitchView {
 	kind: 'auto_mode_switch';
-	errorCode?: string;
-	retryAfterSeconds?: number;
+	errorCode?: string | undefined;
+	retryAfterSeconds?: number | undefined;
 }
 
 export interface InteractiveUserInputView {
 	kind: 'user_input';
 	question: string;
-	choices?: string[];
+	choices?: string[] | undefined;
 	allowFreeform: boolean;
 }
 
@@ -642,15 +642,15 @@ export interface InteractiveElicitationView {
 	kind: 'elicitation';
 	message: string;
 	mode: 'form' | 'url';
-	url?: string;
-	requestedSchema?: ElicitationSchema;
-	elicitationSource?: string;
+	url?: string | undefined;
+	requestedSchema?: ElicitationSchema | undefined;
+	elicitationSource?: string | undefined;
 }
 
 export interface InteractiveExitPlanModeView {
 	kind: 'exit_plan_mode';
 	summary: string;
-	planContent?: string;
+	planContent?: string | undefined;
 	actions: string[];
 	recommendedAction: string;
 }
@@ -814,7 +814,7 @@ export type PortalEvent =
 			// the outer `task` tool call with this id, and (with segmentId) is
 			// rendered as a threaded content block inside the SubagentCall card
 			// rather than appended to the outer assistant message body.
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 			// Groups consecutive child content deltas into one block. Only set
 			// for sub-agent content (alongside parentToolCallId).
 			segmentId?: string;
@@ -826,14 +826,14 @@ export type PortalEvent =
 			text: string;
 			// When set, this reasoning burst originated inside the sub-agent
 			// spawned by the outer `task` tool call with this id.
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 	  }
 	| {
 			type: 'message.reasoning.end';
 			messageId: string;
 			segmentId: string;
 			durationMs: number;
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 	  }
 	| { type: 'message.end'; messageId: string }
 	| {
@@ -847,7 +847,7 @@ export type PortalEvent =
 			toolCallId: string;
 			tool: string;
 			args: unknown;
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 	  }
 	| { type: 'interactive.request'; request: InteractiveRequestView }
 	| {
@@ -873,7 +873,7 @@ export type PortalEvent =
 			ok: boolean;
 			summary: string;
 			output?: unknown;
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 			attachments?: ToolAttachmentMeta[];
 	  }
 	// Ephemeral live-streaming events from the SDK during a tool's execution.
@@ -884,15 +884,15 @@ export type PortalEvent =
 			type: 'tool.partial_output';
 			toolCallId: string;
 			output: string;
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 	  }
 	| {
 			type: 'tool.progress';
 			toolCallId: string;
 			message: string;
-			parentToolCallId?: string;
+			parentToolCallId?: string | undefined;
 	  }
-	| { type: 'file.edit'; path: string; diff: string; parentToolCallId?: string }
+	| { type: 'file.edit'; path: string; diff: string; parentToolCallId?: string | undefined }
 	| { type: 'conversation.update'; conversationId: string; title?: string }
 	| {
 			type: 'session.settings';

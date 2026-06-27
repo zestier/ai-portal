@@ -27,22 +27,22 @@ export interface ExtractPatchInput {
 	turnId: string;
 	userMessage: Message;
 	assistantMessage: Message;
-	initialPacket?: TurnMemoryPacket;
-	memoryToolCalls?: MemoryToolCall[];
-	regularToolCalls?: ToolCallRecord[];
-	recentTranscript?: Message[];
-	extractorModel?: string | null;
+	initialPacket?: TurnMemoryPacket | undefined;
+	memoryToolCalls?: MemoryToolCall[] | undefined;
+	regularToolCalls?: ToolCallRecord[] | undefined;
+	recentTranscript?: Message[] | undefined;
+	extractorModel?: string | null | undefined;
 	/**
 	 * Optional per-conversation override for the extractor backend. When unset
 	 * (NULL/undefined) the server default (`MEMORY_EXTRACTOR_BACKEND`) is used.
 	 */
-	extractorBackend?: MemoryExtractorBackend | null;
+	extractorBackend?: MemoryExtractorBackend | null | undefined;
 	/**
 	 * Optional sink for live tool-calling extractor activity, so a caller can
 	 * render the background agent running. Only the tool-calling extractor
 	 * emits; other extractors ignore it.
 	 */
-	onActivity?: ExtractorActivityEmitter;
+	onActivity?: ExtractorActivityEmitter | undefined;
 	/**
 	 * Aborts the extraction. Wired to the owning turn's abort controller so a
 	 * user "stop" issued while the background extractor is still running tears
@@ -50,7 +50,7 @@ export interface ExtractPatchInput {
 	 * subagent run to completion. The tool-calling extractor also checks it
 	 * between iterations and tool calls.
 	 */
-	signal?: AbortSignal;
+	signal?: AbortSignal | undefined;
 	/**
 	 * Optional hook forwarded to `commitPatch` and invoked exactly once — only
 	 * when the freshly extracted patch validates and is about to be applied
@@ -59,7 +59,7 @@ export interface ExtractPatchInput {
 	 * is guaranteed to land, so a failed, timed-out, aborted, or `needs_review`
 	 * retry never destroys the existing committed memory.
 	 */
-	beforeCommit?: () => void;
+	beforeCommit?: (() => void) | undefined;
 	/**
 	 * Retry path only: the prior committed patch from THIS turn (its durable undo
 	 * is deferred to commit time via `beforeCommit`). When set, the initial packet
@@ -67,7 +67,7 @@ export interface ExtractPatchInput {
 	 * live state — see `readMemoryAtTurnStart` for the why and how. Ignored when
 	 * the caller supplies its own `initialPacket`.
 	 */
-	priorPatchId?: string | null;
+	priorPatchId?: string | null | undefined;
 }
 
 export interface ExtractPatchResult {
@@ -85,14 +85,14 @@ export interface ExtractPatchResult {
 	 * after it stops calling tools). Surfaced as the extraction subagent card's
 	 * "Response" so the background session reads like any other sub-session.
 	 */
-	response?: string;
+	response?: string | undefined;
 }
 
 export type Diagnostic = ExtractPatchResult['diagnostics'][number];
 
 export interface MemoryExtractor {
 	kind: string;
-	model?: string;
+	model?: string | undefined;
 	extractPatch(input: ExtractPatchInput): Promise<ExtractPatchResult>;
 }
 
@@ -116,15 +116,15 @@ export interface ExtractorAssistantTurn {
 	content: string;
 	toolCalls: Array<{ id: string; name: string; arguments: string }>;
 	/** Provider-reported reasoning/thinking for this step, when available. */
-	reasoning?: string;
+	reasoning?: string | undefined;
 }
 
 /** Incremental tokens streamed from the model during a single chat step. */
 export interface ExtractorStreamDelta {
 	/** Provider reasoning/thinking tokens (`reasoning` / `reasoning_content`). */
-	reasoning?: string;
+	reasoning?: string | undefined;
 	/** Spoken-content tokens (may include inline <think> tags). */
-	content?: string;
+	content?: string | undefined;
 }
 
 export type ExtractorChatComplete = (

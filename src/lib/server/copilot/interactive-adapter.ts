@@ -64,12 +64,16 @@ interface InteractiveAdapterOptions {
 	getMode(): SessionMode;
 	getSessionWorkspacePath(): string | null;
 	getPermissionBehavior(tool: string): 'normal' | 'always-prompt' | 'never-prompt';
-	validateCustomToolArgs?(toolName: string, args: unknown): { feedback: string } | null;
+	validateCustomToolArgs?:
+		| ((toolName: string, args: unknown) => { feedback: string } | null)
+		| undefined;
 	// Optional hook letting a portal tool's permission be evaluated as a
 	// filesystem request (e.g. a `write` on a derived path) instead of the
 	// default `custom-tool` request, so it reuses the existing fs grants/seeds.
 	// Returns null to keep the default custom-tool evaluation.
-	derivePermissionRequest?(toolName: string, args: unknown): ToolPermissionRequest | null;
+	derivePermissionRequest?:
+		| ((toolName: string, args: unknown) => ToolPermissionRequest | null)
+		| undefined;
 }
 
 export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
@@ -102,7 +106,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 	// (view is read-only), so this never executes or mutates anything.
 	const maybeCaptureImage = (
 		req: PermissionRequestLike
-	): { keys: string[]; imagePreview?: ImagePreview } | null => {
+	): { keys: string[]; imagePreview?: ImagePreview | undefined } | null => {
 		if (req.kind !== 'read') return null;
 		if (typeof req.path !== 'string' || req.path.length === 0) return null;
 		const absPath = isAbsolute(req.path)
@@ -253,8 +257,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		// outcome (which it may). `prompt-grant` is also non-persistable.
 		type TargetEval =
 			| { kind: 'allow' }
-			| { kind: 'deny'; feedback?: string }
-			| { kind: 'prompt-grant'; feedback?: string }
+			| { kind: 'deny'; feedback?: string | undefined }
+			| { kind: 'prompt-grant'; feedback?: string | undefined }
 			| { kind: 'prompt-policy' };
 		const evalRank = { allow: 0, 'prompt-policy': 1, 'prompt-grant': 2, deny: 3 } as const;
 
@@ -395,7 +399,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		let promptRequest: {
 			canPersistDecision: boolean;
 			bestEffortFeedback: string;
-			defaultDenyFeedback?: string;
+			defaultDenyFeedback?: string | undefined;
 		};
 		if (evaluation.kind === 'prompt-grant') {
 			promptRequest = {
@@ -437,9 +441,11 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				args: req.args ?? null,
 				userPolicy: opts.policy,
 				canPersistDecision: promptRequest.canPersistDecision,
-				defaultDenyFeedback: promptRequest.defaultDenyFeedback,
-				shellAnalysis,
-				imagePreview
+				...(promptRequest.defaultDenyFeedback !== undefined
+					? { defaultDenyFeedback: promptRequest.defaultDenyFeedback }
+					: {}),
+				...(shellAnalysis !== undefined ? { shellAnalysis } : {}),
+				...(imagePreview !== undefined ? { imagePreview } : {})
 			}
 		);
 		if (response.decision === 'deny' || response.decision === 'deny-always') {

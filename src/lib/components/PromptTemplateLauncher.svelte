@@ -13,8 +13,8 @@
 		onError
 	}: {
 		variant?: Variant;
-		onNavigate?: () => void;
-		onError?: (message: string) => void;
+		onNavigate?: (() => void) | undefined;
+		onError?: ((message: string) => void) | undefined;
 	} = $props();
 
 	let busy = $state(false);

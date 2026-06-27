@@ -14,7 +14,7 @@ function event(opts: {
 		request: new Request(opts.url ?? 'http://localhost/api/prompt-templates', {
 			method: opts.body === undefined ? 'GET' : 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
+			...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) })
 		})
 	};
 }

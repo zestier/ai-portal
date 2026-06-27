@@ -520,17 +520,24 @@
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 					<div class="text-part" use:copyableCodeBlocks>{@html p.html}</div>
 				{:else if p.kind === 'tool'}
+					{@const childTools = (message.toolCalls ?? []).filter(
+						(t) => t.parentToolCallId === p.tool.id
+					)}
+					{@const childReasoning = (message.reasoningBlocks ?? []).filter(
+						(r) => r.parentToolCallId === p.tool.id
+					)}
+					{@const childEdits = (message.fileEdits ?? []).filter(
+						(e) => e.parentToolCallId === p.tool.id
+					)}
 					{#if p.tool.tool === 'task'}
 						<SubagentCall
 							toolCall={p.tool}
 							{conversationId}
 							canRetry={canRetryMemory}
 							onRetryStarted={onMemoryRetryStarted}
-							childTools={(message.toolCalls ?? []).filter((t) => t.parentToolCallId === p.tool.id)}
-							childReasoning={(message.reasoningBlocks ?? []).filter(
-								(r) => r.parentToolCallId === p.tool.id
-							)}
-							childEdits={(message.fileEdits ?? []).filter((e) => e.parentToolCallId === p.tool.id)}
+							{childTools}
+							{childReasoning}
+							{childEdits}
 						/>
 					{:else}
 						<ToolCall toolCall={p.tool} {conversationId} onRerunStarted={onToolRerunStarted} />
