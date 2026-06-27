@@ -183,6 +183,32 @@ describe('runRedeploy', () => {
 		return events;
 	}
 
+	it('does not hang and reports failure when a step promise rejects', async () => {
+		const events: RedeployEvent[] = [];
+		const rejectingRunner = (step: Step, emit: (ev: RedeployEvent) => void) => {
+			emit({ type: 'step', label: step.label, cmd: step.display });
+			return Promise.reject(new Error('boom-rejection'));
+		};
+		for await (const ev of runRedeploy(
+			[nodeStep('rejector', ''), nodeStep('never', '')],
+			rejectingRunner
+		)) {
+			events.push(ev);
+		}
+
+		const stepLabels = events
+			.filter((ev) => ev.type === 'step')
+			.map((ev) => (ev as { label: string }).label);
+		// second step must never start once the first rejects (break semantics).
+		expect(stepLabels).toEqual(['rejector']);
+		const errLog = events.find(
+			(ev): ev is Extract<RedeployEvent, { type: 'log' }> =>
+				ev.type === 'log' && ev.stream === 'stderr' && ev.text.includes('boom-rejection')
+		);
+		expect(errLog).toBeDefined();
+		expect(events.at(-1)).toEqual({ type: 'done', ok: false, failedStep: 'rejector', code: 1 });
+	});
+
 	it('runs every step and emits a restarting done event on full success', async () => {
 		// Success triggers a deferred process.exit(0); stub it so the test runner survives.
 		const exitSpy = vi.spyOn(process, 'exit').mockImplementation((): never => undefined as never);

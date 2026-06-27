@@ -94,7 +94,10 @@ export function runStep(step: Step, emit: (ev: RedeployEvent) => void): Promise<
 	});
 }
 
-export async function* runRedeploy(steps: Step[]): AsyncGenerator<RedeployEvent> {
+export async function* runRedeploy(
+	steps: Step[],
+	runner: (step: Step, emit: (ev: RedeployEvent) => void) => Promise<number> = runStep
+): AsyncGenerator<RedeployEvent> {
 	const queue: RedeployEvent[] = [];
 	let wake: (() => void) | null = null;
 	const emit = (ev: RedeployEvent) => {
@@ -106,12 +109,23 @@ export async function* runRedeploy(steps: Step[]): AsyncGenerator<RedeployEvent>
 		let failedStep: string | undefined;
 		let failedCode = 0;
 		for (const step of steps) {
-			const done = runStep(step, emit);
+			const done = runner(step, emit);
 			let code: number | undefined;
-			done.then((c) => {
-				code = c;
-				wake?.();
-			});
+			done.then(
+				(c) => {
+					code = c;
+					wake?.();
+				},
+				(err) => {
+					emit({
+						type: 'log',
+						stream: 'stderr',
+						text: scrubRedeployLog(`step error: ${String(err)}\n`)
+					});
+					code = 1;
+					wake?.();
+				}
+			);
 			while (code === undefined || queue.length > 0) {
 				if (queue.length === 0) {
 					await new Promise<void>((r) => {
