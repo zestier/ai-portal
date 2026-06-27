@@ -274,7 +274,7 @@
 	let activeTurnId: string | null = null;
 	let streamStallTimer: ReturnType<typeof setTimeout> | null = null;
 	let refreshMessagesRun = 0;
-	let scrollEl: HTMLDivElement | undefined;
+	let scrollEl: HTMLDivElement | undefined = $state();
 	// Sticky-scroll: only auto-scroll if the user is pinned to the bottom.
 	// Otherwise, surface a "New messages" pill (Slack-style) so we don't
 	// yank them away from content they're reading.
@@ -1033,6 +1033,24 @@
 	$effect(() => {
 		void thinking;
 		scrollToBottom();
+	});
+
+	// Keep the latest message visible when the messages container itself
+	// resizes — most importantly when the mobile soft keyboard opens. The
+	// app shell is sized from the VisualViewport (see +layout.svelte), so the
+	// keyboard shrinks this container; the sticky-scroll effects above only
+	// react to new content, so without this a pinned-to-bottom user would see
+	// the last message slide up behind the keyboard. A ResizeObserver watches
+	// the element's own box (which changes on viewport resize, not on content
+	// growth), so this won't fight the content-driven scrolling.
+	$effect(() => {
+		const el = scrollEl;
+		if (!el || typeof ResizeObserver === 'undefined') return;
+		const ro = new ResizeObserver(() => {
+			if (pinnedToBottom) el.scrollTo({ top: el.scrollHeight });
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
 	});
 
 	// While streaming, the in-progress assistant turn may not have produced a

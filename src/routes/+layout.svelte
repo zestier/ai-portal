@@ -42,6 +42,30 @@
 		}
 	});
 
+	// Drive the app-shell height from the VisualViewport so the layout shrinks
+	// to the *visible* region when the mobile soft keyboard opens. iOS Safari
+	// ignores `interactive-widget` and does not shrink the layout viewport (or
+	// `dvh`) for the keyboard — it overlays the keyboard and scrolls the page —
+	// so the bottom of the chat (messages + composer) ends up hidden behind it.
+	// Sizing to `visualViewport.height` keeps the composer just above the
+	// keyboard and shrinks the messages container, which lets Chat.svelte's
+	// ResizeObserver re-pin to the latest message. Falls back to `100dvh` (the
+	// CSS default) where VisualViewport is unavailable.
+	onMount(() => {
+		const vv = window.visualViewport;
+		if (!vv) return;
+		const root = document.documentElement;
+		const update = () => {
+			root.style.setProperty('--app-height', `${vv.height}px`);
+		};
+		update();
+		vv.addEventListener('resize', update);
+		return () => {
+			vv.removeEventListener('resize', update);
+			root.style.removeProperty('--app-height');
+		};
+	});
+
 	// Single per-user global event feed for the whole app shell. Unlike the
 	// per-turn stream (which only covers the open conversation), this keeps the
 	// sidebar "awaiting input" indicator live for *every* conversation — a
@@ -162,6 +186,11 @@
 		grid-template-columns: 44px 280px 1fr;
 		height: 100vh;
 		height: 100dvh;
+		/* JS sets --app-height from VisualViewport so the shell shrinks to the
+		   visible area when the mobile keyboard opens (iOS Safari doesn't do
+		   this for us). Falls back to 100dvh before hydration / where the
+		   VisualViewport API is unavailable. */
+		height: var(--app-height, 100dvh);
 		/* viewport-fit=cover lets the shell paint edge-to-edge; carve the
 		   in-flow content (ChatHeader at the top, Composer at the bottom,
 		   the desktop sidebar) back out of the device safe areas. Resolves
