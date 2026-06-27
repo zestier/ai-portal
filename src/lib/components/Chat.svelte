@@ -18,6 +18,8 @@
 	import Composer from './Composer.svelte';
 	import EmptyState from './ui/EmptyState.svelte';
 	import { addInteractive, removeInteractive } from '$lib/client/interactive-queue';
+	import { isBlockingKind } from '$lib/interactive/request-registry';
+	import { setAwaitingInput, clearAwaitingInput } from '$lib/client/awaiting-input';
 	import {
 		findToolCallRecord,
 		shouldRefreshTicketsAfterToolResult
@@ -188,6 +190,20 @@
 			clearCompactionTimer();
 			clearInteractiveRevealTimers();
 		};
+	});
+
+	// Mirror this (open) conversation's blocking-prompt state into the shared
+	// awaiting-input store so the sidebar indicator updates live off the turn
+	// stream — a prompt appearing or being resolved/cancelled — without a
+	// server round-trip or layout reload. Derived straight from
+	// `pendingInteractive` (filtered to blocking kinds) so the sidebar can never
+	// disagree with the chat. The cleanup clears the override on unmount /
+	// conversation switch so the sidebar falls back to the server `load` value.
+	$effect(() => {
+		const id = conversation.id;
+		const awaiting = pendingInteractive.some((p) => isBlockingKind(p.kind));
+		setAwaitingInput(id, awaiting);
+		return () => clearAwaitingInput(id);
 	});
 
 	// Foreground/network resume listeners. Registered once for the component's

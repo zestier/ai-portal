@@ -34,7 +34,7 @@ import type {
 	PermissionPolicy,
 	PortalEvent
 } from '$lib/types';
-import { defaultInteractiveResponse } from '$lib/interactive/request-registry';
+import { defaultInteractiveResponse, isBlockingKind } from '$lib/interactive/request-registry';
 import { isFilesystemPermissionKind } from '$lib/permissions/metadata';
 
 // Default = no timeout. We used to default to 10 minutes "so a forgotten
@@ -213,6 +213,25 @@ export function hasPending(conversationId: string): boolean {
 		if (p.conversationId === conversationId) return true;
 	}
 	return false;
+}
+
+/**
+ * Set of conversation ids that currently have ≥1 outstanding prompt whose
+ * kind actually blocks on the user (see {@link isBlockingKind}). Used by the
+ * sidebar "awaiting input" indicator. Unlike {@link hasPending}, this ignores
+ * the auto-resolving "info" kinds (sampling / mcp_oauth / external_tool),
+ * which never wait on the user.
+ *
+ * Per-process only — correct for single-instance deployments (same caveat as
+ * the `pending` map and {@link hasPending}); a resolve landing on another
+ * process won't be reflected here.
+ */
+export function awaitingInputConversationIds(): Set<string> {
+	const out = new Set<string>();
+	for (const p of pending.values()) {
+		if (isBlockingKind(p.kind)) out.add(p.conversationId);
+	}
+	return out;
 }
 
 export function resolve(requestId: string, userId: string, response: InteractiveResponse): boolean {

@@ -2,6 +2,7 @@ import type { LayoutServerLoad } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
+import { awaitingInputConversationIds } from '$lib/server/runtime/interactive-requests';
 import { orderSidebarTickets } from '$lib/client/sidebar';
 import type { SidebarTicket } from '$lib/types';
 import {
@@ -11,6 +12,12 @@ import {
 
 export const load: LayoutServerLoad = ({ locals, params }) => {
 	const conversations = locals.userId ? convs.list(locals.userId, { includeArchived: true }) : [];
+	// Intersect the registry's awaiting set with this user's conversations so a
+	// single-instance indicator never leaks another user's pending state.
+	const awaiting = locals.userId ? awaitingInputConversationIds() : new Set<string>();
+	const awaitingConversationIds = conversations
+		.filter((c) => c.archivedAt == null && awaiting.has(c.id))
+		.map((c) => c.id);
 	let ticketWorkspace: string | null = null;
 	if (locals.userId) {
 		const activeConversation =
@@ -43,6 +50,7 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 	return {
 		user: locals.user,
 		conversations,
+		awaitingConversationIds,
 		tickets: sidebarTickets,
 		ticketCount:
 			locals.userId && ticketWorkspace ? tickets.count(locals.userId, ticketWorkspace) : 0,

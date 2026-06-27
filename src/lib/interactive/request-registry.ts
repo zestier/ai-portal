@@ -17,6 +17,29 @@ export function defaultInteractiveResponse(kind: InteractiveKind): InteractiveRe
 	return interactiveKindDescriptors[kind]();
 }
 
+/**
+ * Interactive kinds that genuinely block on the user: the turn cannot
+ * proceed until the user answers. These are the kinds that should surface
+ * an "awaiting input" signal (e.g. the sidebar indicator). The remaining
+ * "info" kinds (`sampling`, `mcp_oauth`, `external_tool`) are auto-resolved
+ * by the SDK and never wait on the user, so they are deliberately excluded.
+ *
+ * Centralized here so a future new {@link InteractiveKind} cannot silently
+ * fall out of sync between the registry, the layout load, and the UI/tests.
+ */
+export const BLOCKING_INTERACTIVE_KINDS = new Set<InteractiveKind>([
+	'permission',
+	'user_input',
+	'auto_mode_switch',
+	'exit_plan_mode',
+	'elicitation'
+]);
+
+/** True if `kind` blocks on the user (see {@link BLOCKING_INTERACTIVE_KINDS}). */
+export function isBlockingKind(kind: InteractiveKind): boolean {
+	return BLOCKING_INTERACTIVE_KINDS.has(kind);
+}
+
 export type InformationalInteractiveKind = 'sampling' | 'mcp_oauth' | 'external_tool';
 export type InformationalInteractiveRequest = Extract<
 	InteractiveRequestView,

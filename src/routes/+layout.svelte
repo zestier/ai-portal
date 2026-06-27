@@ -113,6 +113,7 @@
 			</div>
 			<Sidebar
 				conversations={data.conversations}
+				awaitingConversationIds={data.awaitingConversationIds}
 				tickets={data.tickets}
 				ticketCount={data.ticketCount}
 				ticketWorkspace={data.ticketWorkspace}

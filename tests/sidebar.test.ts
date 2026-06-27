@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { archiveWorkspaceTicket } from '../src/lib/client/ticket-archive';
 import { resolveInitialSidebarOpen, orderSidebarTickets } from '../src/lib/client/sidebar';
+import { isAwaitingInput } from '../src/lib/client/awaiting-input';
 import {
 	interpolateTicketPrompt,
 	ticketActionChatTitle,
@@ -36,6 +37,27 @@ describe('resolveInitialSidebarOpen', () => {
 			false
 		);
 		expect(resolveInitialSidebarOpen({ getStored: () => '', isDesktop: () => true })).toBe(true);
+	});
+});
+
+describe('isAwaitingInput', () => {
+	it('falls back to the server set when there is no live override', () => {
+		const server = new Set(['a', 'b']);
+		expect(isAwaitingInput('a', server, {})).toBe(true);
+		expect(isAwaitingInput('c', server, {})).toBe(false);
+	});
+
+	it('lets a live override win over the server set in both directions', () => {
+		const server = new Set(['a']);
+		// Override clears an indicator the server still reports (open conv just resolved).
+		expect(isAwaitingInput('a', server, { a: false })).toBe(false);
+		// Override raises an indicator the server has not caught up on yet.
+		expect(isAwaitingInput('b', server, { b: true })).toBe(true);
+	});
+
+	it('treats only own-key overrides as authoritative', () => {
+		const server = new Set<string>();
+		expect(isAwaitingInput('a', server, { b: true })).toBe(false);
 	});
 });
 

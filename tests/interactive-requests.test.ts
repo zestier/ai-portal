@@ -10,12 +10,14 @@ import {
 	cancelConversation,
 	expireConversation,
 	hasPending,
+	awaitingInputConversationIds,
 	newRequestId,
 	get,
 	defaultInteractiveResponse,
 	InteractivePromptCancelledError
 } from '../src/lib/server/runtime/interactive-requests';
 import { createInteractiveCallbacks } from '../src/lib/server/copilot/interactive-adapter';
+import { isBlockingKind } from '../src/lib/interactive/request-registry';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as settings from '../src/lib/server/db/repos/settings';
@@ -93,6 +95,24 @@ describe('interactive request registry', () => {
 		await setupLocalEnv('portal-interactive-test-');
 		userId = users.ensureLocalUser().id;
 		conversationId = convs.create(userId, { title: 't', workdir: '/tmp', model: null }).id;
+	});
+
+	it('classifies every interactive kind as blocking or info (drift guard)', () => {
+		// Exhaustive Record so adding a new InteractiveKind forces a decision
+		// here rather than silently defaulting one way in the sidebar indicator.
+		const expected: Record<InteractiveKind, boolean> = {
+			permission: true,
+			auto_mode_switch: true,
+			user_input: true,
+			elicitation: true,
+			exit_plan_mode: true,
+			sampling: false,
+			mcp_oauth: false,
+			external_tool: false
+		};
+		for (const [kind, blocking] of Object.entries(expected) as Array<[InteractiveKind, boolean]>) {
+			expect(isBlockingKind(kind)).toBe(blocking);
+		}
 	});
 
 	it('defines default cancellations through the interactive-kind registry', () => {
@@ -265,6 +285,62 @@ describe('interactive request registry', () => {
 		resolve(requestId, userId, { kind: 'permission', decision: 'allow-once' });
 		expect(getResolved()).toEqual({ kind: 'permission', decision: 'allow-once' });
 		expect(hasPending(conversationId)).toBe(false);
+	});
+
+	it('awaitingInputConversationIds flags blocking kinds only', () => {
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(false);
+
+		// An info-only kind (auto-resolved by the SDK) must NOT flag the
+		// conversation as awaiting user input.
+		const infoId = newRequestId();
+		makePending(
+			'sampling',
+			{ requestId: infoId, kind: 'sampling', summary: 'mcp sample' },
+			undefined
+		);
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(false);
+
+		// A blocking kind flags it.
+		const blockId = newRequestId();
+		makePending('permission', permView(blockId), undefined);
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(true);
+	});
+
+	it('awaitingInputConversationIds dedupes multiple prompts per conversation and clears on resolve', () => {
+		const a = newRequestId();
+		const b = newRequestId();
+		makePending('permission', permView(a), undefined);
+		makePending(
+			'user_input',
+			{ requestId: b, kind: 'user_input', question: 'pick', allowFreeform: true },
+			undefined
+		);
+		const awaiting = awaitingInputConversationIds();
+		expect(awaiting.has(conversationId)).toBe(true);
+		// Deduped: one conversation entry despite two outstanding prompts.
+		expect([...awaiting].filter((id) => id === conversationId)).toHaveLength(1);
+
+		// Still awaiting while one prompt remains.
+		resolve(a, userId, { kind: 'permission', decision: 'allow-once' });
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(true);
+
+		// Cleared once the last blocking prompt resolves.
+		resolve(b, userId, { kind: 'user_input', answer: 'x', wasFreeform: true });
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(false);
+	});
+
+	it('awaitingInputConversationIds clears after cancel and expire', () => {
+		const a = newRequestId();
+		makePending('permission', permView(a), undefined);
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(true);
+		cancel(a, 'turn_aborted');
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(false);
+
+		const b = newRequestId();
+		makePending('permission', permView(b), undefined);
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(true);
+		expireConversation(conversationId, 'capacity_evict');
+		expect(awaitingInputConversationIds().has(conversationId)).toBe(false);
 	});
 
 	it('expireConversation rejects prompts and audits them as auto-expired', async () => {

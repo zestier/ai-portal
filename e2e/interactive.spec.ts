@@ -103,8 +103,14 @@ test('permission flow still works via the new interactive endpoint', async ({ pa
 	await waitForPendingInteractive(request, id);
 	await expect(dialog).toBeVisible();
 	await expect(page.getByText(/Permission required/i)).toBeVisible();
+	// The sidebar conversation row shows the live "awaiting input" indicator
+	// (driven off this open conversation's turn stream) while the prompt is up.
+	const sidebarLink = page.locator(`nav a[href="/conversations/${id}"]`);
+	await expect(sidebarLink).toContainText('Awaiting input');
 	await page.getByRole('button', { name: /allow once/i }).click();
 	await expect(dialog).toHaveCount(0);
+	// …and clears once the prompt is resolved, without a full reload.
+	await expect(sidebarLink).not.toContainText('Awaiting input');
 	await waitForAssistantMessage(request, id, 'Stubbed reply to: run @trigger-permission for me');
 	await expect(
 		page.getByText(/Stubbed reply to: run @trigger-permission for me/).first()

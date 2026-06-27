@@ -18,9 +18,11 @@
 	} from '$lib/client/tickets';
 	import { createTicketDraftChat } from '$lib/client/ticket-chat-launch';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
+	import { awaitingInputOverrides, isAwaitingInput } from '$lib/client/awaiting-input';
 
 	let {
 		conversations,
+		awaitingConversationIds = [],
 		tickets,
 		ticketCount,
 		ticketWorkspace,
@@ -29,6 +31,7 @@
 		onnavigate
 	}: {
 		conversations: Conversation[];
+		awaitingConversationIds?: string[];
 		tickets: SidebarTicket[];
 		ticketCount: number;
 		ticketWorkspace: string | null;
@@ -58,6 +61,8 @@
 
 	const active = $derived(conversations.filter((c) => c.archivedAt == null));
 	const archived = $derived(conversations.filter((c) => c.archivedAt != null));
+	const serverAwaiting = $derived(new Set(awaitingConversationIds));
+	const awaiting = (id: string) => isAwaitingInput(id, serverAwaiting, $awaitingInputOverrides);
 	const selectedActiveCount = $derived(active.filter((c) => selected.has(c.id)).length);
 	const allActiveSelected = $derived(active.length > 0 && selectedActiveCount === active.length);
 
@@ -617,7 +622,17 @@
 							}
 						}}
 					>
-						<div class="title">{c.title}</div>
+						<div class="title-row">
+							<span class="title">{c.title}</span>
+							{#if awaiting(c.id)}
+								<span class="awaiting-indicator" title="Awaiting your input">
+									<Pill tone="warning">
+										<span class="awaiting-dot" aria-hidden="true"></span>
+										<span class="visually-hidden">Awaiting input</span>
+									</Pill>
+								</span>
+							{/if}
+						</div>
 						<div class="meta muted">{fmt(c.updatedAt)}</div>
 					</a>
 				{/if}
@@ -1051,6 +1066,38 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.title-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-width: 0;
+	}
+	.title-row .title {
+		min-width: 0;
+		flex: 1;
+	}
+	.awaiting-indicator {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+	}
+	.awaiting-dot {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 50%;
+		background: currentColor;
+	}
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 	.meta {
 		font-size: var(--fs-xs);
