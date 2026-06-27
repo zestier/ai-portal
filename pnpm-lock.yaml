@@ -12,7 +12,7 @@ importers:
         specifier: 1.0.1
         version: 1.0.1(typescript@5.9.3)
       better-sqlite3:
-        specifier: ^12.1.0
+        specifier: 12.10.0
         version: 12.10.0
       diff:
         specifier: ^7.0.0

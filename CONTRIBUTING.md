@@ -82,3 +82,13 @@ Formatting and lint are enforced by `pnpm lint` (ESLint + Prettier check) and
 fixed by `pnpm format` (Prettier write). Don't hand-format; let Prettier do it.
 Comment code only where it needs clarification — prefer a one-line note on a
 non-obvious trade-off over narrating what the code already says.
+
+## Dependencies
+
+Native / ABI-bound modules are pinned to an **exact** version (no `^`/`~`) in
+`package.json`. For these packages a minor or patch bump can swap the prebuilt
+binary or change runtime behavior in ways that don't surface until a different
+environment installs them, so we don't want a fresh `pnpm install` to silently
+float the version. `better-sqlite3` is the current example. Renovate/Dependabot
+can still propose upgrades through a reviewed PR — pinning only removes the
+implicit, unreviewed drift. Pure-JS dependencies may keep caret ranges.
