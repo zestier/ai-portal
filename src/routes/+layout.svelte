@@ -162,6 +162,13 @@
 		grid-template-columns: 44px 280px 1fr;
 		height: 100vh;
 		height: 100dvh;
+		/* viewport-fit=cover lets the shell paint edge-to-edge; carve the
+		   in-flow content (ChatHeader at the top, Composer at the bottom,
+		   the desktop sidebar) back out of the device safe areas. Resolves
+		   to 0 on desktop and anywhere without insets. The mobile drawer and
+		   hamburger are position:fixed overlays and inset themselves. */
+		padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+			env(safe-area-inset-left);
 		overflow: hidden;
 		transition: grid-template-columns 150ms ease-out;
 	}
@@ -174,9 +181,16 @@
 	.sidebar {
 		background: var(--surface);
 		border-right: 1px solid var(--border);
-		overflow-y: auto;
+		/* The drawer is a flex column: an optional .drawer-header (mobile)
+		   plus the Sidebar's .sidebar-inner, which flexes to fill the rest.
+		   The inner list scrolls; the panel itself never does, so the pinned
+		   footer (⚙ Settings) can't be pushed out of view. */
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		overflow-x: hidden;
 		min-width: 0;
+		min-height: 0;
 	}
 	.main {
 		overflow: hidden;
@@ -214,8 +228,8 @@
 		.mobile-menu {
 			display: inline-flex;
 			position: fixed;
-			top: var(--space-2);
-			left: var(--space-2);
+			top: calc(var(--space-2) + env(safe-area-inset-top));
+			left: calc(var(--space-2) + env(safe-area-inset-left));
 			z-index: var(--z-overlay);
 		}
 		.mobile-menu.hidden {
@@ -224,8 +238,15 @@
 		.sidebar {
 			position: fixed;
 			top: 0;
-			bottom: 0;
 			left: 0;
+			/* Fill the full visible height edge-to-edge (no dead gap below the
+			   drawer). The drawer's own children inset themselves from the
+			   safe areas: .drawer-header clears the top status bar / notch and
+			   .bottom (the ⚙ Settings link) clears the home indicator / OS nav
+			   bar. viewport-fit=cover makes those env() insets resolve > 0. */
+			height: 100vh;
+			height: 100dvh;
+			padding-left: env(safe-area-inset-left);
 			width: 80%;
 			max-width: 320px;
 			transform: translateX(-100%);
@@ -241,6 +262,7 @@
 			justify-content: space-between;
 			gap: var(--space-2);
 			padding: var(--space-2) var(--space-3);
+			padding-top: calc(var(--space-2) + env(safe-area-inset-top));
 			border-bottom: 1px solid var(--border);
 		}
 		.drawer-brand {

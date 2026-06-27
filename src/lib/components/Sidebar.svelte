@@ -809,9 +809,18 @@
 	.sidebar-inner {
 		display: flex;
 		flex-direction: column;
-		height: 100%;
+		/* Fill the space the parent .sidebar flex column leaves after the
+		   optional mobile .drawer-header — not height:100%, which would equal
+		   the whole panel and overflow once the header is present. */
+		flex: 1;
+		min-height: 0;
+		/* Only the conversation list (.convs) scrolls; the header, tickets
+		   and footer stay put. Clipping here prevents the whole panel from
+		   scrolling and dragging the pinned .bottom footer out of view. */
+		overflow: hidden;
 	}
 	.top {
+		flex-shrink: 0;
 		padding: var(--space-3) var(--space-4);
 		display: flex;
 		flex-direction: column;
@@ -824,6 +833,7 @@
 		gap: var(--space-2);
 	}
 	.tickets {
+		flex-shrink: 0;
 		padding: 0 var(--space-3) var(--space-2);
 		border-bottom: 1px solid var(--border);
 		margin-bottom: var(--space-2);
@@ -1003,6 +1013,7 @@
 	}
 	.convs {
 		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 		padding: 0 0.5rem 1rem;
 		display: flex;
@@ -1193,6 +1204,7 @@
 		color: var(--danger-text);
 	}
 	.bulk-bar {
+		flex-shrink: 0;
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-2);
@@ -1211,7 +1223,9 @@
 		flex-wrap: wrap;
 	}
 	.bottom {
+		flex-shrink: 0;
 		padding: 0.75rem 1rem;
+		padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
 		border-top: 1px solid var(--border);
 		display: flex;
 		flex-direction: column;
