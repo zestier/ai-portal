@@ -71,8 +71,8 @@ function refreshLiveFromBuild() {
 		log(`refresh failed: ${err.message}`);
 		try {
 			rmSync(tmpDir, { recursive: true, force: true });
-		} catch {
-			/* ignore */
+		} catch (cleanupErr) {
+			log(`failed to clean up tmp dir: ${cleanupErr.message}`);
 		}
 	}
 }
