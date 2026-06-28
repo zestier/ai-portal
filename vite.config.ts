@@ -14,8 +14,17 @@ export default defineConfig({
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'html'],
-			include: ['src/lib/**/*.{ts,js}'],
-			exclude: ['src/lib/**/*.test.{ts,js}', 'src/lib/**/*.spec.{ts,js}', 'src/**/*.d.ts']
+			include: ['src/lib/**/*.{ts,js}', 'src/routes/**/*.{ts,js}'],
+			exclude: [
+				'src/lib/**/*.test.{ts,js}',
+				'src/lib/**/*.spec.{ts,js}',
+				'src/routes/**/*.test.{ts,js}',
+				'src/routes/**/*.spec.{ts,js}',
+				'src/routes/**/+page*.svelte',
+				'src/routes/**/+layout*.svelte',
+				'src/routes/**/$types.{ts,js}',
+				'src/**/*.d.ts'
+			]
 		}
 	},
 	server: {
