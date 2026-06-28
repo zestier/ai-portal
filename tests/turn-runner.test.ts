@@ -74,6 +74,75 @@ describe('turn-runner', () => {
 		}
 	});
 
+	it('reserveTurn throws a typed TurnAlreadyInProgressError on a second reservation', async () => {
+		const { turnRunner } = await freshImports();
+		const id = 'conv-reserve';
+
+		turnRunner.reserveTurn(id);
+		try {
+			expect(() => turnRunner.reserveTurn(id)).toThrow(turnRunner.TurnAlreadyInProgressError);
+			const err = (() => {
+				try {
+					turnRunner.reserveTurn(id);
+				} catch (e) {
+					return e;
+				}
+			})() as InstanceType<typeof turnRunner.TurnAlreadyInProgressError>;
+			expect(err.conversationId).toBe(id);
+		} finally {
+			turnRunner.releaseTurnReservation(id);
+		}
+
+		// After release the slot is free again.
+		expect(() => turnRunner.reserveTurn(id)).not.toThrow();
+		turnRunner.releaseTurnReservation(id);
+	});
+
+	it('startTurn throws a typed TurnAlreadyInProgressError when a turn is running', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'c', workdir: wd, model: 'gpt-4' });
+
+		let resolveAcquire: (session: ReturnType<typeof makeFakeSession>) => void = () => {};
+		acquireMock.mockReturnValue(
+			new Promise((resolve) => {
+				resolveAcquire = resolve;
+			})
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		await expect(
+			turnRunner.startTurn({
+				bridge: {
+					conversationId: conv.id,
+					userId: user.id,
+					workingDirectory: wd,
+					model: 'gpt-4',
+					policy: 'prompt'
+				},
+				prompt: 'second',
+				conversationId: conv.id
+			})
+		).rejects.toBeInstanceOf(turnRunner.TurnAlreadyInProgressError);
+
+		resolveAcquire(makeFakeSession([{ type: 'done' }], conv.id, wd));
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') break;
+		}
+	});
+
 	it('replays initial conversation.update before the terminal done', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const user = users.ensureLocalUser();

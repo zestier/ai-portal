@@ -154,6 +154,60 @@ pool.registerKeepAlive?.('turns.active', (conversationId) => {
 	return turns.get(conversationId)?.status === 'running';
 });
 
+// Synchronous reservations that bridge the gap between a caller's "is a turn
+// running?" guard and the moment `startTurn` actually registers the turn.
+//
+// In memory mode `startTurnFromUserMessage` does `await pool.release(...)`
+// BEFORE calling `startTurn`, so the turn is not registered until after an
+// await. Two concurrent POSTs could both pass a `getTurn` guard, both persist a
+// user message, then race into `startTurn` — the loser threw a bare Error
+// (surfaced as a 500) and left an orphaned user message with no turn. A caller
+// takes a reservation synchronously (no intervening await) before doing any
+// async setup; the reservation occupies the slot so a concurrent caller is
+// rejected immediately and deterministically. Stashed on globalThis for the
+// same HMR-survival reason as the turn registry.
+const RESERVATIONS_KEYS = appGlobalSymbols('turn-reservations');
+const reservations: Set<string> = getOrCreateGlobalSingleton(
+	RESERVATIONS_KEYS,
+	() => new Set<string>()
+);
+
+// Thrown when a turn is already running or reserved for a conversation. Typed
+// so HTTP handlers can map it to a 409 (Conflict) instead of leaking a bare 500.
+export class TurnAlreadyInProgressError extends Error {
+	readonly conversationId: string;
+	constructor(conversationId: string) {
+		super('turn already in progress for this conversation');
+		this.name = 'TurnAlreadyInProgressError';
+		this.conversationId = conversationId;
+	}
+}
+
+// True when a turn is actively running OR a synchronous reservation is held for
+// the conversation. A finished-but-still-cached turn (grace window) does not
+// count as active.
+function isTurnActiveOrReserved(conversationId: string): boolean {
+	return turns.get(conversationId)?.status === 'running' || reservations.has(conversationId);
+}
+
+// Synchronously claim the turn slot for a conversation. MUST be called with no
+// intervening await between the caller's decision to start a turn and any
+// async setup that precedes `startTurn`. Throws `TurnAlreadyInProgressError` if
+// a turn is already running or reserved. Pair every successful call with
+// `releaseTurnReservation` in a `finally`.
+export function reserveTurn(conversationId: string): void {
+	if (isTurnActiveOrReserved(conversationId)) {
+		throw new TurnAlreadyInProgressError(conversationId);
+	}
+	reservations.add(conversationId);
+}
+
+// Release a reservation taken by `reserveTurn`. Safe to call even if no
+// reservation is held (idempotent), so it can live in a `finally`.
+export function releaseTurnReservation(conversationId: string): void {
+	reservations.delete(conversationId);
+}
+
 // How long a finished turn lingers in the registry so that a slightly-late
 // subscriber (e.g., a page that reloaded just as the turn completed) can
 // still replay the full event log instead of missing it.
@@ -242,7 +296,7 @@ async function abortSessionWithDeadline(
 export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	const existing = turns.get(opts.conversationId);
 	if (existing && existing.status === 'running') {
-		throw new Error('turn already in progress for this conversation');
+		throw new TurnAlreadyInProgressError(opts.conversationId);
 	}
 	if (existing) {
 		// Replace a finished-but-still-cached turn with the new one.
@@ -1286,7 +1340,7 @@ export interface StartExtractionRetryOptions {
 export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions): Promise<Turn> {
 	const existing = turns.get(opts.conversationId);
 	if (existing && existing.status === 'running') {
-		throw new Error('turn already in progress for this conversation');
+		throw new TurnAlreadyInProgressError(opts.conversationId);
 	}
 	if (existing) turns.delete(opts.conversationId);
 
