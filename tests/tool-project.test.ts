@@ -42,9 +42,9 @@ describe('project', () => {
 		expect(project(row, { fields: ['default'], keep }).value).toEqual({ default: 'D' });
 	});
 
-	it('accepts a bare string as a one-field selector', () => {
+	it('rejects a bare non-sentinel string instead of treating it as a one-field selector', () => {
 		const row = { id: '1', plan: 'p', secret: 'x' };
-		expect(project(row, { fields: 'plan', keep }).value).toEqual({ plan: 'p' });
+		expect(() => project(row, { fields: 'plan', keep })).toThrow(/use an array like \["plan"\]/);
 	});
 
 	it('treats a bare "default" (and an empty array) like omitting fields', () => {
@@ -147,8 +147,18 @@ describe('normalizeFieldSelector', () => {
 		expect(normalizeFieldSelector('*')).toBe('all');
 	});
 
-	it('coerces a bare field name to a one-element list', () => {
-		expect(normalizeFieldSelector('plan')).toEqual(['plan']);
+	it('rejects a bare field name, guiding toward an array', () => {
+		expect(() => normalizeFieldSelector('plan')).toThrow(/must be an array of field names/);
+		expect(() => normalizeFieldSelector('plan')).toThrow(
+			/use an array like \["plan"\], not "plan"/
+		);
+	});
+
+	it('rejects a stringified array, flagging the JSON-string mistake', () => {
+		const stringified = '["id","title","priority","body"]';
+		expect(() => normalizeFieldSelector(stringified)).toThrow(/JSON-encoded string/);
+		// The whole blob must NOT leak into an unknown-field list.
+		expect(() => normalizeFieldSelector(stringified)).not.toThrow(/Unknown field/);
 	});
 
 	it('takes array entries literally — no sentinel collapsing inside a list', () => {

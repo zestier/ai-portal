@@ -31,7 +31,11 @@ export type FieldSelector = readonly string[] | 'all' | 'default';
 //   - `"all"` (or the glob-ish `"*"`) → the full record;
 //   - `"default"` → the compact view, so a model that feels it must pass
 //     *something* can still ask for the normal view without enumerating fields;
-//   - any other bare string → a one-element field list.
+//   - any OTHER bare string → rejected with a thrown Error. A single-field
+//     selection must be written as an array (`["plan"]`, not `"plan"`); a bare
+//     non-sentinel string is almost always a stringified array or a single
+//     field name in the wrong shape, so failing loudly here is clearer than
+//     silently wrapping it into a one-element list.
 // Array entries are NEVER treated as sentinels — they are literal field names,
 // so `["all"]` selects a field actually named `all` (and errors in `project` if
 // no such field exists). An empty array means "no selection" → the compact view.
@@ -42,14 +46,26 @@ export function normalizeFieldSelector(
 	if (typeof fields === 'string') {
 		if (fields === 'all' || fields === '*') return 'all';
 		if (fields === 'default') return undefined;
-		return [fields];
+		const looksJson = fields.startsWith('[') || fields.includes('","');
+		throw new Error(
+			`Invalid "fields" value: ${JSON.stringify(fields)}. ` +
+				'`fields` must be an array of field names (e.g. ["id","title"]) or one of the ' +
+				'bare sentinels "all" / "default". ' +
+				(looksJson
+					? 'This looks like a JSON-encoded string — pass a real array, not a string. '
+					: '') +
+				'For a single field, use an array like ["plan"], not "plan".'
+		);
 	}
 	return fields.length === 0 ? undefined : fields;
 }
 
-// Shared Zod schema for the optional `fields` argument across tools. Accepts a
-// string array or a bare string (normalized later); validation stays permissive
-// so guessed shapes degrade rather than fail.
+// Shared Zod schema for the optional `fields` argument across tools. The only
+// accepted shapes are an array of field names or the bare sentinels
+// "all"/"default" (plus the tolerated "*" alias). The string arm stays wide at
+// the Zod layer so a bare non-sentinel string reaches `normalizeFieldSelector`,
+// which rejects it with a descriptive shape-error message rather than silently
+// wrapping it into a one-element list.
 export const FieldsArg = z
 	.union([z.array(z.string().trim().min(1).max(100)).max(50), z.string().trim().min(1).max(100)])
 	.optional();
