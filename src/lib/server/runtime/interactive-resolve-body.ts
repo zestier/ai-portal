@@ -84,17 +84,11 @@ const InfoAckBody = z.object({
 	action: z.literal('ack')
 });
 
-const FolderTrustBody = z.object({
-	kind: z.literal('folder_trust'),
-	trust: z.boolean()
-});
-
 export const Body = z.discriminatedUnion('kind', [
 	PermissionBody,
 	AutoModeSwitchBody,
 	UserInputBody,
 	ElicitationBody,
 	ExitPlanModeBody,
-	InfoAckBody,
-	FolderTrustBody
+	InfoAckBody
 ]);

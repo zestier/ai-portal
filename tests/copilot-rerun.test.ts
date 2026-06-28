@@ -30,13 +30,8 @@ function makeSdkSession(sessionId: string) {
 			mode: { set: vi.fn().mockResolvedValue(undefined) },
 			permissions: {
 				setApproveAll: vi.fn().mockResolvedValue({ success: true }),
-				resetSessionApprovals: vi.fn().mockResolvedValue(undefined),
-				folderTrust: {
-					isTrusted: vi.fn(async () => ({ trusted: folderTrusted })),
-					addTrusted: vi.fn(async () => ({ success: true }))
-				}
-			},
-			mcp: { reload: vi.fn().mockResolvedValue(undefined) }
+				resetSessionApprovals: vi.fn().mockResolvedValue(undefined)
+			}
 		}
 	};
 }
@@ -45,10 +40,6 @@ const sessionsById = new Map<string, ReturnType<typeof makeSdkSession>>();
 // When set, the next createSession() rejects with this — used to simulate the
 // Copilot CLI refusing to open the freshly-rotated rerun session.
 let createSessionError: Error | null = null;
-// Drives the fake session's folderTrust.isTrusted result. Default true so the
-// folder-trust gate is a no-op for the existing tests; the trust-prompt test
-// flips it to false to exercise the prompt.
-let folderTrusted = true;
 
 const clientStub = {
 	start: vi.fn().mockResolvedValue(undefined),
@@ -135,7 +126,6 @@ describe('copilot rerun (inline edit / regenerate) provider path', () => {
 		mkdirSync(join(dir, 'session-workspace'), { recursive: true });
 		sessionsById.clear();
 		createSessionError = null;
-		folderTrusted = true;
 		for (const fn of Object.values(clientStub)) (fn as ReturnType<typeof vi.fn>).mockClear?.();
 	});
 
@@ -233,67 +223,5 @@ describe('copilot rerun (inline edit / regenerate) provider path', () => {
 		expect(clientStub.createSession).toHaveBeenCalledWith(
 			expect.objectContaining({ enableConfigDiscovery: true })
 		);
-	});
-
-	it('raises a folder-trust prompt for an untrusted workdir and trusts it on approve', async () => {
-		const repos = await freshImports();
-		folderTrusted = false;
-		const { users, convs, messages, turnStart } = repos;
-		const u = users.ensureLocalUser();
-		const conv = convs.create(u.id, {
-			title: 'copilot',
-			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
-		});
-		const u1 = messages.append(conv.id, { role: 'user', content: 'hi' });
-		const interactive = await import('../src/lib/server/runtime/interactive-requests');
-
-		const turn = await turnStart.startTurnFromUserMessage(conv, u1);
-		const events: { type: string; request?: { requestId: string; kind: string } }[] = [];
-		let sawTrustPrompt = false;
-		for await (const { event } of turn.subscribe()) {
-			events.push(event);
-			if (event.type === 'interactive.request' && event.request?.kind === 'folder_trust') {
-				sawTrustPrompt = true;
-				// Approve: unblocks the producer so the SDK turn proceeds.
-				interactive.resolve(event.request.requestId, u.id, { kind: 'folder_trust', trust: true });
-			}
-			if (event.type === 'done') break;
-		}
-
-		expect(sawTrustPrompt).toBe(true);
-		const sdk = sessionsById.get(conv.providerSessionId)!;
-		expect(sdk.rpc.permissions.folderTrust.addTrusted).toHaveBeenCalledWith({ path: '/tmp' });
-		expect(sdk.rpc.mcp.reload).toHaveBeenCalled();
-		expect(events.some((e) => e.type === 'done')).toBe(true);
-	});
-
-	it('does not prompt for trust when the workdir is already trusted', async () => {
-		const repos = await freshImports();
-		folderTrusted = true;
-		const { users, convs, messages, turnStart } = repos;
-		const u = users.ensureLocalUser();
-		const conv = convs.create(u.id, {
-			title: 'copilot',
-			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
-		});
-		const u1 = messages.append(conv.id, { role: 'user', content: 'hi' });
-
-		const events = await drain(await turnStart.startTurnFromUserMessage(conv, u1));
-
-		expect(
-			events.some(
-				(e) =>
-					e.type === 'interactive.request' &&
-					(e as { request?: { kind: string } }).request?.kind === 'folder_trust'
-			)
-		).toBe(false);
-		const sdk = sessionsById.get(conv.providerSessionId)!;
-		expect(sdk.rpc.permissions.folderTrust.isTrusted).toHaveBeenCalledWith({ path: '/tmp' });
-		expect(sdk.rpc.permissions.folderTrust.addTrusted).not.toHaveBeenCalled();
-		expect(events.some((e) => e.type === 'done')).toBe(true);
 	});
 });

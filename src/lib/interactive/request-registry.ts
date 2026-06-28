@@ -8,8 +8,7 @@ const interactiveKindDescriptors = {
 	exit_plan_mode: () => ({ kind: 'exit_plan_mode', approved: false }),
 	sampling: () => ({ kind: 'sampling', action: 'ack' }),
 	mcp_oauth: () => ({ kind: 'mcp_oauth', action: 'ack' }),
-	external_tool: () => ({ kind: 'external_tool', action: 'ack' }),
-	folder_trust: () => ({ kind: 'folder_trust', trust: false })
+	external_tool: () => ({ kind: 'external_tool', action: 'ack' })
 } satisfies {
 	[K in InteractiveKind]: () => Extract<InteractiveResponse, { kind: K }>;
 };
@@ -33,8 +32,7 @@ export const BLOCKING_INTERACTIVE_KINDS = new Set<InteractiveKind>([
 	'user_input',
 	'auto_mode_switch',
 	'exit_plan_mode',
-	'elicitation',
-	'folder_trust'
+	'elicitation'
 ]);
 
 /** True if `kind` blocks on the user (see {@link BLOCKING_INTERACTIVE_KINDS}). */

@@ -4,7 +4,6 @@
 	import InteractiveAutoModeSwitchRequest from './InteractiveAutoModeSwitchRequest.svelte';
 	import InteractiveElicitationRequest from './InteractiveElicitationRequest.svelte';
 	import InteractiveExitPlanModeRequest from './InteractiveExitPlanModeRequest.svelte';
-	import InteractiveFolderTrustRequest from './InteractiveFolderTrustRequest.svelte';
 	import InteractiveGrantRequest from './InteractiveGrantRequest.svelte';
 	import InteractiveInformationalRequest from './InteractiveInformationalRequest.svelte';
 	import InteractivePermissionRequest from './InteractivePermissionRequest.svelte';
@@ -105,8 +104,6 @@
 			<InteractiveElicitationRequest {request} {busy} onRespond={pick} />
 		{:else if request.kind === 'exit_plan_mode'}
 			<InteractiveExitPlanModeRequest {request} {busy} onRespond={pick} />
-		{:else if request.kind === 'folder_trust'}
-			<InteractiveFolderTrustRequest {request} {busy} onRespond={pick} />
 		{:else if isInformationalInteractiveRequest(request)}
 			<InteractiveInformationalRequest {request} {busy} onRespond={pick} />
 		{/if}

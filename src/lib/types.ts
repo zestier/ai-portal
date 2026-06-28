@@ -539,10 +539,6 @@ export type InteractiveKind =
 	| 'user_input'
 	| 'elicitation'
 	| 'exit_plan_mode'
-	// Portal-originated: the headless runtime never raises the interactive
-	// "trust this folder?" prompt itself, so the portal asks on its behalf
-	// before letting the agent run in an untrusted workspace.
-	| 'folder_trust'
 	// "info" kinds: the SDK fires these but does not expose a public
 	// responder. We surface them so the user knows what's happening; the
 	// turn proceeds whenever the SDK resolves the request on its own.
@@ -678,13 +674,6 @@ export interface InteractiveExternalToolView {
 	summary: string;
 }
 
-export interface InteractiveFolderTrustView {
-	kind: 'folder_trust';
-	/** Absolute path of the workspace folder the agent is about to run in. */
-	path: string;
-	summary: string;
-}
-
 export type InteractiveRequestViewBody =
 	| InteractivePermissionView
 	| InteractiveAutoModeSwitchView
@@ -693,8 +682,7 @@ export type InteractiveRequestViewBody =
 	| InteractiveExitPlanModeView
 	| InteractiveSamplingView
 	| InteractiveMcpOauthView
-	| InteractiveExternalToolView
-	| InteractiveFolderTrustView;
+	| InteractiveExternalToolView;
 
 export type InteractiveRequestView = { requestId: string } & InteractiveRequestViewBody;
 
@@ -741,8 +729,7 @@ export type InteractiveResponse =
 	// "info" kinds: client can only acknowledge / dismiss. Always 'ack'.
 	| { kind: 'sampling'; action: 'ack' }
 	| { kind: 'mcp_oauth'; action: 'ack' }
-	| { kind: 'external_tool'; action: 'ack' }
-	| { kind: 'folder_trust'; trust: boolean };
+	| { kind: 'external_tool'; action: 'ack' };
 
 /**
  * The agent-proposed grant carried by a `request_permission_grant` dialog.
