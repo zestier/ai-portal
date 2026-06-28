@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	matchGrants,
 	matchGrantsDetailed,
-	globToRegex,
+	globMatches,
 	deriveScopeKey,
 	type GrantRow,
 	type MatchQuery
@@ -26,32 +26,46 @@ function grant(partial: Partial<GrantRow> = {}): GrantRow {
 	};
 }
 
-describe('globToRegex', () => {
+describe('globMatches', () => {
 	it('matches anything for "*"', () => {
-		const r = globToRegex('*');
-		expect(r.test('')).toBe(true);
-		expect(r.test('anything goes')).toBe(true);
-		expect(r.test('foo/bar')).toBe(true);
+		expect(globMatches('*', '')).toBe(true);
+		expect(globMatches('*', 'anything goes')).toBe(true);
+		expect(globMatches('*', 'foo/bar')).toBe(true);
 	});
 
 	it('treats non-* characters as literal, including regex metachars', () => {
-		const r = globToRegex('git status.');
-		expect(r.test('git status.')).toBe(true);
-		expect(r.test('git statusX')).toBe(false);
+		expect(globMatches('git status.', 'git status.')).toBe(true);
+		expect(globMatches('git status.', 'git statusX')).toBe(false);
 	});
 
 	it('star matches any run including slashes and empty', () => {
-		const r = globToRegex('./src/*');
-		expect(r.test('./src/')).toBe(true);
-		expect(r.test('./src/a/b/c.ts')).toBe(true);
-		expect(r.test('./other/file.ts')).toBe(false);
+		expect(globMatches('./src/*', './src/')).toBe(true);
+		expect(globMatches('./src/*', './src/a/b/c.ts')).toBe(true);
+		expect(globMatches('./src/*', './other/file.ts')).toBe(false);
 	});
 
 	it('anchors at both ends', () => {
-		const r = globToRegex('git status*');
-		expect(r.test('git status')).toBe(true);
-		expect(r.test('git status -s')).toBe(true);
-		expect(r.test('xgit status')).toBe(false);
+		expect(globMatches('git status*', 'git status')).toBe(true);
+		expect(globMatches('git status*', 'git status -s')).toBe(true);
+		expect(globMatches('git status*', 'xgit status')).toBe(false);
+	});
+
+	it('handles interior and multiple stars without anchoring drift', () => {
+		expect(globMatches('git *-C *', 'git -C /tmp status')).toBe(true);
+		expect(globMatches('git *-C *', 'git status')).toBe(false);
+		expect(globMatches('a*b*c', 'axxbyyc')).toBe(true);
+		expect(globMatches('a*b*c', 'axxbyy')).toBe(false);
+	});
+
+	it('resolves a pathological ReDoS-style pattern in linear time', () => {
+		// `*a*a*…*x` against a long all-`a` (non-matching) key is the classic
+		// catastrophic-backtracking trigger for a `.*`-based regex. The linear
+		// matcher must return promptly instead of stalling the event loop.
+		const pattern = '*a'.repeat(50) + '*x';
+		const key = 'a'.repeat(5000);
+		const start = Date.now();
+		expect(globMatches(pattern, key)).toBe(false);
+		expect(Date.now() - start).toBeLessThan(1000);
 	});
 });
 

@@ -306,45 +306,58 @@ function kindMatches(grant: string | null, want: string): boolean {
 function scopeMatches(pattern: string | null, scopeKey: string | null): boolean {
 	if (pattern === null || pattern === '' || pattern === '*') return true;
 	if (scopeKey === null) return false;
-	return globToRegex(pattern).test(scopeKey);
+	return globMatches(pattern, scopeKey);
 }
 
-const GLOB_CACHE = new Map<string, RegExp>();
-const GLOB_CACHE_MAX = 512;
-
 /**
- * Tiny glob → RegExp. `*` matches any run of characters (including
- * empty, including `/`); everything else is a literal. We deliberately
- * keep it minimal — the scope vocabulary is shell commands, file paths,
- * and URLs, and users want simple "starts with" patterns like
- * `git status*`, `./src/*`, `https://api.github.com/*`. A richer
- * minimatch-style grammar can come later if there's demand.
+ * Tiny glob matcher. `*` matches any run of characters (including
+ * empty, including `/` and spaces); every other character is a literal.
+ * We deliberately keep it minimal — the scope vocabulary is shell
+ * commands, file paths, and URLs, and users want simple "starts with"
+ * patterns like `git status*`, `./src/*`, `https://api.github.com/*`.
  *
- * The cache is bounded to `GLOB_CACHE_MAX` entries with LRU eviction so
- * that arbitrary `scopePattern` strings (e.g. from the grants table)
- * can't grow it without bound. `Map` preserves insertion order, so the
- * first key is the least-recently-used entry.
+ * `*` intentionally crosses `/` (unlike the fs predicate's segment-scoped
+ * `[^/]*`): for shell command and URL scope-keys, `/` is an ordinary
+ * character that patterns must be able to span — e.g. the seeded hard-deny
+ * grants `git -C *` / `git * --git-dir=*` must match `git -C /tmp status`.
+ *
+ * Implemented as a linear-time two-pointer scan with a single backtrack
+ * pointer per `*` (the classic wildcard-match algorithm), NOT by compiling
+ * to a backtracking `RegExp`. Patterns are user-controllable (the grants
+ * table), so a regex translation of `*` → `.*` would be a ReDoS sink: a
+ * pattern like `*a*a*a…*x` against a long non-matching key triggers
+ * catastrophic backtracking in V8's Irregexp and stalls the event loop on
+ * every permission check. This scan is worst-case O(pattern × key) with no
+ * exponential blow-up, so no compiled-regex cache is needed.
  */
-export function globToRegex(pattern: string): RegExp {
-	const cached = GLOB_CACHE.get(pattern);
-	if (cached) {
-		GLOB_CACHE.delete(pattern);
-		GLOB_CACHE.set(pattern, cached);
-		return cached;
+export function globMatches(pattern: string, value: string): boolean {
+	let p = 0;
+	let s = 0;
+	let starP = -1;
+	let starS = 0;
+	while (s < value.length) {
+		if (p < pattern.length && pattern[p] === '*') {
+			// Record the wildcard position and the point in `value` to resume
+			// from, then tentatively let `*` match zero characters.
+			starP = p;
+			starS = s;
+			p++;
+		} else if (p < pattern.length && pattern[p] === value[s]) {
+			p++;
+			s++;
+		} else if (starP !== -1) {
+			// Mismatch after a `*`: backtrack and let that `*` consume one
+			// more character of `value`.
+			p = starP + 1;
+			starS++;
+			s = starS;
+		} else {
+			return false;
+		}
 	}
-	let re = '^';
-	for (const ch of pattern) {
-		if (ch === '*') re += '.*';
-		else re += ch.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-	}
-	re += '$';
-	const r = new RegExp(re);
-	if (GLOB_CACHE.size >= GLOB_CACHE_MAX) {
-		const oldest = GLOB_CACHE.keys().next().value;
-		if (oldest !== undefined) GLOB_CACHE.delete(oldest);
-	}
-	GLOB_CACHE.set(pattern, r);
-	return r;
+	// Trailing `*`s in the pattern match the empty remainder.
+	while (p < pattern.length && pattern[p] === '*') p++;
+	return p === pattern.length;
 }
 
 /**
