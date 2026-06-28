@@ -268,6 +268,51 @@ describe('runRedeploy', () => {
 		exitSpy.mockRestore();
 	});
 
+	it('schedules the rollover exit before yielding done, so a client disconnect cannot block restart', async () => {
+		// Regression: the exit must be scheduled during the SAME .next() that
+		// produces `done` — not deferred to a subsequent pull. If the browser
+		// disconnects after the final log but before consuming `done`, the SSE
+		// layer calls .return() instead of .next(), so any post-yield statement
+		// would never run and the server would keep serving stale code.
+		const exitSpy = vi.spyOn(process, 'exit').mockImplementation((): never => undefined as never);
+		// Delegate to the real timer so any unrelated internal setTimeout still
+		// behaves; only record whether the ~500ms rollover exit was scheduled.
+		const realSetTimeout = global.setTimeout;
+		let scheduledRollover = false;
+		const setTimeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation(((
+			fn: (...a: unknown[]) => void,
+			ms?: number,
+			...rest: unknown[]
+		) => {
+			if (ms === 500) {
+				// This is the rollover exit. Record it but don't actually fire it,
+				// so the stubbed process.exit can't run after the spies are restored.
+				scheduledRollover = true;
+				return { unref: () => {} };
+			}
+			// Delegate unrelated timers to the real implementation.
+			return realSetTimeout(fn, ms as number, ...rest);
+		}) as unknown as typeof setTimeout);
+
+		const gen = runRedeploy([nodeStep('only', 'process.exit(0)')]);
+		let res = await gen.next();
+		while (!(res.done === false && res.value.type === 'done')) {
+			res = await gen.next();
+		}
+
+		expect(res.value).toEqual({ type: 'done', ok: true, restarting: true });
+		// The exit was scheduled as part of producing `done`, before the suspend.
+		expect(scheduledRollover).toBe(true);
+
+		// Simulate the disconnect: consumer calls .return() rather than .next().
+		// The restart is already scheduled, so this cannot undo it.
+		await gen.return(undefined as never);
+		expect(scheduledRollover).toBe(true);
+
+		setTimeoutSpy.mockRestore();
+		exitSpy.mockRestore();
+	});
+
 	it('stops at the first failing step and reports failedStep/code', async () => {
 		const events = await drain([
 			nodeStep('first', 'process.exit(0)'),

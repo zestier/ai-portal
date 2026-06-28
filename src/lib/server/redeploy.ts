@@ -159,9 +159,15 @@ export async function* runRedeploy(
 		if (failedStep) {
 			yield { type: 'done', ok: false, failedStep, code: failedCode };
 		} else {
-			yield { type: 'done', ok: true, restarting: true };
+			// Schedule the rollover exit BEFORE yielding `done`. The yield suspends
+			// this generator until the consumer pulls again; if the client
+			// disconnects in between, the SSE layer calls `.return()` and any code
+			// after the yield never runs. Scheduling first makes the restart
+			// unconditional — a successful build always rolls over, even if nobody
+			// is listening for the final event.
 			log.info('redeploy.ok.exiting');
 			setTimeout(() => process.exit(0), 500).unref();
+			yield { type: 'done', ok: true, restarting: true };
 		}
 	} catch (err) {
 		const message = scrubRedeployLog(String(err));

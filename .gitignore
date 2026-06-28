@@ -5,6 +5,7 @@ build/
 build.live/
 build.live.tmp/
 build.prev/
+build.broken/
 dist/
 # We use pnpm; reject stray npm/yarn lockfiles.
 package-lock.json

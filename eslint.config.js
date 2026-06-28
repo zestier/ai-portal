@@ -26,6 +26,7 @@ export default ts.config(
 			'build/',
 			'build.live/',
 			'build.prev/',
+			'build.broken/',
 			'coverage/',
 			'.svelte-kit/',
 			'.zap/',
