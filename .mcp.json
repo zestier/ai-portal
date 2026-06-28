@@ -1,8 +1,10 @@
 {
 	"mcpServers": {
 		"playwright": {
+			"type": "local",
 			"command": "pnpm",
-			"args": ["exec", "playwright-mcp", "--headless", "--isolated", "--browser", "chromium"]
+			"args": ["exec", "playwright-mcp", "--headless", "--isolated", "--browser", "chromium"],
+			"tools": ["*"]
 		}
 	}
 }
