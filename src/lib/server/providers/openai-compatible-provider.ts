@@ -370,7 +370,14 @@ async function* streamChatCompletionTurn(
 	let usage: ChatStreamChunk['usage'];
 	for await (const data of streamSseData(res.body)) {
 		if (data === '[DONE]') break;
-		const chunk = JSON.parse(data) as ChatStreamChunk;
+		let chunk: ChatStreamChunk;
+		try {
+			chunk = JSON.parse(data) as ChatStreamChunk;
+		} catch {
+			throw new Error(
+				`Received a non-JSON chunk from ${cfg.displayName} backend; the stream may be corrupted or a proxy returned an error page.`
+			);
+		}
 		if (chunk.error?.message) throw new Error(chunk.error.message);
 		if (chunk.usage) usage = chunk.usage;
 		const text = chunkText(chunk);

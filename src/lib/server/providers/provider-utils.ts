@@ -4,7 +4,16 @@ export interface SseEvent {
 }
 
 export async function parseJson(res: Response): Promise<unknown> {
-	return await res.json().catch(() => ({}));
+	const text = await res.text().catch(() => '');
+	if (!text) return {};
+	try {
+		return JSON.parse(text);
+	} catch {
+		// Upstream proxies (502/429/503) often return HTML or plain text. Preserve
+		// the real body in an error-shaped object so callers/logs keep the
+		// actionable upstream message instead of `err: undefined`.
+		return { error: { message: text.slice(0, 500) } };
+	}
 }
 
 export function jsonRequestHeaders(apiKey?: string | null): HeadersInit {

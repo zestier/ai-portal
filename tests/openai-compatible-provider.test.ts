@@ -431,6 +431,51 @@ describe('openAICompatibleProvider', () => {
 		expect(events.map((event) => event.type).slice(-2)).toEqual(['message.end', 'done']);
 	});
 
+	it('surfaces a friendly error when a mid-stream chunk is not JSON', async () => {
+		const fetchMock = vi.fn(async () =>
+			sseResponse([
+				'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+				'data: <html><body>502 Bad Gateway</body></html>\n\n'
+			])
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const session = await openAICompatibleProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('hello', new AbortController().signal));
+
+		const error = events.find((event) => event.type === 'error');
+		expect(error).toMatchObject({
+			type: 'error',
+			code: 'send_failed',
+			message: expect.stringContaining('non-JSON chunk')
+		});
+		expect(error?.message ?? '').not.toContain('<html>');
+	});
+
+	it('preserves a non-JSON error body when the chat request fails', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				async () =>
+					new Response('<html><body>503 Service Unavailable</body></html>', {
+						status: 503,
+						headers: { 'content-type': 'text/html' }
+					})
+			)
+		);
+		const session = await openAICompatibleProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('hello', new AbortController().signal));
+
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: 'error',
+				code: 'send_failed',
+				message: expect.stringContaining('503 Service Unavailable')
+			})
+		);
+	});
+
 	it('aborts an in-flight streaming request when the session is aborted', async () => {
 		const fetchMock = vi.fn(
 			async (_url: string | URL | Request, init?: RequestInit) =>
