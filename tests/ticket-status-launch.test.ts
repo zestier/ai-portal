@@ -10,6 +10,7 @@ const ticket: WorkspaceTicket = {
 	title: 'Fix sidebar actions',
 	body: 'Add a launch button.',
 	plan: '',
+	priority: 'P2',
 	status: 'open',
 	sourceConversationId: null,
 	sourceMessageId: null,

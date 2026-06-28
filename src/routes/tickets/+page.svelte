@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
+	import type { WorkspaceTicket, WorkspaceTicketPriority, WorkspaceTicketStatus } from '$lib/types';
+	import { TICKET_PRIORITIES } from '$lib/types';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import { priorityLabel, priorityTone } from '$lib/tickets/priority';
 	import { fetchTicketsPage, type TicketListStatus } from '$lib/client/tickets-list';
 	import { untrack } from 'svelte';
 
@@ -41,6 +43,23 @@
 	let hasMore = $state(untrack(() => data.initialHasMore));
 	let loading = $state(false);
 	let errorMsg = $state<string | null>(null);
+
+	// Priority filter + sort are opt-in client-side refinements over the rows
+	// already loaded; the default sort (recency, server-driven) is unchanged.
+	let priorityFilter = $state<WorkspaceTicketPriority | 'all'>('all');
+	let sortByPriority = $state(false);
+
+	const priorityRank: Record<WorkspaceTicketPriority, number> = Object.fromEntries(
+		TICKET_PRIORITIES.map((p, i) => [p, i])
+	) as Record<WorkspaceTicketPriority, number>;
+
+	const visibleItems = $derived.by(() => {
+		const filtered =
+			priorityFilter === 'all' ? items : items.filter((t) => t.priority === priorityFilter);
+		if (!sortByPriority) return filtered;
+		// Stable sort keeps the incoming (recency) order within a priority.
+		return [...filtered].sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority]);
+	});
 
 	function fmtDate(ms: number): string {
 		return new Date(ms).toLocaleDateString(undefined, {
@@ -129,17 +148,40 @@
 			<p class="empty error">{errorMsg}</p>
 		{/if}
 
+		<div class="controls">
+			<label class="control">
+				<span class="control-label">Priority</span>
+				<select class="select" bind:value={priorityFilter} aria-label="Filter by priority">
+					<option value="all">All priorities</option>
+					{#each TICKET_PRIORITIES as p (p)}
+						<option value={p}>{priorityLabel[p]}</option>
+					{/each}
+				</select>
+			</label>
+			<button
+				class="tab sort-toggle"
+				class:active={sortByPriority}
+				aria-pressed={sortByPriority}
+				onclick={() => (sortByPriority = !sortByPriority)}
+			>
+				Sort by priority
+			</button>
+		</div>
+
 		{#if items.length === 0 && !loading}
 			<p class="empty muted">{emptyLabel[status]}</p>
+		{:else if visibleItems.length === 0 && !loading}
+			<p class="empty muted">No tickets match this priority.</p>
 		{:else}
 			<ul class="ticket-list">
-				{#each items as ticket (ticket.id)}
+				{#each visibleItems as ticket (ticket.id)}
 					<li class="ticket-row">
 						<a class="ticket-link" href={`/tickets/${ticket.id}`}>
 							<span class="ticket-title">{ticket.title}</span>
 						</a>
 						<span class="ticket-meta">
 							<span class="updated muted">{fmtDate(ticket.updatedAt)}</span>
+							<Pill tone={priorityTone[ticket.priority]}>{ticket.priority}</Pill>
 							<Pill tone={statusTone[ticket.status]}>{statusLabel[ticket.status]}</Pill>
 						</span>
 					</li>
@@ -222,6 +264,35 @@
 		color: var(--text);
 	}
 	.tab.active {
+		background: var(--surface-2);
+		border-color: var(--accent);
+		color: var(--text);
+	}
+	.controls {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		flex-wrap: wrap;
+	}
+	.control {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+	}
+	.control-label {
+		font-size: var(--fs-sm);
+		color: var(--text-muted);
+	}
+	.select {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--text);
+		padding: 0.3rem 0.5rem;
+		font-size: var(--fs-sm);
+		cursor: pointer;
+	}
+	.sort-toggle[aria-pressed='true'] {
 		background: var(--surface-2);
 		border-color: var(--accent);
 		color: var(--text);

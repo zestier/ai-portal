@@ -32,6 +32,7 @@ const TICKET_KEEP = [
 	'id',
 	'title',
 	'body',
+	'priority',
 	'status',
 	'blockedBy',
 	'blocks',
@@ -106,6 +107,10 @@ function isImageMime(mimeType: string): boolean {
 
 const Status = z.enum(['open', 'done', 'archived']);
 
+// Ticket priority P0 (highest urgency) … P3 (lowest). Mirrors the DB CHECK and
+// the REST API validation so a bad value fails fast and consistently.
+const Priority = z.enum(['P0', 'P1', 'P2', 'P3']);
+
 // Edge id lists for `ticket_add`/`ticket_update`. A bounded array of ticket ids.
 const EdgeIds = z.array(z.string().trim().min(1)).max(100);
 
@@ -113,6 +118,7 @@ const AddArgs = z.object({
 	title: z.string().trim().min(1).max(200),
 	body: z.string().trim().max(8000).optional(),
 	plan: z.string().trim().max(100000).optional(),
+	priority: Priority.optional(),
 	blockedBy: EdgeIds.optional(),
 	blocks: EdgeIds.optional()
 });
@@ -132,6 +138,7 @@ const UpdateArgs = z
 		title: z.string().trim().min(1).max(200).optional(),
 		body: z.string().trim().max(8000).optional(),
 		plan: z.string().trim().max(100000).optional(),
+		priority: Priority.optional(),
 		status: Status.optional(),
 		blockedBy: EdgeIds.optional(),
 		blocks: EdgeIds.optional()
@@ -141,6 +148,7 @@ const UpdateArgs = z
 			args.title !== undefined ||
 			args.body !== undefined ||
 			args.plan !== undefined ||
+			args.priority !== undefined ||
 			args.status !== undefined ||
 			args.blockedBy !== undefined ||
 			args.blocks !== undefined,
@@ -189,7 +197,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_add',
 			description:
-				'Add a durable workspace ticket for something the user wants to do later. Use when asked to add a ticket, remember a task, or stash follow-up work between sessions.',
+				'Add a durable workspace ticket for something the user wants to do later. Use when asked to add a ticket, remember a task, or stash follow-up work between sessions. Set `priority` (P0 highest … P3 lowest, default P2) to express relative urgency.',
 			argsSchema: AddArgs,
 			parameters: {
 				type: 'object',
@@ -202,6 +210,12 @@ export function buildTicketTools(opts: {
 							'Optional durable implementation plan / design notes / checklist. Use this ' +
 							'(not a scratch markdown file) to persist a worked-out plan with the ticket. ' +
 							'Supports `- [ ]` / `- [x]` checklist items for subtasks.'
+					},
+					priority: {
+						type: 'string',
+						enum: ['P0', 'P1', 'P2', 'P3'],
+						description:
+							'Relative urgency: P0 is highest, P3 is lowest. Defaults to P2 (normal) when omitted.'
 					},
 					blockedBy: {
 						type: 'array',
@@ -228,13 +242,19 @@ export function buildTicketTools(opts: {
 						title: parsed.title,
 						...(parsed.body !== undefined ? { body: parsed.body } : {}),
 						...(parsed.plan !== undefined ? { plan: parsed.plan } : {}),
+						...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
 						...(parsed.blockedBy !== undefined ? { blockedBy: parsed.blockedBy } : {}),
 						...(parsed.blocks !== undefined ? { blocks: parsed.blocks } : {}),
 						sourceConversationId: opts.conversationId
 					});
 					return ok(
-						{ id: ticket.id, title: ticket.title, status: ticket.status },
-						`Added ticket ${ticket.id}: ${ticket.title}`
+						{
+							id: ticket.id,
+							title: ticket.title,
+							priority: ticket.priority,
+							status: ticket.status
+						},
+						`Added ticket ${ticket.id} [${ticket.priority}]: ${ticket.title}`
 					);
 				} catch (e) {
 					return err(e instanceof Error ? e.message : String(e));
@@ -245,6 +265,7 @@ export function buildTicketTools(opts: {
 			name: 'ticket_list',
 			description:
 				'List durable workspace tickets for the current workspace. Defaults to open tickets. ' +
+				'Each line is tagged with its priority (`[P0]` highest … `[P3]` lowest). ' +
 				'Blocked tickets are annotated with the open tickets blocking them, so a ticket ' +
 				'with no such annotation is ready to start. ' +
 				FIELDS_NOTE,
@@ -289,7 +310,7 @@ export function buildTicketTools(opts: {
 					.map((t) => {
 						const blockers = tickets.openBlockers(t.id);
 						const blockedNote = blockers.length ? ` (blocked by: ${blockers.join(', ')})` : '';
-						return `- ${t.id} [${t.status}] ${t.title}${blockedNote}${t.body ? `\n  ${t.body}` : ''}`;
+						return `- ${t.id} [${t.priority}] [${t.status}] ${t.title}${blockedNote}${t.body ? `\n  ${t.body}` : ''}`;
 					})
 					.join('\n');
 				return ok(rendered, summary);
@@ -335,7 +356,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_update',
 			description:
-				'Update a durable workspace ticket title, body, plan, status, or its blocking edges. Use status=done when a ticket has been completed, or archived when it should be hidden without completion. Use `plan` to persist a worked-out implementation plan or checklist. `blockedBy`/`blocks` replace the complete set of edges on that side (omit to leave unchanged, [] to clear) — a declarative alternative to ticket_block/ticket_unblock.',
+				'Update a durable workspace ticket title, body, plan, priority, status, or its blocking edges. Use status=done when a ticket has been completed, or archived when it should be hidden without completion. Use `plan` to persist a worked-out implementation plan or checklist. Set `priority` (P0 highest … P3 lowest) to re-prioritize. `blockedBy`/`blocks` replace the complete set of edges on that side (omit to leave unchanged, [] to clear) — a declarative alternative to ticket_block/ticket_unblock.',
 			argsSchema: UpdateArgs,
 			parameters: {
 				type: 'object',
@@ -348,6 +369,12 @@ export function buildTicketTools(opts: {
 						description:
 							'New durable implementation plan / design notes / checklist (replaces the ' +
 							'existing plan). Supports `- [ ]` / `- [x]` checklist items for subtasks.'
+					},
+					priority: {
+						type: 'string',
+						enum: ['P0', 'P1', 'P2', 'P3'],
+						description:
+							'New relative urgency: P0 is highest, P3 is lowest. Omit to leave unchanged.'
 					},
 					status: {
 						type: 'string',
@@ -381,8 +408,13 @@ export function buildTicketTools(opts: {
 					const updated = tickets.update(id, opts.userId, patch as UpdateInput);
 					if (!updated) return err(`Ticket not found: ${id}`);
 					return ok(
-						{ id: updated.id, title: updated.title, status: updated.status },
-						`Updated ticket ${updated.id}: ${updated.title} [${updated.status}]`
+						{
+							id: updated.id,
+							title: updated.title,
+							priority: updated.priority,
+							status: updated.status
+						},
+						`Updated ticket ${updated.id}: ${updated.title} [${updated.priority}] [${updated.status}]`
 					);
 				} catch (e) {
 					return err(e instanceof Error ? e.message : String(e));

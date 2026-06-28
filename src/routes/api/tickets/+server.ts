@@ -38,6 +38,7 @@ const CreateBody = z.object({
 	title: z.string().trim().min(1).max(200),
 	body: z.string().trim().max(8000).optional(),
 	plan: z.string().trim().max(100000).optional(),
+	priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
 	workspace: z.string().min(1).optional(),
 	sourceConversationId: z.string().min(1).optional(),
 	sourceMessageId: z.string().min(1).optional()
@@ -68,7 +69,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		sourceConversationId: body.sourceConversationId ?? null,
 		sourceMessageId: body.sourceMessageId ?? null,
 		...(body.body !== undefined ? { body: body.body } : {}),
-		...(body.plan !== undefined ? { plan: body.plan } : {})
+		...(body.plan !== undefined ? { plan: body.plan } : {}),
+		...(body.priority !== undefined ? { priority: body.priority } : {})
 	});
 	return json({ ok: true, ticket }, { status: 201 });
 };

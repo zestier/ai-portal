@@ -63,8 +63,13 @@ describe('isAwaitingInput', () => {
 });
 
 describe('orderSidebarTickets', () => {
-	const t = (id: string, blockerIds: string[] = []) => ({
+	const t = (
+		id: string,
+		blockerIds: string[] = [],
+		priority: 'P0' | 'P1' | 'P2' | 'P3' = 'P2'
+	) => ({
 		id,
+		priority,
 		blockers: blockerIds.map((bid) => ({ id: bid, title: bid, status: 'open' as const }))
 	});
 
@@ -94,6 +99,32 @@ describe('orderSidebarTickets', () => {
 		const snapshot = input.map((o) => o.id);
 		orderSidebarTickets(input);
 		expect(input.map((o) => o.id)).toEqual(snapshot);
+	});
+
+	it('orders by priority within each group but keeps ready before blocked', () => {
+		// A blocked P0 must still sort after every ready ticket (ready-before-blocked
+		// dominates), while priority orders within each group (P0 ahead of P3).
+		const ordered = orderSidebarTickets([
+			t('ready-low', [], 'P3'),
+			t('blocked-top', ['x'], 'P0'),
+			t('ready-top', [], 'P0'),
+			t('blocked-low', ['y'], 'P3')
+		]);
+		expect(ordered.map((o) => o.id)).toEqual([
+			'ready-top',
+			'ready-low',
+			'blocked-top',
+			'blocked-low'
+		]);
+	});
+
+	it('keeps recency order within a shared priority (stable sort)', () => {
+		const ordered = orderSidebarTickets([
+			t('first', [], 'P2'),
+			t('second', [], 'P2'),
+			t('urgent', [], 'P1')
+		]);
+		expect(ordered.map((o) => o.id)).toEqual(['urgent', 'first', 'second']);
 	});
 });
 

@@ -4,16 +4,19 @@
 		ChatPromptTemplate,
 		TicketAttachmentMeta,
 		WorkspaceTicket,
+		WorkspaceTicketPriority,
 		WorkspaceTicketStatus
 	} from '$lib/types';
+	import { TICKET_PRIORITIES } from '$lib/types';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import { priorityLabel, priorityTone } from '$lib/tickets/priority';
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 	import { invalidateAll } from '$app/navigation';
 	import { ticketStatusActions, type TicketStatusAction } from '$lib/tickets/actions';
-	import { patchTicketStatus } from '$lib/client/ticket-status';
+	import { patchTicketStatus, patchTicketPriority } from '$lib/client/ticket-status';
 	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
 	import { onMount } from 'svelte';
 
@@ -86,6 +89,33 @@
 			return;
 		}
 		void applyStatus(action.target);
+	}
+
+	async function applyPriority(target: WorkspaceTicketPriority) {
+		if (busy || target === ticket.priority) return;
+		busy = true;
+		errorMsg = null;
+		try {
+			const result = await patchTicketPriority({
+				ticketId: ticket.id,
+				priority: target,
+				fetcher: fetch
+			});
+			if (!result.ok) {
+				flashError(`Could not update priority (${result.status ?? 'network'})`);
+				return;
+			}
+			await invalidateAll();
+		} catch {
+			flashError('Could not update priority');
+		} finally {
+			busy = false;
+		}
+	}
+
+	function onPriorityChange(event: Event) {
+		const value = (event.currentTarget as HTMLSelectElement).value as WorkspaceTicketPriority;
+		void applyPriority(value);
 	}
 
 	function confirmArchive() {
@@ -173,7 +203,10 @@
 			<p class="eyebrow">Workspace ticket</p>
 			<h1>{ticket.title}</h1>
 		</div>
-		<Pill tone={statusTone[ticket.status]}>{statusLabel[ticket.status]}</Pill>
+		<div class="header-pills">
+			<Pill tone={priorityTone[ticket.priority]}>{ticket.priority}</Pill>
+			<Pill tone={statusTone[ticket.status]}>{statusLabel[ticket.status]}</Pill>
+		</div>
 	</header>
 
 	<div class="toolbar" role="group" aria-label="Ticket actions">
@@ -205,6 +238,22 @@
 	{/if}
 
 	<dl class="meta">
+		<div>
+			<dt class="eyebrow">Priority</dt>
+			<dd>
+				<select
+					class="select priority-select"
+					value={ticket.priority}
+					disabled={busy}
+					aria-label="Ticket priority"
+					onchange={onPriorityChange}
+				>
+					{#each TICKET_PRIORITIES as p (p)}
+						<option value={p}>{priorityLabel[p]}</option>
+					{/each}
+				</select>
+			</dd>
+		</div>
 		<div>
 			<dt class="eyebrow">ID</dt>
 			<dd class="mono">{ticket.id}</dd>
@@ -389,6 +438,30 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-2);
+		align-items: center;
+	}
+	.header-pills {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		flex-shrink: 0;
+	}
+	.select {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--text);
+		padding: 0.3rem 0.5rem;
+		font-size: var(--fs-sm);
+		cursor: pointer;
+	}
+	.select:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	.priority-select {
+		width: 100%;
+		max-width: 220px;
 	}
 	.confirm {
 		display: flex;

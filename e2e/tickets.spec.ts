@@ -128,6 +128,58 @@ test('tickets index browses, filters by status, and paginates', async ({ page, r
 	await page.waitForURL(/\/tickets\/[A-Za-z0-9]+$/);
 });
 
+test('detail page shows a priority pill and edits priority in place', async ({ page, request }) => {
+	const created = await request
+		.post('/api/tickets', { data: { title: 'Priority detail ticket', priority: 'P1' } })
+		.then((r) => r.json());
+	const id: string = created.ticket.id;
+
+	await page.goto(`/tickets/${id}`);
+	const select = page.getByLabel('Ticket priority');
+	await expect(select).toHaveValue('P1');
+	// The header pill reflects the current priority.
+	await expect(page.locator('.header-pills').getByText('P1', { exact: true })).toBeVisible();
+
+	// Editing the select PATCHes and refreshes loader data in place.
+	const patched = page.waitForResponse(
+		(r) => r.url().includes(`/api/tickets/${id}`) && r.request().method() === 'PATCH' && r.ok()
+	);
+	await select.selectOption('P0');
+	await patched;
+	await expect(select).toHaveValue('P0');
+	await expect(page.locator('.header-pills').getByText('P0', { exact: true })).toBeVisible();
+
+	// Persisted: a fresh load reflects the new priority.
+	await page.reload();
+	await expect(page.getByLabel('Ticket priority')).toHaveValue('P0');
+});
+
+test('tickets index filters and sorts by priority', async ({ page, request }) => {
+	const run = `prio-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+	await request.post('/api/tickets', { data: { title: `${run} low`, priority: 'P3' } });
+	await request.post('/api/tickets', { data: { title: `${run} high`, priority: 'P0' } });
+
+	await page.goto('/tickets');
+	const high = page.getByRole('link', { name: `${run} high` });
+	const low = page.getByRole('link', { name: `${run} low` });
+	await expect(high).toBeVisible();
+	await expect(low).toBeVisible();
+
+	// Filtering to P0 keeps the high-priority ticket and drops the P3 one.
+	await page.getByLabel('Filter by priority').selectOption('P0');
+	await expect(high).toBeVisible();
+	await expect(low).toHaveCount(0);
+
+	// Reset the filter, then opt into priority sort: P0 sorts ahead of P3.
+	await page.getByLabel('Filter by priority').selectOption('all');
+	await page.getByRole('button', { name: 'Sort by priority' }).click();
+	const titles = await page.locator('li.ticket-row .ticket-title').allInnerTexts();
+	const highIdx = titles.indexOf(`${run} high`);
+	const lowIdx = titles.indexOf(`${run} low`);
+	expect(highIdx).toBeGreaterThanOrEqual(0);
+	expect(lowIdx).toBeGreaterThan(highIdx);
+});
+
 test('sidebar links to the full tickets page', async ({ page, request }) => {
 	await request.post('/api/tickets', { data: { title: 'Sidebar link ticket' } });
 

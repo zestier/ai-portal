@@ -1,7 +1,13 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
 import { notifyTicketMutation } from '../ticket-mutations';
-import type { TicketDependencyRef, WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
+import type {
+	TicketDependencyRef,
+	WorkspaceTicket,
+	WorkspaceTicketPriority,
+	WorkspaceTicketStatus
+} from '$lib/types';
+import { DEFAULT_TICKET_PRIORITY } from '$lib/types';
 
 interface TicketRow {
 	id: string;
@@ -12,6 +18,9 @@ interface TicketRow {
 	// May be undefined if read from a DB whose `plan` column is missing (see the
 	// defensive coercion in `rowToTicket`).
 	plan: string | undefined;
+	// May be undefined if read from a DB predating the priority column (see the
+	// defensive coercion in `rowToTicket`).
+	priority: string | undefined;
 	status: string;
 	source_conversation_id: string | null;
 	source_message_id: string | null;
@@ -22,6 +31,12 @@ interface TicketRow {
 
 function normalizeStatus(raw: string): WorkspaceTicketStatus {
 	return raw === 'done' || raw === 'archived' ? raw : 'open';
+}
+
+function normalizePriority(raw: string | undefined): WorkspaceTicketPriority {
+	return raw === 'P0' || raw === 'P1' || raw === 'P2' || raw === 'P3'
+		? raw
+		: DEFAULT_TICKET_PRIORITY;
 }
 
 function rowToTicket(r: TicketRow): WorkspaceTicket {
@@ -36,6 +51,9 @@ function rowToTicket(r: TicketRow): WorkspaceTicket {
 		// raw row has no `plan`, so coerce to '' rather than letting `undefined`
 		// reach `.trim()` callers and throw.
 		plan: r.plan ?? '',
+		// Defensive: `priority` was added by migration 053. Coerce an absent or
+		// unexpected value to the default rather than leaking `undefined`.
+		priority: normalizePriority(r.priority),
 		status: normalizeStatus(r.status),
 		sourceConversationId: r.source_conversation_id,
 		sourceMessageId: r.source_message_id,
@@ -93,7 +111,8 @@ export function list(
  * A ticket is "blocked" iff it has at least one prerequisite edge whose
  * prerequisite ticket is still `status = 'open'` — matching the `blockers`
  * definition used by `dependencyRefs` / `orderSidebarTickets`. Within each group
- * the order is `updated_at DESC, created_at DESC, id DESC`, mirroring `list()`.
+ * tickets are ordered by `priority` (P0→P3, sorting correctly as text), then
+ * `updated_at DESC, created_at DESC, id DESC`, mirroring `list()`.
  */
 export function listForSidebar(
 	userId: string,
@@ -110,6 +129,7 @@ export function listForSidebar(
 			     JOIN workspace_tickets dep ON dep.id = d.depends_on
 			     WHERE d.ticket_id = t.id AND dep.user_id = t.user_id AND dep.status = 'open'
 			   ) ASC,
+			   t.priority ASC,
 			   t.updated_at DESC, t.created_at DESC, t.id DESC
 			 LIMIT ?`
 		)
@@ -143,6 +163,8 @@ export interface CreateInput {
 	title: string;
 	body?: string;
 	plan?: string;
+	/** Relative urgency P0 (highest) … P3 (lowest). Defaults to P2 when omitted. */
+	priority?: WorkspaceTicketPriority;
 	/** Ticket ids this new ticket is blocked by — blocking edges added on insert. */
 	blockedBy?: string[];
 	/** Ticket ids this new ticket blocks — blocking edges added on insert. */
@@ -157,6 +179,7 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 	const title = input.title.trim();
 	const body = input.body?.trim() ?? '';
 	const plan = input.plan?.trim() ?? '';
+	const priority = input.priority ?? DEFAULT_TICKET_PRIORITY;
 	if (!title) throw new Error('ticket title cannot be empty');
 	// Insert the row and any blocking edges atomically: edges are created after
 	// the row exists (so addDependency's existence/same-workspace/cycle checks see
@@ -166,9 +189,9 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 		getDb()
 			.prepare(
 				`INSERT INTO workspace_tickets(
-				   id, user_id, workspace_key, title, body, plan, status,
+				   id, user_id, workspace_key, title, body, plan, priority, status,
 				   source_conversation_id, source_message_id, created_at, updated_at, closed_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 			)
 			.run(
 				id,
@@ -177,6 +200,7 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 				title,
 				body,
 				plan,
+				priority,
 				input.sourceConversationId ?? null,
 				input.sourceMessageId ?? null,
 				now,
@@ -198,6 +222,7 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 		title,
 		body,
 		plan,
+		priority,
 		status: 'open',
 		sourceConversationId: input.sourceConversationId ?? null,
 		sourceMessageId: input.sourceMessageId ?? null,
@@ -211,6 +236,8 @@ export interface UpdateInput {
 	title?: string;
 	body?: string;
 	plan?: string;
+	/** New relative urgency. Omit to leave unchanged. */
+	priority?: WorkspaceTicketPriority;
 	status?: WorkspaceTicketStatus;
 	/**
 	 * Replace the complete set of tickets this one is blocked by. Reconciled as a
@@ -239,13 +266,14 @@ export function update(id: string, userId: string, patch: UpdateInput): Workspac
 		getDb()
 			.prepare(
 				`UPDATE workspace_tickets
-				 SET title = ?, body = ?, plan = ?, status = ?, updated_at = ?, closed_at = ?
+				 SET title = ?, body = ?, plan = ?, priority = ?, status = ?, updated_at = ?, closed_at = ?
 				 WHERE id = ? AND user_id = ?`
 			)
 			.run(
 				patch.title?.trim() ?? current.title,
 				patch.body?.trim() ?? current.body,
 				patch.plan?.trim() ?? current.plan,
+				patch.priority ?? current.priority,
 				nextStatus,
 				now,
 				closedAt,

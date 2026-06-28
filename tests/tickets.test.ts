@@ -643,4 +643,195 @@ describe('workspace tickets', () => {
 		expect(empty.initialTickets).toEqual([]);
 		expect(empty.initialHasMore).toBe(false);
 	});
+
+	it('defaults priority to P2, persists a chosen one, and enforces the CHECK constraint', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const { getDb } = await import('../src/lib/server/db');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		// Omitted priority falls back to the column default P2.
+		const def = tickets.create(user.id, { workspaceKey: workspace, title: 'Default priority' });
+		expect(def.priority).toBe('P2');
+		expect(tickets.get(def.id, user.id)?.priority).toBe('P2');
+
+		// An explicit priority round-trips through create + get.
+		const urgent = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Urgent',
+			priority: 'P0'
+		});
+		expect(urgent.priority).toBe('P0');
+		expect(tickets.get(urgent.id, user.id)?.priority).toBe('P0');
+
+		// update changes priority and leaves it untouched when omitted.
+		const bumped = tickets.update(def.id, user.id, { priority: 'P1' });
+		expect(bumped?.priority).toBe('P1');
+		const renamed = tickets.update(def.id, user.id, { title: 'Default priority (renamed)' });
+		expect(renamed?.priority).toBe('P1');
+
+		// The DB CHECK rejects an out-of-set priority.
+		expect(() =>
+			getDb()
+				.prepare(
+					`INSERT INTO workspace_tickets(
+					   id, user_id, workspace_key, title, body, priority, status, created_at, updated_at
+					 ) VALUES ('bad-priority', ?, ?, 'bad', '', 'P9', 'open', 1, 1)`
+				)
+				.run(user.id, workspace)
+		).toThrow();
+	});
+
+	it('listForSidebar orders by priority within a group, ready-before-blocked dominating', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		// A still-open prerequisite used to block a high-priority ticket.
+		const prereq = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Prereq',
+			priority: 'P3'
+		});
+		const blockedP0 = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Blocked but urgent',
+			priority: 'P0'
+		});
+		tickets.addDependency(user.id, blockedP0.id, prereq.id);
+		const readyP2 = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Ready normal',
+			priority: 'P2'
+		});
+		const readyP0 = tickets.create(user.id, {
+			workspaceKey: workspace,
+			title: 'Ready urgent',
+			priority: 'P0'
+		});
+
+		const ordered = tickets.listForSidebar(user.id, workspace, 10).map((t) => t.id);
+		// prereq (P3) is ready; readyP0/readyP2 are ready; blockedP0 is blocked.
+		// Ready group ordered by priority: readyP0 (P0), readyP2 (P2), prereq (P3);
+		// blocked group (only blockedP0) comes last despite being P0.
+		expect(ordered).toEqual([readyP0.id, readyP2.id, prereq.id, blockedP0.id]);
+	});
+
+	it('agent ticket tools accept, persist, and surface priority', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, {
+			id: 'conv-priority-test',
+			title: 'Priority tools',
+			workdir: workspace,
+			model: null
+		});
+		const tools = buildTicketTools({
+			userId: user.id,
+			workspaceKey: workspace,
+			conversationId: conv.id
+		});
+		const add = tools.find((t) => t.name === 'ticket_add')!;
+		const list = tools.find((t) => t.name === 'ticket_list')!;
+		const update = tools.find((t) => t.name === 'ticket_update')!;
+		const get = tools.find((t) => t.name === 'ticket_get')!;
+
+		// ticket_add persists an explicit priority and echoes it back.
+		const added = await add.handler({ title: 'Ship it', priority: 'P0' });
+		expect(added.ok).toBe(true);
+		expect(added.ok && (added.result as { priority?: string }).priority).toBe('P0');
+		const [created] = tickets.list(user.id, workspace);
+		expect(created.priority).toBe('P0');
+
+		// Omitting priority defaults to P2.
+		await add.handler({ title: 'Someday' });
+		const someday = tickets.list(user.id, workspace).find((t) => t.title === 'Someday')!;
+		expect(someday.priority).toBe('P2');
+
+		// Invalid priority is rejected before persisting.
+		await expect(add.handler({ title: 'Bad', priority: 'P9' })).rejects.toThrow();
+
+		// ticket_update changes priority.
+		const updated = await update.handler({ id: created.id, priority: 'P2' });
+		expect(updated.ok && (updated.result as { priority?: string }).priority).toBe('P2');
+		expect(tickets.get(created.id, user.id)?.priority).toBe('P2');
+
+		// ticket_get returns priority in the compact view.
+		const got = await get.handler({ id: created.id });
+		expect(got.ok && (got.result as { priority?: string }).priority).toBe('P2');
+
+		// The dense ticket_list output tags every line with its priority.
+		const listed = await list.handler({ status: 'all' });
+		const rendered = (listed.ok && listed.result) as string;
+		for (const line of rendered.split('\n').filter((l) => l.startsWith('- '))) {
+			expect(line).toMatch(/\[P[0-3]\]/);
+		}
+		expect(rendered).toContain('[P2] [open] Ship it');
+	});
+
+	it('REST API accepts and returns priority on create, patch, and get', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const { POST, GET } = await import('../src/routes/api/tickets/+server');
+		const { PATCH, GET: GET_ONE } = await import('../src/routes/api/tickets/[id]/+server');
+		const user = users.ensureLocalUser();
+
+		const createdResponse = await POST(
+			event({
+				userId: user.id,
+				body: { workspace, title: 'API priority', priority: 'P1' }
+			}) as never
+		);
+		const created = await createdResponse.json();
+		expect(created.ticket.priority).toBe('P1');
+
+		// Omitting priority defaults to P2.
+		const defResponse = await POST(
+			event({ userId: user.id, body: { workspace, title: 'API default' } }) as never
+		);
+		const def = await defResponse.json();
+		expect(def.ticket.priority).toBe('P2');
+
+		// Invalid priority is a 400.
+		let badStatus: number | undefined;
+		try {
+			await POST(
+				event({ userId: user.id, body: { workspace, title: 'API bad', priority: 'P9' } }) as never
+			);
+		} catch (e) {
+			badStatus = (e as { status?: number }).status;
+		}
+		expect(badStatus).toBe(400);
+
+		// PATCH changes priority and GET reflects it.
+		const patchResponse = await PATCH(
+			event({
+				userId: user.id,
+				params: { id: created.ticket.id },
+				body: { priority: 'P3', workspace }
+			}) as never
+		);
+		const patched = await patchResponse.json();
+		expect(patched.ticket.priority).toBe('P3');
+
+		const getResponse = await GET_ONE(
+			event({ userId: user.id, params: { id: created.ticket.id } }) as never
+		);
+		const fetched = await getResponse.json();
+		expect(fetched.ticket.priority).toBe('P3');
+
+		// The list endpoint includes priority on each row.
+		const listResponse = await GET(
+			event({
+				userId: user.id,
+				url: `http://localhost/api/tickets?workspace=${encodeURIComponent(workspace)}`
+			}) as never
+		);
+		const listed = await listResponse.json();
+		expect(listed.tickets.every((t: { priority?: string }) => typeof t.priority === 'string')).toBe(
+			true
+		);
+	});
 });

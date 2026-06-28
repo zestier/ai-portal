@@ -83,12 +83,28 @@ export interface Conversation {
 
 export type WorkspaceTicketStatus = 'open' | 'done' | 'archived';
 
+/**
+ * Relative urgency of a workspace ticket. `P0` is the highest urgency and `P3`
+ * the lowest; new tickets default to `P2` (normal). The same set is enforced by
+ * the DB `CHECK`, the agent tool Zod schemas, and the REST API validation so a
+ * bad value fails fast at every layer.
+ */
+export type WorkspaceTicketPriority = 'P0' | 'P1' | 'P2' | 'P3';
+
+/** Default priority for a new ticket (matches the DB column default). */
+export const DEFAULT_TICKET_PRIORITY: WorkspaceTicketPriority = 'P2';
+
+/** The allowed ticket priorities, highest urgency (P0) first. */
+export const TICKET_PRIORITIES: readonly WorkspaceTicketPriority[] = ['P0', 'P1', 'P2', 'P3'];
+
 export interface WorkspaceTicket {
 	id: string;
 	userId: string;
 	workspaceKey: string;
 	title: string;
 	body: string;
+	/** Relative urgency, P0 (highest) … P3 (lowest). Defaults to P2. */
+	priority: WorkspaceTicketPriority;
 	/**
 	 * Durable, free-form implementation plan / design notes / checklist. Longer
 	 * than `body` and omitted from the agent tools' compact view (fetch it via
