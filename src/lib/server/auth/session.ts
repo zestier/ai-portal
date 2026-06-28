@@ -25,8 +25,20 @@ function b64uDecode(s: string): Buffer {
 // HKDF parameters for deriving the session signing key. The fixed `info`
 // string provides domain separation and a versioned anchor for future key
 // rotation. Changing it invalidates all existing session cookies.
+//
+// The salt is a fixed, non-secret constant rather than empty. HKDF-Extract
+// with an all-zero/empty salt is defined but a fixed application-specific salt
+// is the recommended form (RFC 5869 §3.1): it pins the extract step to this
+// application so the same input keying material can't collide with a key
+// derived for some other purpose. It is intentionally hard-coded (committed,
+// not secret) — its job is domain separation, not secrecy. Changing this value
+// re-derives the signing key and therefore invalidates existing session
+// cookies, the same as changing HKDF_INFO.
 const HKDF_INFO = 'portal-session-v1';
-const HKDF_SALT = Buffer.alloc(0);
+const HKDF_SALT = Buffer.from(
+	'7e3c9a1f5b86d240e9c7a4f0b1382d6e5a0c4791f8b2e63d04a9c1f57e8b6d23',
+	'hex'
+);
 const SIGNING_KEY_LEN = 32;
 
 // Memoize the derived key per source secret so that test config resets (which

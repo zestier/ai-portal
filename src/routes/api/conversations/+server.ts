@@ -13,6 +13,7 @@ import {
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
+import { audit } from '$lib/server/audit';
 
 export const GET: RequestHandler = ({ locals, url }) => {
 	const userId = requireUserId(locals);
@@ -30,7 +31,7 @@ const CreateBody = z.object({
 	memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional()
 });
 
-export const POST: RequestHandler = async ({ locals, request }) => {
+export const POST: RequestHandler = async ({ locals, request, getClientAddress }) => {
 	const userId = requireUserId(locals);
 	const body = await parseBody(request, CreateBody);
 	const cfg = loadConfig();
@@ -44,8 +45,26 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	let workdir: string;
 	if (requested) {
 		const res = resolveAndValidate(requested);
-		if (!res.ok) throw error(400, res.reason);
+		if (!res.ok) {
+			audit({
+				event_type: 'workdir_override',
+				actor_login: locals.user?.githubLogin ?? null,
+				actor_ip: getClientAddress(),
+				resource: requested,
+				outcome: 'failure',
+				detail: { context: 'conversation_create', reason: res.reason }
+			});
+			throw error(400, res.reason);
+		}
 		workdir = res.path;
+		audit({
+			event_type: 'workdir_override',
+			actor_login: locals.user?.githubLogin ?? null,
+			actor_ip: getClientAddress(),
+			resource: workdir,
+			outcome: 'success',
+			detail: { context: 'conversation_create', source: body.workdir ? 'explicit' : 'user_default' }
+		});
 	} else {
 		workdir = projectRoot();
 	}

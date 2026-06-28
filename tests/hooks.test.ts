@@ -175,3 +175,41 @@ describe('hooks auth gate', () => {
 		expect(res.status).toBe(200);
 	});
 });
+
+describe('hooks security headers', () => {
+	beforeEach(async () => {
+		await setupLocalEnv('portal-hooks-test-');
+	});
+
+	it('sets a restrictive Permissions-Policy on responses', async () => {
+		const handle = await loadHandle();
+		const event = makeEvent({ path: '/' });
+		const res = await handle({
+			event,
+			resolve: async () => new Response('ok', { status: 200 })
+		});
+		expect(res.headers.get('permissions-policy')).toBe(
+			'camera=(), microphone=(), geolocation=(), usb=(), payment=()'
+		);
+	});
+});
+
+describe('hooks handleError correlation id', () => {
+	beforeEach(async () => {
+		await setupLocalEnv('portal-hooks-test-');
+	});
+
+	it('uses a CSPRNG hex correlation id (not Math.random base36) for 500s', async () => {
+		vi.resetModules();
+		const mod = await import('../src/hooks.server');
+		const event = makeEvent({ path: '/api/boom', method: 'GET' });
+		const result = mod.handleError({
+			error: new Error('boom'),
+			event,
+			status: 500,
+			message: 'Internal Error'
+		} as unknown as Parameters<typeof mod.handleError>[0]) as { code: string };
+		// randomBytes(4).toString('hex') => exactly 8 lowercase hex chars.
+		expect(result.code).toMatch(/^[0-9a-f]{8}$/);
+	});
+});

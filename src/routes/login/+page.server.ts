@@ -5,6 +5,7 @@ import { loadConfig } from '$lib/server/config';
 import { authorizeUrl } from '$lib/server/auth/github';
 import { issue } from '$lib/server/auth/session';
 import { FixedWindowRateLimiter } from '$lib/server/rate-limit';
+import { audit } from '$lib/server/audit';
 
 // Random per-process key so the digests below can't be precomputed offline.
 const SECRET_COMPARE_KEY = randomBytes(32);
@@ -61,6 +62,14 @@ export const actions: Actions = {
 		const ip = getClientAddress();
 		if (loginRateLimiter.check(ip).limited) {
 			await delay(FAILURE_DELAY_MS);
+			audit({
+				event_type: 'login',
+				actor_login: null,
+				actor_ip: ip,
+				resource: 'shared-secret',
+				outcome: 'denied',
+				detail: { reason: 'rate_limited' }
+			});
 			return { ok: false, error: 'Too many attempts. Please try again later.' };
 		}
 		const data = await request.formData();
@@ -68,6 +77,14 @@ export const actions: Actions = {
 		if (!secret || !cfg.SHARED_SECRET || !sharedSecretMatches(secret, cfg.SHARED_SECRET)) {
 			loginRateLimiter.record(ip);
 			await delay(FAILURE_DELAY_MS);
+			audit({
+				event_type: 'login',
+				actor_login: null,
+				actor_ip: ip,
+				resource: 'shared-secret',
+				outcome: 'failure',
+				detail: { reason: 'invalid_secret' }
+			});
 			return { ok: false, error: 'Invalid secret' };
 		}
 		loginRateLimiter.reset(ip);
@@ -76,6 +93,13 @@ export const actions: Actions = {
 		const user = ensureLocalUser();
 		locals.userId = user.id;
 		issue(cookies, user.id, url.protocol === 'https:');
+		audit({
+			event_type: 'login',
+			actor_login: user.githubLogin,
+			actor_ip: ip,
+			resource: 'shared-secret',
+			outcome: 'success'
+		});
 		throw redirect(303, '/');
 	}
 };

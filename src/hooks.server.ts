@@ -1,4 +1,5 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
+import { randomBytes } from 'node:crypto';
 import { loadConfig } from '$lib/server/config';
 import { log } from '$lib/server/log';
 import { getDb } from '$lib/server/db';
@@ -172,6 +173,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// privacy intent was.
 	response.headers.set('referrer-policy', 'same-origin');
 	response.headers.set('x-frame-options', 'DENY');
+	// Disable powerful browser features the portal never uses, so a content
+	// injection can't reach for the camera/mic/geolocation/USB/payment APIs.
+	response.headers.set(
+		'permissions-policy',
+		'camera=(), microphone=(), geolocation=(), usb=(), payment=()'
+	);
 	if (secure) {
 		response.headers.set('strict-transport-security', 'max-age=63072000; includeSubDomains');
 	}
@@ -185,7 +192,7 @@ export const handleError: HandleServerError = ({ error, event, status }) => {
 	if (status === 404) {
 		return { message: 'Not found', code: 'not_found' };
 	}
-	const id = Math.random().toString(36).slice(2, 10);
+	const id = randomBytes(4).toString('hex');
 	log.error('unhandled', {
 		id,
 		path: event.url.pathname,

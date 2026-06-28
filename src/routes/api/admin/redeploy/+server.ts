@@ -6,6 +6,7 @@ import { log } from '$lib/server/log';
 import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
 import { sseResponse } from '$lib/server/sse';
+import { audit } from '$lib/server/audit';
 import {
 	BUILD_STEPS,
 	PULL_STEPS,
@@ -26,14 +27,24 @@ const Body = z.object({ pull: z.boolean().optional().default(true) });
 
 let inFlight = false;
 
-export const POST: RequestHandler = async ({ request, locals }) => {
+export const POST: RequestHandler = async ({ request, locals, getClientAddress }) => {
 	const userId = requireUserId(locals);
 	const cfg = loadConfig();
+	const actorLogin = locals.user?.githubLogin ?? null;
+	const actorIp = getClientAddress();
 	if (!cfg.ENABLE_REDEPLOY) {
 		throw error(403, 'Redeploy disabled. Set ENABLE_REDEPLOY=1 and run via `pnpm run serve`.');
 	}
 	if (!canRedeployUser(locals.user, cfg)) {
-		log.warn('redeploy.forbidden', { userId, login: locals.user?.githubLogin ?? null });
+		log.warn('redeploy.forbidden', { userId, login: actorLogin });
+		audit({
+			event_type: 'redeploy',
+			actor_login: actorLogin,
+			actor_ip: actorIp,
+			resource: 'admin/redeploy',
+			outcome: 'denied',
+			detail: { reason: 'not_redeploy_admin' }
+		});
 		throw error(403, 'Redeploy requires an authorized redeploy admin.');
 	}
 	if (inFlight) throw error(409, 'A redeploy is already in progress.');
@@ -46,6 +57,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const steps: Step[] = pull ? [...PULL_STEPS, ...BUILD_STEPS] : BUILD_STEPS;
 		log.info('redeploy.start', { userId, pull });
+		audit({
+			event_type: 'redeploy',
+			actor_login: actorLogin,
+			actor_ip: actorIp,
+			resource: 'admin/redeploy',
+			outcome: 'success',
+			detail: { pull }
+		});
 
 		async function* withInFlightReset() {
 			try {

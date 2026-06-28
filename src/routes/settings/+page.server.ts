@@ -18,6 +18,7 @@ import { resolveAndValidate } from '$lib/server/workdir';
 import { loadConfig } from '$lib/server/config';
 import { getDeployMetadata } from '$lib/server/deploy';
 import { log } from '$lib/server/log';
+import { audit } from '$lib/server/audit';
 import { canRedeployUser } from '$lib/server/redeploy';
 import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
@@ -171,7 +172,7 @@ const UpdateMemoryProfileSchema = MemoryProfileSchema.extend({
 });
 
 export const actions: Actions = {
-	save: async ({ request, locals }) => {
+	save: async ({ request, locals, getClientAddress }) => {
 		if (!locals.userId) return { ok: false, error: 'Not authenticated', formId: 'save' };
 		const data = await request.formData();
 		const parsed = SaveSchema.safeParse({
@@ -197,12 +198,28 @@ export const actions: Actions = {
 		if (parsed.data.defaultWorkdir) {
 			const res = resolveAndValidate(parsed.data.defaultWorkdir);
 			if (!res.ok) {
+				audit({
+					event_type: 'workdir_override',
+					actor_login: locals.user?.githubLogin ?? null,
+					actor_ip: getClientAddress(),
+					resource: parsed.data.defaultWorkdir,
+					outcome: 'failure',
+					detail: { context: 'settings_default_workdir', reason: res.reason }
+				});
 				return {
 					ok: false,
 					error: `Invalid default working directory: ${res.reason}`,
 					formId: 'save'
 				};
 			}
+			audit({
+				event_type: 'workdir_override',
+				actor_login: locals.user?.githubLogin ?? null,
+				actor_ip: getClientAddress(),
+				resource: res.path,
+				outcome: 'success',
+				detail: { context: 'settings_default_workdir' }
+			});
 		}
 		const next: UserSettings = {
 			defaultProvider: normalizeBackendProvider(parsed.data.defaultProvider),
