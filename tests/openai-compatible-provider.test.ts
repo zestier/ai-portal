@@ -547,6 +547,64 @@ describe('openAICompatibleProvider', () => {
 		});
 	});
 
+	it('does not double a tool call when a chunk carries both message and delta tool_calls', async () => {
+		const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+			void _url;
+			void _init;
+			if (fetchMock.mock.calls.length === 1) {
+				// Some OpenAI-compatible proxies wrapping non-streaming models emit a
+				// complete message-style tool call AND a delta for the same index in a
+				// single chunk. Applying both would concatenate (double) the
+				// name/arguments and corrupt the JSON args.
+				return sseResponse([
+					'data: {"choices":[{"message":{"tool_calls":[{"id":"call_git_status","type":"function","function":{"name":"git_status","arguments":"{}"}}]},"delta":{"tool_calls":[{"index":0,"id":"call_git_status","type":"function","function":{"name":"git_status","arguments":"{}"}}]}}]}\n\n',
+					'data: [DONE]\n\n'
+				]);
+			}
+			return sseResponse([
+				'data: {"choices":[{"delta":{"content":"done"}}]}\n\n',
+				'data: [DONE]\n\n'
+			]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const session = await openAICompatibleProvider.openSession(
+			await persistedOpts({ policy: 'allow-all' })
+		);
+
+		const events = await collect(session.send('status please', new AbortController().signal));
+
+		expect(events.map((event) => event.type)).toEqual([
+			'message.start',
+			'tool.call',
+			'tool.result',
+			'message.delta',
+			'message.end',
+			'done'
+		]);
+		expect(events[1]).toMatchObject({
+			type: 'tool.call',
+			toolCallId: 'call_git_status',
+			tool: 'git_status',
+			args: {}
+		});
+		expect(events[2]).toMatchObject({
+			type: 'tool.result',
+			toolCallId: 'call_git_status',
+			ok: true
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const assistantBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)) as {
+			messages: Array<{
+				role: string;
+				tool_calls?: Array<{ function: { name: string; arguments: string } }>;
+			}>;
+		};
+		const assistantMsg = assistantBody.messages.find((m) => m.role === 'assistant' && m.tool_calls);
+		expect(assistantMsg?.tool_calls).toHaveLength(1);
+		expect(assistantMsg?.tool_calls?.[0].function.name).toBe('git_status');
+		expect(assistantMsg?.tool_calls?.[0].function.arguments).toBe('{}');
+	});
+
 	it('executes approved tool calls against an OpenAI-compatible fake server', async () => {
 		const requests: unknown[] = [];
 		const server = await startFakeStreamingServer((body, _req, res) => {

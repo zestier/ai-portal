@@ -379,10 +379,28 @@ async function* streamChatCompletionTurn(
 			yield { type: 'message.delta', messageId, text };
 		}
 		const choice = chunk.choices?.[0];
+		// Track tool-call indices populated from `message.tool_calls` in THIS
+		// chunk so we don't also fold a same-index `delta.tool_calls` entry into
+		// them. Some OpenAI-compatible proxies (wrapping non-streaming models)
+		// emit a complete message-style tool call AND a delta for the same index
+		// in a single chunk; applying both would concatenate (double) the
+		// name/arguments and corrupt the resulting JSON.
+		const messageToolCallIndices = new Set<number>();
 		for (const toolCall of choice?.message?.tool_calls ?? []) {
+			messageToolCallIndices.add(toolCallParts.length);
 			toolCallParts.push(toolCall);
 		}
 		for (const delta of choice?.delta?.tool_calls ?? []) {
+			const index =
+				typeof delta.index === 'number'
+					? delta.index
+					: lastToolCallIndex >= 0
+						? lastToolCallIndex
+						: 0;
+			if (messageToolCallIndices.has(index)) {
+				lastToolCallIndex = index;
+				continue;
+			}
 			lastToolCallIndex = applyToolCallDelta(toolCallParts, delta, lastToolCallIndex);
 		}
 	}
