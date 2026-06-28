@@ -6,6 +6,7 @@
 		ShellAnalysisView
 	} from '$lib/types';
 	import { gitCommitPreview } from '$lib/permissions/git-commit';
+	import { focusTrap } from '$lib/actions/focus-trap';
 	import {
 		buildPermissionGrantScope,
 		buildPermissionScopeContext,
@@ -14,6 +15,7 @@
 		expiryChoiceToMs,
 		operatorGloss,
 		previewPersistentPermission,
+		resolvePermissionShortcut,
 		scopeOptionLabel,
 		type ExpiryChoice,
 		type ScopeChoice
@@ -105,6 +107,21 @@
 		shellChecked = {};
 	});
 
+	// The dialog auto-focuses its own shell (initialFocus: 'container') so screen
+	// readers announce the alertdialog and the Enter/Escape shortcuts can fire.
+	// That also means a buffered or auto-repeating Enter — e.g. left over from the
+	// keystroke that sent the message which triggered this prompt — could land on a
+	// freshly mounted dialog. Gate the *approve* shortcuts behind a short arming
+	// delay (re-armed per request) so no accidental keystroke can allow a
+	// security-sensitive request. Escape (deny) is always honored immediately.
+	let approveArmed = $state(false);
+	$effect(() => {
+		void request.requestId;
+		approveArmed = false;
+		const timer = setTimeout(() => (approveArmed = true), 350);
+		return () => clearTimeout(timer);
+	});
+
 	function denyFeedback(): string | undefined {
 		const trimmed = denialFeedback.trim();
 		return trimmed.length > 0 ? trimmed : undefined;
@@ -177,26 +194,44 @@
 	}
 
 	function onKeyDown(e: KeyboardEvent) {
-		if (busy) return;
-		if (e.currentTarget !== e.target) return;
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			pickDeny('deny');
-		} else if (e.key === 'Enter' && e.shiftKey) {
-			if (!canPersistDecision) return;
-			if (denyAllPolicy) return;
-			e.preventDefault();
-			pickAlways('allow-always');
-		} else if (e.key === 'Enter') {
-			e.preventDefault();
-			pick({ kind: 'permission', decision: 'allow-once' });
+		const action = resolvePermissionShortcut(e, {
+			busy,
+			focusOnDialog: e.currentTarget === e.target,
+			approveArmed,
+			canPersistDecision,
+			denyAllPolicy
+		});
+		if (action === 'none') return;
+		e.preventDefault();
+		switch (action) {
+			case 'deny':
+				pickDeny('deny');
+				break;
+			case 'allow-once':
+				pick({ kind: 'permission', decision: 'allow-once' });
+				break;
+			case 'allow-always':
+				pickAlways('allow-always');
+				break;
 		}
 	}
+
+	const headingId = $derived(`permission-request-heading-${request.requestId}`);
+	const bodyId = $derived(`permission-request-body-${request.requestId}`);
 </script>
 
-<div class="interactive" role="alertdialog" aria-modal="true" tabindex="-1" onkeydown={onKeyDown}>
-	<div class="head">Permission required</div>
-	<div class="body">
+<div
+	class="interactive"
+	role="alertdialog"
+	aria-modal="true"
+	aria-labelledby={headingId}
+	aria-describedby={bodyId}
+	tabindex="-1"
+	onkeydown={onKeyDown}
+	use:focusTrap={{ initialFocus: 'container' }}
+>
+	<div class="head" id={headingId}>Permission required</div>
+	<div class="body" id={bodyId}>
 		<div>
 			<strong>{request.tool}</strong>
 			<span class="muted">({request.permissionKind})</span>

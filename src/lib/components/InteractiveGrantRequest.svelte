@@ -7,6 +7,7 @@
 	// PermissionGrantScopeFields renderer live in $lib/components so the in-chat
 	// approval and the settings editor stay byte-for-byte identical.
 	import GrantScopeEditor from './GrantScopeEditor.svelte';
+	import { focusTrap } from '$lib/actions/focus-trap';
 	import { expiryChoiceToMs, type ExpiryChoice } from './interactive-permission';
 	import Alert from './ui/Alert.svelte';
 
@@ -84,17 +85,28 @@
 
 	function onKeyDown(e: KeyboardEvent) {
 		if (busy) return;
-		if (e.currentTarget !== e.target) return;
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			deny();
 		}
 	}
+
+	const headingId = $derived(`grant-request-heading-${request.requestId}`);
+	const bodyId = $derived(`grant-request-body-${request.requestId}`);
 </script>
 
-<div class="interactive" role="alertdialog" aria-modal="true" tabindex="-1" onkeydown={onKeyDown}>
-	<div class="head">Permission grant requested</div>
-	<div class="body">
+<div
+	class="interactive"
+	role="alertdialog"
+	aria-modal="true"
+	aria-labelledby={headingId}
+	aria-describedby={bodyId}
+	tabindex="-1"
+	onkeydown={onKeyDown}
+	use:focusTrap={{ initialFocus: 'container' }}
+>
+	<div class="head" id={headingId}>Permission grant requested</div>
+	<div class="body" id={bodyId}>
 		<div>
 			<strong>{request.tool}</strong>
 			<span class="muted">({request.permissionKind})</span>

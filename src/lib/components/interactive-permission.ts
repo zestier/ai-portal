@@ -33,6 +33,58 @@ export function expiryChoiceToMs(choice: ExpiryChoice): number | undefined {
 	}
 }
 
+/** The decision a keydown maps to in the permission dialog, or `none`. */
+export type PermissionShortcut = 'none' | 'deny' | 'allow-once' | 'allow-always';
+
+export interface PermissionShortcutEvent {
+	key: string;
+	shiftKey: boolean;
+	/** True for an OS key-repeat (held key) — never treated as an approval. */
+	repeat: boolean;
+}
+
+export interface PermissionShortcutState {
+	/** A response is already in flight; ignore all keys. */
+	busy: boolean;
+	/** The dialog shell itself has focus (not the deny-feedback textarea etc.). */
+	focusOnDialog: boolean;
+	/** Approve shortcuts stay disabled until the arming delay has elapsed. */
+	approveArmed: boolean;
+	/** Whether a persistent (allow-always) decision is currently offered. */
+	canPersistDecision: boolean;
+	/** Policy forces deny; allow-always must not be reachable. */
+	denyAllPolicy: boolean;
+}
+
+/**
+ * Decide which decision (if any) a keydown maps to in the permission dialog.
+ *
+ * Escape always denies — the safe direction — and is honored immediately, even
+ * mid-typing in the feedback textarea and before the approve shortcuts arm. The
+ * approve shortcuts (Enter / Shift+Enter) are deliberately gated: they fire only
+ * when the dialog shell itself has focus, the keystroke is not an OS auto-repeat,
+ * and the arming delay has elapsed — so a buffered or auto-repeating Enter left
+ * over from the keystroke that triggered the prompt can't silently allow a
+ * security-sensitive request.
+ *
+ * Pure and DOM-free so the security-critical gating is unit-testable.
+ */
+export function resolvePermissionShortcut(
+	e: PermissionShortcutEvent,
+	state: PermissionShortcutState
+): PermissionShortcut {
+	if (state.busy) return 'none';
+	if (e.key === 'Escape') return 'deny';
+	if (!state.focusOnDialog) return 'none';
+	if (e.repeat || !state.approveArmed) return 'none';
+	if (e.key === 'Enter' && e.shiftKey) {
+		if (!state.canPersistDecision || state.denyAllPolicy) return 'none';
+		return 'allow-always';
+	}
+	if (e.key === 'Enter') return 'allow-once';
+	return 'none';
+}
+
 export interface PermissionScopeContext {
 	isFsKind: boolean;
 	scopeKey: string | null;

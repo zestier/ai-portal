@@ -154,6 +154,10 @@ describe('Svelte component regression coverage', () => {
 		}).body;
 
 		expect(body).toContain('role="alertdialog"');
+		expect(body).toContain('aria-labelledby="permission-request-heading-perm-1"');
+		expect(body).toContain('id="permission-request-heading-perm-1"');
+		expect(body).toContain('aria-describedby="permission-request-body-perm-1"');
+		expect(body).toContain('id="permission-request-body-perm-1"');
 		expect(body).toContain('Just this exact read');
 		expect(body).toContain('Anywhere under `/tmp/`');
 		expect(body).toContain('"forceReadLargeFiles": true');
@@ -238,6 +242,10 @@ describe('Svelte component regression coverage', () => {
 		const text = textOf(body);
 
 		expect(body).toContain('Permission grant requested');
+		expect(body).toContain('aria-labelledby="grant-request-heading-grant-1"');
+		expect(body).toContain('id="grant-request-heading-grant-1"');
+		expect(body).toContain('aria-describedby="grant-request-body-grant-1"');
+		expect(body).toContain('id="grant-request-body-grant-1"');
 		expect(text).toContain('Scaffolding needs pnpm to install dependencies.');
 		expect(body).toContain('Save grant');
 		expect(body).toContain('Every conversation (global)');
