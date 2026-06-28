@@ -101,7 +101,7 @@ describe('ticket action helpers', () => {
 	const doPrompt =
 		'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
 	const refinePrompt =
-		'Refine this workspace ticket: {{ticket.title}}\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
+		"Refine this workspace ticket: {{ticket.title}}\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}";
 
 	it('uses the ticket title as the chat title', () => {
 		expect(ticketActionChatTitle({ title: 'Fix sidebar actions' })).toBe('Fix sidebar actions');
@@ -130,7 +130,7 @@ describe('ticket action helpers', () => {
 				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			'Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: ticket-1\n\nAdd a launch button.'
+			"Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: ticket-1\n\nAdd a launch button."
 		);
 	});
 
