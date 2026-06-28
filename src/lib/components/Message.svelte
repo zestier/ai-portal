@@ -610,6 +610,15 @@
 {/if}
 
 <style>
+	.text-part :global(img) {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		max-height: 24em;
+		object-fit: contain;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+	}
 	.msg {
 		padding: var(--space-3) var(--space-4);
 		border-radius: var(--radius-lg);

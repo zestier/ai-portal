@@ -50,6 +50,22 @@ test('an image viewed via the view tool is captured, served, and rendered inline
 	const img = viewCard.locator('img[src*="/attachments/"]');
 	await expect(img).toBeVisible();
 
+	// Standardized image sizing: the rule that prevents overflow/distortion is
+	// applied to tool-result images — width-clamped, aspect preserved, and tall
+	// images height-capped (see ResultBlock `.image`). Asserting the computed
+	// rule is robust regardless of the (tiny) stub fixture's intrinsic size.
+	const sizing = await img.evaluate((el) => {
+		const cs = getComputedStyle(el);
+		return {
+			objectFit: cs.objectFit,
+			maxWidth: cs.maxWidth,
+			maxHeight: cs.maxHeight
+		};
+	});
+	expect(sizing.objectFit).toBe('contain');
+	expect(sizing.maxWidth).toBe('100%');
+	expect(sizing.maxHeight).not.toBe('none');
+
 	// The src serves real PNG bytes over the authed endpoint.
 	const src = await img.getAttribute('src');
 	expect(src).toBeTruthy();

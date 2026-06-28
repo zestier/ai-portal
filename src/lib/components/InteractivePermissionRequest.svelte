@@ -584,7 +584,9 @@
 		display: block;
 		margin-top: 0.25rem;
 		max-width: 100%;
+		height: auto;
 		max-height: 18em;
+		object-fit: contain;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 	}

@@ -74,7 +74,18 @@
 <style>
 	.image {
 		max-width: 100%;
-		max-height: 32em;
+		height: auto;
+		max-height: 24em;
+		object-fit: contain;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+	}
+	.markdown-result :global(img) {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		max-height: 24em;
+		object-fit: contain;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 	}
