@@ -89,10 +89,18 @@ export interface MatchQuery {
  * Expired grants are skipped.
  *
  * For shell requests with multiple parsed segments (e.g. `cd ./src &&
- * git diff`), hard-denies are checked first across all segments. Otherwise,
- * each segment is evaluated independently against the ordered grant set. This
- * lets a `cd` grant cover the prefix while a `git` grant covers the tail
- * without requiring a single rule that knows about both.
+ * git diff`), each segment is evaluated independently against the ordered
+ * grant set and the results are combined by taking the MOST RESTRICTIVE
+ * outcome across segments: `deny` > `none` > `prompt` > `allow`. This lets a
+ * `cd` grant cover the prefix while a `git` grant covers the tail without
+ * requiring a single rule that knows about both — but it never lets a grant
+ * covering one segment silently approve a sibling segment that no grant
+ * covers. An uncovered segment yields `none` (fall through to policy) even
+ * when another segment matched a `prompt`/`allow` grant, so the human dialog
+ * can't be made to approve more than it describes. `force-allow` is applied
+ * per segment and overrides a `deny` on that same segment (so a force-allow
+ * created to bypass a deny still works when the command is chained), but it
+ * only covers the segment(s) it actually matches.
  */
 export function matchGrants(rows: GrantRow[], q: MatchQuery): MatchOutcome {
 	return matchGrantsDetailed(rows, q).outcome;
@@ -106,13 +114,17 @@ export function matchGrants(rows: GrantRow[], q: MatchQuery): MatchOutcome {
  */
 export function matchGrantsDetailed(rows: GrantRow[], q: MatchQuery): DetailedMatchOutcome {
 	const orderedRows = sortGrantRows(rows);
+	if (q.permissionKind === 'shell' && q.shellSegments && q.shellSegments.length > 0) {
+		// Shell chains/pipelines are evaluated per segment, with force-allow,
+		// deny, allow and prompt all resolved inside matchShellSegments so that
+		// force-allow can override a deny on the same segment and an uncovered
+		// segment can pull the whole chain down to `none`.
+		return matchShellSegments(orderedRows, q, q.shellSegments);
+	}
 	const forceAllow = matchFirst(orderedRows, q, (r) => r.decision === 'force-allow');
 	if (forceAllow) return withFeedback('allow', null);
 	const hardDeny = matchHardDeny(orderedRows, q);
 	if (hardDeny) return hardDeny;
-	if (q.permissionKind === 'shell' && q.shellSegments && q.shellSegments.length > 0) {
-		return matchShellSegments(orderedRows, q, q.shellSegments);
-	}
 	const match = matchFirst(orderedRows, q, (r) => !r.argsHash);
 	if (!match) return withFeedback('none', null);
 	return withFeedback(
@@ -122,23 +134,6 @@ export function matchGrantsDetailed(rows: GrantRow[], q: MatchQuery): DetailedMa
 }
 
 function matchHardDeny(rows: GrantRow[], q: MatchQuery): DetailedMatchOutcome | null {
-	if (q.permissionKind === 'shell' && q.shellSegments && q.shellSegments.length > 0) {
-		for (let i = 0; i < q.shellSegments.length; i++) {
-			const seg = q.shellSegments[i];
-			const ctx = {
-				workspaceRoot: q.workspaceRoot ?? null,
-				sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
-				inPipeline: segmentInPipeline(q.shellSegments, i)
-			};
-			for (const r of rows) {
-				if (r.decision !== 'deny') continue;
-				if (!grantApplies(r, q)) continue;
-				if (!rowMatchesShellSegment(r, seg, ctx)) continue;
-				return withFeedback('deny', r.denyReason);
-			}
-		}
-		return null;
-	}
 	for (const r of rows) {
 		if (r.decision !== 'deny') continue;
 		if (!grantApplies(r, q)) continue;
@@ -162,40 +157,62 @@ function matchFirst(
 	return null;
 }
 
+/**
+ * Resolve a shell request whose command parsed into one or more segments.
+ *
+ * Each segment is matched independently against the ordered grant set; the
+ * first matching grant (rows are pre-sorted force-allow → deny → allow →
+ * prompt) decides that segment's outcome. A force-allow that matches a
+ * segment therefore overrides a deny on the SAME segment. Per-segment
+ * outcomes are then combined by taking the most restrictive: an uncovered
+ * segment is `none`, and the precedence is `deny` > `none` > `prompt` >
+ * `allow`. Crucially, an uncovered segment is NOT swallowed by another
+ * segment's `prompt`/`allow`: the chain falls through to `none` so the
+ * generic policy prompt (with accurate feedback) covers it, instead of the
+ * dialog for a benign segment silently approving the uncovered one.
+ */
 function matchShellSegments(
 	rows: GrantRow[],
 	q: MatchQuery,
 	segments: ParsedSegment[]
 ): DetailedMatchOutcome {
-	let allAllowed = true;
+	let sawDeny = false;
+	let sawUncovered = false;
 	let sawPrompt = false;
+	let denyFeedback: string | null = null;
 	let promptFeedback: string | null = null;
 	for (let i = 0; i < segments.length; i++) {
 		const seg = segments[i];
-		const inPipeline = segmentInPipeline(segments, i);
 		const ctx = {
 			workspaceRoot: q.workspaceRoot ?? null,
 			sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
-			inPipeline
+			inPipeline: segmentInPipeline(segments, i)
 		};
-		let segMatched = false;
+		let segDecision: GrantDecision | null = null;
+		let segFeedback: string | null = null;
 		for (const r of rows) {
-			if (r.decision === 'deny') continue;
-			if (r.decision === 'force-allow') continue;
-			if (r.argsHash) continue;
 			if (!grantApplies(r, q)) continue;
 			if (!rowMatchesShellSegment(r, seg, ctx)) continue;
-			segMatched = true;
-			if (r.decision === 'prompt') {
-				sawPrompt = true;
-				promptFeedback ??= r.denyReason;
-			}
+			segDecision = r.decision;
+			segFeedback = r.denyReason;
 			break;
 		}
-		if (!segMatched || sawPrompt) allAllowed = false;
+		if (segDecision === 'deny') {
+			sawDeny = true;
+			denyFeedback ??= segFeedback;
+		} else if (segDecision === null) {
+			sawUncovered = true;
+		} else if (segDecision === 'prompt') {
+			sawPrompt = true;
+			promptFeedback ??= segFeedback;
+		}
+		// 'allow' / 'force-allow' contribute the least-restrictive outcome and
+		// need no bookkeeping.
 	}
+	if (sawDeny) return withFeedback('deny', denyFeedback);
+	if (sawUncovered) return withFeedback('none', null);
 	if (sawPrompt) return withFeedback('prompt', promptFeedback);
-	return withFeedback(allAllowed ? 'allow' : 'none', null);
+	return withFeedback('allow', null);
 }
 
 function sortGrantRows(rows: GrantRow[]): GrantRow[] {

