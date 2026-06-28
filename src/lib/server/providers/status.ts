@@ -68,10 +68,21 @@ export async function loadProviderStatus(
 		};
 	}
 
-	const [auth, models] = await Promise.all([
+	const [authResult, modelsResult] = await Promise.allSettled([
 		opts.loader.fetchAuthStatus(opts.userId, opts.providerAuthToken, provider.id),
 		opts.loader.fetchModels(opts.userId, opts.providerAuthToken, provider.id)
 	]);
+	// Resolve each leg independently: a transient model-list failure must not
+	// discard a successful auth probe (and vice versa), which would otherwise
+	// paint the provider fully unavailable on the settings page. Fall back to an
+	// unauthenticated/empty result for whichever leg rejected, and surface the
+	// failure(s) via the optional `error` field rather than throwing.
+	const auth: ProviderAuthStatus =
+		authResult.status === 'fulfilled' ? authResult.value : { isAuthenticated: false };
+	const models: ProviderModelInfo[] = modelsResult.status === 'fulfilled' ? modelsResult.value : [];
+	const errors: string[] = [];
+	if (authResult.status === 'rejected') errors.push(`auth: ${reason(authResult.reason)}`);
+	if (modelsResult.status === 'rejected') errors.push(`models: ${reason(modelsResult.reason)}`);
 	return {
 		id: provider.id,
 		displayName: provider.displayName,
@@ -88,6 +99,11 @@ export async function loadProviderStatus(
 			maxContextWindowTokens: m.capabilities?.limits?.max_context_window_tokens
 		})),
 		capabilities: provider.capabilities,
-		statusChecked: true
+		statusChecked: true,
+		...(errors.length ? { error: errors.join('; ') } : {})
 	};
+}
+
+function reason(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
 }

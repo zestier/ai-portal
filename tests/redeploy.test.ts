@@ -36,6 +36,7 @@ const baseCfg: AppConfig = {
 	SHARED_SECRET: undefined,
 	COPILOT_GITHUB_TOKEN: undefined,
 	COPILOT_CONTEXT_TIER: 'default',
+	COPILOT_SDK_CALL_TIMEOUT_MS: 60_000,
 	DEFAULT_BACKEND_PROVIDER: 'copilot',
 	DEFAULT_MODEL: 'claude-sonnet-4.5',
 	OPENAI_COMPATIBLE_BASE_URL: undefined,

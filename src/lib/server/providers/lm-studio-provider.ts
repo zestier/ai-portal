@@ -6,6 +6,7 @@ import {
 	openOpenAICompatibleSession,
 	type OpenAICompatibleConfig
 } from './openai-compatible-provider';
+import { BoundedTtlCache } from '../copilot/bounded-ttl-cache';
 import type { BackendProviderId } from '$lib/types';
 import type {
 	ModelBackendProvider,
@@ -47,7 +48,14 @@ const providerId = 'lm-studio' satisfies Extract<BackendProviderId, 'lm-studio'>
 const displayName = 'LM Studio';
 const MODEL_CONTEXT_CACHE_TTL_MS = 5 * 60_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
-const modelContextCache = new Map<string, { at: number; contextLength: number }>();
+// Bounded so a long-running server probing many rotating model IDs doesn't grow
+// the cache without limit — lazy TTL eviction alone never reclaims keys that are
+// never read again. Mirrors copilot-provider's per-user model cache.
+const MODEL_CONTEXT_CACHE_MAX = 256;
+const modelContextCache = new BoundedTtlCache<string, number>({
+	ttlMs: MODEL_CONTEXT_CACHE_TTL_MS,
+	maxEntries: MODEL_CONTEXT_CACHE_MAX
+});
 
 export const lmStudioProvider: ModelBackendProvider = {
 	id: providerId,
@@ -266,8 +274,8 @@ async function fetchModelContextLength(
 ): Promise<number | null> {
 	const cacheKey = `${cfg.nativeBaseUrl}\0${modelId}`;
 	const cached = modelContextCache.get(cacheKey);
-	if (cached && Date.now() - cached.at < MODEL_CONTEXT_CACHE_TTL_MS) {
-		return cached.contextLength;
+	if (cached !== undefined) {
+		return cached;
 	}
 	try {
 		const res = await fetchWithTimeout(
@@ -284,20 +292,20 @@ async function fetchModelContextLength(
 		const exactLoadedContext = model.loaded_instances?.find((instance) => instance.id === modelId)
 			?.config?.context_length;
 		if (typeof exactLoadedContext === 'number') {
-			modelContextCache.set(cacheKey, { at: Date.now(), contextLength: exactLoadedContext });
+			modelContextCache.set(cacheKey, exactLoadedContext);
 			return exactLoadedContext;
 		}
 		const firstLoadedContext = model.loaded_instances?.find(
 			(instance) => instance.config?.context_length
 		)?.config?.context_length;
 		if (typeof firstLoadedContext === 'number') {
-			modelContextCache.set(cacheKey, { at: Date.now(), contextLength: firstLoadedContext });
+			modelContextCache.set(cacheKey, firstLoadedContext);
 			return firstLoadedContext;
 		}
 		const contextLength =
 			typeof model.max_context_length === 'number' ? model.max_context_length : null;
 		if (contextLength !== null) {
-			modelContextCache.set(cacheKey, { at: Date.now(), contextLength });
+			modelContextCache.set(cacheKey, contextLength);
 		}
 		return contextLength;
 	} catch (e) {

@@ -100,6 +100,47 @@ describe('provider registry', () => {
 		expect(loader.fetchModels).not.toHaveBeenCalled();
 	});
 
+	it('keeps auth status when the model list probe fails', async () => {
+		const loader = {
+			fetchAuthStatus: vi.fn().mockResolvedValue({ isAuthenticated: true, authType: 'none' }),
+			fetchModels: vi.fn().mockRejectedValue(new Error('models endpoint flaked'))
+		};
+		const lmStudio = getProvider('lm-studio');
+
+		const snapshot = await loadProviderStatus(lmStudio, {
+			userId: 'user-1',
+			defaultProvider: 'lm-studio',
+			loader
+		});
+
+		expect(snapshot.statusChecked).toBe(true);
+		expect(snapshot.auth.isAuthenticated).toBe(true);
+		expect(snapshot.models).toEqual([]);
+		expect(snapshot.error).toContain('models');
+		expect(snapshot.error).toContain('models endpoint flaked');
+	});
+
+	it('keeps the model list when the auth probe fails', async () => {
+		const loader = {
+			fetchAuthStatus: vi.fn().mockRejectedValue(new Error('auth flaked')),
+			fetchModels: vi.fn().mockResolvedValue([{ id: 'm1', name: 'Model 1' }])
+		};
+		const lmStudio = getProvider('lm-studio');
+
+		const snapshot = await loadProviderStatus(lmStudio, {
+			userId: 'user-1',
+			defaultProvider: 'lm-studio',
+			loader
+		});
+
+		expect(snapshot.statusChecked).toBe(true);
+		expect(snapshot.auth.isAuthenticated).toBe(false);
+		expect(snapshot.models).toEqual([
+			{ id: 'm1', name: 'Model 1', maxContextWindowTokens: undefined }
+		]);
+		expect(snapshot.error).toContain('auth');
+	});
+
 	it('resolves credentials only for providers that need them', () => {
 		const tokenSpy = vi.spyOn(tokens, 'getGithubToken');
 		process.env.COPILOT_GITHUB_TOKEN = 'fallback-token';

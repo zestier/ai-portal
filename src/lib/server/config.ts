@@ -96,6 +96,11 @@ const Schema = z
 		// window. Set to "long_context" to request the large window on every
 		// session. Forwarded as the SDK's `contextTier` session-config field.
 		COPILOT_CONTEXT_TIER: z.enum(['default', 'long_context']).default('default'),
+		// Per-call timeout (ms) for Copilot SDK lifecycle calls (client start,
+		// session metadata lookup, create/resume). A hung CLI subprocess must not
+		// pin a request — and the per-user `starting` dedupe lock — open forever.
+		// 0 disables the guard.
+		COPILOT_SDK_CALL_TIMEOUT_MS: z.coerce.number().int().min(0).default(60_000),
 		// Connection token for a token-protected remote CLI reached via
 		// COPILOT_CLI_URL. Must match the COPILOT_CONNECTION_TOKEN set on the
 		// `copilot --headless` server. Forwarded to the SDK as the

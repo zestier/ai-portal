@@ -11,6 +11,7 @@ import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
 import type { ContextTier } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
+import { withTimeout } from '../runtime/with-timeout';
 import { PORTAL_SYSTEM_GUIDANCE } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from './interactive-adapter';
 import { SdkEventAdapter, toRuntimeMode, type RuntimeSessionMode } from './sdk-events';
@@ -60,6 +61,10 @@ const starting: Map<string, Promise<CopilotClient>> = getOrCreateGlobalSingleton
 	() => new Map<string, Promise<CopilotClient>>()
 );
 
+function sdkCallTimeoutMs(): number {
+	return loadConfig().COPILOT_SDK_CALL_TIMEOUT_MS;
+}
+
 export async function getClient(
 	userId: string,
 	providerAuthToken?: string
@@ -90,7 +95,7 @@ export async function getClient(
 						useLoggedInUser: true,
 						...(providerAuthToken !== undefined ? { gitHubToken: providerAuthToken } : {})
 					});
-		await client.start();
+		await withTimeout(client.start(), sdkCallTimeoutMs(), 'copilot client.start');
 		clients.set(userId, client);
 		log.info('copilot.client.started', { userId });
 		return client;
@@ -285,7 +290,11 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 
 	let existingMetadata: unknown;
 	try {
-		existingMetadata = await client.getSessionMetadata(providerSessionId);
+		existingMetadata = await withTimeout(
+			client.getSessionMetadata(providerSessionId),
+			sdkCallTimeoutMs(),
+			'copilot getSessionMetadata'
+		);
 	} catch (e) {
 		log.warn('copilot.session.metadata_lookup_failed', {
 			conversationId: opts.conversationId,
@@ -351,10 +360,14 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	// see. The auth token lives on the client, never in this message.
 	const createFreshSession = async (): Promise<SdkSession> => {
 		try {
-			return (await client.createSession({
-				...sessionConfig,
-				sessionId: providerSessionId
-			})) as unknown as SdkSession;
+			return (await withTimeout(
+				client.createSession({
+					...sessionConfig,
+					sessionId: providerSessionId
+				}),
+				sdkCallTimeoutMs(),
+				'copilot createSession'
+			)) as unknown as SdkSession;
 		} catch (e) {
 			throw new Error(
 				`Failed to open a GitHub Copilot session for conversation ${opts.conversationId}: ${
@@ -393,9 +406,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	log.info('copilot.session.config', sessionConfigSummary);
 	if (existingMetadata) {
 		try {
-			sdkSession = (await client.resumeSession(
-				providerSessionId,
-				sessionConfig
+			sdkSession = (await withTimeout(
+				client.resumeSession(providerSessionId, sessionConfig),
+				sdkCallTimeoutMs(),
+				'copilot resumeSession'
 			)) as unknown as SdkSession;
 		} catch (e) {
 			log.warn('copilot.session.resume_failed_falling_back_to_create', {
