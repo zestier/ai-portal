@@ -172,6 +172,12 @@ export interface ChatPromptTemplate {
 	 * creates its conversation. `null` means use the user's default mode.
 	 */
 	conversationMode: SessionMode | null;
+	/**
+	 * Optional model override applied when a ticket-action template creates its
+	 * conversation. `null` means use the user's default model. A stale id (no
+	 * longer offered by the provider) is passed through unchanged.
+	 */
+	model: string | null;
 	status: PromptTemplateStatus;
 	pinned: boolean;
 	orderIndex: number;

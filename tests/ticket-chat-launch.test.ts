@@ -28,6 +28,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
 		launchBehavior: 'draft',
 		conversationMode: null,
+		model: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,

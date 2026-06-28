@@ -29,6 +29,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
 		launchBehavior: 'send',
 		conversationMode: null,
+		model: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,
@@ -95,6 +96,30 @@ describe('createTicketLaunchChat', () => {
 			title: 'Fix sidebar actions',
 			workdir: '/workspace',
 			mode: 'interactive'
+		});
+	});
+
+	it('applies the model override at creation', async () => {
+		const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+			void init;
+			if (url === '/api/conversations') {
+				return Response.json({ conversation: { id: 'conv-3' } }, { status: 201 });
+			}
+			return new Response(null, { status: 200 });
+		});
+
+		await createTicketLaunchChat({
+			ticket,
+			template: action({ model: 'claude-sonnet-4.6' }),
+			workdir: '/workspace',
+			fetcher
+		});
+
+		const [, init] = fetcher.mock.calls[0];
+		expect(JSON.parse(init.body as string)).toEqual({
+			title: 'Fix sidebar actions',
+			workdir: '/workspace',
+			model: 'claude-sonnet-4.6'
 		});
 	});
 

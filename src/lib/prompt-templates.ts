@@ -23,6 +23,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'Review the current code changes for correctness, security, and maintainability. Focus on issues that matter and suggest concrete fixes.',
 		launchBehavior: null,
 		conversationMode: null,
+		model: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,
@@ -40,6 +41,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'I need help debugging an error. Start by asking for or inspecting the failing command/output, identify likely root causes, and propose the smallest safe fix.',
 		launchBehavior: null,
 		conversationMode: null,
+		model: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 20,
@@ -57,6 +59,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'Help plan this implementation. Inspect the relevant code paths, call out risks or open questions, and propose a concise step-by-step approach before editing.',
 		launchBehavior: null,
 		conversationMode: null,
+		model: null,
 		status: 'open',
 		pinned: false,
 		orderIndex: 30,
@@ -74,6 +77,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'Explain how this part of the codebase works. Trace the important files and data flow, and summarize the behavior, extension points, and gotchas.',
 		launchBehavior: null,
 		conversationMode: null,
+		model: null,
 		status: 'open',
 		pinned: false,
 		orderIndex: 40,
@@ -168,6 +172,8 @@ export interface TicketActionDefault {
 	prompt: string;
 	launchBehavior: TicketLaunchBehavior;
 	conversationMode: SessionMode | null;
+	/** Optional model override; `null` keeps the user's default model. */
+	model: string | null;
 	pinned: boolean;
 	orderIndex: number;
 }
@@ -191,6 +197,7 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 		prompt: DO_PROMPT,
 		launchBehavior: 'send',
 		conversationMode: null,
+		model: null,
 		pinned: true,
 		orderIndex: 10
 	},
@@ -201,6 +208,7 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 		prompt: DO_PROMPT,
 		launchBehavior: 'draft',
 		conversationMode: null,
+		model: null,
 		pinned: true,
 		orderIndex: 20
 	},
@@ -211,6 +219,7 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 		prompt: REFINE_PROMPT,
 		launchBehavior: 'send',
 		conversationMode: 'interactive',
+		model: null,
 		pinned: true,
 		orderIndex: 30
 	}

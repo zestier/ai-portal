@@ -77,6 +77,8 @@ describe('prompt templates', () => {
 		const refine = seeded.find((t) => t.title === 'Refine');
 		expect(refine?.conversationMode).toBe('interactive');
 		expect(seeded.find((t) => t.title === 'Draft')?.launchBehavior).toBe('draft');
+		// Seeded defaults don't pin a model; launches use the user's default.
+		expect(seeded.every((t) => t.model === null)).toBe(true);
 
 		// Chat-type listing excludes ticket actions.
 		expect(promptTemplates.list(user.id, { type: 'chat' })).toEqual([]);
@@ -104,6 +106,34 @@ describe('prompt templates', () => {
 		expect(() =>
 			promptTemplates.create(user.id, { title: 'Chat bad', prompt: 'Has {{ticket.title}}' })
 		).toThrow(/don't support placeholders/i);
+	});
+
+	it('persists, updates, and clears the ticket-action model override; ignores it for chat', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const promptTemplates = await import('../src/lib/server/db/repos/prompt-templates');
+		const user = users.ensureLocalUser();
+
+		const action = promptTemplates.create(user.id, {
+			type: 'ticket-action',
+			title: 'Ship it',
+			prompt: 'Do {{ticket.title}}',
+			model: '  claude-sonnet-4.6  '
+		});
+		// Stored override is trimmed and round-trips through a fresh read.
+		expect(action.model).toBe('claude-sonnet-4.6');
+		expect(promptTemplates.get(action.id, user.id)?.model).toBe('claude-sonnet-4.6');
+
+		// Empty/whitespace clears back to "use my default model".
+		expect(promptTemplates.update(action.id, user.id, { model: '   ' })?.model).toBeNull();
+
+		// Chat templates never carry a model override even if one is supplied.
+		const chat = promptTemplates.create(user.id, {
+			type: 'chat',
+			title: 'Plain',
+			prompt: 'No placeholders here',
+			model: 'claude-sonnet-4.6'
+		});
+		expect(chat.model).toBeNull();
 	});
 
 	it('API lists built-ins and performs user-scoped custom CRUD', async () => {
@@ -195,7 +225,8 @@ describe('prompt templates', () => {
 					title: 'Investigate',
 					prompt: 'Investigate {{ticket.title}} ({{ticket.id}})',
 					launchBehavior: 'send',
-					conversationMode: 'interactive'
+					conversationMode: 'interactive',
+					model: 'claude-sonnet-4.6'
 				}
 			}) as never
 		);
@@ -204,7 +235,8 @@ describe('prompt templates', () => {
 		expect(createdBody.template).toMatchObject({
 			type: 'ticket-action',
 			launchBehavior: 'send',
-			conversationMode: 'interactive'
+			conversationMode: 'interactive',
+			model: 'claude-sonnet-4.6'
 		});
 
 		// Ticket actions are excluded from the chat-template GET listing.

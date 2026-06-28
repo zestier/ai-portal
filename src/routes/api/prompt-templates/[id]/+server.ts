@@ -23,6 +23,7 @@ const PatchBody = z
 			.enum(['interactive', 'plan', 'autopilot', 'best-effort'])
 			.nullable()
 			.optional(),
+		model: z.string().trim().max(200).nullable().optional(),
 		status: z.enum(['open', 'archived']).optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
@@ -34,6 +35,7 @@ const PatchBody = z
 			body.prompt !== undefined ||
 			body.launchBehavior !== undefined ||
 			body.conversationMode !== undefined ||
+			body.model !== undefined ||
 			body.status !== undefined ||
 			body.pinned !== undefined ||
 			body.orderIndex !== undefined,
@@ -57,6 +59,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
+		...(body.model !== undefined ? { model: body.model } : {}),
 		...(body.status !== undefined ? { status: body.status } : {}),
 		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
 		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})

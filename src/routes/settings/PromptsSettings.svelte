@@ -9,10 +9,12 @@
 	let {
 		builtInTemplates,
 		promptTemplates,
+		modelOptions = [],
 		form
 	}: {
 		builtInTemplates: PromptTemplateListItem[];
 		promptTemplates: PromptTemplate[];
+		modelOptions?: string[];
 		form: FormResult | null;
 	} = $props();
 
@@ -33,6 +35,15 @@
 		{ value: 'autopilot', label: 'Autopilot' },
 		{ value: 'best-effort', label: 'Best effort' }
 	];
+
+	// Model-override options for ticket actions. Always include the currently
+	// stored override (even if the provider no longer lists it) so editing a
+	// stale id doesn't silently drop it.
+	function modelOptionsFor(current: string | null | undefined): string[] {
+		const ids = [...modelOptions];
+		if (current && !ids.includes(current)) ids.unshift(current);
+		return ids;
+	}
 </script>
 
 <div
@@ -199,6 +210,7 @@
 								<small>
 									{action.launchBehavior === 'draft' ? 'Draft' : 'Send'}
 									· {action.conversationMode ?? 'default mode'}
+									· {action.model ?? 'default model'}
 								</small>
 							</span>
 							{#if action.pinned}<Pill tone="accent">Pinned</Pill>{/if}
@@ -242,6 +254,17 @@
 												selected={(action.conversationMode ?? '') === opt.value}
 											>
 												{opt.label}
+											</option>
+										{/each}
+									</select>
+								</label>
+								<label>
+									Model
+									<select name="model">
+										<option value="" selected={!action.model}>Use my default model</option>
+										{#each modelOptionsFor(action.model) as modelId (modelId)}
+											<option value={modelId} selected={action.model === modelId}>
+												{modelId}
 											</option>
 										{/each}
 									</select>
@@ -308,6 +331,15 @@
 						<select name="conversationMode">
 							{#each conversationModeOptions as opt (opt.value)}
 								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						Model
+						<select name="model">
+							<option value="">Use my default model</option>
+							{#each modelOptions as modelId (modelId)}
+								<option value={modelId}>{modelId}</option>
 							{/each}
 						</select>
 					</label>

@@ -27,6 +27,7 @@ interface PromptTemplateRow {
 	prompt: string;
 	launch_behavior: string | null;
 	conversation_mode: string | null;
+	model: string | null;
 	status: string;
 	pinned: number;
 	order_index: number;
@@ -37,6 +38,12 @@ interface PromptTemplateRow {
 
 function normalizeStatus(raw: string): PromptTemplateStatus {
 	return raw === 'archived' ? 'archived' : 'open';
+}
+
+/** Trim a model override, collapsing empty/whitespace to `null` (use default). */
+function normalizeModelOverride(raw: string | null | undefined): string | null {
+	const trimmed = raw?.trim();
+	return trimmed ? trimmed : null;
 }
 
 function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
@@ -54,6 +61,7 @@ function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 			type === 'ticket-action' && row.conversation_mode
 				? normalizeSessionMode(row.conversation_mode)
 				: null,
+		model: type === 'ticket-action' ? (row.model ?? null) : null,
 		status: normalizeStatus(row.status),
 		pinned: row.pinned === 1,
 		orderIndex: row.order_index,
@@ -121,6 +129,7 @@ export interface CreateInput {
 	prompt: string;
 	launchBehavior?: TicketLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
+	model?: string | null;
 	pinned?: boolean;
 	orderIndex?: number;
 }
@@ -135,6 +144,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 	assertPlaceholders(prompt, type);
 	const launchBehavior = type === 'ticket-action' ? (input.launchBehavior ?? 'send') : null;
 	const conversationMode = type === 'ticket-action' ? (input.conversationMode ?? null) : null;
+	const model = type === 'ticket-action' ? normalizeModelOverride(input.model) : null;
 	const id = input.id ?? ulid();
 	const now = Date.now();
 	const orderIndex = Number.isFinite(input.orderIndex) ? Math.trunc(input.orderIndex ?? 0) : 0;
@@ -142,8 +152,8 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		.prepare(
 			`INSERT INTO prompt_templates(
 			   id, user_id, type, title, description, prompt, launch_behavior, conversation_mode,
-			   status, pinned, order_index, created_at, updated_at, archived_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+			   model, status, pinned, order_index, created_at, updated_at, archived_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 		)
 		.run(
 			id,
@@ -154,6 +164,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 			prompt,
 			launchBehavior,
 			conversationMode,
+			model,
 			input.pinned ? 1 : 0,
 			orderIndex,
 			now,
@@ -168,6 +179,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		prompt,
 		launchBehavior,
 		conversationMode,
+		model,
 		status: 'open',
 		pinned: input.pinned ?? false,
 		orderIndex,
@@ -183,6 +195,7 @@ export interface UpdateInput {
 	prompt?: string;
 	launchBehavior?: TicketLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
+	model?: string | null;
 	status?: PromptTemplateStatus;
 	pinned?: boolean;
 	orderIndex?: number;
@@ -216,12 +229,18 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 				? patch.conversationMode
 				: current.conversationMode
 			: null;
+	const model =
+		current.type === 'ticket-action'
+			? patch.model !== undefined
+				? normalizeModelOverride(patch.model)
+				: current.model
+			: null;
 
 	getDb()
 		.prepare(
 			`UPDATE prompt_templates
 			 SET title = ?, description = ?, prompt = ?, launch_behavior = ?, conversation_mode = ?,
-			     status = ?, pinned = ?, order_index = ?, updated_at = ?, archived_at = ?
+			     model = ?, status = ?, pinned = ?, order_index = ?, updated_at = ?, archived_at = ?
 			 WHERE id = ? AND user_id = ?`
 		)
 		.run(
@@ -230,6 +249,7 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 			prompt ?? current.prompt,
 			launchBehavior,
 			conversationMode,
+			model,
 			nextStatus,
 			(patch.pinned ?? current.pinned) ? 1 : 0,
 			orderIndex,
@@ -258,6 +278,7 @@ function insertDefault(userId: string, def: TicketActionDefault): void {
 		prompt: def.prompt,
 		launchBehavior: def.launchBehavior,
 		conversationMode: def.conversationMode,
+		model: def.model,
 		pinned: def.pinned,
 		orderIndex: def.orderIndex
 	});

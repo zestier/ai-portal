@@ -37,6 +37,7 @@ const CreateBody = z
 		prompt: z.string().trim().min(1).max(20_000),
 		launchBehavior: z.enum(['send', 'draft']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		model: z.string().trim().max(200).nullable().optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -61,6 +62,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		...(body.description !== undefined ? { description: body.description } : {}),
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
+		...(body.model !== undefined ? { model: body.model } : {}),
 		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
 		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})
 	});

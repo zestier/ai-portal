@@ -120,6 +120,7 @@ const PromptTemplateSchema = z
 		prompt: z.string().trim().min(1).max(20_000),
 		launchBehavior: z.enum(['send', 'draft']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		model: z.string().trim().max(200).optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -143,6 +144,7 @@ const UpdatePromptTemplateSchema = z
 		prompt: z.string().trim().min(1).max(20_000),
 		launchBehavior: z.enum(['send', 'draft']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		model: z.string().trim().max(200).optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -229,6 +231,7 @@ export const actions: Actions = {
 			prompt: data.get('prompt'),
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
+			model: (data.get('model') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
 		});
@@ -245,6 +248,7 @@ export const actions: Actions = {
 			prompt: parsed.data.prompt,
 			conversationMode:
 				parsed.data.type === 'ticket-action' ? (parsed.data.conversationMode ?? null) : null,
+			model: parsed.data.type === 'ticket-action' ? (parsed.data.model ?? null) : null,
 			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
 			...(parsed.data.launchBehavior !== undefined
 				? { launchBehavior: parsed.data.launchBehavior }
@@ -267,6 +271,7 @@ export const actions: Actions = {
 			prompt: data.get('prompt'),
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
+			model: (data.get('model') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
 		});
@@ -284,7 +289,7 @@ export const actions: Actions = {
 			...(patch.description !== undefined ? { description: patch.description } : {}),
 			...(patch.launchBehavior !== undefined ? { launchBehavior: patch.launchBehavior } : {}),
 			...(parsedType === 'ticket-action'
-				? { conversationMode: patch.conversationMode ?? null }
+				? { conversationMode: patch.conversationMode ?? null, model: patch.model ?? null }
 				: {}),
 			...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
 			...(patch.orderIndex !== undefined ? { orderIndex: patch.orderIndex } : {})

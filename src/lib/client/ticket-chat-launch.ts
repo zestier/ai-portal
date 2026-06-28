@@ -2,6 +2,7 @@ import {
 	interpolateTicketPrompt,
 	ticketActionChatTitle,
 	ticketActionConversationMode,
+	ticketActionModel,
 	ticketActionDraftUrl
 } from '$lib/tickets/chat';
 import type { ChatPromptTemplate, WorkspaceTicket } from '$lib/types';
@@ -10,7 +11,7 @@ type TicketDraftFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 type TicketActionTemplate = Pick<
 	ChatPromptTemplate,
-	'id' | 'prompt' | 'launchBehavior' | 'conversationMode'
+	'id' | 'prompt' | 'launchBehavior' | 'conversationMode' | 'model'
 >;
 
 /**
@@ -45,7 +46,8 @@ export async function createTicketLaunchChat({
 			body: JSON.stringify({
 				title: ticketActionChatTitle(ticket),
 				workdir: workdir ?? undefined,
-				mode: ticketActionConversationMode(template)
+				mode: ticketActionConversationMode(template),
+				model: ticketActionModel(template)
 			})
 		});
 		if (!convRes.ok) return { ok: false, stage: 'create', status: convRes.status };
@@ -101,7 +103,8 @@ export async function createTicketDraftChat({
 		body: JSON.stringify({
 			title: ticketActionChatTitle(ticket),
 			workdir: workdir ?? undefined,
-			mode: ticketActionConversationMode(template)
+			mode: ticketActionConversationMode(template),
+			model: ticketActionModel(template)
 		})
 	});
 	if (!convRes.ok) return { ok: false, status: convRes.status };

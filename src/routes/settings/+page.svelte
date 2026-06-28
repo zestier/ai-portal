@@ -86,6 +86,7 @@
 		<PromptsSettings
 			builtInTemplates={data.builtInPromptTemplates}
 			promptTemplates={data.promptTemplates}
+			modelOptions={data.defaultProviderStatus?.models.map((m) => m.id) ?? []}
 			{form}
 		/>
 	{:else if activeTab === 'memory'}

@@ -24,6 +24,15 @@ export function ticketActionConversationMode(
 	return template.conversationMode ?? undefined;
 }
 
+/**
+ * Model override for a ticket-action template, or `undefined` to use the user's
+ * default model. A stale id is passed through unchanged; the conversation API
+ * stores whatever it's given.
+ */
+export function ticketActionModel(template: Pick<ChatPromptTemplate, 'model'>): string | undefined {
+	return template.model ?? undefined;
+}
+
 /** Interpolate a ticket-action template's prompt with a ticket's values. */
 export function interpolateTicketPrompt(
 	template: Pick<ChatPromptTemplate, 'prompt'>,
