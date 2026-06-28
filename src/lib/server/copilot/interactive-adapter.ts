@@ -591,12 +591,36 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 	};
 
+	// Portal-originated trust prompt. The headless runtime never surfaces its
+	// own "trust this folder?" dialog, so the portal asks before letting the
+	// agent run in an untrusted workspace (which would otherwise silently skip
+	// the workspace `.mcp.json`). Returns true when the user grants trust.
+	const onFolderTrustRequest = async (req: { path: string }): Promise<boolean> => {
+		try {
+			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'folder_trust' }>>(
+				'folder_trust',
+				{
+					kind: 'folder_trust',
+					path: req.path,
+					summary: `Trust this workspace folder so Copilot can load tools and MCP servers configured in it (e.g. ${req.path}/.mcp.json)?`
+				}
+			);
+			return response.trust === true;
+		} catch (err) {
+			if (isInteractivePromptCancelledError(err)) {
+				return false;
+			}
+			throw err;
+		}
+	};
+
 	return {
 		onPermissionRequest,
 		onUserInputRequest,
 		onElicitationRequest,
 		onExitPlanMode,
-		onAutoModeSwitch
+		onAutoModeSwitch,
+		onFolderTrustRequest
 	};
 }
 

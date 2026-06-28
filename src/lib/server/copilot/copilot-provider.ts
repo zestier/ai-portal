@@ -190,6 +190,22 @@ interface SdkSession {
 		permissions?: {
 			setApproveAll?: (params: { enabled: boolean }) => Promise<{ success: boolean }>;
 			resetSessionApprovals?: () => Promise<unknown>;
+			/**
+			 * Experimental folder-trust surface. Workspace config sources
+			 * (notably `.mcp.json`) only load from a trusted working directory;
+			 * the headless runtime never raises its own trust prompt, so the
+			 * portal checks + grants trust here on the user's behalf.
+			 */
+			folderTrust?: {
+				isTrusted?: (params: { path: string }) => Promise<{ trusted: boolean }>;
+				addTrusted?: (params: { path: string }) => Promise<{ success: boolean }>;
+			};
+		};
+		/** Reloads the session's MCP server connections (e.g. after granting
+		 * folder trust so a now-allowed workspace `.mcp.json` is picked up
+		 * without recreating the session). */
+		mcp?: {
+			reload?: () => Promise<void>;
 		};
 	};
 }
@@ -260,7 +276,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		onUserInputRequest,
 		onElicitationRequest,
 		onExitPlanMode,
-		onAutoModeSwitch
+		onAutoModeSwitch,
+		onFolderTrustRequest
 	} = createInteractiveCallbacks({
 		conversationId: opts.conversationId,
 		userId: opts.userId,
@@ -451,6 +468,63 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			});
 		}
 	}
+	// Folder trust gate. Workspace config sources (notably `.mcp.json`) only
+	// load from a trusted working directory, and the headless runtime never
+	// raises its own trust prompt — so we ask the user once per session before
+	// the agent runs. On approval we persist trust and reload MCP so the
+	// now-allowed servers connect in this live session (they also load at
+	// creation time for every later session in the same folder). Best-effort
+	// throughout: a missing rpc surface (stub client), a check failure, or a
+	// declined prompt all just leave the workspace untrusted and continue.
+	let folderTrustResolved = false;
+	async function ensureFolderTrust(): Promise<void> {
+		if (folderTrustResolved) return;
+		folderTrustResolved = true;
+		const folderTrust = sdkSession.rpc?.permissions?.folderTrust;
+		if (!folderTrust?.isTrusted || !folderTrust?.addTrusted) return;
+		const path = opts.workingDirectory;
+		if (!path) return;
+		try {
+			const { trusted } = await folderTrust.isTrusted({ path });
+			if (trusted) return;
+		} catch (e) {
+			log.warn('copilot.session.folder_trust_check_failed', {
+				conversationId: opts.conversationId,
+				path,
+				err: (e as Error).message
+			});
+			return;
+		}
+		let approved: boolean;
+		try {
+			approved = await onFolderTrustRequest({ path });
+		} catch (e) {
+			log.warn('copilot.session.folder_trust_prompt_failed', {
+				conversationId: opts.conversationId,
+				path,
+				err: (e as Error).message
+			});
+			return;
+		}
+		if (!approved) {
+			log.info('copilot.session.folder_trust_declined', {
+				conversationId: opts.conversationId,
+				path
+			});
+			return;
+		}
+		try {
+			await folderTrust.addTrusted({ path });
+			await sdkSession.rpc?.mcp?.reload?.();
+			log.info('copilot.session.folder_trusted', { conversationId: opts.conversationId, path });
+		} catch (e) {
+			log.warn('copilot.session.add_trusted_failed', {
+				conversationId: opts.conversationId,
+				path,
+				err: (e as Error).message
+			});
+		}
+	}
 	// Await initialization before returning so the first turn cannot call
 	// `session.send()` before `rpc.mode.set` / `setApproveAll` complete and
 	// run in the wrong mode. Both helpers swallow their own errors (best-effort
@@ -478,22 +552,34 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			};
 			signal.addEventListener('abort', onAbort, { once: true });
 
-			try {
-				await sdkSession.send({ prompt });
-			} catch (err) {
-				q.push({
-					type: 'error',
-					code: 'send_failed',
-					message: err instanceof Error ? err.message : String(err)
-				});
-				q.end();
-			}
+			// Producer: gate on folder trust (which may raise an interactive
+			// prompt that must stream to the client via `q` to be answerable),
+			// then submit the turn. Runs concurrently with the drain loop below
+			// so the prompt is delivered and resolved before `sdkSession.send`.
+			// Placing the trust check *before* the drain loop would deadlock:
+			// the prompt event would buffer in `q` with nothing consuming it.
+			const producer = (async () => {
+				try {
+					await ensureFolderTrust();
+					if (signal.aborted) return;
+					await sdkSession.send({ prompt });
+				} catch (err) {
+					q.push({
+						type: 'error',
+						code: 'send_failed',
+						message: err instanceof Error ? err.message : String(err)
+					});
+					q.end();
+				}
+			})();
+
 			try {
 				for await (const ev of q) {
 					opts.onEvent?.(ev);
 					yield ev;
 				}
 			} finally {
+				await producer.catch(() => undefined);
 				signal.removeEventListener('abort', onAbort);
 				if (activeQueue === q) activeQueue = null;
 				if (currentTurnSignal === signal) currentTurnSignal = null;

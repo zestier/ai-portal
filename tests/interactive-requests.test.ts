@@ -110,7 +110,8 @@ describe('interactive request registry', () => {
 			exit_plan_mode: true,
 			sampling: false,
 			mcp_oauth: false,
-			external_tool: false
+			external_tool: false,
+			folder_trust: true
 		};
 		for (const [kind, blocking] of Object.entries(expected) as Array<[InteractiveKind, boolean]>) {
 			expect(isBlockingKind(kind)).toBe(blocking);
@@ -126,7 +127,8 @@ describe('interactive request registry', () => {
 			exit_plan_mode: { kind: 'exit_plan_mode', approved: false },
 			sampling: { kind: 'sampling', action: 'ack' },
 			mcp_oauth: { kind: 'mcp_oauth', action: 'ack' },
-			external_tool: { kind: 'external_tool', action: 'ack' }
+			external_tool: { kind: 'external_tool', action: 'ack' },
+			folder_trust: { kind: 'folder_trust', trust: false }
 		};
 		for (const [kind, response] of Object.entries(expected) as Array<
 			[InteractiveKind, InteractiveResponse]
