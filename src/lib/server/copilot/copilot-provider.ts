@@ -27,6 +27,7 @@ import * as settingsRepo from '../db/repos/settings';
 import { loadConfig } from '../config';
 import { log } from '../log';
 import { StubCopilotClient, isStubMode } from './bridge-stub';
+import { BoundedTtlCache } from './bounded-ttl-cache';
 import { buildGitTools } from '../tools/git';
 import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
@@ -116,9 +117,15 @@ export async function shutdownClient() {
 }
 
 // Per-user listModels cache: entitlements (and therefore the list of
-// available models) can differ between users.
-const modelsCache = new Map<string, { at: number; models: ProviderModelInfo[] }>();
+// available models) can differ between users. Bounded so a long-running server
+// that sees many distinct users doesn't accumulate a permanent registry of
+// every userId — entries expire on read and the map is LRU-capped.
 const MODELS_TTL_MS = 5 * 60_000;
+const MODELS_CACHE_MAX = 1000;
+const modelsCache = new BoundedTtlCache<string, ProviderModelInfo[]>({
+	ttlMs: MODELS_TTL_MS,
+	maxEntries: MODELS_CACHE_MAX
+});
 
 export async function fetchAuthStatus(
 	userId: string,
@@ -133,12 +140,12 @@ export async function fetchModels(
 	providerAuthToken?: string
 ): Promise<ProviderModelInfo[]> {
 	const cached = modelsCache.get(userId);
-	if (cached && Date.now() - cached.at < MODELS_TTL_MS) {
-		return cached.models;
+	if (cached) {
+		return cached;
 	}
 	const client = await getClient(userId, providerAuthToken);
 	const models = await client.listModels();
-	modelsCache.set(userId, { at: Date.now(), models });
+	modelsCache.set(userId, models);
 	return models;
 }
 
