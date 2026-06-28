@@ -116,3 +116,29 @@ test('permission flow still works via the new interactive endpoint', async ({ pa
 		page.getByText(/Stubbed reply to: run @trigger-permission for me/).first()
 	).toBeVisible();
 });
+
+test('Stop clears a pending prompt dialog without a reload', async ({ page, request }) => {
+	const id = await createConversation(request, uniqueTitle('E2E interactive'));
+	await page.goto(`/conversations/${id}`);
+
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.fill('run @trigger-permission for me');
+	await composer.press('Enter');
+
+	const dialog = page.getByRole('alertdialog');
+	await waitForPendingInteractive(request, id);
+	await expect(dialog).toBeVisible();
+	await expect(page.getByText(/Permission required/i)).toBeVisible();
+
+	// Clicking Stop aborts the turn; the server's abort flow drains over the
+	// still-open stream (interactive.resolved per prompt, then a terminal
+	// done), which should clear the dialog promptly — crucially without a
+	// page reload refetching authoritative state.
+	await page.getByRole('button', { name: /stop generating/i }).click();
+	await expect(dialog).toHaveCount(0);
+
+	// The sidebar "awaiting input" indicator clears too, confirming the prompt
+	// was resolved rather than merely hidden.
+	const sidebarLink = page.locator(`nav a[href="/conversations/${id}"]`);
+	await expect(sidebarLink).not.toContainText('Awaiting input');
+});

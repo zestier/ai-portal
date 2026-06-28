@@ -31,6 +31,12 @@
 	import { reviewStore } from '$lib/client/review.svelte';
 
 	const INTERACTIVE_REVEAL_DELAY_MS = 150;
+	// Upper bound on how long a user-initiated Stop waits for the server's
+	// abort flow (interactive.resolved per prompt, then a terminal `done`) to
+	// drain over the still-open stream before we force-close locally. Kept
+	// well under CHAT_STREAM_STALL_TIMEOUT_MS so a wedged server / dropped
+	// stream can never leave Stop stuck showing dialogs or a stopping state.
+	const STOP_FALLBACK_TIMEOUT_MS = 1500;
 
 	let {
 		conversation,
@@ -141,6 +147,16 @@
 	function clearInteractiveRevealTimers() {
 		for (const timer of interactiveRevealTimers.values()) clearTimeout(timer);
 		interactiveRevealTimers.clear();
+	}
+
+	// Drop every outstanding prompt for this conversation (both the pending
+	// queue and the revealed dialogs) plus their reveal timers. Mirrors the
+	// server's `cancelConversation`, which cancels every pending request — used
+	// by the Stop fallback so a wedged abort can't strand dialogs on screen.
+	function clearAllPendingInteractive() {
+		clearInteractiveRevealTimers();
+		pendingInteractive = [];
+		visibleInteractive = [];
 	}
 
 	function invalidateRefreshMessages() {
@@ -270,6 +286,17 @@
 	// EventSource owns its own URL; we need the id for DELETE on cancel.
 	let activeTurnId: string | null = null;
 	let streamStallTimer: ReturnType<typeof setTimeout> | null = null;
+	// Bounded safety net armed by `stop()`: force-closes the stream and clears
+	// pending prompts if the server's abort flow doesn't drain in time.
+	let stopFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+	// True between a user Stop and the turn's terminal teardown. The server's
+	// abort flow cancels every pending prompt, but it can emit the terminal
+	// `done` BEFORE the per-prompt `interactive.resolved` events (turn.abort()
+	// fires the provider abort — which drives `error`/`done` — before
+	// `cancelConversation` emits the resolves). Since the `done` handler closes
+	// the stream, those later resolves never arrive, so we clear the prompts
+	// ourselves on the terminal event when a Stop is in flight.
+	let stopping = false;
 	let refreshMessagesRun = 0;
 	let scrollEl: HTMLDivElement | undefined = $state();
 	// Sticky-scroll: only auto-scroll if the user is pinned to the bottom.
@@ -361,6 +388,12 @@
 				// `streaming` to false first so the follow-up POST isn't
 				// rejected by the 409 guard.
 				const failed = turnErrored || ev.status === 'interrupted';
+				// A user Stop cancels every pending prompt server-side, but the
+				// matching `interactive.resolved` events may be emitted after
+				// this terminal `done` (see `stopping`) — at which point the
+				// stream is closed and they'd never arrive. Clear the dialogs
+				// here so Stop removes them promptly without a reload.
+				if (stopping) clearAllPendingInteractive();
 				closeStream();
 				flushArmed(failed);
 			} else {
@@ -389,12 +422,14 @@
 
 	function closeStream() {
 		clearStreamStallTimeout();
+		clearStopFallbackTimer();
 		if (eventSource) {
 			eventSource.close();
 			eventSource = null;
 		}
 		activeTurnId = null;
 		streaming = false;
+		stopping = false;
 	}
 
 	// A `null` socket is obviously gone, but a non-null one is not
@@ -436,6 +471,22 @@
 			clearTimeout(streamStallTimer);
 			streamStallTimer = null;
 		}
+	}
+
+	function clearStopFallbackTimer() {
+		if (stopFallbackTimer) {
+			clearTimeout(stopFallbackTimer);
+			stopFallbackTimer = null;
+		}
+	}
+
+	// Force-tear-down path for Stop: drop the stream and clear every pending
+	// prompt locally. Idempotent with the `done`-driven `closeStream()`
+	// (closeStream also clears the fallback timer), so it's safe whether it
+	// fires first or the server's terminal event beats it.
+	function forceStopCleanup() {
+		closeStream();
+		clearAllPendingInteractive();
 	}
 
 	function scheduleStreamStallTimeout() {
@@ -990,20 +1041,48 @@
 	async function stop() {
 		// Tell the server to actually cancel the turn (just closing the
 		// EventSource would only detach this client; the turn would keep
-		// running). Then close the stream locally.
+		// running). Crucially we keep the stream OPEN so the server's abort
+		// flow can drain over it: it cancels every pending prompt and emits a
+		// terminal `done` (status `interrupted`). The `done` handler then
+		// clears any still-open prompt dialogs (see `stopping`) and closes the
+		// stream. If we closed the stream synchronously here those terminal
+		// events would never arrive and the dialogs would linger until reload.
 		clearStreamStallTimeout();
 		// A user-initiated stop is a "hold" path: disarm any armed follow-up
 		// but keep the composer text so they can review and send manually.
 		armed = false;
 		const turnId = activeTurnId;
-		if (turnId) {
-			try {
-				await fetch(`/api/conversations/${conversation.id}/turns/${turnId}`, { method: 'DELETE' });
-			} catch {
-				/* ignore */
-			}
+		if (!turnId) {
+			// Nothing in flight to abort — just clear any lingering prompts.
+			forceStopCleanup();
+			return;
 		}
-		closeStream();
+		stopping = true;
+		// Bounded safety net: if the server's abort flow doesn't drain in time
+		// (wedged server, dropped stream) or the DELETE itself fails, force the
+		// teardown so Stop is never stuck. The normal `done`-driven
+		// `closeStream()` cancels this timer first on the happy path.
+		clearStopFallbackTimer();
+		stopFallbackTimer = setTimeout(() => {
+			stopFallbackTimer = null;
+			forceStopCleanup();
+		}, STOP_FALLBACK_TIMEOUT_MS);
+		const convId = conversation.id;
+		// Only act on the settled DELETE if this stop is still current. The
+		// await yields, during which a conversation switch (or the turn's own
+		// terminal teardown) can run `closeStream()` — which resets `stopping`
+		// and re-points state at a different conversation. Without this guard a
+		// late non-OK/throwing DELETE would force-clear the *new* conversation's
+		// stream and prompt dialogs.
+		const stillCurrent = () => stopping && activeTurnId === turnId && conversation.id === convId;
+		try {
+			const r = await fetch(`/api/conversations/${convId}/turns/${turnId}`, {
+				method: 'DELETE'
+			});
+			if (!r.ok && stillCurrent()) forceStopCleanup();
+		} catch {
+			if (stillCurrent()) forceStopCleanup();
+		}
 	}
 
 	$effect(() => {
