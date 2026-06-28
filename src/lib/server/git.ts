@@ -6,10 +6,10 @@
 // `--` separator so they can't be interpreted as flags.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { safeResolve } from './files';
 import { log as logger } from './log';
 
@@ -394,8 +394,16 @@ const LOG_REC = '\x1e';
 const LOG_FORMAT = ['%H', '%h', '%an', '%ae', '%at', '%s'].join(LOG_SEP) + LOG_REC;
 const REF_RE = /^[A-Za-z0-9._\-/@^~]+$/;
 
+// Reflog/stash selectors (`@{...}`, `stash`, `refs/stash`) can expose
+// deliberately-uncommitted content, so they are rejected even though their
+// characters pass REF_RE.
+const STASH_REF_RE = /^(refs\/)?stash$/;
+
 function isSafeRef(ref: string): boolean {
-	return REF_RE.test(ref) && !ref.startsWith('-');
+	if (!REF_RE.test(ref) || ref.startsWith('-')) return false;
+	if (ref.includes('@{')) return false;
+	if (STASH_REF_RE.test(ref)) return false;
+	return true;
 }
 
 export async function log(
@@ -580,7 +588,16 @@ export async function showFile(cwd: string, ref: string, relPath: string): Promi
 	if (!isSafeRef(ref)) throw new GitError('invalid ref', emptyResult());
 	const r = safeResolve(cwd, relPath);
 	if (!r.ok) throw new GitError(`invalid path: ${r.reason}`, emptyResult());
-	return await runGitOk(['show', `${ref}:${r.rel}`], { cwd });
+	// `git show <ref>:<path>` resolves <path> relative to the repository root,
+	// not `cwd`. When the workdir is a subdirectory, recompute the path
+	// relative to the repo root so the correct blob is read.
+	const repoRoot = await repositoryRoot(cwd);
+	const repoRootReal = existsSync(repoRoot) ? realpathSync(repoRoot) : repoRoot;
+	const treePath = relative(repoRootReal, r.abs).split(sep).join('/');
+	if (treePath === '' || treePath === '..' || treePath.startsWith('../')) {
+		throw new GitError('invalid path', emptyResult());
+	}
+	return await runGitOk(['show', `${ref}:${treePath}`], { cwd: repoRoot });
 }
 
 export interface CommitTrailer {
@@ -624,8 +641,8 @@ export function formatCommitMessage(opts: {
 	const lines = [opts.subject];
 	const body = opts.body;
 	if (body !== undefined && body.length > 0) {
-		if (body.includes('\0'))
-			throw new GitError('commit body must not contain NUL bytes', emptyResult());
+		if (hasControlCharacter(body, { allowWhitespace: true }))
+			throw new GitError('commit body must not contain control characters', emptyResult());
 		lines.push('', body.trimEnd());
 	}
 	if (opts.trailers?.length) {
@@ -952,10 +969,14 @@ function restoreIndex(snapshot: IndexSnapshot): void {
 	rmSync(snapshot.path, { force: true });
 }
 
-function hasControlCharacter(value: string): boolean {
+function hasControlCharacter(value: string, opts: { allowWhitespace?: boolean } = {}): boolean {
 	for (const char of value) {
 		const code = char.charCodeAt(0);
-		if (code <= 0x1f || code === 0x7f) return true;
+		if (opts.allowWhitespace && (code === 0x09 || code === 0x0a || code === 0x0d)) continue;
+		// C0 controls and DEL (U+0000–U+001F, U+007F) plus C1 controls
+		// (U+0080–U+009F). C1 includes NEL (U+0085), which can forge extra
+		// commit lines, and the bytes used by ANSI escape sequences.
+		if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return true;
 	}
 	return false;
 }

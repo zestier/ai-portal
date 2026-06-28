@@ -179,6 +179,22 @@ describe('log', () => {
 		await expect(git.log(repo, { ref: '--all' })).rejects.toThrow('invalid ref');
 		await expect(git.log(repo, { path: '../escape' })).rejects.toThrow('invalid path');
 	});
+
+	it('rejects stash/reflog refs', async () => {
+		await expect(git.log(repo, { ref: 'stash@{0}' })).rejects.toThrow('invalid ref');
+		await expect(git.log(repo, { ref: '@{upstream}' })).rejects.toThrow('invalid ref');
+		await expect(git.log(repo, { ref: 'refs/stash' })).rejects.toThrow('invalid ref');
+	});
+
+	it('still allows ordinary branch names that merely end in "stash"', async () => {
+		g(['branch', 'feature/stash']);
+		try {
+			const entries = await git.log(repo, { ref: 'feature/stash', limit: 1 });
+			expect(entries[0].subject).toBe('initial');
+		} finally {
+			g(['branch', '-D', 'feature/stash']);
+		}
+	});
 });
 
 describe('diff', () => {
@@ -222,6 +238,17 @@ describe('showCommit / showFile', () => {
 	it('reads file at revision', async () => {
 		const out = await git.showFile(repo, firstSha, 'a.txt');
 		expect(out).toBe('hello\n');
+	});
+	it('reads the correct blob when the workdir is a subdirectory', async () => {
+		// `git show <ref>:<path>` resolves <path> relative to the repo root, so
+		// a subdir workdir must have its path rebased onto the repo root.
+		const out = await git.showFile(join(repo, 'sub'), firstSha, 'b.txt');
+		expect(out).toBe('one\ntwo\n');
+	});
+	it('rejects stash/reflog refs', async () => {
+		await expect(git.showFile(repo, 'stash@{0}', 'a.txt')).rejects.toThrow('invalid ref');
+		await expect(git.showFile(repo, 'refs/stash', 'a.txt')).rejects.toThrow('invalid ref');
+		await expect(git.showFile(repo, '@{-1}', 'a.txt')).rejects.toThrow('invalid ref');
 	});
 	it('rejects invalid sha', async () => {
 		await expect(git.showCommit(repo, 'not-a-sha!!')).rejects.toThrow();
@@ -490,6 +517,33 @@ describe('commitChanges', () => {
 		} finally {
 			rmSync(tmp, { recursive: true, force: true });
 		}
+	});
+
+	it('rejects C1 control characters and ANSI escapes in the subject', () => {
+		// NEL (U+0085) could forge an extra commit line; ESC drives ANSI
+		// sequences in terminal `git log` viewers.
+		expect(() => git.formatCommitMessage({ subject: 'line\u0085forged' })).toThrow(
+			'control characters'
+		);
+		expect(() => git.formatCommitMessage({ subject: 'clear\u001b[2Jscreen' })).toThrow(
+			'control characters'
+		);
+	});
+
+	it('rejects control characters in the body but allows ordinary whitespace', () => {
+		expect(() => git.formatCommitMessage({ subject: 'ok', body: 'nel\u0085here' })).toThrow(
+			'control characters'
+		);
+		expect(() => git.formatCommitMessage({ subject: 'ok', body: 'ansi\u001b[31mred' })).toThrow(
+			'control characters'
+		);
+		expect(() => git.formatCommitMessage({ subject: 'ok', body: 'NUL\u0000here' })).toThrow(
+			'control characters'
+		);
+		// Newlines and tabs remain valid in a body.
+		expect(() =>
+			git.formatCommitMessage({ subject: 'ok', body: 'first line\n\tindented\n' })
+		).not.toThrow();
 	});
 });
 
