@@ -8,6 +8,14 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = resolve(__dirname, 'e2e/.tmp-data');
 
+// Never reuse/attach to an already-running server. The in-app redeploy
+// (src/lib/server/redeploy.ts) runs the full verify gate — including this e2e
+// suite — while the live portal is still serving. `reuseExistingServer` is on
+// outside CI, so without this Playwright could attach to the LIVE server (if it
+// shared the e2e port) and run destructive specs against live data. Redeploy
+// sets E2E_ISOLATED=1 to force a fresh, throwaway server + DB on the e2e port.
+const isolated = !!process.env.E2E_ISOLATED;
+
 const PORT = Number(process.env.E2E_PORT ?? 4173);
 const buildEntry = resolve(__dirname, 'build');
 const requestedWorkers = Number(process.env.E2E_WORKERS ?? 2);
@@ -34,7 +42,7 @@ function isPortInUse(port: number): boolean {
 	return r.status === 0;
 }
 
-const willReuseServer = !process.env.CI && isPortInUse(PORT);
+const willReuseServer = !process.env.CI && !isolated && isPortInUse(PORT);
 if (!willReuseServer) {
 	rmSync(dataDir, { recursive: true, force: true });
 	mkdirSync(dataDir, { recursive: true });
@@ -72,7 +80,7 @@ export default defineConfig({
 	webServer: {
 		command: `node ${JSON.stringify(buildEntry)}`,
 		url: `http://127.0.0.1:${PORT}/api/health`,
-		reuseExistingServer: !process.env.CI,
+		reuseExistingServer: !process.env.CI && !isolated,
 		timeout: 60_000,
 		stdout: 'pipe',
 		stderr: 'pipe',

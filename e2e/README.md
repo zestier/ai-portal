@@ -16,6 +16,11 @@ The `webServer` in `playwright.config.ts` builds the app and launches
 Specs use unique conversations and per-test workdirs so Playwright can run
 them with multiple workers. Set `E2E_WORKERS=1` to force serial execution.
 
+Set `E2E_ISOLATED=1` to refuse to reuse/attach to any already-running server
+(forcing a fresh, throwaway server on the e2e port). The in-app redeploy uses
+this so it can run the full gate while the live portal is still serving without
+risk of Playwright driving the live server or its DB.
+
 ## Stub mode
 
 When the server starts with `COPILOT_STUB=1`, `bridge.ts` swaps the real

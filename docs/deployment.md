@@ -298,7 +298,11 @@ the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).
    redeploy button runs `git pull && pnpm install && pnpm run verify`
    and exits; the supervisor relaunches on the new code. `verify`
    schedules a small DAG that overlaps independent lint/unit/build phases,
-   then runs check and Playwright e2e with phase-prefixed logs. Disabled by default;
+   then runs check and Playwright e2e with phase-prefixed logs. Running the
+   full gate (including e2e) is deliberate — it keeps a broken build from
+   rolling over onto the live server. The e2e phase runs with `E2E_ISOLATED=1`
+   so it never reuses/attaches to the live server, spinning up its own
+   throwaway server + DB instead and leaving the running portal untouched. Disabled by default;
    set `ENABLE_REDEPLOY=1` to opt in. With `AUTH_MODE=github`, set
    `REDEPLOY_ADMIN_GITHUB_LOGINS` to the GitHub logins allowed to trigger
    redeploys when more than one login can sign in. Not used in the container

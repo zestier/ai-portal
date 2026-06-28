@@ -8,6 +8,7 @@ export type Step = {
 	command: string;
 	args: string[];
 	display: string;
+	env?: NodeJS.ProcessEnv;
 };
 
 export type RedeployEvent =
@@ -36,7 +37,19 @@ export const PULL_STEPS: Step[] = [
 ];
 
 export const BUILD_STEPS: Step[] = [
-	{ label: 'pnpm run verify', command: 'pnpm', args: ['run', 'verify'], display: 'pnpm run verify' }
+	{
+		label: 'pnpm run verify',
+		command: 'pnpm',
+		args: ['run', 'verify'],
+		display: 'pnpm run verify',
+		// Run the full gate — including Playwright e2e — as a deliberate safety
+		// net so a broken build never rolls over onto the live server. The live
+		// portal is still serving while this runs, so E2E_ISOLATED makes
+		// playwright.config.ts refuse to reuse/attach to the running server and
+		// instead spin up its own throwaway server + DB, so the gate can't drive
+		// or corrupt live state.
+		env: { E2E_ISOLATED: '1' }
+	}
 ];
 
 export function canRedeployUser(user: User | null, cfg: AppConfig): boolean {
@@ -70,7 +83,7 @@ export function runStep(step: Step, emit: (ev: RedeployEvent) => void): Promise<
 		emit({ type: 'step', label: step.label, cmd: step.display });
 		const p = spawn(step.command, step.args, {
 			cwd: process.cwd(),
-			env: process.env,
+			env: { ...process.env, ...step.env },
 			shell: false
 		});
 		p.stdout.on('data', (b: Buffer) =>

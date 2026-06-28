@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execPath } from 'node:process';
 import {
+	BUILD_STEPS,
 	canRedeployUser,
 	runRedeploy,
 	runStep,
@@ -69,6 +70,20 @@ const baseCfg: AppConfig = {
 function user(login: string): User {
 	return { id: `user-${login}`, githubLogin: login, displayName: null, avatarUrl: null };
 }
+
+describe('redeploy build steps', () => {
+	it('runs the full verify gate so a broken build never rolls over', () => {
+		expect(BUILD_STEPS.map((step) => step.args.join(' '))).toEqual(['run verify']);
+	});
+
+	it('isolates the e2e harness so the gate cannot reuse or corrupt the live server', () => {
+		// E2E_ISOLATED makes playwright.config.ts refuse to reuse/attach to an
+		// already-running portal, so running the full gate during redeploy can
+		// never drive the live server or its DB.
+		const verify = BUILD_STEPS.find((step) => step.args.includes('verify'));
+		expect(verify?.env?.E2E_ISOLATED).toBe('1');
+	});
+});
 
 describe('redeploy authorization', () => {
 	it('requires the GitHub user to be in the redeploy admin allowlist', () => {
@@ -167,6 +182,28 @@ describe('runStep', () => {
 				ev.type === 'log' && ev.stream === 'stderr' && ev.text.includes('spawn error')
 		);
 		expect(errLog).toBeDefined();
+	});
+
+	it('merges step.env over the inherited environment for the child', async () => {
+		const events: RedeployEvent[] = [];
+		const code = await runStep(
+			{
+				label: 'envcheck',
+				command: execPath,
+				args: ['-e', 'process.stdout.write(process.env.ZAP_STEP_ENV_PROBE ?? "unset")'],
+				display: 'envcheck',
+				env: { ZAP_STEP_ENV_PROBE: 'injected-value' }
+			},
+			(ev) => events.push(ev)
+		);
+
+		expect(code).toBe(0);
+		const logs = events.filter(
+			(ev): ev is Extract<RedeployEvent, { type: 'log' }> => ev.type === 'log'
+		);
+		expect(logs.some((ev) => ev.stream === 'stdout' && ev.text.includes('injected-value'))).toBe(
+			true
+		);
 	});
 });
 
