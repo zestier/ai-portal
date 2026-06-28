@@ -54,6 +54,90 @@ test('rejects empty messages on the server', async ({ request }) => {
 	expect(res.ok()).toBeFalsy();
 });
 
+test('a failed turn start rolls back its optimistic user bubble (no ghost duplicate)', async ({
+	page,
+	request
+}) => {
+	const id = await createConversation(request, uniqueTitle('E2E send fail'));
+	await page.goto(`/conversations/${id}`);
+
+	// Fail only the first POST /turns; let the retry through to the stub so we
+	// can prove the optimistic bubble was removed (no duplicate after retry).
+	let failedOnce = false;
+	await page.route(`**/api/conversations/${id}/turns`, async (route) => {
+		if (route.request().method() === 'POST' && !failedOnce) {
+			failedOnce = true;
+			await route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'simulated start failure' })
+			});
+			return;
+		}
+		await route.continue();
+	});
+
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.click();
+	await composer.fill('ghost message');
+	await composer.press('Enter');
+
+	// The failure surfaces as an error system message, the optimistic
+	// `local-` user bubble is removed, and the draft is restored for retry.
+	await expect(page.getByText('Error: simulated start failure')).toBeVisible();
+	await expect(page.getByText('ghost message', { exact: true })).toHaveCount(0);
+	await expect(composer).toHaveValue('ghost message');
+
+	// Retrying now succeeds. Exactly one persisted user bubble must appear —
+	// the rolled-back optimistic one must not linger as a second copy.
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, id, /Stubbed reply to: ghost message/);
+	await expect(page.getByText('ghost message', { exact: true })).toHaveCount(1);
+});
+
+test('a failed turn start does not corrupt the previous assistant reply', async ({
+	page,
+	request
+}) => {
+	const id = await createConversation(request, uniqueTitle('E2E fail prior'));
+	await page.goto(`/conversations/${id}`);
+
+	// First send succeeds and yields a completed assistant reply.
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.click();
+	await composer.fill('first message');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, id, /Stubbed reply to: first message/);
+	const assistantBubble = page
+		.locator('article.msg[data-role="assistant"]')
+		.filter({ hasText: 'Stubbed reply to: first message' });
+	await expect(assistantBubble).toBeVisible();
+
+	// The next POST /turns fails. Rolling back the optimistic bubble must not
+	// leave the *previous* assistant reply marked as errored.
+	await page.route(`**/api/conversations/${id}/turns`, async (route) => {
+		if (route.request().method() === 'POST') {
+			await route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'second start failed' })
+			});
+			return;
+		}
+		await route.continue();
+	});
+	await composer.fill('second message');
+	await composer.press('Enter');
+
+	await expect(page.getByText('Error: second start failed')).toBeVisible();
+	// The optimistic bubble is gone and the earlier assistant reply is intact:
+	// a `complete` message renders no `(status)` marker, so the prior reply
+	// must not have been flipped into an `(error)` state by the rollback.
+	await expect(page.getByText('second message', { exact: true })).toHaveCount(0);
+	await expect(assistantBubble).toBeVisible();
+	await expect(assistantBubble.locator('.status')).toHaveCount(0);
+});
+
 test('an armed follow-up auto-sends after the active turn finishes', async ({ page, request }) => {
 	const id = await createConversation(request, uniqueTitle('E2E arm'));
 	await page.goto(`/conversations/${id}`);

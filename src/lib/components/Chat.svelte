@@ -1015,6 +1015,19 @@
 		// stream. The POST is just a "create" — all event delivery flows
 		// through the GET stream so reconnects (browser-driven) just work.
 		streaming = true;
+		// Roll back the optimistic send: restore the composer draft, surface the
+		// failure, and drop the unpersisted `local-` bubble so it can't linger
+		// as a duplicate of the next persisted message. Both failure paths below
+		// funnel through here so they can't drift apart. Order matters: emit the
+		// error event while the `local-` user bubble is still the last message so
+		// `applyEvent`'s error case (which only touches a trailing *assistant*
+		// message) can't accidentally mark a prior assistant reply as errored.
+		const failSend = (code: string, message: string) => {
+			streaming = false;
+			if (!composer) composer = text;
+			applyEvent({ type: 'error', code, message });
+			messages = messages.filter((m) => m.id !== localMessageId);
+		};
 		try {
 			const r = await fetch(`/api/conversations/${conversation.id}/turns`, {
 				method: 'POST',
@@ -1029,9 +1042,7 @@
 				} catch {
 					/* ignore */
 				}
-				streaming = false;
-				if (!composer) composer = text;
-				applyEvent({ type: 'error', code: 'start_failed', message: msg });
+				failSend('start_failed', msg);
 				return;
 			}
 			const {
@@ -1050,13 +1061,7 @@
 			}
 			attachStream(turnId);
 		} catch (e) {
-			streaming = false;
-			if (!composer) composer = text;
-			applyEvent({
-				type: 'error',
-				code: 'network',
-				message: e instanceof Error ? e.message : String(e)
-			});
+			failSend('network', e instanceof Error ? e.message : String(e));
 		}
 	}
 
