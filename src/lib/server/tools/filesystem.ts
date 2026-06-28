@@ -272,7 +272,16 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 					return err('refusing to trash the workspace root');
 				}
 				const dir = trashDir();
-				const relation = trashRelation(target.rel, dir);
+				// Compare `target.rel` against the REALPATH-resolved trash dir, not
+				// the lexical `.zap/scratch/trash` string. `target.rel` is already
+				// symlink-resolved (resolveWorkspaceTarget realpaths existing
+				// ancestors), so if `.zap` is itself a symlink a lexical compare
+				// would miss — letting the tool re-bury an already-trashed entry and
+				// stamp meta.json with the wrong originalPath. Resolving the store
+				// the same way keeps both sides in the same (real) namespace.
+				const resolvedDir = resolveWorkspaceTarget(workspaceRoot, dir);
+				const dirForCompare = resolvedDir.ok ? resolvedDir.rel : dir;
+				const relation = trashRelation(target.rel, dirForCompare);
 				if (relation === 'inside') {
 					return err('refusing to trash the trash store itself');
 				}

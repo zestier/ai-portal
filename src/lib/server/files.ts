@@ -28,23 +28,41 @@ import {
 /**
  * Resolve a workspace root to a stable absolute realpath, caching by the
  * lexical root so repeated route hits don't pay the realpath cost.
+ *
+ * The cache is bounded by a short TTL rather than living forever: the lexical
+ * root can point at a *different* realpath over time (a rolling deploy that
+ * repoints a `/workspace` symlink at `/workspace-v2`, or a per-request
+ * sandboxed workdir reusing the same mount point). Without expiry a stale
+ * realpath would silently become the containment root for every later
+ * safeResolve/listDir/readFileSafe call. The TTL is long enough to absorb the
+ * burst of realpath hits from a single request yet short enough that a
+ * repointed root is picked up promptly.
  */
-const cachedRoots = new Map<string, string>();
+const ROOT_CACHE_TTL_MS = 5_000;
+
+interface CachedRoot {
+	real: string;
+	expiresAt: number;
+}
+
+const cachedRoots = new Map<string, CachedRoot>();
 
 export function resolveWorkspaceRoot(root: string): string {
 	const abs = resolve(root);
+	const now = Date.now();
 	const cached = cachedRoots.get(abs);
-	if (cached) return cached;
+	if (cached && cached.expiresAt > now) return cached.real;
 	let real: string;
 	try {
 		real = realpathSync(abs);
 	} catch {
-		// realpath failed (path missing or transient I/O error): fall back to the
-		// lexical path without caching, so a future call retries the realpath
-		// resolution once the path exists.
+		// realpath failed (path missing or transient I/O error): drop any stale
+		// entry and fall back to the lexical path without caching, so a future
+		// call retries the realpath resolution once the path exists.
+		cachedRoots.delete(abs);
 		return abs;
 	}
-	cachedRoots.set(abs, real);
+	cachedRoots.set(abs, { real, expiresAt: now + ROOT_CACHE_TTL_MS });
 	return real;
 }
 

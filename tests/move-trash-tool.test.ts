@@ -250,6 +250,20 @@ describe('trash tool', () => {
 		expect(expectErr(res)).toMatch(/trash/i);
 	});
 
+	it('refuses to trash an already-trashed entry reached through a symlinked .zap', async () => {
+		// `.zap` is a symlink to a real in-workspace dir. `target.rel` is
+		// symlink-resolved, so the "already inside trash" check must compare
+		// against the resolved store path, not the lexical `.zap/...` string —
+		// otherwise the entry gets re-buried with a wrong meta.json originalPath.
+		mkdirSync(join(root, 'realzap/scratch/trash/old'), { recursive: true });
+		writeFileSync(join(root, 'realzap/scratch/trash/old/x'), 'x');
+		symlinkSync(join(root, 'realzap'), join(root, zapDir()));
+		const res = await trash.handler({ path: `${TRASH_DIR}/old/x` });
+		expect(expectErr(res)).toMatch(/trash/i);
+		// The entry is left untouched (not re-trashed).
+		expect(existsSync(join(root, 'realzap/scratch/trash/old/x'))).toBe(true);
+	});
+
 	it('refuses to trash an ancestor of the trash store, leaving it intact', async () => {
 		mkdirSync(join(root, TRASH_DIR), { recursive: true });
 		for (const ancestor of [zapDir(), scratchDir()]) {
