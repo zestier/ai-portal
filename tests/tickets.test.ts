@@ -542,6 +542,41 @@ describe('workspace tickets', () => {
 		).toEqual(fullAll.slice(0, 3).map((t) => t.id));
 	});
 
+	it('listForSidebar surfaces ready tickets even when the newest are all blocked', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		// An open prerequisite that itself is ready (no prerequisites of its own).
+		const prereq = tickets.create(user.id, { workspaceKey: workspace, title: 'Prereq' });
+		// A ready ticket created early, so it falls outside the 10 most-recent rows.
+		const ready = tickets.create(user.id, { workspaceKey: workspace, title: 'Ready' });
+		// Ten newer tickets, each blocked by the still-open prerequisite.
+		const blocked: string[] = [];
+		for (let i = 0; i < 10; i++) {
+			const b = tickets.create(user.id, { workspaceKey: workspace, title: `Blocked ${i}` });
+			tickets.addDependency(user.id, b.id, prereq.id);
+			blocked.push(b.id);
+		}
+
+		// The shared recency-only list fills its window with the 10 newest tickets —
+		// all blocked — hiding the ready ones. This is the bug listForSidebar fixes.
+		const recency = tickets
+			.list(user.id, workspace, { status: 'open', limit: 10 })
+			.map((t) => t.id);
+		expect(recency).toEqual([...blocked].reverse());
+		expect(recency).not.toContain(ready.id);
+		expect(recency).not.toContain(prereq.id);
+
+		// listForSidebar prioritizes ready-before-blocked across the full open set,
+		// so both ready tickets surface ahead of the blocked overflow.
+		const sidebar = tickets.listForSidebar(user.id, workspace, 10).map((t) => t.id);
+		expect(sidebar.length).toBe(10);
+		expect(sidebar.slice(0, 2)).toEqual([ready.id, prereq.id]);
+		expect(sidebar).toContain(ready.id);
+		expect(sidebar).toContain(prereq.id);
+	});
+
 	it('GET /api/tickets honors the offset query param', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const tickets = await import('../src/lib/server/db/repos/tickets');

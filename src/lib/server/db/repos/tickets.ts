@@ -81,6 +81,42 @@ export function list(
 	return rows.map(rowToTicket);
 }
 
+/**
+ * Open tickets for a workspace, ordered ready-before-blocked, for the sidebar.
+ *
+ * Unlike `list()` (recency-only, shared with the `/tickets` index page), this
+ * pushes blocked-ness into the query so the `LIMIT` window is filled with
+ * actionable (ready) tickets first, then blocked tickets only if fewer than
+ * `limit` ready exist. Without this, a recency-then-LIMIT query could fill the
+ * whole window with blocked tickets and hide ready ones that exist further down.
+ *
+ * A ticket is "blocked" iff it has at least one prerequisite edge whose
+ * prerequisite ticket is still `status = 'open'` — matching the `blockers`
+ * definition used by `dependencyRefs` / `orderSidebarTickets`. Within each group
+ * the order is `updated_at DESC, created_at DESC, id DESC`, mirroring `list()`.
+ */
+export function listForSidebar(
+	userId: string,
+	workspaceKey: string,
+	limit = 10
+): WorkspaceTicket[] {
+	const rows = getDb()
+		.prepare(
+			`SELECT t.* FROM workspace_tickets t
+			 WHERE t.user_id = ? AND t.workspace_key = ? AND t.status = 'open'
+			 ORDER BY
+			   EXISTS (
+			     SELECT 1 FROM ticket_deps d
+			     JOIN workspace_tickets dep ON dep.id = d.depends_on
+			     WHERE d.ticket_id = t.id AND dep.user_id = t.user_id AND dep.status = 'open'
+			   ) ASC,
+			   t.updated_at DESC, t.created_at DESC, t.id DESC
+			 LIMIT ?`
+		)
+		.all(userId, workspaceKey, limit) as TicketRow[];
+	return rows.map(rowToTicket);
+}
+
 export function count(
 	userId: string,
 	workspaceKey: string,
