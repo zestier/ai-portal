@@ -156,28 +156,41 @@ test('detail page shows a priority pill and edits priority in place', async ({ p
 
 test('tickets index filters and sorts by priority', async ({ page, request }) => {
 	const run = `prio-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-	await request.post('/api/tickets', { data: { title: `${run} low`, priority: 'P3' } });
+	// Seed enough P2 filler that a P3 ticket cannot fit on the first page once the
+	// whole set is ordered by priority server-side. This makes the test
+	// self-contained (independent of how many tickets sibling specs left behind)
+	// and is what distinguishes a real server-side sort from a client-side reorder
+	// of just the already-loaded rows: the P3 ticket pages out entirely.
+	for (let i = 0; i < 20; i++) {
+		await request.post('/api/tickets', { data: { title: `${run} fill ${i}`, priority: 'P2' } });
+	}
 	await request.post('/api/tickets', { data: { title: `${run} high`, priority: 'P0' } });
+	await request.post('/api/tickets', { data: { title: `${run} low`, priority: 'P3' } });
 
 	await page.goto('/tickets');
-	const high = page.getByRole('link', { name: `${run} high` });
-	const low = page.getByRole('link', { name: `${run} low` });
+	const high = page.getByRole('link', { name: `${run} high`, exact: true });
+	const low = page.getByRole('link', { name: `${run} low`, exact: true });
+	// Default recency order: the two newest tickets (high, low) are on page one.
 	await expect(high).toBeVisible();
 	await expect(low).toBeVisible();
 
-	// Filtering to P0 keeps the high-priority ticket and drops the P3 one.
+	// Filtering to P0 returns only the P0 ticket across the WHOLE set — the P3 and
+	// the P2 fillers drop out, not merely the loaded rows.
 	await page.getByLabel('Filter by priority').selectOption('P0');
 	await expect(high).toBeVisible();
 	await expect(low).toHaveCount(0);
+	await expect(page.getByRole('link', { name: `${run} fill 0`, exact: true })).toHaveCount(0);
 
-	// Reset the filter, then opt into priority sort: P0 sorts ahead of P3.
+	// Reset the filter, then opt into priority sort. The P0 ticket rises to the
+	// very top of the full set, while the P3 ticket is paged out beyond the first
+	// page — it would still be loaded if the sort only reordered loaded rows.
 	await page.getByLabel('Filter by priority').selectOption('all');
 	await page.getByRole('button', { name: 'Sort by priority' }).click();
-	const titles = await page.locator('li.ticket-row .ticket-title').allInnerTexts();
-	const highIdx = titles.indexOf(`${run} high`);
-	const lowIdx = titles.indexOf(`${run} low`);
-	expect(highIdx).toBeGreaterThanOrEqual(0);
-	expect(lowIdx).toBeGreaterThan(highIdx);
+	await expect(page.locator('li.ticket-row .ticket-title').first()).toHaveText(`${run} high`);
+	await expect(low).toHaveCount(0);
+
+	// Sort + filter state is reflected in the URL so a reload/share reproduces it.
+	await expect(page).toHaveURL(/sort=priority/);
 });
 
 test('sidebar links to the full tickets page', async ({ page, request }) => {

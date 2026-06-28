@@ -12,6 +12,8 @@ import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
 
 const Status = z.enum(['open', 'done', 'archived', 'all']);
+const Sort = z.enum(['recency', 'priority']);
+const Priority = z.enum(['P0', 'P1', 'P2', 'P3']);
 
 export const GET: RequestHandler = ({ locals, url }) => {
 	const userId = requireUserId(locals);
@@ -28,8 +30,20 @@ export const GET: RequestHandler = ({ locals, url }) => {
 		.catch(100)
 		.parse(url.searchParams.get('limit'));
 	const offset = z.coerce.number().int().min(0).catch(0).parse(url.searchParams.get('offset'));
+	// Optional priority sort + filter (default: recency, all priorities). Invalid
+	// or absent values fall back safely, matching the status/limit/offset style.
+	const sort = Sort.catch('recency').parse(url.searchParams.get('sort') ?? 'recency');
+	const priority = Priority.optional()
+		.catch(undefined)
+		.parse(url.searchParams.get('priority') ?? undefined);
 	return json({
-		tickets: tickets.list(userId, workspace, { status, limit, offset }),
+		tickets: tickets.list(userId, workspace, {
+			status,
+			limit,
+			offset,
+			sort,
+			...(priority ? { priority } : {})
+		}),
 		workspace
 	});
 };

@@ -63,11 +63,27 @@ function rowToTicket(r: TicketRow): WorkspaceTicket {
 	};
 }
 
+/** Ordering for {@link list}. `recency` is the historical default. */
+export type TicketListSort = 'recency' | 'priority';
+
 export interface ListOptions {
 	status?: WorkspaceTicketStatus | 'all';
 	limit?: number;
 	/** Number of rows to skip for pagination. Defaults to 0. */
 	offset?: number;
+	/**
+	 * Restrict to a single priority. Omit (the default) to include all
+	 * priorities. The filter is applied in SQL so the LIMIT/OFFSET window pages
+	 * over the matching set, not a pre-loaded subset.
+	 */
+	priority?: WorkspaceTicketPriority;
+	/**
+	 * Result ordering. `recency` (default) preserves the historical
+	 * updated_at-first order — including the open-before-other grouping on the
+	 * `all` tab. `priority` orders highest-first (P0→P3, sorting correctly as
+	 * text), tie-broken by recency, mirroring `listForSidebar`.
+	 */
+	sort?: TicketListSort;
 }
 
 export function list(
@@ -78,24 +94,42 @@ export function list(
 	const limit = opts.limit ?? 100;
 	const offset = opts.offset ?? 0;
 	const status = opts.status ?? 'open';
-	const rows =
-		status === 'all'
-			? (getDb()
-					.prepare(
-						`SELECT * FROM workspace_tickets
-						 WHERE user_id = ? AND workspace_key = ?
-						 ORDER BY status = 'open' DESC, updated_at DESC, created_at DESC, id DESC
-						 LIMIT ? OFFSET ?`
-					)
-					.all(userId, workspaceKey, limit, offset) as TicketRow[])
-			: (getDb()
-					.prepare(
-						`SELECT * FROM workspace_tickets
-						 WHERE user_id = ? AND workspace_key = ? AND status = ?
-						 ORDER BY updated_at DESC, created_at DESC, id DESC
-						 LIMIT ? OFFSET ?`
-					)
-					.all(userId, workspaceKey, status, limit, offset) as TicketRow[]);
+	const priority = opts.priority;
+	const sort = opts.sort ?? 'recency';
+
+	// Build the WHERE incrementally so the optional priority filter pages over
+	// the matching set in SQL. The default-args path reproduces the original two
+	// queries exactly (status-specific: …AND status = ?; all: no status clause).
+	const where: string[] = ['user_id = ?', 'workspace_key = ?'];
+	const args: (string | number)[] = [userId, workspaceKey];
+	if (status !== 'all') {
+		where.push('status = ?');
+		args.push(status);
+	}
+	if (priority) {
+		where.push('priority = ?');
+		args.push(priority);
+	}
+
+	// ORDER BY: priority sort is highest-first (text-sortable P0→P3) then recency,
+	// matching `listForSidebar`. Recency keeps today's behavior byte-for-byte,
+	// including open-first grouping on the `all` tab.
+	const recency = 'updated_at DESC, created_at DESC, id DESC';
+	const orderBy =
+		sort === 'priority'
+			? `priority ASC, ${recency}`
+			: status === 'all'
+				? `status = 'open' DESC, ${recency}`
+				: recency;
+
+	const rows = getDb()
+		.prepare(
+			`SELECT * FROM workspace_tickets
+			 WHERE ${where.join(' AND ')}
+			 ORDER BY ${orderBy}
+			 LIMIT ? OFFSET ?`
+		)
+		.all(...args, limit, offset) as TicketRow[];
 	return rows.map(rowToTicket);
 }
 

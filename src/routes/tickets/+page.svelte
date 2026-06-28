@@ -1,10 +1,16 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { WorkspaceTicket, WorkspaceTicketPriority, WorkspaceTicketStatus } from '$lib/types';
+	import type { WorkspaceTicket, WorkspaceTicketStatus } from '$lib/types';
 	import { TICKET_PRIORITIES } from '$lib/types';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import { priorityLabel, priorityTone } from '$lib/tickets/priority';
-	import { fetchTicketsPage, type TicketListStatus } from '$lib/client/tickets-list';
+	import {
+		fetchTicketsPage,
+		type TicketListSort,
+		type TicketListStatus,
+		type TicketPriorityFilter
+	} from '$lib/client/tickets-list';
+	import { replaceState } from '$app/navigation';
 	import { untrack } from 'svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -44,22 +50,12 @@
 	let loading = $state(false);
 	let errorMsg = $state<string | null>(null);
 
-	// Priority filter + sort are opt-in client-side refinements over the rows
-	// already loaded; the default sort (recency, server-driven) is unchanged.
-	let priorityFilter = $state<WorkspaceTicketPriority | 'all'>('all');
-	let sortByPriority = $state(false);
-
-	const priorityRank: Record<WorkspaceTicketPriority, number> = Object.fromEntries(
-		TICKET_PRIORITIES.map((p, i) => [p, i])
-	) as Record<WorkspaceTicketPriority, number>;
-
-	const visibleItems = $derived.by(() => {
-		const filtered =
-			priorityFilter === 'all' ? items : items.filter((t) => t.priority === priorityFilter);
-		if (!sortByPriority) return filtered;
-		// Stable sort keeps the incoming (recency) order within a priority.
-		return [...filtered].sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority]);
-	});
+	// Priority filter + sort are server-driven: changing either resets to page 0
+	// and refetches the correctly ordered/filtered window. They're seeded from the
+	// loader (URL-derived) so first paint matches a shared/reloaded link.
+	let priorityFilter = $state<TicketPriorityFilter>(untrack(() => data.initialPriority ?? 'all'));
+	let sort = $state<TicketListSort>(untrack(() => data.initialSort ?? 'recency'));
+	const sortByPriority = $derived(sort === 'priority');
 
 	function fmtDate(ms: number): string {
 		return new Date(ms).toLocaleDateString(undefined, {
@@ -69,16 +65,29 @@
 		});
 	}
 
-	async function selectStatus(next: TicketListStatus) {
-		if (next === status || loading) return;
-		status = next;
-		items = [];
-		hasMore = false;
-		errorMsg = null;
+	// Reflect sort + filter in the URL (omitting defaults) without re-running the
+	// loader, so the view is shareable and survives reload.
+	function syncUrl() {
+		const params = new URLSearchParams();
+		if (sort === 'priority') params.set('sort', 'priority');
+		if (priorityFilter !== 'all') params.set('priority', priorityFilter);
+		const qs = params.toString();
+		replaceState(qs ? `?${qs}` : location.pathname, {});
+	}
+
+	async function loadFirstPage() {
 		if (!workspace) return;
 		loading = true;
+		errorMsg = null;
 		try {
-			const page = await fetchTicketsPage({ status: next, workspace, limit: pageSize, offset: 0 });
+			const page = await fetchTicketsPage({
+				status,
+				workspace,
+				limit: pageSize,
+				offset: 0,
+				sort,
+				priority: priorityFilter
+			});
 			items = page.tickets;
 			hasMore = page.hasMore;
 		} catch (e) {
@@ -86,6 +95,28 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function selectStatus(next: TicketListStatus) {
+		if (next === status || loading) return;
+		status = next;
+		items = [];
+		hasMore = false;
+		await loadFirstPage();
+	}
+
+	async function selectPriority(next: TicketPriorityFilter) {
+		if (next === priorityFilter || loading) return;
+		priorityFilter = next;
+		syncUrl();
+		await loadFirstPage();
+	}
+
+	async function toggleSort() {
+		if (loading) return;
+		sort = sort === 'priority' ? 'recency' : 'priority';
+		syncUrl();
+		await loadFirstPage();
 	}
 
 	async function loadMore() {
@@ -97,7 +128,9 @@
 				status,
 				workspace,
 				limit: pageSize,
-				offset: items.length
+				offset: items.length,
+				sort,
+				priority: priorityFilter
 			});
 			items = [...items, ...page.tickets];
 			hasMore = page.hasMore;
@@ -151,7 +184,13 @@
 		<div class="controls">
 			<label class="control">
 				<span class="control-label">Priority</span>
-				<select class="select" bind:value={priorityFilter} aria-label="Filter by priority">
+				<select
+					class="select"
+					value={priorityFilter}
+					onchange={(e) => selectPriority(e.currentTarget.value as TicketPriorityFilter)}
+					disabled={loading}
+					aria-label="Filter by priority"
+				>
 					<option value="all">All priorities</option>
 					{#each TICKET_PRIORITIES as p (p)}
 						<option value={p}>{priorityLabel[p]}</option>
@@ -162,19 +201,20 @@
 				class="tab sort-toggle"
 				class:active={sortByPriority}
 				aria-pressed={sortByPriority}
-				onclick={() => (sortByPriority = !sortByPriority)}
+				disabled={loading}
+				onclick={toggleSort}
 			>
 				Sort by priority
 			</button>
 		</div>
 
 		{#if items.length === 0 && !loading}
-			<p class="empty muted">{emptyLabel[status]}</p>
-		{:else if visibleItems.length === 0 && !loading}
-			<p class="empty muted">No tickets match this priority.</p>
+			<p class="empty muted">
+				{priorityFilter === 'all' ? emptyLabel[status] : 'No tickets match this priority.'}
+			</p>
 		{:else}
 			<ul class="ticket-list">
-				{#each visibleItems as ticket (ticket.id)}
+				{#each items as ticket (ticket.id)}
 					<li class="ticket-row">
 						<a class="ticket-link" href={`/tickets/${ticket.id}`}>
 							<span class="ticket-title">{ticket.title}</span>

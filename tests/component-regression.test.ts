@@ -658,6 +658,23 @@ describe('Svelte component regression coverage', () => {
 		expect(body).toContain('No open tickets.');
 	});
 
+	test('Tickets index shows a priority-filtered empty state', () => {
+		const body = render(TicketsIndexPage, {
+			props: {
+				data: {
+					ticketWorkspace: '/ws',
+					pageSize: 20,
+					initialStatus: 'open' as const,
+					initialSort: 'recency' as const,
+					initialPriority: 'P1' as const,
+					initialTickets: [],
+					initialHasMore: false
+				}
+			}
+		} as never).body;
+		expect(body).toContain('No tickets match this priority.');
+	});
+
 	test('Prompts settings lists built-ins and user-managed templates', () => {
 		const body = render(PromptsSettings, {
 			props: {

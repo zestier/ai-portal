@@ -546,6 +546,134 @@ describe('workspace tickets', () => {
 		).toEqual(fullAll.slice(0, 3).map((t) => t.id));
 	});
 
+	it('repo list filters by priority and sorts highest-first across the full set', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const user = users.ensureLocalUser();
+
+		// Create in an order where recency (newest-first) disagrees with priority,
+		// so a sort that only reordered a single loaded page would be detectable.
+		const priorities = ['P3', 'P0', 'P2', 'P1', 'P0', 'P3', 'P1', 'P2'] as const;
+		priorities.forEach((priority, i) =>
+			tickets.create(user.id, { workspaceKey: workspace, title: `T${i}`, priority })
+		);
+
+		// Priority sort orders P0→P3 across the WHOLE set (the count of each
+		// priority is deterministic regardless of the recency tie-break).
+		const sorted = tickets.list(user.id, workspace, {
+			status: 'open',
+			sort: 'priority',
+			limit: 100,
+			offset: 0
+		});
+		expect(sorted.map((t) => t.priority)).toEqual(['P0', 'P0', 'P1', 'P1', 'P2', 'P2', 'P3', 'P3']);
+
+		// The first page holds the globally highest-priority tickets and paging
+		// continues in that same order — not a per-page reshuffle. `sorted` is the
+		// source of truth, robust to same-millisecond create ordering.
+		expect(
+			tickets.list(user.id, workspace, { sort: 'priority', limit: 3, offset: 0 }).map((t) => t.id)
+		).toEqual(sorted.slice(0, 3).map((t) => t.id));
+		expect(
+			tickets.list(user.id, workspace, { sort: 'priority', limit: 3, offset: 3 }).map((t) => t.id)
+		).toEqual(sorted.slice(3, 6).map((t) => t.id));
+
+		// Priority filter returns only that priority across the full set and pages
+		// within it (so "Load more" never fetches phantom rows).
+		const p0 = tickets.list(user.id, workspace, { priority: 'P0', limit: 100, offset: 0 });
+		expect(p0.length).toBe(2);
+		expect(p0.every((t) => t.priority === 'P0')).toBe(true);
+		expect(
+			tickets.list(user.id, workspace, { priority: 'P0', limit: 1, offset: 1 }).map((t) => t.id)
+		).toEqual([p0[1].id]);
+
+		// Filter + sort compose, and the default (no sort, no filter) still returns
+		// the whole open set in recency order — same query shape as before.
+		expect(
+			tickets
+				.list(user.id, workspace, { priority: 'P3', sort: 'priority', limit: 100, offset: 0 })
+				.every((t) => t.priority === 'P3')
+		).toBe(true);
+		expect(tickets.list(user.id, workspace, { status: 'open', limit: 100, offset: 0 }).length).toBe(
+			8
+		);
+	});
+
+	it('GET /api/tickets honors and validates the sort + priority params', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { GET } = await import('../src/routes/api/tickets/+server');
+		const user = users.ensureLocalUser();
+
+		tickets.create(user.id, { workspaceKey: workspace, title: 'low', priority: 'P3' });
+		tickets.create(user.id, { workspaceKey: workspace, title: 'high', priority: 'P0' });
+		tickets.create(user.id, { workspaceKey: workspace, title: 'mid', priority: 'P2' });
+		const ws = encodeURIComponent(workspace);
+
+		const sortedRes = (await GET(
+			event({
+				url: `http://localhost/api/tickets?status=open&sort=priority&workspace=${ws}`,
+				userId: user.id
+			}) as never
+		)) as Response;
+		const sorted = (await sortedRes.json()) as { tickets: { priority: string }[] };
+		expect(sorted.tickets.map((t) => t.priority)).toEqual(['P0', 'P2', 'P3']);
+
+		const filteredRes = (await GET(
+			event({
+				url: `http://localhost/api/tickets?status=open&priority=P0&workspace=${ws}`,
+				userId: user.id
+			}) as never
+		)) as Response;
+		const filtered = (await filteredRes.json()) as {
+			tickets: { title: string; priority: string }[];
+		};
+		expect(filtered.tickets.map((t) => t.priority)).toEqual(['P0']);
+		expect(filtered.tickets[0].title).toBe('high');
+
+		// Invalid params fall back safely: bad sort -> recency, bad priority -> all.
+		const fallbackRes = (await GET(
+			event({
+				url: `http://localhost/api/tickets?status=open&sort=bogus&priority=P9&workspace=${ws}`,
+				userId: user.id
+			}) as never
+		)) as Response;
+		const fallback = (await fallbackRes.json()) as { tickets: unknown[] };
+		expect(fallback.tickets.length).toBe(3);
+	});
+
+	it('/tickets page load reads sort + priority from the URL', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const tickets = await import('../src/lib/server/db/repos/tickets');
+		const { load } = await import('../src/routes/tickets/+page.server');
+		const user = users.ensureLocalUser();
+
+		tickets.create(user.id, { workspaceKey: workspace, title: 'low', priority: 'P3' });
+		tickets.create(user.id, { workspaceKey: workspace, title: 'high', priority: 'P0' });
+		tickets.create(user.id, { workspaceKey: workspace, title: 'mid', priority: 'P2' });
+
+		const data = (await load({
+			locals: { userId: user.id },
+			parent: async () => ({ ticketWorkspace: workspace }),
+			url: new URL('http://localhost/tickets?sort=priority&priority=P0')
+		} as never)) as {
+			initialSort: string;
+			initialPriority: string;
+			initialTickets: { priority: string }[];
+		};
+		expect(data.initialSort).toBe('priority');
+		expect(data.initialPriority).toBe('P0');
+		expect(data.initialTickets.map((t) => t.priority)).toEqual(['P0']);
+
+		// Defaults when the URL omits them (and degrades gracefully without `url`).
+		const def = (await load({
+			locals: { userId: user.id },
+			parent: async () => ({ ticketWorkspace: workspace })
+		} as never)) as { initialSort: string; initialPriority: string };
+		expect(def.initialSort).toBe('recency');
+		expect(def.initialPriority).toBe('all');
+	});
+
 	it('listForSidebar surfaces ready tickets even when the newest are all blocked', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const tickets = await import('../src/lib/server/db/repos/tickets');
