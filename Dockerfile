@@ -81,5 +81,10 @@ USER node
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "build"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:${PORT:-3000}/api/health || exit 1
+# Probe the DB-free liveness endpoint, not readiness (`/api/health`, which
+# runs a sync DB query). Otherwise a transient DB hiccup -- or a long startup
+# migration -- would mark the container unhealthy and restart it mid-migration.
+# `--start-period` is generous so first-boot schema migrations have room to
+# finish before failing probes start counting against `--retries`.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:${PORT:-3000}/api/health/liveness || exit 1

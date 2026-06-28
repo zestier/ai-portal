@@ -94,6 +94,16 @@ describe('hooks auth gate', () => {
 		expect(res.status).toBe(200);
 	});
 
+	it('allows /api/health/liveness without auth', async () => {
+		const handle = await loadHandle();
+		const event = makeEvent({ path: '/api/health/liveness' });
+		const res = await handle({
+			event,
+			resolve: async () => new Response('ok', { status: 200 })
+		});
+		expect(res.status).toBe(200);
+	});
+
 	it('allows /login without auth', async () => {
 		const handle = await loadHandle();
 		const event = makeEvent({ path: '/login' });

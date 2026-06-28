@@ -13,11 +13,22 @@ concurrency:
 permissions: {}
 
 jobs:
+  # Gate: re-run the full CI suite (lint/check/test/e2e/docker/audit) against
+  # the tagged commit before anything is built or pushed. release.yml fires on
+  # tag push independently of ci.yml, so without this a commit with failing CI
+  # could be tagged and published to GHCR. A failure here fails the whole
+  # workflow and `build`/`merge` never run.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   # Build each architecture on its native GitHub-hosted runner (no QEMU)
   # and push it to GHCR by digest only (no tags yet). The `merge` job
   # below then stitches the per-arch images into a single multi-arch
   # manifest under the human-readable tags.
   build:
+    needs: ci
     strategy:
       fail-fast: false
       matrix:

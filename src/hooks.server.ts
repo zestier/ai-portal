@@ -34,7 +34,10 @@ function boot() {
 }
 boot();
 
-const PUBLIC_PATHS = new Set(['/login', '/auth/callback', '/api/health']);
+// `/api/health/liveness` is also short-circuited at the top of `handle` (it
+// returns before the auth gate is ever consulted); it's listed here too as
+// defense-in-depth so the path stays public if that short-circuit is removed.
+const PUBLIC_PATHS = new Set(['/login', '/auth/callback', '/api/health', '/api/health/liveness']);
 const PUBLIC_PREFIXES = ['/_app/', '/favicon'];
 
 function isPublic(pathname: string): boolean {
@@ -43,6 +46,15 @@ function isPublic(pathname: string): boolean {
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
+	// Liveness probe must be process-only. Short-circuit ahead of any
+	// DB-touching work below (AUTH_MODE=none calls users.ensureLocalUser() on
+	// every request) so a DB hiccup or an in-flight startup migration can't
+	// make the container HEALTHCHECK fail and trigger a restart mid-migration.
+	// It's an unauthenticated GET that sets no cookies and reads no state.
+	if (event.url.pathname === '/api/health/liveness') {
+		return resolve(event);
+	}
+
 	const cfg = loadConfig();
 	const secure = event.url.protocol === 'https:';
 

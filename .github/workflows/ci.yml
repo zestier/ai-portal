@@ -3,6 +3,10 @@ on:
   push:
     branches: ['**']
   pull_request:
+  # Allow other workflows (notably release.yml) to invoke the full suite as a
+  # gate. Releasing a tag must re-run CI against the tagged commit so a red
+  # commit can't be tagged into a published image.
+  workflow_call:
 
 # Default to no permissions; each job re-grants only `contents: read`.
 # This means even if a step is compromised, GITHUB_TOKEN cannot push code,

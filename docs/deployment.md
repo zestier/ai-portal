@@ -313,9 +313,15 @@ the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).
 
 ## Health and observability
 
-- `GET /api/health` → `200 {"ok":true}` if DB reachable and migrations
-  current. `503 {"ok":false,"error":"…"}` on failure. Used by the
-  compose healthcheck and Cloudflare Tunnel origin checks.
+- `GET /api/health/liveness` → `200 {"ok":true}`, DB-free. Answers "is the
+  process serving HTTP?" This is what the container HEALTHCHECK polls, so a
+  transient DB hiccup or a long startup migration can't restart the container
+  mid-migration. The Dockerfile uses a generous `--start-period` to give
+  first-boot migrations room to finish.
+- `GET /api/health` → readiness. `200 {"ok":true}` if DB reachable and
+  migrations current. `503 {"ok":false,"error":"…"}` on failure. Use it for
+  traffic-routing / Cloudflare Tunnel origin checks — not as the restart
+  trigger.
 - Logs to stdout as structured JSON. `docker logs -f portal` is
   sufficient for personal use; pipe to Loki/Vector if you have one.
 - Metrics out of scope for v1.
