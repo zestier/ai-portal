@@ -149,7 +149,7 @@ export const lmStudioProvider: ModelBackendProvider = {
 			contextWindowEvents: true,
 			contextCompactionEvents: false,
 			fileEditEvents: false,
-			reasoningEvents: false,
+			reasoningEvents: true,
 			subagentLifecycleEvents: false
 		}
 	},

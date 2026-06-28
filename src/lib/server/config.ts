@@ -118,6 +118,7 @@ const Schema = z
 		OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
 		OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(8),
 		OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES: z.coerce.number().int().positive().default(20),
+		OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT: z.coerce.number().int().positive().optional(),
 		OPENAI_COMPATIBLE_TEMPERATURE: z.coerce.number().min(0).max(2).optional(),
 		OPENAI_COMPATIBLE_TOP_P: z.coerce.number().min(0).max(1).optional(),
 		OPENAI_COMPATIBLE_PRESENCE_PENALTY: z.coerce.number().min(-2).max(2).optional(),

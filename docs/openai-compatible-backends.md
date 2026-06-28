@@ -52,6 +52,9 @@ OPENAI_COMPATIBLE_API_KEY=<token>
 OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS=8
 # Optional cap for persisted messages replayed into a fresh provider session:
 OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES=20
+# Optional context-window size (tokens). When set, the portal requests streamed
+# token usage and shows the header context meter; leave unset to disable it:
+# OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT=32768
 # Optional sampling controls shared by OpenAI-compatible and LM Studio sessions.
 # Leave unset to let the backend/model defaults apply:
 # OPENAI_COMPATIBLE_TEMPERATURE=0.8
@@ -99,7 +102,8 @@ Expected differences:
 | ---- | -------------------------- |
 | Runtime modes | Saved for portal permission semantics, but not sent as Copilot runtime mode hints. |
 | Approve all | Enforced by the portal for portal-hosted tools; no separate provider-side approval cache is reset. |
-| Context meter | No Copilot context-window or compaction events are emitted. |
+| Context meter | Shown when `OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT` is set and the backend streams token usage; no Copilot compaction events are emitted. |
+| Reasoning | Captured from `reasoning_content`/`thinking` fields (DeepSeek-R1, Qwen3/QwQ, Claude-via-proxy) and shown as thinking; no Copilot reasoning summaries. |
 | Subagents | Copilot subagent/task lifecycle events are unavailable. |
 | MCP info events | Copilot SDK sampling, OAuth, and external-tool informational events are unavailable. |
 | Plan exit and elicitation | Copilot callback dialogs for plan-exit and elicitation are unavailable. |

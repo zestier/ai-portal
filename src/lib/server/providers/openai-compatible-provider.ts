@@ -50,6 +50,8 @@ export interface OpenAICompatibleSamplingOptions {
 
 interface ChatChoiceDelta {
 	content?: unknown;
+	reasoning_content?: unknown;
+	thinking?: unknown;
 	tool_calls?: OpenAIToolCallDelta[];
 }
 
@@ -58,6 +60,8 @@ interface ChatStreamChunk {
 		delta?: ChatChoiceDelta;
 		message?: {
 			content?: unknown;
+			reasoning_content?: unknown;
+			thinking?: unknown;
 			tool_calls?: OpenAIToolCall[];
 		};
 		text?: unknown;
@@ -220,7 +224,7 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 			contextWindowEvents: true,
 			contextCompactionEvents: false,
 			fileEditEvents: false,
-			reasoningEvents: false,
+			reasoningEvents: true,
 			subagentLifecycleEvents: false
 		}
 	},
@@ -285,7 +289,9 @@ function providerConfig(): OpenAICompatibleConfig {
 		apiKey: cfg.OPENAI_COMPATIBLE_API_KEY ?? null,
 		maxToolIterations: cfg.OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS,
 		contextRestoreMessages: cfg.OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES,
-		sampling: openAICompatibleSamplingOptions(cfg)
+		sampling: openAICompatibleSamplingOptions(cfg),
+		contextTokenLimit: cfg.OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT ?? null,
+		includeUsage: cfg.OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT !== undefined
 	};
 }
 
@@ -342,6 +348,20 @@ function chunkText(chunk: ChatStreamChunk): string {
 	);
 }
 
+// Reasoning models surface their thinking output in a separate field rather
+// than `content`: DeepSeek-R1 and Qwen3/QwQ use `reasoning_content`, while some
+// Claude-via-proxy backends use `thinking`. Without collecting these, models
+// that put their whole answer in the thinking block render a blank response.
+function chunkReasoning(chunk: ChatStreamChunk): string {
+	const choice = chunk.choices?.[0];
+	return (
+		stringContent(choice?.delta?.reasoning_content) ||
+		stringContent(choice?.delta?.thinking) ||
+		stringContent(choice?.message?.reasoning_content) ||
+		stringContent(choice?.message?.thinking)
+	);
+}
+
 function backendErrorMessage(cfg: OpenAICompatibleConfig, e: unknown): string {
 	if (e instanceof Error && e.name === 'TimeoutError') {
 		return `Timed out connecting to ${cfg.displayName} backend at ${cfg.baseUrl}. Check that the server is reachable from the portal process.`;
@@ -368,6 +388,11 @@ async function* streamChatCompletionTurn(
 	const toolCallParts: OpenAIToolCall[] = [];
 	let lastToolCallIndex = -1;
 	let usage: ChatStreamChunk['usage'];
+	// Reasoning ("thinking") arrives as a contiguous burst before content for
+	// most reasoning models. Open a single segment lazily and close it once
+	// content starts or the turn ends, mirroring the Copilot SDK reasoning path.
+	let reasoningSegmentId: string | null = null;
+	let reasoningStartedAt = 0;
 	for await (const data of streamSseData(res.body)) {
 		if (data === '[DONE]') break;
 		let chunk: ChatStreamChunk;
@@ -380,8 +405,30 @@ async function* streamChatCompletionTurn(
 		}
 		if (chunk.error?.message) throw new Error(chunk.error.message);
 		if (chunk.usage) usage = chunk.usage;
+		const reasoning = chunkReasoning(chunk);
+		if (reasoning) {
+			if (reasoningSegmentId === null) {
+				reasoningSegmentId = ulid();
+				reasoningStartedAt = Date.now();
+			}
+			yield {
+				type: 'message.reasoning',
+				messageId,
+				segmentId: reasoningSegmentId,
+				text: reasoning
+			};
+		}
 		const text = chunkText(chunk);
 		if (text) {
+			if (reasoningSegmentId !== null) {
+				yield {
+					type: 'message.reasoning.end',
+					messageId,
+					segmentId: reasoningSegmentId,
+					durationMs: Date.now() - reasoningStartedAt
+				};
+				reasoningSegmentId = null;
+			}
 			content += text;
 			yield { type: 'message.delta', messageId, text };
 		}
@@ -410,6 +457,14 @@ async function* streamChatCompletionTurn(
 			}
 			lastToolCallIndex = applyToolCallDelta(toolCallParts, delta, lastToolCallIndex);
 		}
+	}
+	if (reasoningSegmentId !== null) {
+		yield {
+			type: 'message.reasoning.end',
+			messageId,
+			segmentId: reasoningSegmentId,
+			durationMs: Date.now() - reasoningStartedAt
+		};
 	}
 	return { content, toolCalls: finalizeToolCalls(toolCallParts), usage };
 }

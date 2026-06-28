@@ -112,6 +112,7 @@ afterEach(() => {
 	delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 	delete process.env.OPENAI_COMPATIBLE_API_KEY;
 	delete process.env.OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS;
+	delete process.env.OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT;
 	delete process.env.OPENAI_COMPATIBLE_TEMPERATURE;
 	delete process.env.OPENAI_COMPATIBLE_TOP_P;
 	delete process.env.OPENAI_COMPATIBLE_PRESENCE_PENALTY;
@@ -218,6 +219,67 @@ describe('openAICompatibleProvider', () => {
 		expect(fetchMock).toHaveBeenCalledWith(
 			'http://127.0.0.1:1234/v1/chat/completions',
 			expect.objectContaining({ method: 'POST' })
+		);
+	});
+
+	it('captures reasoning_content and thinking deltas as reasoning events', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				sseResponse([
+					'data: {"choices":[{"delta":{"reasoning_content":"Let me "}}]}\n\n',
+					'data: {"choices":[{"delta":{"thinking":"think."}}]}\n\n',
+					'data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n',
+					'data: [DONE]\n\n'
+				])
+			)
+		);
+		const session = await openAICompatibleProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('hello', new AbortController().signal));
+
+		expect(events.map((event) => event.type)).toEqual([
+			'message.start',
+			'message.reasoning',
+			'message.reasoning',
+			'message.reasoning.end',
+			'message.delta',
+			'message.end',
+			'done'
+		]);
+		const reasoning = events.filter((e) => e.type === 'message.reasoning') as Array<{
+			text: string;
+			segmentId: string;
+		}>;
+		expect(reasoning.map((e) => e.text).join('')).toBe('Let me think.');
+		expect(reasoning[0].segmentId).toBe(reasoning[1].segmentId);
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: 'message.delta', text: 'Answer' })
+		);
+	});
+
+	it('emits context.usage when a context token limit is configured', async () => {
+		process.env.OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT = '8192';
+		resetConfigForTests();
+		const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			void url;
+			void init;
+			return sseResponse([
+				'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n',
+				'data: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":5,"total_tokens":45}}\n\n',
+				'data: [DONE]\n\n'
+			]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const session = await openAICompatibleProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('hello', new AbortController().signal));
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+			stream_options: { include_usage: true }
+		});
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: 'context.usage', currentTokens: 45, tokenLimit: 8192 })
 		);
 	});
 
