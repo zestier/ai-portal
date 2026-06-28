@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import type {
 		ChatPromptTemplate,
 		Conversation,
@@ -14,6 +14,8 @@
 	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
 	import { awaitingInputOverrides, isAwaitingInput } from '$lib/client/awaiting-input';
+	import { renderMarkdown } from '$lib/client/markdown';
+	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 
 	let {
 		conversations,
@@ -50,6 +52,10 @@
 	let ticketArchiveId = $state<string | null>(null);
 	let expandedTicketIds = $state(new Set<string>());
 	let errorMsg = $state<string | null>(null);
+	let mounted = $state(false);
+	onMount(() => {
+		mounted = true;
+	});
 	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 	let firstMenuItem: HTMLButtonElement | null = $state(null);
 	let renameInput: HTMLInputElement | null = $state(null);
@@ -520,7 +526,15 @@
 										</div>
 										<div class="ticket-details">
 											{#if ticket.body.trim()}
-												<div class="ticket-body">{ticket.body}</div>
+												{#if mounted}
+													<!-- eslint-disable svelte/no-at-html-tags -->
+													<div class="markdown-body ticket-body-md" use:copyableCodeBlocks>
+														{@html renderMarkdown(ticket.body)}
+													</div>
+													<!-- eslint-enable svelte/no-at-html-tags -->
+												{:else}
+													<div class="ticket-body">{ticket.body}</div>
+												{/if}
 											{:else}
 												<div class="ticket-body muted">No details.</div>
 											{/if}
@@ -961,6 +975,21 @@
 	.ticket-body {
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+	}
+	.ticket-body-md {
+		font-size: var(--fs-xs);
+	}
+	.ticket-body-md :global(:is(h1, h2, h3, h4, h5, h6)) {
+		font-size: inherit;
+	}
+	.ticket-body-md :global(pre) {
+		max-width: 100%;
+		overflow-x: auto;
+	}
+	.ticket-body-md :global(table) {
+		max-width: 100%;
+		overflow-x: auto;
+		display: block;
 	}
 	.ticket-meta {
 		margin-top: 0.25rem;

@@ -202,7 +202,7 @@
 		{#if ticket.body.trim()}
 			{#if mounted}
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				<div class="markdown" use:copyableCodeBlocks>{@html renderMarkdown(ticket.body)}</div>
+				<div class="markdown-body" use:copyableCodeBlocks>{@html renderMarkdown(ticket.body)}</div>
 			{:else}
 				<p class="fallback">{ticket.body}</p>
 			{/if}
@@ -216,7 +216,7 @@
 		{#if ticket.plan.trim()}
 			{#if mounted}
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				<div class="markdown" use:copyableCodeBlocks>{@html renderMarkdown(ticket.plan)}</div>
+				<div class="markdown-body" use:copyableCodeBlocks>{@html renderMarkdown(ticket.plan)}</div>
 			{:else}
 				<p class="fallback">{ticket.plan}</p>
 			{/if}
@@ -394,30 +394,6 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		line-height: 1.5;
-	}
-	.markdown {
-		margin: 0;
-		overflow-wrap: anywhere;
-		line-height: 1.5;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-	}
-	.markdown :global(> :first-child) {
-		margin-top: 0;
-	}
-	.markdown :global(> :last-child) {
-		margin-bottom: 0;
-	}
-	.markdown :global(.contains-task-list) {
-		list-style: none;
-		padding-left: 0;
-	}
-	.markdown :global(.task-list-item) {
-		list-style: none;
-	}
-	.markdown :global(.task-list-item input) {
-		margin-right: var(--space-1);
 	}
 	.empty {
 		margin: 0;

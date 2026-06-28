@@ -348,6 +348,51 @@ textarea {
 	color: var(--danger);
 }
 
+/* Shared markdown rendering styles.
+ * Applied to containers that render {@html renderMarkdown(...)} output.
+ * Used by the ticket detail page and the sidebar ticket panel. (Other
+ * markdown renderers such as SubagentCall keep their own component-scoped
+ * styles, so this class is opt-in rather than matching every `.markdown`.)
+ *
+ * Spacing strategy: all direct-children margin-tops are zeroed so spacing
+ * is controlled via margin-bottom only. Headings are the exception: they
+ * get a top margin for a section-break effect, and a tight bottom margin
+ * so the content they introduce reads as a unit.
+ *   element → heading : max(el.mb, heading.mt) = clear section break
+ *   heading → element : heading.mb (0.25em) = tight / belongs-together feel
+ * The :first-child rule zero-outs the top margin regardless of element type. */
+.markdown-body {
+	margin: 0;
+	overflow-wrap: anywhere;
+	line-height: 1.5;
+}
+.markdown-body > * {
+	margin-top: 0;
+}
+.markdown-body > :is(h1, h2, h3, h4, h5, h6) {
+	margin-top: 0.75em;
+	margin-bottom: 0.25em;
+}
+.markdown-body > :first-child {
+	margin-top: 0;
+}
+.markdown-body > :last-child {
+	margin-bottom: 0;
+}
+.markdown-body :is(ul, ol) {
+	padding-left: 1.5em;
+}
+.markdown-body .contains-task-list {
+	list-style: none;
+	padding-left: 0;
+}
+.markdown-body .task-list-item {
+	list-style: none;
+}
+.markdown-body .task-list-item input {
+	margin-right: var(--space-1);
+}
+
 /* Horizontal scroll affordance for overflow-x containers (e.g. tab strips).
    Edge "cover" fades (move with content via attachment: local) hide a dark
    shadow at whichever edge still has scrollable content. Override the cover
