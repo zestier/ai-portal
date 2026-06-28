@@ -20,6 +20,21 @@ const commaList = z
 			: []
 	);
 
+// Like commaList but preserves case — filesystem paths are case-sensitive on
+// the platforms we target, so lowercasing them would silently break the
+// allowlist on a case-sensitive root.
+const pathList = z
+	.string()
+	.optional()
+	.transform((v) =>
+		v
+			? v
+					.split(',')
+					.map((s) => s.trim())
+					.filter(Boolean)
+			: []
+	);
+
 const Schema = z
 	.object({
 		HOST: z.string().default('127.0.0.1'),
@@ -31,6 +46,14 @@ const Schema = z
 		// unset, which for a `pnpm dev`/`pnpm serve` run is the portal
 		// checkout (or whatever real project the user is running it from).
 		PROJECT_ROOT: z.string().default(process.cwd()),
+		// Allowlist of roots a user-supplied workdir may resolve inside. Empty
+		// (the default) means "only PROJECT_ROOT". Comma-separated absolute
+		// paths widen it for a trusted single operator who wants to point
+		// conversations at several project trees. In multi-user GitHub mode
+		// (AUTH_MODE=github with >1 allowed login) the effective roots are
+		// always clamped to PROJECT_ROOT regardless of this value, so one
+		// operator can never browse another's data or the host's secrets.
+		ALLOWED_WORKDIRS: pathList,
 		LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
 		AUTH_MODE: z.enum(['github', 'shared-secret', 'none']).default('none'),

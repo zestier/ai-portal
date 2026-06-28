@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { setupLocalEnv } from './helpers/env';
+import { setupLocalEnv, resetServerSingletons } from './helpers/env';
 
 let workspace: string;
 
@@ -28,6 +28,10 @@ describe('workspace tickets', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-tickets-');
 		workspace = mkdtempSync(join(tmpdir(), 'portal-ticket-workspace-'));
+		// Ticket REST routes resolve the supplied workspace through the workdir
+		// allowlist; these tests use throwaway tmpdir workspaces, so allow them.
+		process.env.ALLOWED_WORKDIRS = tmpdir();
+		await resetServerSingletons();
 	});
 
 	afterEach(() => {

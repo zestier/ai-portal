@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { resolve, join, sep } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, symlinkSync, realpathSync } from 'node:fs';
 import { setupLocalEnv, resetServerSingletons } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
 
@@ -15,8 +15,10 @@ describe('workdir resolution', () => {
 		dataDir = await setupLocalEnv('portal-workdir-test-');
 	});
 
-	async function withProjectRoot(root: string) {
+	async function withProjectRoot(root: string, allowed?: string[]) {
 		process.env.PROJECT_ROOT = root;
+		if (allowed) process.env.ALLOWED_WORKDIRS = allowed.join(',');
+		else delete process.env.ALLOWED_WORKDIRS;
 		await resetServerSingletons();
 		return freshImport();
 	}
@@ -43,17 +45,28 @@ describe('workdir resolution', () => {
 			expect(effectiveWorkdir('')).toBe(projectRoot());
 		});
 
-		it('returns a normalized absolute path for a real stored workdir', async () => {
+		it('returns a normalized absolute path for an allowlisted stored workdir', async () => {
 			const root = makeTmpDir('portal-proot-');
-			const { effectiveWorkdir } = await withProjectRoot(root);
+			// effectiveWorkdir now also enforces the allowlist; widen it so the
+			// stored value is honored rather than folded back to PROJECT_ROOT.
+			const { effectiveWorkdir } = await withProjectRoot(root, ['/srv/projects']);
 			const stored = '/srv/projects/app/.';
 			expect(effectiveWorkdir(stored)).toBe(resolve(stored));
 		});
 
-		it('resolves a relative stored workdir against cwd', async () => {
+		it('resolves a relative stored workdir against cwd when allowlisted', async () => {
 			const root = makeTmpDir('portal-proot-');
-			const { effectiveWorkdir } = await withProjectRoot(root);
+			const { effectiveWorkdir } = await withProjectRoot(root, [process.cwd()]);
 			expect(effectiveWorkdir('rel/work')).toBe(resolve('rel/work'));
+		});
+
+		it('folds a stored workdir outside the allowlist back to PROJECT_ROOT', async () => {
+			const root = makeTmpDir('portal-proot-');
+			// Simulates a value persisted before the allowlist existed (e.g. "/").
+			// It must not become a live containment root for the file/git routes.
+			const { effectiveWorkdir, projectRoot } = await withProjectRoot(root);
+			expect(effectiveWorkdir('/')).toBe(projectRoot());
+			expect(effectiveWorkdir('/etc')).toBe(projectRoot());
 		});
 
 		it('routes the legacy workspaces dir itself back to PROJECT_ROOT', async () => {
@@ -72,9 +85,10 @@ describe('workdir resolution', () => {
 
 		it('does not treat a sibling that merely shares the legacy prefix as legacy', async () => {
 			const root = makeTmpDir('portal-proot-');
-			const { effectiveWorkdir } = await withProjectRoot(root);
 			// `<dataDir>/workspaces-other` shares the string prefix but is not
-			// inside `<dataDir>/workspaces/`, so it must be preserved.
+			// inside `<dataDir>/workspaces/`, so it must be preserved — allowlist
+			// it via dataDir so the legacy-prefix check is what we're exercising.
+			const { effectiveWorkdir } = await withProjectRoot(root, [dataDir]);
 			const sibling = resolve(dataDir, 'workspaces-other');
 			expect(effectiveWorkdir(sibling)).toBe(sibling);
 			expect(effectiveWorkdir(sibling)).not.toBe(resolve(root));
@@ -82,35 +96,175 @@ describe('workdir resolution', () => {
 	});
 
 	describe('resolveAndValidate', () => {
-		it('accepts an existing directory and returns its absolute path', async () => {
-			const { resolveAndValidate } = await freshImport();
+		// resolveAndValidate now enforces an allowlist (default: PROJECT_ROOT).
+		// Point the allowlist at a fresh root for each case so we exercise the
+		// existence / directory checks independently of containment.
+		async function withAllowed(roots: string[]) {
+			process.env.ALLOWED_WORKDIRS = roots.join(',');
+			delete process.env.PROJECT_ROOT;
+			await resetServerSingletons();
+			return freshImport();
+		}
+
+		it('accepts an existing directory inside an allowed root', async () => {
 			const dir = makeTmpDir('portal-valid-wd-');
+			const { resolveAndValidate } = await withAllowed([dir]);
 			const res = resolveAndValidate(dir);
 			expect(res).toEqual({ ok: true, path: resolve(dir) });
 		});
 
+		it('accepts a subdirectory of an allowed root', async () => {
+			const root = makeTmpDir('portal-valid-wd-');
+			const sub = join(root, 'project');
+			mkdirSync(sub);
+			const { resolveAndValidate } = await withAllowed([root]);
+			const res = resolveAndValidate(sub);
+			expect(res).toEqual({ ok: true, path: resolve(sub) });
+		});
+
 		it('normalizes traversal segments before validating', async () => {
-			const { resolveAndValidate } = await freshImport();
 			const dir = makeTmpDir('portal-valid-wd-');
+			const { resolveAndValidate } = await withAllowed([dir]);
 			const messy = join(dir, 'sub', '..');
 			const res = resolveAndValidate(messy);
 			expect(res).toEqual({ ok: true, path: resolve(dir) });
 		});
 
 		it('rejects a path that does not exist', async () => {
-			const { resolveAndValidate } = await freshImport();
-			const missing = join(makeTmpDir('portal-valid-wd-'), 'nope');
+			const root = makeTmpDir('portal-valid-wd-');
+			const { resolveAndValidate } = await withAllowed([root]);
+			const missing = join(root, 'nope');
 			const res = resolveAndValidate(missing);
 			expect(res).toEqual({ ok: false, reason: 'workdir does not exist' });
 		});
 
 		it('rejects a path that exists but is a file, not a directory', async () => {
-			const { resolveAndValidate } = await freshImport();
 			const dir = makeTmpDir('portal-valid-wd-');
+			const { resolveAndValidate } = await withAllowed([dir]);
 			const file = join(dir, 'a.txt');
 			writeFileSync(file, 'hi\n');
 			const res = resolveAndValidate(file);
 			expect(res).toEqual({ ok: false, reason: 'workdir is not a directory' });
+		});
+
+		it('rejects an existing directory outside every allowed root', async () => {
+			const allowed = makeTmpDir('portal-allowed-wd-');
+			const outside = makeTmpDir('portal-outside-wd-');
+			const { resolveAndValidate } = await withAllowed([allowed]);
+			const res = resolveAndValidate(outside);
+			expect(res).toEqual({ ok: false, reason: 'workdir is not within an allowed root' });
+		});
+
+		it('rejects host roots like / and /etc by default', async () => {
+			const root = makeTmpDir('portal-proot-');
+			// Default allowlist is just PROJECT_ROOT (the temp root here).
+			process.env.PROJECT_ROOT = root;
+			delete process.env.ALLOWED_WORKDIRS;
+			await resetServerSingletons();
+			const { resolveAndValidate } = await freshImport();
+			expect(resolveAndValidate('/')).toEqual({
+				ok: false,
+				reason: 'workdir is not within an allowed root'
+			});
+			expect(resolveAndValidate('/etc')).toEqual({
+				ok: false,
+				reason: 'workdir is not within an allowed root'
+			});
+		});
+
+		it('honors multiple comma-separated allowed roots', async () => {
+			const a = makeTmpDir('portal-allowed-a-');
+			const b = makeTmpDir('portal-allowed-b-');
+			const { resolveAndValidate } = await withAllowed([a, b]);
+			expect(resolveAndValidate(a)).toEqual({ ok: true, path: resolve(a) });
+			expect(resolveAndValidate(b)).toEqual({ ok: true, path: resolve(b) });
+		});
+
+		it('rejects a symlink inside an allowed root that escapes it', async () => {
+			const allowed = makeTmpDir('portal-allowed-wd-');
+			const outside = makeTmpDir('portal-outside-wd-');
+			const link = join(allowed, 'escape');
+			symlinkSync(outside, link);
+			const { resolveAndValidate } = await withAllowed([allowed]);
+			// Lexically `allowed/escape` is inside the root, but its realpath is
+			// the outside dir — the allowlist must reject it.
+			const res = resolveAndValidate(link);
+			expect(res).toEqual({ ok: false, reason: 'workdir is not within an allowed root' });
+		});
+	});
+
+	describe('allowedWorkdirRoots', () => {
+		it('defaults to PROJECT_ROOT when ALLOWED_WORKDIRS is unset', async () => {
+			const root = makeTmpDir('portal-proot-');
+			process.env.PROJECT_ROOT = root;
+			delete process.env.ALLOWED_WORKDIRS;
+			await resetServerSingletons();
+			const { allowedWorkdirRoots } = await freshImport();
+			expect(allowedWorkdirRoots()).toEqual([realpathSync(root)]);
+		});
+
+		it('clamps roots to PROJECT_ROOT in multi-user GitHub mode', async () => {
+			const projects = makeTmpDir('portal-proot-');
+			const inside = join(projects, 'app');
+			mkdirSync(inside);
+			const outside = makeTmpDir('portal-outside-wd-');
+			// Multi-user GitHub: a configured root outside PROJECT_ROOT is dropped,
+			// an inside one is kept.
+			process.env.AUTH_MODE = 'github';
+			process.env.ALLOWED_GITHUB_LOGINS = 'alice,bob';
+			process.env.GITHUB_CLIENT_ID = 'id';
+			process.env.GITHUB_CLIENT_SECRET = 'secret';
+			process.env.SESSION_SECRET = 'x'.repeat(48);
+			process.env.ENCRYPTION_KEY = Buffer.alloc(32).toString('base64');
+			delete process.env.I_KNOW_THIS_IS_LOCAL;
+			delete process.env.ENABLE_REDEPLOY;
+			process.env.PROJECT_ROOT = projects;
+			process.env.ALLOWED_WORKDIRS = `${inside},${outside}`;
+			await resetServerSingletons();
+			const { allowedWorkdirRoots, resolveAndValidate } = await freshImport();
+			expect(allowedWorkdirRoots()).toEqual([realpathSync(inside)]);
+			expect(resolveAndValidate(outside)).toEqual({
+				ok: false,
+				reason: 'workdir is not within an allowed root'
+			});
+			expect(resolveAndValidate(inside)).toEqual({ ok: true, path: resolve(inside) });
+		});
+
+		it('falls back to PROJECT_ROOT when every configured root is outside it (multi-user)', async () => {
+			const projects = makeTmpDir('portal-proot-');
+			const outside = makeTmpDir('portal-outside-wd-');
+			process.env.AUTH_MODE = 'github';
+			process.env.ALLOWED_GITHUB_LOGINS = 'alice,bob';
+			process.env.GITHUB_CLIENT_ID = 'id';
+			process.env.GITHUB_CLIENT_SECRET = 'secret';
+			process.env.SESSION_SECRET = 'x'.repeat(48);
+			process.env.ENCRYPTION_KEY = Buffer.alloc(32).toString('base64');
+			delete process.env.I_KNOW_THIS_IS_LOCAL;
+			delete process.env.ENABLE_REDEPLOY;
+			process.env.PROJECT_ROOT = projects;
+			process.env.ALLOWED_WORKDIRS = outside;
+			await resetServerSingletons();
+			const { allowedWorkdirRoots } = await freshImport();
+			expect(allowedWorkdirRoots()).toEqual([realpathSync(projects)]);
+		});
+
+		it('honors a root outside PROJECT_ROOT for a single GitHub login', async () => {
+			const projects = makeTmpDir('portal-proot-');
+			const outside = makeTmpDir('portal-outside-wd-');
+			process.env.AUTH_MODE = 'github';
+			process.env.ALLOWED_GITHUB_LOGINS = 'solo';
+			process.env.GITHUB_CLIENT_ID = 'id';
+			process.env.GITHUB_CLIENT_SECRET = 'secret';
+			process.env.SESSION_SECRET = 'x'.repeat(48);
+			process.env.ENCRYPTION_KEY = Buffer.alloc(32).toString('base64');
+			delete process.env.I_KNOW_THIS_IS_LOCAL;
+			delete process.env.ENABLE_REDEPLOY;
+			process.env.PROJECT_ROOT = projects;
+			process.env.ALLOWED_WORKDIRS = outside;
+			await resetServerSingletons();
+			const { allowedWorkdirRoots, resolveAndValidate } = await freshImport();
+			expect(allowedWorkdirRoots()).toEqual([realpathSync(outside)]);
+			expect(resolveAndValidate(outside)).toEqual({ ok: true, path: resolve(outside) });
 		});
 	});
 

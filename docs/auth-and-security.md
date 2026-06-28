@@ -29,9 +29,12 @@ The intended boundary is therefore **outside the portal**:
   Cloudflare Access.
 - Only allow identities that you would also trust with a terminal on the host
   and the selected `PROJECT_ROOT`.
-- Treat features such as redeploy, global permission grants, arbitrary workdir
-   selection, and same-workdir concurrent conversations as capabilities of that
-   trusted operator model, not as isolation guarantees.
+- Treat features such as redeploy, global permission grants, and same-workdir
+   concurrent conversations as capabilities of that trusted operator model, not
+   as isolation guarantees. Workdir selection is allowlisted (see
+   "Working-directory containment"): it defaults to `PROJECT_ROOT`, and in
+   multi-user GitHub mode it is clamped to `PROJECT_ROOT` so it can't be used to
+   reach another operator's files.
 - When `ENABLE_REDEPLOY=1` with GitHub auth, use
   `REDEPLOY_ADMIN_GITHUB_LOGINS` to restrict the update/restart endpoint to a
   subset of allowed operators. Single-user GitHub installs default that one
@@ -154,9 +157,23 @@ first after process boot.
   at the same path share the same files, git state, running services, caches,
   and external side effects; permission prompts and snapshots do not make that
   state transactional.
-- No allowlist is enforced. The portal is a single-trusted-user app;
-  if you can log in, you can already make the agent run shell
-  commands, so policing the chosen directory adds no real defence.
+- No allowlist is enforced by default beyond `PROJECT_ROOT`. A user-supplied
+  workdir (at conversation create or via the per-user default in settings)
+  must resolve, after symlinks, inside one of the configured allowed roots —
+  by default just `PROJECT_ROOT`. A single trusted operator who wants to point
+  conversations at several project trees widens this with `ALLOWED_WORKDIRS`
+  (comma-separated absolute paths). This is what stops an authenticated user
+  from setting `workdir` to `/` and then reading arbitrary host files (e.g.
+  `/etc/passwd`, `/proc/self/environ`) through the conversation-scoped
+  file-browser / git endpoints.
+- **Multi-user GitHub mode is hardened further.** When `AUTH_MODE=github` and
+  more than one login is in `ALLOWED_GITHUB_LOGINS`, the effective allowed
+  roots are *clamped* to `PROJECT_ROOT`: any `ALLOWED_WORKDIRS` entry outside
+  it is dropped. So no matter how the allowlist is configured, one operator can
+  never select a workdir outside `PROJECT_ROOT` and read another operator's
+  data — or the server's own secrets — through the file/git endpoints. Single
+  trusted-operator installs (local mode, shared-secret, or a one-login GitHub
+  install) retain the original "any allowlisted directory" flexibility.
 - The read-only file browser and git endpoints (`/api/conversations/[id]/fs/*`,
   `/api/conversations/[id]/git/*`) constrain paths to the workspace
   root's realpath; symlinks that resolve outside it are rejected, and

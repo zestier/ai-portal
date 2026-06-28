@@ -32,12 +32,17 @@ describe('conversation-scoped fs/git routes', () => {
 		projectRoot = mkdtempSync(join(tmpdir(), 'portal-project-root-'));
 		conversationRoot = mkdtempSync(join(tmpdir(), 'portal-conversation-root-'));
 		process.env.PROJECT_ROOT = projectRoot;
+		// The conversation workdir lives outside PROJECT_ROOT here; allowlist it
+		// so the read-boundary containment check honors it (mirrors an operator
+		// who points conversations at a separate project tree).
+		process.env.ALLOWED_WORKDIRS = `${projectRoot},${conversationRoot}`;
 		await resetServerSingletons();
 		vi.resetModules();
 	});
 
 	afterEach(() => {
 		delete process.env.PROJECT_ROOT;
+		delete process.env.ALLOWED_WORKDIRS;
 		rmSync(projectRoot, { recursive: true, force: true });
 		rmSync(conversationRoot, { recursive: true, force: true });
 	});

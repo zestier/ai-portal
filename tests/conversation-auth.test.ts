@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { setupLocalEnv } from './helpers/env';
+import { setupLocalEnv, resetServerSingletons } from './helpers/env';
 
 describe('authorizeConversationWorkdir', () => {
 	beforeEach(async () => {
@@ -16,6 +16,10 @@ describe('authorizeConversationWorkdir', () => {
 		const user = users.ensureLocalUser();
 		const workdir = resolve('/tmp', 'portal-conversation-auth-workdir');
 		mkdirSync(workdir, { recursive: true });
+		// Allowlist the out-of-PROJECT_ROOT workdir so the read-boundary
+		// containment check honors it rather than folding back to PROJECT_ROOT.
+		process.env.ALLOWED_WORKDIRS = workdir;
+		await resetServerSingletons();
 		const conv = convs.create(user.id, { title: 't', workdir, model: null });
 
 		const out = authorizeConversationWorkdir(conv.id, user.id);

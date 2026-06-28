@@ -21,6 +21,7 @@ const baseCfg: AppConfig = {
 	PORT: 3000,
 	DATA_DIR: './data',
 	PROJECT_ROOT: process.cwd(),
+	ALLOWED_WORKDIRS: [],
 	LOG_LEVEL: 'info',
 	AUTH_MODE: 'github',
 	SESSION_SECRET: 'x'.repeat(32),

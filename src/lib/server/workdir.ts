@@ -10,9 +10,9 @@
 // in practice. We now just route everything to the configured
 // PROJECT_ROOT (env or cwd), with an optional per-user override.
 
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import { loadConfig } from './config';
+import { loadConfig, type AppConfig } from './config';
 
 /**
  * The default workdir for newly created conversations when the user has
@@ -30,20 +30,33 @@ export function projectRoot(): string {
  *  - the stored value is empty, or
  *  - it points into the legacy `<DATA_DIR>/workspaces/` tree (old, empty
  *    per-conversation sandboxes from before workdirs were wired through
- *    to the SDK; their on-disk dirs are still there but unusable).
+ *    to the SDK; their on-disk dirs are still there but unusable), or
+ *  - it no longer resolves inside the configured allowlist (see
+ *    {@link allowedWorkdirRoots}).
+ *
+ * The allowlist fallback is defense-in-depth for the *read* boundary: the
+ * conversation-scoped file-browser / git endpoints derive their containment
+ * root from the stored `conversations.workdir` via this function, so a value
+ * that was persisted before the allowlist existed (or after an operator
+ * narrowed it) — e.g. a stored `"/"` — must not become a live root. Such a
+ * value is folded back to PROJECT_ROOT instead of being trusted.
  */
 export function effectiveWorkdir(stored: string | null | undefined): string {
 	if (!stored) return projectRoot();
 	const abs = resolve(stored);
 	const legacy = resolve(loadConfig().DATA_DIR, 'workspaces');
 	if (abs === legacy || abs.startsWith(legacy + sep)) return projectRoot();
+	if (!withinAllowedRoots(abs)) return projectRoot();
 	return abs;
 }
 
 /**
- * Validate a user-supplied workdir path. The path must exist and be a
- * directory; no allowlist is enforced (the portal is a single-trusted-
- * user app — see AGENTS.md / auth-and-security docs).
+ * Validate a user-supplied workdir path. The path must exist, be a directory,
+ * and resolve (after symlinks) inside one of the configured allowed roots
+ * (see {@link allowedWorkdirRoots}). The allowlist is what keeps an
+ * authenticated user from pointing a conversation at `/` (or any other host
+ * directory) and then reading arbitrary files via the conversation-scoped
+ * file-browser / git endpoints.
  */
 export function resolveAndValidate(
 	input: string
@@ -59,5 +72,66 @@ export function resolveAndValidate(
 	} catch (e) {
 		return { ok: false, reason: `workdir not accessible: ${(e as Error).message}` };
 	}
+	// Containment is checked against the *realpath* of the candidate so a
+	// symlink inside an allowed root that points back out (e.g. an attacker
+	// drops `allowed/link -> /`) cannot smuggle the root past the allowlist.
+	if (!withinAllowedRoots(abs)) {
+		return { ok: false, reason: 'workdir is not within an allowed root' };
+	}
 	return { ok: true, path: abs };
+}
+
+/**
+ * True when `abs` resolves (after symlinks) inside one of the configured
+ * allowed roots. Shared by the write boundary ({@link resolveAndValidate})
+ * and the read boundary ({@link effectiveWorkdir}).
+ */
+function withinAllowedRoots(abs: string): boolean {
+	const real = safeRealpath(abs);
+	return allowedWorkdirRoots().some((root) => isWithin(root, real));
+}
+
+/**
+ * Resolve a path to its realpath, falling back to the lexical path when the
+ * realpath cannot be taken (missing path / transient I/O error). Callers that
+ * need existence guarantees check that separately.
+ */
+function safeRealpath(p: string): string {
+	try {
+		return realpathSync(p);
+	} catch {
+		return p;
+	}
+}
+
+/** True when `candidate` is `root` itself or a descendant of it. */
+function isWithin(root: string, candidate: string): boolean {
+	return candidate === root || candidate.startsWith(root + sep);
+}
+
+/**
+ * The set of realpath'd roots a user-supplied workdir is allowed to resolve
+ * inside.
+ *
+ * Defaults to `[PROJECT_ROOT]`. An operator running a single trusted account
+ * can widen it with the `ALLOWED_WORKDIRS` env var (comma-separated absolute
+ * paths) to point conversations at several project trees.
+ *
+ * In multi-user GitHub mode (`AUTH_MODE=github` with more than one allowed
+ * login) the roots are *clamped* to PROJECT_ROOT: any configured root that is
+ * not inside PROJECT_ROOT is dropped, and if that leaves nothing we fall back
+ * to PROJECT_ROOT. This guarantees that — regardless of how `ALLOWED_WORKDIRS`
+ * is set — no operator can browse outside PROJECT_ROOT into another operator's
+ * data or the host's secrets.
+ */
+export function allowedWorkdirRoots(cfg: AppConfig = loadConfig()): string[] {
+	const configured = cfg.ALLOWED_WORKDIRS.length > 0 ? cfg.ALLOWED_WORKDIRS : [cfg.PROJECT_ROOT];
+	let roots = configured.map((r) => safeRealpath(resolve(r)));
+	const multiUserGithub = cfg.AUTH_MODE === 'github' && cfg.ALLOWED_GITHUB_LOGINS.length > 1;
+	if (multiUserGithub) {
+		const pr = safeRealpath(projectRoot());
+		roots = roots.filter((r) => isWithin(pr, r));
+		if (roots.length === 0) roots = [pr];
+	}
+	return [...new Set(roots)];
 }
