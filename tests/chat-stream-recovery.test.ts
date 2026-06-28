@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
 	CHAT_STREAM_STALL_TIMEOUT_MS,
+	CHAT_INTERACTIVE_STALL_TIMEOUT_MS,
 	EVENT_SOURCE_CLOSED,
 	shouldResumeStream,
 	streamIsLive,
-	streamRefreshAction
+	streamRefreshAction,
+	streamStallDelayMs
 } from '../src/lib/client/chat-stream-recovery';
 
 describe('chat stream recovery', () => {
@@ -121,6 +123,49 @@ describe('streamIsLive', () => {
 
 	it('treats an OPEN socket as live', () => {
 		expect(streamIsLive({ readyState: 1 })).toBe(true);
+	});
+});
+
+describe('streamStallDelayMs', () => {
+	it('does not arm without a live EventSource', () => {
+		expect(
+			streamStallDelayMs({
+				hasEventSource: false,
+				activeTurnId: 'turn-1',
+				pendingInteractiveCount: 0
+			})
+		).toBeNull();
+	});
+
+	it('does not arm without an active turn', () => {
+		expect(
+			streamStallDelayMs({
+				hasEventSource: true,
+				activeTurnId: null,
+				pendingInteractiveCount: 0
+			})
+		).toBeNull();
+	});
+
+	it('uses the normal stall timeout when no prompt is pending', () => {
+		expect(
+			streamStallDelayMs({
+				hasEventSource: true,
+				activeTurnId: 'turn-1',
+				pendingInteractiveCount: 0
+			})
+		).toBe(CHAT_STREAM_STALL_TIMEOUT_MS);
+	});
+
+	it('arms a longer fuse (not a no-op) while a prompt is pending so a wedged interactive recovers', () => {
+		expect(
+			streamStallDelayMs({
+				hasEventSource: true,
+				activeTurnId: 'turn-1',
+				pendingInteractiveCount: 1
+			})
+		).toBe(CHAT_INTERACTIVE_STALL_TIMEOUT_MS);
+		expect(CHAT_INTERACTIVE_STALL_TIMEOUT_MS).toBeGreaterThan(CHAT_STREAM_STALL_TIMEOUT_MS);
 	});
 });
 

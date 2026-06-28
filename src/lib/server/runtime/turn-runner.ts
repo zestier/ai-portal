@@ -405,9 +405,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 		} else if (ev.type === 'message.end') {
 			emit({ ...ev, messageId: ensurePersistedAssistant() });
 		} else if (ev.type === 'tool.call') {
-			emit(ev);
 			const isChild = !!ev.parentToolCallId;
 			const persistedId = ensurePersistedAssistant();
+			emit({ ...ev, messageId: persistedId });
 			const tool: PendingTool = {
 				toolCallId: ev.toolCallId,
 				tool: ev.tool,
@@ -460,8 +460,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			emit(ev);
 			messages.updateBackgroundAgentLifecycle(ev.toolCallId, ev.agentId, ev.status);
 		} else if (ev.type === 'file.edit') {
-			emit(ev);
 			const isChild = !!ev.parentToolCallId;
+			const persistedId = ensurePersistedAssistant();
+			emit({ ...ev, messageId: persistedId });
 			const textOffset = isChild ? null : assistantBuf.length;
 			const parentToolCallId = ev.parentToolCallId ?? null;
 			const key = JSON.stringify([ev.path, ev.diff, textOffset, parentToolCallId]);
@@ -875,7 +876,7 @@ function makeExtractorCardDispatch(
 	let nextReasoningIndex = 0;
 	return (ev: PortalEvent) => {
 		if (ev.type === 'tool.call') {
-			emit(ev);
+			emit({ ...ev, messageId: assistantMessageId });
 			messages.upsertToolCall(assistantMessageId, {
 				id: ev.toolCallId,
 				tool: ev.tool,

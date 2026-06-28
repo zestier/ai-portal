@@ -879,6 +879,13 @@ export type PortalEvent =
 			tool: string;
 			args: unknown;
 			parentToolCallId?: string | undefined;
+			// The assistant message this call is anchored to. Set when the event
+			// is emitted to clients so the UI can target by id (like
+			// `message.delta`) instead of assuming the last message is the active
+			// assistant turn — which breaks across a reconnect gap. Optional
+			// because lower-level SDK/provider emitters dispatch before the
+			// assistant message is persisted.
+			messageId?: string | undefined;
 	  }
 	| { type: 'interactive.request'; request: InteractiveRequestView }
 	| {
@@ -923,7 +930,14 @@ export type PortalEvent =
 			message: string;
 			parentToolCallId?: string | undefined;
 	  }
-	| { type: 'file.edit'; path: string; diff: string; parentToolCallId?: string | undefined }
+	| {
+			type: 'file.edit';
+			path: string;
+			diff: string;
+			parentToolCallId?: string | undefined;
+			// Assistant message anchor; see the note on `tool.call`.
+			messageId?: string | undefined;
+	  }
 	| { type: 'conversation.update'; conversationId: string; title?: string }
 	| {
 			type: 'session.settings';

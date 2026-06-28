@@ -21,8 +21,9 @@
 	import { isBlockingKind } from '$lib/interactive/request-registry';
 	import { setAwaitingInput, clearAwaitingInput } from '$lib/client/awaiting-input';
 	import { findToolCallRecord } from '$lib/client/tool-call-record';
+	import { resolveAssistantTarget } from '$lib/client/assistant-target';
 	import {
-		CHAT_STREAM_STALL_TIMEOUT_MS,
+		streamStallDelayMs,
 		streamRefreshAction,
 		streamIsLive,
 		shouldResumeStream
@@ -513,17 +514,28 @@
 
 	function scheduleStreamStallTimeout() {
 		clearStreamStallTimeout();
-		if (!eventSource || !activeTurnId || pendingInteractive.length > 0) return;
+		const delay = streamStallDelayMs({
+			hasEventSource: !!eventSource,
+			activeTurnId,
+			pendingInteractiveCount: pendingInteractive.length
+		});
+		if (delay === null) return;
 		const turnId = activeTurnId;
+		if (turnId === null) return;
 		streamStallTimer = setTimeout(() => {
 			void recoverStalledStream(turnId);
-		}, CHAT_STREAM_STALL_TIMEOUT_MS);
+		}, delay);
 	}
 
 	async function recoverStalledStream(turnId: string) {
-		if (turnId !== activeTurnId || pendingInteractive.length > 0) {
+		if (turnId !== activeTurnId) {
 			return;
 		}
+		// Re-sync from the server even when a prompt is outstanding: if the
+		// interactive handler timed out or the stream died mid-permission
+		// without an `interactive.resolved`, `refreshMessages()` snaps the
+		// dialog queue back to the authoritative `pending` map (clearing a
+		// prompt the server no longer holds) instead of deadlocking the UI.
 		await refreshMessages();
 		if (turnId !== activeTurnId) return;
 		scheduleStreamStallTimeout();
@@ -729,22 +741,27 @@
 				break;
 			}
 			case 'tool.call': {
-				const m = messages[messages.length - 1];
-				if (m && m.role === 'assistant') {
-					const isChild = !!ev.parentToolCallId;
-					(m.toolCalls ??= []).push({
-						id: ev.toolCallId,
-						messageId: m.id,
-						tool: ev.tool,
-						argsJson: safeJson(ev.args),
-						resultJson: null,
-						status: 'pending',
-						startedAt: Date.now(),
-						endedAt: null,
-						textOffset: isChild ? null : m.content.length,
-						parentToolCallId: ev.parentToolCallId ?? null
-					});
+				const target = resolveAssistantTarget(messages, ev.messageId);
+				if (target.kind === 'refresh') {
+					// Card arrived in a reconnect gap before its assistant message
+					// was fetched — re-sync rather than silently dropping it.
+					void refreshMessages();
+					break;
 				}
+				const m = messages[target.index];
+				const isChild = !!ev.parentToolCallId;
+				(m.toolCalls ??= []).push({
+					id: ev.toolCallId,
+					messageId: m.id,
+					tool: ev.tool,
+					argsJson: safeJson(ev.args),
+					resultJson: null,
+					status: 'pending',
+					startedAt: Date.now(),
+					endedAt: null,
+					textOffset: isChild ? null : m.content.length,
+					parentToolCallId: ev.parentToolCallId ?? null
+				});
 				break;
 			}
 			case 'tool.result': {
@@ -803,19 +820,24 @@
 				break;
 			}
 			case 'file.edit': {
-				const m = messages[messages.length - 1];
-				if (m && m.role === 'assistant') {
-					const isChild = !!ev.parentToolCallId;
-					(m.fileEdits ??= []).push({
-						id: `${m.id}-${(m.fileEdits ?? []).length}`,
-						messageId: m.id,
-						path: ev.path,
-						diff: ev.diff,
-						createdAt: Date.now(),
-						textOffset: isChild ? null : m.content.length,
-						parentToolCallId: ev.parentToolCallId ?? null
-					});
+				const target = resolveAssistantTarget(messages, ev.messageId);
+				if (target.kind === 'refresh') {
+					// Edit card arrived in a reconnect gap before its assistant
+					// message was fetched — re-sync rather than dropping it.
+					void refreshMessages();
+					break;
 				}
+				const m = messages[target.index];
+				const isChild = !!ev.parentToolCallId;
+				(m.fileEdits ??= []).push({
+					id: `${m.id}-${(m.fileEdits ?? []).length}`,
+					messageId: m.id,
+					path: ev.path,
+					diff: ev.diff,
+					createdAt: Date.now(),
+					textOffset: isChild ? null : m.content.length,
+					parentToolCallId: ev.parentToolCallId ?? null
+				});
 				break;
 			}
 			case 'error': {

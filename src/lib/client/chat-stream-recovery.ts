@@ -1,5 +1,35 @@
 export const CHAT_STREAM_STALL_TIMEOUT_MS = 60_000;
 
+// A longer-fused stall timeout used while a blocking interactive prompt is
+// outstanding. The normal stall timer is disarmed during a prompt (we expect
+// the user to take their time clicking), but if the server-side handler times
+// out, the process restarts, or the stream dies mid-permission WITHOUT emitting
+// `interactive.resolved`, the client would otherwise sit on the dialog forever.
+// This long fuse eventually re-syncs from the server (`refreshMessages`), which
+// snaps the dialog queue + stream state back to the authoritative `pending`
+// map — clearing a prompt the server no longer holds, or re-arming for another
+// interval if it does.
+export const CHAT_INTERACTIVE_STALL_TIMEOUT_MS = 5 * CHAT_STREAM_STALL_TIMEOUT_MS;
+
+// How long the stall timer should wait before firing recovery, or `null` when
+// it should not arm at all (no live stream / no active turn). Pure so the
+// branching is unit-testable without timers or a DOM. A pending interactive
+// uses the longer fuse rather than disabling recovery entirely.
+export function streamStallDelayMs({
+	hasEventSource,
+	activeTurnId,
+	pendingInteractiveCount
+}: {
+	hasEventSource: boolean;
+	activeTurnId: string | null;
+	pendingInteractiveCount: number;
+}): number | null {
+	if (!hasEventSource || !activeTurnId) return null;
+	return pendingInteractiveCount > 0
+		? CHAT_INTERACTIVE_STALL_TIMEOUT_MS
+		: CHAT_STREAM_STALL_TIMEOUT_MS;
+}
+
 // `EventSource.CLOSED` as a bare numeric constant so this module stays pure
 // (importable in a non-DOM test environment where the `EventSource` global
 // is undefined). Matches the WHATWG ready-state enum.
