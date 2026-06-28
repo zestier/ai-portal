@@ -1,6 +1,7 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
 import { loadConfig } from '../../config';
+import { purgeSessionSearchIndex } from './memory';
 import {
 	normalizeBackendProvider,
 	normalizeMemoryExtractorBackend,
@@ -334,8 +335,16 @@ export function unarchive(id: string, userId: string): boolean {
 }
 
 export function remove(id: string, userId: string): boolean {
-	const r = getDb()
-		.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?')
-		.run(id, userId);
-	return r.changes > 0;
+	const db = getDb();
+	return db.transaction(() => {
+		const r = db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(id, userId);
+		if (r.changes > 0) {
+			// FK `ON DELETE CASCADE` cleans the relational memory_* tables, but the
+			// memory_search_index FTS5 virtual table can't be a cascade target, so
+			// its rows must be purged explicitly or they leak forever. Gating on a
+			// real delete avoids touching another user's index on an unauthorized id.
+			purgeSessionSearchIndex(db, id);
+		}
+		return r.changes > 0;
+	})();
 }

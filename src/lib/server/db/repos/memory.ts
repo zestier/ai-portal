@@ -2069,6 +2069,20 @@ export function search(
 	}));
 }
 
+/**
+ * Purge the FTS5 search-index rows for a conversation's session memory.
+ *
+ * `memory_search_index` is an FTS5 virtual table, which SQLite forbids as the
+ * target of a foreign key. So the `ON DELETE CASCADE` that cleans the relational
+ * `memory_*` tables when a conversation row is deleted does NOT reach this index
+ * — its rows would leak forever. Any path that deletes a conversation must call
+ * this in the SAME transaction as the delete (see `conversations.remove`). Pass
+ * the active db handle so the purge participates in the caller's transaction.
+ */
+export function purgeSessionSearchIndex(db: Database.Database, conversationId: string): void {
+	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
+}
+
 export function wipe(conversationId: string): void {
 	const db = getDb();
 	const tx = db.transaction(() => {

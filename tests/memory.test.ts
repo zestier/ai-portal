@@ -36,6 +36,8 @@ import type { ToolResult } from '../src/lib/server/tools/types';
 import { PATCH as patchMemoryItem } from '../src/routes/api/conversations/[id]/memory/[kind]/[itemId]/+server';
 import { getDb } from '../src/lib/server/db';
 import { setupLocalEnv } from './helpers/env';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // The structured tool-result envelope is the model-visible payload; substring
 // assertions check that serialized form, structured assertions read `result`.
@@ -4509,6 +4511,126 @@ describe('memory-backed sessions', () => {
 
 		expect(memory.search(conv.id, { query: 'stale indexes' })).toHaveLength(0);
 		expect(memory.searchGlobalMemories(user.id, { query: 'global stale indexes' })).toHaveLength(0);
+	});
+
+	it('purges the session FTS index when a conversation is deleted', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'fts_leak', value: 'Searchable leak content.' }] }
+		});
+
+		const db = getDb();
+		const ftsRows = () =>
+			(
+				db
+					.prepare('SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = ?')
+					.get(conv.id) as { n: number }
+			).n;
+		expect(ftsRows()).toBeGreaterThan(0);
+
+		expect(convs.remove(conv.id, user.id)).toBe(true);
+
+		// memory_search_index is an FTS5 virtual table and cannot be an ON DELETE
+		// CASCADE target, so remove() must purge it explicitly or the rows leak.
+		expect(ftsRows()).toBe(0);
+		expect(convs.get(conv.id, user.id)).toBeNull();
+	});
+
+	it('does not touch the FTS index when remove() deletes nothing (wrong owner)', () => {
+		const owner = users.ensureLocalUser();
+		const conv = convs.create(owner.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'fts_keep', value: 'Keep this indexed.' }] }
+		});
+
+		const db = getDb();
+		const ftsRows = () =>
+			(
+				db
+					.prepare('SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = ?')
+					.get(conv.id) as { n: number }
+			).n;
+		const before = ftsRows();
+		expect(before).toBeGreaterThan(0);
+
+		expect(convs.remove(conv.id, 'someone-else')).toBe(false);
+
+		expect(ftsRows()).toBe(before);
+		expect(convs.get(conv.id, owner.id)).not.toBeNull();
+	});
+
+	it('migration 055 sweep purges orphaned FTS rows while preserving live ones', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		commitPatch({
+			conversationId: conv.id,
+			patch: { facts: [{ predicate: 'fts_live', value: 'Live indexed content.' }] }
+		});
+
+		const db = getDb();
+		const liveSessionRows = () =>
+			(
+				db
+					.prepare('SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = ?')
+					.get(conv.id) as { n: number }
+			).n;
+		expect(liveSessionRows()).toBeGreaterThan(0);
+
+		// Simulate orphans left behind by a pre-fix conversation/user deletion:
+		// index rows whose parent no longer exists.
+		db.prepare(
+			'INSERT INTO memory_search_index(conversation_id, item_type, item_id, text) VALUES (?, ?, ?, ?)'
+		).run('conv-gone', 'fact', 'fact-gone', 'orphaned session row');
+		db.prepare(
+			'INSERT INTO global_memory_search_index(user_id, item_id, text) VALUES (?, ?, ?)'
+		).run('user-gone', 'mem-gone', 'orphaned global row');
+		memory.upsertGlobalMemory(user.id, {
+			kind: 'preference',
+			memoryKey: 'live-global',
+			value: 'live global content'
+		});
+
+		const orphanSession = () =>
+			(
+				db
+					.prepare(
+						"SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = 'conv-gone'"
+					)
+					.get() as { n: number }
+			).n;
+		const orphanGlobal = () =>
+			(
+				db
+					.prepare(
+						"SELECT count(*) AS n FROM global_memory_search_index WHERE user_id = 'user-gone'"
+					)
+					.get() as { n: number }
+			).n;
+		const liveGlobalRows = () =>
+			(
+				db
+					.prepare('SELECT count(*) AS n FROM global_memory_search_index WHERE user_id = ?')
+					.get(user.id) as { n: number }
+			).n;
+		expect(orphanSession()).toBe(1);
+		expect(orphanGlobal()).toBe(1);
+		expect(liveGlobalRows()).toBeGreaterThan(0);
+
+		// Re-run the actual migration SQL (the runner already applied it at open;
+		// the DELETEs are safe to replay) and assert it only removes orphans.
+		const migration = readFileSync(
+			resolve(process.cwd(), 'src/lib/server/db/migrations/055_purge_orphaned_memory_fts.sql'),
+			'utf8'
+		);
+		db.exec(migration);
+
+		expect(orphanSession()).toBe(0);
+		expect(orphanGlobal()).toBe(0);
+		expect(liveSessionRows()).toBeGreaterThan(0);
+		expect(liveGlobalRows()).toBeGreaterThan(0);
 	});
 
 	it('records parent and message-head references for appended memory events', () => {
