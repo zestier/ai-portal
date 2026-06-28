@@ -601,7 +601,11 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			await opts.beforeSend?.();
 			session = await pool.acquire(opts.bridge);
 			if (turnAc.signal.aborted) {
-				await session.abort();
+				// Same wedge hazard as turn.abort(): a bare `await session.abort()`
+				// would hang `finishedPromise` (and thus turn cleanup) forever if the
+				// SDK subprocess is stuck in I/O. Bound it with the deadline helper so a
+				// stuck abort escalates to a force-dispose instead of orphaning the turn.
+				await abortSessionWithDeadline(session, opts.conversationId);
 				return;
 			}
 			for await (const ev of session.send(promptToSend, turnAc.signal)) {

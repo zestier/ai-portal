@@ -616,6 +616,92 @@ describe('turn-runner', () => {
 		delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
 	});
 
+	it('force-disposes the session when the early-abort path hits a wedged abort()', async () => {
+		// The turn is aborted while `pool.acquire` is still pending, so the abort
+		// is observed immediately after acquire resolves (the early-abort branch)
+		// rather than mid-stream. A bare `await session.abort()` there would hang
+		// `finishedPromise` (and turn cleanup) forever on a wedged subprocess; the
+		// deadline helper must still escalate to a force-dispose.
+		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '50';
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'early wedged abort',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+
+		let disposed = false;
+		let resolveDisposed: () => void = () => {};
+		const disposedCalled = new Promise<void>((resolve) => {
+			resolveDisposed = resolve;
+		});
+
+		// Hold acquire pending so we can abort the turn before the session exists,
+		// then resolve with a session whose abort() never settles.
+		let resolveAcquire: (session: unknown) => void = () => {};
+		acquireMock.mockReturnValue(
+			new Promise((resolve) => {
+				resolveAcquire = resolve;
+			})
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		// Abort while acquire is still pending: session is null here, so the
+		// early-abort branch (not turn.abort) owns the wedged teardown.
+		void turn.abort();
+
+		resolveAcquire({
+			conversationId: conv.id,
+			providerSessionId: conv.id,
+			workingDirectory: wd,
+			model: 'test-model',
+			// eslint-disable-next-line require-yield -- must never be called on this path
+			async *send(): AsyncIterable<PortalEvent> {
+				// Should never run: the turn is already aborted on acquire.
+				throw new Error('send must not be called on the early-abort path');
+			},
+			abort() {
+				return new Promise<void>(() => {});
+			},
+			async dispose() {
+				disposed = true;
+				resolveDisposed();
+			},
+			async setMode() {},
+			async setApproveAll() {},
+			async resetSessionApprovals() {},
+			lastUsed: Date.now()
+		});
+
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+		// The turn finalizes as interrupted despite the wedged abort()...
+		expect(done).toMatchObject({ type: 'done', status: 'interrupted' });
+		// ...and the hung abort() escalates to a force-dispose.
+		await disposedCalled;
+		expect(disposed).toBe(true);
+
+		delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
+	});
+
 	it('emits persisted assistant message ids for streamed assistant events', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const messages = await import('../src/lib/server/db/repos/messages');
