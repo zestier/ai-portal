@@ -307,9 +307,10 @@ export function ensureTicketActionDefaults(userId: string): void {
 }
 
 /**
- * Re-add any missing default actions (and un-archive removed ones) without
- * clobbering still-open user edits. Powers the "Restore defaults" button.
- * Returns the number of defaults (re)added.
+ * Re-add any missing default actions, un-archive removed ones, and reset the
+ * canonical fields (prompt, title, description, launchBehavior, conversationMode)
+ * of existing defaults to the current built-in values. Powers the "Restore
+ * defaults" button. Returns the number of defaults (re)added or updated.
  */
 export function restoreTicketActionDefaults(userId: string): number {
 	let restored = 0;
@@ -320,8 +321,15 @@ export function restoreTicketActionDefaults(userId: string): number {
 			if (!existing) {
 				insertDefault(userId, def);
 				restored += 1;
-			} else if (existing.status === 'archived') {
-				update(id, userId, { status: 'open' });
+			} else {
+				update(id, userId, {
+					status: 'open',
+					title: def.title,
+					description: def.description,
+					prompt: def.prompt,
+					launchBehavior: def.launchBehavior,
+					conversationMode: def.conversationMode
+				});
 				restored += 1;
 			}
 		}
