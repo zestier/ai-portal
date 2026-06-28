@@ -466,6 +466,46 @@ describe('openAICompatibleProvider', () => {
 		});
 	});
 
+	it('aborts mid-body-stream when the session is aborted after headers arrive', async () => {
+		const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+			const signal = init?.signal;
+			expect(signal).toBeInstanceOf(AbortSignal);
+			const encoder = new TextEncoder();
+			let started = false;
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					// Headers/first chunk arrive; then the body hangs until the
+					// caller signal aborts. If cleanup() severed the link, this
+					// stream would never error and the read would orphan.
+					signal?.addEventListener(
+						'abort',
+						() => controller.error(new DOMException('aborted', 'AbortError')),
+						{ once: true }
+					);
+				},
+				pull(controller) {
+					if (!started) {
+						started = true;
+						controller.enqueue(encoder.encode('data: {"choices":[{"delta":{}}]}\n\n'));
+					}
+				}
+			});
+			return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const session = await openAICompatibleProvider.openSession(baseOpts);
+		const iter = session.send('hello', new AbortController().signal)[Symbol.asyncIterator]();
+
+		expect((await iter.next()).value).toMatchObject({ type: 'message.start' });
+		const next = iter.next();
+		await session.abort();
+
+		await expect(next).resolves.toMatchObject({
+			value: { type: 'error', code: 'aborted' },
+			done: false
+		});
+	});
+
 	it('aborts immediately when the caller signal is already aborted', async () => {
 		const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
 			expect(init?.signal).toBeInstanceOf(AbortSignal);

@@ -24,20 +24,31 @@ export async function fetchWithTimeout(
 	const handle = setTimeout(() => {
 		timeout.abort(new DOMException(`Request timed out after ${timeoutMs}ms.`, 'TimeoutError'));
 	}, timeoutMs);
-	const { signal, cleanup } = combineAbortSignals(init.signal, timeout.signal);
+	const { signal, releaseTimeout, cleanup } = combineAbortSignals(init.signal, timeout.signal);
 	try {
 		return await fetch(input, { ...init, signal });
-	} finally {
-		clearTimeout(handle);
+	} catch (error) {
+		// fetch rejected (timeout, abort, or connection failure) — nothing is
+		// streaming, so drop every listener.
 		cleanup();
+		throw error;
+	} finally {
+		// The timeout only guards the request up to the response headers; once
+		// fetch resolves we stop the timer and drop its listener, but keep the
+		// caller-signal → combined link so a later Stop during body streaming
+		// still aborts the in-flight read. (combineAbortSignals self-cleans the
+		// caller listener when it fires; cleanup() above handles the error path.)
+		clearTimeout(handle);
+		releaseTimeout();
 	}
 }
 
 function combineAbortSignals(
 	existing: AbortSignal | null | undefined,
 	timeout: AbortSignal
-): { signal: AbortSignal; cleanup: () => void } {
-	if (!existing) return { signal: timeout, cleanup: () => undefined };
+): { signal: AbortSignal; releaseTimeout: () => void; cleanup: () => void } {
+	if (!existing)
+		return { signal: timeout, releaseTimeout: () => undefined, cleanup: () => undefined };
 	const combined = new AbortController();
 	const abortFromExisting = () => combined.abort(existing.reason);
 	const abortFromTimeout = () => combined.abort(timeout.reason);
@@ -47,6 +58,9 @@ function combineAbortSignals(
 	timeout.addEventListener('abort', abortFromTimeout, { once: true });
 	return {
 		signal: combined.signal,
+		releaseTimeout: () => {
+			timeout.removeEventListener('abort', abortFromTimeout);
+		},
 		cleanup: () => {
 			existing.removeEventListener('abort', abortFromExisting);
 			timeout.removeEventListener('abort', abortFromTimeout);
