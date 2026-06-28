@@ -608,6 +608,52 @@ describe('memory-backed sessions', () => {
 		expect(memory.getOpenLoop(conv.id, first.id)?.description).toContain('found it');
 	});
 
+	it('enforces unique non-empty loop keys per conversation at the schema level', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const loop = memory.addOpenLoop(conv.id, { loopType: 'task', title: 'Find the attic key' });
+		expect(loop.loopKey).toBe('loop.find_the_attic_key');
+
+		// A raw INSERT reusing the same (conversation_id, loop_key) is rejected by
+		// the partial UNIQUE index (migration 057) — addOpenLoop relies on that to
+		// keep key-based addressing unambiguous.
+		const db = getDb();
+		expect(() =>
+			db
+				.prepare(
+					`INSERT INTO memory_open_loops(
+					   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
+					 ) VALUES (?, ?, ?, 'task', 'dup', 'open', ?, ?)`
+				)
+				.run('dup-id', conv.id, loop.loopKey, Date.now(), Date.now())
+		).toThrow(/UNIQUE/i);
+
+		// The empty-key default is exempt, so legacy/pre-039 rows can coexist.
+		expect(() => {
+			db.prepare(
+				`INSERT INTO memory_open_loops(
+				   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
+				 ) VALUES (?, ?, '', 'task', 'legacy', 'open', ?, ?)`
+			).run('legacy-1', conv.id, Date.now(), Date.now());
+			db.prepare(
+				`INSERT INTO memory_open_loops(
+				   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
+				 ) VALUES (?, ?, '', 'task', 'legacy', 'open', ?, ?)`
+			).run('legacy-2', conv.id, Date.now(), Date.now());
+		}).not.toThrow();
+	});
+
+	it('allocates distinct keys for same-titled loops added one at a time', () => {
+		const user = users.ensureLocalUser();
+		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
+		const a = memory.addOpenLoop(conv.id, { loopType: 'task', title: 'Find the attic key' });
+		const b = memory.addOpenLoop(conv.id, { loopType: 'task', title: 'Find the attic key' });
+		expect([a.loopKey, b.loopKey].sort()).toEqual([
+			'loop.find_the_attic_key',
+			'loop.find_the_attic_key_2'
+		]);
+	});
+
 	it('dedupes events and open loops across racing patches but keeps intra-patch repeats', () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });

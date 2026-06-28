@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { getDb } from '../src/lib/server/db';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
@@ -99,6 +102,92 @@ describe('db migrations + repos', () => {
 		// '*' tool wildcard, user-global.
 		settings.addGrant({ userId: u.id, conversationId: null, tool: '*' });
 		expect(settings.hasGrant(u.id, c.id, 'read')).toBe(true);
+	});
+
+	it('indexes permission_grants(conversation_id) so the FK cascade is not a full scan', () => {
+		const db = getDb();
+		// SQLite uses an index for an ON DELETE CASCADE lookup only when the FK
+		// column is the leftmost index column. There must be an index whose first
+		// column is conversation_id (migration 056).
+		const indexes = db.prepare("PRAGMA index_list('permission_grants')").all() as {
+			name: string;
+		}[];
+		const leadsWithConversation = indexes.some((idx) => {
+			const cols = db.prepare(`PRAGMA index_info('${idx.name}')`).all() as {
+				seqno: number;
+				name: string;
+			}[];
+			const first = cols.find((c) => c.seqno === 0);
+			return first?.name === 'conversation_id';
+		});
+		expect(leadsWithConversation).toBe(true);
+	});
+
+	it('cascades permission_grants when its conversation is deleted', () => {
+		const db = getDb();
+		const u = users.ensureLocalUser();
+		const c = convs.create(u.id, { title: 'doomed', workdir: '/tmp', model: null });
+		settings.addGrant({ userId: u.id, conversationId: c.id, tool: 'shell' });
+		expect(
+			(
+				db
+					.prepare('SELECT COUNT(*) AS n FROM permission_grants WHERE conversation_id = ?')
+					.get(c.id) as { n: number }
+			).n
+		).toBe(1);
+		convs.remove(c.id, u.id);
+		expect(
+			(
+				db
+					.prepare('SELECT COUNT(*) AS n FROM permission_grants WHERE conversation_id = ?')
+					.get(c.id) as { n: number }
+			).n
+		).toBe(0);
+	});
+
+	it('migration 057 dedup makes pre-existing duplicate loop keys unique without new collisions', () => {
+		// Replays the real migration SQL against a constructed pre-migration table
+		// that holds the exact corruption the migration repairs, including the
+		// tricky case where a naive `_<rowid>` suffix would collide with an
+		// already-allocated `_N` key.
+		const db = new Database(':memory:');
+		try {
+			db.exec(`CREATE TABLE memory_open_loops (
+				id TEXT PRIMARY KEY,
+				conversation_id TEXT NOT NULL,
+				loop_key TEXT NOT NULL DEFAULT ''
+			)`);
+			const insert = db.prepare(
+				'INSERT INTO memory_open_loops(id, conversation_id, loop_key) VALUES (?, ?, ?)'
+			);
+			// rowid 1 + 2: a race wrote `loop.x` twice. rowid 3: a later add saw
+			// `loop.x` taken and legitimately allocated `loop.x_2`.
+			insert.run('01ID00000000000000000000R1', 'conv', 'loop.x');
+			insert.run('01ID00000000000000000000R2', 'conv', 'loop.x');
+			insert.run('01ID00000000000000000000R3', 'conv', 'loop.x_2');
+			// Two legacy empty-key rows must survive untouched (exempt from unique).
+			insert.run('01ID00000000000000000000L1', 'conv', '');
+			insert.run('01ID00000000000000000000L2', 'conv', '');
+
+			const sql = readFileSync(
+				resolve('src/lib/server/db/migrations/057_memory_open_loop_key_unique.sql'),
+				'utf8'
+			);
+			expect(() => db.exec(sql)).not.toThrow();
+
+			const rows = db.prepare('SELECT loop_key FROM memory_open_loops').all() as {
+				loop_key: string;
+			}[];
+			const nonEmpty = rows.map((r) => r.loop_key).filter((k) => k !== '');
+			// All non-empty keys are now distinct, and the kept row retains the base.
+			expect(new Set(nonEmpty).size).toBe(nonEmpty.length);
+			expect(nonEmpty).toContain('loop.x');
+			expect(nonEmpty).toContain('loop.x_2');
+			// Two empty-key rows coexist under the partial unique index.
+			expect(rows.filter((r) => r.loop_key === '').length).toBe(2);
+		} finally {
+			db.close();
+		}
 	});
 
 	it('lists and revokes grants per user; prune drops expired rows', () => {

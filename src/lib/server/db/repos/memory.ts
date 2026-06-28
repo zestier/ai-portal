@@ -874,47 +874,77 @@ export function resolveOpenLoopId(conversationId: string, ref: string): string |
 	return byKey ? byKey.id : null;
 }
 
+/**
+ * True when an error is the UNIQUE(conversation_id, loop_key) violation guarded
+ * by idx_memory_open_loops_conv_key (migration 057). better-sqlite3 surfaces
+ * these as a SqliteError with code 'SQLITE_CONSTRAINT_UNIQUE'.
+ */
+function isLoopKeyUniqueViolation(err: unknown): boolean {
+	const e = err as { code?: string; message?: string } | null;
+	return (
+		!!e &&
+		e.code === 'SQLITE_CONSTRAINT_UNIQUE' &&
+		typeof e.message === 'string' &&
+		e.message.includes('memory_open_loops.loop_key')
+	);
+}
+
 export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): MemoryOpenLoop {
 	const db = getDb();
-	const id = ulid();
 	const now = Date.now();
-	// Key allocation, the projection INSERT, the FTS index write, and the
-	// event-log append must commit atomically: the event log is the rebuild
-	// source of truth, so a crash between these writes would either lose the log
-	// entry (unrecoverable) or diverge the FTS index from the projection row.
-	const tx = db.transaction((): MemoryOpenLoop => {
-		const loopKey = allocateLoopKey(db, conversationId, input.title);
-		db.prepare(
-			`INSERT INTO memory_open_loops(
-			   id, conversation_id, loop_key, loop_type, title, description, status, priority,
-			   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
-		).run(
-			id,
-			conversationId,
-			loopKey,
-			input.loopType,
-			input.title,
-			input.description ?? '',
-			input.priority ?? 0,
-			safeJson(input.relatedEntityIds ?? []),
-			input.sourceEventId ?? null,
-			input.sourceMessageId ?? null,
-			now,
-			now
-		);
-		const row = db.prepare('SELECT * FROM memory_open_loops WHERE id = ?').get(id) as OpenLoopRow;
-		indexItem(db, conversationId, 'open_loop', id, openLoopIndexText(row));
-		appendSessionMemoryLog(db, conversationId, {
-			eventKind: 'open_loop.create',
-			itemType: 'open_loop',
-			itemId: id,
-			sourceMessageId: input.sourceMessageId ?? null,
-			payload: { item: rowToOpenLoop(row) }
+	// allocateLoopKey reads-then-inserts, so two concurrent extractions (separate
+	// connections, same pre-commit snapshot) can both pick the same free key. The
+	// UNIQUE index now rejects the loser's INSERT instead of letting it corrupt
+	// key-based addressing; re-run the whole transaction so the loser re-reads
+	// the now-taken key and allocates the next suffix. Bounded so a genuinely
+	// unrelated constraint failure can't spin forever.
+	const maxAttempts = 5;
+	for (let attempt = 1; ; attempt++) {
+		const id = ulid();
+		// Key allocation, the projection INSERT, the FTS index write, and the
+		// event-log append must commit atomically: the event log is the rebuild
+		// source of truth, so a crash between these writes would either lose the
+		// log entry (unrecoverable) or diverge the FTS index from the projection
+		// row.
+		const tx = db.transaction((): MemoryOpenLoop => {
+			const loopKey = allocateLoopKey(db, conversationId, input.title);
+			db.prepare(
+				`INSERT INTO memory_open_loops(
+				   id, conversation_id, loop_key, loop_type, title, description, status, priority,
+				   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
+			).run(
+				id,
+				conversationId,
+				loopKey,
+				input.loopType,
+				input.title,
+				input.description ?? '',
+				input.priority ?? 0,
+				safeJson(input.relatedEntityIds ?? []),
+				input.sourceEventId ?? null,
+				input.sourceMessageId ?? null,
+				now,
+				now
+			);
+			const row = db.prepare('SELECT * FROM memory_open_loops WHERE id = ?').get(id) as OpenLoopRow;
+			indexItem(db, conversationId, 'open_loop', id, openLoopIndexText(row));
+			appendSessionMemoryLog(db, conversationId, {
+				eventKind: 'open_loop.create',
+				itemType: 'open_loop',
+				itemId: id,
+				sourceMessageId: input.sourceMessageId ?? null,
+				payload: { item: rowToOpenLoop(row) }
+			});
+			return rowToOpenLoop(row);
 		});
-		return rowToOpenLoop(row);
-	});
-	return tx();
+		try {
+			return tx();
+		} catch (err) {
+			if (attempt < maxAttempts && isLoopKeyUniqueViolation(err)) continue;
+			throw err;
+		}
+	}
 }
 
 /**
