@@ -77,6 +77,7 @@
 			onkeydown={onKeydown}
 			oninput={autoGrow}
 			{placeholder}
+			aria-label={placeholder}
 			rows="1"
 		></textarea>
 		<div class="composer-actions">

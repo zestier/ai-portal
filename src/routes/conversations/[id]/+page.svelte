@@ -33,24 +33,30 @@
 <div class="conversation">
 	<div class="tabs scroll-mask" role="tablist">
 		<button
+			id="conversation-tab-chat"
 			role="tab"
 			aria-selected={tab === 'chat'}
+			aria-controls="conversation-panel-chat"
 			class:active={tab === 'chat'}
 			onclick={() => selectTab('chat')}
 		>
 			Chat
 		</button>
 		<button
+			id="conversation-tab-memory"
 			role="tab"
 			aria-selected={tab === 'memory'}
+			aria-controls="conversation-panel-memory"
 			class:active={tab === 'memory'}
 			onclick={() => selectTab('memory')}
 		>
 			Memory
 		</button>
 		<button
+			id="conversation-tab-changes"
 			role="tab"
 			aria-selected={tab === 'changes'}
+			aria-controls="conversation-panel-changes"
 			class:active={tab === 'changes'}
 			onclick={() => selectTab('changes')}
 		>
@@ -60,23 +66,33 @@
 			</span>
 		</button>
 		<button
+			id="conversation-tab-files"
 			role="tab"
 			aria-selected={tab === 'files'}
+			aria-controls="conversation-panel-files"
 			class:active={tab === 'files'}
 			onclick={() => selectTab('files')}
 		>
 			Files
 		</button>
 		<button
+			id="conversation-tab-commits"
 			role="tab"
 			aria-selected={tab === 'commits'}
+			aria-controls="conversation-panel-commits"
 			class:active={tab === 'commits'}
 			onclick={() => selectTab('commits')}
 		>
 			Commits
 		</button>
 	</div>
-	<div class="tab-body" class:hidden={tab !== 'chat'}>
+	<div
+		id="conversation-panel-chat"
+		role="tabpanel"
+		aria-labelledby="conversation-tab-chat"
+		class="tab-body"
+		class:hidden={tab !== 'chat'}
+	>
 		<Chat
 			conversation={data.conversation}
 			providerCapabilities={data.providerCapabilities}
@@ -95,11 +111,21 @@
 		/>
 	</div>
 	{#if tab === 'memory'}
-		<div class="tab-body">
+		<div
+			id="conversation-panel-memory"
+			role="tabpanel"
+			aria-labelledby="conversation-tab-memory"
+			class="tab-body"
+		>
 			<MemoryInspector conversationId={data.conversation.id} initialMemory={data.memorySnapshot} />
 		</div>
 	{:else if tab !== 'chat'}
-		<div class="tab-body">
+		<div
+			id="conversation-panel-{tab}"
+			role="tabpanel"
+			aria-labelledby="conversation-tab-{tab}"
+			class="tab-body"
+		>
 			<FileBrowser
 				conversationId={data.conversation.id}
 				pane={tab}

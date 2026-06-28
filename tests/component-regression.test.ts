@@ -385,6 +385,28 @@ describe('Svelte component regression coverage', () => {
 		expect(body).toContain('Permission required');
 		expect(body).not.toContain('Allow always');
 		expect(body).toContain('placeholder="Ask Copilot"');
+		// Streamed/optimistic content lives in a polite live region so screen
+		// readers announce assistant tokens and new messages.
+		expect(body).toContain('role="log"');
+		expect(body).toContain('aria-live="polite"');
+		// The "new messages" pill lives in a persistent status live region so
+		// its appearance is announced even though the button is toggled.
+		expect(body).toContain('role="status"');
+	});
+
+	test('Composer exposes a programmatic label matching its placeholder', () => {
+		const body = render(Composer, {
+			props: {
+				value: '',
+				placeholder: 'Message GitHub Copilot…',
+				onSend: () => undefined,
+				onStop: () => undefined
+			}
+		}).body;
+
+		// A placeholder is not a programmatic label (WCAG 1.3.1) and vanishes
+		// once typing starts, so the textarea carries a real aria-label.
+		expect(body).toContain('aria-label="Message GitHub Copilot…"');
 	});
 
 	test('Composer keeps Send visible while streaming and shows an armed state', () => {

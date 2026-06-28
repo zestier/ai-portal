@@ -1206,7 +1206,7 @@
 
 	<div class="messages-wrap">
 		<div class="messages" bind:this={scrollEl} onscroll={onMessagesScroll}>
-			<div class="messages-inner">
+			<div class="messages-inner" role="log" aria-live="polite" aria-label="Conversation messages">
 				{#if renderedMessages.length === 0 && visibleInteractive.length === 0}
 					<div class="empty-conversation">
 						<EmptyState
@@ -1244,29 +1244,31 @@
 				{/if}
 			</div>
 		</div>
-		{#if hasNewBelow && !pinnedToBottom}
-			<button
-				type="button"
-				class="jump-latest"
-				onclick={jumpToLatest}
-				aria-label="Jump to latest messages"
-			>
-				New messages
-				<svg
-					width="12"
-					height="12"
-					viewBox="0 0 16 16"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
+		<div class="jump-latest-region" role="status">
+			{#if hasNewBelow && !pinnedToBottom}
+				<button
+					type="button"
+					class="jump-latest"
+					onclick={jumpToLatest}
+					aria-label="Jump to latest messages"
 				>
-					<path d="M4 6l4 4 4-4" />
-				</svg>
-			</button>
-		{/if}
+					New messages
+					<svg
+						width="12"
+						height="12"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M4 6l4 4 4-4" />
+					</svg>
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	<Composer
