@@ -8,7 +8,7 @@
 // sdk-events.ts / interactive-adapter.ts (event names + handler field names).
 
 import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
-import type { ContextTier, MCPServerConfig } from '@github/copilot-sdk';
+import type { ContextTier } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { PORTAL_SYSTEM_GUIDANCE } from '../runtime/system-guidance';
@@ -33,7 +33,6 @@ import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
 import { buildFilesystemTools } from '../tools/filesystem';
-import { loadWorkspaceMcpServers } from './workspace-mcp';
 import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { wrapToolsForStreaming } from './tool-streaming';
@@ -312,24 +311,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	// with its own `ToolInvocation` (no streaming channel) — still lets custom
 	// tools stream. See `tool-streaming.ts`. `portalTools` is still used directly
 	// below for permission registration and arg validation.
-	const workspaceMcpServers: Record<string, MCPServerConfig> = loadWorkspaceMcpServers(
-		opts.workingDirectory
-	);
 	const sessionConfig = {
 		model: opts.model,
 		workingDirectory: opts.workingDirectory,
 		streaming: true,
-		// Discover skill directories (and, in the interactive CLI, other config)
-		// from the working directory. NOTE: despite its docs, this does NOT load
-		// the workspace `.mcp.json` for SDK-created sessions — only the
-		// interactive CLI does. We therefore load `.mcp.json` ourselves and pass
-		// the servers explicitly via `mcpServers` below. Kept on for skills.
-		enableConfigDiscovery: true,
-		// Workspace MCP servers read from `<workdir>/.mcp.json` (e.g. the
-		// Playwright MCP used for portal development). Passed explicitly because
-		// `enableConfigDiscovery` doesn't load them for SDK sessions. Omitted
-		// entirely when there's no config so we don't hand the SDK an empty map.
-		...(Object.keys(workspaceMcpServers).length > 0 ? { mcpServers: workspaceMcpServers } : {}),
 		// Append our standing guidance to the SDK-managed system prompt. `append`
 		// mode keeps every SDK guardrail/safety section intact and just adds ours;
 		// `replace` would drop those, so we never use it here. Set once at session
@@ -391,8 +376,6 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		model: sessionConfig.model,
 		workingDirectory: sessionConfig.workingDirectory,
 		streaming: sessionConfig.streaming,
-		enableConfigDiscovery: sessionConfig.enableConfigDiscovery,
-		mcpServers: Object.keys(workspaceMcpServers),
 		contextTier: 'contextTier' in sessionConfig ? sessionConfig.contextTier : null,
 		systemMessage: {
 			mode: sessionConfig.systemMessage.mode,

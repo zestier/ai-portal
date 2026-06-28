@@ -61,6 +61,36 @@ When you change behavior, add or update tests in the same change, then run
 declaring the work done. See [CONTRIBUTING.md](CONTRIBUTING.md) for unit-vs-e2e
 conventions, fixtures, and the process-isolation setup.
 
+## Browser automation — use the Playwright CLI
+
+Need to drive a real browser (manual checks, reproducing a UI bug, scraping a
+page)? Use the **Playwright CLI** (`@playwright/cli`, a devDependency) rather
+than a browser MCP server — it's the token-efficient path Microsoft recommends
+for coding agents (concise commands instead of large tool schemas and
+accessibility trees loaded into context). Discover the full command set from its
+own help:
+
+```
+pnpm exec playwright-cli --help
+```
+
+Then drive a session, e.g.:
+
+```
+pnpm exec playwright-cli open https://example.com --browser firefox
+pnpm exec playwright-cli snapshot          # accessibility snapshot with element refs
+pnpm exec playwright-cli click <ref>
+pnpm exec playwright-cli close
+```
+
+Notes:
+
+- This repo standardizes on **Firefox** (so do e2e tests); pass
+  `--browser firefox`. If the browser isn't installed yet,
+  `pnpm exec playwright install firefox` (the CLI also has `install-browser`).
+- The CLI writes scratch artifacts (snapshots, console logs) under
+  `.playwright-cli/`, which is gitignored.
+
 ## Local testing — use an isolated data dir
 
 **Do not** run `pnpm dev` against the default `./data` when doing exploratory

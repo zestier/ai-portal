@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTmpDir } from './helpers/tmp';
 import { appGlobalSymbols, clearGlobalSingletonValues } from '../src/lib/server/global-singleton';
 
 // A fake @github/copilot-sdk session whose `.on` records handlers and whose
@@ -211,55 +210,5 @@ describe('copilot rerun (inline edit / regenerate) provider path', () => {
 		expect(errEvent?.message).toContain('GitHub Copilot session');
 		expect(errEvent?.message).toContain(conv.id);
 		expect(errEvent?.message).toContain('runtime connection lost');
-	});
-
-	it('opens sessions with MCP/config discovery enabled so repo .mcp.json is loaded', async () => {
-		const repos = await freshImports();
-		// The SDK defaults `enableConfigDiscovery` to false and would otherwise
-		// ignore the repo's `.mcp.json` (e.g. the Playwright MCP used for portal
-		// development). Resume reuses this same sessionConfig object, so asserting
-		// the create path is enough to pin the opt-in.
-		await copilotConversationWithReply(repos);
-
-		expect(clientStub.createSession).toHaveBeenCalledWith(
-			expect.objectContaining({ enableConfigDiscovery: true })
-		);
-	});
-
-	it('passes workspace .mcp.json servers to createSession (discovery does not load them)', async () => {
-		const repos = await freshImports();
-		const { users, convs, messages, turnStart } = repos;
-		const u = users.ensureLocalUser();
-		// A real workdir whose .mcp.json declares one server. The provider reads
-		// this file directly because enableConfigDiscovery does not load workspace
-		// MCP servers for SDK-created sessions.
-		const workdir = makeTmpDir('mcp-provider-');
-		writeFileSync(
-			join(workdir, '.mcp.json'),
-			JSON.stringify({ mcpServers: { playwright: { command: 'pnpm', args: ['exec', 'x'] } } })
-		);
-		const conv = convs.create(u.id, {
-			title: 'copilot',
-			workdir,
-			model: 'gpt-4',
-			provider: 'copilot'
-		});
-		const u1 = messages.append(conv.id, { role: 'user', content: 'first' });
-		await drain(await turnStart.startTurnFromUserMessage(conv, u1));
-
-		expect(clientStub.createSession).toHaveBeenCalledWith(
-			expect.objectContaining({
-				mcpServers: { playwright: { command: 'pnpm', args: ['exec', 'x'] } }
-			})
-		);
-	});
-
-	it('omits mcpServers entirely when the workdir has no .mcp.json', async () => {
-		const repos = await freshImports();
-		await copilotConversationWithReply(repos);
-		// conv workdir is /tmp (no .mcp.json) → no mcpServers key handed to the SDK.
-		const cfg = clientStub.createSession.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-		expect(cfg).toBeDefined();
-		expect('mcpServers' in cfg).toBe(false);
 	});
 });

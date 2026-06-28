@@ -22,6 +22,8 @@ data/
 playwright-report/
 test-results/
 e2e/.tmp-data/
+# Playwright CLI (browser automation) scratch: snapshots, console logs, traces.
+.playwright-cli/
 coverage/
 # ZAP's per-project dir self-ignores its ephemeral scratch tree via a
 # generated .zap/.gitignore; no blanket .zap/ entry so committed config

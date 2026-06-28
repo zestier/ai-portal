@@ -7,7 +7,7 @@ so no real GitHub Copilot credentials or network are required.
 ## Run locally
 
 ```bash
-pnpm exec playwright install --with-deps chromium   # one-time
+pnpm exec playwright install --with-deps firefox   # one-time
 pnpm test:e2e
 ```
 
