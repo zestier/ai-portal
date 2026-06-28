@@ -165,6 +165,33 @@ export function safeResolve(root: string, rel: string): ResolveResult {
 	return { ok: true, abs: candidate, rel: toPosix(r) };
 }
 
+/**
+ * Resolve a model-supplied tool `path` argument — which may be absolute or
+ * relative — against `root`, enforcing the same symlink-safe containment as the
+ * file browser (`safeResolve`). Returns the safe absolute path when it stays
+ * inside the workspace root, or null when it escapes (or `root` is unusable).
+ *
+ * The image-capture side-channel uses this so a prompt-injected
+ * `view /home/user/secrets/whatever.png` can't read image bytes from outside
+ * the conversation workspace. Absolute paths are accepted only when they fall
+ * inside the root; everything else (including `..` escapes and out-of-root
+ * symlinks) is rejected by `safeResolve`.
+ */
+export function resolveContainedToolPath(root: string, p: string): string | null {
+	if (typeof p !== 'string' || p.length === 0) return null;
+	// Convert an absolute model path into a root-relative one so safeResolve
+	// (which rejects absolute `rel`) can apply its containment + symlink walk.
+	// The model addresses files using the *lexical* workspace root it was given
+	// (`workingDirectory`), so strip that lexical prefix here — not the realpath
+	// — otherwise a symlinked root (e.g. `/workspace` → `/data/workspace-v2`)
+	// would turn a legitimate in-workspace absolute path into a false `..`
+	// escape. safeResolve still enforces realpath containment on the result, so
+	// any genuine out-of-root path (or escaping symlink) is still rejected.
+	const rel = isAbsolute(p) ? relative(resolve(root), p) : p;
+	const r = safeResolve(root, rel);
+	return r.ok ? r.abs : null;
+}
+
 function classify(d: Dirent): DirEntry['type'] {
 	if (d.isDirectory()) return 'directory';
 	if (d.isFile()) return 'file';

@@ -18,6 +18,7 @@ import * as toolAttachments from '../db/repos/tool-attachments';
 import type { ToolAttachmentMeta } from '$lib/types';
 import { takeAttachment, toolCallKey, pathKey } from './tool-attachment-buffer';
 import { captureImageAttachment } from './image-attachment';
+import { resolveContainedToolPath } from '../files';
 import { log } from '../log';
 
 // Tools whose `path` argument we'll fall back to reading directly as an image
@@ -83,9 +84,13 @@ function resolveImage(input: FlushInput): ResolvedImage | null {
 	if (!input.tool || !DIRECT_CAPTURE_TOOLS.has(input.tool)) return null;
 	const p = argPath(input.argsJson);
 	if (!p) return null;
-	const abs = isAbsolute(p)
-		? resolvePath(p)
-		: resolvePath(input.workingDirectory || process.cwd(), p);
+	// Containment guard: `path` is model-controlled, so resolve it against the
+	// session workspace root and refuse anything that escapes it (same
+	// symlink-safe check the file browser uses). Without this, a prompt-injected
+	// `view /home/user/secrets/whatever.png` would let this side-channel read
+	// image bytes from anywhere on the host.
+	const abs = resolveContainedToolPath(input.workingDirectory || process.cwd(), p);
+	if (!abs) return null;
 	const captured = captureImageAttachment(abs);
 	if (!captured) return null;
 	return { kind: 'image', mimeType: captured.mimeType, data: captured.data, sourcePath: abs };

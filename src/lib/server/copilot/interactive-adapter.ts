@@ -11,6 +11,7 @@ import type {
 } from '$lib/types';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { captureImageAttachment, MAX_IMAGE_PREVIEW_BYTES } from './image-attachment';
+import { resolveContainedToolPath } from '../files';
 import { bufferAttachment, dropAttachment, pathKey, toolCallKey } from './tool-attachment-buffer';
 import {
 	newRequestId,
@@ -109,11 +110,20 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 	): { keys: string[]; imagePreview?: ImagePreview | undefined } | null => {
 		if (req.kind !== 'read') return null;
 		if (typeof req.path !== 'string' || req.path.length === 0) return null;
-		const absPath = isAbsolute(req.path)
-			? resolvePath(req.path)
-			: resolvePath(opts.workingDirectory || process.cwd(), req.path);
-		const captured = captureImageAttachment(absPath);
+		const root = opts.workingDirectory || process.cwd();
+		// Containment guard: `req.path` is model-controlled, so resolve it against
+		// the session workspace root and refuse anything that escapes it (same
+		// symlink-safe check the file browser uses). Without this, a
+		// prompt-injected `view /home/user/secrets/whatever.png` would let this
+		// pre-approval capture read image bytes from anywhere on the host.
+		const safeAbs = resolveContainedToolPath(root, req.path);
+		if (!safeAbs) return null;
+		const captured = captureImageAttachment(safeAbs);
 		if (!captured) return null;
+		// Correlation keys stay on the lexical absolute path so the flush side
+		// (which recomputes it lexically in `correlationKeys`) matches; the read
+		// above used the contained realpath.
+		const absPath = isAbsolute(req.path) ? resolvePath(req.path) : resolvePath(root, req.path);
 		const keys = [pathKey(opts.conversationId, absPath)];
 		if (typeof req.toolCallId === 'string' && req.toolCallId.length > 0) {
 			keys.push(toolCallKey(req.toolCallId));

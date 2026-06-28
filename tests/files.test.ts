@@ -2,7 +2,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { safeResolve, listDir, readFileSafe, readImageFileSafe } from '../src/lib/server/files';
+import {
+	safeResolve,
+	listDir,
+	readFileSafe,
+	readImageFileSafe,
+	resolveContainedToolPath
+} from '../src/lib/server/files';
+import { realpathSync } from 'node:fs';
 
 let root: string;
 let outside: string;
@@ -162,4 +169,59 @@ describe('readImageFileSafe', () => {
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.status).toBe(400);
 	});
+});
+
+describe('resolveContainedToolPath', () => {
+	it('resolves an in-workspace relative path to its absolute realpath', () => {
+		const abs = resolveContainedToolPath(root, 'pic.png');
+		expect(abs).toBe(realpathSync(join(root, 'pic.png')));
+	});
+
+	it('accepts an absolute path that falls inside the root', () => {
+		const inside = join(root, 'sub', 'b.txt');
+		expect(resolveContainedToolPath(root, inside)).toBe(realpathSync(inside));
+	});
+
+	it('rejects an absolute path outside the root', () => {
+		// The core of the vuln: a model-supplied absolute path anywhere on the
+		// host must not resolve to a readable target.
+		expect(resolveContainedToolPath(root, join(outside, 'secret.txt'))).toBeNull();
+		expect(resolveContainedToolPath(root, '/etc/passwd')).toBeNull();
+	});
+
+	it('rejects a "../" escape from a relative path', () => {
+		expect(resolveContainedToolPath(root, '../foo.png')).toBeNull();
+		expect(resolveContainedToolPath(root, '../../etc/hosts')).toBeNull();
+	});
+
+	it('rejects empty / null-byte paths', () => {
+		expect(resolveContainedToolPath(root, '')).toBeNull();
+		expect(resolveContainedToolPath(root, 'a\0b')).toBeNull();
+	});
+
+	it.skipIf(!symlinksWork)('rejects an absolute path reached via an escaping symlink', () => {
+		expect(resolveContainedToolPath(root, join(root, 'escape', 'secret.txt'))).toBeNull();
+	});
+
+	it.skipIf(!symlinksWork)(
+		'accepts an in-workspace absolute path when the root itself is a symlink',
+		() => {
+			// Regression: the model names files using the lexical workingDirectory.
+			// If the root is a symlink, converting an absolute path against the
+			// realpath root would turn a legitimate file into a false `..` escape.
+			const linkRoot = mkdtempSync(join(tmpdir(), 'files-linkparent-'));
+			const linkedRoot = join(linkRoot, 'link');
+			symlinkSync(root, linkedRoot);
+			try {
+				// Lexical root differs from its realpath (`root`); an absolute path
+				// under the lexical root must still resolve and capture.
+				const abs = resolveContainedToolPath(linkedRoot, join(linkedRoot, 'pic.png'));
+				expect(abs).toBe(realpathSync(join(root, 'pic.png')));
+				// Out-of-root absolute paths are still rejected through the symlinked root.
+				expect(resolveContainedToolPath(linkedRoot, join(outside, 'secret.txt'))).toBeNull();
+			} finally {
+				rmSync(linkRoot, { recursive: true, force: true });
+			}
+		}
+	);
 });
