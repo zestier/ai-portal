@@ -28,6 +28,7 @@
 		shouldResumeStream
 	} from '$lib/client/chat-stream-recovery';
 	import { decideArmedFlush, decideComposerAction } from '$lib/client/composer-arming';
+	import { createConversationResetGate } from '$lib/client/conversation-reset';
 	import { reviewStore } from '$lib/client/review.svelte';
 
 	const INTERACTIVE_REVEAL_DELAY_MS = 150;
@@ -163,10 +164,21 @@
 		refreshMessagesRun++;
 	}
 
+	// Gate that re-seeds local state only when the conversation *id value*
+	// changes (a genuine switch), not when a new `conversation` prop object
+	// arrives with the same id (a background refresh). Keeps an unsent composer
+	// draft — and the rest of the local state — alive across refreshes.
+	const resetGate = createConversationResetGate();
+
 	$effect(() => {
-		// Reset local message list when the conversation prop changes.
-		void conversation.id;
+		// Reset local state only when the conversation *id value* changes — a
+		// genuine switch — not merely when a new `conversation` prop object
+		// arrives. `invalidateAll()` / `load` re-runs (e.g. the tickets UI)
+		// produce a fresh prop object with the *same* id; re-seeding then would
+		// clobber user state, most visibly an unsent composer draft.
+		const nextId = conversation.id;
 		untrack(() => {
+			if (!resetGate.shouldReset(nextId)) return;
 			invalidateRefreshMessages();
 			// Tear down any stream attached to the previous conversation
 			// before we swap state — otherwise its events would land in
@@ -198,6 +210,16 @@
 			}
 			void refreshForks();
 		});
+	});
+
+	// Destroy-only teardown. Kept in its own dependency-free effect so it runs
+	// exactly once on unmount — NOT before every re-run of the reset effect
+	// above. The reset effect re-fires on every same-id background refresh
+	// (it subscribes to the `conversation` prop object), and tearing the stream
+	// down there would close an in-progress turn's EventSource without
+	// reattaching it. A genuine conversation switch already tears down the old
+	// stream via `closeStream()` inside the reset body before reseeding.
+	$effect(() => {
 		return () => {
 			closeStream();
 			clearCompactionTimer();
