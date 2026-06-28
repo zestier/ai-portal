@@ -220,6 +220,16 @@ export function listByConversation(conversationId: string): Message[] {
 	return msgs;
 }
 
+// Build a trigram FTS5 query for a literal substring search. Trigram matching
+// needs at least 3 characters; shorter terms can't use the index, so we return
+// null and the caller falls back to a plain scan. The whole term is sent as one
+// quoted phrase (double quotes stripped — they're the phrase delimiter) so a
+// multi-word query matches the literal substring including its spaces.
+function ftsPhrase(term: string): string | null {
+	if (term.length < 3) return null;
+	return `"${term.replace(/"/g, '')}"`;
+}
+
 export function searchConversation(
 	conversationId: string,
 	query: string,
@@ -227,15 +237,36 @@ export function searchConversation(
 ): Message[] {
 	const term = query.trim();
 	if (!term) return [];
+	const limit = opts.limit ?? 20;
+	const phrase = ftsPhrase(term);
+	// Sub-trigram (1-2 char) queries can't use the trigram index; fall back to a
+	// scan to preserve the exact-literal contract for those rare short terms.
+	if (!phrase) {
+		const rows = getDb()
+			.prepare(
+				`SELECT * FROM messages
+				  WHERE conversation_id = ?
+				    AND instr(lower(content), lower(?)) > 0
+				  ORDER BY created_at DESC, id DESC
+				  LIMIT ?`
+			)
+			.all(conversationId, term, limit) as MsgRow[];
+		return rows.map(rowToMessage).reverse();
+	}
+	// Trigram FTS5 MATCH narrows to messages whose content contains the literal
+	// substring; instr then re-confirms the exact match (trigram is case-folded,
+	// so e.g. "FOO" can MATCH "foo"). The index makes this fast on huge threads.
 	const rows = getDb()
 		.prepare(
-			`SELECT * FROM messages
-			  WHERE conversation_id = ?
-			    AND instr(lower(content), lower(?)) > 0
-			  ORDER BY created_at DESC, id DESC
+			`SELECT m.* FROM messages_fts f
+			   JOIN messages m ON m.id = f.message_id
+			  WHERE f.conversation_id = ?
+			    AND messages_fts MATCH ?
+			    AND instr(lower(m.content), lower(?)) > 0
+			  ORDER BY m.created_at DESC, m.id DESC
 			  LIMIT ?`
 		)
-		.all(conversationId, term, opts.limit ?? 20) as MsgRow[];
+		.all(conversationId, phrase, term, limit) as MsgRow[];
 	return rows.map(rowToMessage).reverse();
 }
 
