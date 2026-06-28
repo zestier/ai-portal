@@ -503,23 +503,26 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		choices?: string[];
 		allowFreeform?: boolean;
 	}) => {
-		try {
-			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'user_input' }>>(
-				'user_input',
-				{
-					kind: 'user_input',
-					question: req.question ?? 'The agent is requesting input.',
-					choices: req.choices,
-					allowFreeform: req.allowFreeform ?? true
-				}
-			);
-			return { answer: response.answer, wasFreeform: response.wasFreeform ?? true };
-		} catch (err) {
-			if (isInteractivePromptCancelledError(err)) {
-				return { answer: '', wasFreeform: true };
+		// No cancellation catch here on purpose. If the prompt is abandoned (turn
+		// aborted, timed out, client disconnected, or backing session evicted),
+		// `askInteractive` throws an `InteractivePromptCancelledError` which we let
+		// propagate. Unlike permissions, the SDK's user-input handler has no
+		// `user-not-available` sentinel — its only return shape is an answer.
+		// Returning an empty string would be read as the user supplying `''`, so
+		// the model proceeds on phantom input (e.g. using `""` as a
+		// filename/command) and wastes tokens; rethrowing lets the SDK abort the
+		// tool call instead. The cancellation is already audited and broadcast as
+		// an `interactive.resolved` event by the registry.
+		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'user_input' }>>(
+			'user_input',
+			{
+				kind: 'user_input',
+				question: req.question ?? 'The agent is requesting input.',
+				choices: req.choices,
+				allowFreeform: req.allowFreeform ?? true
 			}
-			throw err;
-		}
+		);
+		return { answer: response.answer, wasFreeform: response.wasFreeform ?? true };
 	};
 
 	const onElicitationRequest = async (ctx: {
