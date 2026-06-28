@@ -92,16 +92,23 @@ export function upsertGithub(input: UpsertGithubInput): User {
  */
 export function ensureLocalUser(): User {
 	const db = getDb();
-	const existing = db.prepare('SELECT * FROM users WHERE github_login = ?').get('local') as
-		| UserRow
-		| undefined;
-	if (existing) return rowToUser(existing);
-	const id = ulid();
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO users(id, github_login, display_name, created_at, last_login_at)
+	// Keep the SELECT and the cold-start INSERT in the SAME transaction so the
+	// get-or-create is atomic. With the synchronous single-process
+	// better-sqlite3 connection each transaction runs to completion before the
+	// next, so two callers can't both observe existing=undefined and race to
+	// INSERT the 'local' user (violating UNIQUE(github_login)).
+	return db.transaction((): User => {
+		const existing = db.prepare('SELECT * FROM users WHERE github_login = ?').get('local') as
+			| UserRow
+			| undefined;
+		if (existing) return rowToUser(existing);
+		const id = ulid();
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO users(id, github_login, display_name, created_at, last_login_at)
 		 VALUES (?, ?, ?, ?, ?)`
-	).run(id, 'local', 'Local user', now, now);
-	ensureSeedGrantsForUser(id);
-	return { id, githubLogin: 'local', displayName: 'Local user', avatarUrl: null };
+		).run(id, 'local', 'Local user', now, now);
+		ensureSeedGrantsForUser(id);
+		return { id, githubLogin: 'local', displayName: 'Local user', avatarUrl: null };
+	})();
 }

@@ -543,17 +543,21 @@ export function listEntities(
 }
 
 export function addEvent(conversationId: string, input: AddEventInput): MemoryEvent {
+	const db = getDb();
 	const id = ulid();
 	const now = Date.now();
-	getDb()
-		.prepare(
+	// The projection INSERT, the FTS index write, and the event-log append must
+	// commit atomically: the event log is the rebuild source of truth, so a crash
+	// between these writes would either lose the log entry (unrecoverable) or
+	// diverge the FTS index from the projection row. Wrap all three in one tx.
+	const tx = db.transaction((): MemoryEvent => {
+		db.prepare(
 			`INSERT INTO memory_events(
 			   id, conversation_id, turn_id, event_type, occurred_at, actor_entity_id,
 			   target_entity_id, summary, payload_json, visibility, confidence,
 			   source_message_id, source_tool_call_id, created_at
 			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
-		)
-		.run(
+		).run(
 			id,
 			conversationId,
 			input.turnId ?? null,
@@ -568,17 +572,19 @@ export function addEvent(conversationId: string, input: AddEventInput): MemoryEv
 			input.sourceMessageId ?? null,
 			now
 		);
-	const row = getDb().prepare('SELECT * FROM memory_events WHERE id = ?').get(id) as EventRow;
-	indexItem(getDb(), conversationId, 'event', id, eventIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind: 'event.create',
-		itemType: 'event',
-		itemId: id,
-		sourceMessageId: input.sourceMessageId ?? null,
-		turnId: input.turnId ?? null,
-		payload: { item: rowToEvent(row) }
+		const row = db.prepare('SELECT * FROM memory_events WHERE id = ?').get(id) as EventRow;
+		indexItem(db, conversationId, 'event', id, eventIndexText(row));
+		appendSessionMemoryLog(db, conversationId, {
+			eventKind: 'event.create',
+			itemType: 'event',
+			itemId: id,
+			sourceMessageId: input.sourceMessageId ?? null,
+			turnId: input.turnId ?? null,
+			payload: { item: rowToEvent(row) }
+		});
+		return rowToEvent(row);
 	});
-	return rowToEvent(row);
+	return tx();
 }
 
 /**
@@ -869,17 +875,21 @@ export function resolveOpenLoopId(conversationId: string, ref: string): string |
 }
 
 export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): MemoryOpenLoop {
+	const db = getDb();
 	const id = ulid();
 	const now = Date.now();
-	const loopKey = allocateLoopKey(getDb(), conversationId, input.title);
-	getDb()
-		.prepare(
+	// Key allocation, the projection INSERT, the FTS index write, and the
+	// event-log append must commit atomically: the event log is the rebuild
+	// source of truth, so a crash between these writes would either lose the log
+	// entry (unrecoverable) or diverge the FTS index from the projection row.
+	const tx = db.transaction((): MemoryOpenLoop => {
+		const loopKey = allocateLoopKey(db, conversationId, input.title);
+		db.prepare(
 			`INSERT INTO memory_open_loops(
 			   id, conversation_id, loop_key, loop_type, title, description, status, priority,
 			   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
 			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
-		)
-		.run(
+		).run(
 			id,
 			conversationId,
 			loopKey,
@@ -893,18 +903,18 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 			now,
 			now
 		);
-	const row = getDb()
-		.prepare('SELECT * FROM memory_open_loops WHERE id = ?')
-		.get(id) as OpenLoopRow;
-	indexItem(getDb(), conversationId, 'open_loop', id, openLoopIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
-		eventKind: 'open_loop.create',
-		itemType: 'open_loop',
-		itemId: id,
-		sourceMessageId: input.sourceMessageId ?? null,
-		payload: { item: rowToOpenLoop(row) }
+		const row = db.prepare('SELECT * FROM memory_open_loops WHERE id = ?').get(id) as OpenLoopRow;
+		indexItem(db, conversationId, 'open_loop', id, openLoopIndexText(row));
+		appendSessionMemoryLog(db, conversationId, {
+			eventKind: 'open_loop.create',
+			itemType: 'open_loop',
+			itemId: id,
+			sourceMessageId: input.sourceMessageId ?? null,
+			payload: { item: rowToOpenLoop(row) }
+		});
+		return rowToOpenLoop(row);
 	});
-	return rowToOpenLoop(row);
+	return tx();
 }
 
 /**
@@ -1748,51 +1758,61 @@ export function upsertGlobalMemory(
 ): GlobalMemory {
 	const db = getDb();
 	const now = Date.now();
-	const existing = db
-		.prepare(
-			`SELECT * FROM global_memories
+	// Keep the SELECT and the dependent INSERT/UPDATE in the SAME transaction so
+	// the read-modify-write is atomic. With the synchronous single-process
+	// better-sqlite3 connection (a per-process singleton) each transaction runs
+	// to completion before the next begins, so no other caller can slip an
+	// INSERT for the same (user_id, kind, memory_key) between our SELECT and
+	// write — which would otherwise violate the UNIQUE constraint. It also keeps
+	// the projection write and the FTS index write crash-atomic.
+	const tx = db.transaction((): GlobalMemory => {
+		const existing = db
+			.prepare(
+				`SELECT * FROM global_memories
 			  WHERE user_id = ? AND kind = ? AND memory_key = ?`
-		)
-		.get(userId, input.kind, input.memoryKey) as GlobalMemoryRow | undefined;
-	if (existing) {
-		db.prepare(
-			`UPDATE global_memories
+			)
+			.get(userId, input.kind, input.memoryKey) as GlobalMemoryRow | undefined;
+		if (existing) {
+			db.prepare(
+				`UPDATE global_memories
 			    SET value_json = ?, status = 'active', source_conversation_id = ?,
 			        source_message_id = ?, updated_at = ?
 			  WHERE id = ?`
-		).run(
-			safeJson(input.value),
-			input.sourceConversationId ?? existing.source_conversation_id,
-			input.sourceMessageId ?? existing.source_message_id,
-			now,
-			existing.id
-		);
-		const updated = db
-			.prepare('SELECT * FROM global_memories WHERE id = ?')
-			.get(existing.id) as GlobalMemoryRow;
-		indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
-		return rowToGlobalMemory(updated);
-	}
-	const id = ulid();
-	db.prepare(
-		`INSERT INTO global_memories(
+			).run(
+				safeJson(input.value),
+				input.sourceConversationId ?? existing.source_conversation_id,
+				input.sourceMessageId ?? existing.source_message_id,
+				now,
+				existing.id
+			);
+			const updated = db
+				.prepare('SELECT * FROM global_memories WHERE id = ?')
+				.get(existing.id) as GlobalMemoryRow;
+			indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
+			return rowToGlobalMemory(updated);
+		}
+		const id = ulid();
+		db.prepare(
+			`INSERT INTO global_memories(
 		   id, user_id, kind, memory_key, value_json, status, source_conversation_id,
 		   source_message_id, created_at, updated_at
 		 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
-	).run(
-		id,
-		userId,
-		input.kind,
-		input.memoryKey,
-		safeJson(input.value),
-		input.sourceConversationId ?? null,
-		input.sourceMessageId ?? null,
-		now,
-		now
-	);
-	const row = db.prepare('SELECT * FROM global_memories WHERE id = ?').get(id) as GlobalMemoryRow;
-	indexGlobalMemory(db, userId, id, globalMemoryIndexText(row));
-	return rowToGlobalMemory(row);
+		).run(
+			id,
+			userId,
+			input.kind,
+			input.memoryKey,
+			safeJson(input.value),
+			input.sourceConversationId ?? null,
+			input.sourceMessageId ?? null,
+			now,
+			now
+		);
+		const row = db.prepare('SELECT * FROM global_memories WHERE id = ?').get(id) as GlobalMemoryRow;
+		indexGlobalMemory(db, userId, id, globalMemoryIndexText(row));
+		return rowToGlobalMemory(row);
+	});
+	return tx();
 }
 
 export type UpdateGlobalMemoryResult =
@@ -1812,38 +1832,48 @@ export function updateGlobalMemory(
 	}
 ): UpdateGlobalMemoryResult {
 	const db = getDb();
-	const current = db
-		.prepare('SELECT * FROM global_memories WHERE id = ? AND user_id = ?')
-		.get(id, userId) as GlobalMemoryRow | undefined;
-	if (!current) return { status: 'not_found' };
-	const conflict = db
-		.prepare(
-			`SELECT id FROM global_memories
+	// Keep the conflict check, the UPDATE, and the FTS index write in the SAME
+	// transaction so they are atomic. With the synchronous single-process
+	// better-sqlite3 connection each transaction runs to completion before the
+	// next, so no other caller can create or rename a row into the same
+	// (user_id, kind, memory_key) between our check and our UPDATE (which would
+	// invalidate the conflict check or abort our commit on the UNIQUE
+	// constraint), and the projection/FTS writes stay crash-atomic.
+	const tx = db.transaction((): UpdateGlobalMemoryResult => {
+		const current = db
+			.prepare('SELECT * FROM global_memories WHERE id = ? AND user_id = ?')
+			.get(id, userId) as GlobalMemoryRow | undefined;
+		if (!current) return { status: 'not_found' };
+		const conflict = db
+			.prepare(
+				`SELECT id FROM global_memories
 			  WHERE user_id = ? AND kind = ? AND memory_key = ? AND id != ?`
-		)
-		.get(userId, input.kind, input.memoryKey, id) as { id: string } | undefined;
-	if (conflict) return { status: 'conflict' };
-	const now = Date.now();
-	db.prepare(
-		`UPDATE global_memories
+			)
+			.get(userId, input.kind, input.memoryKey, id) as { id: string } | undefined;
+		if (conflict) return { status: 'conflict' };
+		const now = Date.now();
+		db.prepare(
+			`UPDATE global_memories
 		    SET kind = ?, memory_key = ?, value_json = ?, status = 'active',
 		        source_conversation_id = ?, source_message_id = ?, updated_at = ?
 		  WHERE id = ? AND user_id = ?`
-	).run(
-		input.kind,
-		input.memoryKey,
-		safeJson(input.value),
-		input.sourceConversationId ?? current.source_conversation_id,
-		input.sourceMessageId ?? current.source_message_id,
-		now,
-		id,
-		userId
-	);
-	const updated = db
-		.prepare('SELECT * FROM global_memories WHERE id = ? AND user_id = ?')
-		.get(id, userId) as GlobalMemoryRow;
-	indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
-	return { status: 'updated', memory: rowToGlobalMemory(updated) };
+		).run(
+			input.kind,
+			input.memoryKey,
+			safeJson(input.value),
+			input.sourceConversationId ?? current.source_conversation_id,
+			input.sourceMessageId ?? current.source_message_id,
+			now,
+			id,
+			userId
+		);
+		const updated = db
+			.prepare('SELECT * FROM global_memories WHERE id = ? AND user_id = ?')
+			.get(id, userId) as GlobalMemoryRow;
+		indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
+		return { status: 'updated', memory: rowToGlobalMemory(updated) };
+	});
+	return tx();
 }
 
 export function listGlobalMemories(
