@@ -114,6 +114,15 @@ export interface TicketDependencyRef {
 	status: WorkspaceTicketStatus;
 }
 
+export interface TicketAttachmentMeta {
+	id: string;
+	ticketId: string;
+	filename: string;
+	mimeType: string;
+	byteSize: number;
+	createdAt: number;
+}
+
 /**
  * A workspace ticket enriched with its still-open prerequisites for the sidebar
  * list. `blockers` is the subset of the ticket's prerequisites that are still

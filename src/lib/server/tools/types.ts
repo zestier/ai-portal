@@ -24,6 +24,16 @@ export interface ToolError {
 	details?: unknown;
 }
 
+// Binary artifact returned alongside a successful tool result — e.g. an image
+// that the model should see inline or a file blob. Mirrors the SDK's
+// `ToolBinaryResult` so it can be forwarded verbatim to `binaryResultsForLlm`.
+export interface ToolBinaryResult {
+	data: string; // base64-encoded bytes
+	mimeType: string;
+	type: 'image' | 'resource';
+	description?: string;
+}
+
 // The uniform envelope every PortalTool handler returns. Discriminated on `ok`:
 // framework fields (`ok`/`summary`) live top-level so they never collide with a
 // tool's own data, which nests under `result`. The envelope is the single
@@ -38,7 +48,13 @@ export interface ToolError {
 // successful tool may set (e.g. git_commit reminding the agent to reconcile
 // workspace tickets). It lives only on the `ok: true` variant.
 export type ToolResult =
-	| { ok: true; summary?: string; result?: unknown; followUpHint?: string }
+	| {
+			ok: true;
+			summary?: string;
+			result?: unknown;
+			followUpHint?: string;
+			binary?: ToolBinaryResult[];
+	  }
 	| { ok: false; summary?: string; error: ToolError };
 
 // A tool's declaration that its permission check should be evaluated as a
@@ -97,15 +113,18 @@ export function buildPermissionRequestResolver(
 // Build a success envelope. `result` is the tool's domain payload (any
 // JSON-serializable value); `summary` is an optional short, human-readable line
 // the provider prefers over its derived fallback. `opts.followUpHint` sets the
-// reserved, model-visible next-step nudge.
+// reserved, model-visible next-step nudge. `opts.binary` attaches binary
+// artifacts (images, blobs) to be forwarded to the model via the SDK's
+// `binaryResultsForLlm` channel.
 export function ok(
 	result?: unknown,
 	summary?: string,
-	opts?: { followUpHint?: string }
+	opts?: { followUpHint?: string; binary?: ToolBinaryResult[] }
 ): ToolResult {
 	const envelope: ToolResult = { ok: true, result };
 	if (summary !== undefined) envelope.summary = summary;
 	if (opts?.followUpHint !== undefined) envelope.followUpHint = opts.followUpHint;
+	if (opts?.binary !== undefined && opts.binary.length > 0) envelope.binary = opts.binary;
 	return envelope;
 }
 
@@ -171,12 +190,19 @@ export function parseEnvelopeJson(json: string): ToolResult | null {
 		if ('details' in e) error.details = e.details;
 		return summary === undefined ? { ok: false, error } : { ok: false, summary, error };
 	}
-	const out: { ok: true; summary?: string; result?: unknown; followUpHint?: string } = {
+	const out: {
+		ok: true;
+		summary?: string;
+		result?: unknown;
+		followUpHint?: string;
+		binary?: ToolBinaryResult[];
+	} = {
 		ok: true,
 		result: rec.result
 	};
 	if (summary !== undefined) out.summary = summary;
 	if (typeof rec.followUpHint === 'string') out.followUpHint = rec.followUpHint;
+	if (Array.isArray(rec.binary)) out.binary = rec.binary as ToolBinaryResult[];
 	return out;
 }
 

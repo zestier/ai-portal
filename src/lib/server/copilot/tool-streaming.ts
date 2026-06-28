@@ -51,6 +51,9 @@ function toSdkResult(envelope: ToolResult): PortalSdkToolResult {
 		detailedContent: views.fullContent
 	};
 	if (!views.ok) result.error = views.summary;
+	if (envelope.ok && envelope.binary && envelope.binary.length > 0) {
+		result.binaryResultsForLlm = envelope.binary;
+	}
 	return result;
 }
 

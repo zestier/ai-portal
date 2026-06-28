@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import * as tickets from '$lib/server/db/repos/tickets';
+import * as ticketAttachments from '$lib/server/db/repos/ticket-attachments';
 import { ticketWorkspaceFromInput } from '$lib/server/ticket-workspace';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
@@ -29,7 +30,8 @@ export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
 	const ticket = tickets.get(params.id, userId);
 	if (!ticket) throw error(404);
-	return json({ ticket });
+	const attachments = ticketAttachments.listMetaForTicket(params.id);
+	return json({ ticket, attachments });
 };
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
