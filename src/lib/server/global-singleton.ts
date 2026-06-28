@@ -15,11 +15,27 @@ export function getGlobalSingletonValue<T>(keys: readonly symbol[]): T | null {
 	return null;
 }
 
-export function getOrCreateGlobalSingleton<T>(keys: readonly symbol[], create: () => T): T {
-	const existing = getGlobalSingletonValue<T>(keys);
+/**
+ * Retrieve or create a global singleton for `keys`. The `create` factory must
+ * return a non-null, non-undefined value — a null/undefined result would be
+ * stored but then treated as "unset" by the `!= null` guard on the next call,
+ * re-running `create()` and its side effects. An assertion fires at runtime to
+ * surface this early, and the TypeScript signature enforces it at compile time.
+ */
+export function getOrCreateGlobalSingleton<T>(
+	keys: readonly symbol[],
+	create: () => NonNullable<T>
+): NonNullable<T> {
+	const existing = getGlobalSingletonValue<NonNullable<T>>(keys);
 	if (existing != null) return existing;
 
 	const value = create();
+	if (value == null) {
+		throw new Error(
+			`getOrCreateGlobalSingleton: factory returned ${value} for key "${String(keys[0])}". ` +
+				'Null/undefined cannot be cached unambiguously — return a non-null sentinel instead.'
+		);
+	}
 	setGlobalSingletonValue(keys, value);
 	return value;
 }

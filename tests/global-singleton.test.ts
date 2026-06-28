@@ -82,3 +82,42 @@ describe('global singleton fallback keys', () => {
 		}
 	});
 });
+
+describe('getOrCreateGlobalSingleton null guard', () => {
+	afterEach(() => {
+		// Clean up any slots touched in these tests.
+		for (const key of appGlobalSymbols('null-factory-test')) {
+			delete (globalThis as unknown as Record<symbol, unknown>)[key];
+		}
+	});
+
+	it('throws synchronously when the factory returns null', () => {
+		const keys = appGlobalSymbols('null-factory-test');
+		// TypeScript would normally reject `() => null` here; cast to bypass the
+		// compile-time guard so we can test the runtime assertion independently.
+		expect(() => getOrCreateGlobalSingleton(keys, () => null as unknown as object)).toThrow(
+			/factory returned null/i
+		);
+	});
+
+	it('throws synchronously when the factory returns undefined', () => {
+		const keys = appGlobalSymbols('null-factory-test');
+		expect(() => getOrCreateGlobalSingleton(keys, () => undefined as unknown as object)).toThrow(
+			/factory returned undefined/i
+		);
+	});
+
+	it('does not invoke the factory a second time after a successful create', () => {
+		const keys = appGlobalSymbols('null-factory-test');
+		let calls = 0;
+		const factory = () => {
+			calls++;
+			return { calls };
+		};
+
+		getOrCreateGlobalSingleton(keys, factory);
+		getOrCreateGlobalSingleton(keys, factory);
+
+		expect(calls).toBe(1);
+	});
+});

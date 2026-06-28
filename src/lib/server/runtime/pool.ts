@@ -267,6 +267,12 @@ export function startIdleReaper() {
 	setReaperTimer(timer);
 }
 
+/** Snapshot of session-pool counters for observability. */
+export function getPoolStats(): { active: number; inflight: number; max: number } {
+	const cfg = loadConfig();
+	return { active: sessions.size, inflight: inflight.size, max: cfg.MAX_CONCURRENT_SESSIONS };
+}
+
 export async function shutdown() {
 	const timer = getReaperTimer();
 	if (timer) {
