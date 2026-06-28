@@ -280,10 +280,15 @@ export function updateStatus(id: string, status: MessageStatus, errorCode?: stri
 		.run(status, errorCode ?? null, id);
 }
 
-export function updateContent(id: string, content: string, status: MessageStatus) {
+export function updateContent(
+	id: string,
+	content: string,
+	status: MessageStatus,
+	errorCode?: string | null
+) {
 	getDb()
-		.prepare('UPDATE messages SET content = ?, status = ? WHERE id = ?')
-		.run(content, status, id);
+		.prepare('UPDATE messages SET content = ?, status = ?, error_code = ? WHERE id = ?')
+		.run(content, status, errorCode ?? null, id);
 }
 
 export function updateContentOnly(id: string, content: string) {

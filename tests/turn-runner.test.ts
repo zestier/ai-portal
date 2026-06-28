@@ -404,6 +404,72 @@ describe('turn-runner', () => {
 		expect(done).toMatchObject({ type: 'done', status: 'interrupted' });
 	});
 
+	it('persists a failed stream as error and tags the terminal done with status error', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'boom', workdir: wd, model: 'gpt-4' });
+
+		// A session that streams a partial reply then throws a non-abort error
+		// (provider crash / network drop / rate-limit) without the user issuing
+		// Stop — the case that previously finalized as a false 'complete'.
+		acquireMock.mockResolvedValue({
+			conversationId: conv.id,
+			providerSessionId: conv.id,
+			workingDirectory: wd,
+			model: 'test-model',
+			async *send(): AsyncIterable<PortalEvent> {
+				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+				yield { type: 'message.delta', messageId: 'm1', text: 'partial' };
+				throw new Error('provider exploded');
+			},
+			async abort() {},
+			async dispose() {},
+			async setMode() {},
+			async setApproveAll() {},
+			async resetSessionApprovals() {},
+			lastUsed: Date.now()
+		});
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		const seen: PortalEvent[] = [];
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			seen.push(event);
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+
+		// The transient error event is still surfaced into the live stream...
+		expect(seen.some((e) => e.type === 'error' && e.code === 'stream_failed')).toBe(true);
+		// ...and the terminal done now carries the failure, not a false 'complete'.
+		expect(done).toMatchObject({ type: 'done', status: 'error' });
+		// The turn itself ends in the previously-dead 'error' state.
+		expect(turnRunner.getTurn(conv.id)?.status).toBe('error');
+
+		// The persisted assistant message reflects the failure (status + error_code),
+		// so history/export filters keyed on status='complete' won't silently
+		// include this failed turn.
+		const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
+		expect(assistant?.status).toBe('error');
+		expect(assistant?.errorCode).toBe('stream_failed');
+		expect(assistant?.content).toBe('partial');
+	});
+
 	it('force-disposes the session when abort() hangs past the finalize deadline', async () => {
 		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '50';
 		const { users, convs, turnRunner } = await freshImports();

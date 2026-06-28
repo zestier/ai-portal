@@ -409,7 +409,7 @@
 				// before flushing an armed follow-up. `closeStream()` flips
 				// `streaming` to false first so the follow-up POST isn't
 				// rejected by the 409 guard.
-				const failed = turnErrored || ev.status === 'interrupted';
+				const failed = turnErrored || ev.status === 'interrupted' || ev.status === 'error';
 				// A user Stop cancels every pending prompt server-side, but the
 				// matching `interactive.resolved` events may be emitted after
 				// this terminal `done` (see `stopping`) — at which point the

@@ -312,6 +312,11 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	let assistantBuf = '';
 	let assistantId: string | null = null;
 	let persistedAssistantId: string | null = null;
+	// Set to an error code when the stream fails for a non-abort reason
+	// (network drop, SDK crash, rate-limit). Drives the terminal `status` to
+	// `'error'` so the failed turn is persisted and reported as such rather
+	// than a false `'complete'`. `null` means no stream failure.
+	let streamErrorCode: string | null = null;
 	const pendingTools = new Map<string, PendingTool>();
 	// Reasoning segments keyed by the segmentId minted in the bridge. Order
 	// of insertion matches stream order, which is what we persist.
@@ -578,6 +583,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			}
 		} catch (e) {
 			if (turnAc.signal.aborted) return;
+			streamErrorCode = 'stream_failed';
 			log.warn('turn.stream.failed', {
 				conversationId: opts.conversationId,
 				err: String(e)
@@ -588,12 +594,16 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				message: e instanceof Error ? e.message : String(e)
 			});
 		} finally {
-			const status: 'interrupted' | 'complete' = turnAc.signal.aborted ? 'interrupted' : 'complete';
+			const status: 'interrupted' | 'complete' | 'error' = turnAc.signal.aborted
+				? 'interrupted'
+				: streamErrorCode
+					? 'error'
+					: 'complete';
 
 			try {
 				if (persistedAssistantId || assistantBuf || assistantId || pendingTools.size) {
 					const id = ensurePersistedAssistant();
-					messages.updateContent(id, assistantBuf, status);
+					messages.updateContent(id, assistantBuf, status, streamErrorCode);
 					for (const t of pendingTools.values()) {
 						if (t.status === 'pending') {
 							t.status = 'error';
@@ -667,11 +677,12 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			// We always emit our own terminal `done` here: `dispatch` suppresses
 			// the SDK's `done` so this runs after persistence work completes. We
 			// carry the terminal status so clients can distinguish a clean finish
-			// from an interrupt/abort (the latter emits no `error` event). The
-			// `some` check is a defensive guard against a double terminal event in
-			// case a future change ever re-emits the SDK `done` into the log.
+			// from an interrupt/abort or a hard stream failure (`'error'`, which
+			// also emits an `error` event). The `some` check is a defensive guard
+			// against a double terminal event in case a future change ever
+			// re-emits the SDK `done` into the log.
 			if (!eventLog.some((e) => e.type === 'done')) {
-				emit({ type: 'done', status: turn.status === 'interrupted' ? 'interrupted' : 'complete' });
+				emit({ type: 'done', status: turn.status });
 			}
 			for (const q of subscribers) q.end();
 			subscribers.clear();

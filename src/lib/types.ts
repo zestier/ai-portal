@@ -967,7 +967,7 @@ export type PortalEvent =
 	  }
 	| { type: 'error'; code: string; message: string }
 	| { type: 'heartbeat' }
-	| { type: 'done'; status?: 'complete' | 'interrupted' };
+	| { type: 'done'; status?: 'complete' | 'interrupted' | 'error' };
 
 // --- App-level (cross-conversation) event feed ---
 //
