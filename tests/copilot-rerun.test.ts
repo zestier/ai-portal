@@ -211,4 +211,17 @@ describe('copilot rerun (inline edit / regenerate) provider path', () => {
 		expect(errEvent?.message).toContain(conv.id);
 		expect(errEvent?.message).toContain('runtime connection lost');
 	});
+
+	it('opens sessions with MCP/config discovery enabled so repo .mcp.json is loaded', async () => {
+		const repos = await freshImports();
+		// The SDK defaults `enableConfigDiscovery` to false and would otherwise
+		// ignore the repo's `.mcp.json` (e.g. the Playwright MCP used for portal
+		// development). Resume reuses this same sessionConfig object, so asserting
+		// the create path is enough to pin the opt-in.
+		await copilotConversationWithReply(repos);
+
+		expect(clientStub.createSession).toHaveBeenCalledWith(
+			expect.objectContaining({ enableConfigDiscovery: true })
+		);
+	});
 });

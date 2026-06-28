@@ -315,6 +315,13 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		model: opts.model,
 		workingDirectory: opts.workingDirectory,
 		streaming: true,
+		// Auto-load MCP server configs (`.mcp.json`, `.vscode/mcp.json`) and skill
+		// dirs from the working directory. The SDK defaults this to false, so
+		// without it the repo's `.mcp.json` (e.g. the Playwright MCP used for
+		// portal development) is ignored and its tools never reach the agent. This
+		// portal is a dev tool, so we always opt in. Applies to create and resume
+		// alike — `enableConfigDiscovery` lives on the shared SessionConfigBase.
+		enableConfigDiscovery: true,
 		// Append our standing guidance to the SDK-managed system prompt. `append`
 		// mode keeps every SDK guardrail/safety section intact and just adds ours;
 		// `replace` would drop those, so we never use it here. Set once at session
@@ -376,6 +383,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		model: sessionConfig.model,
 		workingDirectory: sessionConfig.workingDirectory,
 		streaming: sessionConfig.streaming,
+		enableConfigDiscovery: sessionConfig.enableConfigDiscovery,
 		contextTier: 'contextTier' in sessionConfig ? sessionConfig.contextTier : null,
 		systemMessage: {
 			mode: sessionConfig.systemMessage.mode,
