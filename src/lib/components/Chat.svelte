@@ -1022,6 +1022,9 @@
 		armed = false;
 		composer = '';
 		const localMessageId = `local-${Date.now()}`;
+		// Stable per-send key so a retried POST (after a client-side timeout)
+		// dedupes server-side instead of creating a second user message/turn.
+		const requestId = crypto.randomUUID();
 		messages.push({
 			id: localMessageId,
 			conversationId: conversation.id,
@@ -1050,12 +1053,35 @@
 			applyEvent({ type: 'error', code, message });
 			messages = messages.filter((m) => m.id !== localMessageId);
 		};
+		// POST the turn, reusing the same idempotency key across attempts so a
+		// network/timeout failure that actually reached the server replays the
+		// original turn instead of creating a duplicate user message. Only
+		// transport failures (thrown fetch, abort timeout) are retried; an HTTP
+		// response — even a non-2xx one — is returned to the caller as-is.
+		const TURN_POST_TIMEOUT_MS = 30_000;
+		const postTurn = async (): Promise<Response> => {
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), TURN_POST_TIMEOUT_MS);
+			try {
+				return await fetch(`/api/conversations/${conversation.id}/turns`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json', 'idempotency-key': requestId },
+					body: JSON.stringify({ content: text }),
+					signal: controller.signal
+				});
+			} finally {
+				clearTimeout(timer);
+			}
+		};
 		try {
-			const r = await fetch(`/api/conversations/${conversation.id}/turns`, {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ content: text })
-			});
+			let r: Response;
+			try {
+				r = await postTurn();
+			} catch {
+				// One bounded retry on a transport-level failure; the shared
+				// idempotency key makes it safe even if the first attempt landed.
+				r = await postTurn();
+			}
 			if (!r.ok) {
 				let msg = `HTTP ${r.status}`;
 				try {
