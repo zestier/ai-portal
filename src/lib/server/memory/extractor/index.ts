@@ -256,6 +256,11 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		// serialize the envelope here (mirroring the provider boundary).
 		for (const tool of readTools)
 			handlers.set(tool.name, async (args) => JSON.stringify(await tool.handler(args)));
+		// Read-tool results are durable memory content fed verbatim to the
+		// (possibly external/less-trusted) extractor model. Write-time secret
+		// filtering can miss obfuscated or model-summarized values, so re-screen
+		// these results before they enter the transcript (see the push site below).
+		const readToolNames = new Set(readTools.map((tool) => tool.name));
 		const writeHandlers = createWriteToolHandlers({
 			conversationId: input.conversationId,
 			mode: input.mode,
@@ -571,13 +576,18 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 				messages.push({
 					role: 'tool',
 					tool_call_id: call.id,
-					// Tool results are fed back to the (possibly external) provider
-					// verbatim. We don't re-redact here: read-tool output is durable
-					// memory that was already secret-filtered on write (see
-					// sanitizePatch), and write-tool output only echoes the model's
-					// own staged input. Thrown-exception messages ARE redacted at the
-					// dispatch boundary (dispatchExtractorToolCall).
-					content: truncate(result, TOOL_RESULT_MAX_CHARS)
+					// Read-tool output is durable memory that may carry secrets the
+					// write-time filter missed (zero-width-obfuscated tokens,
+					// JSON-escaped values, model-generated summaries), so re-redact
+					// it before it reaches the (possibly external) extractor model —
+					// closing an exfiltration channel. Write-tool output only echoes
+					// the model's own staged input, so it's passed through; thrown-
+					// exception messages are redacted at the dispatch boundary
+					// (dispatchExtractorToolCall).
+					content: truncate(
+						readToolNames.has(call.name) ? redactSensitiveText(result) : result,
+						TOOL_RESULT_MAX_CHARS
+					)
 				});
 			}
 			// The model explicitly ended the run this turn (after any writes it

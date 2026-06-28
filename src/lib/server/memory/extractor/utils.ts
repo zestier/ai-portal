@@ -51,13 +51,35 @@ export const PROMPT_INJECTION_PATTERNS: ReadonlyArray<RegExp> = [
 ];
 
 /**
+ * Candidate normalizations to scan before matching the injection patterns. The
+ * patterns bridge tokens with `[^.\n]{0,40}` gaps that exclude newlines and
+ * anchor every required token with `\b`, so an attacker can split a phrase two
+ * ways: across a *newline* between tokens, or with a *zero-width* char either
+ * inside a word ("ig\u200bnore") or between two words ("ignore\u200ball"). No
+ * single rewrite defeats both zero-width variants against `\b`: deleting the
+ * char rejoins an intra-word split ("ig\u200bnore" → "ignore") but merges an
+ * inter-word split ("ignore\u200ball" → "ignoreall", destroying the boundary),
+ * while substituting a space does the reverse. So we produce both: whitespace is
+ * always collapsed to single spaces (closing the newline bypass), and zero-width
+ * / soft-hyphen chars are once *removed* and once *replaced with a space*. A
+ * match against either variant counts. The sentence-boundary (`.`) guard is left
+ * intact in both, so ordinary multi-sentence text doesn't newly trip.
+ */
+function normalizeForInjectionScan(text: string): string[] {
+	const collapsed = text.replace(/\s+/g, ' ');
+	const zeroWidth = /[\u00AD\u200B-\u200D\u2060\uFEFF]/g;
+	return [collapsed.replace(zeroWidth, ''), collapsed.replace(zeroWidth, ' ').replace(/\s+/g, ' ')];
+}
+
+/**
  * Whether `text` reads like an attempt to override or exfiltrate the system
  * prompt / safety rules (see {@link PROMPT_INJECTION_PATTERNS}). Used to reject
  * such text from persistent, high-authority storage (standing directives).
  */
 export function looksLikePromptInjection(text: string): boolean {
 	if (!text) return false;
-	return PROMPT_INJECTION_PATTERNS.some((regex) => regex.test(text));
+	const variants = normalizeForInjectionScan(text);
+	return PROMPT_INJECTION_PATTERNS.some((regex) => variants.some((variant) => regex.test(variant)));
 }
 
 /** Whether `text` matches any known secret shape (see {@link SENSITIVE_PATTERNS}). */
