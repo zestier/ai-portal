@@ -18,7 +18,14 @@ export type RedeployEvent =
 	| { type: 'done'; ok: true; restarting: true }
 	| { type: 'done'; ok: false; failedStep?: string; code?: number; message?: string };
 
-const SENSITIVE_ENV_NAME = /(?:auth|credential|cookie|key|password|passwd|secret|token)/i;
+const SENSITIVE_ENV_NAME =
+	/(?:auth|copilot|credential|cookie|key|password|passwd|secret|shared|token)/i;
+
+// Newline-less output is buffered until a newline so a secret split across Node
+// chunks is scrubbed whole. Cap that buffer to bound memory, but keep a tail
+// overlap (longer than any plausible secret) so a forced flush can't split one.
+const MAX_BUFFERED_LINE = 256 * 1024;
+const SCRUB_TAIL = 1024;
 
 export const PULL_STEPS: Step[] = [
 	{
@@ -69,7 +76,7 @@ export function canRedeployUser(user: User | null, cfg: AppConfig): boolean {
 export function scrubRedeployLog(text: string, env: NodeJS.ProcessEnv = process.env): string {
 	let scrubbed = text;
 	for (const [name, value] of Object.entries(env)) {
-		if (!value || value.length < 8 || !SENSITIVE_ENV_NAME.test(name)) continue;
+		if (!value || value.length < 4 || !SENSITIVE_ENV_NAME.test(name)) continue;
 		scrubbed = scrubbed.split(value).join(`[redacted:${name}]`);
 	}
 	return scrubbed
@@ -86,12 +93,36 @@ export function runStep(step: Step, emit: (ev: RedeployEvent) => void): Promise<
 			env: { ...process.env, ...step.env },
 			shell: false
 		});
-		p.stdout.on('data', (b: Buffer) =>
-			emit({ type: 'log', stream: 'stdout', text: scrubRedeployLog(b.toString()) })
-		);
-		p.stderr.on('data', (b: Buffer) =>
-			emit({ type: 'log', stream: 'stderr', text: scrubRedeployLog(b.toString()) })
-		);
+		// Buffer incomplete lines so a secret split across arbitrary-length Node
+		// chunks is scrubbed against a whole line, not two half-matches.
+		const emitStream = (stream: 'stdout' | 'stderr', text: string) => {
+			if (text) emit({ type: 'log', stream, text: scrubRedeployLog(text) });
+		};
+		const buffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' };
+		const onChunk = (stream: 'stdout' | 'stderr', b: Buffer) => {
+			const merged = buffers[stream] + b.toString();
+			const lastBreak = merged.lastIndexOf('\n');
+			if (lastBreak === -1) {
+				// No newline yet. Cap memory for newline-less output (progress bars,
+				// huge single-line blobs) but retain a tail so a secret can't straddle
+				// the forced flush boundary and leak as two half-matches.
+				if (merged.length > MAX_BUFFERED_LINE) {
+					emitStream(stream, merged.slice(0, -SCRUB_TAIL));
+					buffers[stream] = merged.slice(-SCRUB_TAIL);
+				} else {
+					buffers[stream] = merged;
+				}
+				return;
+			}
+			buffers[stream] = merged.slice(lastBreak + 1);
+			emitStream(stream, merged.slice(0, lastBreak + 1));
+		};
+		const flushStream = (stream: 'stdout' | 'stderr') => {
+			emitStream(stream, buffers[stream]);
+			buffers[stream] = '';
+		};
+		p.stdout.on('data', (b: Buffer) => onChunk('stdout', b));
+		p.stderr.on('data', (b: Buffer) => onChunk('stderr', b));
 		p.on('error', (err) => {
 			emit({
 				type: 'log',
@@ -101,6 +132,8 @@ export function runStep(step: Step, emit: (ev: RedeployEvent) => void): Promise<
 			resolve(1);
 		});
 		p.on('close', (code) => {
+			flushStream('stdout');
+			flushStream('stderr');
 			emit({ type: 'step-done', label: step.label, code: code ?? 1 });
 			resolve(code ?? 1);
 		});

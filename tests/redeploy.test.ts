@@ -129,6 +129,70 @@ describe('redeploy log scrubbing', () => {
 		expect(scrubbed).toContain('[redacted:github-token]');
 		expect(scrubbed).toContain('Bearer [redacted]');
 	});
+
+	it('redacts short and broadly-named secrets', () => {
+		const scrubbed = scrubRedeployLog('COPILOT_GITHUB_TOKEN=ab12 SHARED_SECRET=wxyz', {
+			COPILOT_GITHUB_TOKEN: 'ab12',
+			SHARED_SECRET: 'wxyz'
+		});
+		expect(scrubbed).not.toContain('ab12');
+		expect(scrubbed).not.toContain('wxyz');
+		expect(scrubbed).toContain('[redacted:COPILOT_GITHUB_TOKEN]');
+		expect(scrubbed).toContain('[redacted:SHARED_SECRET]');
+	});
+
+	it('redacts a secret split across two stream chunks (buffered until newline)', async () => {
+		const secret = 'A'.repeat(32) + 'B'.repeat(32);
+		const prev = process.env.SESSION_SECRET;
+		process.env.SESSION_SECRET = secret;
+		try {
+			const events: RedeployEvent[] = [];
+			const half = secret.length / 2;
+			const code = await runStep(
+				nodeStep(
+					'split',
+					`process.stdout.write(${JSON.stringify(secret.slice(0, half))});` +
+						`setTimeout(() => { process.stdout.write(${JSON.stringify(secret.slice(half) + '\n')}); process.exit(0); }, 20)`
+				),
+				(ev) => events.push(ev)
+			);
+			expect(code).toBe(0);
+			const logs = events.filter(
+				(ev): ev is Extract<RedeployEvent, { type: 'log' }> => ev.type === 'log'
+			);
+			expect(logs.every((ev) => !ev.text.includes(secret.slice(0, half)))).toBe(true);
+			expect(logs.some((ev) => ev.text.includes('[redacted:SESSION_SECRET]'))).toBe(true);
+		} finally {
+			if (prev === undefined) delete process.env.SESSION_SECRET;
+			else process.env.SESSION_SECRET = prev;
+		}
+	});
+
+	it('caps the newline-less buffer while keeping a tail so a secret cannot straddle the flush', async () => {
+		const secret = 'S'.repeat(64);
+		const prev = process.env.SESSION_SECRET;
+		process.env.SESSION_SECRET = secret;
+		try {
+			const events: RedeployEvent[] = [];
+			// Emit ~512KB with no newline, then the secret, then exit (no newline).
+			const code = await runStep(
+				nodeStep(
+					'flood',
+					`process.stdout.write('x'.repeat(512*1024)); process.stdout.write(${JSON.stringify(secret + '\n')})`
+				),
+				(ev) => events.push(ev)
+			);
+			expect(code).toBe(0);
+			const logs = events.filter(
+				(ev): ev is Extract<RedeployEvent, { type: 'log' }> => ev.type === 'log'
+			);
+			expect(logs.every((ev) => !ev.text.includes(secret))).toBe(true);
+			expect(logs.some((ev) => ev.text.includes('[redacted:SESSION_SECRET]'))).toBe(true);
+		} finally {
+			if (prev === undefined) delete process.env.SESSION_SECRET;
+			else process.env.SESSION_SECRET = prev;
+		}
+	});
 });
 
 describe('runStep', () => {
