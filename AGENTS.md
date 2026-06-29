@@ -83,6 +83,22 @@ pnpm exec playwright-cli click <ref>
 pnpm exec playwright-cli close
 ```
 
+**Iterate visually — don't edit UI blind.** When you change anything visual
+(CSS, layout, spacing, colors, a component's markup), close the loop with the
+browser instead of guessing: render the affected page, `screenshot` it, look at
+the result, adjust, and re-screenshot until it's right. The same loop is how you
+catch regressions a unit test won't — overflow, contrast, broken wrapping,
+dark-mode glitches. A typical pass:
+
+```
+pnpm exec playwright-cli open http://localhost:5193/<page> --browser firefox
+pnpm exec playwright-cli screenshot        # eyeball it, tweak the code, repeat
+```
+
+Point it at your `pnpm dev:isolated` server (see below), and check the states
+that matter for the change — narrow/wide viewport (`resize`), light/dark, and
+any hover/focus/error states — not just the happy path.
+
 Notes:
 
 - This repo standardizes on **Firefox** (so do e2e tests); pass
