@@ -80,6 +80,35 @@ describe('interpolatePrompt', () => {
 		).toBe('Do this: Fix it\n\nTicket ID: ticket-1');
 	});
 
+	it('renders an empty plan as (none) and trims a non-empty plan', () => {
+		expect(
+			ticketPlaceholderValues({ id: 't', title: 'x', body: 'b', plan: '   ' })['ticket.plan']
+		).toBe('(none)');
+		expect(
+			ticketPlaceholderValues({ id: 't', title: 'x', body: 'b', plan: '  Step 1.  ' })[
+				'ticket.plan'
+			]
+		).toBe('Step 1.');
+	});
+
+	it('includes the plan under a Plan heading when present', () => {
+		expect(
+			interpolatePrompt(
+				'{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
+				ticketPlaceholderValues({ id: 't', title: 'x', body: 'Body.', plan: 'Step 1. Step 2.' })
+			)
+		).toBe('Body.\n\nPlan:\nStep 1. Step 2.');
+	});
+
+	it('shows Plan:\\n(none) for an empty plan', () => {
+		expect(
+			interpolatePrompt(
+				'{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
+				ticketPlaceholderValues({ id: 't', title: 'x', body: 'Body.', plan: '' })
+			)
+		).toBe('Body.\n\nPlan:\n(none)');
+	});
+
 	it('collapses runs of blank lines created by empty substitutions', () => {
 		expect(interpolatePrompt('a\n\n{{ticket.body}}\n\nb', { 'ticket.body': '' })).toBe('a\n\nb');
 	});

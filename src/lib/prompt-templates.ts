@@ -179,7 +179,7 @@ export interface TicketActionDefault {
 }
 
 const DO_PROMPT =
-	'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
+	'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 
 const REFINE_PROMPT =
 	'Refine this workspace ticket: {{ticket.title}}\n\n' +
@@ -188,7 +188,7 @@ const REFINE_PROMPT =
 	'each open decision to a concrete choice rather than leaving it ambiguous. Record those ' +
 	'decisions in the ticket and build a concrete implementation plan with a checklist in the ' +
 	"ticket's plan field. Update the ticket instead of implementing it unless explicitly asked." +
-	'\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
+	'\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 
 export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 	{
@@ -239,6 +239,6 @@ export function ticketPlaceholderValues(
 		'ticket.title': ticket.title,
 		'ticket.id': ticket.id,
 		'ticket.body': ticket.body.trim(),
-		'ticket.plan': ticket.plan.trim()
+		'ticket.plan': ticket.plan.trim() || '(none)'
 	};
 }

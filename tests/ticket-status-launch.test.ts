@@ -27,7 +27,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 		title: 'Do',
 		description: '',
 		prompt:
-			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
+			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
 		launchBehavior: 'send',
 		conversationMode: null,
 		model: null,
@@ -72,7 +72,7 @@ describe('createTicketLaunchChat', () => {
 		expect(calls[1].url).toBe('/api/conversations/conv-1/turns');
 		expect(JSON.parse(calls[1].init.body as string)).toEqual({
 			content:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.'
+				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 	});
 

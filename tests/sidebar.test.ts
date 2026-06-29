@@ -130,9 +130,9 @@ describe('orderSidebarTickets', () => {
 
 describe('ticket action helpers', () => {
 	const doPrompt =
-		'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}';
+		'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 	const refinePrompt =
-		"Refine this workspace ticket: {{ticket.title}}\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}";
+		"Refine this workspace ticket: {{ticket.title}}\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}";
 
 	it('uses the ticket title as the chat title', () => {
 		expect(ticketActionChatTitle({ title: 'Fix sidebar actions' })).toBe('Fix sidebar actions');
@@ -150,7 +150,7 @@ describe('ticket action helpers', () => {
 				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.'
+			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		);
 	});
 
@@ -161,7 +161,7 @@ describe('ticket action helpers', () => {
 				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			"Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: ticket-1\n\nAdd a launch button."
+			"Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)"
 		);
 	});
 
@@ -171,7 +171,7 @@ describe('ticket action helpers', () => {
 				{ prompt: doPrompt },
 				{ id: 'ticket-1', title: 'Fix sidebar actions', body: '  ', plan: '' }
 			)
-		).toBe('Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1');
+		).toBe('Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nPlan:\n(none)');
 	});
 
 	it('builds encoded draft chat URLs that carry the action id', () => {

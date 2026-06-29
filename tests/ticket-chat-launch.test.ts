@@ -26,7 +26,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 		title: 'Do',
 		description: '',
 		prompt:
-			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
+			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
 		launchBehavior: 'draft',
 		conversationMode: null,
 		model: null,
@@ -59,7 +59,7 @@ describe('createTicketDraftChat', () => {
 			ok: true,
 			href: '/conversations/conv-1?draftTicketId=ticket-1&ticketActionId=action-do',
 			prompt:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.'
+				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const [url, init] = fetcher.mock.calls[0];

@@ -353,7 +353,7 @@ describe('prompt templates', () => {
 			type: 'ticket-action',
 			title: 'Do',
 			prompt:
-				'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
+				'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
 			launchBehavior: 'draft'
 		});
 
@@ -365,7 +365,7 @@ describe('prompt templates', () => {
 			)
 		} as never);
 		expect((data as { initialComposer: string }).initialComposer).toBe(
-			`Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ${ticket.id}\n\nAdd a launch button.`
+			`Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ${ticket.id}\n\nAdd a launch button.\n\nPlan:\n(none)`
 		);
 
 		// A chat template id is not a valid ticket action -> 404.
