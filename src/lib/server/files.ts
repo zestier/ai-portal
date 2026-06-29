@@ -144,11 +144,19 @@ export function safeResolve(root: string, rel: string): ResolveResult {
 		return { ok: false, reason: 'path escapes root' };
 	}
 	// Walk the path; for each existing component, realpath it and re-check.
-	// This catches symlinks pointing outside the root.
+	// This catches symlinks pointing outside the root. When we reach a
+	// not-yet-existing component, anchor the remaining (lexical) parts on the
+	// realpath of the deepest existing prefix instead of the lexical
+	// `candidate`. That removes the TOCTOU hole where the lexical prefix is an
+	// out-of-root symlink the caller would later follow: a concurrent actor
+	// can still create the missing tail component, but it can only appear under
+	// a directory we already verified stays inside the root, so the deepest
+	// existing prefix can never relocate the path outside the workspace.
 	const parts = r.split(sep);
 	let curr = rootReal;
-	for (const part of parts) {
-		curr = join(curr, part);
+	let escaped = false;
+	for (let i = 0; i < parts.length; i++) {
+		curr = join(curr, parts[i]);
 		try {
 			const real = realpathSync(curr);
 			const insideR = relative(rootReal, real);
@@ -157,13 +165,42 @@ export function safeResolve(root: string, rel: string): ResolveResult {
 			}
 			curr = real;
 		} catch {
-			// Component does not exist (yet). That's fine — remaining parts
-			// can't contain new symlinks until they're created. Use lexical
-			// resolution for the rest.
+			// Component does not exist (yet). Build the rest lexically on top of
+			// the deepest existing prefix's realpath, then confirm containment.
+			escaped = true;
+			curr = join(curr, ...parts.slice(i + 1));
 			break;
 		}
 	}
-	return { ok: true, abs: candidate, rel: toPosix(r) };
+	const finalInside = relative(rootReal, curr);
+	if (finalInside.startsWith('..') || isAbsolute(finalInside)) {
+		return { ok: false, reason: 'path escapes root' };
+	}
+	return { ok: true, abs: escaped ? curr : candidate, rel: toPosix(r) };
+}
+
+/**
+ * Re-validate that `abs` still resolves inside `rootReal` at use time,
+ * narrowing the TOCTOU window between `safeResolve` and the caller's read:
+ * `safeResolve` may return a path whose final component does not yet exist, and
+ * a concurrent actor can create it as a symlink pointing out of the root before
+ * the caller touches it. We realpath the path that the OS will actually follow
+ * and confirm containment; ENOENT (still missing) is contained by construction.
+ * A residual race remains between this check and the caller's stat/open (a
+ * path-string API can't fully close it without holding an fd), but escaping
+ * symlinks present at check time are rejected. Returns true when safe to use.
+ */
+function stillContained(rootReal: string, abs: string): boolean {
+	let resolved: string;
+	try {
+		resolved = realpathSync(abs);
+	} catch (e) {
+		// Missing target is fine: there's nothing to follow out of the root.
+		if ((e as NodeJS.ErrnoException).code === 'ENOENT') return true;
+		return false;
+	}
+	const inside = relative(rootReal, resolved);
+	return resolved === rootReal || (!inside.startsWith('..') && !isAbsolute(inside));
 }
 
 /**
@@ -211,6 +248,9 @@ export function listDir(
 ): { ok: true; entries: DirEntry[] } | { ok: false; reason: string; status?: number } {
 	const r = safeResolve(root, rel);
 	if (!r.ok) return { ok: false, reason: r.reason, status: 400 };
+	if (!stillContained(realpathSync(root), r.abs)) {
+		return { ok: false, reason: 'path escapes root', status: 400 };
+	}
 	let dirents: Dirent[];
 	try {
 		const st = statSync(r.abs);
@@ -294,6 +334,9 @@ function looksBinary(buf: Buffer): boolean {
 export async function readFileSafe(root: string, rel: string): Promise<FileResult> {
 	const r = safeResolve(root, rel);
 	if (!r.ok) return { ok: false, reason: r.reason, status: 400 };
+	if (!stillContained(realpathSync(root), r.abs)) {
+		return { ok: false, reason: 'path escapes root', status: 400 };
+	}
 	let size: number;
 	try {
 		const st = statSync(r.abs);
@@ -363,6 +406,9 @@ export type ImageBytesResult =
 export function readImageFileSafe(root: string, rel: string): ImageBytesResult {
 	const r = safeResolve(root, rel);
 	if (!r.ok) return { ok: false, reason: r.reason, status: 400 };
+	if (!stillContained(realpathSync(root), r.abs)) {
+		return { ok: false, reason: 'path escapes root', status: 400 };
+	}
 	const img: CapturedImage | null = readImageFile(r.abs);
 	if (!img) return { ok: false, reason: 'not an image', status: 404 };
 	return { ok: true, mimeType: img.mimeType, data: img.data };

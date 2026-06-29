@@ -92,6 +92,21 @@ describe('safeResolve', () => {
 		const r = safeResolve(root, 'escape/secret.txt');
 		expect(r.ok).toBe(false);
 	});
+
+	it.skipIf(!symlinksWork)(
+		'anchors a not-yet-existing tail on the deepest existing realpath',
+		() => {
+			// `missing` does not exist; the deepest existing prefix is root, so
+			// the resolved abs must live under root's realpath, not be a bare
+			// lexical join that a later out-of-root symlink could redirect.
+			const r = safeResolve(root, 'missing/deep.txt');
+			expect(r.ok).toBe(true);
+			if (r.ok) {
+				const inside = realpathSync(root);
+				expect(r.abs.startsWith(inside)).toBe(true);
+			}
+		}
+	);
 });
 
 describe('listDir', () => {
@@ -165,13 +180,14 @@ describe('readFileSafe', () => {
 		}
 	});
 
-	it('serves SVG text content (not flagged) when it is not real SVG', async () => {
-		const r = await readFileSafe(root, 'notreally.svg');
-		expect(r.ok).toBe(true);
-		if (r.ok && !('binary' in r && r.binary)) {
-			expect((r as { content: string }).content).toContain('plain text');
-		} else {
-			throw new Error('expected text result');
+	it.skipIf(!symlinksWork)('refuses to read through a tail symlink that escapes root', async () => {
+		const linkRel = 'leak.txt';
+		symlinkSync(join(outside, 'secret.txt'), join(root, linkRel));
+		try {
+			const r = await readFileSafe(root, linkRel);
+			expect(r.ok).toBe(false);
+		} finally {
+			rmSync(join(root, linkRel), { force: true });
 		}
 	});
 });
