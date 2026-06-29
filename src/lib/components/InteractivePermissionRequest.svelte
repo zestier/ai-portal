@@ -21,6 +21,7 @@
 		type ScopeChoice
 	} from './interactive-permission';
 	import Alert from './ui/Alert.svelte';
+	import { openImageLightbox } from '$lib/client/image-lightbox.svelte';
 
 	let {
 		request,
@@ -239,14 +240,19 @@
 		<pre>{request.summary}</pre>
 
 		{#if request.imagePreview}
+			{@const previewSrc = `data:${request.imagePreview.mimeType};base64,${request.imagePreview.dataBase64}`}
 			<div class="image-preview">
 				<div class="muted small">
 					Preview ({Math.round(request.imagePreview.byteSize / 1024)} KB)
 				</div>
-				<img
-					src={`data:${request.imagePreview.mimeType};base64,${request.imagePreview.dataBase64}`}
-					alt="file preview"
-				/>
+				<button
+					type="button"
+					class="image-zoom"
+					title="Click to view full size"
+					onclick={() => openImageLightbox(previewSrc, 'file preview')}
+				>
+					<img src={previewSrc} alt="file preview" />
+				</button>
 			</div>
 		{/if}
 
@@ -615,15 +621,23 @@
 	.image-preview {
 		margin-top: 0.5rem;
 	}
-	.image-preview img {
+	.image-zoom {
 		display: block;
 		margin-top: 0.25rem;
+		padding: 0;
+		border: 0;
+		background: none;
+		cursor: zoom-in;
+	}
+	.image-preview img {
+		display: block;
 		max-width: 100%;
 		height: auto;
 		max-height: 18em;
 		object-fit: contain;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
+		cursor: zoom-in;
 	}
 	.shell-breakdown,
 	.git-commit-preview {

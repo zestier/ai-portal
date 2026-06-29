@@ -2,6 +2,7 @@
 	import '../app.css';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SidebarRail from '$lib/components/SidebarRail.svelte';
+	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
 	import { page } from '$app/stores';
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -192,6 +193,8 @@
 		</main>
 	</div>
 {/if}
+
+<ImageLightbox />
 
 <style>
 	.layout {

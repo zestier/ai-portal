@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
+	import { zoomableImages } from '$lib/client/zoomable-images';
+	import { openImageLightbox } from '$lib/client/image-lightbox.svelte';
 	import type { ResultBlock } from '$lib/client/tool-result';
 	import TerminalBlock from './TerminalBlock.svelte';
 
@@ -39,13 +41,17 @@
 	<TerminalBlock text={block.text} {command} />
 {:else if block.kind === 'text' && markdownHtml}
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-	<div class="markdown-result" use:copyableCodeBlocks>{@html markdownHtml}</div>
+	<div class="markdown-result" use:copyableCodeBlocks use:zoomableImages>{@html markdownHtml}</div>
 {:else if block.kind === 'image'}
-	<img
-		class="image"
-		src={block.src ?? `data:${block.mimeType};base64,${block.data}`}
-		alt="tool output"
-	/>
+	{@const imgSrc = block.src ?? `data:${block.mimeType};base64,${block.data}`}
+	<button
+		type="button"
+		class="image-zoom"
+		title="Click to view full size"
+		onclick={() => openImageLightbox(imgSrc, 'tool output')}
+	>
+		<img class="image" src={imgSrc} alt="tool output" />
+	</button>
 {:else if block.kind === 'audio'}
 	<audio controls src={`data:${block.mimeType};base64,${block.data}`}></audio>
 {:else if block.kind === 'resource_link'}
@@ -72,6 +78,13 @@
 {/if}
 
 <style>
+	.image-zoom {
+		display: block;
+		padding: 0;
+		border: 0;
+		background: none;
+		cursor: zoom-in;
+	}
 	.image {
 		max-width: 100%;
 		height: auto;
@@ -79,6 +92,7 @@
 		object-fit: contain;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
+		cursor: zoom-in;
 	}
 	.markdown-result :global(img) {
 		display: block;

@@ -2,6 +2,7 @@
 	import type { Message, ToolCallRecord, FileEditRecord, ReasoningBlockRecord } from '$lib/types';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
+	import { zoomableImages } from '$lib/client/zoomable-images';
 	import ToolCall from './ToolCall.svelte';
 	import SubagentCall from './SubagentCall.svelte';
 	import DiffView from './DiffView.svelte';
@@ -518,7 +519,7 @@
 			{#each parts as p, i (i)}
 				{#if p.kind === 'text'}
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					<div class="text-part" use:copyableCodeBlocks>{@html p.html}</div>
+					<div class="text-part" use:copyableCodeBlocks use:zoomableImages>{@html p.html}</div>
 				{:else if p.kind === 'tool'}
 					{@const childTools = (message.toolCalls ?? []).filter(
 						(t) => t.parentToolCallId === p.tool.id
@@ -595,8 +596,10 @@
 				{/if}
 			</form>
 		{:else}
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			<div class="text-part" use:copyableCodeBlocks>{@html renderMarkdown(message.content)}</div>
+			<div class="text-part" use:copyableCodeBlocks use:zoomableImages>
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+				{@html renderMarkdown(message.content)}
+			</div>
 		{/if}
 	</div>
 </article>

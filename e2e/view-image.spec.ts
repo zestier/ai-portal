@@ -74,6 +74,16 @@ test('an image viewed via the view tool is captured, served, and rendered inline
 	expect(res.headers()['content-type']).toContain('image/png');
 	expect((await res.body()).length).toBeGreaterThan(0);
 
+	// Click-to-zoom: the tool image is wrapped in a focusable button trigger that
+	// opens the shared full-size lightbox; Escape dismisses it (Modal owns Esc).
+	await expect(viewCard.locator('button.image-zoom')).toBeVisible();
+	await img.click();
+	const lightbox = page.locator('dialog[open] .frame img');
+	await expect(lightbox).toBeVisible();
+	await expect(lightbox).toHaveAttribute('src', src!);
+	await page.keyboard.press('Escape');
+	await expect(lightbox).toBeHidden();
+
 	// The attachment rehydrates from SQLite after a full reload.
 	await page.reload();
 	const viewCardAfter = page.locator('details.tool', { hasText: 'view' }).first();
