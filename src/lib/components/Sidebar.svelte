@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
-	import { onMount, tick } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import type {
 		ChatPromptTemplate,
 		Conversation,
@@ -57,6 +57,9 @@
 		mounted = true;
 	});
 	let errorTimer: ReturnType<typeof setTimeout> | null = null;
+	onDestroy(() => {
+		if (errorTimer) clearTimeout(errorTimer);
+	});
 	let firstMenuItem: HTMLButtonElement | null = $state(null);
 	let renameInput: HTMLInputElement | null = $state(null);
 

@@ -141,7 +141,7 @@
 	// and edits in the order they happened, sorted purely by start timestamp.
 	type ActivityItem =
 		| { kind: 'reasoning'; ts: number; block: ReasoningBlockRecord }
-		| { kind: 'content'; ts: number; block: ReasoningBlockRecord }
+		| { kind: 'content'; ts: number; block: ReasoningBlockRecord; html: string }
 		| { kind: 'tool'; ts: number; tool: ToolCallRecord }
 		| { kind: 'edit'; ts: number; edit: FileEditRecord };
 
@@ -151,7 +151,7 @@
 			items.push({ kind: 'reasoning', ts: r.startedAt, block: r });
 		}
 		for (const r of childSpoken) {
-			items.push({ kind: 'content', ts: r.startedAt, block: r });
+			items.push({ kind: 'content', ts: r.startedAt, block: r, html: renderMarkdown(r.text) });
 		}
 		for (const t of childTools) {
 			items.push({ kind: 'tool', ts: t.startedAt, tool: t });
@@ -328,7 +328,7 @@
 						{:else if item.kind === 'content'}
 							<div class="markdown agent-content" use:copyableCodeBlocks>
 								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-								{@html renderMarkdown(item.block.text)}
+								{@html item.html}
 							</div>
 						{:else if item.kind === 'tool'}
 							<ToolCall toolCall={item.tool} />
