@@ -16,6 +16,7 @@ import { apiErrorResponse } from '$lib/server/http';
 import { startIdleReaper } from '$lib/server/runtime/pool';
 import { startMemoryMaintenance } from '$lib/server/runtime/memory-maintenance';
 import { startTicketEventBridge } from '$lib/server/runtime/ticket-events';
+import { startAppEventReaper } from '$lib/server/runtime/app-events';
 import * as messages from '$lib/server/db/repos/messages';
 import { faviconDataUri, normalizeThemeAccent, type ThemeAccent } from '$lib/types';
 
@@ -30,6 +31,7 @@ function boot() {
 	startIdleReaper();
 	startMemoryMaintenance();
 	startTicketEventBridge();
+	startAppEventReaper();
 	log.info('boot.ok');
 }
 boot();

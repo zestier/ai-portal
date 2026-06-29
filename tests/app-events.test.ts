@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import {
 	getAppEventBus,
 	publishAppEvent,
+	startAppEventReaper,
+	stopAppEventReaper,
 	type AppEventBus,
 	type IdentifiedAppEvent
 } from '../src/lib/server/runtime/app-events';
@@ -177,5 +179,74 @@ describe('app event bus', () => {
 		expect(afterReap.map((e) => e.event)).toEqual([awaiting('c2', false)]);
 
 		nowSpy.mockRestore();
+	});
+
+	it('reaps a subscriber-less channel past TTL on the next unrelated disconnect (no publish)', async () => {
+		const bus = getAppEventBus();
+		const stale = `stale-${Math.random()}`;
+		const other = `other-${Math.random()}`;
+		const base = Date.now();
+		const nowSpy = vi.spyOn(Date, 'now');
+
+		// `stale` connects once and immediately disconnects -> a subscriber-less
+		// channel sitting in the map, awaiting reaping. No publish ever follows.
+		nowSpy.mockReturnValue(base);
+		await take(bus, stale, 1, { timeoutMs: 50 }, () => {
+			bus.publish(stale, awaiting('c1', true));
+		});
+
+		// Long past the TTL, a *different* user merely connects and disconnects
+		// with NO publish anywhere. The only thing that can reclaim the stale
+		// channel is the new `subscribe` `finally` sweep (the pre-existing
+		// publish-path reap never runs here).
+		nowSpy.mockReturnValue(base + 10 * 60_000);
+		await take(bus, other, 1, { timeoutMs: 50 });
+
+		// Stale channel is gone: a later subscribe is a fresh empty channel and
+		// replays nothing — only the freshly-published live event arrives.
+		nowSpy.mockReturnValue(base + 10 * 60_000);
+		const afterReap = await take(bus, stale, 1, { sinceId: '', timeoutMs: 150 }, () => {
+			bus.publish(stale, awaiting('c2', false));
+		});
+		expect(afterReap.map((e) => e.event)).toEqual([awaiting('c2', false)]);
+
+		nowSpy.mockRestore();
+	});
+
+	it('background reaper reclaims an idle channel with no publish or subscribe', async () => {
+		vi.useFakeTimers();
+		try {
+			const bus = getAppEventBus();
+			const stale = `stale-${Math.random()}`;
+
+			// Buffer an event for a never-connected user, then leave the process
+			// idle: no further publish, no further subscribe.
+			bus.publish(stale, awaiting('c1', true));
+
+			startAppEventReaper();
+			// Advance past two sweeps: the interval period equals the TTL, so the
+			// first tick (elapsed == TTL) doesn't reap (strict `>`); the second
+			// (elapsed > TTL) does.
+			vi.advanceTimersByTime(11 * 60_000);
+
+			// The interval reclaimed the idle channel: a fresh subscribe replays
+			// nothing (only the new live event arrives).
+			const out: IdentifiedAppEvent[] = [];
+			const ac = new AbortController();
+			const iter = (async () => {
+				for await (const ev of bus.subscribe(stale, { signal: ac.signal, sinceId: '' })) {
+					out.push(ev);
+					ac.abort();
+					break;
+				}
+			})();
+			await Promise.resolve();
+			bus.publish(stale, awaiting('c2', false));
+			await iter;
+			expect(out.map((e) => e.event)).toEqual([awaiting('c2', false)]);
+		} finally {
+			stopAppEventReaper();
+			vi.useRealTimers();
+		}
 	});
 });

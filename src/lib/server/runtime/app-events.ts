@@ -20,7 +20,13 @@
 // emitters or the SSE route.
 
 import { AsyncQueue } from './async-queue';
-import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
+import {
+	appGlobalSymbols,
+	clearGlobalSingletonValues,
+	getGlobalSingletonValue,
+	getOrCreateGlobalSingleton,
+	setGlobalSingletonValue
+} from '../global-singleton';
 import { ulid } from '../db/ids';
 import type { AppEvent } from '$lib/types';
 
@@ -92,17 +98,32 @@ class InProcessAppEventBus implements AppEventBus {
 	}
 
 	// Drop channels that have no live subscribers and haven't seen activity
-	// within the TTL. Swept lazily from `publish` (no background timer to manage
-	// across HMR / shutdown): publishes are sparse and the channel count is
-	// small, so an O(channels) sweep here is negligible. A channel that is idle
-	// *and* receives no further publishes simply stops growing — steady-state
-	// memory stays bounded either way.
+	// within the TTL. Driven from three cheap places: every `publish` (sparse),
+	// every `subscribe` `finally` (the other path that leaves a subscriber-less
+	// channel behind), and a low-frequency background sweep (so a mostly-idle
+	// process with no further publishes still reclaims — see `startReaper`). The
+	// channel count is small, so an O(channels) pass is negligible. A channel
+	// that is idle *and* sees no further activity simply stops growing — memory
+	// stays bounded either way.
 	private reapIdle(now: number): void {
 		for (const [userId, ch] of this.channels) {
 			if (ch.subscribers.size === 0 && now - ch.lastActivityAt > IDLE_CHANNEL_TTL_MS) {
 				this.channels.delete(userId);
 			}
 		}
+	}
+
+	// Background sweep so a subscriber-less channel is reclaimed even when no
+	// further `publish` or `subscribe` ever follows the last disconnect (the
+	// common case on a mostly-idle single-user portal, or the first user to
+	// disconnect before any activity). Mirrors the pool / memory-maintenance
+	// reaper: a single unref'd interval pinned on a global singleton so Vite HMR
+	// re-imports and repeated boots don't stack timers. Idempotent.
+	startReaper(): void {
+		if (getGlobalSingletonValue<NodeJS.Timeout>(APP_EVENT_REAPER_KEYS)) return;
+		const timer = setInterval(() => this.reapIdle(Date.now()), IDLE_CHANNEL_TTL_MS);
+		timer.unref?.();
+		setGlobalSingletonValue(APP_EVENT_REAPER_KEYS, timer);
 	}
 
 	publish(userId: string, event: AppEvent): void {
@@ -157,13 +178,20 @@ class InProcessAppEventBus implements AppEventBus {
 		} finally {
 			signal?.removeEventListener('abort', onAbort);
 			ch.subscribers.delete(q);
-			// Don't drop the channel immediately on disconnect: keeping it (and
+			// Don't drop *this* channel immediately on disconnect: keeping it (and
 			// its replay buffer) alive briefly is exactly what lets a browser
 			// EventSource auto-reconnect replay the events it missed during the
-			// blip. Just mark it idle; the TTL reaper in `publish` reclaims it if
-			// the user never comes back. A reconnect gap beyond the buffer/TTL is
+			// blip. Just mark it idle (its fresh `lastActivityAt` spares it from
+			// the sweep just below); the TTL reaper reclaims it later if the user
+			// never comes back. A reconnect gap beyond the buffer/TTL is
 			// reconciled by the next layout `load`.
 			if (ch.subscribers.size === 0) ch.lastActivityAt = Date.now();
+			// Co-located sweep: `subscribe`'s `finally` is — alongside `publish` —
+			// the other path that leaves a subscriber-less channel behind, so
+			// opportunistically reclaim any *other* channel already past its TTL.
+			// This is what stops the leak when no publish ever follows the last
+			// unsubscribe; the background `startReaper` interval is the backstop.
+			this.reapIdle(Date.now());
 		}
 	}
 }
@@ -173,8 +201,34 @@ class InProcessAppEventBus implements AppEventBus {
 // old module's closure.
 const APP_EVENT_BUS_KEYS = appGlobalSymbols('app-events.bus');
 
-export function getAppEventBus(): AppEventBus {
+// The background idle-sweep timer, pinned on its own global singleton so HMR
+// re-imports / repeated boots don't stack intervals (same rationale as the bus).
+const APP_EVENT_REAPER_KEYS = appGlobalSymbols('app-events.reaper');
+
+function getInProcessAppEventBus(): InProcessAppEventBus {
 	return getOrCreateGlobalSingleton(APP_EVENT_BUS_KEYS, () => new InProcessAppEventBus());
+}
+
+export function getAppEventBus(): AppEventBus {
+	return getInProcessAppEventBus();
+}
+
+/**
+ * Start the low-frequency background sweep that reclaims subscriber-less
+ * channels even when no further `publish`/`subscribe` follows the last
+ * disconnect. Idempotent and `.unref()`'d; call once at boot.
+ */
+export function startAppEventReaper(): void {
+	getInProcessAppEventBus().startReaper();
+}
+
+/** Stop the background sweep (shutdown / test cleanup). */
+export function stopAppEventReaper(): void {
+	const timer = getGlobalSingletonValue<NodeJS.Timeout>(APP_EVENT_REAPER_KEYS);
+	if (timer) {
+		clearInterval(timer);
+		clearGlobalSingletonValues(APP_EVENT_REAPER_KEYS);
+	}
 }
 
 /** Convenience: publish an `AppEvent` to a user's global feed. */
