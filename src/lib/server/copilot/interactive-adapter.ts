@@ -35,6 +35,7 @@ import {
 	isFilesystemPermissionKind
 } from '$lib/permissions/metadata';
 import { summarizeGitCommitPermission } from '$lib/permissions/git-commit';
+import { summarizeTemplatePermission } from '$lib/permissions/prompt-template';
 import type { ToolPermissionRequest } from '../tools/types';
 
 interface PermissionRequestLike {
@@ -703,6 +704,10 @@ function bestEffortPromptGrantFeedback(view: { permissionKind: string }): string
 function summarizePermissionRequest(req: PermissionRequestLike, tool: string): string {
 	if (tool === 'git_commit') {
 		const summary = summarizeGitCommitPermission(req.args);
+		if (summary) return summary;
+	}
+	if (tool === 'template_create' || tool === 'template_update') {
+		const summary = summarizeTemplatePermission(tool, req.args);
 		if (summary) return summary;
 	}
 	return req.fullCommandText ?? req.fileName ?? req.path ?? req.url ?? req.toolDescription ?? tool;

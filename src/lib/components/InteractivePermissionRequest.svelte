@@ -6,6 +6,7 @@
 		ShellAnalysisView
 	} from '$lib/types';
 	import { gitCommitPreview } from '$lib/permissions/git-commit';
+	import { templatePermissionPreview } from '$lib/permissions/prompt-template';
 	import { focusTrap } from '$lib/actions/focus-trap';
 	import {
 		buildPermissionGrantScope,
@@ -61,6 +62,7 @@
 	}
 
 	const gitCommit = $derived(request.tool === 'git_commit' ? gitCommitPreview(request.args) : null);
+	const templatePreview = $derived(templatePermissionPreview(request.tool, request.args));
 	const permissionScopeContext = $derived(buildPermissionScopeContext(request));
 	const scopeChoices = $derived<ScopeChoice[]>(permissionScopeContext.choices);
 	const isFsKind = $derived(permissionScopeContext.isFsKind);
@@ -360,9 +362,52 @@
 			</div>
 		{/if}
 
+		{#if templatePreview}
+			<div class="template-preview" role="note">
+				<div class="muted small">
+					{templatePreview.action === 'update'
+						? 'Update prompt template'
+						: 'Create prompt template'}
+				</div>
+				<dl>
+					{#if templatePreview.action === 'update'}
+						<div>
+							<dt>Template id</dt>
+							<dd><code>{templatePreview.id ?? '(missing)'}</code></dd>
+						</div>
+					{/if}
+					{#if templatePreview.title}
+						<div>
+							<dt>Title</dt>
+							<dd>{templatePreview.title}</dd>
+						</div>
+					{/if}
+					{#each templatePreview.fields as field}
+						<div>
+							<dt>{field.label}</dt>
+							<dd>{field.value}</dd>
+						</div>
+					{/each}
+					<div>
+						<dt>Approval</dt>
+						<dd>One-time only; stored grants are disabled for this tool.</dd>
+					</div>
+				</dl>
+				{#if templatePreview.prompt}
+					<div class="template-prompt-block">
+						<div class="muted small">
+							Prompt body ({templatePreview.promptLineCount}
+							{templatePreview.promptLineCount === 1 ? 'line' : 'lines'})
+						</div>
+						<pre>{templatePreview.prompt}</pre>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		{#if formatArgs(request.args)}
 			<details class="args">
-				<summary>{gitCommit ? 'Raw arguments' : 'Arguments'}</summary>
+				<summary>{gitCommit || templatePreview ? 'Raw arguments' : 'Arguments'}</summary>
 				<pre>{formatArgs(request.args)}</pre>
 			</details>
 		{/if}
@@ -613,7 +658,8 @@
 	}
 	.shell-breakdown,
 	.shell-unsafe,
-	.git-commit-preview {
+	.git-commit-preview,
+	.template-preview {
 		margin-top: 0.5rem;
 		border-radius: var(--radius-sm);
 		font-size: var(--fs-md);
@@ -640,7 +686,8 @@
 		cursor: zoom-in;
 	}
 	.shell-breakdown,
-	.git-commit-preview {
+	.git-commit-preview,
+	.template-preview {
 		padding: 0.4rem 0.5rem;
 		border: 1px solid var(--border);
 		background: var(--surface);
@@ -689,6 +736,36 @@
 	.git-commit-preview dd {
 		margin: 0;
 		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.template-preview {
+		padding: 0.5rem 0.6rem;
+	}
+	.template-preview dl {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 0.25rem 0.7rem;
+		margin: 0.35rem 0 0;
+	}
+	.template-preview dl > div {
+		display: contents;
+	}
+	.template-preview dt {
+		color: var(--text-muted);
+		font-weight: 600;
+	}
+	.template-preview dd {
+		margin: 0;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.template-prompt-block {
+		margin-top: 0.5rem;
+	}
+	.template-prompt-block pre {
+		margin-top: 0.25rem;
+		max-height: 14rem;
+		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
 	.commit-paths {
