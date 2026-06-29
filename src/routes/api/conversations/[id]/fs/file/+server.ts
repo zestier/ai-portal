@@ -18,11 +18,16 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 	if (url.searchParams.get('raw') !== null) {
 		const img = readImageFileSafe(workdir, relPath);
 		if (!img.ok) throw error(img.status ?? 400, img.reason);
+		// SVG bytes are sanitized in readImageFile, but still serve every raw
+		// image with nosniff + a locked-down sandbox CSP so a crafted file can't
+		// execute script or fetch subresources in the portal origin.
 		return new Response(new Uint8Array(img.data), {
 			headers: {
 				'content-type': img.mimeType,
 				'content-length': String(img.data.length),
 				'cache-control': 'private, no-store',
+				'x-content-type-options': 'nosniff',
+				'content-security-policy': "default-src 'none'; sandbox",
 				'content-disposition': 'inline'
 			}
 		});

@@ -203,6 +203,12 @@ first after process boot.
   `DOMPurify` (see `src/lib/client/markdown.ts`). Assistant content is
   never injected into SSR HTML; the chat transcript is hydrated and
   rendered in the browser, where DOMPurify uses the real DOM.
+- SVG images are active content (script/handlers/external refs), so they
+  are sanitized server-side with DOMPurify's SVG profile over a jsdom DOM
+  (`src/lib/server/svg-sanitize.ts`) — ticket attachments at upload, file
+  browser / view-tool SVGs on serve — and rendered only via `<img>` under
+  `nosniff` + `default-src 'none'; sandbox`, so a directly-opened SVG is
+  also inert.
 - A strict default CSP is sent. Inline-script-emitting pages use
   SvelteKit's hash-mode CSP integration (`kit.csp.directives` in
   `svelte.config.js`) so we can omit `'unsafe-inline'` from `script-src`;

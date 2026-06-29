@@ -12,6 +12,7 @@ import {
 	type ToolPermissionRequest
 } from './types';
 import * as ticketAttachments from '../db/repos/ticket-attachments';
+import { sanitizeSvg } from '../svg-sanitize';
 import {
 	project,
 	withOmitted,
@@ -556,6 +557,19 @@ export function buildTicketTools(opts: {
 				}
 				const filename = parsed.filename ?? basename(resolvedPath);
 				const mimeType = sniffMimeType(filename, data);
+				// SVG is active content: sanitize before storing so the bytes at
+				// rest are safe to inline/serve, regardless of how a surface
+				// later renders them. Reject SVGs we can't sanitize rather than
+				// storing raw script-bearing markup.
+				if (mimeType === 'image/svg+xml') {
+					const clean = sanitizeSvg(data);
+					if (clean === null) {
+						return err('SVG could not be sanitized for safe rendering.', {
+							code: 'unsafe_svg'
+						});
+					}
+					data = Buffer.from(clean, 'utf-8');
+				}
 				const meta = ticketAttachments.insert({
 					ticketId: parsed.ticketId,
 					filename,

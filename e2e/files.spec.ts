@@ -83,6 +83,11 @@ const TINY_PNG = Buffer.from(
 	'base64'
 );
 
+// SVG carrying a <script> and an onload handler; the browser/raw endpoint must
+// report image/svg+xml, strip the script, and lock the response down with CSP.
+const DANGEROUS_SVG =
+	'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" onload="alert(1)"><script>alert(1)</script><rect width="10" height="10" fill="#0a0"/></svg>';
+
 test('Files tab renders an image file inline', async ({ page, request }) => {
 	const workdir = createWorkdir();
 	const { id } = await createConversation(request, workdir);
@@ -116,6 +121,38 @@ test('Files tab renders an image file inline', async ({ page, request }) => {
 	// The caption surfaces the natural dimensions so tiny (e.g. 1×1) images are
 	// obviously present rather than looking like an empty pane.
 	await expect(page.locator('.image-caption')).toContainText('1 × 1 px');
+});
+
+test('Files tab renders an SVG inline, sanitized and sandboxed', async ({ page, request }) => {
+	const workdir = createWorkdir();
+	const { id } = await createConversation(request, workdir);
+	writeFileSync(join(workdir, 'logo.svg'), DANGEROUS_SVG);
+
+	// API: SVG is text but flagged as a renderable image so the client inlines it.
+	const meta = await request.get(`/api/conversations/${id}/fs/file?path=logo.svg`);
+	expect(meta.ok()).toBeTruthy();
+	const metaBody = await meta.json();
+	expect(metaBody.file.binary).toBe(true);
+	expect(metaBody.file.imageMimeType).toBe('image/svg+xml');
+
+	// Raw mode serves sanitized bytes (no <script>/onload) with nosniff + CSP.
+	const raw = await request.get(`/api/conversations/${id}/fs/file?path=logo.svg&raw=1`);
+	expect(raw.ok()).toBeTruthy();
+	expect(raw.headers()['content-type']).toContain('image/svg+xml');
+	expect(raw.headers()['x-content-type-options']).toBe('nosniff');
+	expect(raw.headers()['content-security-policy']).toContain("default-src 'none'");
+	const body = (await raw.body()).toString('utf-8');
+	expect(body).not.toMatch(/<script/i);
+	expect(body).not.toMatch(/onload/i);
+	expect(body).toContain('<rect');
+
+	// UI: selecting the SVG shows an <img>, not the source-code placeholder.
+	await page.goto(`/conversations/${id}`);
+	await page.getByRole('tab', { name: 'Files' }).click();
+	await page.getByRole('button', { name: /logo\.svg/ }).click();
+	const img = page.locator('.image-preview img');
+	await expect(img).toBeVisible();
+	await expect(img).toHaveAttribute('src', /raw=1/);
 });
 
 test('Files tab ignores stale content responses after rapid selection changes', async ({

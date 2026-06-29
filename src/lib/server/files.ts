@@ -24,6 +24,7 @@ import {
 	readImageFile,
 	type CapturedImage
 } from './image-detect';
+import { MAX_SVG_BYTES } from './svg-sanitize';
 
 /**
  * Resolve a workspace root to a stable absolute realpath, caching by the
@@ -329,6 +330,15 @@ export async function readFileSafe(root: string, rel: string): Promise<FileResul
 
 	const truncated = size > MAX_TEXT_BYTES;
 	const buf = await readFile(r.abs);
+	// SVG is text (no NUL) so it lands here, but it's an image surface: flag it
+	// so the client renders it inline via the raw endpoint (which sanitizes and
+	// sandboxes the bytes) rather than dumping the markup as source. Cap at
+	// MAX_SVG_BYTES — the same ceiling readImageFile enforces — so a larger SVG
+	// stays a (truncated) source view instead of flagging a never-served image.
+	const svgMime = detectImageMime(r.abs, buf.subarray(0, 8192));
+	if (svgMime === 'image/svg+xml' && size <= MAX_SVG_BYTES) {
+		return { ok: true, binary: true, size, imageMimeType: svgMime };
+	}
 	const slice = truncated ? buf.subarray(0, MAX_TEXT_BYTES) : buf;
 	return {
 		ok: true,

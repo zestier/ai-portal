@@ -41,14 +41,22 @@ describe('image-attachment detection', () => {
 	it('returns null for non-image / truncated bytes', () => {
 		expect(sniffImageMime(Buffer.from('not an image'))).toBeNull();
 		expect(sniffImageMime(Buffer.from([0x89, 0x50]))).toBeNull();
-		// SVG is intentionally excluded — it's XML, not a raster signature.
+		// SVG has no raster magic bytes — detectImageMime handles it structurally.
 		expect(sniffImageMime(Buffer.from('<svg xmlns="..."></svg>'))).toBeNull();
+	});
+
+	it('detects SVG by extension + structural sniff, not raster bytes', () => {
+		expect(detectImageMime('a.svg', Buffer.from('<svg xmlns="x"></svg>'))).toBe('image/svg+xml');
+		// .svg extension but content isn't SVG → null
+		expect(detectImageMime('a.svg', PNG_HEADER)).toBeNull();
+		// SVG bytes under a raster extension are not raster → null
+		expect(detectImageMime('a.png', Buffer.from('<svg></svg>'))).toBeNull();
 	});
 
 	it('gates the allowlist by extension AND magic bytes', () => {
 		expect(isAllowlistedImageExtension('a.png')).toBe(true);
 		expect(isAllowlistedImageExtension('a.PNG')).toBe(true);
-		expect(isAllowlistedImageExtension('a.svg')).toBe(false);
+		expect(isAllowlistedImageExtension('a.svg')).toBe(true);
 		expect(isAllowlistedImageExtension('a.txt')).toBe(false);
 		// non-allowlisted ext even with valid bytes → null
 		expect(detectImageMime('a.txt', PNG_HEADER)).toBeNull();
@@ -95,6 +103,25 @@ describe('captureImageAttachment', () => {
 			Buffer.concat([PNG_HEADER, Buffer.alloc(MAX_IMAGE_ATTACHMENT_BYTES + 1, 2)])
 		);
 		expect(captureImageAttachment(big)).toBeNull();
+	});
+
+	it('captures an SVG with scripts stripped', () => {
+		const p = join(dir, 'icon.svg');
+		writeFileSync(
+			p,
+			'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect/></svg>'
+		);
+		const captured = captureImageAttachment(p);
+		expect(captured).not.toBeNull();
+		expect(captured!.mimeType).toBe('image/svg+xml');
+		expect(captured!.data.toString('utf-8')).not.toMatch(/<script/i);
+		expect(captured!.data.toString('utf-8')).toContain('<rect');
+	});
+
+	it('skips an .svg that is not actually SVG markup', () => {
+		const p = join(dir, 'fake.svg');
+		writeFileSync(p, 'just some text, no svg root here');
+		expect(captureImageAttachment(p)).toBeNull();
 	});
 });
 

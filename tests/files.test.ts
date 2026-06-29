@@ -47,6 +47,13 @@ beforeAll(() => {
 	);
 	// A .png extension whose bytes are NOT an image (and contain a NUL).
 	writeFileSync(join(root, 'fake.png'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+	// SVG: text (no NUL) so it lands in the text branch; should be flagged image.
+	writeFileSync(
+		join(root, 'logo.svg'),
+		'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect/></svg>'
+	);
+	// .svg extension that isn't SVG markup → not flagged as image.
+	writeFileSync(join(root, 'notreally.svg'), 'plain text, not svg');
 });
 
 afterAll(() => {
@@ -147,6 +154,26 @@ describe('readFileSafe', () => {
 		const fake = await readFileSafe(root, 'fake.png');
 		if (fake.ok && 'binary' in fake && fake.binary) expect(fake.imageMimeType).toBeUndefined();
 	});
+
+	it('flags an SVG as a renderable image even though it is text', async () => {
+		const r = await readFileSafe(root, 'logo.svg');
+		expect(r.ok).toBe(true);
+		if (r.ok && 'binary' in r && r.binary) {
+			expect(r.imageMimeType).toBe('image/svg+xml');
+		} else {
+			throw new Error('expected an svg image result');
+		}
+	});
+
+	it('serves SVG text content (not flagged) when it is not real SVG', async () => {
+		const r = await readFileSafe(root, 'notreally.svg');
+		expect(r.ok).toBe(true);
+		if (r.ok && !('binary' in r && r.binary)) {
+			expect((r as { content: string }).content).toContain('plain text');
+		} else {
+			throw new Error('expected text result');
+		}
+	});
 });
 
 describe('readImageFileSafe', () => {
@@ -162,6 +189,16 @@ describe('readImageFileSafe', () => {
 	it('404s for a non-image / mis-typed path', () => {
 		expect(readImageFileSafe(root, 'a.txt').ok).toBe(false);
 		expect(readImageFileSafe(root, 'fake.png').ok).toBe(false);
+	});
+
+	it('serves sanitized SVG bytes', () => {
+		const r = readImageFileSafe(root, 'logo.svg');
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.mimeType).toBe('image/svg+xml');
+			expect(r.data.toString('utf-8')).not.toMatch(/<script/i);
+			expect(r.data.toString('utf-8')).toContain('<rect');
+		}
 	});
 
 	it('400s on an escape attempt and never serves out-of-root files', () => {

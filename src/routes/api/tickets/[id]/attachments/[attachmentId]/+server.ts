@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { requireUserId } from '$lib/server/auth/require';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as ticketAttachments from '$lib/server/db/repos/ticket-attachments';
+import { sanitizeSvg } from '$lib/server/svg-sanitize';
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
@@ -10,16 +11,22 @@ export const GET: RequestHandler = ({ params, locals }) => {
 	if (!ticket) throw error(404);
 	const att = ticketAttachments.getForOwner(params.id, params.attachmentId, userId);
 	if (!att) throw error(404);
-	// Only raster images are safe to render inline from our own origin. Anything
-	// else (HTML, SVG, scripts, unknown blobs) is forced to download so a crafted
-	// attachment can't execute script in the portal origin. `nosniff` stops the
-	// browser from second-guessing the declared type, and the sandbox CSP defangs
-	// any document that does get rendered.
-	const inlineOk = att.mimeType.startsWith('image/') && att.mimeType !== 'image/svg+xml';
-	return new Response(new Uint8Array(att.data), {
+	// Raster images and SVG are safe to render inline from our origin: SVG is
+	// sanitized at upload and re-sanitized here (so legacy rows stored before
+	// sanitization existed are also clean), and the sandbox CSP + nosniff defang
+	// any document that does render. Other types (HTML, scripts, unknown blobs)
+	// are forced to download so a crafted attachment can't execute in the portal.
+	let body = att.data;
+	if (att.mimeType === 'image/svg+xml') {
+		const clean = sanitizeSvg(att.data);
+		if (clean === null) throw error(415, 'SVG could not be sanitized for safe rendering.');
+		body = Buffer.from(clean, 'utf-8');
+	}
+	const inlineOk = att.mimeType.startsWith('image/');
+	return new Response(new Uint8Array(body), {
 		headers: {
 			'content-type': att.mimeType,
-			'content-length': String(att.byteSize),
+			'content-length': String(body.length),
 			'cache-control': 'private, max-age=31536000, immutable',
 			'x-content-type-options': 'nosniff',
 			'content-security-policy': "default-src 'none'; sandbox",

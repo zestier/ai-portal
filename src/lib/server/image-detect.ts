@@ -2,8 +2,9 @@
 //
 // Detection is deliberately conservative: an extension allowlist gates which
 // files we even look at, and a magic-byte sniff confirms the real format (and
-// derives the mime). SVG is intentionally excluded — it is an XML/script vector,
-// not a raster image we want to inline. The buffer-taking helpers are pure so
+// derives the mime). Raster formats are confirmed by magic bytes; SVG is text,
+// so it is sniffed structurally and *sanitized* (server/svg-sanitize.ts) before
+// it is ever served — never inlined raw. The buffer-taking helpers are pure so
 // they can be unit-tested without touching the filesystem.
 //
 // Used both by the `view`-tool attachment capture (copilot/image-attachment.ts)
@@ -12,6 +13,7 @@
 
 import { statSync, readFileSync } from 'node:fs';
 import { extname } from 'node:path';
+import { sanitizeSvg, looksLikeSvg, MAX_SVG_BYTES } from './svg-sanitize';
 
 // Hard ceiling on a single captured/served image. Larger images are skipped
 // gracefully (no capture, no inline render) rather than loading huge blobs.
@@ -28,8 +30,11 @@ const EXTENSION_MIME: Record<string, string> = {
 	'.jpeg': 'image/jpeg',
 	'.gif': 'image/gif',
 	'.webp': 'image/webp',
-	'.bmp': 'image/bmp'
+	'.bmp': 'image/bmp',
+	'.svg': 'image/svg+xml'
 };
+
+export const SVG_MIME = 'image/svg+xml';
 
 export function isAllowlistedImageExtension(path: string): boolean {
 	return extname(path).toLowerCase() in EXTENSION_MIME;
@@ -96,11 +101,16 @@ export function sniffImageMime(head: Uint8Array): string | null {
 
 /**
  * Decide the mime for a path given its extension and head bytes. The extension
- * gates the lookup, and the magic bytes must sniff to a supported format
- * (the bytes are authoritative for the returned mime). Returns null otherwise.
+ * gates the lookup. Raster formats must sniff to a supported signature (bytes
+ * are authoritative). An `.svg` extension whose head looks like SVG markup is
+ * reported as image/svg+xml — the bytes are confirmed/sanitized at read time.
+ * Returns null otherwise.
  */
 export function detectImageMime(path: string, head: Uint8Array): string | null {
 	if (!isAllowlistedImageExtension(path)) return null;
+	if (extname(path).toLowerCase() === '.svg') {
+		return looksLikeSvg(head) ? SVG_MIME : null;
+	}
 	return sniffImageMime(head);
 }
 
@@ -110,9 +120,12 @@ export interface CapturedImage {
 }
 
 /**
- * Read an image file at `absPath` if it is an allowlisted, magic-byte-confirmed
- * raster image within the size cap. Returns null (never throws) on any miss:
- * not an image, too large, missing, unreadable, content-excluded, etc.
+ * Read an image file at `absPath` if it is an allowlisted image within the size
+ * cap. Raster formats are confirmed by magic bytes and returned verbatim. SVG
+ * is sanitized (scripts/handlers/external refs stripped) before being returned,
+ * so the bytes are always safe to inline as a data: URL or serve directly.
+ * Returns null (never throws) on any miss: not an image, invalid, too large,
+ * missing, unreadable, content-excluded, etc.
  */
 export function readImageFile(absPath: string): CapturedImage | null {
 	try {
@@ -121,6 +134,12 @@ export function readImageFile(absPath: string): CapturedImage | null {
 		if (!st.isFile()) return null;
 		if (st.size <= 0 || st.size > MAX_IMAGE_ATTACHMENT_BYTES) return null;
 		const data = readFileSync(absPath);
+		if (extname(absPath).toLowerCase() === '.svg') {
+			if (st.size > MAX_SVG_BYTES) return null;
+			const clean = sanitizeSvg(data);
+			if (clean === null) return null;
+			return { mimeType: SVG_MIME, data: Buffer.from(clean, 'utf-8') };
+		}
 		const mimeType = sniffImageMime(data.subarray(0, 16));
 		if (!mimeType) return null;
 		return { mimeType, data };

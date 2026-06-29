@@ -279,6 +279,36 @@ describe('ticket_attach tool cap enforcement', () => {
 		expect(meta.filename).toBe('shot.png');
 	});
 
+	it('sanitizes an SVG attachment at upload (stored bytes carry no script)', async () => {
+		const { users, tickets, repo } = await imports();
+		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
+		const user = users.ensureLocalUser();
+		const ticket = tickets.create(user.id, { workspaceKey: workspace, title: 'SVG attach' });
+
+		const svgFile = join(workspace, 'icon.svg');
+		writeFileSync(
+			svgFile,
+			'<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script><rect/></svg>'
+		);
+
+		const tools = buildTicketTools({
+			userId: user.id,
+			workspaceKey: workspace,
+			conversationId: 'conv-1'
+		});
+		const attach = tools.find((t) => t.name === 'ticket_attach')!;
+
+		const result = await attach.handler({ ticketId: ticket.id, path: svgFile });
+		expect(result.ok).toBe(true);
+		expect(result.ok && (result.result as { mimeType: string }).mimeType).toBe('image/svg+xml');
+		const [meta] = repo.listMetaForTicket(ticket.id);
+		const stored = repo.getForOwner(ticket.id, meta.id, user.id)!;
+		const text = stored.data.toString('utf-8');
+		expect(text).not.toMatch(/<script/i);
+		expect(text).not.toMatch(/onload/i);
+		expect(text).toContain('<rect');
+	});
+
 	it('returns error for non-existent file', async () => {
 		const { users, tickets } = await imports();
 		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
