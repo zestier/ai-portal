@@ -2316,13 +2316,21 @@ export function rewindSessionMemoryLogToMessagePrefix(
 	return { kept, removed };
 }
 
+// Restrict `table` to the known projection table names so a non-literal (e.g. a
+// future user-derived value) fails typecheck rather than being interpolated raw
+// into the FROM clause — the only reason the `${table}` template is safe today.
+type SessionProjectionTable =
+	| 'memory_entities'
+	| 'memory_events'
+	| 'memory_facts'
+	| 'memory_open_loops';
+
 function countSessionProjectionRows(
 	db: Database.Database,
-	table: string,
+	table: SessionProjectionTable,
 	conversationId: string,
 	status: string | null
 ): number {
-	// `table` is an internal constant, never user input.
 	const row = (
 		status
 			? db

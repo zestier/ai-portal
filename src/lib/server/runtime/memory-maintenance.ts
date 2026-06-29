@@ -13,6 +13,7 @@ import {
 } from '../global-singleton';
 import { log } from '../log';
 import { runMemoryRetention, vacuumMemoryDatabase } from '../db/repos/memory';
+import { checkpointWal } from '../db/index';
 
 const TIMER_KEYS = appGlobalSymbols('memory.maintenance');
 
@@ -38,6 +39,14 @@ export function runMemoryMaintenance(): { conversations: number; trimmed: number
 		} catch (err) {
 			log.warn('memory.maintenance.vacuum_failed', { err: String(err) });
 		}
+	}
+	// Backstop the wal_autocheckpoint pragma: fold the WAL back into the main DB
+	// every pass so a quiet-but-bursty workload can't leave a large WAL sitting
+	// around indefinitely. PASSIVE never blocks concurrent connections.
+	try {
+		checkpointWal();
+	} catch (err) {
+		log.warn('memory.maintenance.checkpoint_failed', { err: String(err) });
 	}
 	return result;
 }

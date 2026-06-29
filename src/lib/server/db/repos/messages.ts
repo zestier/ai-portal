@@ -368,17 +368,6 @@ function deleteMessagesAfter(db: Database.Database, conversationId: string, targ
 		.all(conversationId, target.created_at, target.created_at, target.id) as { id: string }[];
 	const laterIds = later.map((r) => r.id);
 	if (laterIds.length === 0) return;
-	const toolIds = selectInBatches<{ id: string }>(
-		db,
-		laterIds,
-		(placeholders) => `SELECT id FROM tool_calls WHERE message_id IN (${placeholders})`
-	).map((r) => r.id);
-	runInBatches(
-		db,
-		toolIds,
-		(placeholders) =>
-			`DELETE FROM background_agent_lifecycles WHERE tool_call_id IN (${placeholders})`
-	);
 	runInBatches(
 		db,
 		laterIds,
@@ -389,6 +378,9 @@ function deleteMessagesAfter(db: Database.Database, conversationId: string, targ
 		laterIds,
 		(placeholders) => `DELETE FROM file_edits WHERE message_id IN (${placeholders})`
 	);
+	// Deleting tool_calls cascades (ON DELETE CASCADE) to its child tables:
+	// background_agent_lifecycles (migration 044). No manual cleanup of those
+	// children is needed here — adding one would be dead code.
 	runInBatches(
 		db,
 		laterIds,

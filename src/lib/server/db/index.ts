@@ -34,6 +34,11 @@ export function getDb(): Database.Database {
 	const db = new Database(path);
 	db.pragma('journal_mode = WAL');
 	db.pragma('synchronous = NORMAL');
+	// Checkpoint the WAL back into the main DB more eagerly than the 1000-page
+	// (~4 MB) default so a large write burst can't let the WAL grow unbounded
+	// before the next idle checkpoint. The periodic maintenance task also runs an
+	// explicit PASSIVE checkpoint.
+	db.pragma('wal_autocheckpoint = 400');
 	db.pragma('foreign_keys = ON');
 	db.pragma('busy_timeout = 5000');
 	runMigrations(db);
@@ -152,4 +157,12 @@ export function closeDb() {
 		cached.close();
 		clearGlobalSingletonValues(DB_KEYS);
 	}
+}
+
+// Force a WAL checkpoint, folding the write-ahead log back into the main DB
+// file. PASSIVE never blocks on concurrent readers/writers (it checkpoints as
+// many frames as it can without waiting), so it's safe to call from the
+// periodic maintenance task as a backstop to the autocheckpoint.
+export function checkpointWal(): void {
+	getDb().pragma('wal_checkpoint(PASSIVE)');
 }
