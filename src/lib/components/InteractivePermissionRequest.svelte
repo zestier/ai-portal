@@ -62,7 +62,9 @@
 	}
 
 	const gitCommit = $derived(request.tool === 'git_commit' ? gitCommitPreview(request.args) : null);
-	const templatePreview = $derived(templatePermissionPreview(request.tool, request.args));
+	const templatePreview = $derived(
+		templatePermissionPreview(request.tool, request.args, request.templateBefore ?? null)
+	);
 	const permissionScopeContext = $derived(buildPermissionScopeContext(request));
 	const scopeChoices = $derived<ScopeChoice[]>(permissionScopeContext.choices);
 	const isFsKind = $derived(permissionScopeContext.isFsKind);
@@ -366,41 +368,105 @@
 			<div class="template-preview" role="note">
 				<div class="muted small">
 					{templatePreview.action === 'update'
-						? 'Update prompt template'
+						? templatePreview.merged
+							? 'Update prompt template (current → proposed)'
+							: 'Update prompt template'
 						: 'Create prompt template'}
 				</div>
-				<dl>
-					{#if templatePreview.action === 'update'}
+				{#if templatePreview.merged}
+					{@const merged = templatePreview.merged}
+					<dl>
 						<div>
 							<dt>Template id</dt>
 							<dd><code>{templatePreview.id ?? '(missing)'}</code></dd>
 						</div>
-					{/if}
-					{#if templatePreview.title}
-						<div>
+						<div class:changed={merged.title.changed}>
 							<dt>Title</dt>
-							<dd>{templatePreview.title}</dd>
+							<dd>
+								{#if merged.title.changed}
+									<span class="before">{merged.title.before ?? '(none)'}</span>
+									<span class="arrow" aria-hidden="true">→</span>
+									<span class="after">{merged.title.after ?? '(none)'}</span>
+								{:else}
+									{merged.title.after ?? '(none)'}
+								{/if}
+							</dd>
+						</div>
+						{#each merged.fields as field}
+							<div class:changed={field.changed}>
+								<dt>{field.label}</dt>
+								<dd>
+									{#if field.changed}
+										<span class="before">{field.before ?? '(none)'}</span>
+										<span class="arrow" aria-hidden="true">→</span>
+										<span class="after">{field.after ?? '(none)'}</span>
+									{:else}
+										{field.after ?? '(none)'}
+									{/if}
+								</dd>
+							</div>
+						{/each}
+						<div>
+							<dt>Approval</dt>
+							<dd>One-time only; stored grants are disabled for this tool.</dd>
+						</div>
+					</dl>
+					{#if merged.prompt.changed}
+						<div class="template-prompt-block">
+							<div class="muted small">
+								Prompt body — current ({merged.prompt.beforeLineCount}
+								{merged.prompt.beforeLineCount === 1 ? 'line' : 'lines'})
+							</div>
+							<pre class="prompt-before">{merged.prompt.before ?? '(none)'}</pre>
+							<div class="muted small">
+								Prompt body — proposed ({merged.prompt.afterLineCount}
+								{merged.prompt.afterLineCount === 1 ? 'line' : 'lines'})
+							</div>
+							<pre class="prompt-after">{merged.prompt.after ?? '(none)'}</pre>
+						</div>
+					{:else if merged.prompt.after}
+						<div class="template-prompt-block">
+							<div class="muted small">
+								Prompt body — unchanged ({merged.prompt.afterLineCount}
+								{merged.prompt.afterLineCount === 1 ? 'line' : 'lines'})
+							</div>
+							<pre>{merged.prompt.after}</pre>
 						</div>
 					{/if}
-					{#each templatePreview.fields as field}
+				{:else}
+					<dl>
+						{#if templatePreview.action === 'update'}
+							<div>
+								<dt>Template id</dt>
+								<dd><code>{templatePreview.id ?? '(missing)'}</code></dd>
+							</div>
+						{/if}
+						{#if templatePreview.title}
+							<div>
+								<dt>Title</dt>
+								<dd>{templatePreview.title}</dd>
+							</div>
+						{/if}
+						{#each templatePreview.fields as field}
+							<div>
+								<dt>{field.label}</dt>
+								<dd>{field.value}</dd>
+							</div>
+						{/each}
 						<div>
-							<dt>{field.label}</dt>
-							<dd>{field.value}</dd>
+							<dt>Approval</dt>
+							<dd>One-time only; stored grants are disabled for this tool.</dd>
 						</div>
-					{/each}
-					<div>
-						<dt>Approval</dt>
-						<dd>One-time only; stored grants are disabled for this tool.</dd>
-					</div>
-				</dl>
-				{#if templatePreview.prompt}
-					<div class="template-prompt-block">
-						<div class="muted small">
-							Prompt body ({templatePreview.promptLineCount}
-							{templatePreview.promptLineCount === 1 ? 'line' : 'lines'})
+					</dl>
+					{#if templatePreview.prompt}
+						<div class="template-prompt-block">
+							<div class="muted small">
+								Prompt body ({templatePreview.promptLineCount}
+								{templatePreview.promptLineCount === 1 ? 'line' : 'lines'})
+							</div>
+							<pre>{templatePreview.prompt}</pre>
 						</div>
-						<pre>{templatePreview.prompt}</pre>
-					</div>
+					{/if}
 				{/if}
 			</div>
 		{/if}
@@ -767,6 +833,25 @@
 		max-height: 14rem;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+	}
+	.template-preview dd .before {
+		color: var(--text-muted);
+		text-decoration: line-through;
+		overflow-wrap: anywhere;
+	}
+	.template-preview dd .after {
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+	.template-preview dd .arrow {
+		margin: 0 0.35rem;
+		color: var(--text-muted);
+	}
+	.template-prompt-block pre.prompt-before {
+		border-left: 2px solid var(--danger, var(--warning));
+	}
+	.template-prompt-block pre.prompt-after {
+		border-left: 2px solid var(--success, var(--accent, var(--border)));
 	}
 	.commit-paths {
 		margin: 0.5rem 0 0;

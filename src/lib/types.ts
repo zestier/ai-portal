@@ -1,6 +1,7 @@
 // Shared types used by both client and server.
 
 import type { GrantScope } from './permissions/scope-types';
+import type { TemplateBeforeSnapshot } from './permissions/prompt-template';
 
 export type Role = 'user' | 'assistant' | 'system';
 export type MessageStatus = 'complete' | 'streaming' | 'interrupted' | 'error';
@@ -636,6 +637,14 @@ export interface InteractivePermissionView {
 	 * small enough to embed. `dataBase64` is the raw base64 (no data: prefix).
 	 */
 	imagePreview?: ImagePreview | undefined;
+	/**
+	 * For `template_update`: a read-only snapshot of the existing template's
+	 * resolved values, loaded server-side by id + userId. Lets the dialog render
+	 * a merged before→after preview (current vs. proposed for each field) instead
+	 * of a patch view. Omitted for `template_create` and when the target id is
+	 * missing/deleted (the dialog then falls back to the patch view).
+	 */
+	templateBefore?: TemplateBeforeSnapshot | undefined;
 }
 
 export interface ImagePreview {

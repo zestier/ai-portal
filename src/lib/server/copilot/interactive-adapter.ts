@@ -35,7 +35,12 @@ import {
 	isFilesystemPermissionKind
 } from '$lib/permissions/metadata';
 import { summarizeGitCommitPermission } from '$lib/permissions/git-commit';
-import { summarizeTemplatePermission } from '$lib/permissions/prompt-template';
+import {
+	summarizeTemplatePermission,
+	templateBeforeSnapshot,
+	type TemplateBeforeSnapshot
+} from '$lib/permissions/prompt-template';
+import * as promptTemplatesRepo from '../db/repos/prompt-templates';
 import type { ToolPermissionRequest } from '../tools/types';
 
 interface PermissionRequestLike {
@@ -377,6 +382,10 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 
 		if (alwaysPrompt) {
+			const templateBefore =
+				tool === 'template_update'
+					? loadTemplateBeforeSnapshot(req.args, opts.userId, opts.conversationId)
+					: undefined;
 			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
 				'permission',
 				{
@@ -388,7 +397,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					userPolicy: opts.policy,
 					canPersistDecision: false,
 					shellAnalysis,
-					imagePreview
+					imagePreview,
+					...(templateBefore !== undefined ? { templateBefore } : {})
 				}
 			);
 			if (response.decision === 'deny' || response.decision === 'deny-always') {
@@ -711,4 +721,31 @@ function summarizePermissionRequest(req: PermissionRequestLike, tool: string): s
 		if (summary) return summary;
 	}
 	return req.fullCommandText ?? req.fileName ?? req.path ?? req.url ?? req.toolDescription ?? tool;
+}
+
+/**
+ * Load a read-only snapshot of the existing template targeted by a
+ * `template_update` so the permission dialog can show a merged before→after
+ * view. Strictly read-only (no DB writes); returns `undefined` for a missing
+ * id, a missing/deleted template, or any lookup error, in which case the dialog
+ * falls back to the patch view.
+ */
+function loadTemplateBeforeSnapshot(
+	args: unknown,
+	userId: string,
+	conversationId: string
+): TemplateBeforeSnapshot | undefined {
+	if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined;
+	const id = (args as Record<string, unknown>).id;
+	if (typeof id !== 'string' || id.length === 0) return undefined;
+	try {
+		const tpl = promptTemplatesRepo.get(id, userId);
+		return tpl ? templateBeforeSnapshot(tpl) : undefined;
+	} catch (e) {
+		log.warn('copilot.template_before_load_failed', {
+			conversationId,
+			err: String(e)
+		});
+		return undefined;
+	}
 }

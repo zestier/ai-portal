@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	templatePermissionPreview,
+	templateBeforeSnapshot,
 	summarizeTemplatePermission
 } from '../src/lib/permissions/prompt-template';
 
@@ -106,6 +107,194 @@ describe('templatePermissionPreview', () => {
 		expect(preview?.pinned).toBe(false);
 		expect(preview?.fields.find((f) => f.label === 'Pinned')?.value).toBe('no');
 	});
+
+	it('has a null merged view for create and for update without a before snapshot', () => {
+		expect(
+			templatePermissionPreview('template_create', { title: 'T', prompt: 'p' })?.merged
+		).toBeNull();
+		expect(
+			templatePermissionPreview('template_update', { id: 'x', title: 'New' })?.merged
+		).toBeNull();
+		// Explicit null before behaves like a missing snapshot (patch fallback).
+		expect(
+			templatePermissionPreview('template_update', { id: 'x', title: 'New' }, null)?.merged
+		).toBeNull();
+	});
+});
+
+const BEFORE = {
+	title: 'Old title',
+	type: 'ticket-action',
+	description: 'Old description',
+	launchBehavior: 'send',
+	conversationMode: 'interactive',
+	model: 'old-model',
+	pinned: false,
+	status: 'open',
+	prompt: 'old line one\nold line two'
+};
+
+describe('templatePermissionPreview merged before→after view', () => {
+	it('marks changed fields and resolves unchanged ones to current values', () => {
+		const preview = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', title: 'New title', status: 'archived' },
+			BEFORE
+		);
+		const merged = preview?.merged;
+		expect(merged).not.toBeNull();
+
+		expect(merged?.title).toEqual({
+			label: 'Title',
+			before: 'Old title',
+			after: 'New title',
+			changed: true
+		});
+
+		const status = merged?.fields.find((f) => f.label === 'Status');
+		expect(status).toEqual({ label: 'Status', before: 'open', after: 'archived', changed: true });
+
+		// Untouched fields resolve to the current value and are not changed.
+		const desc = merged?.fields.find((f) => f.label === 'Description');
+		expect(desc).toEqual({
+			label: 'Description',
+			before: 'Old description',
+			after: 'Old description',
+			changed: false
+		});
+		const model = merged?.fields.find((f) => f.label === 'Model');
+		expect(model?.changed).toBe(false);
+		expect(model?.after).toBe('old-model');
+	});
+
+	it('surfaces the (non-editable) type as a resolved, unchanged row', () => {
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', type: 'chat' },
+			BEFORE
+		)?.merged;
+		const type = merged?.fields.find((f) => f.label === 'Type');
+		expect(type).toEqual({
+			label: 'Type',
+			before: 'ticket-action',
+			after: 'ticket-action',
+			changed: false
+		});
+	});
+
+	it('keeps the current value for fields the repo can never clear (null arg, no phantom clear)', () => {
+		// title/description/status persist as `patch.x ?? current.x`, so a null arg
+		// keeps the current value — the preview must not show them as cleared.
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', title: null, description: null, status: null },
+			BEFORE
+		)?.merged;
+		expect(merged?.title).toEqual({
+			label: 'Title',
+			before: 'Old title',
+			after: 'Old title',
+			changed: false
+		});
+		const desc = merged?.fields.find((f) => f.label === 'Description');
+		expect(desc?.after).toBe('Old description');
+		expect(desc?.changed).toBe(false);
+		const status = merged?.fields.find((f) => f.label === 'Status');
+		expect(status?.after).toBe('open');
+		expect(status?.changed).toBe(false);
+	});
+
+	it('keeps the current title when an empty/whitespace title is supplied (repo rejects empty)', () => {
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', title: '   ' },
+			BEFORE
+		)?.merged;
+		expect(merged?.title).toEqual({
+			label: 'Title',
+			before: 'Old title',
+			after: 'Old title',
+			changed: false
+		});
+	});
+
+	it('treats an explicit null arg as clearing the field', () => {
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', model: null },
+			BEFORE
+		)?.merged;
+		const model = merged?.fields.find((f) => f.label === 'Model');
+		expect(model).toEqual({ label: 'Model', before: 'old-model', after: null, changed: true });
+	});
+
+	it('ignores ticket-action-only fields for a chat template (matches repo type-gating)', () => {
+		const chatBefore = {
+			...BEFORE,
+			type: 'chat',
+			launchBehavior: null,
+			conversationMode: null,
+			model: null
+		};
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', model: 'gpt-5', launchBehavior: 'draft', conversationMode: 'plan' },
+			chatBefore
+		)?.merged;
+		const labels = merged?.fields.map((f) => f.label);
+		// The update repo forces these to null on chat templates, so the preview
+		// must not claim they change (they resolve to unset and are omitted).
+		expect(labels).not.toContain('Model');
+		expect(labels).not.toContain('Launch behavior');
+		expect(labels).not.toContain('Conversation mode');
+	});
+
+	it('detects a pinned toggle and renders yes/no', () => {
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', pinned: true },
+			BEFORE
+		)?.merged;
+		const pinned = merged?.fields.find((f) => f.label === 'Pinned');
+		expect(pinned).toEqual({ label: 'Pinned', before: 'no', after: 'yes', changed: true });
+	});
+
+	it('builds a changed prompt diff with both line counts', () => {
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', prompt: 'brand new prompt' },
+			BEFORE
+		)?.merged;
+		expect(merged?.prompt).toEqual({
+			before: 'old line one\nold line two',
+			after: 'brand new prompt',
+			beforeLineCount: 2,
+			afterLineCount: 1,
+			changed: true
+		});
+	});
+
+	it('keeps the current prompt (unchanged) when prompt is absent', () => {
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', title: 'x' },
+			BEFORE
+		)?.merged;
+		expect(merged?.prompt.changed).toBe(false);
+		expect(merged?.prompt.after).toBe('old line one\nold line two');
+	});
+
+	it('omits fields that are unset both before and after', () => {
+		const before = { ...BEFORE, model: null, description: null };
+		const merged = templatePermissionPreview(
+			'template_update',
+			{ id: 'tpl_1', title: 'x' },
+			before
+		)?.merged;
+		const labels = merged?.fields.map((f) => f.label);
+		expect(labels).not.toContain('Model');
+		expect(labels).not.toContain('Description');
+	});
 });
 
 describe('summarizeTemplatePermission', () => {
@@ -143,5 +332,32 @@ describe('summarizeTemplatePermission', () => {
 			prompt: 'single'
 		});
 		expect(summary).toContain('Prompt: 1 line');
+	});
+});
+
+describe('templateBeforeSnapshot', () => {
+	it('normalizes a template record into a snapshot', () => {
+		const snap = templateBeforeSnapshot({
+			title: '  My template  ',
+			type: 'ticket-action',
+			description: '',
+			launchBehavior: 'draft',
+			conversationMode: null,
+			model: '  ',
+			pinned: true,
+			status: 'open',
+			prompt: 'hello'
+		});
+		expect(snap).toEqual({
+			title: 'My template',
+			type: 'ticket-action',
+			description: null,
+			launchBehavior: 'draft',
+			conversationMode: null,
+			model: null,
+			pinned: true,
+			status: 'open',
+			prompt: 'hello'
+		});
 	});
 });
