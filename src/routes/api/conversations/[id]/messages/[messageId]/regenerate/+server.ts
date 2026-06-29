@@ -5,6 +5,11 @@ import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { requireUserId } from '$lib/server/auth/require';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { throwRerunFailure } from '$lib/server/rerun-error';
+import {
+	TurnAlreadyInProgressError,
+	releaseTurnReservation,
+	reserveTurn
+} from '$lib/server/runtime/turn-runner';
 
 const REJECT_STATUS: Record<string, number> = {
 	conversation_not_found: 404,
@@ -27,6 +32,19 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	authorizeConversation(params.id, locals.userId);
 	const userId = requireUserId(locals);
 
+	// Claim the turn slot synchronously to close the same memory-mode race as
+	// the inline-edit route: a plain `getTurn` busy-check leaves a window where
+	// two concurrent reruns both pass and race into `startTurn`. The loser is
+	// rejected here as a clean 409 instead of a 502.
+	try {
+		reserveTurn(params.id!);
+	} catch (e) {
+		if (e instanceof TurnAlreadyInProgressError) {
+			throw error(409, 'A turn is already in progress for this conversation.');
+		}
+		throw e;
+	}
+
 	try {
 		const { conversation, userMessage } = regenerateFromAssistant({
 			userId,
@@ -42,5 +60,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
 		throwRerunFailure({ route: 'message_regenerate', conversationId: params.id, userId }, e);
+	} finally {
+		releaseTurnReservation(params.id!);
 	}
 };

@@ -1,5 +1,6 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import { log } from '$lib/server/log';
+import { TurnAlreadyInProgressError } from '$lib/server/runtime/turn-runner';
 
 /**
  * Map an unexpected (non-domain) failure raised while starting a rerun turn —
@@ -28,6 +29,13 @@ export function throwRerunFailure(
 	// A handler that already chose a specific HTTP status (e.g. a nested
 	// `authorizeConversation` 404) should pass through unchanged.
 	if (isHttpError(e)) throw e;
+
+	// A concurrent rerun that lost the turn-start race throws this typed error.
+	// Map it to a clean 409, matching `conversation_busy` and the turns route,
+	// instead of leaking a confusing 502 for what is just "another turn won".
+	if (e instanceof TurnAlreadyInProgressError) {
+		throw error(409, 'A turn is already in progress for this conversation.');
+	}
 
 	const message = e instanceof Error ? e.message : String(e);
 	log.error('rerun.start_failed', {

@@ -130,4 +130,62 @@ describe('rerun routes: error surfacing', () => {
 		expect(httpErr.body.message).toContain("Couldn't start the rerun");
 		expect(httpErr.body.message).toContain('runtime connection lost');
 	});
+
+	it('/edit rejects a concurrent second rerun with 409, not 502', async () => {
+		const { users, convs, messages, editRoute } = await freshImports();
+		const u = users.ensureLocalUser();
+		const conv = convs.create(u.id, {
+			title: 'c',
+			workdir: '/tmp',
+			model: 'gpt-4',
+			provider: 'copilot'
+		});
+		const u1 = messages.append(conv.id, { role: 'user', content: 'original' });
+
+		// First rerun parks inside startTurnFromUserMessage (reservation held).
+		let resolveStart: (turn: unknown) => void = () => {};
+		startTurnMock.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveStart = resolve;
+				})
+		);
+
+		const first = callAndCapture(() =>
+			editRoute.POST({
+				params: { id: conv.id, messageId: u1.id },
+				locals: { userId: u.id },
+				request: jsonRequest({ content: 'edit-a' })
+			} as never)
+		);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// Second concurrent rerun must be rejected with a clean 409, not a 502.
+		const second = await callAndCapture(() =>
+			editRoute.POST({
+				params: { id: conv.id, messageId: u1.id },
+				locals: { userId: u.id },
+				request: jsonRequest({ content: 'edit-b' })
+			} as never)
+		);
+		expect(isHttpError(second.thrown)).toBe(true);
+		expect((second.thrown as { status: number }).status).toBe(409);
+		expect(startTurnMock).toHaveBeenCalledTimes(1);
+
+		resolveStart({ id: 'turn-1' });
+		const firstResult = await first;
+		expect(firstResult.status).toBe(200);
+
+		// A follow-up rerun succeeds once the reservation is released.
+		startTurnMock.mockResolvedValue({ id: 'turn-2' });
+		const third = await callAndCapture(() =>
+			editRoute.POST({
+				params: { id: conv.id, messageId: u1.id },
+				locals: { userId: u.id },
+				request: jsonRequest({ content: 'edit-c' })
+			} as never)
+		);
+		expect(third.status).toBe(200);
+	});
 });
