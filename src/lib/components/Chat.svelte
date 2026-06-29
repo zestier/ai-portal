@@ -423,6 +423,12 @@
 				scheduleStreamStallTimeout();
 			}
 		};
+		// `sseResponse` emits its defensive catch-block error frame under a
+		// named `event: stream_error` (its `data` keeps `type: 'error'`).
+		// Native EventSource routes named events away from `onmessage`, so
+		// forward it through the same handler to keep the inline error surfacing
+		// (turnErrored + system message) that an unnamed frame used to trigger.
+		es.addEventListener('stream_error', (msg) => es.onmessage?.(msg as MessageEvent));
 		es.onerror = () => {
 			// Browser closed the connection permanently (e.g. 410 from
 			// our stream endpoint: turn id unknown because the grace

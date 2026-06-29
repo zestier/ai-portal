@@ -9,6 +9,19 @@
 
 import { csrfToken } from './csrf';
 
+// Base reconnect interval (ms) for client-managed EventSource reconnection.
+// Mirrors the server's `SSE_RETRY_MS` directive; the client adds jitter on top.
+export const SSE_RECONNECT_BASE_MS = 5000;
+
+// Compute a jittered reconnect delay. After a server restart every client would
+// otherwise reconnect on the same fixed interval, re-creating the thundering
+// herd the `retry:` directive is meant to soften. We spread reconnections
+// uniformly across `[base, 2*base)` — a `base` floor avoids hammering on the
+// first retry, while the jitter de-correlates the herd ("equal jitter").
+export function reconnectDelayMs(baseMs = SSE_RECONNECT_BASE_MS, rand: () => number = Math.random) {
+	return baseMs + Math.floor(rand() * baseMs);
+}
+
 export interface StreamSseInit extends RequestInit {
 	signal?: AbortSignal;
 	onStatus?: (status: number) => void;

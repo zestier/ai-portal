@@ -192,6 +192,10 @@ async function send(text: string) {
     applyEvent(ev);
     if (ev.type === 'done') es.close();
   };
+  // `sseResponse`'s defensive error frame is a *named* `stream_error` event,
+  // which native EventSource routes away from `onmessage`. Forward it through
+  // the same handler so the in-band error surfacing still fires.
+  es.addEventListener('stream_error', (msg) => es.onmessage?.(msg as MessageEvent));
   es.onerror = () => {
     // Transient errors keep readyState === CONNECTING and the browser
     // auto-reconnects. Only CLOSED is terminal (e.g. server 410 Gone

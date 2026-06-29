@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { setAwaitingInput } from '$lib/client/awaiting-input';
 	import { createTrailingDebounce } from '$lib/client/ticket-refresh';
+	import { reconnectDelayMs } from '$lib/client/sse';
 	import type { AppEvent } from '$lib/types';
 	import {
 		resolveInitialSidebarOpen,
@@ -81,28 +82,64 @@
 		// Coalesce bursts of ticket mutations (an agent can emit several per turn)
 		// into a single sidebar refresh on the trailing edge.
 		const refreshTickets = createTrailingDebounce(() => void invalidateAll());
-		const source = new EventSource('/api/events');
-		source.onmessage = (e) => {
-			let ev: AppEvent;
-			try {
-				ev = JSON.parse(e.data) as AppEvent;
-			} catch {
-				return;
-			}
-			if (!ev) return;
-			if (ev.type === 'awaiting.changed') {
-				setAwaitingInput(ev.conversationId, ev.awaiting);
-			} else if (ev.type === 'tickets.changed') {
-				// Re-run the layout `load` so the sidebar ticket list/count reflects
-				// the change — regardless of which page or conversation is focused.
-				refreshTickets.trigger();
-			}
+
+		// Client-managed reconnect (instead of the browser's built-in
+		// auto-reconnect) so we can add jitter on top of the server's `retry:`
+		// directive — after a server restart, jittered reconnects de-correlate
+		// the herd instead of every client retrying in lockstep. A fresh
+		// EventSource can't resend the `Last-Event-ID` header, so we carry the
+		// last id forward as a query param; the bus replays from that offset.
+		let source: EventSource | null = null;
+		let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+		let lastEventId = '';
+		let stopped = false;
+
+		const connect = () => {
+			if (stopped) return;
+			const url = lastEventId
+				? `/api/events?last-event-id=${encodeURIComponent(lastEventId)}`
+				: '/api/events';
+			source = new EventSource(url);
+			source.onmessage = (e) => {
+				if (e.lastEventId) lastEventId = e.lastEventId;
+				let ev: AppEvent;
+				try {
+					ev = JSON.parse(e.data) as AppEvent;
+				} catch {
+					return;
+				}
+				if (!ev) return;
+				if (ev.type === 'awaiting.changed') {
+					setAwaitingInput(ev.conversationId, ev.awaiting);
+				} else if (ev.type === 'tickets.changed') {
+					// Re-run the layout `load` so the sidebar ticket list/count reflects
+					// the change — regardless of which page or conversation is focused.
+					refreshTickets.trigger();
+				}
+			};
+			// Named application-level error frame (see `sseResponse`). Distinct
+			// from `onerror`, which is for transport failures — this fires when the
+			// server emits an error frame over an otherwise healthy connection.
+			source.addEventListener('stream_error', (e) => {
+				console.warn('app events: stream_error', (e as MessageEvent).data);
+			});
+			source.onerror = () => {
+				// Take over reconnection from the browser: close now (→ CLOSED, so
+				// the native retry loop stops) and reopen after a jittered delay.
+				if (stopped) return;
+				source?.close();
+				source = null;
+				clearTimeout(reconnectTimer);
+				reconnectTimer = setTimeout(connect, reconnectDelayMs());
+			};
 		};
-		// EventSource auto-reconnects (resending Last-Event-ID); nothing to do
-		// on transient errors. Closed explicitly on unmount.
+		connect();
+
 		return () => {
+			stopped = true;
+			clearTimeout(reconnectTimer);
 			refreshTickets.cancel();
-			source.close();
+			source?.close();
 		};
 	});
 </script>

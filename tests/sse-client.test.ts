@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { streamSse } from '../src/lib/client/sse';
+import { streamSse, reconnectDelayMs, SSE_RECONNECT_BASE_MS } from '../src/lib/client/sse';
 
 // Build a fake Response whose body streams the given chunks in order.
 function fakeResponse(opts: { status: number; chunks?: string[]; contentType?: string }): Response {
@@ -253,5 +253,60 @@ describe('streamSse', () => {
 		const seen: Array<{ type: string }> = [];
 		for await (const ev of streamSse<{ type: string }>('/x')) seen.push(ev);
 		expect(seen).toEqual([{ type: 'ok' }, { type: 'done' }]);
+	});
+
+	it('ignores the leading retry: directive frame', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				fakeResponse({
+					status: 200,
+					chunks: ['retry: 5000\n\n', 'data: {"type":"ok"}\n\n', 'data: {"type":"done"}\n\n']
+				})
+			)
+		);
+		const seen: unknown[] = [];
+		for await (const ev of streamSse('/x')) seen.push(ev);
+		expect(seen).toEqual([{ type: 'ok' }, { type: 'done' }]);
+	});
+
+	it('yields the data payload of a named stream_error event frame', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				fakeResponse({
+					status: 200,
+					chunks: [
+						'event: stream_error\ndata: {"type":"error","code":"stream_failed","message":"boom"}\n\n'
+					]
+				})
+			)
+		);
+		const seen: unknown[] = [];
+		for await (const ev of streamSse('/x')) seen.push(ev);
+		// Back-compat: fetch consumers still receive the error via the data
+		// payload's `type` field regardless of the named event line.
+		expect(seen).toEqual([{ type: 'error', code: 'stream_failed', message: 'boom' }]);
+	});
+});
+
+describe('reconnectDelayMs', () => {
+	it('defaults to the shared base interval with full jitter', () => {
+		expect(reconnectDelayMs(SSE_RECONNECT_BASE_MS, () => 0)).toBe(SSE_RECONNECT_BASE_MS);
+		// rand→1 is the open upper bound; floor keeps it just under 2*base.
+		expect(reconnectDelayMs(SSE_RECONNECT_BASE_MS, () => 0.9999)).toBeLessThan(
+			SSE_RECONNECT_BASE_MS * 2
+		);
+		expect(reconnectDelayMs(SSE_RECONNECT_BASE_MS, () => 0.5)).toBe(
+			SSE_RECONNECT_BASE_MS + Math.floor(0.5 * SSE_RECONNECT_BASE_MS)
+		);
+	});
+
+	it('stays within [base, 2*base) across many random draws', () => {
+		for (let i = 0; i < 50; i++) {
+			const d = reconnectDelayMs();
+			expect(d).toBeGreaterThanOrEqual(SSE_RECONNECT_BASE_MS);
+			expect(d).toBeLessThan(SSE_RECONNECT_BASE_MS * 2);
+		}
 	});
 });

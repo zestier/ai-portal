@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { sseResponse } from '../src/lib/server/sse';
+import { sseResponse, SSE_RETRY_MS } from '../src/lib/server/sse';
 
 async function readAll(res: Response): Promise<string> {
 	const reader = res.body!.getReader();
@@ -17,8 +17,10 @@ function parseDataFrames(text: string): unknown[] {
 	return text
 		.split('\n\n')
 		.map((frame) => frame.trim())
-		.filter((frame) => frame.startsWith('data: '))
-		.map((frame) => JSON.parse(frame.slice('data: '.length)));
+		.filter((frame) => frame.length > 0)
+		.map((frame) => frame.split('\n').find((line) => line.startsWith('data: ')))
+		.filter((line): line is string => line !== undefined)
+		.map((line) => JSON.parse(line.slice('data: '.length)));
 }
 
 afterEach(() => {
@@ -36,6 +38,16 @@ describe('sseResponse', () => {
 		expect(res.headers.get('connection')).toBe('keep-alive');
 		expect(res.headers.get('x-accel-buffering')).toBe('no');
 		await readAll(res); // drain so the stream closes cleanly
+	});
+
+	it('emits a retry: directive as the first frame', async () => {
+		async function* empty() {
+			/* no events */
+		}
+		const text = await readAll(sseResponse(empty()));
+		const firstFrame = text.split('\n\n')[0];
+		expect(firstFrame).toBe(`retry: ${SSE_RETRY_MS}`);
+		expect(SSE_RETRY_MS).toBeGreaterThanOrEqual(5000);
 	});
 
 	it('serializes each yielded event as a JSON data frame in order', async () => {
@@ -58,19 +70,38 @@ describe('sseResponse', () => {
 		}
 		const res = sseResponse(events());
 		const reader = res.body!.getReader();
-		// First read returns the data frame, second returns done.
+		const decoder = new TextDecoder();
+		// First read is the retry: directive, second is the data frame, third done.
 		const first = await reader.read();
 		expect(first.done).toBe(false);
+		expect(decoder.decode(first.value)).toBe(`retry: ${SSE_RETRY_MS}\n\n`);
 		const second = await reader.read();
-		expect(second.done).toBe(true);
+		expect(second.done).toBe(false);
+		const third = await reader.read();
+		expect(third.done).toBe(true);
 	});
 
-	it('emits a JSON error frame when the iterable throws', async () => {
+	it('emits a named stream_error event frame when the iterable throws', async () => {
 		async function* events() {
 			yield { type: 'ok' };
 			throw new Error('boom');
 		}
 		const text = await readAll(sseResponse(events()));
+		// The error frame carries a named `event: stream_error` line so native
+		// EventSource clients can listen for it specifically.
+		const errorFrame = text
+			.split('\n\n')
+			.map((f) => f.trim())
+			.find((f) => f.startsWith('event: stream_error'));
+		expect(errorFrame).toBeDefined();
+		expect(errorFrame).toContain('event: stream_error');
+		const dataLine = errorFrame!.split('\n').find((l) => l.startsWith('data: '))!;
+		expect(JSON.parse(dataLine.slice('data: '.length))).toEqual({
+			type: 'error',
+			code: 'stream_failed',
+			message: 'boom'
+		});
+		// Back-compat: fetch-based consumers reading data frames still see both.
 		const frames = parseDataFrames(text) as Array<Record<string, unknown>>;
 		expect(frames).toHaveLength(2);
 		expect(frames[0]).toEqual({ type: 'ok' });
@@ -90,6 +121,10 @@ describe('sseResponse', () => {
 		const res = sseResponse(events());
 		const reader = res.body!.getReader();
 		const decoder = new TextDecoder();
+
+		// The retry: directive is the first frame, enqueued immediately.
+		const retry = await reader.read();
+		expect(decoder.decode(retry.value)).toBe(`retry: ${SSE_RETRY_MS}\n\n`);
 
 		// Advance past the 15s heartbeat interval; the comment should arrive
 		// before any data frame.
@@ -128,7 +163,7 @@ describe('sseResponse', () => {
 		const frames = text
 			.split('\n\n')
 			.map((f) => f.trim())
-			.filter((f) => f.length > 0 && !f.startsWith(':'));
+			.filter((f) => f.length > 0 && !f.startsWith(':') && !f.startsWith('retry:'));
 		expect(frames).toHaveLength(3);
 		expect(frames[0]).toBe('id: 0\ndata: {"type":"message.start"}');
 		expect(frames[1]).toBe('id: 1\ndata: {"type":"message.delta","text":"hi"}');

@@ -19,13 +19,17 @@ import { getAppEventBus } from '$lib/server/runtime/app-events';
  * interactive registry that feeds it). A multi-instance deployment would need
  * a cross-process bus behind the `AppEventBus` interface.
  */
-export const GET: RequestHandler = ({ locals, request }) => {
+export const GET: RequestHandler = ({ locals, request, url }) => {
 	const userId = locals.userId;
 	if (!userId) throw error(401, 'Not authenticated');
 
 	// Browser auto-reconnect sets this header to the last `id:` (a ULID) it saw.
-	// Opaque cursor — passed straight through; the bus orders it lexicographically.
-	const lastIdHeader = request.headers.get('last-event-id');
+	// Client-managed reconnect (see `+layout.svelte`) can't set request headers
+	// on a fresh EventSource, so it passes the same cursor as a `last-event-id`
+	// query param instead — accept either. Opaque cursor: passed straight
+	// through; the bus orders it lexicographically.
+	const lastIdHeader =
+		request.headers.get('last-event-id') ?? url.searchParams.get('last-event-id');
 	const sinceId = lastIdHeader && lastIdHeader.length > 0 ? lastIdHeader : undefined;
 
 	return sseResponse(
