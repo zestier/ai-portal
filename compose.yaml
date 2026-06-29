@@ -8,6 +8,11 @@
 # PROJECT_DIR must point at the host directory the agent should read and
 # edit. It will be mounted into the container at /workspace and used as
 # the default working directory for new conversations.
+#
+# NOTE: the container runs as the built-in `node` user (UID 1000). When the
+# ./data bind mount doesn't exist, Docker pre-creates it root:root and the
+# portal can't open the SQLite DB. Either `chown 1000:1000 data` once, or run
+# the container as your UID (see docs/deployment.md → UID / permissions).
 
 services:
   portal:
@@ -60,3 +65,21 @@ services:
       - ${PROJECT_DIR:?required}:/workspace
     ports:
       - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
+    networks:
+      - appnet
+    # Cap memory/CPU so a runaway redeploy or copilot subprocess can't OOM the
+    # host. Defaults budget ~1.5 GB peak for MAX_CONCURRENT_SESSIONS=4 (see
+    # docs/deployment.md → Resource expectations); tune via .env if needed.
+    mem_limit: ${PORTAL_MEM_LIMIT:-2g}
+    cpus: ${PORTAL_CPUS:-2}
+    # Bound json-file log growth so a stuck/debug-logging container can't fill
+    # the host disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+networks:
+  appnet:
+    driver: bridge

@@ -73,6 +73,12 @@ special is needed. Otherwise either:
   ```
 - Or `chown` the bind-mounted directories to UID 1000 once.
 
+> **First boot:** if `./data` doesn't already exist, Docker pre-creates it
+> `root:root`, which UID 1000 can't write — the portal then crashes opening the
+> SQLite DB. Create it owned correctly before the first `up`:
+> `mkdir -p data && sudo chown 1000:1000 data`. (Skipped automatically if your
+> host user is already UID 1000.)
+
 **Podman, rootless mode:** add `--userns=keep-id` (or set
 `userns_mode: keep-id` in the compose file) so that container UID 1000
 maps to your host UID instead of a subuid. Without this, snapshots fail
@@ -254,16 +260,20 @@ Use the `compose.tunnel.yaml` overlay:
 docker compose -f compose.yaml -f compose.tunnel.yaml up -d
 ```
 
-This switches both services to `network_mode: host` so `cloudflared`
-can reach the portal on `127.0.0.1:3000` without a shared bridge. The
-portal binds to `127.0.0.1`; public reachability comes from the tunnel.
+This wires both services onto a shared `appnet` bridge so `cloudflared`
+reaches the portal at `http://portal:3000` — no host networking, so the
+container's port namespace stays isolated (child processes binding ports
+aren't exposed on host interfaces). The portal isn't published to the host;
+public reachability comes solely from the tunnel. `cloudflared` is pinned and
+waits for the portal's `service_healthy` state, so it won't forward traffic to
+a not-yet-bound origin on cold boot.
 
 Cloudflare side:
 
 1. Cloudflare dashboard → Zero Trust → Networks → Tunnels → Create tunnel.
 2. Install method: Docker → copy the `TUNNEL_TOKEN` into `.env` as
    `CLOUDFLARE_TUNNEL_TOKEN`.
-3. Public Hostname: `copilot.example.com` → Service `http://127.0.0.1:3000`.
+3. Public Hostname: `copilot.example.com` → Service `http://portal:3000`.
 4. *(Strongly recommended)* Zero Trust → Access → Applications →
    Self-hosted. Cover the same hostname; policy: "Emails are one of:
    you@example.com" with GitHub or Google identity provider.
