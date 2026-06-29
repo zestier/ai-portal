@@ -3,7 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { PageServerLoad, Actions } from './$types';
 import { loadConfig } from '$lib/server/config';
 import { authorizeUrl } from '$lib/server/auth/github';
-import { issue } from '$lib/server/auth/session';
+import { issue, issueOAuthState } from '$lib/server/auth/session';
 import { FixedWindowRateLimiter } from '$lib/server/rate-limit';
 import { audit } from '$lib/server/audit';
 
@@ -37,13 +37,7 @@ export const load: PageServerLoad = ({ locals, cookies, url }) => {
 	const cfg = loadConfig();
 	if (cfg.AUTH_MODE === 'github') {
 		const state = randomBytes(16).toString('base64url');
-		cookies.set('oauth_state', state, {
-			path: '/',
-			httpOnly: true,
-			sameSite: 'lax',
-			secure: url.protocol === 'https:',
-			maxAge: 600
-		});
+		issueOAuthState(cookies, state, url.protocol === 'https:');
 		const redirectUri = `${url.origin}/auth/callback`;
 		return { mode: 'github' as const, authorizeUrl: authorizeUrl(state, redirectUri) };
 	}

@@ -101,6 +101,10 @@ front.
 
 ## CSRF
 
+- The OAuth `state` cookie is `__Host-oauth_state` (dev: `oauth_state` over
+  http), so a sibling subdomain cannot inject `Domain=.example.com` state and
+  force a known value (login CSRF / state fixation).
+
 - By default, mutating endpoints require a same-origin `Origin`/`Referer`
   header (SvelteKit's built-in check + an explicit check for the JSON API).
 - The session cookie is `SameSite=Lax`, which blocks cross-site `POST` from

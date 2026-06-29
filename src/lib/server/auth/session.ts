@@ -174,6 +174,44 @@ export function issueCsrfCookie(cookies: Cookies, token: string, secure = true):
 	});
 }
 
+// OAuth state cookie. `__Host-` prefixed over HTTPS so a sibling subdomain
+// (e.g. static.example.com setting Domain=.example.com) cannot inject/override
+// the legitimate state and enable login CSRF / state fixation; the dev name is
+// used over plain http where the browser would reject the `__Host-` prefix.
+const OAUTH_STATE_COOKIE_NAME = '__Host-oauth_state';
+const DEV_OAUTH_STATE_COOKIE_NAME = 'oauth_state';
+const OAUTH_STATE_MAX_AGE = 600;
+
+function oauthStateCookieName(secure: boolean): string {
+	return secure ? OAUTH_STATE_COOKIE_NAME : DEV_OAUTH_STATE_COOKIE_NAME;
+}
+
+export function issueOAuthState(cookies: Cookies, state: string, secure = true): void {
+	cookies.set(oauthStateCookieName(secure), state, {
+		path: '/',
+		httpOnly: true,
+		sameSite: 'lax',
+		secure,
+		maxAge: OAUTH_STATE_MAX_AGE
+	});
+}
+
+export function readOAuthState(cookies: Cookies, secure = true): string | null {
+	// Mirror the session cookie policy: in secure mode only accept the
+	// `__Host-` cookie; in dev/http mode accept either name.
+	const v = secure
+		? cookies.get(OAUTH_STATE_COOKIE_NAME)
+		: (cookies.get(oauthStateCookieName(secure)) ?? cookies.get(oauthStateCookieName(!secure)));
+	return v ?? null;
+}
+
+export function clearOAuthState(cookies: Cookies): void {
+	// Delete both names so the secure flag can't strand a surviving cookie. The
+	// `__Host-` cookie must be cleared with secure+path=/ or the browser rejects it.
+	cookies.delete(OAUTH_STATE_COOKIE_NAME, { path: '/', secure: true });
+	cookies.delete(DEV_OAUTH_STATE_COOKIE_NAME, { path: '/' });
+}
+
 export function csrfTokensMatch(
 	provided: string | null | undefined,
 	expected: string | null | undefined

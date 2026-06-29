@@ -3,15 +3,15 @@ import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from './$types';
 import { exchangeCode, fetchProfile, isAllowed } from '$lib/server/auth/github';
 import { upsertGithub } from '$lib/server/db/repos/users';
-import { issue } from '$lib/server/auth/session';
+import { issue, readOAuthState, clearOAuthState } from '$lib/server/auth/session';
 import { log } from '$lib/server/log';
 import { audit } from '$lib/server/audit';
 
 export const GET: RequestHandler = async ({ url, cookies, getClientAddress }) => {
 	const code = url.searchParams.get('code');
 	const state = url.searchParams.get('state');
-	const expectedState = cookies.get('oauth_state');
-	cookies.delete('oauth_state', { path: '/', secure: url.protocol === 'https:' });
+	const expectedState = readOAuthState(cookies, url.protocol === 'https:');
+	clearOAuthState(cookies);
 	const ip = getClientAddress();
 
 	if (!code || !state || !expectedState || !statesMatch(state, expectedState)) {

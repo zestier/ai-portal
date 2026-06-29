@@ -7,7 +7,10 @@ import {
 	issue,
 	read,
 	clear,
-	generateCsrfToken
+	generateCsrfToken,
+	issueOAuthState,
+	readOAuthState,
+	clearOAuthState
 } from '../src/lib/server/auth/session';
 import type { Cookies } from '@sveltejs/kit';
 
@@ -116,6 +119,50 @@ describe('session cookie read/clear', () => {
 		expect(read(cookies, true)?.sub).toBe('u1');
 		clear(cookies, true);
 		expect(read(cookies, true)).toBeNull();
+	});
+});
+
+describe('OAuth state cookie scoping', () => {
+	const SECURE = '__Host-oauth_state';
+	const DEV = 'oauth_state';
+
+	it('issues the __Host- prefixed cookie over HTTPS', () => {
+		const { cookies, store } = makeCookies();
+		issueOAuthState(cookies, 's1', true);
+		expect(store.get(SECURE)).toBe('s1');
+		expect(store.has(DEV)).toBe(false);
+	});
+
+	it('issues the dev-named cookie over http', () => {
+		const { cookies, store } = makeCookies();
+		issueOAuthState(cookies, 's1', false);
+		expect(store.get(DEV)).toBe('s1');
+		expect(store.has(SECURE)).toBe(false);
+	});
+
+	it('secure read does NOT accept an injected non-__Host- cookie', () => {
+		const { cookies } = makeCookies({ [DEV]: 'attacker' });
+		expect(readOAuthState(cookies, true)).toBeNull();
+	});
+
+	it('secure read accepts the __Host- cookie', () => {
+		const { cookies } = makeCookies({ [SECURE]: 's1' });
+		expect(readOAuthState(cookies, true)).toBe('s1');
+	});
+
+	it('non-secure read falls back to either cookie name', () => {
+		const { cookies: c1 } = makeCookies({ [DEV]: 's1' });
+		expect(readOAuthState(c1, false)).toBe('s1');
+		const { cookies: c2 } = makeCookies({ [SECURE]: 's1' });
+		expect(readOAuthState(c2, false)).toBe('s1');
+	});
+
+	it('clear deletes both names; __Host- with secure+path=/', () => {
+		const { cookies, deleted, deleteOpts } = makeCookies();
+		clearOAuthState(cookies);
+		expect(deleted).toContain(SECURE);
+		expect(deleted).toContain(DEV);
+		expect(deleteOpts.get(SECURE)).toMatchObject({ path: '/', secure: true });
 	});
 });
 
