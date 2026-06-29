@@ -824,6 +824,57 @@ describe('turn-runner', () => {
 		expect(futureEvents[0]).toMatchObject({ type: 'message.delta', text: 'b' });
 	});
 
+	it('delivers a terminal done when subscribing with skipReplay after the turn finished', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'skip replay finished',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+
+		acquireMock.mockResolvedValue(
+			makeFakeSession(
+				[
+					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'm1', text: 'hi' },
+					{ type: 'done' }
+				],
+				conv.id,
+				wd
+			)
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		// Drain the turn to completion so it is no longer running.
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') break;
+		}
+		expect(turn.status).not.toBe('running');
+
+		// Attaching with skipReplay in this window must still yield a terminal
+		// `done` rather than completing with silence.
+		const events: PortalEvent[] = [];
+		for await (const { event } of turn.subscribe({ skipReplay: true })) {
+			events.push(event);
+			if (event.type === 'done') break;
+		}
+		expect(events.map((e) => e.type)).toEqual(['done']);
+		expect(events[events.length - 1]).toMatchObject({ type: 'done' });
+	});
+
 	it('getTurnById returns null when the turn id does not match', async () => {
 		const { users, convs, turnRunner } = await freshImports();
 		const user = users.ensureLocalUser();

@@ -779,7 +779,21 @@ async function* subscribe(
 	}
 
 	// If the turn already finished, we're done after the replay.
-	if (turn.status !== 'running') return;
+	if (turn.status !== 'running') {
+		// `skipReplay` starts at the end of the log, so on an already-finished
+		// turn the loop above yields nothing and the subscriber would otherwise
+		// receive no events — forcing it to infer completion from silence.
+		// Replay the terminal `done` (always the last log entry once a turn
+		// finishes) so every subscriber gets an explicit terminal signal
+		// regardless of attach timing.
+		if (opts.skipReplay && !signal?.aborted) {
+			const lastIdx = turn.eventLog.length - 1;
+			if (lastIdx >= 0 && turn.eventLog[lastIdx].type === 'done') {
+				yield { id: lastIdx, event: turn.eventLog[lastIdx] };
+			}
+		}
+		return;
+	}
 
 	// Subscribe to live events. Adding q to `subscribers` is synchronous
 	// with the loop exit above (no awaits between them), so dispatch can't
