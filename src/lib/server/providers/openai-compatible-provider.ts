@@ -15,6 +15,7 @@ import { buildFilesystemTools } from '../tools/filesystem';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
 import { buildMemoryTools } from '../tools/memory';
+import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type { BackendProviderId, PortalEvent, SessionMode, ToolCallRecord } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
@@ -943,6 +944,7 @@ function buildOpenAITools(opts: {
 			conversationId: opts.opts.conversationId,
 			mode: opts.opts.memoryMode ?? 'off',
 			globalMemoryEnabled: opts.opts.globalMemoryEnabled === true
-		})
+		}),
+		...buildPromptTemplateTools({ userId: opts.opts.userId })
 	];
 }
