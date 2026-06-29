@@ -6,7 +6,7 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as usage from '$lib/server/db/repos/usage';
 import * as memory from '$lib/server/db/repos/memory';
-import { getBuiltInPromptTemplate } from '$lib/prompt-templates';
+import { getBuiltInPromptTemplate, buildRefinePromptSeed } from '$lib/prompt-templates';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
 import { fetchModels, getProvider } from '$lib/server/providers';
@@ -48,6 +48,12 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 					: null;
 		if (!template || template.status !== 'open') throw error(404);
 		initialComposer = template.prompt;
+	}
+	const refinePromptTemplateId = url.searchParams.get('refinePromptTemplateId');
+	if (!initialComposer && refinePromptTemplateId && msgs.length === 0) {
+		const template = promptTemplates.get(refinePromptTemplateId, locals.userId);
+		if (!template || template.status !== 'open') throw error(404);
+		initialComposer = buildRefinePromptSeed(template);
 	}
 	// A fork created while its source was busy stashes the edited prompt as a
 	// persisted draft (no turn auto-started). Seed it into the composer until

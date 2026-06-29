@@ -162,6 +162,44 @@ export function interpolatePrompt(prompt: string, values: Record<string, string>
 }
 
 // ---------------------------------------------------------------------------
+// "Refine this prompt" seed
+//
+// Launching a refine session pre-fills the composer with a draft that targets
+// one stored template by id. The seed intentionally does NOT inline the current
+// prompt body — it tells the agent to read live state with `template_get` and
+// apply agreed changes with `template_update` (both gated by the always-prompt
+// permission), so the session can never act on a stale copy.
+// ---------------------------------------------------------------------------
+
+/** Human-readable label for a template type used in the refine seed text. */
+function refineTemplateKindLabel(type: PromptTemplateType): string {
+	return type === 'ticket-action' ? 'ticket action' : 'chat template';
+}
+
+/**
+ * Seed prompt for a per-template "Refine this prompt" draft chat. Names the
+ * template and embeds its id, and directs the agent to inspect current content
+ * with `template_get` and apply improvements with `template_update` (proposing
+ * changes + rationale first, applying on agreement).
+ */
+export function buildRefinePromptSeed(
+	template: Pick<ChatPromptTemplate, 'id' | 'type' | 'title'>
+): string {
+	const kind = refineTemplateKindLabel(template.type);
+	return [
+		`Help me refine my saved ${kind} "${template.title}" (template id: ${template.id}).`,
+		'',
+		`Start by reading the template's current content with the \`template_get\` tool (id "${template.id}"). ` +
+			'Then suggest concrete improvements to its prompt body — and, where useful, its title or description — ' +
+			'to make it clearer, more specific, and more effective. Explain the rationale for each change first and ' +
+			'wait for my agreement before applying anything.',
+		'',
+		`Apply the changes we agree on with the \`template_update\` tool (id "${template.id}"); each write will ask ` +
+			'me to approve it. Keep the same intent and behavior — only sharpen how it is expressed.'
+	].join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Ticket-action defaults (seeded Do / Draft / Refine)
 // ---------------------------------------------------------------------------
 

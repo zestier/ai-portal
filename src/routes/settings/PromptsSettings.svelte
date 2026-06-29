@@ -5,6 +5,9 @@
 	import type { FormResult, PromptTemplate } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
 	import { placeholdersForType } from '$lib/prompt-templates';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { createPromptTemplateRefineChat } from '$lib/client/prompt-template-launch';
+	import { onDestroy } from 'svelte';
 
 	let {
 		builtInTemplates,
@@ -44,6 +47,46 @@
 		if (current && !ids.includes(current)) ids.unshift(current);
 		return ids;
 	}
+
+	let refiningId = $state<string | null>(null);
+	let refineError = $state<string | null>(null);
+	let refineErrorId = $state<string | null>(null);
+	let refineController: AbortController | null = null;
+
+	async function refineTemplate(template: Pick<PromptTemplate, 'id' | 'title'>) {
+		if (refiningId) return;
+		refiningId = template.id;
+		refineError = null;
+		refineErrorId = null;
+		const controller = new AbortController();
+		refineController = controller;
+		try {
+			const result = await createPromptTemplateRefineChat({
+				template,
+				fetcher: fetch,
+				signal: controller.signal
+			});
+			if (controller.signal.aborted) return;
+			if (!result.ok) {
+				refineError = `Could not start refine chat (${result.status ?? 'network'})`;
+				refineErrorId = template.id;
+				return;
+			}
+			await invalidateAll();
+			await goto(result.href);
+		} catch (err) {
+			if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+				return;
+			}
+			refineError = 'Could not start refine chat';
+			refineErrorId = template.id;
+		} finally {
+			if (refineController === controller) refineController = null;
+			if (refiningId === template.id) refiningId = null;
+		}
+	}
+
+	onDestroy(() => refineController?.abort());
 </script>
 
 <div
@@ -162,10 +205,22 @@
 							</div>
 							<div class="actions">
 								<button class="btn primary" type="submit">Save changes</button>
+								<button
+									class="btn secondary"
+									type="button"
+									onclick={() => refineTemplate(template)}
+									disabled={refiningId !== null}
+									title="Starts a chat that refines the saved version of this template. Save changes first to include unsaved edits."
+								>
+									{refiningId === template.id ? 'Starting...' : 'Refine this prompt'}
+								</button>
 								<button class="btn danger" type="submit" form="archive-template-{template.id}">
 									Archive
 								</button>
 							</div>
+							{#if refineErrorId === template.id}
+								<p class="refine-error" role="alert">{refineError}</p>
+							{/if}
 						</form>
 						<form
 							id="archive-template-{template.id}"
@@ -282,10 +337,22 @@
 							</div>
 							<div class="actions">
 								<button class="btn primary" type="submit">Save changes</button>
+								<button
+									class="btn secondary"
+									type="button"
+									onclick={() => refineTemplate(action)}
+									disabled={refiningId !== null}
+									title="Starts a chat that refines the saved version of this template. Save changes first to include unsaved edits."
+								>
+									{refiningId === action.id ? 'Starting...' : 'Refine this prompt'}
+								</button>
 								<button class="btn danger" type="submit" form="archive-template-{action.id}">
 									Remove
 								</button>
 							</div>
+							{#if refineErrorId === action.id}
+								<p class="refine-error" role="alert">{refineError}</p>
+							{/if}
 						</form>
 						<form id="archive-template-{action.id}" method="POST" action="?/archivePromptTemplate">
 							<input type="hidden" name="id" value={action.id} />
@@ -474,6 +541,11 @@
 		border: 1px dashed var(--border);
 		border-radius: var(--radius-md);
 		padding: var(--space-3);
+	}
+	.refine-error {
+		margin: 0;
+		color: var(--danger);
+		font-size: var(--fs-sm);
 	}
 	.archived {
 		color: var(--text-muted);
