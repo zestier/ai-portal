@@ -33,6 +33,7 @@ import { buildGitTools } from '../tools/git';
 import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
+import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildFilesystemTools } from '../tools/filesystem';
 import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
@@ -256,7 +257,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			conversationId: opts.conversationId,
 			mode: opts.memoryMode ?? 'off',
 			globalMemoryEnabled: opts.globalMemoryEnabled === true
-		})
+		}),
+		...buildPromptTemplateTools({ userId: opts.userId })
 	];
 	const validateCustomToolArgs = buildToolArgsValidator(portalTools);
 	const derivePermissionRequest = buildPermissionRequestResolver(portalTools);
