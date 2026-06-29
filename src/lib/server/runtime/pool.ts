@@ -245,6 +245,13 @@ export function startIdleReaper() {
 	const idleMs = cfg.IDLE_TIMEOUT_MIN * 60_000;
 	const timer = setInterval(async () => {
 		const now = Date.now();
+		// Iterates the live map and awaits dispose inline, so if a dispose
+		// outlasts the 60s interval a second tick can overlap. That's safe:
+		// each entry is `sessions.delete`d synchronously before its await, so
+		// neither tick can re-dispose a claimed entry, and entries added mid-
+		// iteration are visited per the Map spec (never skipped). Worst case is
+		// a few concurrent dispose() calls — exactly what shutdown() does on
+		// purpose — so a snapshot/re-entrancy guard would add state for no gain.
 		for (const [id, entry] of sessions) {
 			if (now - entry.lastUsed > idleMs) {
 				// Never reap a session with work outstanding (an open prompt
