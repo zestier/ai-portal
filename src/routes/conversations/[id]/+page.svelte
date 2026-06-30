@@ -5,11 +5,12 @@
 	import ChangesTabIndicator from '$lib/components/ChangesTabIndicator.svelte';
 	import FileBrowser from '$lib/components/FileBrowser.svelte';
 	import MemoryInspector from '$lib/components/MemoryInspector.svelte';
+	import ActionsPanel from '$lib/components/ActionsPanel.svelte';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
 
-	type Tab = 'chat' | 'memory' | 'changes' | 'files' | 'commits';
-	const tabs: Tab[] = ['chat', 'memory', 'changes', 'files', 'commits'];
+	type Tab = 'chat' | 'memory' | 'changes' | 'files' | 'commits' | 'actions';
+	const tabs: Tab[] = ['chat', 'memory', 'changes', 'files', 'commits', 'actions'];
 
 	function readTab(value: string | null): Tab {
 		return value && tabs.includes(value as Tab) ? (value as Tab) : 'chat';
@@ -85,6 +86,16 @@
 		>
 			Commits
 		</button>
+		<button
+			id="conversation-tab-actions"
+			role="tab"
+			aria-selected={tab === 'actions'}
+			aria-controls="conversation-panel-actions"
+			class:active={tab === 'actions'}
+			onclick={() => selectTab('actions')}
+		>
+			Actions
+		</button>
 	</div>
 	<div
 		id="conversation-panel-chat"
@@ -118,6 +129,15 @@
 			class="tab-body"
 		>
 			<MemoryInspector conversationId={data.conversation.id} initialMemory={data.memorySnapshot} />
+		</div>
+	{:else if tab === 'actions'}
+		<div
+			id="conversation-panel-actions"
+			role="tabpanel"
+			aria-labelledby="conversation-tab-actions"
+			class="tab-body scrollable"
+		>
+			<ActionsPanel conversationId={data.conversation.id} />
 		</div>
 	{:else if tab !== 'chat'}
 		<div
@@ -185,5 +205,8 @@
 	}
 	.tab-body.hidden {
 		display: none;
+	}
+	.tab-body.scrollable {
+		overflow-y: auto;
 	}
 </style>
