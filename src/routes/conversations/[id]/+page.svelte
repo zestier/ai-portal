@@ -171,10 +171,14 @@
 		--scroll-mask-cover: var(--surface);
 	}
 	/* On mobile the sidebar toggle is a fixed-position hamburger at top-left;
-	   inset the tab strip so it doesn't sit underneath. */
+	   inset the tab strip so it doesn't sit underneath. `scroll-padding-left`
+	   keeps the inset honored by scroll-snap: without it, the first tab's
+	   `scroll-snap-align: start` snaps to the bare start edge, scrolling the
+	   strip by exactly the padding and sliding "Chat" back under the hamburger. */
 	@media (max-width: 768px) {
 		.tabs {
 			padding-left: var(--mobile-hamburger-inset);
+			scroll-padding-left: var(--mobile-hamburger-inset);
 		}
 	}
 	.tabs button {
