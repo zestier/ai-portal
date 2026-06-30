@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { streamSse } from '$lib/client/sse';
+	import { streamSse, type StreamSseInit } from '$lib/client/sse';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
 	type ActionEvent =
@@ -9,11 +9,22 @@
 		| { type: 'step-done'; label: string; code: number }
 		| { type: 'done'; ok: boolean; failedStep?: string; message?: string };
 
+	type ActionInput = {
+		name: string;
+		label: string;
+		type: 'string' | 'enum' | 'number';
+		required: boolean;
+		default: string | number | null;
+		options: string[] | null;
+		placeholder: string | null;
+	};
+
 	type ActionMeta = {
 		id: string;
 		label: string;
 		description: string | null;
 		permission: 'user' | 'admin';
+		inputs: ActionInput[];
 		commands: string[];
 	};
 
@@ -24,6 +35,8 @@
 	let configError = $state<string | null>(null);
 	let canRunAdmin = $state(false);
 	let actions = $state<ActionMeta[]>([]);
+	// Input values keyed `${actionId}::${inputName}`.
+	let formValues = $state<Record<string, string>>({});
 
 	let runningId = $state<string | null>(null);
 	let runLabel = $state('');
@@ -31,7 +44,16 @@
 	let runStatus = $state<'idle' | 'running' | 'ok' | 'failed'>('idle');
 	let logEl = $state<HTMLPreElement | undefined>();
 
+	// Mirror of the server-side `{{NAME}}` token grammar, used only to render a
+	// resolved-argv preview in the confirm dialog. The server re-validates and
+	// re-substitutes; this is human-visibility, not enforcement.
+	const INPUT_TOKEN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
 	onMount(load);
+
+	function fieldKey(actionId: string, name: string): string {
+		return `${actionId}::${name}`;
+	}
 
 	async function load() {
 		loading = true;
@@ -43,6 +65,14 @@
 			actions = body.actions ?? [];
 			canRunAdmin = body.canRunAdmin ?? false;
 			configError = body.configError ?? null;
+			const init: Record<string, string> = {};
+			for (const action of actions) {
+				for (const input of action.inputs ?? []) {
+					init[fieldKey(action.id, input.name)] =
+						input.default != null ? String(input.default) : '';
+				}
+			}
+			formValues = init;
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -61,19 +91,46 @@
 		return action.permission !== 'admin' || canRunAdmin;
 	}
 
+	function collectInputs(action: ActionMeta): Record<string, string> {
+		const values: Record<string, string> = {};
+		for (const input of action.inputs) {
+			values[input.name] = formValues[fieldKey(action.id, input.name)] ?? '';
+		}
+		return values;
+	}
+
+	function resolveCommand(action: ActionMeta, command: string): string {
+		const values = collectInputs(action);
+		return command.replace(INPUT_TOKEN, (_, name: string) => values[name] ?? '');
+	}
+
 	async function run(action: ActionMeta) {
 		if (runningId) return;
 		if (!canRun(action)) return;
-		const preview = action.commands.map((c) => `$ ${c}`).join('\n');
+		// Client-side required check for a friendly message; the server is
+		// authoritative and re-validates.
+		const missing = action.inputs.find(
+			(i) => i.required && !formValues[fieldKey(action.id, i.name)]
+		);
+		if (missing) {
+			alert(`"${missing.label}" is required.`);
+			return;
+		}
+		const preview = action.commands.map((c) => `$ ${resolveCommand(action, c)}`).join('\n');
 		if (!confirm(`Run "${action.label}"?\n\n${preview}`)) return;
 		runningId = action.id;
 		runLabel = action.label;
 		runStatus = 'running';
 		runLog = '';
 		try {
+			const init: StreamSseInit = { method: 'POST' };
+			if (action.inputs.length > 0) {
+				init.body = JSON.stringify({ inputs: collectInputs(action) });
+				init.headers = { 'content-type': 'application/json' };
+			}
 			for await (const ev of streamSse<ActionEvent>(
 				`/api/conversations/${conversationId}/actions/${action.id}`,
-				{ method: 'POST' }
+				init
 			)) {
 				switch (ev.type) {
 					case 'step':
@@ -135,23 +192,64 @@
 			<ul class="action-list">
 				{#each actions as action (action.id)}
 					<li class="action-item">
-						<div class="action-text">
-							<span class="action-label">{action.label}</span>
-							{#if action.permission === 'admin'}
-								<span class="badge">admin</span>
-							{/if}
-							{#if action.description}
-								<span class="action-desc">{action.description}</span>
-							{/if}
+						<div class="action-row">
+							<div class="action-text">
+								<span class="action-label">{action.label}</span>
+								{#if action.permission === 'admin'}
+									<span class="badge">admin</span>
+								{/if}
+								{#if action.description}
+									<span class="action-desc">{action.description}</span>
+								{/if}
+							</div>
+							<button
+								class="btn"
+								onclick={() => run(action)}
+								disabled={runningId !== null || !canRun(action)}
+								title={!canRun(action)
+									? 'Requires an authorized admin'
+									: action.commands.join('\n')}
+							>
+								{runningId === action.id ? 'Running…' : 'Run'}
+							</button>
 						</div>
-						<button
-							class="btn"
-							onclick={() => run(action)}
-							disabled={runningId !== null || !canRun(action)}
-							title={!canRun(action) ? 'Requires an authorized admin' : action.commands.join('\n')}
-						>
-							{runningId === action.id ? 'Running…' : 'Run'}
-						</button>
+						{#if action.inputs.length > 0}
+							<div class="action-inputs">
+								{#each action.inputs as input (input.name)}
+									<label class="field">
+										<span class="field-label">
+											{input.label}{#if input.required}<span class="req" title="required">*</span
+												>{/if}
+										</span>
+										{#if input.type === 'enum'}
+											<select
+												bind:value={formValues[fieldKey(action.id, input.name)]}
+												disabled={runningId !== null || !canRun(action)}
+											>
+												{#if !input.required}<option value="">—</option>{/if}
+												{#each input.options ?? [] as opt (opt)}
+													<option value={opt}>{opt}</option>
+												{/each}
+											</select>
+										{:else if input.type === 'number'}
+											<input
+												type="number"
+												bind:value={formValues[fieldKey(action.id, input.name)]}
+												placeholder={input.placeholder ?? ''}
+												disabled={runningId !== null || !canRun(action)}
+											/>
+										{:else}
+											<input
+												type="text"
+												bind:value={formValues[fieldKey(action.id, input.name)]}
+												placeholder={input.placeholder ?? ''}
+												disabled={runningId !== null || !canRun(action)}
+											/>
+										{/if}
+									</label>
+								{/each}
+							</div>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -188,13 +286,45 @@
 	}
 	.action-item {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
+		flex-direction: column;
+		gap: 0.6rem;
 		padding: 0.6rem 0.75rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 		background: var(--surface-2);
+	}
+	.action-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+	.action-inputs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+	.field-label {
+		font-size: var(--fs-sm);
+		color: var(--text-muted);
+	}
+	.req {
+		color: var(--danger);
+		margin-left: 0.15rem;
+	}
+	.field input,
+	.field select {
+		padding: 0.35rem 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		color: var(--text);
+		font-size: var(--fs-md);
 	}
 	.action-text {
 		display: flex;

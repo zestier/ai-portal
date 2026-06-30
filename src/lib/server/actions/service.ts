@@ -4,6 +4,7 @@
 
 import { buildActionEnv, type Step } from './runner';
 import type { ActionDef } from './config';
+import { substituteArg } from './inputs';
 
 /**
  * Lower a validated action definition into runner steps bound to a specific
@@ -12,18 +13,29 @@ import type { ActionDef } from './config';
  *  - default-deny env (`inheritEnv: false`) built from a safe base plus the
  *    action's explicit env-name allowlist,
  *  - `shell: false` (inherited from the runner).
+ *
+ * `values` holds already-validated typed input values (see resolveInputValues);
+ * each `{{NAME}}` token in a step's args is substituted with its value. Commands
+ * are never substituted. Pass `{}` (the default) for an action with no inputs.
  */
-export function actionToSteps(action: ActionDef, workdir: string): Step[] {
+export function actionToSteps(
+	action: ActionDef,
+	workdir: string,
+	values: Record<string, string> = {}
+): Step[] {
 	const env = buildActionEnv(action.env);
-	return action.steps.map((step) => ({
-		label: step.label ?? step.command,
-		command: step.command,
-		args: step.args,
-		display: [step.command, ...step.args].join(' '),
-		cwd: workdir,
-		env,
-		inheritEnv: false
-	}));
+	return action.steps.map((step) => {
+		const args = step.args.map((arg) => substituteArg(arg, values));
+		return {
+			label: step.label ?? step.command,
+			command: step.command,
+			args,
+			display: [step.command, ...args].join(' '),
+			cwd: workdir,
+			env,
+			inheritEnv: false
+		};
+	});
 }
 
 // Per-(conversation, action) in-flight guard. A given action can run in

@@ -30,6 +30,15 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 		label: a.label,
 		description: a.description ?? null,
 		permission: a.permission,
+		inputs: a.inputs.map((i) => ({
+			name: i.name,
+			label: i.label,
+			type: i.type,
+			required: i.required,
+			default: i.default ?? null,
+			options: i.options ?? null,
+			placeholder: i.placeholder ?? null
+		})),
 		commands: a.steps.map((s) => [s.command, ...s.args].join(' '))
 	}));
 	return json({ actions, canRunAdmin });

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { zapSubdir } from '../tools/zap-dir';
 import { isPortalSecretEnvName } from './runner';
+import { tokensIn } from './inputs';
 
 export const ACTIONS_FILE = 'actions.json';
 
@@ -26,12 +27,35 @@ const FORBIDDEN_KEYS = ['cwd', 'rollover', 'restarting', 'restart', 'inheritEnv'
 
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const ACTION_ID = /^[a-z0-9][a-z0-9-]*$/;
+const INPUT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const StepSchema = z
 	.object({
 		label: z.string().trim().min(1).optional(),
 		command: z.string().trim().min(1, 'step command must be non-empty'),
 		args: z.array(z.string()).default([])
+	})
+	.strict();
+
+const InputSchema = z
+	.object({
+		name: z
+			.string()
+			.trim()
+			.min(1)
+			.regex(
+				INPUT_NAME,
+				'input name must be a token (letters, digits, underscore; no leading digit)'
+			),
+		label: z.string().trim().min(1, 'input label must be non-empty'),
+		type: z.enum(['string', 'enum', 'number']).default('string'),
+		required: z.boolean().default(true),
+		// Per-type validated in the action superRefine (string/enum -> string,
+		// number -> number).
+		default: z.union([z.string(), z.number()]).optional(),
+		// enum only; each option a non-empty string.
+		options: z.array(z.string().min(1)).optional(),
+		placeholder: z.string().optional()
 	})
 	.strict();
 
@@ -58,9 +82,78 @@ const ActionSchema = z
 					}
 				}
 			}),
+		inputs: z.array(InputSchema).default([]),
 		steps: z.array(StepSchema).min(1, 'an action needs at least one step')
 	})
-	.strict();
+	.strict()
+	.superRefine((action, ctx) => {
+		const names = new Set<string>();
+		for (const input of action.inputs) {
+			if (names.has(input.name)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `duplicate input name: ${input.name}`
+				});
+			}
+			names.add(input.name);
+			if (input.type === 'enum') {
+				if (!input.options || input.options.length === 0) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `input "${input.name}" is an enum and needs a non-empty options list`
+					});
+				} else if (input.default !== undefined && !input.options.includes(String(input.default))) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `input "${input.name}" default must be one of its options`
+					});
+				}
+			} else if (input.options !== undefined) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `input "${input.name}" only supports options when type is "enum"`
+				});
+			}
+			if (
+				input.type === 'number' &&
+				input.default !== undefined &&
+				typeof input.default !== 'number'
+			) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `input "${input.name}" default must be a number`
+				});
+			}
+			if (input.type !== 'number' && typeof input.default === 'number') {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `input "${input.name}" default must be a string`
+				});
+			}
+		}
+		// Every `{{token}}` in a step's args must reference a declared input, and
+		// tokens are NOT allowed in `command` (an input must never choose the
+		// binary). Unknown tokens are rejected so a typo can't silently run with
+		// an empty substitution.
+		for (const step of action.steps) {
+			for (const token of tokensIn(step.command)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `step command may not contain input tokens ({{${token}}})`
+				});
+			}
+			for (const arg of step.args) {
+				for (const token of tokensIn(arg)) {
+					if (!names.has(token)) {
+						ctx.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `step arg references unknown input "{{${token}}}"`
+						});
+					}
+				}
+			}
+		}
+	});
 
 const ConfigSchema = z
 	.object({
@@ -79,6 +172,7 @@ const ConfigSchema = z
 	});
 
 export type ActionStep = z.infer<typeof StepSchema>;
+export type ActionInput = z.infer<typeof InputSchema>;
 export type ActionDef = z.infer<typeof ActionSchema>;
 export type ActionsConfig = z.infer<typeof ConfigSchema>;
 

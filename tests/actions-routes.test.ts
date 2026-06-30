@@ -189,6 +189,77 @@ describe('conversation actions routes (local mode)', () => {
 		}
 	});
 
+	it('POST substitutes typed inputs into argv and validates them', async () => {
+		writeActions(projectRoot, {
+			version: 1,
+			actions: [
+				{
+					id: 'greet',
+					label: 'Greet',
+					inputs: [
+						{ name: 'who', label: 'Who', type: 'string' },
+						{ name: 'env', label: 'Env', type: 'enum', options: ['staging', 'prod'] }
+					],
+					steps: [
+						{
+							command: execPath,
+							args: [
+								'-e',
+								'process.stdout.write(process.argv.slice(1).join("|"))',
+								'{{who}}',
+								'{{env}}'
+							]
+						}
+					]
+				}
+			]
+		});
+		const { POST } =
+			await import('../src/routes/api/conversations/[id]/actions/[actionId]/+server');
+		const { user, conv } = await makeConversation();
+
+		// Valid inputs are substituted into argv (as whole literals).
+		const okRes = await POST(
+			makeEvent(
+				`http://localhost/api/conversations/${conv.id}/actions/greet`,
+				{ id: conv.id, actionId: 'greet' },
+				user.id,
+				user,
+				{
+					request: new Request('http://localhost/x', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ inputs: { who: 'a b', env: 'prod' } })
+					})
+				}
+			) as never
+		);
+		const out = (await readSse(okRes))
+			.filter((e) => e.type === 'log')
+			.map((e) => String(e.text))
+			.join('');
+		expect(out).toContain('a b|prod');
+
+		// An out-of-enum value is rejected with 400 before anything runs.
+		await expect(
+			POST(
+				makeEvent(
+					`http://localhost/api/conversations/${conv.id}/actions/greet`,
+					{ id: conv.id, actionId: 'greet' },
+					user.id,
+					user,
+					{
+						request: new Request('http://localhost/x', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({ inputs: { who: 'x', env: 'dev' } })
+						})
+					}
+				) as never
+			)
+		).rejects.toMatchObject({ status: 400 });
+	});
+
 	it('POST 404s an unknown action id', async () => {
 		writeActions(projectRoot, { version: 1, actions: [] });
 		const { POST } =

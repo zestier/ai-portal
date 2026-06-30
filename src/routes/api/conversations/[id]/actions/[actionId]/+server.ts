@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { requireUserId } from '$lib/server/auth/require';
 import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
@@ -10,6 +11,16 @@ import { sseResponse } from '$lib/server/sse';
 import { runSequence } from '$lib/server/actions/runner';
 import { loadActionsConfig } from '$lib/server/actions/config';
 import { actionToSteps, claimActionRun, releaseActionRun } from '$lib/server/actions/service';
+import { resolveInputValues } from '$lib/server/actions/inputs';
+
+// Raw input values supplied with the run. Names/coercion are validated against
+// the action's declared `inputs` by resolveInputValues; this only bounds the
+// wire shape (a flat map of scalars).
+const Body = z
+	.object({
+		inputs: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+	})
+	.strict();
 
 /**
  * Run a single project action defined in the conversation's
@@ -58,6 +69,32 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 		throw error(403, 'This action requires an authorized admin.');
 	}
 
+	// Resolve typed inputs (Phase 2) before claiming the run guard so a bad
+	// request neither holds the guard nor starts a child. An action with no
+	// declared inputs accepts an empty body and resolves to `{}`.
+	let rawInputs: Record<string, unknown> = {};
+	const bodyText = await request.text();
+	if (bodyText) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(bodyText);
+		} catch {
+			denied('bad_body');
+			throw error(400, 'Invalid JSON body.');
+		}
+		const body = Body.safeParse(parsed);
+		if (!body.success) {
+			denied('bad_body');
+			throw error(400, body.error.issues[0]?.message ?? 'Invalid request body.');
+		}
+		rawInputs = body.data.inputs ?? {};
+	}
+	const resolved = resolveInputValues(action.inputs, rawInputs);
+	if (!resolved.ok) {
+		denied('invalid_inputs', { error: resolved.error });
+		throw error(400, resolved.error);
+	}
+
 	if (!claimActionRun(conversation.id, actionId)) {
 		// Distinct from the gating denials above — this is a benign concurrency
 		// collision, not an authz failure, so don't write a `denied` audit row.
@@ -65,7 +102,7 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 	}
 
 	try {
-		const steps = actionToSteps(action, workdir);
+		const steps = actionToSteps(action, workdir, resolved.values);
 		log.info('action.start', { userId, conversationId: conversation.id, actionId });
 		audit({
 			event_type: 'action_run',

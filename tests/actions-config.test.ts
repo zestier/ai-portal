@@ -163,6 +163,121 @@ describe('parseActionsConfig — fail closed', () => {
 	});
 });
 
+describe('parseActionsConfig — typed inputs', () => {
+	it('accepts declared inputs and applies defaults', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [
+				{
+					id: 'deploy',
+					label: 'Deploy',
+					inputs: [
+						{ name: 'env', label: 'Environment', type: 'enum', options: ['staging', 'prod'] },
+						{ name: 'note', label: 'Note', required: false }
+					],
+					steps: [{ command: 'pnpm', args: ['run', 'deploy', '--env={{env}}', '--note={{note}}'] }]
+				}
+			]
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(res.actions[0].inputs[0].type).toBe('enum');
+		expect(res.actions[0].inputs[1].required).toBe(false); // explicit
+		expect(res.actions[0].inputs[0].required).toBe(true); // default
+	});
+
+	it('rejects an enum input with no options', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [
+				{
+					id: 'x',
+					label: 'X',
+					inputs: [{ name: 'env', label: 'Env', type: 'enum' }],
+					steps: [{ command: 'ls' }]
+				}
+			]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('options');
+	});
+
+	it('rejects an enum default that is not one of its options', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [
+				{
+					id: 'x',
+					label: 'X',
+					inputs: [{ name: 'env', label: 'Env', type: 'enum', options: ['a', 'b'], default: 'c' }],
+					steps: [{ command: 'ls' }]
+				}
+			]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('options');
+	});
+
+	it('rejects options on a non-enum input', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [
+				{
+					id: 'x',
+					label: 'X',
+					inputs: [{ name: 'env', label: 'Env', type: 'string', options: ['a'] }],
+					steps: [{ command: 'ls' }]
+				}
+			]
+		});
+		expect(res.ok).toBe(false);
+	});
+
+	it('rejects a step arg referencing an undeclared input token', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [{ id: 'x', label: 'X', steps: [{ command: 'echo', args: ['{{ghost}}'] }] }]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('unknown input');
+	});
+
+	it('rejects an input token in the command itself', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [
+				{
+					id: 'x',
+					label: 'X',
+					inputs: [{ name: 'bin', label: 'Bin' }],
+					steps: [{ command: '{{bin}}', args: [] }]
+				}
+			]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('command');
+	});
+
+	it('rejects duplicate input names', () => {
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [
+				{
+					id: 'x',
+					label: 'X',
+					inputs: [
+						{ name: 'a', label: 'A' },
+						{ name: 'a', label: 'A2' }
+					],
+					steps: [{ command: 'echo', args: ['{{a}}'] }]
+				}
+			]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('duplicate input');
+	});
+});
+
 describe('loadActionsConfig — file IO', () => {
 	it('returns empty actions when the file is absent', async () => {
 		const dir = makeTmpDir('portal-actions-');
