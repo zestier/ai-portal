@@ -151,6 +151,64 @@ describe('conversation actions routes (local mode)', () => {
 		expect(events.at(-1)).toEqual({ type: 'done', ok: true });
 	});
 
+	it('POST writes a start audit row and a terminal success/failure row', async () => {
+		writeActions(projectRoot, {
+			version: 1,
+			actions: [
+				{ id: 'ok', label: 'OK', steps: [{ command: execPath, args: ['-e', 'process.exit(0)'] }] },
+				{
+					id: 'bad',
+					label: 'Bad',
+					steps: [{ command: execPath, args: ['-e', 'process.exit(3)'] }]
+				}
+			]
+		});
+		const { setAuditSink } = await import('../src/lib/server/audit');
+		const records: { outcome: string; detail?: Record<string, unknown> }[] = [];
+		setAuditSink((r) => records.push(r));
+		try {
+			const { POST } =
+				await import('../src/routes/api/conversations/[id]/actions/[actionId]/+server');
+			const { user, conv } = await makeConversation();
+
+			const okRes = await POST(
+				makeEvent(
+					`http://localhost/api/conversations/${conv.id}/actions/ok`,
+					{ id: conv.id, actionId: 'ok' },
+					user.id,
+					user
+				) as never
+			);
+			await readSse(okRes);
+
+			const badRes = await POST(
+				makeEvent(
+					`http://localhost/api/conversations/${conv.id}/actions/bad`,
+					{ id: conv.id, actionId: 'bad' },
+					user.id,
+					user
+				) as never
+			);
+			await readSse(badRes);
+
+			const phases = records.map((r) => ({
+				phase: r.detail?.phase,
+				outcome: r.outcome,
+				actionId: r.detail?.actionId
+			}));
+			// ok action: start (success) then end (success).
+			expect(phases).toContainEqual({ phase: 'start', outcome: 'success', actionId: 'ok' });
+			expect(phases).toContainEqual({ phase: 'end', outcome: 'success', actionId: 'ok' });
+			// bad action: start (success/launched) then end (failure).
+			expect(phases).toContainEqual({ phase: 'start', outcome: 'success', actionId: 'bad' });
+			expect(phases).toContainEqual({ phase: 'end', outcome: 'failure', actionId: 'bad' });
+			const badEnd = records.find((r) => r.detail?.actionId === 'bad' && r.detail?.phase === 'end');
+			expect(badEnd?.detail?.code).toBe(3);
+		} finally {
+			setAuditSink(null);
+		}
+	});
+
 	it('POST runs with cwd = the conversation workdir, not PROJECT_ROOT', async () => {
 		const otherWorkdir = mkdtempSync(join(tmpdir(), 'portal-actions-other-'));
 		process.env.ALLOWED_WORKDIRS = `${projectRoot},${otherWorkdir}`;

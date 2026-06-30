@@ -159,6 +159,29 @@ describe('runStep cwd selection', () => {
 	});
 });
 
+describe('runStep spawn error', () => {
+	it('emits a single step-done with a non-zero code when the command does not exist', async () => {
+		const events: ActionEvent[] = [];
+		const code = await runStep(
+			{
+				label: 'missing',
+				command: '/nonexistent/definitely-not-a-real-binary',
+				args: [],
+				display: 'missing',
+				inheritEnv: false,
+				env: { PATH: process.env.PATH }
+			},
+			(ev) => events.push(ev)
+		);
+		expect(code).not.toBe(0);
+		const stepDones = events.filter((ev) => ev.type === 'step-done');
+		expect(stepDones).toHaveLength(1);
+		expect(events.at(-1)?.type).toBe('step-done');
+		// The spawn error is surfaced as a scrubbed stderr log before the step-done.
+		expect(logsOf(events).some((ev) => ev.text.includes('spawn error'))).toBe(true);
+	});
+});
+
 describe('runStep kill-on-abort', () => {
 	it('kills a long-running child when the signal aborts', async () => {
 		const events: ActionEvent[] = [];

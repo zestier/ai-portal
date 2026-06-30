@@ -241,22 +241,28 @@ export function runStep(
 		};
 		p.stdout.on('data', (b: Buffer) => onChunk('stdout', b));
 		p.stderr.on('data', (b: Buffer) => onChunk('stderr', b));
-		p.on('error', (err) => {
+		// A spawn failure (e.g. ENOENT) fires 'error'; depending on the Node
+		// version 'close' may also follow. Guard so the stream gets exactly one
+		// terminal `step-done` and the promise resolves once.
+		let settled = false;
+		const finish = (code: number) => {
+			if (settled) return;
+			settled = true;
 			cleanup();
+			flushStream('stdout');
+			flushStream('stderr');
+			emit({ type: 'step-done', label: step.label, code });
+			resolve(code);
+		};
+		p.on('error', (err) => {
 			emit({
 				type: 'log',
 				stream: 'stderr',
 				text: scrubLog(`spawn error: ${err.message}\n`)
 			});
-			resolve(1);
+			finish(1);
 		});
-		p.on('close', (code) => {
-			cleanup();
-			flushStream('stdout');
-			flushStream('stderr');
-			emit({ type: 'step-done', label: step.label, code: code ?? 1 });
-			resolve(code ?? 1);
-		});
+		p.on('close', (code) => finish(code ?? 1));
 	});
 }
 

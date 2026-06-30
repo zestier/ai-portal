@@ -103,27 +103,60 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 
 	try {
 		const steps = actionToSteps(action, workdir, resolved.values);
+		const permission = action.permission;
 		log.info('action.start', { userId, conversationId: conversation.id, actionId });
+		// "start" row: the run was authorized and launched. A terminal row with
+		// the real success/failure outcome is written when the sequence finishes
+		// (see below) so the trail distinguishes "launched" from "completed OK".
 		audit({
 			event_type: 'action_run',
 			actor_login: actorLogin,
 			actor_ip: actorIp,
 			resource,
 			outcome: 'success',
-			detail: { actionId, permission: action.permission, steps: steps.length }
+			detail: { actionId, permission, steps: steps.length, phase: 'start' }
 		});
 
 		async function* withGuardRelease() {
+			let terminal:
+				| { ok: true }
+				| { ok: false; failedStep?: string | undefined; code?: number | undefined }
+				| null = null;
 			try {
 				// rollover stays false: the restart capability is reserved to the
 				// built-in redeploy and is not reachable from project config.
-				yield* runSequence(steps, {
+				for await (const ev of runSequence(steps, {
 					rollover: false,
 					signal: request.signal,
 					logLabel: `action.${actionId}`
-				});
+				})) {
+					if (ev.type === 'done') {
+						terminal = ev.ok
+							? { ok: true }
+							: { ok: false, failedStep: ev.failedStep, code: ev.code };
+					}
+					yield ev;
+				}
 			} finally {
 				releaseActionRun(conversation.id, actionId);
+				// "end" row reflecting the real outcome. A null terminal means the
+				// stream was torn down before a `done` event (client disconnect /
+				// abort) — record that as a failure so an incomplete run is visible.
+				const endDetail: Record<string, unknown> = { actionId, permission, phase: 'end' };
+				if (!terminal) {
+					endDetail.aborted = true;
+				} else if (!terminal.ok) {
+					if (terminal.failedStep !== undefined) endDetail.failedStep = terminal.failedStep;
+					if (terminal.code !== undefined) endDetail.code = terminal.code;
+				}
+				audit({
+					event_type: 'action_run',
+					actor_login: actorLogin,
+					actor_ip: actorIp,
+					resource,
+					outcome: terminal?.ok ? 'success' : 'failure',
+					detail: endDetail
+				});
 			}
 		}
 

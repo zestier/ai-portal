@@ -29,11 +29,22 @@ const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const ACTION_ID = /^[a-z0-9][a-z0-9-]*$/;
 const INPUT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+// Generous upper bounds so a committed (or prompt-injected) config can't drive
+// unbounded UI rendering or argv construction. Realistic configs sit far below
+// these; they exist only to fail a pathological file closed with a clear error
+// rather than letting it through.
+const MAX_ACTIONS = 100;
+const MAX_STEPS = 50;
+const MAX_ARGS = 200;
+const MAX_INPUTS = 50;
+const MAX_OPTIONS = 100;
+const MAX_ENV = 50;
+
 const StepSchema = z
 	.object({
 		label: z.string().trim().min(1).optional(),
 		command: z.string().trim().min(1, 'step command must be non-empty'),
-		args: z.array(z.string()).default([])
+		args: z.array(z.string()).max(MAX_ARGS, `a step may have at most ${MAX_ARGS} args`).default([])
 	})
 	.strict();
 
@@ -54,7 +65,10 @@ const InputSchema = z
 		// number -> number).
 		default: z.union([z.string(), z.number()]).optional(),
 		// enum only; each option a non-empty string.
-		options: z.array(z.string().min(1)).optional(),
+		options: z
+			.array(z.string().min(1))
+			.max(MAX_OPTIONS, `an input may have at most ${MAX_OPTIONS} options`)
+			.optional(),
 		placeholder: z.string().optional()
 	})
 	.strict();
@@ -67,6 +81,7 @@ const ActionSchema = z
 		permission: z.enum(['user', 'admin']).default('user'),
 		env: z
 			.array(z.string().regex(ENV_NAME, 'env entries must be env var NAMES, not values'))
+			.max(MAX_ENV, `an action may allowlist at most ${MAX_ENV} env names`)
 			.default([])
 			.superRefine((names, ctx) => {
 				for (const name of names) {
@@ -82,8 +97,14 @@ const ActionSchema = z
 					}
 				}
 			}),
-		inputs: z.array(InputSchema).default([]),
-		steps: z.array(StepSchema).min(1, 'an action needs at least one step')
+		inputs: z
+			.array(InputSchema)
+			.max(MAX_INPUTS, `an action may have at most ${MAX_INPUTS} inputs`)
+			.default([]),
+		steps: z
+			.array(StepSchema)
+			.min(1, 'an action needs at least one step')
+			.max(MAX_STEPS, `an action may have at most ${MAX_STEPS} steps`)
 	})
 	.strict()
 	.superRefine((action, ctx) => {
@@ -158,7 +179,10 @@ const ActionSchema = z
 const ConfigSchema = z
 	.object({
 		version: z.literal(1, { message: 'version must be 1' }),
-		actions: z.array(ActionSchema).default([])
+		actions: z
+			.array(ActionSchema)
+			.max(MAX_ACTIONS, `at most ${MAX_ACTIONS} actions are allowed`)
+			.default([])
 	})
 	.strict()
 	.superRefine((cfg, ctx) => {

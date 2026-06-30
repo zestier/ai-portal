@@ -278,6 +278,46 @@ describe('parseActionsConfig — typed inputs', () => {
 	});
 });
 
+describe('parseActionsConfig — array bounds', () => {
+	it('rejects more than the maximum number of actions', () => {
+		const actions = Array.from({ length: 101 }, (_, i) => ({
+			id: `a${i}`,
+			label: 'A',
+			steps: [{ command: 'ls' }]
+		}));
+		const res = parseActionsConfig({ version: 1, actions });
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('at most');
+	});
+
+	it('rejects an action with too many steps', () => {
+		const steps = Array.from({ length: 51 }, () => ({ command: 'ls' }));
+		const res = parseActionsConfig({ version: 1, actions: [{ id: 'x', label: 'X', steps }] });
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('at most');
+	});
+
+	it('rejects a step with too many args', () => {
+		const args = Array.from({ length: 201 }, () => 'x');
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [{ id: 'x', label: 'X', steps: [{ command: 'echo', args }] }]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('at most');
+	});
+
+	it('rejects an action with too many inputs', () => {
+		const inputs = Array.from({ length: 51 }, (_, i) => ({ name: `i${i}`, label: 'I' }));
+		const res = parseActionsConfig({
+			version: 1,
+			actions: [{ id: 'x', label: 'X', inputs, steps: [{ command: 'ls' }] }]
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toContain('at most');
+	});
+});
+
 describe('loadActionsConfig — file IO', () => {
 	it('returns empty actions when the file is absent', async () => {
 		const dir = makeTmpDir('portal-actions-');
