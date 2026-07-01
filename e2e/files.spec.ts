@@ -394,6 +394,53 @@ test('Changes tab ignores stale diff responses after rapid selection changes', a
 	await expect(page.locator('.diff')).not.toContainText('STALE');
 });
 
+test('Changes tab "Revert all" requires confirmation and then discards changes', async ({
+	page,
+	request
+}) => {
+	const workdir = createWorkdir();
+	const { id } = await createConversation(request, workdir);
+	const g = (args: string[]) => execFileSync('git', args, { cwd: workdir, stdio: 'pipe' });
+	g(['init', '-q', '-b', 'main']);
+	g(['config', 'user.email', 'e2e@example.com']);
+	g(['config', 'user.name', 'E2E']);
+	g(['config', 'commit.gpgsign', 'false']);
+	writeFileSync(join(workdir, 'tracked.txt'), 'one\ntwo\n');
+	g(['add', 'tracked.txt']);
+	g(['commit', '-q', '-m', 'baseline']);
+	// Working-tree changes: one modified tracked file + one untracked file.
+	writeFileSync(join(workdir, 'tracked.txt'), 'one\nTWO\nthree\n');
+	writeFileSync(join(workdir, 'untracked.txt'), 'fresh\n');
+
+	await page.goto(`/conversations/${id}`);
+	await page.getByRole('tab', { name: 'Changes' }).click();
+
+	const revertBtn = page.getByRole('button', { name: 'Revert all' });
+	await expect(revertBtn).toBeEnabled();
+
+	// First click only opens a confirmation dialog naming the affected count; it
+	// must not discard anything yet.
+	await revertBtn.click();
+	const dialog = page.getByRole('alertdialog');
+	await expect(dialog).toBeVisible();
+	await expect(dialog).toContainText('2 uncommitted changes');
+
+	// Cancel leaves the working tree untouched.
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+	let changes = await (await request.get(`/api/conversations/${id}/git/changes`)).json();
+	expect(changes.entries.length).toBe(2);
+
+	// Confirming actually reverts: tracked file reset, untracked file deleted.
+	await revertBtn.click();
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole('button', { name: 'Revert all' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByRole('button', { name: 'Revert all' })).toBeDisabled();
+	changes = await (await request.get(`/api/conversations/${id}/git/changes`)).json();
+	expect(changes.entries.length).toBe(0);
+});
+
 test('Review comments on file lines can be sent to the chat composer', async ({
 	page,
 	request

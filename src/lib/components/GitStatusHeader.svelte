@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { fetchHeadStatus, type HeadStatus } from '$lib/client/file-browser';
 	import Alert from './ui/Alert.svelte';
+	import ConfirmDialog from './ui/ConfirmDialog.svelte';
 
 	let {
 		conversationId,
@@ -17,6 +18,7 @@
 	let error = $state<string | null>(null);
 	let loading = $state(false);
 	let reverting = $state(false);
+	let confirmOpen = $state(false);
 
 	async function load() {
 		loading = true;
@@ -39,12 +41,17 @@
 		});
 	});
 
-	async function revertAll() {
+	function requestRevert() {
 		if (!head?.initialized || head.dirtyCount === 0 || reverting) return;
-		const confirmed = window.confirm(
-			'Discard all local changes? This resets tracked files and deletes untracked files.'
-		);
-		if (!confirmed) return;
+		confirmOpen = true;
+	}
+
+	function cancelRevert() {
+		confirmOpen = false;
+	}
+
+	async function confirmRevert() {
+		if (!head?.initialized || head.dirtyCount === 0 || reverting) return;
 
 		reverting = true;
 		error = null;
@@ -59,6 +66,7 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			reverting = false;
+			confirmOpen = false;
 		}
 	}
 </script>
@@ -107,12 +115,35 @@
 			class:is-loading={reverting}
 			disabled={head.dirtyCount === 0 || reverting}
 			title="Revert all local changes"
-			onclick={revertAll}
+			onclick={requestRevert}
 		>
 			Revert all
 		</button>
 	{/if}
 </div>
+
+{#if head?.initialized}
+	<ConfirmDialog
+		open={confirmOpen}
+		title="Discard all local changes?"
+		confirmLabel="Revert all"
+		cancelLabel="Cancel"
+		danger
+		busy={reverting}
+		onConfirm={confirmRevert}
+		onCancel={cancelRevert}
+	>
+		<p>
+			This permanently discards
+			<strong
+				>{head?.dirtyCount ?? 0} uncommitted change{(head?.dirtyCount ?? 0) === 1
+					? ''
+					: 's'}</strong
+			>
+			in the working tree: tracked files are reset and untracked files are deleted. This cannot be undone.
+		</p>
+	</ConfirmDialog>
+{/if}
 
 <style>
 	.git-status {

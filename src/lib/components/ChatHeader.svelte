@@ -9,6 +9,7 @@
 		SessionMode
 	} from '$lib/types';
 	import ContextMeter from './ContextMeter.svelte';
+	import ConfirmDialog from './ui/ConfirmDialog.svelte';
 
 	let {
 		title,
@@ -75,6 +76,7 @@
 	let savingHarvesterBackend = $state(false);
 	let savingGlobalMemory = $state(false);
 	let savingApprove = $state(false);
+	let approveConfirmOpen = $state(false);
 	let resetting = $state(false);
 	let resetFlash = $state<'ok' | 'err' | null>(null);
 	let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -324,8 +326,34 @@
 		}
 	}
 
-	async function toggleApproveAll(e: Event) {
-		const next = (e.currentTarget as HTMLInputElement).checked;
+	function toggleApproveAll(e: Event) {
+		const target = e.currentTarget as HTMLInputElement;
+		const next = target.checked;
+		if (savingApprove) {
+			target.checked = approveAllTools;
+			return;
+		}
+		if (next) {
+			// Enabling auto-approve is a user-wide grant that leaks into every other
+			// conversation, so gate it behind an explicit confirmation. Snap the
+			// checkbox back until the user confirms.
+			target.checked = approveAllTools;
+			approveConfirmOpen = true;
+			return;
+		}
+		void applyApproveAll(false);
+	}
+
+	function cancelApproveAll() {
+		approveConfirmOpen = false;
+	}
+
+	async function confirmApproveAll() {
+		await applyApproveAll(true);
+		approveConfirmOpen = false;
+	}
+
+	async function applyApproveAll(next: boolean) {
 		if (savingApprove) return;
 		savingApprove = true;
 		const prev = approveAllTools;
@@ -715,6 +743,25 @@
 		</div>
 	</div>
 </header>
+
+<ConfirmDialog
+	open={approveConfirmOpen}
+	title="Approve all tool calls?"
+	confirmLabel="Enable for my account"
+	cancelLabel="Cancel"
+	danger
+	busy={savingApprove}
+	onConfirm={confirmApproveAll}
+	onCancel={cancelApproveAll}
+>
+	<p>
+		This blanket-approves every tool call without prompting. The grant is scoped to
+		<strong>your user account, not this conversation</strong>, so it takes effect in
+		<strong>all of your conversations</strong> — including future ones. Each auto-approved portal
+		tool is still recorded in the audit log as <code>auto-allow</code>. You can turn it back off at
+		any time.
+	</p>
+</ConfirmDialog>
 
 <style>
 	.chat-header {

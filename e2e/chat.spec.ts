@@ -175,3 +175,43 @@ test('an armed follow-up auto-sends after the active turn finishes', async ({ pa
 		page.getByRole('button', { name: 'Send when current response finishes' })
 	).toHaveCount(0);
 });
+
+test('"Approve all tool calls" is gated behind a user-wide confirmation', async ({
+	page,
+	request
+}) => {
+	const id = await createConversation(request, uniqueTitle('E2E approve-all'));
+	await page.goto(`/conversations/${id}`);
+
+	// Expand the conversation-settings panel that hosts the toggle.
+	await page.locator('[aria-controls="chat-header-details"]').click();
+
+	const toggle = page.getByRole('checkbox', { name: 'Approve all tool calls' });
+	await expect(toggle).not.toBeChecked();
+
+	// Clicking only opens a confirmation that spells out the user-wide blast
+	// radius; the toggle must snap back off until the user confirms.
+	await toggle.click();
+	const dialog = page.getByRole('alertdialog');
+	await expect(dialog).toBeVisible();
+	await expect(dialog).toContainText('all of your conversations');
+	await expect(toggle).not.toBeChecked();
+
+	// Cancel: nothing changes.
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(toggle).not.toBeChecked();
+
+	// Confirm: the grant is applied and the toggle reflects it.
+	await toggle.click();
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole('button', { name: 'Enable for my account' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(toggle).toBeChecked();
+
+	// Turning it back off needs no confirmation (disabling is not destructive),
+	// and restores a clean state for the rest of the shared suite.
+	await toggle.click();
+	await expect(page.getByRole('alertdialog')).toHaveCount(0);
+	await expect(toggle).not.toBeChecked();
+});
