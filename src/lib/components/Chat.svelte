@@ -18,6 +18,7 @@
 	import Composer from './Composer.svelte';
 	import EmptyState from './ui/EmptyState.svelte';
 	import { addInteractive, removeInteractive } from '$lib/client/interactive-queue';
+	import { PORTAL_TOOL_GROUP_IDS, type PortalToolGroupId } from '$lib/tools/groups';
 	import { isBlockingKind } from '$lib/interactive/request-registry';
 	import { setAwaitingInput, clearAwaitingInput } from '$lib/client/awaiting-input';
 	import { findToolCallRecord } from '$lib/client/tool-call-record';
@@ -108,6 +109,9 @@
 	);
 	let globalMemoryEnabled = $state<boolean>(untrack(() => conversation.globalMemoryEnabled));
 	let approveAllTools = $state<boolean>(untrack(() => conversation.approveAllTools));
+	let disabledToolGroups = $state<PortalToolGroupId[]>(
+		untrack(() => conversation.disabledToolGroups)
+	);
 	let usage = $state<ConversationUsage | null>(untrack(() => initialUsage));
 	let recentCompaction = $state<{ tokensRemoved?: number; messagesRemoved?: number } | null>(null);
 	let compactionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -194,6 +198,7 @@
 			memoryExtractorBackend = conversation.memoryExtractorBackend;
 			globalMemoryEnabled = conversation.globalMemoryEnabled;
 			approveAllTools = conversation.approveAllTools;
+			disabledToolGroups = conversation.disabledToolGroups;
 			usage = initialUsage;
 			composer = initialComposer;
 			recentCompaction = null;
@@ -884,6 +889,10 @@
 				if (ev.mode !== undefined) sessionMode = ev.mode;
 				if (ev.memoryMode !== undefined) memoryMode = ev.memoryMode;
 				if (ev.approveAllTools !== undefined) approveAllTools = ev.approveAllTools;
+				if (ev.disabledToolGroups !== undefined)
+					disabledToolGroups = ev.disabledToolGroups.filter((g): g is PortalToolGroupId =>
+						(PORTAL_TOOL_GROUP_IDS as readonly string[]).includes(g)
+					);
 				break;
 			}
 			case 'context.usage': {
@@ -1271,6 +1280,7 @@
 		{memoryExtractorBackend}
 		{globalMemoryEnabled}
 		{approveAllTools}
+		{disabledToolGroups}
 		modelChangeDisabled={streaming}
 		onSettingsChange={(patch) => {
 			if (patch.model !== undefined) sessionModel = patch.model;
@@ -1282,6 +1292,7 @@
 				memoryExtractorBackend = patch.memoryExtractorBackend;
 			if (patch.globalMemoryEnabled !== undefined) globalMemoryEnabled = patch.globalMemoryEnabled;
 			if (patch.approveAllTools !== undefined) approveAllTools = patch.approveAllTools;
+			if (patch.disabledToolGroups !== undefined) disabledToolGroups = patch.disabledToolGroups;
 		}}
 	/>
 

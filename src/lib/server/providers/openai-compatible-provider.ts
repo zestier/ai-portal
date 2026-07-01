@@ -16,6 +16,7 @@ import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
+import { filterPortalToolGroups } from '../tools/filter-groups';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type { BackendProviderId, PortalEvent, SessionMode, ToolCallRecord } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
@@ -924,27 +925,30 @@ function buildOpenAITools(opts: {
 	getMode: () => SessionMode;
 	emit: (ev: PortalEvent) => void;
 }): PortalTool[] {
-	return [
-		...buildGitTools(opts.opts.workingDirectory),
-		...buildFilesystemTools(opts.opts.workingDirectory),
-		...buildTicketTools({
-			userId: opts.opts.userId,
-			workspaceKey: ticketWorkspaceFromConversation(opts.opts.workingDirectory),
-			conversationId: opts.opts.conversationId
-		}),
-		...buildPermissionTools({
-			userId: opts.opts.userId,
-			conversationId: opts.opts.conversationId,
-			policy: opts.opts.policy,
-			getMode: opts.getMode,
-			emit: opts.emit
-		}),
-		...buildMemoryTools({
-			userId: opts.opts.userId,
-			conversationId: opts.opts.conversationId,
-			mode: opts.opts.memoryMode ?? 'off',
-			globalMemoryEnabled: opts.opts.globalMemoryEnabled === true
-		}),
-		...buildPromptTemplateTools({ userId: opts.opts.userId })
-	];
+	return filterPortalToolGroups(
+		{
+			git: buildGitTools(opts.opts.workingDirectory),
+			filesystem: buildFilesystemTools(opts.opts.workingDirectory),
+			tickets: buildTicketTools({
+				userId: opts.opts.userId,
+				workspaceKey: ticketWorkspaceFromConversation(opts.opts.workingDirectory),
+				conversationId: opts.opts.conversationId
+			}),
+			permissions: buildPermissionTools({
+				userId: opts.opts.userId,
+				conversationId: opts.opts.conversationId,
+				policy: opts.opts.policy,
+				getMode: opts.getMode,
+				emit: opts.emit
+			}),
+			memory: buildMemoryTools({
+				userId: opts.opts.userId,
+				conversationId: opts.opts.conversationId,
+				mode: opts.opts.memoryMode ?? 'off',
+				globalMemoryEnabled: opts.opts.globalMemoryEnabled === true
+			}),
+			'prompt-templates': buildPromptTemplateTools({ userId: opts.opts.userId })
+		},
+		opts.opts.disabledToolGroups
+	);
 }

@@ -10,6 +10,7 @@
 	} from '$lib/types';
 	import ContextMeter from './ContextMeter.svelte';
 	import ConfirmDialog from './ui/ConfirmDialog.svelte';
+	import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
 
 	let {
 		title,
@@ -29,6 +30,7 @@
 		memoryExtractorBackend,
 		globalMemoryEnabled,
 		approveAllTools,
+		disabledToolGroups,
 		modelChangeDisabled = false,
 		onSettingsChange
 	}: {
@@ -54,6 +56,7 @@
 		memoryExtractorBackend: MemoryExtractorBackend | null;
 		globalMemoryEnabled: boolean;
 		approveAllTools: boolean;
+		disabledToolGroups: PortalToolGroupId[];
 		modelChangeDisabled?: boolean;
 		// Fires with the optimistic patch right before the PATCH request,
 		// so the parent can mirror state without waiting for the SSE echo.
@@ -65,6 +68,7 @@
 			memoryExtractorBackend?: MemoryExtractorBackend | null;
 			globalMemoryEnabled?: boolean;
 			approveAllTools?: boolean;
+			disabledToolGroups?: PortalToolGroupId[];
 		}) => void;
 	} = $props();
 
@@ -76,6 +80,7 @@
 	let savingHarvesterBackend = $state(false);
 	let savingGlobalMemory = $state(false);
 	let savingApprove = $state(false);
+	let savingToolGroups = $state(false);
 	let approveConfirmOpen = $state(false);
 	let resetting = $state(false);
 	let resetFlash = $state<'ok' | 'err' | null>(null);
@@ -205,6 +210,7 @@
 		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
 		approveAllTools?: boolean;
+		disabledToolGroups?: PortalToolGroupId[];
 	}) {
 		const res = await fetch(`/api/conversations/${conversation.id}/session`, {
 			method: 'PATCH',
@@ -364,6 +370,30 @@
 			onSettingsChange?.({ approveAllTools: prev });
 		} finally {
 			savingApprove = false;
+		}
+	}
+
+	const disabledToolGroupSet = $derived(new Set<PortalToolGroupId>(disabledToolGroups));
+
+	async function toggleToolGroup(id: PortalToolGroupId, e: Event) {
+		const target = e.currentTarget as HTMLInputElement;
+		// checked = group enabled; unchecked = group disabled.
+		const enabled = target.checked;
+		if (savingToolGroups) {
+			target.checked = !disabledToolGroupSet.has(id);
+			return;
+		}
+		const prev = disabledToolGroups;
+		const next = enabled ? prev.filter((g) => g !== id) : prev.includes(id) ? prev : [...prev, id];
+		savingToolGroups = true;
+		onSettingsChange?.({ disabledToolGroups: next });
+		try {
+			await patchSession({ disabledToolGroups: next });
+		} catch {
+			onSettingsChange?.({ disabledToolGroups: prev });
+			target.checked = !prev.includes(id);
+		} finally {
+			savingToolGroups = false;
 		}
 	}
 
@@ -738,6 +768,32 @@
 							alternatives, but it must stop once extra permission is truly required.
 						</p>
 					{/if}
+					<div class="tool-groups">
+						<div class="tool-groups-head">
+							<span class="tool-groups-title">Portal tool groups</span>
+							<span class="tool-groups-sub">Checked = available to the agent this session.</span>
+						</div>
+						<div class="tool-groups-grid">
+							{#each PORTAL_TOOL_GROUPS as group (group.id)}
+								<label class="approve-toggle tool-group" title={group.hint}>
+									<input
+										type="checkbox"
+										checked={!disabledToolGroupSet.has(group.id)}
+										disabled={savingToolGroups}
+										onchange={(e) => toggleToolGroup(group.id, e)}
+									/>
+									<span>{group.label}</span>
+								</label>
+							{/each}
+						</div>
+						<p class="tool-groups-note" role="note">
+							Native CLI tools (bash, view, edit, task, web_fetch…) come from the Copilot runtime
+							and are always available — these toggles only cover portal-injected tools. Disabling
+							<strong>Permissions</strong> removes the agent's self-service grant tools; disabling
+							<strong>Memory</strong> gates the memory tools on top of the memory-mode setting. Changes
+							take effect on the next turn.
+						</p>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -1069,5 +1125,41 @@
 	.approve-warning code {
 		font-family: var(--mono);
 		font-size: var(--fs-lg);
+	}
+	.tool-groups {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		margin-top: var(--space-1);
+		padding-top: var(--space-2);
+		border-top: 1px solid var(--border);
+	}
+	.tool-groups-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: var(--space-1) var(--space-2);
+	}
+	.tool-groups-title {
+		font-weight: 600;
+		font-size: var(--fs-sm);
+	}
+	.tool-groups-sub {
+		font-size: var(--fs-xs);
+		opacity: 0.72;
+	}
+	.tool-groups-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 2px var(--space-2);
+	}
+	.tool-group {
+		min-width: 0;
+	}
+	.tool-groups-note {
+		margin: 0;
+		font-size: var(--fs-xs);
+		opacity: 0.78;
+		line-height: 1.4;
 	}
 </style>

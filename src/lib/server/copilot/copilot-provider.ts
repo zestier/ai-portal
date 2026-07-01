@@ -35,6 +35,7 @@ import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildFilesystemTools } from '../tools/filesystem';
+import { filterPortalToolGroups } from '../tools/filter-groups';
 import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { wrapToolsForStreaming } from './tool-streaming';
@@ -237,29 +238,32 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			messagesRepo.updateBackgroundAgentLifecycle(ev.toolCallId, ev.agentId, ev.status);
 		}
 	});
-	const portalTools = [
-		...buildGitTools(opts.workingDirectory),
-		...buildFilesystemTools(opts.workingDirectory),
-		...buildTicketTools({
-			userId: opts.userId,
-			workspaceKey: ticketWorkspaceFromConversation(opts.workingDirectory),
-			conversationId: opts.conversationId
-		}),
-		...buildPermissionTools({
-			userId: opts.userId,
-			conversationId: opts.conversationId,
-			policy: opts.policy,
-			getMode: () => currentMode,
-			emit
-		}),
-		...buildMemoryTools({
-			userId: opts.userId,
-			conversationId: opts.conversationId,
-			mode: opts.memoryMode ?? 'off',
-			globalMemoryEnabled: opts.globalMemoryEnabled === true
-		}),
-		...buildPromptTemplateTools({ userId: opts.userId })
-	];
+	const portalTools = filterPortalToolGroups(
+		{
+			git: buildGitTools(opts.workingDirectory),
+			filesystem: buildFilesystemTools(opts.workingDirectory),
+			tickets: buildTicketTools({
+				userId: opts.userId,
+				workspaceKey: ticketWorkspaceFromConversation(opts.workingDirectory),
+				conversationId: opts.conversationId
+			}),
+			permissions: buildPermissionTools({
+				userId: opts.userId,
+				conversationId: opts.conversationId,
+				policy: opts.policy,
+				getMode: () => currentMode,
+				emit
+			}),
+			memory: buildMemoryTools({
+				userId: opts.userId,
+				conversationId: opts.conversationId,
+				mode: opts.memoryMode ?? 'off',
+				globalMemoryEnabled: opts.globalMemoryEnabled === true
+			}),
+			'prompt-templates': buildPromptTemplateTools({ userId: opts.userId })
+		},
+		opts.disabledToolGroups
+	);
 	const validateCustomToolArgs = buildToolArgsValidator(portalTools);
 	const derivePermissionRequest = buildPermissionRequestResolver(portalTools);
 	const {

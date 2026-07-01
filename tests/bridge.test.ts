@@ -399,6 +399,21 @@ describe('bridge.open() session mode and permissions', () => {
 		);
 	});
 
+	it('omits tools for disabled portal groups', async () => {
+		const { open } = await importBridge();
+		await open({ ...baseOpts, disabledToolGroups: ['git', 'tickets'] });
+
+		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{ name: string }>;
+		const names = tools.map((t) => t.name);
+		// Disabled groups drop out entirely...
+		expect(names).not.toContain('git_status');
+		expect(names).not.toContain('git_commit');
+		expect(names).not.toContain('ticket_add');
+		expect(names).not.toContain('ticket_list');
+		// ...while other groups remain.
+		expect(names).toContain('permission_capabilities');
+	});
+
 	it('permission_capabilities reports effective alternatives without raw grant internals', async () => {
 		const { open } = await importBridge();
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');

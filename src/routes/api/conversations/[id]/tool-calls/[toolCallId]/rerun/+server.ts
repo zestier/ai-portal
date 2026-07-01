@@ -106,6 +106,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
 			approveAllTools: conv.approveAllTools,
+			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,
 			...(providerToken !== undefined ? { providerAuthToken: providerToken } : {})

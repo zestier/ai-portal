@@ -2,6 +2,7 @@
 
 import type { GrantScope } from './permissions/scope-types';
 import type { TemplateBeforeSnapshot } from './permissions/prompt-template';
+import type { PortalToolGroupId } from './tools/groups';
 
 export type Role = 'user' | 'assistant' | 'system';
 export type MessageStatus = 'complete' | 'streaming' | 'interrupted' | 'error';
@@ -65,6 +66,13 @@ export interface Conversation {
 	 * model knows it's running in a less-supervised context.
 	 */
 	approveAllTools: boolean;
+	/**
+	 * Portal tool groups the user has disabled for this conversation. Empty =
+	 * all groups enabled (today's behaviour). Ids come from PORTAL_TOOL_GROUPS
+	 * in `$lib/tools/groups`; providers drop the matching tools when assembling
+	 * the session's portal tools, and a change forces a session recreate.
+	 */
+	disabledToolGroups: PortalToolGroupId[];
 	createdAt: number;
 	updatedAt: number;
 	archivedAt: number | null;
@@ -954,6 +962,7 @@ export type PortalEvent =
 			mode?: SessionMode;
 			memoryMode?: MemoryMode;
 			approveAllTools?: boolean;
+			disabledToolGroups?: PortalToolGroupId[];
 			// Free-form source label so the UI can show "Agent switched to
 			// plan mode" vs "You enabled autopilot" in a future iteration.
 			source?: 'user' | 'agent' | 'system';

@@ -13,6 +13,21 @@ import {
 	type MemoryMode,
 	type SessionMode
 } from '$lib/types';
+import { sanitizeDisabledToolGroups, type PortalToolGroupId } from '$lib/tools/groups';
+
+/**
+ * Parse the `disabled_tool_groups` JSON column into a validated id list.
+ * Tolerates NULL/legacy/garbage values (returns [] = all groups enabled) and
+ * drops any ids that are no longer recognized.
+ */
+function parseDisabledToolGroups(raw: string | null): PortalToolGroupId[] {
+	if (!raw) return [];
+	try {
+		return sanitizeDisabledToolGroups(JSON.parse(raw));
+	} catch {
+		return [];
+	}
+}
 
 interface ConvRow {
 	id: string;
@@ -33,6 +48,7 @@ interface ConvRow {
 	memory_extractor_backend: string | null;
 	global_memory_enabled: number | null;
 	approve_all_tools: number | null;
+	disabled_tool_groups: string | null;
 	draft_prompt: string | null;
 }
 
@@ -51,6 +67,7 @@ function rowToConv(r: ConvRow): Conversation {
 		memoryExtractorBackend: normalizeMemoryExtractorBackend(r.memory_extractor_backend),
 		globalMemoryEnabled: r.global_memory_enabled === 1,
 		approveAllTools: r.approve_all_tools === 1,
+		disabledToolGroups: parseDisabledToolGroups(r.disabled_tool_groups),
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
 		archivedAt: r.archived_at,
@@ -108,6 +125,7 @@ export interface CreateInput {
 	memoryExtractorModel?: string | null;
 	memoryExtractorBackend?: MemoryExtractorBackend | null;
 	globalMemoryEnabled?: boolean;
+	disabledToolGroups?: string[];
 	id?: string;
 	forkedFromConversationId?: string | null;
 	forkedFromMessageId?: string | null;
@@ -135,6 +153,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const memoryExtractorModel = normalizeOptionalModel(input.memoryExtractorModel);
 	const memoryExtractorBackend = normalizeMemoryExtractorBackend(input.memoryExtractorBackend);
 	const globalMemoryEnabled = input.globalMemoryEnabled === true;
+	const disabledToolGroups = sanitizeDisabledToolGroups(input.disabledToolGroups);
 	const provider =
 		input.provider ?? normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
 	const draftPrompt = input.draftPrompt ?? null;
@@ -142,9 +161,9 @@ export function create(userId: string, input: CreateInput): Conversation {
 		.prepare(
 			`INSERT INTO conversations(
 			   id, user_id, title, workdir, provider, model, mode, memory_mode, memory_extractor_model,
-			   memory_extractor_backend, global_memory_enabled, created_at, updated_at,
+			   memory_extractor_backend, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
 			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			id,
@@ -158,6 +177,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 			memoryExtractorModel,
 			memoryExtractorBackend,
 			globalMemoryEnabled ? 1 : 0,
+			JSON.stringify(disabledToolGroups),
 			now,
 			now,
 			forkConv,
@@ -178,6 +198,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 		memoryExtractorBackend,
 		globalMemoryEnabled,
 		approveAllTools: false,
+		disabledToolGroups,
 		createdAt: now,
 		updatedAt: now,
 		archivedAt: null,
@@ -251,6 +272,7 @@ export function updateSessionSettings(
 		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
 		approveAllTools?: boolean;
+		disabledToolGroups?: string[];
 	}
 ): boolean {
 	const sets: string[] = [];
@@ -282,6 +304,10 @@ export function updateSessionSettings(
 	if (patch.approveAllTools !== undefined) {
 		sets.push('approve_all_tools = ?');
 		args.push(patch.approveAllTools ? 1 : 0);
+	}
+	if (patch.disabledToolGroups !== undefined) {
+		sets.push('disabled_tool_groups = ?');
+		args.push(JSON.stringify(sanitizeDisabledToolGroups(patch.disabledToolGroups)));
 	}
 	if (sets.length === 0) return false;
 	sets.push('updated_at = ?');

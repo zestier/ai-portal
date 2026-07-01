@@ -8,6 +8,7 @@ import { getProvider } from '$lib/server/providers';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { parseBody } from '$lib/server/validate';
 import { MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
+import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import { log } from '$lib/server/log';
 
 // PATCH /api/conversations/:id/session — flip per-conversation SDK settings.
@@ -32,7 +33,10 @@ const PatchBody = z
 			.optional(),
 		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).nullable().optional(),
 		globalMemoryEnabled: z.boolean().optional(),
-		approveAllTools: z.boolean().optional()
+		approveAllTools: z.boolean().optional(),
+		disabledToolGroups: z
+			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
+			.optional()
 	})
 	.refine(
 		(b) =>
@@ -42,7 +46,8 @@ const PatchBody = z
 			b.memoryExtractorModel !== undefined ||
 			b.memoryExtractorBackend !== undefined ||
 			b.globalMemoryEnabled !== undefined ||
-			b.approveAllTools !== undefined,
+			b.approveAllTools !== undefined ||
+			b.disabledToolGroups !== undefined,
 		{
 			message: 'No fields to update'
 		}
@@ -62,18 +67,22 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		body.memoryExtractorBackend !== conv.memoryExtractorBackend;
 	const globalMemoryChanged =
 		body.globalMemoryEnabled !== undefined && body.globalMemoryEnabled !== conv.globalMemoryEnabled;
+	const toolGroupsChanged =
+		body.disabledToolGroups !== undefined &&
+		!sameGroupSet(sanitizeDisabledToolGroups(body.disabledToolGroups), conv.disabledToolGroups);
 	const turn = getTurn(conv.id);
 	if (
 		(modelChanged ||
 			memoryChanged ||
 			extractorModelChanged ||
 			extractorBackendChanged ||
-			globalMemoryChanged) &&
+			globalMemoryChanged ||
+			toolGroupsChanged) &&
 		turn?.status === 'running'
 	) {
 		throw error(
 			409,
-			'Cannot change model, memory mode, harvester model, harvester backend, or global memory while a turn is running.'
+			'Cannot change model, memory mode, harvester model, harvester backend, global memory, or tool groups while a turn is running.'
 		);
 	}
 
@@ -90,7 +99,10 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.globalMemoryEnabled !== undefined
 			? { globalMemoryEnabled: body.globalMemoryEnabled }
 			: {}),
-		...(body.approveAllTools !== undefined ? { approveAllTools: body.approveAllTools } : {})
+		...(body.approveAllTools !== undefined ? { approveAllTools: body.approveAllTools } : {}),
+		...(body.disabledToolGroups !== undefined
+			? { disabledToolGroups: body.disabledToolGroups }
+			: {})
 	};
 	convs.updateSessionSettings(conv.id, conv.userId, persistedPatch);
 	if (
@@ -98,8 +110,12 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		memoryChanged ||
 		extractorModelChanged ||
 		extractorBackendChanged ||
-		globalMemoryChanged
+		globalMemoryChanged ||
+		toolGroupsChanged
 	) {
+		// Portal tools are fixed at createSession/resumeSession — there is no live
+		// RPC to swap them — so releasing the pooled session is the mechanism that
+		// makes the next turn reopen with the filtered tool set.
 		await pool.release(conv.id);
 	}
 	const live =
@@ -107,7 +123,8 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		memoryChanged ||
 		extractorModelChanged ||
 		extractorBackendChanged ||
-		globalMemoryChanged
+		globalMemoryChanged ||
+		toolGroupsChanged
 			? null
 			: pool.getActive(conv.id);
 	if (live) {
@@ -171,3 +188,12 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	}
 	return json({ ok: true, supported: true });
 };
+
+// Order-insensitive equality for two disabled-group id lists (already
+// sanitized). Used to decide whether a tool-group change actually mutated the
+// set and therefore requires a session recreate.
+function sameGroupSet(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) return false;
+	const set = new Set(a);
+	return b.every((id) => set.has(id));
+}

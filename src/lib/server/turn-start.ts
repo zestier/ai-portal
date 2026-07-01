@@ -73,6 +73,7 @@ export async function startTurnFromUserMessage(
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
 			approveAllTools: conv.approveAllTools,
+			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,
 			...(authToken !== undefined ? { providerAuthToken: authToken } : {}),

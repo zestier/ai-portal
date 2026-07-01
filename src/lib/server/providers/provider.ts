@@ -53,6 +53,12 @@ export interface ProviderOpenOptions {
 	mode?: SessionMode;
 	/** Initial approve-all setting. Providers without approve-all support may ignore it. */
 	approveAllTools?: boolean;
+	/**
+	 * Portal tool groups disabled for this conversation. Providers drop the
+	 * matching tool group from the assembled portal tools. Empty/undefined =
+	 * all groups enabled.
+	 */
+	disabledToolGroups?: string[];
 	/** Portal-managed memory mode. Providers use it to expose memory tools. */
 	memoryMode?: MemoryMode;
 	/** Explicit opt-in for user-scoped global memory tools. */
