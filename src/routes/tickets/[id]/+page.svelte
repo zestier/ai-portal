@@ -14,9 +14,10 @@
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { ticketStatusActions, type TicketStatusAction } from '$lib/tickets/actions';
 	import { patchTicketStatus, patchTicketPriority } from '$lib/client/ticket-status';
+	import { deleteWorkspaceTicket } from '$lib/client/ticket-archive';
 	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
 	import { onMount } from 'svelte';
 
@@ -55,6 +56,7 @@
 	let busy = $state(false);
 	let errorMsg = $state<string | null>(null);
 	let archiveOpen = $state(false);
+	let deleteOpen = $state(false);
 
 	function flashError(msg: string) {
 		errorMsg = msg;
@@ -125,6 +127,38 @@
 
 	function cancelArchive() {
 		archiveOpen = false;
+	}
+
+	function requestDelete() {
+		if (busy) return;
+		deleteOpen = true;
+	}
+
+	function cancelDelete() {
+		deleteOpen = false;
+	}
+
+	async function confirmDelete() {
+		deleteOpen = false;
+		if (busy) return;
+		busy = true;
+		errorMsg = null;
+		try {
+			const result = await deleteWorkspaceTicket({
+				ticketId: ticket.id,
+				workspace: ticket.workspaceKey,
+				fetcher: fetch
+			});
+			if (!result.ok) {
+				flashError(`Could not delete ticket (${result.status ?? 'network'})`);
+				return;
+			}
+			await goto('/tickets');
+		} catch {
+			flashError('Could not delete ticket');
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function runChatAction(action: ChatPromptTemplate) {
@@ -231,6 +265,7 @@
 				{action.title}
 			</button>
 		{/each}
+		<button class="btn sm danger" disabled={busy} onclick={requestDelete}> Delete </button>
 	</div>
 
 	{#if errorMsg}
@@ -389,6 +424,26 @@
 		<div class="confirm-actions">
 			<button class="btn sm ghost" onclick={cancelArchive}>Cancel</button>
 			<button class="btn sm danger primary" onclick={confirmArchive}>Archive</button>
+		</div>
+	</div>
+</Modal>
+
+<Modal
+	open={deleteOpen}
+	onClose={cancelDelete}
+	role="alertdialog"
+	ariaLabel="Delete ticket permanently"
+	width="min(420px, 100%)"
+>
+	<div class="confirm">
+		<h2 class="confirm-title">Delete ticket permanently?</h2>
+		<p class="confirm-body">
+			This permanently removes the ticket, its attachments, and its blocking links from the
+			database. This cannot be undone.
+		</p>
+		<div class="confirm-actions">
+			<button class="btn sm ghost" onclick={cancelDelete}>Cancel</button>
+			<button class="btn sm danger primary" onclick={confirmDelete}>Delete permanently</button>
 		</div>
 	</div>
 </Modal>

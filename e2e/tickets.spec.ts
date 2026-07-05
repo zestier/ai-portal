@@ -77,6 +77,36 @@ test('detail toolbar transitions status in place and confirms archive', async ({
 	await expect(toolbar.getByRole('button', { name: 'Mark done' })).toHaveCount(0);
 });
 
+test('detail toolbar permanently deletes a ticket after confirmation', async ({
+	page,
+	request
+}) => {
+	const created = await request
+		.post('/api/tickets', { data: { title: 'Deletable ticket' } })
+		.then((r) => r.json());
+	const id: string = created.ticket.id;
+
+	await page.goto(`/tickets/${id}`);
+	const toolbar = page.getByRole('group', { name: 'Ticket actions' });
+
+	// Delete opens a confirmation dialog; cancelling leaves the ticket in place.
+	await toolbar.getByRole('button', { name: 'Delete', exact: true }).click();
+	const dialog = page.getByRole('alertdialog', { name: 'Delete ticket permanently' });
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByRole('heading', { name: 'Deletable ticket' })).toBeVisible();
+
+	// Confirming removes the ticket and navigates back to the index; the row is
+	// gone from the DB entirely (a direct GET 404s), not merely archived.
+	await toolbar.getByRole('button', { name: 'Delete', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Delete permanently' }).click();
+	await page.waitForURL(/\/tickets$/);
+
+	const after = await request.get(`/api/tickets/${id}`);
+	expect(after.status()).toBe(404);
+});
+
 test('tickets index browses, filters by status, and paginates', async ({ page, request }) => {
 	// The e2e suite shares one server + DB + default workspace across all specs
 	// (and CI retries), so tag this run's tickets with a unique prefix to keep

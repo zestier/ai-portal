@@ -65,6 +65,15 @@ export const DELETE: RequestHandler = ({ params, locals, url }) => {
 		const workspace = ticketWorkspaceFromInput(requestedWorkspace, userId);
 		if (current.workspaceKey !== workspace) throw error(404);
 	}
+	// `?purge=true` permanently removes the ticket row (cascading its dependency
+	// edges and attachments via FK ON DELETE CASCADE). The default — no flag —
+	// keeps the historical soft-delete behavior, archiving the ticket so it can
+	// still be reopened.
+	if (url.searchParams.get('purge') === 'true') {
+		const deleted = tickets.remove(params.id, userId);
+		if (!deleted) throw error(404);
+		return json({ ok: true, deleted: true });
+	}
 	const ticket = tickets.update(params.id, userId, { status: 'archived' });
 	if (!ticket) throw error(404);
 	return json({ ok: true, ticket });
