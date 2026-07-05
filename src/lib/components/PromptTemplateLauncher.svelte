@@ -2,6 +2,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { createPromptTemplateDraftChat } from '$lib/client/prompt-template-launch';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
+	import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 	import Modal from './ui/Modal.svelte';
 	import EmptyState from './ui/EmptyState.svelte';
 
@@ -34,6 +35,15 @@
 	function reportError(message: string) {
 		if (onError) onError(message);
 		else localError = message;
+	}
+
+	// Short "Git, Tickets off" summary for a template's disabled tool groups, or
+	// null when the template disables nothing (so we render no clutter).
+	function disabledGroupsSummary(template: PromptTemplateListItem): string | null {
+		const disabled = template.disabledToolGroups ?? [];
+		if (disabled.length === 0) return null;
+		const labels = PORTAL_TOOL_GROUPS.filter((g) => disabled.includes(g.id)).map((g) => g.label);
+		return `${labels.join(', ')} off`;
 	}
 
 	async function newBlankChat() {
@@ -249,6 +259,9 @@
 							>
 								<strong>{template.title}</strong>
 								<span>{template.description || 'Custom prompt template'}</span>
+								{#if disabledGroupsSummary(template)}
+									<span class="tool-groups-tag">{disabledGroupsSummary(template)}</span>
+								{/if}
 							</button>
 						{/each}
 					</div>
@@ -355,5 +368,12 @@
 	.template-card span {
 		color: var(--text-muted);
 		font-size: var(--fs-sm);
+	}
+	.tool-groups-tag {
+		color: var(--text-muted);
+		font-size: var(--fs-xs);
+		font-variant: all-small-caps;
+		letter-spacing: 0.04em;
+		opacity: 0.85;
 	}
 </style>

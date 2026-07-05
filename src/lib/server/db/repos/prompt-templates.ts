@@ -17,6 +17,7 @@ import {
 	type SessionMode,
 	type TicketLaunchBehavior
 } from '$lib/types';
+import { sanitizeDisabledToolGroups, type PortalToolGroupId } from '$lib/tools/groups';
 
 interface PromptTemplateRow {
 	id: string;
@@ -28,6 +29,7 @@ interface PromptTemplateRow {
 	launch_behavior: string | null;
 	conversation_mode: string | null;
 	model: string | null;
+	disabled_tool_groups: string | null;
 	status: string;
 	pinned: number;
 	order_index: number;
@@ -46,6 +48,16 @@ function normalizeModelOverride(raw: string | null | undefined): string | null {
 	return trimmed ? trimmed : null;
 }
 
+/** Parse the `disabled_tool_groups` JSON column into a validated id list. */
+function parseDisabledToolGroups(raw: string | null): PortalToolGroupId[] {
+	if (!raw) return [];
+	try {
+		return sanitizeDisabledToolGroups(JSON.parse(raw));
+	} catch {
+		return [];
+	}
+}
+
 function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 	const type = normalizePromptTemplateType(row.type);
 	return {
@@ -62,6 +74,7 @@ function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 				? normalizeSessionMode(row.conversation_mode)
 				: null,
 		model: type === 'ticket-action' ? (row.model ?? null) : null,
+		disabledToolGroups: type === 'chat' ? parseDisabledToolGroups(row.disabled_tool_groups) : [],
 		status: normalizeStatus(row.status),
 		pinned: row.pinned === 1,
 		orderIndex: row.order_index,
@@ -130,6 +143,7 @@ export interface CreateInput {
 	launchBehavior?: TicketLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
 	model?: string | null;
+	disabledToolGroups?: string[];
 	pinned?: boolean;
 	orderIndex?: number;
 }
@@ -145,6 +159,8 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 	const launchBehavior = type === 'ticket-action' ? (input.launchBehavior ?? 'send') : null;
 	const conversationMode = type === 'ticket-action' ? (input.conversationMode ?? null) : null;
 	const model = type === 'ticket-action' ? normalizeModelOverride(input.model) : null;
+	const disabledToolGroups =
+		type === 'chat' ? sanitizeDisabledToolGroups(input.disabledToolGroups) : [];
 	const id = input.id ?? ulid();
 	const now = Date.now();
 	const orderIndex = Number.isFinite(input.orderIndex) ? Math.trunc(input.orderIndex ?? 0) : 0;
@@ -152,8 +168,8 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		.prepare(
 			`INSERT INTO prompt_templates(
 			   id, user_id, type, title, description, prompt, launch_behavior, conversation_mode,
-			   model, status, pinned, order_index, created_at, updated_at, archived_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+			   model, disabled_tool_groups, status, pinned, order_index, created_at, updated_at, archived_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 		)
 		.run(
 			id,
@@ -165,6 +181,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 			launchBehavior,
 			conversationMode,
 			model,
+			JSON.stringify(disabledToolGroups),
 			input.pinned ? 1 : 0,
 			orderIndex,
 			now,
@@ -180,6 +197,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		launchBehavior,
 		conversationMode,
 		model,
+		disabledToolGroups,
 		status: 'open',
 		pinned: input.pinned ?? false,
 		orderIndex,
@@ -196,6 +214,7 @@ export interface UpdateInput {
 	launchBehavior?: TicketLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
 	model?: string | null;
+	disabledToolGroups?: string[];
 	status?: PromptTemplateStatus;
 	pinned?: boolean;
 	orderIndex?: number;
@@ -235,12 +254,19 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 				? normalizeModelOverride(patch.model)
 				: current.model
 			: null;
+	const disabledToolGroups =
+		current.type === 'chat'
+			? patch.disabledToolGroups !== undefined
+				? sanitizeDisabledToolGroups(patch.disabledToolGroups)
+				: current.disabledToolGroups
+			: [];
 
 	getDb()
 		.prepare(
 			`UPDATE prompt_templates
 			 SET title = ?, description = ?, prompt = ?, launch_behavior = ?, conversation_mode = ?,
-			     model = ?, status = ?, pinned = ?, order_index = ?, updated_at = ?, archived_at = ?
+			     model = ?, disabled_tool_groups = ?, status = ?, pinned = ?, order_index = ?,
+			     updated_at = ?, archived_at = ?
 			 WHERE id = ? AND user_id = ?`
 		)
 		.run(
@@ -250,6 +276,7 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 			launchBehavior,
 			conversationMode,
 			model,
+			JSON.stringify(disabledToolGroups),
 			nextStatus,
 			(patch.pinned ?? current.pinned) ? 1 : 0,
 			orderIndex,

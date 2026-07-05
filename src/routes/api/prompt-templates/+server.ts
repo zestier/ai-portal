@@ -10,6 +10,7 @@ import {
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
+import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
 
 export const GET: RequestHandler = ({ locals }) => {
 	const userId = requireUserId(locals);
@@ -38,6 +39,9 @@ const CreateBody = z
 		launchBehavior: z.enum(['send', 'draft']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
 		model: z.string().trim().max(200).nullable().optional(),
+		disabledToolGroups: z
+			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
+			.optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -63,6 +67,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
 		...(body.model !== undefined ? { model: body.model } : {}),
+		...(body.disabledToolGroups !== undefined
+			? { disabledToolGroups: body.disabledToolGroups }
+			: {}),
 		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
 		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})
 	});

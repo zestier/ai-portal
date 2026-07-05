@@ -212,6 +212,14 @@ export interface ChatPromptTemplate {
 	 * longer offered by the provider) is passed through unchanged.
 	 */
 	model: string | null;
+	/**
+	 * Portal tool groups to seed as *disabled* on the conversation a `chat`
+	 * template launches (ids from `$lib/tools/groups`). `[]` for chat templates
+	 * with no preset and always `[]` for ticket-action templates. This is only a
+	 * seed — the created conversation's own `disabledToolGroups` remains the
+	 * source of truth and the user can change it afterward.
+	 */
+	disabledToolGroups: PortalToolGroupId[];
 	status: PromptTemplateStatus;
 	pinned: boolean;
 	orderIndex: number;

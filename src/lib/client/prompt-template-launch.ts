@@ -11,12 +11,16 @@ type TemplateFetch = (url: string, init: RequestInit) => Promise<Response>;
 async function createConversation(
 	title: string,
 	fetcher: TemplateFetch,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	promptTemplateId?: string
 ): Promise<{ ok: true; id: string } | { ok: false; status?: number }> {
 	const convRes = await fetcher('/api/conversations', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ title }),
+		body: JSON.stringify({
+			title,
+			...(promptTemplateId !== undefined ? { promptTemplateId } : {})
+		}),
 		...(signal !== undefined ? { signal } : {})
 	});
 	if (!convRes.ok) return { ok: false, status: convRes.status };
@@ -44,7 +48,7 @@ export async function createPromptTemplateDraftChat({
 	fetcher?: TemplateFetch;
 	signal?: AbortSignal;
 }): Promise<{ ok: true; href: string } | { ok: false; status?: number }> {
-	const conv = await createConversation(template.title, fetcher, signal);
+	const conv = await createConversation(template.title, fetcher, signal, template.id);
 	if (!conv.ok) return conv;
 	return {
 		ok: true,

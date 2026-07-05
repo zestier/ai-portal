@@ -5,6 +5,7 @@
 	import type { FormResult, PromptTemplate } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
 	import { placeholdersForType } from '$lib/prompt-templates';
+	import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { createPromptTemplateRefineChat } from '$lib/client/prompt-template-launch';
 	import { onDestroy } from 'svelte';
@@ -89,6 +90,30 @@
 	onDestroy(() => refineController?.abort());
 </script>
 
+{#snippet toolGroupFieldset(disabled: string[])}
+	<fieldset class="tool-groups-fieldset">
+		<legend>Portal tools for launched chats</legend>
+		<p class="muted small">
+			Checked groups are disabled up front in chats started from this template (a seed — the chat
+			can re-enable them). Unchecked groups stay available. Native CLI tools (bash, view, edit…) are
+			always available and unaffected.
+		</p>
+		<div class="tool-groups-checks">
+			{#each PORTAL_TOOL_GROUPS as group (group.id)}
+				<label class="checkbox" title={group.hint}>
+					<input
+						name="disabledToolGroups"
+						type="checkbox"
+						value={group.id}
+						checked={disabled.includes(group.id)}
+					/>
+					Disable {group.label}
+				</label>
+			{/each}
+		</div>
+	</fieldset>
+{/snippet}
+
 <div
 	id="settings-panel-prompts"
 	class="tab-panel prompts"
@@ -142,6 +167,7 @@
 					<input name="orderIndex" type="number" value="0" />
 				</label>
 			</div>
+			{@render toolGroupFieldset([])}
 			<button class="btn primary" type="submit">Save template</button>
 		</form>
 	</section>
@@ -203,6 +229,7 @@
 									<input name="orderIndex" type="number" value={template.orderIndex} />
 								</label>
 							</div>
+							{@render toolGroupFieldset(template.disabledToolGroups ?? [])}
 							<div class="actions">
 								<button class="btn primary" type="submit">Save changes</button>
 								<button

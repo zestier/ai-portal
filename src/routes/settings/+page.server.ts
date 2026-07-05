@@ -24,6 +24,7 @@ import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
+import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import {
 	normalizeBackendProvider,
 	normalizeContextTier,
@@ -122,6 +123,9 @@ const PromptTemplateSchema = z
 		launchBehavior: z.enum(['send', 'draft']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
 		model: z.string().trim().max(200).optional(),
+		disabledToolGroups: z
+			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
+			.optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -146,6 +150,9 @@ const UpdatePromptTemplateSchema = z
 		launchBehavior: z.enum(['send', 'draft']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
 		model: z.string().trim().max(200).optional(),
+		disabledToolGroups: z
+			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
+			.optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.coerce.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -249,6 +256,8 @@ export const actions: Actions = {
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
+			disabledToolGroups:
+				type === 'chat' ? data.getAll('disabledToolGroups').map(String) : undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
 		});
@@ -266,6 +275,9 @@ export const actions: Actions = {
 			conversationMode:
 				parsed.data.type === 'ticket-action' ? (parsed.data.conversationMode ?? null) : null,
 			model: parsed.data.type === 'ticket-action' ? (parsed.data.model ?? null) : null,
+			...(parsed.data.type === 'chat'
+				? { disabledToolGroups: sanitizeDisabledToolGroups(parsed.data.disabledToolGroups) }
+				: {}),
 			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
 			...(parsed.data.launchBehavior !== undefined
 				? { launchBehavior: parsed.data.launchBehavior }
@@ -289,6 +301,8 @@ export const actions: Actions = {
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
+			disabledToolGroups:
+				type === 'chat' ? data.getAll('disabledToolGroups').map(String) : undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
 		});
@@ -307,7 +321,7 @@ export const actions: Actions = {
 			...(patch.launchBehavior !== undefined ? { launchBehavior: patch.launchBehavior } : {}),
 			...(parsedType === 'ticket-action'
 				? { conversationMode: patch.conversationMode ?? null, model: patch.model ?? null }
-				: {}),
+				: { disabledToolGroups: sanitizeDisabledToolGroups(patch.disabledToolGroups) }),
 			...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
 			...(patch.orderIndex !== undefined ? { orderIndex: patch.orderIndex } : {})
 		});

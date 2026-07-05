@@ -31,6 +31,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 		launchBehavior: 'send',
 		conversationMode: null,
 		model: null,
+		disabledToolGroups: [],
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,

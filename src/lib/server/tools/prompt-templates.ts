@@ -6,6 +6,7 @@ import {
 	placeholdersForType
 } from '$lib/prompt-templates';
 import { PROMPT_TEMPLATE_TYPES, type ChatPromptTemplate } from '$lib/types';
+import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
 import { err, ok, type PortalTool } from './types';
 import {
 	project,
@@ -28,6 +29,7 @@ const TEMPLATE_KEEP = [
 	'launchBehavior',
 	'conversationMode',
 	'model',
+	'disabledToolGroups',
 	'status',
 	'pinned'
 ] as const;
@@ -36,6 +38,7 @@ const Type = z.enum(['chat', 'ticket-action']);
 const Status = z.enum(['open', 'archived']);
 const LaunchBehavior = z.enum(['send', 'draft']);
 const ConversationMode = z.enum(['interactive', 'plan', 'autopilot', 'best-effort']);
+const ToolGroupId = z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]);
 
 const ListArgs = z
 	.object({
@@ -60,6 +63,7 @@ const CreateArgs = z.object({
 	launchBehavior: LaunchBehavior.optional(),
 	conversationMode: ConversationMode.nullable().optional(),
 	model: z.string().trim().max(200).nullable().optional(),
+	disabledToolGroups: z.array(ToolGroupId).optional(),
 	pinned: z.boolean().optional()
 });
 
@@ -72,6 +76,7 @@ const UpdateArgs = z
 		launchBehavior: LaunchBehavior.optional(),
 		conversationMode: ConversationMode.nullable().optional(),
 		model: z.string().trim().max(200).nullable().optional(),
+		disabledToolGroups: z.array(ToolGroupId).optional(),
 		status: Status.optional(),
 		pinned: z.boolean().optional()
 	})
@@ -83,6 +88,7 @@ const UpdateArgs = z
 			a.launchBehavior !== undefined ||
 			a.conversationMode !== undefined ||
 			a.model !== undefined ||
+			a.disabledToolGroups !== undefined ||
 			a.status !== undefined ||
 			a.pinned !== undefined,
 		{ message: 'No fields to update' }
@@ -246,6 +252,12 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						description: 'ticket-action only: conversation mode override.'
 					},
 					model: { type: 'string', description: 'ticket-action only: model override.' },
+					disabledToolGroups: {
+						type: 'array',
+						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
+						description:
+							'chat only: portal tool groups to disable on conversations launched from this template (seed, not a lock).'
+					},
 					pinned: { type: 'boolean', description: 'Pin to the top of its list.' }
 				},
 				required: ['title', 'prompt'],
@@ -262,6 +274,9 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						...(p.launchBehavior !== undefined ? { launchBehavior: p.launchBehavior } : {}),
 						...(p.conversationMode !== undefined ? { conversationMode: p.conversationMode } : {}),
 						...(p.model !== undefined ? { model: p.model } : {}),
+						...(p.disabledToolGroups !== undefined
+							? { disabledToolGroups: p.disabledToolGroups }
+							: {}),
 						...(p.pinned !== undefined ? { pinned: p.pinned } : {})
 					});
 					return ok(summarize(tpl), `Created ${tpl.type} template ${tpl.id}: ${tpl.title}`);
@@ -301,6 +316,12 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						description: 'ticket-action only: new conversation mode override.'
 					},
 					model: { type: 'string', description: 'ticket-action only: new model override.' },
+					disabledToolGroups: {
+						type: 'array',
+						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
+						description:
+							'chat only: new set of portal tool groups to disable on launched conversations (replaces the existing set).'
+					},
 					status: {
 						type: 'string',
 						enum: ['open', 'archived'],

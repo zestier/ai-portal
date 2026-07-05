@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as settings from '$lib/server/db/repos/settings';
+import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { loadConfig } from '$lib/server/config';
 import { getDefaultProviderId } from '$lib/server/providers';
 import {
@@ -28,7 +29,13 @@ const CreateBody = z.object({
 	workdir: z.string().min(1).optional(),
 	mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
 	memoryExtractorModel: z.string().min(1).optional(),
-	memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional()
+	memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
+	/**
+	 * Optional chat prompt-template to seed conversation settings from. When it
+	 * resolves to one of the caller's own chat templates, its
+	 * `disabledToolGroups` preset is copied onto the new conversation.
+	 */
+	promptTemplateId: z.string().min(1).optional()
 });
 
 export const POST: RequestHandler = async ({ locals, request, getClientAddress }) => {
@@ -38,6 +45,14 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 	const userSettings = settings.get(userId) ?? settings.defaults();
 	const provider = body.provider ?? userSettings.defaultProvider ?? getDefaultProviderId();
 	const model = body.model ?? userSettings.defaultModel ?? cfg.DEFAULT_MODEL;
+
+	// Seed tool-group scoping from a chat template when one is supplied and owned
+	// by the caller. Non-chat / missing / other-user templates seed nothing.
+	let disabledToolGroups: string[] = [];
+	if (body.promptTemplateId) {
+		const tpl = promptTemplates.get(body.promptTemplateId, userId);
+		if (tpl && tpl.type === 'chat') disabledToolGroups = tpl.disabledToolGroups;
+	}
 
 	const id = convs.newId();
 	// Precedence: explicit body.workdir > user's defaultWorkdir > PROJECT_ROOT.
@@ -81,7 +96,8 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 		memoryExtractorModel:
 			body.memoryExtractorModel ?? userSettings.defaultMemoryExtractorModel ?? null,
 		memoryExtractorBackend:
-			body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null
+			body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null,
+		disabledToolGroups
 	});
 	return json({ ok: true, conversation: conv }, { status: 201 });
 };

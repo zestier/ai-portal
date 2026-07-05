@@ -27,7 +27,10 @@ describe('prompt template chat launcher', () => {
 		const [url, init] = fetcher.mock.calls[0];
 		expect(String(url)).toBe('/api/conversations');
 		expect(String(url)).not.toContain('/turns');
-		expect(JSON.parse(init?.body as string)).toEqual({ title: 'Debug an error' });
+		expect(JSON.parse(init?.body as string)).toEqual({
+			title: 'Debug an error',
+			promptTemplateId: 'debug-error'
+		});
 	});
 
 	it('encodes custom template draft URLs', () => {
