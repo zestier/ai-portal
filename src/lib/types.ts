@@ -422,6 +422,18 @@ export interface ProviderCapabilities {
 		reasoningEvents: boolean;
 		subagentLifecycleEvents: boolean;
 	};
+	/**
+	 * Local load/unload inference backends (e.g. Ollama via openai-compatible,
+	 * LM Studio) keep one model resident and evict it when a *different* model
+	 * runs. When `primeAfterModelSwap` is true, the runtime may proactively
+	 * re-warm ("prime") the main chat model after background work — chiefly the
+	 * model-backed memory extractor loading a different model — so the next user
+	 * turn does not pay a cold model-load stall. Cloud providers report false:
+	 * they have no local load/unload (and thus no cold-load) to prime around.
+	 */
+	localModelLoad: {
+		primeAfterModelSwap: boolean;
+	};
 }
 
 export interface Message {

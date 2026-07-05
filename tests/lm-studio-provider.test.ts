@@ -58,6 +58,28 @@ afterEach(() => {
 });
 
 describe('lmStudioProvider', () => {
+	it('primes a model against the LM Studio OpenAI-compatible /v1 endpoint', async () => {
+		process.env.LMSTUDIO_API_KEY = 'lm-token';
+		resetConfigForTests();
+		const fetchMock = vi.fn(async () => Response.json({ choices: [{ message: { content: '' } }] }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			lmStudioProvider.primeModel!('local-model', { signal: new AbortController().signal })
+		).resolves.toBeUndefined();
+
+		expect(lmStudioProvider.capabilities.localModelLoad.primeAfterModelSwap).toBe(true);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('http://127.0.0.1:1234/v1/chat/completions');
+		expect((init.headers as Record<string, string>).authorization).toBe('Bearer lm-token');
+		expect(JSON.parse(String(init.body))).toMatchObject({
+			model: 'local-model',
+			max_tokens: 1,
+			stream: false
+		});
+	});
+
 	it('reuses OpenAI-compatible live controls except unsupported runtime modes', async () => {
 		expect(lmStudioProvider.capabilities.controls).toEqual({
 			mode: false,

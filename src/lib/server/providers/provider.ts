@@ -123,6 +123,18 @@ export interface ModelBackendProvider {
 	 */
 	openSession(opts: ProviderOpenOptions): Promise<ProviderSession>;
 	/**
+	 * Best-effort re-warm ("prime") of a model on a local load/unload backend
+	 * (Ollama via openai-compatible, LM Studio). Called after background work
+	 * — the model-backed memory extractor — has loaded a *different* model and
+	 * evicted the main chat model, so the next user turn avoids a cold-load
+	 * stall. Implementations issue a minimal warmup request bounded by `signal`.
+	 * Fire-and-forget: the caller never blocks on it and swallows failures, so
+	 * implementations may reject on error. Absent (or a no-op) for providers
+	 * whose `capabilities.localModelLoad.primeAfterModelSwap` is false, e.g.
+	 * cloud backends with no local load/unload.
+	 */
+	primeModel?(model: string, opts: { signal: AbortSignal }): Promise<void>;
+	/**
 	 * Providers with durable resume but no request-time assistant-history import
 	 * can ask the portal to wrap prior messages into the next prompt until a
 	 * backend-native session id exists.

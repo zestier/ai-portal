@@ -4,6 +4,7 @@ import { fetchWithTimeout, jsonRequestHeaders, parseJson } from './provider-util
 import {
 	openAICompatibleSamplingOptions,
 	openOpenAICompatibleSession,
+	primeOpenAICompatibleModel,
 	type OpenAICompatibleConfig
 } from './openai-compatible-provider';
 import { BoundedTtlCache } from '../copilot/bounded-ttl-cache';
@@ -151,6 +152,9 @@ export const lmStudioProvider: ModelBackendProvider = {
 			fileEditEvents: false,
 			reasoningEvents: true,
 			subagentLifecycleEvents: false
+		},
+		localModelLoad: {
+			primeAfterModelSwap: true
 		}
 	},
 	async fetchAuthStatus(): Promise<ProviderAuthStatus> {
@@ -235,6 +239,14 @@ export const lmStudioProvider: ModelBackendProvider = {
 			includeUsage: tokenLimit !== null
 		};
 		return openOpenAICompatibleSession(sessionCfg, opts);
+	},
+	async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
+		const cfg = providerConfig();
+		await primeOpenAICompatibleModel(
+			{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
+			model,
+			opts
+		);
 	}
 };
 

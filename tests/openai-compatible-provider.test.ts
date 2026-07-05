@@ -147,6 +147,39 @@ describe('openAICompatibleProvider', () => {
 		});
 	});
 
+	it('primes a model with a minimal warmup chat request to the /chat/completions endpoint', async () => {
+		process.env.OPENAI_COMPATIBLE_API_KEY = 'warm-key';
+		resetConfigForTests();
+		const fetchMock = vi.fn(async () => Response.json({ choices: [{ message: { content: '' } }] }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			openAICompatibleProvider.primeModel!('local-model', { signal: new AbortController().signal })
+		).resolves.toBeUndefined();
+
+		expect(openAICompatibleProvider.capabilities.localModelLoad.primeAfterModelSwap).toBe(true);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('http://127.0.0.1:1234/v1/chat/completions');
+		expect(init.method).toBe('POST');
+		expect((init.headers as Record<string, string>).authorization).toBe('Bearer warm-key');
+		const body = JSON.parse(init.body as string);
+		// A 1-token, non-streaming request: just enough to fault the model into VRAM.
+		expect(body).toMatchObject({ model: 'local-model', max_tokens: 1, stream: false });
+	});
+
+	it('rejects (best-effort) when the prime warmup request returns a non-OK status', async () => {
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ error: { message: 'model missing' } }), { status: 404 })
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			openAICompatibleProvider.primeModel!('local-model', { signal: new AbortController().signal })
+		).rejects.toThrow('model missing');
+	});
+
 	it('discovers models from an OpenAI-compatible /models endpoint with optional API key', async () => {
 		process.env.OPENAI_COMPATIBLE_API_KEY = 'test-key';
 		resetConfigForTests();

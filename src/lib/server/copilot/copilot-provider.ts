@@ -635,6 +635,9 @@ export const copilotProvider: ModelBackendProvider = {
 			fileEditEvents: true,
 			reasoningEvents: true,
 			subagentLifecycleEvents: true
+		},
+		localModelLoad: {
+			primeAfterModelSwap: false
 		}
 	},
 	resolveAuthToken(userId: string): string | undefined {

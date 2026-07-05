@@ -133,6 +133,9 @@ const providerId = 'openai-compatible' satisfies Extract<BackendProviderId, 'ope
 const displayName = 'OpenAI compatible';
 const MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const CHAT_RESPONSE_TIMEOUT_MS = 120_000;
+// Upper bound for a model-priming warmup request. The caller also passes an
+// abort signal with its own (shorter) deadline; whichever fires first wins.
+const PRIME_REQUEST_TIMEOUT_MS = 15_000;
 
 export const openAICompatibleProvider: ModelBackendProvider = {
 	id: providerId,
@@ -228,6 +231,9 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 			fileEditEvents: false,
 			reasoningEvents: true,
 			subagentLifecycleEvents: false
+		},
+		localModelLoad: {
+			primeAfterModelSwap: true
 		}
 	},
 	async fetchAuthStatus(): Promise<ProviderAuthStatus> {
@@ -279,8 +285,51 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 		const cfg = providerConfig();
 		if (!cfg.baseUrl) throw new Error(`${displayName} requires a base URL.`);
 		return openOpenAICompatibleSession(cfg, opts);
+	},
+	async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
+		const cfg = providerConfig();
+		await primeOpenAICompatibleModel(cfg, model, opts);
 	}
 };
+
+/**
+ * Re-warm a model on an OpenAI-compatible local backend by issuing a minimal
+ * (1-token, non-streaming) chat completion. On single-GPU local servers this
+ * loads the model back into VRAM after a different model (e.g. the memory
+ * extractor) evicted it, so the user's next turn skips the cold-load stall.
+ *
+ * Best-effort: callers treat this as fire-and-forget and swallow failures, so
+ * this rejects on a non-OK response or transport error rather than masking it.
+ * Shared by the openai-compatible and LM Studio providers.
+ */
+export async function primeOpenAICompatibleModel(
+	cfg: Pick<OpenAICompatibleConfig, 'baseUrl' | 'apiKey' | 'displayName'>,
+	model: string,
+	opts: { signal: AbortSignal }
+): Promise<void> {
+	if (!cfg.baseUrl) return;
+	const res = await fetchWithTimeout(
+		endpoint(cfg.baseUrl, '/chat/completions'),
+		{
+			method: 'POST',
+			headers: jsonRequestHeaders(cfg.apiKey),
+			body: JSON.stringify({
+				model,
+				messages: [{ role: 'user', content: 'ok' }],
+				max_tokens: 1,
+				stream: false
+			}),
+			signal: opts.signal
+		},
+		PRIME_REQUEST_TIMEOUT_MS
+	);
+	// Drain the body so the connection can be reused/closed; the content is
+	// irrelevant — priming only cares that the model was loaded to serve it.
+	const body = (await parseJson(res)) as { error?: { message?: string } };
+	if (!res.ok) {
+		throw new Error(body.error?.message ?? `${cfg.displayName} prime failed: ${res.status}`);
+	}
+}
 
 function providerConfig(): OpenAICompatibleConfig {
 	const cfg = loadConfig();

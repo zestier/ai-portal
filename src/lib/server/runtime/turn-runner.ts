@@ -27,10 +27,14 @@ import { flushToolAttachment } from '../copilot/tool-attachment-flush';
 import * as toolAttachments from '../db/repos/tool-attachments';
 import { isEnabled } from '../memory/engine';
 import { loadConfig } from '../config';
-import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
+import {
+	extractAndCommitMemory,
+	createMemoryExtractor,
+	MemoryExtractorHttpError
+} from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
-import type { MemoryExtractorBackend, MemoryMode } from '$lib/types';
-import type { ProviderOpenOptions, ProviderSession } from '../providers';
+import type { MemoryExtractorBackend, MemoryMode, BackendProviderId } from '$lib/types';
+import { getProvider, type ProviderOpenOptions, type ProviderSession } from '../providers';
 import type { PortalEvent } from '$lib/types';
 
 interface PendingTool {
@@ -725,6 +729,21 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					logPrefix: 'turn.memory',
 					cancelOutput: 'Cancelled by user.'
 				});
+
+				// Best-effort re-warm of the main model after extraction may have
+				// evicted it on a local backend. Fire-and-forget: not awaited, so it
+				// never delays the turn's `done`, and skipped when the turn aborted.
+				if (!turnAc.signal.aborted) {
+					void primeMainModel({
+						cfg,
+						provider: opts.bridge.provider,
+						mainModel: opts.bridge.model,
+						extractorModel: opts.memory.extractorModel,
+						extractorBackend: opts.memory.extractorBackend,
+						conversationId: opts.conversationId,
+						logPrefix: 'turn.memory'
+					});
+				}
 			}
 
 			// A Stop issued while the post-turn extractor was still running aborts
@@ -1059,6 +1078,78 @@ interface MemoryExtractionCardOptions {
 	priorPatchId?: string | null | undefined;
 }
 
+// Deadline for the fire-and-forget post-extraction prime request. It runs on
+// its own AbortController — never `turnAc`, which is torn down when the turn
+// ends — so a slow prime can't hold the turn open and the turn's teardown can't
+// cancel an otherwise-useful warmup.
+const PRIME_MAIN_MODEL_DEADLINE_MS = 10_000;
+
+/**
+ * Best-effort re-warm ("prime") of the main chat model after memory extraction.
+ *
+ * On single-GPU local backends the model-backed extractor can evict the main
+ * chat model from VRAM; without priming the user's next message pays a cold
+ * model-load stall. This re-issues a tiny warmup request to the main model so it
+ * is resident again. Fire-and-forget by contract: it must never block the turn's
+ * `done`, never surface a user-visible error, and never touch the turn signal.
+ *
+ * Gating (all must hold, else it no-ops without issuing a request):
+ *  - the env kill switch `MEMORY_PRIME_MAIN_MODEL` is on;
+ *  - the main provider reports `localModelLoad.primeAfterModelSwap` (a local
+ *    load/unload backend) and implements `primeModel` — cloud/Copilot does not;
+ *  - the extractor is model-backed (heuristic loads no model → no eviction); and
+ *  - the resolved extractor model id differs from the main model id (same model
+ *    is already resident).
+ *
+ * Never throws: every failure/timeout is caught and logged at warn/debug only.
+ */
+async function primeMainModel(o: {
+	cfg: ReturnType<typeof loadConfig>;
+	provider: BackendProviderId | undefined;
+	mainModel: string | null | undefined;
+	extractorModel?: string | null | undefined;
+	extractorBackend?: MemoryExtractorBackend | null | undefined;
+	conversationId: string;
+	logPrefix: string;
+}): Promise<void> {
+	try {
+		if (!o.cfg.MEMORY_PRIME_MAIN_MODEL) return;
+		const mainModelId = o.mainModel?.trim();
+		if (!mainModelId) return;
+		const provider = getProvider(o.provider);
+		if (!provider.capabilities.localModelLoad.primeAfterModelSwap) return;
+		if (typeof provider.primeModel !== 'function') return;
+		// Resolve the extractor the same way extraction did. A heuristic extractor
+		// loads no model, so nothing evicted the main model — skip.
+		const extractor = createMemoryExtractor({
+			model: o.extractorModel,
+			backend: o.extractorBackend
+		});
+		if (extractor.kind === 'heuristic') return;
+		const extractorModelId = extractor.model?.trim();
+		// Same model (or unknown) → already resident, priming is pointless.
+		if (!extractorModelId || extractorModelId === mainModelId) return;
+
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), PRIME_MAIN_MODEL_DEADLINE_MS);
+		(timer as { unref?: () => void }).unref?.();
+		try {
+			await provider.primeModel(mainModelId, { signal: ac.signal });
+			log.debug(`${o.logPrefix}.prime.ok`, {
+				conversationId: o.conversationId,
+				model: mainModelId
+			});
+		} finally {
+			clearTimeout(timer);
+		}
+	} catch (err) {
+		log.warn(`${o.logPrefix}.prime.failed`, {
+			conversationId: o.conversationId,
+			err: err instanceof Error ? err.message : String(err)
+		});
+	}
+}
+
 /**
  * Run the memory-extraction step and surface it as a subagent-style card via
  * `dispatch`, emitting the `extracting -> validating -> committed/needs_review`
@@ -1324,6 +1415,11 @@ export interface StartExtractionRetryOptions {
 	// content is reused verbatim — the assistant response is NOT regenerated.
 	assistantMessageId: string;
 	assistantContent: string;
+	// Main conversation provider + model, used to prime (re-warm) the main model
+	// after the retry's extraction on local load/unload backends. Optional;
+	// priming is skipped when absent or when the provider doesn't benefit.
+	mainProvider?: BackendProviderId | null | undefined;
+	mainModel?: string | null | undefined;
 	memory: {
 		mode: MemoryMode;
 		userMessageId: string;
@@ -1442,6 +1538,20 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 				beforeCommit,
 				priorPatchId
 			});
+
+			// Best-effort re-warm of the main model after the retry's extraction
+			// may have evicted it. Fire-and-forget; skipped when the retry aborted.
+			if (!turnAc.signal.aborted) {
+				void primeMainModel({
+					cfg,
+					provider: opts.mainProvider ?? undefined,
+					mainModel: opts.mainModel,
+					extractorModel: opts.memory.extractorModel,
+					extractorBackend: opts.memory.extractorBackend,
+					conversationId: opts.conversationId,
+					logPrefix: 'memory.retry'
+				});
+			}
 		} finally {
 			try {
 				convs.touch(opts.conversationId);

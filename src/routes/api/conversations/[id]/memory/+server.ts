@@ -92,6 +92,8 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		userId: conv.userId,
 		assistantMessageId: assistantMessage.id,
 		assistantContent: assistantMessage.content,
+		mainProvider: conv.provider,
+		mainModel: conv.model,
 		memory: {
 			mode: conv.memoryMode,
 			userMessageId: userMessage.id,

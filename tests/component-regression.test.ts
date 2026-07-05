@@ -63,6 +63,9 @@ const providerCapabilities: ProviderCapabilities = {
 		fileEditEvents: true,
 		reasoningEvents: true,
 		subagentLifecycleEvents: true
+	},
+	localModelLoad: {
+		primeAfterModelSwap: false
 	}
 };
 

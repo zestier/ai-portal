@@ -164,6 +164,18 @@ const Schema = z
 		// in minutes. Must be positive.
 		MEMORY_MAINTENANCE_INTERVAL_MIN: z.coerce.number().int().positive().default(720),
 
+		// Kill switch (default on) for post-extraction main-model priming. On
+		// local load/unload backends (Ollama via openai-compatible, LM Studio)
+		// the model-backed memory extractor can evict the main chat model from
+		// VRAM; when enabled the runtime re-warms the main model after extraction
+		// so the next user turn skips the cold model-load stall. Set to "0"/
+		// "false" to disable globally. Only fires when priming is useful (local
+		// backend, model-backed extractor, and extractor model ≠ main model).
+		MEMORY_PRIME_MAIN_MODEL: z
+			.string()
+			.optional()
+			.transform((v) => v !== '0' && v !== 'false'),
+
 		IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(15),
 		MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(4),
 		// After a user Stop, the turn must reach a terminal state and free the
