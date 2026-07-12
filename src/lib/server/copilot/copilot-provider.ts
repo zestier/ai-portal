@@ -12,7 +12,7 @@ import type { ContextTier } from '@github/copilot-sdk';
 import type { PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { withTimeout } from '../runtime/with-timeout';
-import { PORTAL_SYSTEM_GUIDANCE } from '../runtime/system-guidance';
+import { buildPortalSystemGuidance } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from './interactive-adapter';
 import { SdkEventAdapter, toRuntimeMode, type RuntimeSessionMode } from './sdk-events';
 import type {
@@ -335,7 +335,12 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		// `replace` would drop those, so we never use it here. Set once at session
 		// establishment (carried on both the create and resume paths) so it costs
 		// system tokens once rather than being re-sent every turn like the prelude.
-		systemMessage: { mode: 'append' as const, content: PORTAL_SYSTEM_GUIDANCE },
+		// Built from this session's real tool set so guidance for absent tool
+		// groups (e.g. a disabled `tickets` group) isn't sent.
+		systemMessage: {
+			mode: 'append' as const,
+			content: buildPortalSystemGuidance(portalTools.map((tool) => tool.name))
+		},
 		...(contextTier ? { contextTier } : {}),
 		tools: wrapToolsForStreaming(portalTools, emit, () => currentTurnSignal),
 		onPermissionRequest,
