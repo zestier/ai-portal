@@ -13,6 +13,17 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { loadConfig, type AppConfig } from './config';
+import type { Conversation } from '$lib/types';
+import { expectedManagedWorktreePath } from './worktrees';
+
+export class WorkspaceUnavailableError extends Error {
+	readonly code = 'workspace_unavailable';
+
+	constructor(message: string) {
+		super(message);
+		this.name = 'WorkspaceUnavailableError';
+	}
+}
 
 /**
  * The default workdir for newly created conversations when the user has
@@ -48,6 +59,39 @@ export function effectiveWorkdir(stored: string | null | undefined): string {
 	if (abs === legacy || abs.startsWith(legacy + sep)) return projectRoot();
 	if (!withinAllowedRoots(abs)) return projectRoot();
 	return abs;
+}
+
+/**
+ * Resolve the directory used by a conversation. Managed worktrees are
+ * portal-owned and therefore bypass ALLOWED_WORKDIRS, but only at their exact
+ * generated path. They fail closed instead of falling back to PROJECT_ROOT.
+ */
+export function resolveConversationWorkspace(conversation: Conversation): string {
+	if (conversation.workspaceKind !== 'managed-worktree') {
+		return effectiveWorkdir(conversation.workdir);
+	}
+	const expected = resolve(expectedManagedWorktreePath(conversation.userId, conversation.id));
+	const stored = resolve(conversation.workdir);
+	if (stored !== expected || !existsSync(stored)) {
+		throw new WorkspaceUnavailableError('managed worktree path is unavailable');
+	}
+	try {
+		const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
+		const storedReal = realpathSync(stored);
+		const expectedReal = resolve(rootReal, conversation.userId, conversation.id);
+		if (
+			!statSync(stored).isDirectory() ||
+			storedReal !== expectedReal ||
+			storedReal === rootReal ||
+			!storedReal.startsWith(rootReal + sep)
+		) {
+			throw new WorkspaceUnavailableError('managed worktree path is invalid');
+		}
+		return storedReal;
+	} catch (error) {
+		if (error instanceof WorkspaceUnavailableError) throw error;
+		throw new WorkspaceUnavailableError('managed worktree path is not accessible');
+	}
 }
 
 /**

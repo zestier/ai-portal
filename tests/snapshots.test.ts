@@ -199,4 +199,35 @@ describe('snapshots', () => {
 		}).toString();
 		expect(staged.trim()).toBe('');
 	});
+
+	it('snapshots a linked worktree without touching its normal index', async () => {
+		const { users, convs, messages, snapshots } = await freshImports();
+		const u = users.ensureLocalUser();
+		initGitRepo(workdir);
+		execFileSync('git', ['config', 'user.name', 'Portal Test'], { cwd: workdir });
+		execFileSync('git', ['config', 'user.email', 'portal-test@localhost'], { cwd: workdir });
+		writeFileSync(join(workdir, 'a.txt'), 'base\n');
+		execFileSync('git', ['add', 'a.txt'], { cwd: workdir });
+		execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: workdir });
+		const linked = makeTmpDir('portal-snap-linked-');
+		rmSync(linked, { recursive: true });
+		execFileSync('git', ['worktree', 'add', '-q', '-b', 'linked', linked, 'HEAD'], {
+			cwd: workdir
+		});
+		const c = convs.create(u.id, { title: 'linked', workdir: linked, model: null });
+		const m = messages.append(c.id, { role: 'user', content: 'hi' });
+		writeFileSync(join(linked, 'a.txt'), 'changed\n');
+
+		const row = requireSnapshot(await snapshots.snapshot(linked, m.id, 'pre'));
+
+		expect(row.baseCommitSha).toBe(
+			execFileSync('git', ['rev-parse', 'HEAD'], { cwd: linked }).toString().trim()
+		);
+		expect(
+			execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: linked }).toString().trim()
+		).toBe('');
+		expect(
+			execFileSync('git', ['show', `${row.commitSha}:a.txt`], { cwd: linked }).toString()
+		).toBe('changed\n');
+	});
 });

@@ -27,6 +27,9 @@ services:
       PORT: 3000
       DATA_DIR: /data
       PROJECT_ROOT: /workspace
+      # Portal-owned linked worktrees persist with the database. Keep this
+      # absolute path stable across container replacements.
+      WORKTREE_ROOT: /data/worktrees
       AUTH_MODE: ${AUTH_MODE:-github}
       SESSION_SECRET: ${SESSION_SECRET:?required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?required}
@@ -59,6 +62,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       IDLE_TIMEOUT_MIN: ${IDLE_TIMEOUT_MIN:-15}
       MAX_CONCURRENT_SESSIONS: ${MAX_CONCURRENT_SESSIONS:-4}
+      WORKTREE_CREATE_TIMEOUT_MS: ${WORKTREE_CREATE_TIMEOUT_MS:-120000}
       ORIGIN: ${ORIGIN:-}
     volumes:
       - ./data:/data

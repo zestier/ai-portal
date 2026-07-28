@@ -6,10 +6,18 @@ import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
 import { throwRerunFailure } from '$lib/server/rerun-error';
+import * as convs from '$lib/server/db/repos/conversations';
+import * as pool from '$lib/server/runtime/pool';
+import { getTurn } from '$lib/server/runtime/turn-runner';
+import { rollbackManagedWorktree } from '$lib/server/worktrees';
+import { log } from '$lib/server/log';
 
 // `content` present => edit a user message with the new text.
 // `content` absent  => retry from an assistant message (uses post snapshot).
-const Body = z.object({ content: z.string().min(1).max(64_000).optional() });
+const Body = z.object({
+	content: z.string().min(1).max(64_000).optional(),
+	workspace: z.enum(['shared', 'worktree']).optional()
+});
 
 const REJECT_STATUS: Record<string, number> = {
 	source_not_found: 404,
@@ -17,7 +25,8 @@ const REJECT_STATUS: Record<string, number> = {
 	not_user_message: 400,
 	unsupported_role: 400,
 	content_required: 400,
-	content_not_allowed: 400
+	content_not_allowed: 400,
+	no_snapshot: 409
 };
 
 /**
@@ -45,14 +54,33 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			userId,
 			sourceConversationId: sourceId,
 			messageId,
-			newContent: parsed.content ?? null
+			newContent: parsed.content ?? null,
+			workspaceKind: parsed.workspace === 'worktree' ? 'managed-worktree' : 'shared'
 		});
 		if (!userMessage) {
 			return json({ ok: true, conversationId: conversation.id, deferred });
 		}
-		const turn = await startTurnFromUserMessage(conversation, userMessage, {
-			includePriorMessages: true
-		});
+		let turn;
+		try {
+			turn = await startTurnFromUserMessage(conversation, userMessage, {
+				includePriorMessages: true
+			});
+		} catch (cause) {
+			if (!getTurn(conversation.id)) {
+				try {
+					await pool.release(conversation.id);
+					const managed = convs.getManagedWorktree(conversation.id, userId);
+					if (managed) await rollbackManagedWorktree(managed);
+					convs.remove(conversation.id, userId);
+				} catch (cleanupError) {
+					log.warn('fork.start_cleanup_failed', {
+						conversationId: conversation.id,
+						err: String(cleanupError)
+					});
+				}
+			}
+			throw cause;
+		}
 		return json({ ok: true, conversationId: conversation.id, turnId: turn.id });
 	} catch (e) {
 		if (e instanceof ForkRejected) {

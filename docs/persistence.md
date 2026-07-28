@@ -181,6 +181,30 @@ Limitations (v1):
   rolled back. Snapshots track files only.
 - Submodule/LFS state is out of scope.
 
+## Managed worktrees
+
+Migration `061_managed_worktrees.sql` adds `conversations.workspace_kind`, a
+stable `workspace_key`, and the `managed_worktrees` ownership table. The latter
+records the source checkout, generated path, common Git directory, generated
+branch, and base commit. Migration `062_snapshot_base_commit.sql` records the
+HEAD commit alongside each snapshot tree so an isolated historical fork can
+start from the correct ancestry and overlay the captured files as ordinary
+unstaged/untracked changes. Snapshots created before migration `062` have no
+recorded base commit; isolated forks from those snapshots start at the source
+repository's current HEAD and still overlay the exact captured tree as working
+changes.
+
+Creating a managed conversation provisions Git first and then inserts the
+conversation and metadata in one SQLite transaction. A database failure rolls
+back the newly created worktree and generated branch. Archiving retains the
+worktree. Deletion refuses dirty worktrees unless explicitly forced, removes
+the linked checkout before deleting the database row, and deliberately keeps
+the branch so committed work is not destroyed.
+
+Existing conversations migrate as `shared`; no existing checkout is adopted
+or deleted by the portal. A directory supplied through the legacy `workdir`
+field is always shared even if it happens to be a Git worktree.
+
 
 ## Turn input capture (observability)
 

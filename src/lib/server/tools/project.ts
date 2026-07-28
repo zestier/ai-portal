@@ -46,28 +46,40 @@ export function normalizeFieldSelector(
 	if (typeof fields === 'string') {
 		if (fields === 'all' || fields === '*') return 'all';
 		if (fields === 'default') return undefined;
-		const looksJson = fields.startsWith('[') || fields.includes('","');
 		throw new Error(
-			`Invalid "fields" value: ${JSON.stringify(fields)}. ` +
-				'`fields` must be an array of field names (e.g. ["id","title"]) or one of the ' +
-				'bare sentinels "all" / "default". ' +
-				(looksJson
-					? 'This looks like a JSON-encoded string — pass a real array, not a string. '
-					: '') +
-				'For a single field, use an array like ["plan"], not "plan".'
+			`Invalid "fields" value: ${JSON.stringify(fields)}. ${fieldsShapeError(fields)}`
 		);
 	}
 	return fields.length === 0 ? undefined : fields;
 }
 
+function fieldsShapeError(fields: string): string {
+	if (fields.startsWith('[') || fields.includes('","')) {
+		return (
+			'"fields" must be a JSON array, not a JSON-encoded string. ' +
+			'Send {"fields":["id","title"]}, not {"fields":"[\\"id\\",\\"title\\"]"}.'
+		);
+	}
+	return (
+		'"fields" must be an array of field names for field selection; only "all" and "default" ' +
+		`may be strings. For a single field, use an array like [${JSON.stringify(fields)}], not ` +
+		`${JSON.stringify(fields)}. Send {"fields":[${JSON.stringify(fields)}]}.`
+	);
+}
+
 // Shared Zod schema for the optional `fields` argument across tools. The only
 // accepted shapes are an array of field names or the bare sentinels
-// "all"/"default" (plus the tolerated "*" alias). The string arm stays wide at
-// the Zod layer so a bare non-sentinel string reaches `normalizeFieldSelector`,
-// which rejects it with a descriptive shape-error message rather than silently
-// wrapping it into a one-element list.
+// "all"/"default" (plus the tolerated "*" alias). The string arm uses a custom
+// refinement so permission-layer validation rejects malformed strings with an
+// exact corrected payload. `normalizeFieldSelector` repeats the check for direct
+// handler callers and other uses outside that validation boundary.
 export const FieldsArg = z
 	.union([z.array(z.string().trim().min(1).max(100)).max(50), z.string().trim().min(1).max(100)])
+	.superRefine((fields, ctx) => {
+		if (typeof fields === 'string' && fields !== 'all' && fields !== 'default' && fields !== '*') {
+			ctx.addIssue({ code: z.ZodIssueCode.custom, message: fieldsShapeError(fields) });
+		}
+	})
 	.optional();
 
 // Shared JSON-Schema fragment advertising the `fields` parameter on a tool. The
@@ -79,7 +91,8 @@ export const FIELDS_PARAM = {
 		'Optional. Selects how much of each record to return. Omit (or pass "default") for ' +
 		'a compact view with the fields you usually need (dropped field names are listed in ' +
 		'`_omitted`). Pass an array of top-level field names to fetch exactly those — including ' +
-		'fields omitted by default, e.g. ["plan"] — or "all" for the complete record. Field ' +
+		'fields omitted by default, e.g. {"fields":["plan"]} — or "all" for the complete record. ' +
+		'Do not quote or JSON-encode the array. Field ' +
 		'names must exist on the record; unknown names are rejected. "all"/"default" are ' +
 		'sentinels only as the whole value, not inside the array. Prefer the default unless you ' +
 		'need something specific.',

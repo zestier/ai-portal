@@ -982,7 +982,8 @@ function buildOpenAITools(opts: {
 			filesystem: buildFilesystemTools(opts.opts.workingDirectory),
 			tickets: buildTicketTools({
 				userId: opts.opts.userId,
-				workspaceKey: ticketWorkspaceFromConversation(opts.opts.workingDirectory),
+				workspaceKey:
+					opts.opts.workspaceKey ?? ticketWorkspaceFromConversation(opts.opts.workingDirectory),
 				conversationId: opts.opts.conversationId
 			}),
 			permissions: buildPermissionTools({

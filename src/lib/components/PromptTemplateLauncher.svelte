@@ -46,7 +46,7 @@
 		return `${labels.join(', ')} off`;
 	}
 
-	async function newBlankChat() {
+	async function newBlankChat(kind: 'shared' | 'worktree' = 'shared') {
 		if (busy) return;
 		busy = true;
 		localError = null;
@@ -54,10 +54,17 @@
 			const res = await fetch('/api/conversations', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ title: 'New chat' })
+				body: JSON.stringify({
+					title: 'New chat',
+					...(kind === 'worktree' ? { workspace: { kind: 'worktree' } } : {})
+				})
 			});
 			if (!res.ok) {
-				reportError(`Could not create chat (${res.status})`);
+				const body = (await res.json().catch(() => null)) as { message?: unknown } | null;
+				const message = typeof body?.message === 'string' ? body.message.trim() : '';
+				reportError(
+					message ? `Could not create chat: ${message}` : `Could not create chat (${res.status})`
+				);
 				return;
 			}
 			const body = await res.json();
@@ -146,7 +153,7 @@
 			class="rail-btn"
 			title="New blank chat"
 			aria-label="New blank chat"
-			onclick={newBlankChat}
+			onclick={() => newBlankChat()}
 			disabled={busy}
 		>
 			<svg
@@ -183,10 +190,20 @@
 			type="button"
 			class="btn primary"
 			class:block={variant === 'sidebar'}
-			onclick={newBlankChat}
+			onclick={() => newBlankChat()}
 			disabled={busy}
 		>
-			{busy ? 'Creating...' : '+ New chat'}
+			{busy ? 'Creating...' : 'New shared chat'}
+		</button>
+		<button
+			type="button"
+			class="btn secondary"
+			class:block={variant === 'sidebar'}
+			onclick={() => newBlankChat('worktree')}
+			disabled={busy}
+			title="Create an isolated Git worktree"
+		>
+			New worktree chat
 		</button>
 		<button
 			type="button"

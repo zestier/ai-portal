@@ -72,7 +72,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		) {
 			throw error(404, 'source message not found');
 		}
-		workspace = ticketWorkspaceFromConversation(conv.workdir);
+		workspace = ticketWorkspaceFromConversation(conv);
 	} else if (body.sourceMessageId) {
 		throw error(400, 'sourceConversationId is required when sourceMessageId is set');
 	}

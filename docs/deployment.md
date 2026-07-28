@@ -6,6 +6,8 @@ The portal is distributed as a multi-arch container image
 that needs:
 
 - A persistent volume for its encrypted SQLite database (`/data`).
+- Persistent space for portal-owned linked worktrees (`/data/worktrees` by
+  default, covered by the same volume).
 - A bind mount of the project tree the agent should read and edit
   (`/workspace`).
 - `git` available in `PATH` inside the container (already included in the
@@ -57,6 +59,23 @@ docker compose up -d
 
 The portal is now reachable on `http://127.0.0.1:3000`. For public
 access, see "Cloudflare Tunnel" below.
+
+### Managed worktrees
+
+`WORKTREE_ROOT` defaults to `<DATA_DIR>/worktrees`; the Compose deployment pins
+it to `/data/worktrees`. Git stores absolute paths for linked worktrees, so both
+`PROJECT_ROOT` and `WORKTREE_ROOT` must keep the same in-container paths across
+restarts and image upgrades. The portal user needs write access to both the
+source repository's Git metadata and `WORKTREE_ROOT`.
+
+`WORKTREE_CREATE_TIMEOUT_MS` bounds `git worktree` lifecycle commands and
+defaults to 120 seconds. Managed worktrees require a repository with at least
+one commit. Submodule initialization, Git LFS fetching, pushing, merging, and
+branch deletion remain operator/user responsibilities.
+
+Conversation deletion removes a clean managed checkout but retains its
+`portal/<conversationId>` branch. Dirty deletion requires an explicit second
+confirmation. Archive never removes files.
 
 ### UID / permissions
 

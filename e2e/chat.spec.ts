@@ -23,6 +23,33 @@ test('streamed assistant reply (stubbed) appears and persists across reloads', a
 	await expect(page.getByText('Stubbed reply to: hello world').first()).toBeVisible();
 });
 
+test('a worktree fork failure is visible on the assistant message', async ({ page, request }) => {
+	const id = await createConversation(request, uniqueTitle('E2E worktree fork failure'));
+	await page.goto(`/conversations/${id}`);
+
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.fill('fork this reply');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, id, /Stubbed reply to: fork this reply/);
+	await page.reload();
+
+	await page.route(`**/api/conversations/${id}/messages/*/fork`, async (route) => {
+		await route.fulfill({
+			status: 409,
+			contentType: 'application/json',
+			body: JSON.stringify({ code: 'no_snapshot', message: 'snapshot unavailable' })
+		});
+	});
+	const assistantBubble = page
+		.locator('article.msg[data-role="assistant"]')
+		.filter({ hasText: 'Stubbed reply to: fork this reply' });
+	await assistantBubble
+		.getByRole('button', { name: 'Continue from here in an isolated worktree' })
+		.click();
+
+	await expect(assistantBubble.getByRole('alert')).toContainText('snapshot unavailable');
+});
+
 test('thinking indicator renders inside the assistant turn bubble', async ({ page, request }) => {
 	const id = await createConversation(request, uniqueTitle('E2E thinking'));
 	await page.goto(`/conversations/${id}`);

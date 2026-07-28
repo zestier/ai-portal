@@ -8,6 +8,10 @@ import { getTurn } from '$lib/server/runtime/turn-runner';
 import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
 import { parseBody } from '$lib/server/validate';
 import { authorizeConversation } from '$lib/server/conversation-auth';
+import { getManagedWorktree } from '$lib/server/db/repos/conversations';
+import { removeManagedWorktree, WorktreeError } from '$lib/server/worktrees';
+import { error } from '@sveltejs/kit';
+import { audit } from '$lib/server/audit';
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
@@ -55,9 +59,47 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	return json({ ok: true });
 };
 
-export const DELETE: RequestHandler = async ({ params, locals }) => {
+export const DELETE: RequestHandler = async ({ params, locals, url, getClientAddress }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	// A provider subprocess may have this directory as its cwd. Dispose it
+	// before asking Git to remove the linked worktree.
 	await pool.release(conv.id);
+	const managed = getManagedWorktree(conv.id, conv.userId);
+	if (managed) {
+		try {
+			await removeManagedWorktree(managed, {
+				force: url.searchParams.get('forceWorktree') === '1',
+				owner: { userId: conv.userId, conversationId: conv.id }
+			});
+		} catch (cause) {
+			if (cause instanceof WorktreeError) {
+				audit({
+					event_type: 'worktree_remove',
+					actor_login: locals.user?.githubLogin ?? null,
+					actor_ip: getClientAddress(),
+					resource: managed.path,
+					outcome: cause.code === 'worktree_dirty' ? 'denied' : 'failure',
+					detail: { conversationId: conv.id, code: cause.code }
+				});
+				throw error(cause.code === 'worktree_dirty' ? 409 : 500, {
+					message: cause.message,
+					code: cause.code
+				});
+			}
+			throw cause;
+		}
+		audit({
+			event_type: 'worktree_remove',
+			actor_login: locals.user?.githubLogin ?? null,
+			actor_ip: getClientAddress(),
+			resource: managed.path,
+			outcome: 'success',
+			detail: {
+				conversationId: conv.id,
+				forced: url.searchParams.get('forceWorktree') === '1'
+			}
+		});
+	}
 	convs.remove(conv.id, conv.userId);
 	return json({ ok: true });
 };

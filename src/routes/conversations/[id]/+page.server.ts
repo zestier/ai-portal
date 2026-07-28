@@ -27,7 +27,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const draftTicketId = url.searchParams.get('draftTicketId');
 	if (draftTicketId && msgs.length === 0) {
 		const ticket = tickets.get(draftTicketId, locals.userId);
-		if (!ticket || ticket.workspaceKey !== ticketWorkspaceFromConversation(conv.workdir)) {
+		if (!ticket || ticket.workspaceKey !== ticketWorkspaceFromConversation(conv)) {
 			throw error(404);
 		}
 		const actionId = url.searchParams.get('ticketActionId');

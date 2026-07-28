@@ -295,8 +295,27 @@
 	async function deleteConv(id: string) {
 		closeMenu();
 		if (!confirm('Delete this conversation? This cannot be undone.')) return;
-		const ok = await api(`/api/conversations/${id}`, { method: 'DELETE' }, 'Delete');
-		if (ok) {
+		let res: Response;
+		try {
+			res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+			if (res.status === 409) {
+				const body = await res.json().catch(() => null);
+				if (body?.code !== 'worktree_dirty') {
+					flashError('Delete failed (409)');
+					return;
+				}
+				if (!confirm('This worktree has uncommitted changes. Delete it anyway?')) return;
+				res = await fetch(`/api/conversations/${id}?forceWorktree=1`, { method: 'DELETE' });
+			}
+		} catch {
+			flashError('Delete failed');
+			return;
+		}
+		if (!res.ok) {
+			flashError(`Delete failed (${res.status})`);
+			return;
+		}
+		if (res.ok) {
 			await invalidateAll();
 			if (location.pathname === `/conversations/${id}`) location.href = '/';
 		}
@@ -337,27 +356,53 @@
 		}
 		bulkBusy = true;
 		try {
-			const results = await Promise.all(
-				ids.map((id) => {
+			let results = await Promise.all(
+				ids.map(async (id) => {
 					if (action === 'delete') {
-						return fetch(`/api/conversations/${id}`, { method: 'DELETE' }).then((r) => r.ok);
+						const response = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+						const body = response.status === 409 ? await response.json().catch(() => null) : null;
+						return { id, ok: response.ok, dirty: body?.code === 'worktree_dirty' };
 					}
-					return fetch(`/api/conversations/${id}`, {
+					const response = await fetch(`/api/conversations/${id}`, {
 						method: 'PATCH',
 						headers: { 'content-type': 'application/json' },
 						body: JSON.stringify({ archived: action === 'archive' })
-					}).then((r) => r.ok);
+					});
+					return { id, ok: response.ok, dirty: false };
 				})
 			);
-			const failed = results.filter((ok) => !ok).length;
+			const dirtyIds = results.filter((result) => result.dirty).map((result) => result.id);
+			if (
+				action === 'delete' &&
+				dirtyIds.length > 0 &&
+				confirm(
+					`${dirtyIds.length} worktree${dirtyIds.length === 1 ? ' has' : 's have'} uncommitted changes. Delete ${dirtyIds.length === 1 ? 'it' : 'them'} anyway?`
+				)
+			) {
+				const forced = await Promise.all(
+					dirtyIds.map(async (id) => ({
+						id,
+						ok: (await fetch(`/api/conversations/${id}?forceWorktree=1`, { method: 'DELETE' })).ok,
+						dirty: false
+					}))
+				);
+				const forcedById = new Map(forced.map((result) => [result.id, result]));
+				results = results.map((result) => forcedById.get(result.id) ?? result);
+			}
+			const failedIds = results.filter((result) => !result.ok).map((result) => result.id);
+			const failed = failedIds.length;
 			if (failed > 0) flashError(`${failed} of ${ids.length} ${action} operations failed`);
 			await invalidateAll();
 			if (action === 'delete') {
 				const currentId = location.pathname.match(/^\/conversations\/([^/]+)/)?.[1];
-				if (currentId && ids.includes(currentId)) location.href = '/';
+				if (currentId && results.some((result) => result.id === currentId && result.ok)) {
+					location.href = '/';
+				}
 			}
-			selected = new Set();
-			selectMode = false;
+			selected = new Set(failedIds);
+			selectMode = failed > 0;
+		} catch {
+			flashError(`${action[0].toUpperCase()}${action.slice(1)} failed`);
 		} finally {
 			bulkBusy = false;
 		}

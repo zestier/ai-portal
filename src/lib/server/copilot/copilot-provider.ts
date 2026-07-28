@@ -244,7 +244,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			filesystem: buildFilesystemTools(opts.workingDirectory),
 			tickets: buildTicketTools({
 				userId: opts.userId,
-				workspaceKey: ticketWorkspaceFromConversation(opts.workingDirectory),
+				workspaceKey: opts.workspaceKey ?? ticketWorkspaceFromConversation(opts.workingDirectory),
 				conversationId: opts.conversationId
 			}),
 			permissions: buildPermissionTools({

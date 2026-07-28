@@ -21,7 +21,7 @@ session (enforced in `hooks.server.ts`).
 ┌──────────────────────────────────────────────────────┐
 │  Sidebar (collapsible on mobile)   │   Main          │
 │  ┌────────────────────────────┐    │   ┌──────────┐  │
-│  │ + New chat                 │    │   │ Header   │  │
+│  │ New shared/worktree chat   │    │   │ Header   │  │
 │  │ ── Conversations ──        │    │   │  title,  │  │
 │  │  • "Fix flaky test in foo" │    │   │  model,  │  │
 │  │  • "Draft release notes"   │    │   │  workdir │  │
@@ -170,6 +170,12 @@ A **Select** button enables multi-select mode with a bulk action bar at the
 bottom for archiving, unarchiving, or deleting in batches. API failures
 surface in a dismissible inline banner. Click a row to navigate; archiving
 releases the conversation's pooled SDK client.
+
+The launcher offers shared and managed-worktree chats. Managed conversations
+show their branch and base commit in the chat header. Deleting a dirty managed
+worktree produces a second destructive confirmation; declining leaves both the
+conversation and files intact. Message actions also offer an opt-in worktree
+fork that restores the selected turn snapshot into a new linked checkout.
 
 ## Streaming on the client
 

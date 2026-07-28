@@ -11,8 +11,11 @@ import {
 	type Conversation,
 	type MemoryExtractorBackend,
 	type MemoryMode,
-	type SessionMode
+	type SessionMode,
+	type WorkspaceKind
 } from '$lib/types';
+import type { ManagedWorktreeMetadata } from '../../worktrees';
+import { effectiveWorkdir } from '../../workdir';
 import { sanitizeDisabledToolGroups, type PortalToolGroupId } from '$lib/tools/groups';
 
 /**
@@ -50,7 +53,19 @@ interface ConvRow {
 	approve_all_tools: number | null;
 	disabled_tool_groups: string | null;
 	draft_prompt: string | null;
+	workspace_kind: WorkspaceKind;
+	workspace_key: string | null;
+	worktree_branch: string | null;
+	worktree_base_sha: string | null;
 }
+
+const CONVERSATION_SELECT = `
+	SELECT conversations.*,
+	       (SELECT branch FROM managed_worktrees WHERE conversation_id = conversations.id)
+	         AS worktree_branch,
+	       (SELECT base_sha FROM managed_worktrees WHERE conversation_id = conversations.id)
+	         AS worktree_base_sha
+	  FROM conversations`;
 
 function rowToConv(r: ConvRow): Conversation {
 	const mode = normalizeSessionMode(r.mode);
@@ -74,13 +89,17 @@ function rowToConv(r: ConvRow): Conversation {
 		forkedFromConversationId: r.forked_from_conversation_id,
 		forkedFromMessageId: r.forked_from_message_id,
 		providerSessionId: r.provider_session_id ?? r.id,
-		draftPrompt: r.draft_prompt ?? null
+		draftPrompt: r.draft_prompt ?? null,
+		workspaceKind: r.workspace_kind ?? 'shared',
+		workspaceKey: r.workspace_key ?? effectiveWorkdir(r.workdir),
+		worktreeBranch: r.worktree_branch ?? null,
+		worktreeBaseSha: r.worktree_base_sha ?? null
 	};
 }
 
 export function get(id: string, userId: string): Conversation | null {
 	const r = getDb()
-		.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?')
+		.prepare(`${CONVERSATION_SELECT} WHERE conversations.id = ? AND conversations.user_id = ?`)
 		.get(id, userId) as ConvRow | undefined;
 	return r ? rowToConv(r) : null;
 }
@@ -98,8 +117,8 @@ export interface ListOpts {
 export function listChildren(userId: string, sourceId: string): Conversation[] {
 	const rows = getDb()
 		.prepare(
-			`SELECT * FROM conversations
-			 WHERE user_id = ? AND forked_from_conversation_id = ?
+			`${CONVERSATION_SELECT}
+			 WHERE conversations.user_id = ? AND conversations.forked_from_conversation_id = ?
 			 ORDER BY created_at ASC`
 		)
 		.all(userId, sourceId) as ConvRow[];
@@ -109,8 +128,8 @@ export function listChildren(userId: string, sourceId: string): Conversation[] {
 export function list(userId: string, opts: ListOpts = {}): Conversation[] {
 	const limit = opts.limit ?? 200;
 	const sql = opts.includeArchived
-		? `SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?`
-		: `SELECT * FROM conversations WHERE user_id = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`;
+		? `${CONVERSATION_SELECT} WHERE conversations.user_id = ? ORDER BY updated_at DESC LIMIT ?`
+		: `${CONVERSATION_SELECT} WHERE conversations.user_id = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT ?`;
 	const rows = getDb().prepare(sql).all(userId, limit) as ConvRow[];
 	return rows.map(rowToConv);
 }
@@ -131,6 +150,9 @@ export interface CreateInput {
 	forkedFromMessageId?: string | null;
 	providerSessionId?: string | null;
 	draftPrompt?: string | null;
+	workspaceKind?: WorkspaceKind;
+	workspaceKey?: string;
+	managedWorktree?: ManagedWorktreeMetadata;
 }
 
 /**
@@ -157,15 +179,18 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const provider =
 		input.provider ?? normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
 	const draftPrompt = input.draftPrompt ?? null;
-	getDb()
-		.prepare(
+	const workspaceKind = input.workspaceKind ?? 'shared';
+	const workspaceKey = input.workspaceKey ?? effectiveWorkdir(input.workdir);
+	const db = getDb();
+	db.transaction(() => {
+		db.prepare(
 			`INSERT INTO conversations(
 			   id, user_id, title, workdir, provider, model, mode, memory_mode, memory_extractor_model,
 			   memory_extractor_backend, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
-			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		)
-		.run(
+			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt,
+			   workspace_kind, workspace_key
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
 			id,
 			userId,
 			input.title,
@@ -183,8 +208,30 @@ export function create(userId: string, input: CreateInput): Conversation {
 			forkConv,
 			forkMsg,
 			providerSessionId,
-			draftPrompt
+			draftPrompt,
+			workspaceKind,
+			workspaceKey
 		);
+		if (workspaceKind === 'managed-worktree') {
+			if (!input.managedWorktree) {
+				throw new Error('managed-worktree conversation requires managedWorktree metadata');
+			}
+			const worktree = input.managedWorktree;
+			db.prepare(
+				`INSERT INTO managed_worktrees(
+				   conversation_id, source_workdir, path, git_common_dir, branch, base_sha, created_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				id,
+				worktree.sourceWorkdir,
+				worktree.path,
+				worktree.gitCommonDir,
+				worktree.branch,
+				worktree.baseSha,
+				now
+			);
+		}
+	})();
 	return {
 		id,
 		userId,
@@ -205,8 +252,40 @@ export function create(userId: string, input: CreateInput): Conversation {
 		forkedFromConversationId: forkConv,
 		forkedFromMessageId: forkMsg,
 		providerSessionId,
-		draftPrompt
+		draftPrompt,
+		workspaceKind,
+		workspaceKey,
+		worktreeBranch: input.managedWorktree?.branch ?? null,
+		worktreeBaseSha: input.managedWorktree?.baseSha ?? null
 	};
+}
+
+export function getManagedWorktree(id: string, userId: string): ManagedWorktreeMetadata | null {
+	const row = getDb()
+		.prepare(
+			`SELECT mw.source_workdir, mw.path, mw.git_common_dir, mw.branch, mw.base_sha
+			   FROM managed_worktrees mw
+			   JOIN conversations c ON c.id = mw.conversation_id
+			  WHERE mw.conversation_id = ? AND c.user_id = ?`
+		)
+		.get(id, userId) as
+		| {
+				source_workdir: string;
+				path: string;
+				git_common_dir: string;
+				branch: string;
+				base_sha: string;
+		  }
+		| undefined;
+	return row
+		? {
+				sourceWorkdir: row.source_workdir,
+				path: row.path,
+				gitCommonDir: row.git_common_dir,
+				branch: row.branch,
+				baseSha: row.base_sha
+			}
+		: null;
 }
 
 export function rotateProviderSession(id: string, userId: string): string | null {

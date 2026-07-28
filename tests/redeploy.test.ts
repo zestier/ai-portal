@@ -22,6 +22,8 @@ const baseCfg: AppConfig = {
 	DATA_DIR: './data',
 	PROJECT_ROOT: process.cwd(),
 	ALLOWED_WORKDIRS: [],
+	WORKTREE_ROOT: './data/worktrees',
+	WORKTREE_CREATE_TIMEOUT_MS: 120_000,
 	LOG_LEVEL: 'info',
 	AUTH_MODE: 'github',
 	SESSION_SECRET: 'x'.repeat(32),

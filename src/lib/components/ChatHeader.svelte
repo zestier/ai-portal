@@ -469,6 +469,18 @@
 					<dd>{model}</dd>
 					<dt>Workdir</dt>
 					<dd class="mono">{conversation.workdir}</dd>
+					<dt>Workspace</dt>
+					<dd>
+						{conversation.workspaceKind === 'managed-worktree' ? 'Managed worktree' : 'Shared'}
+					</dd>
+					{#if conversation.worktreeBranch}
+						<dt>Branch</dt>
+						<dd class="mono">{conversation.worktreeBranch}</dd>
+					{/if}
+					{#if conversation.worktreeBaseSha}
+						<dt>Base</dt>
+						<dd class="mono">{conversation.worktreeBaseSha.slice(0, 8)}</dd>
+					{/if}
 					<dt>ID</dt>
 					<dd class="mono">{conversation.id}</dd>
 				</dl>

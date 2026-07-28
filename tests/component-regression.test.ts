@@ -89,7 +89,11 @@ const conversation: Conversation = {
 	forkedFromConversationId: null,
 	forkedFromMessageId: null,
 	providerSessionId: 'session-1',
-	draftPrompt: null
+	draftPrompt: null,
+	workspaceKind: 'shared',
+	workspaceKey: '/workspaces/copilot-portal',
+	worktreeBranch: null,
+	worktreeBaseSha: null
 };
 
 function textOf(body: string): string {
@@ -550,7 +554,8 @@ describe('Svelte component regression coverage', () => {
 			props: { variant: 'rail' }
 		}).body;
 
-		expect(home).toContain('+ New chat');
+		expect(home).toContain('New shared chat');
+		expect(home).toContain('New worktree chat');
 		expect(home).toContain('Use template');
 		expect(rail).toContain('aria-label="New blank chat"');
 		expect(rail).toContain('aria-label="New chat from template"');

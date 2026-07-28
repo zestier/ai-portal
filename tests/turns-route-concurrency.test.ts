@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { isHttpError } from '@sveltejs/kit';
+import { join } from 'node:path';
 import { setupLocalEnv } from './helpers/env';
 
 // The turns POST route persists a user message and then calls
@@ -136,5 +137,50 @@ describe('turns POST concurrency', () => {
 
 		const userMsgs = messages.listByConversation(conv.id).filter((m) => m.role === 'user');
 		expect(userMsgs.map((m) => m.content)).toEqual(['first', 'second']);
+	});
+
+	it('rejects an unavailable managed workspace before persisting send state', async () => {
+		const dataDir = await setupLocalEnv('portal-turns-missing-worktree-');
+		const { users, convs, messages, route } = await freshImports();
+		const user = users.ensureLocalUser();
+		const conversationId = 'MISSINGSENDWORKTREE';
+		const worktreePath = join(dataDir, 'worktrees', user.id, conversationId);
+		const conversation = convs.create(user.id, {
+			id: conversationId,
+			title: 'New chat',
+			workdir: worktreePath,
+			workspaceKind: 'managed-worktree',
+			workspaceKey: '/tmp/source',
+			managedWorktree: {
+				sourceWorkdir: '/tmp/source',
+				path: worktreePath,
+				gitCommonDir: '/tmp/source/.git',
+				branch: `portal/${conversationId}`,
+				baseSha: 'a'.repeat(40)
+			},
+			draftPrompt: 'keep this draft',
+			model: 'gpt-4',
+			provider: 'copilot'
+		});
+
+		const result = await capture(() =>
+			route.POST({
+				params: { id: conversation.id },
+				locals: { userId: user.id },
+				request: jsonRequest({ content: 'do not persist' })
+			} as never)
+		);
+
+		expect(isHttpError(result.thrown)).toBe(true);
+		expect(result.thrown).toMatchObject({
+			status: 409,
+			body: { code: 'workspace_unavailable' }
+		});
+		expect(messages.listByConversation(conversation.id)).toEqual([]);
+		expect(convs.get(conversation.id, user.id)).toMatchObject({
+			title: 'New chat',
+			draftPrompt: 'keep this draft'
+		});
+		expect(startTurnMock).not.toHaveBeenCalled();
 	});
 });

@@ -47,6 +47,8 @@ export interface ProviderOpenOptions {
 	providerSessionId?: string;
 	userId: string;
 	workingDirectory: string;
+	/** Stable logical repository identity used to scope tickets across worktrees. */
+	workspaceKey?: string;
 	model: string;
 	policy: PermissionPolicy;
 	/** Initial session mode. Providers without mode support may ignore it. */

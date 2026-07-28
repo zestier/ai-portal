@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { setupLocalEnv } from './helpers/env';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../src/lib/server/global-singleton';
 
@@ -34,6 +35,9 @@ describe('fork.forkAtMessage', () => {
 
 	beforeEach(async () => {
 		dataDir = await setupLocalEnv('portal-fork-test-');
+		process.env.WORKTREE_ROOT = join(dataDir, 'managed-worktrees');
+		const { resetConfigForTests } = await import('../src/lib/server/config');
+		resetConfigForTests();
 	});
 
 	afterEach(() => {
@@ -98,6 +102,140 @@ describe('fork.forkAtMessage', () => {
 
 		// Source is untouched.
 		expect(messages.listByConversation(sourceConv.id)).toHaveLength(4);
+	});
+
+	it('creates an isolated worktree at the historical snapshot state', async () => {
+		const { users, convs, messages, snapshots, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('isolated-source');
+		execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: wd });
+		execFileSync('git', ['config', 'user.name', 'Portal Test'], { cwd: wd });
+		execFileSync('git', ['config', 'user.email', 'portal-test@localhost'], { cwd: wd });
+		writeFileSync(join(wd, 'state.txt'), 'base\n');
+		execFileSync('git', ['add', 'state.txt'], { cwd: wd });
+		execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: wd });
+		const source = convs.create(u.id, { title: 'src', workdir: wd, model: null });
+
+		writeFileSync(join(wd, 'state.txt'), 'historical\n');
+		writeFileSync(join(wd, 'untracked.txt'), 'captured\n');
+		const target = messages.append(source.id, { role: 'user', content: 'change it' });
+		await snapshots.snapshot(wd, target.id, 'pre');
+		writeFileSync(join(wd, 'state.txt'), 'current\n');
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: source.id,
+			messageId: target.id,
+			newContent: 'change it differently',
+			workspaceKind: 'managed-worktree'
+		});
+
+		expect(result.deferred).toBe(false);
+		expect(result.conversation.workspaceKind).toBe('managed-worktree');
+		expect(result.conversation.workspaceKey).toBe(source.workspaceKey);
+		expect(result.conversation.workdir).not.toBe(source.workdir);
+		expect(readFileSync(join(result.conversation.workdir, 'state.txt'), 'utf8')).toBe(
+			'historical\n'
+		);
+		expect(readFileSync(join(result.conversation.workdir, 'untracked.txt'), 'utf8')).toBe(
+			'captured\n'
+		);
+		expect(readFileSync(join(source.workdir, 'state.txt'), 'utf8')).toBe('current\n');
+		const status = execFileSync('git', ['status', '--porcelain'], {
+			cwd: result.conversation.workdir,
+			encoding: 'utf8'
+		});
+		expect(status).toContain(' M state.txt');
+		expect(status).toContain('?? untracked.txt');
+	});
+
+	it('creates an isolated worktree from a legacy snapshot without a recorded base commit', async () => {
+		const { users, convs, messages, snapshots, fork, db } = await freshImports();
+		const u = users.ensureLocalUser();
+		const wd = workdirFor('legacy-snapshot-source');
+		execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: wd });
+		execFileSync('git', ['config', 'user.name', 'Portal Test'], { cwd: wd });
+		execFileSync('git', ['config', 'user.email', 'portal-test@localhost'], { cwd: wd });
+		writeFileSync(join(wd, 'state.txt'), 'base\n');
+		execFileSync('git', ['add', 'state.txt'], { cwd: wd });
+		execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: wd });
+		const source = convs.create(u.id, { title: 'src', workdir: wd, model: null });
+		writeFileSync(join(wd, 'state.txt'), 'historical\n');
+		const target = messages.append(source.id, { role: 'user', content: 'change it' });
+		await snapshots.snapshot(wd, target.id, 'pre');
+		db.getDb()
+			.prepare('UPDATE turn_snapshots SET base_commit_sha = NULL WHERE message_id = ?')
+			.run(target.id);
+		writeFileSync(join(wd, 'state.txt'), 'new head\n');
+		execFileSync('git', ['add', 'state.txt'], { cwd: wd });
+		execFileSync('git', ['commit', '-q', '-m', 'new head'], { cwd: wd });
+		const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+			cwd: wd,
+			encoding: 'utf8'
+		}).trim();
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: source.id,
+			messageId: target.id,
+			newContent: 'change it differently',
+			workspaceKind: 'managed-worktree'
+		});
+
+		expect(result.conversation.worktreeBaseSha).toBe(currentHead);
+		expect(readFileSync(join(result.conversation.workdir, 'state.txt'), 'utf8')).toBe(
+			'historical\n'
+		);
+		expect(
+			execFileSync('git', ['status', '--porcelain'], {
+				cwd: result.conversation.workdir,
+				encoding: 'utf8'
+			})
+		).toContain(' M state.txt');
+	});
+
+	it('gives a managed-source fork an independent worktree with a stable repository source', async () => {
+		const { users, convs, messages, snapshots, fork } = await freshImports();
+		const { createManagedWorktree, removeManagedWorktree } =
+			await import('../src/lib/server/worktrees');
+		const u = users.ensureLocalUser();
+		const repository = workdirFor('managed-parent-source');
+		execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repository });
+		execFileSync('git', ['config', 'user.name', 'Portal Test'], { cwd: repository });
+		execFileSync('git', ['config', 'user.email', 'portal-test@localhost'], { cwd: repository });
+		writeFileSync(join(repository, 'state.txt'), 'base\n');
+		execFileSync('git', ['add', 'state.txt'], { cwd: repository });
+		execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repository });
+		const parentId = convs.newId();
+		const parentWorktree = await createManagedWorktree({
+			sourceWorkdir: repository,
+			userId: u.id,
+			conversationId: parentId
+		});
+		const parent = convs.create(u.id, {
+			id: parentId,
+			title: 'managed parent',
+			workdir: parentWorktree.path,
+			workspaceKind: 'managed-worktree',
+			workspaceKey: repository,
+			managedWorktree: parentWorktree,
+			model: null
+		});
+		const target = messages.append(parent.id, { role: 'user', content: 'change it' });
+		await snapshots.snapshot(parent.workdir, target.id, 'pre');
+
+		const result = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: parent.id,
+			messageId: target.id,
+			newContent: 'change it differently'
+		});
+		const childWorktree = convs.getManagedWorktree(result.conversation.id, u.id);
+
+		expect(result.conversation.workspaceKind).toBe('managed-worktree');
+		expect(childWorktree?.sourceWorkdir).toBe(repository);
+		await removeManagedWorktree(parentWorktree, { force: true });
+		await expect(removeManagedWorktree(childWorktree!, { force: true })).resolves.toBeUndefined();
 	});
 
 	it('rejects edits on assistant messages when newContent is provided', async () => {

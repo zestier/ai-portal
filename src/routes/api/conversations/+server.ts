@@ -15,6 +15,20 @@ import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
 import { audit } from '$lib/server/audit';
+import {
+	createManagedWorktree,
+	rollbackManagedWorktree,
+	WorktreeError
+} from '$lib/server/worktrees';
+
+const WorkspaceInput = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('shared'), path: z.string().min(1).optional() }),
+	z.object({
+		kind: z.literal('worktree'),
+		sourcePath: z.string().min(1).optional(),
+		baseRef: z.string().min(1).max(500).optional()
+	})
+]);
 
 export const GET: RequestHandler = ({ locals, url }) => {
 	const userId = requireUserId(locals);
@@ -22,21 +36,26 @@ export const GET: RequestHandler = ({ locals, url }) => {
 	return json({ conversations: convs.list(userId, { includeArchived }) });
 };
 
-const CreateBody = z.object({
-	title: z.string().min(1).max(200).default('New chat'),
-	provider: z.enum(BACKEND_PROVIDER_IDS).optional(),
-	model: z.string().min(1).optional(),
-	workdir: z.string().min(1).optional(),
-	mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
-	memoryExtractorModel: z.string().min(1).optional(),
-	memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
-	/**
-	 * Optional chat prompt-template to seed conversation settings from. When it
-	 * resolves to one of the caller's own chat templates, its
-	 * `disabledToolGroups` preset is copied onto the new conversation.
-	 */
-	promptTemplateId: z.string().min(1).optional()
-});
+const CreateBody = z
+	.object({
+		title: z.string().min(1).max(200).default('New chat'),
+		provider: z.enum(BACKEND_PROVIDER_IDS).optional(),
+		model: z.string().min(1).optional(),
+		workdir: z.string().min(1).optional(),
+		mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		memoryExtractorModel: z.string().min(1).optional(),
+		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
+		/**
+		 * Optional chat prompt-template to seed conversation settings from. When it
+		 * resolves to one of the caller's own chat templates, its
+		 * `disabledToolGroups` preset is copied onto the new conversation.
+		 */
+		promptTemplateId: z.string().min(1).optional(),
+		workspace: WorkspaceInput.optional()
+	})
+	.refine((body) => !(body.workdir && body.workspace), {
+		message: 'workdir and workspace cannot both be supplied'
+	});
 
 export const POST: RequestHandler = async ({ locals, request, getClientAddress }) => {
 	const userId = requireUserId(locals);
@@ -56,7 +75,12 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 
 	const id = convs.newId();
 	// Precedence: explicit body.workdir > user's defaultWorkdir > PROJECT_ROOT.
-	const requested = body.workdir ?? userSettings.defaultWorkdir ?? null;
+	const requested =
+		body.workspace?.kind === 'shared'
+			? (body.workspace.path ?? userSettings.defaultWorkdir ?? null)
+			: body.workspace?.kind === 'worktree'
+				? (body.workspace.sourcePath ?? userSettings.defaultWorkdir ?? null)
+				: (body.workdir ?? userSettings.defaultWorkdir ?? null);
 	let workdir: string;
 	if (requested) {
 		const res = resolveAndValidate(requested);
@@ -84,20 +108,66 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 		workdir = projectRoot();
 	}
 
-	const conv = convs.create(userId, {
-		id,
-		title: body.title,
-		workdir,
-		provider: normalizeBackendProvider(provider),
-		model,
-		mode: body.mode ?? userSettings.defaultConversationMode,
-		// Seed-only, mirroring model/mode precedence: explicit create-body field
-		// wins, else the user's default, else NULL (resolved from env at runtime).
-		memoryExtractorModel:
-			body.memoryExtractorModel ?? userSettings.defaultMemoryExtractorModel ?? null,
-		memoryExtractorBackend:
-			body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null,
-		disabledToolGroups
-	});
+	let managedWorktree;
+	if (body.workspace?.kind === 'worktree') {
+		try {
+			managedWorktree = await createManagedWorktree({
+				sourceWorkdir: workdir,
+				userId,
+				conversationId: id,
+				...(body.workspace.baseRef ? { baseRef: body.workspace.baseRef } : {})
+			});
+		} catch (cause) {
+			if (cause instanceof WorktreeError) {
+				audit({
+					event_type: 'worktree_create',
+					actor_login: locals.user?.githubLogin ?? null,
+					actor_ip: getClientAddress(),
+					resource: workdir,
+					outcome: 'failure',
+					detail: { conversationId: id, code: cause.code }
+				});
+				throw error(cause.code === 'git_failed' ? 500 : 400, {
+					message: cause.message,
+					code: cause.code
+				});
+			}
+			throw cause;
+		}
+	}
+	let conv;
+	try {
+		conv = convs.create(userId, {
+			id,
+			title: body.title,
+			workdir: managedWorktree?.path ?? workdir,
+			workspaceKind: managedWorktree ? 'managed-worktree' : 'shared',
+			workspaceKey: managedWorktree?.sourceWorkdir ?? workdir,
+			...(managedWorktree ? { managedWorktree } : {}),
+			provider: normalizeBackendProvider(provider),
+			model,
+			mode: body.mode ?? userSettings.defaultConversationMode,
+			// Seed-only, mirroring model/mode precedence: explicit create-body field
+			// wins, else the user's default, else NULL (resolved from env at runtime).
+			memoryExtractorModel:
+				body.memoryExtractorModel ?? userSettings.defaultMemoryExtractorModel ?? null,
+			memoryExtractorBackend:
+				body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null,
+			disabledToolGroups
+		});
+	} catch (cause) {
+		if (managedWorktree) await rollbackManagedWorktree(managedWorktree).catch(() => undefined);
+		throw cause;
+	}
+	if (managedWorktree) {
+		audit({
+			event_type: 'worktree_create',
+			actor_login: locals.user?.githubLogin ?? null,
+			actor_ip: getClientAddress(),
+			resource: managedWorktree.path,
+			outcome: 'success',
+			detail: { conversationId: id, branch: managedWorktree.branch }
+		});
+	}
 	return json({ ok: true, conversation: conv }, { status: 201 });
 };

@@ -54,6 +54,19 @@ database files, and long-lived side effects. The portal records per-message
 snapshots for inspection, but it does not isolate or transactionally roll back
 the working tree per conversation.
 
+Conversations created as **managed worktrees** are the exception: the portal
+creates a linked Git worktree and branch at
+`WORKTREE_ROOT/<userId>/<conversationId>`, persists ownership metadata, and
+uses that path for the provider, tools, actions, snapshots, and file browser.
+The path is verified against its generated location and fails closed if it is
+missing or replaced; it never falls back to `PROJECT_ROOT`. Managed worktrees
+share Git objects and portal snapshot refs with their source repository, but
+their checked-out files and index are isolated.
+
+The logical ticket workspace is stored separately from `workdir`. A managed
+worktree inherits its source repository's workspace key, so conversations on
+different branches still share one ticket backlog.
+
 ### 5. Cloudflare Tunnel (optional, deployment-time)
 
 `cloudflared` runs as a sidecar container, exposing the SvelteKit port over
@@ -126,6 +139,8 @@ discriminated `{ kind, ... }` body. The legacy
   conversations that reference the same `workdir` can run at the same time and
   interleave filesystem/git side effects. Treat same-workdir conversations like
   separate chat transcripts sharing one keyboard.
+- Managed-worktree conversations avoid that filesystem race because each has
+  its own checkout. Shared-workdir conversations retain the behavior above.
 - Idle reaper runs every minute. On shutdown, all sessions are closed
   and the shared client is stopped cleanly.
 - New messages to an idle/closed conversation transparently respawn the

@@ -22,7 +22,7 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 		const activeConversation =
 			typeof params.id === 'string' ? convs.get(params.id, locals.userId) : null;
 		ticketWorkspace = activeConversation
-			? ticketWorkspaceFromConversation(activeConversation.workdir)
+			? ticketWorkspaceFromConversation(activeConversation)
 			: defaultTicketWorkspace(locals.userId);
 	}
 	let ticketActions: ReturnType<typeof promptTemplates.list> = [];

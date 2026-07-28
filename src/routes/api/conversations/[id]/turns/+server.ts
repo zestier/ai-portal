@@ -12,6 +12,7 @@ import {
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
 import { authorizeConversation } from '$lib/server/conversation-auth';
+import { resolveConversationWorkspace, WorkspaceUnavailableError } from '$lib/server/workdir';
 import { log } from '$lib/server/log';
 import { tryRenameFromFirstUserMessage } from '$lib/server/conversation-title';
 
@@ -66,6 +67,15 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 				title: prior.title
 			});
 		}
+	}
+
+	try {
+		resolveConversationWorkspace(conv);
+	} catch (cause) {
+		if (cause instanceof WorkspaceUnavailableError) {
+			throw error(409, { message: cause.message, code: cause.code });
+		}
+		throw cause;
 	}
 
 	// Synchronously claim the turn slot BEFORE persisting the user message.

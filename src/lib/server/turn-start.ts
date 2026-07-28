@@ -7,7 +7,7 @@ import { startTurn } from '$lib/server/runtime/turn-runner';
 import { getProvider } from '$lib/server/providers';
 import { providerAuthToken } from '$lib/server/providers/auth';
 import { snapshot as takeSnapshot } from '$lib/server/snapshots';
-import { effectiveWorkdir } from '$lib/server/workdir';
+import { resolveConversationWorkspace } from '$lib/server/workdir';
 import { log } from '$lib/server/log';
 import { buildPromptWithMemory, isEnabled } from '$lib/server/memory/engine';
 import { isModelBackedExtractorConfigured } from '$lib/server/memory/extractor';
@@ -24,7 +24,7 @@ export async function startTurnFromUserMessage(
 	userMsg: Message,
 	opts: StartTurnFromUserMessageOptions = {}
 ) {
-	const workdir = effectiveWorkdir(conv.workdir);
+	const workdir = resolveConversationWorkspace(conv);
 
 	const cfg = loadConfig();
 	const userSettings = settings.get(conv.userId) ?? settings.defaults();
@@ -68,6 +68,7 @@ export async function startTurnFromUserMessage(
 			providerSessionId,
 			userId: conv.userId,
 			workingDirectory: workdir,
+			workspaceKey: conv.workspaceKey,
 			provider: conv.provider,
 			model: conv.model ?? cfg.DEFAULT_MODEL,
 			policy: userSettings.defaultPolicy,

@@ -1,6 +1,7 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import { log } from '$lib/server/log';
 import { TurnAlreadyInProgressError } from '$lib/server/runtime/turn-runner';
+import { WorkspaceUnavailableError } from '$lib/server/workdir';
 
 /**
  * Map an unexpected (non-domain) failure raised while starting a rerun turn —
@@ -35,6 +36,9 @@ export function throwRerunFailure(
 	// instead of leaking a confusing 502 for what is just "another turn won".
 	if (e instanceof TurnAlreadyInProgressError) {
 		throw error(409, 'A turn is already in progress for this conversation.');
+	}
+	if (e instanceof WorkspaceUnavailableError) {
+		throw error(409, { message: e.message, code: e.code });
 	}
 
 	const message = e instanceof Error ? e.message : String(e);

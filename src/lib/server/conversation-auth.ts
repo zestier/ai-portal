@@ -4,7 +4,8 @@
 
 import { error } from '@sveltejs/kit';
 import * as convs from '$lib/server/db/repos/conversations';
-import { conversationWorkspaceRoot } from '$lib/server/files';
+import { resolveWorkspaceRoot } from '$lib/server/files';
+import { resolveConversationWorkspace, WorkspaceUnavailableError } from '$lib/server/workdir';
 import type { Conversation } from '$lib/types';
 
 export function authorizeConversation(
@@ -23,8 +24,17 @@ export function authorizeConversationWorkdir(
 	userId: string | null | undefined
 ): { conversation: Conversation; workdir: string } {
 	const conversation = authorizeConversation(convId, userId);
+	let workdir: string;
+	try {
+		workdir = resolveWorkspaceRoot(resolveConversationWorkspace(conversation));
+	} catch (cause) {
+		if (cause instanceof WorkspaceUnavailableError) {
+			throw error(409, { message: cause.message, code: cause.code });
+		}
+		throw cause;
+	}
 	return {
 		conversation,
-		workdir: conversationWorkspaceRoot(conversation.workdir)
+		workdir
 	};
 }

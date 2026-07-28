@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolve } from 'node:path';
 import { BACKEND_PROVIDER_IDS, MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
 
 const optionalUrl = z
@@ -54,6 +55,10 @@ const Schema = z
 		// always clamped to PROJECT_ROOT regardless of this value, so one
 		// operator can never browse another's data or the host's secrets.
 		ALLOWED_WORKDIRS: pathList,
+		// Portal-owned linked worktrees live outside the user-selectable workdir
+		// allowlist. The final default is derived from DATA_DIR after parsing.
+		WORKTREE_ROOT: z.string().trim().optional(),
+		WORKTREE_CREATE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
 		LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
 		AUTH_MODE: z.enum(['github', 'shared-secret', 'none']).default('none'),
@@ -308,7 +313,11 @@ const Schema = z
 				message: 'ENCRYPTION_KEY is required for AUTH_MODE=github (encrypts stored tokens).'
 			});
 		}
-	});
+	})
+	.transform((cfg) => ({
+		...cfg,
+		WORKTREE_ROOT: resolve(cfg.WORKTREE_ROOT ?? resolve(cfg.DATA_DIR, 'worktrees'))
+	}));
 
 export type AppConfig = z.infer<typeof Schema>;
 

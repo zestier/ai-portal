@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import * as settings from '$lib/server/db/repos/settings';
 import { conversationWorkspaceRoot, resolveWorkspaceRoot } from '$lib/server/files';
 import { resolveAndValidate } from '$lib/server/workdir';
+import type { Conversation } from '$lib/types';
 
 export function defaultTicketWorkspace(userId: string): string {
 	const userSettings = settings.get(userId) ?? settings.defaults();
@@ -11,8 +12,12 @@ export function defaultTicketWorkspace(userId: string): string {
 	return conversationWorkspaceRoot(userSettings.defaultWorkdir ?? null);
 }
 
-export function ticketWorkspaceFromConversation(workdir: string): string {
-	return conversationWorkspaceRoot(workdir);
+export function ticketWorkspaceFromConversation(
+	conversationOrWorkdir: Pick<Conversation, 'workspaceKey' | 'workdir'> | string
+): string {
+	return typeof conversationOrWorkdir === 'string'
+		? conversationWorkspaceRoot(conversationOrWorkdir)
+		: conversationOrWorkdir.workspaceKey;
 }
 
 export function ticketWorkspaceFromInput(input: string | undefined, userId: string): string {

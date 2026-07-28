@@ -6,6 +6,7 @@ import type { PortalToolGroupId } from './tools/groups';
 
 export type Role = 'user' | 'assistant' | 'system';
 export type MessageStatus = 'complete' | 'streaming' | 'interrupted' | 'error';
+export type WorkspaceKind = 'shared' | 'managed-worktree';
 
 export interface User {
 	id: string;
@@ -88,6 +89,14 @@ export interface Conversation {
 	 * turn is deferred, not auto-started). Null when there is no pending draft.
 	 */
 	draftPrompt: string | null;
+	/** Filesystem ownership model for this conversation. */
+	workspaceKind: WorkspaceKind;
+	/** Stable ticket namespace; managed worktrees inherit their source repository's key. */
+	workspaceKey: string;
+	/** Managed-worktree branch, otherwise null. */
+	worktreeBranch: string | null;
+	/** Commit from which the managed worktree was created, otherwise null. */
+	worktreeBaseSha: string | null;
 }
 
 export type WorkspaceTicketStatus = 'open' | 'done' | 'archived';

@@ -66,6 +66,15 @@ describe('db migrations + repos', () => {
 		expect(convs.get(c.id, u.id)?.provider).toBe('copilot');
 	});
 
+	it('normalizes the workspace key for conversations upgraded from before migration 061', () => {
+		const u = users.ensureLocalUser();
+		const legacyWorkdir = resolve(process.env.DATA_DIR!, 'workspaces', 'legacy-conversation');
+		const c = convs.create(u.id, { title: 'legacy', workdir: legacyWorkdir, model: null });
+		getDb().prepare('UPDATE conversations SET workspace_key = NULL WHERE id = ?').run(c.id);
+
+		expect(convs.get(c.id, u.id)?.workspaceKey).toBe(resolve(process.cwd()));
+	});
+
 	it('round-trips conversation provider separately from model', () => {
 		const u = users.ensureLocalUser();
 		const c = convs.create(u.id, {

@@ -12,5 +12,12 @@ if [ "${SKIP_VERIFY:-0}" = "1" ]; then
 	exit 0
 fi
 
+# Git exports repository-local variables to hooks. In particular,
+# GIT_INDEX_FILE=.git/index breaks commands run inside linked worktrees,
+# where .git is a file rather than a directory.
+while IFS= read -r variable; do
+	unset "$variable"
+done < <(git rev-parse --local-env-vars)
+
 echo "[pre-commit] pnpm run verify"
 exec pnpm run verify

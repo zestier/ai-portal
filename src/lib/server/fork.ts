@@ -41,6 +41,12 @@ import * as memoryRepo from './db/repos/memory';
 import { getTurn } from './runtime/turn-runner';
 import { log } from './log';
 import type { Conversation, Message } from '$lib/types';
+import { getSnapshot } from './snapshots';
+import {
+	createManagedWorktreeFromSnapshot,
+	rollbackManagedWorktree,
+	type ManagedWorktreeMetadata
+} from './worktrees';
 
 export type ForkError =
 	| 'source_not_found'
@@ -48,7 +54,8 @@ export type ForkError =
 	| 'not_user_message'
 	| 'unsupported_role'
 	| 'content_required'
-	| 'content_not_allowed';
+	| 'content_not_allowed'
+	| 'no_snapshot';
 
 export class ForkRejected extends Error {
 	constructor(
@@ -69,6 +76,8 @@ export interface ForkInput {
 	 * for an assistant-message retry.
 	 */
 	newContent: string | null;
+	/** Opt into a new linked worktree restored to the selected snapshot. */
+	workspaceKind?: 'shared' | 'managed-worktree';
 }
 
 export interface ForkResult {
@@ -140,8 +149,37 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// draft is persisted on the conversation row so it survives reload/navigation
 	// and is seeded into the composer on load; the user presses Send to start
 	// the turn, explicitly opting into a concurrent turn in the shared workdir.
-	const deferred = mode === 'edit' && sourceBusy;
+	// A managed checkout has one owning conversation and is removed with that
+	// conversation, so a fork must receive its own checkout rather than sharing
+	// the source path. Use the persisted repository source because the source
+	// checkout itself is disposable.
+	const isolate =
+		input.workspaceKind === 'managed-worktree' || source.workspaceKind === 'managed-worktree';
+	const deferred = mode === 'edit' && sourceBusy && !isolate;
 	const draftPrompt = deferred ? input.newContent! : null;
+	const newId = convs.newId();
+	let managedWorktree: ManagedWorktreeMetadata | null = null;
+	if (isolate) {
+		const snapshotKind = mode === 'edit' ? 'pre' : 'post';
+		const snapshot = getSnapshot(target.id, snapshotKind);
+		if (!snapshot) {
+			throw new ForkRejected('no_snapshot', 'No snapshot exists for this message.');
+		}
+		const sourceWorkdir =
+			source.workspaceKind === 'managed-worktree'
+				? convs.getManagedWorktree(source.id, input.userId)?.sourceWorkdir
+				: source.workdir;
+		if (!sourceWorkdir) {
+			throw new ForkRejected('source_not_found', 'Managed source workspace is unavailable.');
+		}
+		managedWorktree = await createManagedWorktreeFromSnapshot({
+			sourceWorkdir,
+			userId: input.userId,
+			conversationId: newId,
+			...(snapshot.baseCommitSha ? { baseCommitSha: snapshot.baseCommitSha } : {}),
+			treeSha: snapshot.treeSha
+		});
+	}
 
 	// The forked conversation reuses the source's workdir. We deliberately
 	// do NOT roll the workdir back to the snapshot — multiple conversations
@@ -156,12 +194,14 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// All of these helpers are synchronous better-sqlite3 calls (no `await`),
 	// and better-sqlite3 promotes the nested `.transaction()` calls inside
 	// `cloneMessagePrefix` / the repos to SAVEPOINTs, so nesting is safe.
-	const newId = convs.newId();
 	const tx = getDb().transaction((): ForkResult => {
 		const newConv = convs.create(input.userId, {
 			id: newId,
 			title: source.title,
-			workdir: source.workdir,
+			workdir: managedWorktree?.path ?? source.workdir,
+			workspaceKind: managedWorktree ? 'managed-worktree' : source.workspaceKind,
+			workspaceKey: source.workspaceKey,
+			...(managedWorktree ? { managedWorktree } : {}),
 			provider: source.provider,
 			model: source.model,
 			mode: source.mode,
@@ -214,7 +254,19 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		});
 		return { conversation: refreshed, userMessage, deferred };
 	});
-	return tx();
+	try {
+		return tx();
+	} catch (cause) {
+		if (managedWorktree) {
+			await rollbackManagedWorktree(managedWorktree).catch((cleanupError) => {
+				log.warn('fork.worktree_cleanup_failed', {
+					conversationId: newId,
+					err: String(cleanupError)
+				});
+			});
+		}
+		throw cause;
+	}
 }
 
 function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string, string> {

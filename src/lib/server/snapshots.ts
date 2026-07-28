@@ -13,7 +13,7 @@
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, existsSync, realpathSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { getDb } from './db';
 
 const SNAP_TIMEOUT_MS = 30_000;
@@ -38,6 +38,7 @@ export interface SnapshotRow {
 	gitRef: string;
 	commitSha: string;
 	treeSha: string;
+	baseCommitSha: string | null;
 	createdAt: number;
 }
 
@@ -191,6 +192,7 @@ export async function snapshot(
 					git_ref: string;
 					commit_sha: string;
 					tree_sha: string;
+					base_commit_sha: string | null;
 					created_at: number;
 			  }
 			| undefined;
@@ -201,6 +203,7 @@ export async function snapshot(
 				gitRef: existing.git_ref,
 				commitSha: existing.commit_sha,
 				treeSha: existing.tree_sha,
+				baseCommitSha: existing.base_commit_sha,
 				createdAt: existing.created_at
 			};
 		}
@@ -210,8 +213,14 @@ export async function snapshot(
 		// Use a private index file so the user's staging area (if any) is
 		// not disturbed. We pick a path inside .git so concurrent processes
 		// using a different convention don't conflict.
-		const indexFile = join(workdir, '.git', `portal-index-${messageId}-${kind}`);
+		const indexName = `portal-index-${messageId}-${kind}`;
+		const indexPath = (
+			await runOk(['rev-parse', '--git-path', indexName], { cwd: workdir })
+		).trim();
+		const indexFile = isAbsolute(indexPath) ? indexPath : resolve(workdir, indexPath);
 		try {
+			const head = await run(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: workdir });
+			const baseCommitSha = head.code === 0 ? head.stdout.trim() || null : null;
 			await runOk(['add', '-A'], { cwd: workdir, env: { GIT_INDEX_FILE: indexFile } });
 			const tree = (
 				await runOk(['write-tree'], { cwd: workdir, env: { GIT_INDEX_FILE: indexFile } })
@@ -230,6 +239,7 @@ export async function snapshot(
 				gitRef: ref,
 				commitSha: commit,
 				treeSha: tree,
+				baseCommitSha,
 				createdAt: Date.now()
 			};
 			// Atomicity: the git ref now exists. Insert the DB row that
@@ -240,9 +250,18 @@ export async function snapshot(
 			// break restore, whereas a momentarily orphaned ref is inert.
 			try {
 				db.prepare(
-					`INSERT INTO turn_snapshots(message_id, kind, git_ref, commit_sha, tree_sha, created_at)
-					 VALUES (?, ?, ?, ?, ?, ?)`
-				).run(row.messageId, row.kind, row.gitRef, row.commitSha, row.treeSha, row.createdAt);
+					`INSERT INTO turn_snapshots(
+					   message_id, kind, git_ref, commit_sha, tree_sha, base_commit_sha, created_at
+					 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+				).run(
+					row.messageId,
+					row.kind,
+					row.gitRef,
+					row.commitSha,
+					row.treeSha,
+					row.baseCommitSha,
+					row.createdAt
+				);
 			} catch (err) {
 				// Best-effort cleanup of the ref we just created. If this
 				// also fails the worst case is an orphaned, invisible ref
@@ -275,6 +294,7 @@ export function getSnapshot(messageId: string, kind: SnapshotKind): SnapshotRow 
 				git_ref: string;
 				commit_sha: string;
 				tree_sha: string;
+				base_commit_sha: string | null;
 				created_at: number;
 		  }
 		| undefined;
@@ -285,6 +305,7 @@ export function getSnapshot(messageId: string, kind: SnapshotKind): SnapshotRow 
 		gitRef: r.git_ref,
 		commitSha: r.commit_sha,
 		treeSha: r.tree_sha,
+		baseCommitSha: r.base_commit_sha,
 		createdAt: r.created_at
 	};
 }

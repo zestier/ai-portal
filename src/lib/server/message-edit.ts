@@ -5,6 +5,7 @@ import * as messages from '$lib/server/db/repos/messages';
 import * as usage from '$lib/server/db/repos/usage';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { cancelConversation as cancelPendingInteractive } from '$lib/server/runtime/interactive-requests';
+import { resolveConversationWorkspace } from '$lib/server/workdir';
 import type { Conversation, Message } from '$lib/types';
 
 export type InlineEditError =
@@ -142,6 +143,7 @@ function rerunFromUserMessage(
 	cancelReason: string
 ): InlineEditResult {
 	const targetIdx = all.findIndex((m) => m.id === userMessage.id);
+	resolveConversationWorkspace(conv);
 
 	cancelPendingInteractive(conv.id, cancelReason);
 	const updated = getDb().transaction(() => {

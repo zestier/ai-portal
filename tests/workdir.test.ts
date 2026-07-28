@@ -276,4 +276,25 @@ describe('workdir resolution', () => {
 		const legacy = resolve(dataDir, 'workspaces');
 		expect(effectiveWorkdir(legacy + sep + 'deep' + sep + 'nested')).toBe(projectRoot());
 	});
+
+	it('rejects a managed worktree path redirected to a sibling checkout', async () => {
+		const root = join(dataDir, 'managed-worktrees');
+		const sibling = join(root, 'other-user', 'other-conversation');
+		const expected = join(root, 'user-1', 'conversation-1');
+		mkdirSync(sibling, { recursive: true });
+		mkdirSync(join(root, 'user-1'), { recursive: true });
+		symlinkSync(sibling, expected, 'dir');
+		process.env.WORKTREE_ROOT = root;
+		await resetServerSingletons();
+		const { resolveConversationWorkspace, WorkspaceUnavailableError } = await freshImport();
+
+		expect(() =>
+			resolveConversationWorkspace({
+				id: 'conversation-1',
+				userId: 'user-1',
+				workdir: expected,
+				workspaceKind: 'managed-worktree'
+			} as never)
+		).toThrow(WorkspaceUnavailableError);
+	});
 });

@@ -101,7 +101,7 @@
 		errorMsg = null;
 	}
 
-	async function submitForkEdit() {
+	async function submitForkEdit(isolated = false) {
 		const text = editText.trim();
 		if (!text || !conversationId || submitting) return;
 		submitting = true;
@@ -110,7 +110,7 @@
 			const r = await fetch(`/api/conversations/${conversationId}/messages/${message.id}/fork`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ content: text })
+				body: JSON.stringify({ content: text, ...(isolated ? { workspace: 'worktree' } : {}) })
 			});
 			if (!r.ok) {
 				const body = await r.text();
@@ -196,7 +196,7 @@
 		}
 	}
 
-	async function continueInNewConversation() {
+	async function continueInNewConversation(isolated = false) {
 		if (!conversationId || submitting) return;
 		submitting = true;
 		errorMsg = null;
@@ -204,7 +204,7 @@
 			const r = await fetch(`/api/conversations/${conversationId}/messages/${message.id}/fork`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: '{}'
+				body: JSON.stringify(isolated ? { workspace: 'worktree' } : {})
 			});
 			if (!r.ok) {
 				const body = await r.text();
@@ -489,7 +489,7 @@
 			<button
 				type="button"
 				class="action-btn fork-btn"
-				onclick={continueInNewConversation}
+				onclick={() => continueInNewConversation()}
 				disabled={submitting}
 				title="Clone this conversation up to here into a new conversation (shares the workdir)"
 				aria-label="Continue from here in a new conversation"
@@ -511,6 +511,16 @@
 					<path d="M11 12.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
 				</svg>
 				Continue in new conversation
+			</button>
+			<button
+				type="button"
+				class="action-btn fork-btn"
+				onclick={() => continueInNewConversation(true)}
+				disabled={submitting}
+				title="Clone this conversation into an isolated worktree at this snapshot"
+				aria-label="Continue from here in an isolated worktree"
+			>
+				Worktree fork
 			</button>
 		{/if}
 	</header>
@@ -590,16 +600,25 @@
 					>
 						{submitting ? 'Saving…' : 'Fork & re-run'}
 					</button>
+					<button
+						type="button"
+						class="btn secondary"
+						disabled={submitting || !editText.trim()}
+						onclick={() => submitForkEdit(true)}
+						title="Create an isolated worktree at this message's snapshot"
+					>
+						Fork in worktree
+					</button>
 				</div>
-				{#if errorMsg}
-					<Alert kind="error">{errorMsg}</Alert>
-				{/if}
 			</form>
 		{:else}
 			<div class="text-part" use:copyableCodeBlocks use:zoomableImages>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				{@html renderMarkdown(message.content)}
 			</div>
+		{/if}
+		{#if errorMsg}
+			<Alert kind="error">{errorMsg}</Alert>
 		{/if}
 	</div>
 </article>

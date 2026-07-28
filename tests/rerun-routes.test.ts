@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { isHttpError } from '@sveltejs/kit';
 import { setupLocalEnv } from './helpers/env';
+import { makeTmpDir } from './helpers/tmp';
 
 // The /edit and /regenerate routes call startTurnFromUserMessage AFTER the
 // (synchronous) message-edit work. Mock it so we can drive the "unexpected
@@ -20,7 +24,24 @@ async function freshImports() {
 		await import('../src/routes/api/conversations/[id]/messages/[messageId]/edit/+server');
 	const regenRoute =
 		await import('../src/routes/api/conversations/[id]/messages/[messageId]/regenerate/+server');
-	return { users, convs, messages, editRoute, regenRoute };
+	const forkRoute =
+		await import('../src/routes/api/conversations/[id]/messages/[messageId]/fork/+server');
+	return { users, convs, messages, editRoute, regenRoute, forkRoute };
+}
+
+function git(cwd: string, args: string[]): string {
+	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+function committedRepository(): string {
+	const source = makeTmpDir('portal-rerun-fork-source-');
+	git(source, ['init', '-q', '-b', 'main']);
+	git(source, ['config', 'user.name', 'Portal Test']);
+	git(source, ['config', 'user.email', 'portal-test@localhost']);
+	writeFileSync(join(source, 'README.md'), 'base\n');
+	git(source, ['add', 'README.md']);
+	git(source, ['commit', '-q', '-m', 'initial']);
+	return source;
 }
 
 function jsonRequest(body: unknown): Request {
@@ -129,6 +150,102 @@ describe('rerun routes: error surfacing', () => {
 		expect(httpErr.status).toBe(502);
 		expect(httpErr.body.message).toContain("Couldn't start the rerun");
 		expect(httpErr.body.message).toContain('runtime connection lost');
+	});
+
+	it('rejects reruns before mutating history when a managed workspace is unavailable', async () => {
+		const dataDir = await setupLocalEnv('portal-rerun-missing-worktree-');
+		const { users, convs, messages, editRoute, regenRoute } = await freshImports();
+		const user = users.ensureLocalUser();
+		const conversationId = 'MISSINGWORKTREE';
+		const worktreePath = join(dataDir, 'worktrees', user.id, conversationId);
+		const conversation = convs.create(user.id, {
+			id: conversationId,
+			title: 'managed',
+			workdir: worktreePath,
+			workspaceKind: 'managed-worktree',
+			workspaceKey: '/tmp/source',
+			managedWorktree: {
+				sourceWorkdir: '/tmp/source',
+				path: worktreePath,
+				gitCommonDir: '/tmp/source/.git',
+				branch: `portal/${conversationId}`,
+				baseSha: 'a'.repeat(40)
+			},
+			model: 'gpt-4',
+			provider: 'copilot'
+		});
+		const userMessage = messages.append(conversation.id, {
+			role: 'user',
+			content: 'original'
+		});
+		const assistantMessage = messages.append(conversation.id, {
+			role: 'assistant',
+			content: 'reply'
+		});
+
+		for (const call of [
+			() =>
+				editRoute.POST({
+					params: { id: conversation.id, messageId: userMessage.id },
+					locals: { userId: user.id },
+					request: jsonRequest({ content: 'edited' })
+				} as never),
+			() =>
+				regenRoute.POST({
+					params: { id: conversation.id, messageId: assistantMessage.id },
+					locals: { userId: user.id }
+				} as never)
+		]) {
+			const { thrown } = await callAndCapture(call);
+			expect(isHttpError(thrown)).toBe(true);
+			expect(thrown).toMatchObject({
+				status: 409,
+				body: { code: 'workspace_unavailable' }
+			});
+			expect(messages.listByConversation(conversation.id)).toMatchObject([
+				{ id: userMessage.id, content: 'original' },
+				{ id: assistantMessage.id, content: 'reply' }
+			]);
+		}
+		expect(startTurnMock).not.toHaveBeenCalled();
+	});
+
+	it('/fork rolls back a managed child when turn startup fails', async () => {
+		const dataDir = await setupLocalEnv('portal-rerun-managed-fork-');
+		const source = committedRepository();
+		const worktreeRoot = join(dataDir, 'worktrees');
+		process.env.PROJECT_ROOT = source;
+		process.env.WORKTREE_ROOT = worktreeRoot;
+		const { users, convs, messages, forkRoute } = await freshImports();
+		const snapshots = await import('../src/lib/server/snapshots');
+		const user = users.ensureLocalUser();
+		const conversation = convs.create(user.id, {
+			title: 'source',
+			workdir: source,
+			model: 'gpt-4',
+			provider: 'copilot'
+		});
+		const userMessage = messages.append(conversation.id, {
+			role: 'user',
+			content: 'original'
+		});
+		await snapshots.snapshot(source, userMessage.id, 'pre');
+		startTurnMock.mockRejectedValue(new Error('provider session unavailable'));
+
+		const { thrown } = await callAndCapture(() =>
+			forkRoute.POST({
+				params: { id: conversation.id, messageId: userMessage.id },
+				locals: { userId: user.id },
+				request: jsonRequest({ content: 'edited', workspace: 'worktree' })
+			} as never)
+		);
+
+		expect(isHttpError(thrown)).toBe(true);
+		expect((thrown as { status: number }).status).toBe(502);
+		expect(convs.listChildren(user.id, conversation.id)).toEqual([]);
+		const userRoot = join(worktreeRoot, user.id);
+		expect(existsSync(userRoot) ? readdirSync(userRoot) : []).toEqual([]);
+		expect(git(source, ['branch', '--list', 'portal/*'])).toBe('');
 	});
 
 	it('/edit rejects a concurrent second rerun with 409, not 502', async () => {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { buildGitTools } from '../src/lib/server/tools/git';
 import { ok } from '../src/lib/server/tools/types';
 import { buildMemoryTools } from '../src/lib/server/tools/memory';
+import { buildTicketTools } from '../src/lib/server/tools/tickets';
 import {
 	buildToolArgsValidator,
 	validatePortalToolArgs
@@ -45,6 +46,21 @@ describe('validatePortalToolArgs', () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error('unreachable');
 		expect(result.feedback).toMatch(/subject:/);
+	});
+
+	it('rejects a JSON-encoded ticket fields array with copyable corrected arguments', () => {
+		const ticketList = buildTicketTools({
+			userId: 'u1',
+			workspaceKey: '/workspace',
+			conversationId: 'c1'
+		}).find((tool) => tool.name === 'ticket_list')!;
+		expect(validatePortalToolArgs(ticketList, { fields: ['id', 'title'] })).toEqual({ ok: true });
+
+		const result = validatePortalToolArgs(ticketList, { fields: '["id","title"]' });
+		expect(result.ok).toBe(false);
+		if (result.ok) throw new Error('unreachable');
+		expect(result.feedback).toContain('fields: "fields" must be a JSON array');
+		expect(result.feedback).toContain('{"fields":["id","title"]}');
 	});
 
 	it('returns ok:true for tools without an argsSchema', () => {
