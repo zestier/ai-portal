@@ -59,8 +59,23 @@ describe('validatePortalToolArgs', () => {
 		const result = validatePortalToolArgs(ticketList, { fields: '["id","title"]' });
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error('unreachable');
-		expect(result.feedback).toContain('fields: "fields" must be a JSON array');
-		expect(result.feedback).toContain('{"fields":["id","title"]}');
+		expect(result.feedback).toContain('fields: Expected array');
+		expect(result.feedback).toContain('"type": "array"');
+	});
+
+	it('rejects an empty ticket fields array', () => {
+		const ticketList = buildTicketTools({
+			userId: 'u1',
+			workspaceKey: '/workspace',
+			conversationId: 'c1'
+		}).find((tool) => tool.name === 'ticket_list')!;
+
+		const result = validatePortalToolArgs(ticketList, { fields: [] });
+		expect(result.ok).toBe(false);
+		if (result.ok) throw new Error('unreachable');
+		expect(result.feedback).toContain(
+			'At least one field must be requested; omit "fields" for the compact view.'
+		);
 	});
 
 	it('returns ok:true for tools without an argsSchema', () => {

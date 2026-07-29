@@ -11,19 +11,9 @@ import {
 describe('project', () => {
 	const keep = ['id', 'title', 'status'] as const;
 
-	it('passes the input through untouched for fields:"all"', () => {
-		const row = { id: '1', title: 'a', status: 'open', secret: 'keep me', payload: { big: 1 } };
-		const { value, omitted } = project(row, { fields: 'all', keep });
-		expect(value).toBe(row);
-		expect(omitted).toEqual([]);
-	});
-
-	it('treats only a bare "*" as "all"; inside an array it is a literal field name', () => {
+	it('treats array entries literally, including former sentinel names', () => {
 		const row = { id: '1', secret: 'x' };
-		expect(project(row, { fields: '*', keep }).value).toBe(row);
-		// A list entry is never a sentinel, so ["*"] asks for a (nonexistent) field.
 		expect(() => project(row, { fields: ['*'], keep })).toThrow(/Unknown field/);
-		// "all" inside a list is likewise literal, not the everything-sentinel.
 		expect(() => project(row, { fields: ['id', 'all'], keep })).toThrow(/Unknown field/);
 	});
 
@@ -47,11 +37,9 @@ describe('project', () => {
 		expect(() => project(row, { fields: 'plan', keep })).toThrow(/use an array like \["plan"\]/);
 	});
 
-	it('treats a bare "default" (and an empty array) like omitting fields', () => {
+	it('rejects an empty array instead of silently using the compact view', () => {
 		const row = { id: '1', title: 'a', status: 'open', secret: 'x', payload: { big: 1 } };
-		const omittedResult = project(row, { keep });
-		expect(project(row, { fields: 'default', keep })).toEqual(omittedResult);
-		expect(project(row, { fields: [], keep })).toEqual(omittedResult);
+		expect(() => project(row, { fields: [], keep })).toThrow(/no fields were requested/);
 	});
 
 	it('throws on requested field names that exist on no record', () => {
@@ -136,15 +124,9 @@ describe('project', () => {
 });
 
 describe('normalizeFieldSelector', () => {
-	it('maps undefined, bare "default", and an empty array to undefined (compact)', () => {
+	it('maps undefined to the compact view and rejects an empty array', () => {
 		expect(normalizeFieldSelector(undefined)).toBeUndefined();
-		expect(normalizeFieldSelector('default')).toBeUndefined();
-		expect(normalizeFieldSelector([])).toBeUndefined();
-	});
-
-	it('maps only a bare "all"/"*" to "all"', () => {
-		expect(normalizeFieldSelector('all')).toBe('all');
-		expect(normalizeFieldSelector('*')).toBe('all');
+		expect(() => normalizeFieldSelector([])).toThrow(/no fields were requested/);
 	});
 
 	it('rejects a bare field name, guiding toward an array', () => {
@@ -161,8 +143,7 @@ describe('normalizeFieldSelector', () => {
 		expect(() => normalizeFieldSelector(stringified)).not.toThrow(/Unknown field/);
 	});
 
-	it('takes array entries literally — no sentinel collapsing inside a list', () => {
-		// "all"/"*"/"default" inside an array are real field names, not sentinels.
+	it('takes every array entry literally', () => {
 		expect(normalizeFieldSelector(['id', '*'])).toEqual(['id', '*']);
 		expect(normalizeFieldSelector(['all'])).toEqual(['all']);
 		expect(normalizeFieldSelector(['default', 'plan'])).toEqual(['default', 'plan']);
@@ -170,11 +151,9 @@ describe('normalizeFieldSelector', () => {
 });
 
 describe('assertFieldsKnown', () => {
-	it('no-ops for compact/all selectors and undefined', () => {
+	it('no-ops for the compact selector', () => {
 		const shapes = [{ input: { id: '1' }, keep: ['id'] }];
 		expect(() => assertFieldsKnown(undefined, shapes)).not.toThrow();
-		expect(() => assertFieldsKnown('default', shapes)).not.toThrow();
-		expect(() => assertFieldsKnown('all', shapes)).not.toThrow();
 	});
 
 	it('accepts a field valid for ANY shape in the union', () => {

@@ -242,10 +242,6 @@ describe('workspace tickets', () => {
 		// ticket_list with no fields keeps the dense hand-rendered string.
 		expect(typeof (listed.ok && listed.result)).toBe('string');
 
-		// "default" behaves like omitting fields -> same dense string.
-		const listedDefault = await list.handler({ status: 'all', fields: 'default' });
-		expect(listedDefault.ok && listedDefault.result).toBe(listed.ok && listed.result);
-
 		// An explicit `fields` selector switches ticket_list to a structured,
 		// projected array trimmed to the requested fields.
 		const listedFields = await list.handler({ status: 'all', fields: ['id', 'status'] });
@@ -264,19 +260,15 @@ describe('workspace tickets', () => {
 		expect(compactData).not.toHaveProperty('createdAt');
 		expect((compactData as { _omitted?: string[] })._omitted).toContain('createdAt');
 
-		// "default" on ticket_get matches the omitted-fields compact result.
-		const compactDefault = await get.handler({ id: ticket.id, fields: 'default' });
-		expect(compactDefault.ok && compactDefault.result).toEqual(compactData);
-
 		const picked = await get.handler({ id: ticket.id, fields: ['createdAt'] });
 		const pickedData = picked.ok && (picked.result as Record<string, unknown>);
 		expect(pickedData).toHaveProperty('createdAt');
 		expect(pickedData).not.toHaveProperty('title');
 		expect(pickedData).not.toHaveProperty('_omitted');
 
-		const all = await get.handler({ id: ticket.id, fields: 'all' });
-		const allData = all.ok && (all.result as Record<string, unknown>);
-		expect(allData).toHaveProperty('workspaceKey', workspace);
+		const workspaceOnly = await get.handler({ id: ticket.id, fields: ['workspaceKey'] });
+		const workspaceData = workspaceOnly.ok && (workspaceOnly.result as Record<string, unknown>);
+		expect(workspaceData).toEqual({ workspaceKey: workspace });
 
 		// plan: settable via ticket_update, omitted from the compact view, and
 		// fetched on demand through the fields selector (the showcase use case).

@@ -1175,7 +1175,7 @@ describe('memory-backed sessions', () => {
 		expect(toolText(await globalSearch.handler({ query: 'noir' }))).toContain('story-tone');
 	});
 
-	it('returns compact memory rows by default and full rows under fields:"all"', async () => {
+	it('returns compact memory rows by default and requested omitted fields explicitly', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		commitPatch({
@@ -1211,14 +1211,19 @@ describe('memory-backed sessions', () => {
 		expect(compact._omitted).toContain('conversationId');
 		expect(compact._omitted).not.toContain('summary');
 
-		const full = toolData<{
+		const provenance = toolData<{
 			entity: Record<string, unknown>;
 			_omitted?: string[];
-		}>(await getEntity.handler({ id: 'character.elias', fields: 'all' }));
-		// fields:"all" restores the full payload and omits the marker.
-		expect(full.entity).toHaveProperty('createdAt');
-		expect(full.entity).toHaveProperty('conversationId');
-		expect(full._omitted).toBeUndefined();
+		}>(
+			await getEntity.handler({
+				id: 'character.elias',
+				fields: ['createdAt', 'conversationId']
+			})
+		);
+		expect(provenance.entity).toHaveProperty('createdAt');
+		expect(provenance.entity).toHaveProperty('conversationId');
+		expect(provenance.entity).not.toHaveProperty('displayName');
+		expect(provenance._omitted).toBeUndefined();
 
 		// An explicit field list returns exactly those columns (here a provenance
 		// field omitted by the compact view) and suppresses the _omitted marker.

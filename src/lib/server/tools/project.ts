@@ -17,40 +17,31 @@
 
 import { z } from 'zod';
 
-// The model-facing `fields` selector. Either an explicit list of top-level field
-// names to return, the literal `"all"` for the full unprojected record, or
-// `"default"` for the compact view (the same as omitting `fields`). `"all"` and
-// `"default"` are only meaningful as the *whole* value — inside an array every
-// entry is taken literally as a field name, so a record genuinely containing an
-// `all` or `default` field can still be selected.
-export type FieldSelector = readonly string[] | 'all' | 'default';
+// The model-facing `fields` selector. Omit it for the compact view; otherwise
+// name one or more top-level fields to return. Keeping one JSON type here is
+// deliberate: mixed string/array schemas are coerced to strings by some model
+// providers.
+export type FieldSelector = readonly string[];
 
-// Normalize the raw, leniently-typed `fields` argument into one of three modes:
-// `undefined` (compact default), `"all"` (full record), or an explicit name
-// list. The string sentinels are recognized only as a bare value:
-//   - `"all"` (or the glob-ish `"*"`) → the full record;
-//   - `"default"` → the compact view, so a model that feels it must pass
-//     *something* can still ask for the normal view without enumerating fields;
-//   - any OTHER bare string → rejected with a thrown Error. A single-field
-//     selection must be written as an array (`["plan"]`, not `"plan"`); a bare
-//     non-sentinel string is almost always a stringified array or a single
-//     field name in the wrong shape, so failing loudly here is clearer than
-//     silently wrapping it into a one-element list.
-// Array entries are NEVER treated as sentinels — they are literal field names,
-// so `["all"]` selects a field actually named `all` (and errors in `project` if
-// no such field exists). An empty array means "no selection" → the compact view.
+// Normalize the raw `fields` argument into compact-default (`undefined`) or an
+// explicit field list. The string arm is defensive for direct callers outside
+// schema validation and always rejects; custom-tool schemas advertise and
+// accept non-empty arrays only.
 export function normalizeFieldSelector(
 	fields: FieldSelector | string | undefined
-): readonly string[] | 'all' | undefined {
+): readonly string[] | undefined {
 	if (fields === undefined) return undefined;
 	if (typeof fields === 'string') {
-		if (fields === 'all' || fields === '*') return 'all';
-		if (fields === 'default') return undefined;
 		throw new Error(
 			`Invalid "fields" value: ${JSON.stringify(fields)}. ${fieldsShapeError(fields)}`
 		);
 	}
-	return fields.length === 0 ? undefined : fields;
+	if (fields.length === 0) {
+		throw new Error(
+			'Invalid "fields" value: no fields were requested. Omit "fields" for the compact view.'
+		);
+	}
+	return fields;
 }
 
 function fieldsShapeError(fields: string): string {
@@ -61,51 +52,37 @@ function fieldsShapeError(fields: string): string {
 		);
 	}
 	return (
-		'"fields" must be an array of field names for field selection; only "all" and "default" ' +
-		`may be strings. For a single field, use an array like [${JSON.stringify(fields)}], not ` +
+		'"fields" must be an array of field names. ' +
+		`For a single field, use an array like [${JSON.stringify(fields)}], not ` +
 		`${JSON.stringify(fields)}. Send {"fields":[${JSON.stringify(fields)}]}.`
 	);
 }
 
-// Shared Zod schema for the optional `fields` argument across tools. The only
-// accepted shapes are an array of field names or the bare sentinels
-// "all"/"default" (plus the tolerated "*" alias). The string arm uses a custom
-// refinement so permission-layer validation rejects malformed strings with an
-// exact corrected payload. `normalizeFieldSelector` repeats the check for direct
-// handler callers and other uses outside that validation boundary.
+// Shared Zod schema for the optional `fields` argument across tools.
 export const FieldsArg = z
-	.union([z.array(z.string().trim().min(1).max(100)).max(50), z.string().trim().min(1).max(100)])
-	.superRefine((fields, ctx) => {
-		if (typeof fields === 'string' && fields !== 'all' && fields !== 'default' && fields !== '*') {
-			ctx.addIssue({ code: z.ZodIssueCode.custom, message: fieldsShapeError(fields) });
-		}
-	})
+	.array(z.string().trim().min(1).max(100))
+	.min(1, 'At least one field must be requested; omit "fields" for the compact view.')
+	.max(50)
 	.optional();
 
-// Shared JSON-Schema fragment advertising the `fields` parameter on a tool. The
-// advertised shape is the clean `string[] | "all" | "default"`; the extra
-// leniency in `normalizeFieldSelector` (bare `"*"`, empty array) is an
-// unadvertised safety net.
+// Shared JSON-Schema fragment advertising the array-only `fields` parameter.
 export const FIELDS_PARAM = {
+	type: 'array',
+	items: { type: 'string' },
 	description:
-		'Optional. Selects how much of each record to return. Omit (or pass "default") for ' +
+		'Optional. Selects how much of each record to return. Omit for ' +
 		'a compact view with the fields you usually need (dropped field names are listed in ' +
 		'`_omitted`). Pass an array of top-level field names to fetch exactly those — including ' +
-		'fields omitted by default, e.g. {"fields":["plan"]} — or "all" for the complete record. ' +
-		'Do not quote or JSON-encode the array. Field ' +
-		'names must exist on the record; unknown names are rejected. "all"/"default" are ' +
-		'sentinels only as the whole value, not inside the array. Prefer the default unless you ' +
-		'need something specific.',
-	oneOf: [
-		{ type: 'array', items: { type: 'string' } },
-		{ type: 'string', enum: ['default', 'all'] }
-	]
+		'fields omitted by default, e.g. {"fields":["plan"]}. To fetch many fields, list each ' +
+		'one explicitly. Do not quote or JSON-encode the array. Field names must exist on the ' +
+		'record; unknown names are rejected. Prefer the default unless you ' +
+		'need something specific.'
 } as const;
 
 // Prose variant of `FIELDS_PARAM.description` for appending to tool descriptions.
 export const FIELDS_NOTE =
 	'By default this returns a compact view; pass `fields` (an array of existing top-level ' +
-	'field names, "all", or "default") to control what comes back — the compact view\'s ' +
+	"field names) to fetch exactly those fields — the compact view's " +
 	'`_omitted` list names what you can ask for. Unknown field names are rejected.';
 
 export interface Projection<T> {
@@ -158,10 +135,9 @@ function projectRecord(
 }
 
 // Project a record or array of records according to the `fields` selector.
-// Three modes:
+// Two modes:
 //   - `fields` omitted   → compact default: project to the `keep` allowlist and
 //                          report dropped non-empty field names in `omitted`.
-//   - `fields === "all"` → return the input untouched with an empty `omitted`.
 //   - `fields` is a list → return exactly those top-level fields (a deliberate,
 //                          model-chosen shape), so `omitted` is suppressed:
 //                          listing what *else* was dropped would be noise when
@@ -182,12 +158,11 @@ export function project<T>(
 	opts: { keep: readonly string[]; fields?: FieldSelector | string; validate?: boolean }
 ): Projection<T> {
 	const selector = normalizeFieldSelector(opts.fields);
-	if (selector === 'all') return { value: input, omitted: [] };
 	const explicit = selector !== undefined;
 	if (explicit && opts.validate !== false) {
-		assertFieldsKnown(selector as readonly string[], [{ input, keep: opts.keep }]);
+		assertFieldsKnown(selector, [{ input, keep: opts.keep }]);
 	}
-	const keep = new Set(explicit ? (selector as readonly string[]) : opts.keep);
+	const keep = new Set(explicit ? selector : opts.keep);
 	const dropped = new Set<string>();
 	let value: unknown;
 	if (Array.isArray(input)) {
@@ -234,7 +209,7 @@ export function assertFieldsKnown(
 	shapes: Array<{ input: unknown; keep: readonly string[] }>
 ): void {
 	const selector = normalizeFieldSelector(fields);
-	if (selector === undefined || selector === 'all') return;
+	if (selector === undefined) return;
 	const known = new Set<string>();
 	for (const shape of shapes) {
 		for (const name of collectKnownFields(shape.input, shape.keep)) known.add(name);
@@ -250,8 +225,7 @@ export function assertFieldsKnown(
 // Union the `omitted` lists of several projections into one sorted, de-duplicated
 // list — used by handlers that project multiple shapes into a single result.
 // Note: attribution is intentionally collapsed. A name like `conversationId` may
-// originate from any of the combined shapes; the model cannot tell which, but
-// `fields:"all"` recovers every shape in full, so the ambiguity is harmless.
+// originate from any of the combined shapes; the model cannot tell which.
 export function combineOmitted(...projections: Projection<unknown>[]): string[] {
 	return [...new Set(projections.flatMap((p) => p.omitted))].sort();
 }

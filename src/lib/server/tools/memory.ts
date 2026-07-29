@@ -17,7 +17,7 @@ import {
 
 // Per-shape allowlists of model-relevant fields. Everything else (provenance
 // ids, timestamps, raw payloads, confidence/visibility, etc.) is dropped from
-// the compact-by-default result; pass `fields` (specific names or "all") to
+// the compact-by-default result; pass `fields` with specific names to
 // recover more.
 const ENTITY_KEEP = ['id', 'entityKey', 'entityType', 'displayName', 'summary', 'status'] as const;
 const EVENT_KEEP = [
