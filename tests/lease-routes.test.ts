@@ -1,0 +1,188 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetServerSingletons, setupLocalEnv } from './helpers/env';
+import { makeTmpDir } from './helpers/tmp';
+
+function git(cwd: string, args: string[]): string {
+	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+function committedRepository(): string {
+	const source = makeTmpDir('portal-lease-route-source-');
+	git(source, ['init', '-q', '-b', 'main']);
+	git(source, ['config', 'user.name', 'Portal Test']);
+	git(source, ['config', 'user.email', 'portal-test@localhost']);
+	writeFileSync(join(source, 'README.md'), 'base\n');
+	git(source, ['add', 'README.md']);
+	git(source, ['commit', '-q', '-m', 'initial']);
+	return source;
+}
+
+describe('lease-scoped conversation routes', () => {
+	let source: string;
+	let userId: string;
+	let conversationId: string;
+	let otherConversationId: string;
+
+	async function makeLease(convId = conversationId, label = 'api') {
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const { createLease } = await import('../src/lib/server/leases');
+		const conversation = convs.get(convId, userId)!;
+		return createLease({ conversation, label });
+	}
+
+	function ctx(query = '', extraParams: Record<string, string> = {}) {
+		return {
+			params: { id: conversationId, ...extraParams },
+			locals: {
+				userId,
+				user: { id: userId, githubLogin: 'local-dev', displayName: null, avatarUrl: null }
+			},
+			url: new URL(`http://localhost/api/conversations/${conversationId}/x${query}`),
+			getClientAddress: () => '127.0.0.1'
+		} as never;
+	}
+
+	beforeEach(async () => {
+		const dataDir = await setupLocalEnv('portal-lease-routes-');
+		source = committedRepository();
+		process.env.PROJECT_ROOT = source;
+		process.env.WORKTREE_ROOT = join(dataDir, 'worktrees');
+		await resetServerSingletons();
+		vi.resetModules();
+
+		const users = await import('../src/lib/server/db/repos/users');
+		userId = users.ensureLocalUser().id;
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const base = {
+			workdir: source,
+			model: 'test-model',
+			workspaceKind: 'shared' as const,
+			workspaceKey: source
+		};
+		conversationId = convs.create(userId, { id: convs.newId(), title: 'main', ...base }).id;
+		otherConversationId = convs.create(userId, { id: convs.newId(), title: 'other', ...base }).id;
+	});
+
+	it('lists held worktrees with dirty counts', async () => {
+		const lease = await makeLease();
+		writeFileSync(join(lease.path, 'wip.txt'), 'x\n');
+
+		const { GET } = await import('../src/routes/api/conversations/[id]/worktrees/+server');
+		const body = await (await GET(ctx())).json();
+
+		expect(body.worktrees).toHaveLength(1);
+		expect(body.worktrees[0]).toMatchObject({
+			id: lease.id,
+			label: 'api',
+			branch: lease.branch,
+			available: true,
+			dirtyCount: 1
+		});
+	});
+
+	it('reads the file tree of a lease rather than the conversation workspace', async () => {
+		const lease = await makeLease();
+		writeFileSync(join(lease.path, 'only-in-lease.txt'), 'x\n');
+
+		const { GET } = await import('../src/routes/api/conversations/[id]/fs/tree/+server');
+		const inLease = await (await GET(ctx(`?worktree=${lease.id}`))).json();
+		const inPrimary = await (await GET(ctx())).json();
+
+		expect(inLease.entries.map((e: { name: string }) => e.name)).toContain('only-in-lease.txt');
+		// Omitting the selector must still resolve the conversation's own tree.
+		expect(inPrimary.entries.map((e: { name: string }) => e.name)).not.toContain(
+			'only-in-lease.txt'
+		);
+	});
+
+	it('reads a file from the selected lease', async () => {
+		const lease = await makeLease();
+		writeFileSync(join(lease.path, 'README.md'), 'lease copy\n');
+
+		const { GET } = await import('../src/routes/api/conversations/[id]/fs/file/+server');
+		const body = await (await GET(ctx(`?path=README.md&worktree=${lease.id}`))).json();
+
+		expect(body.file.content).toBe('lease copy\n');
+	});
+
+	it('reports git changes for the selected lease', async () => {
+		const lease = await makeLease();
+		writeFileSync(join(lease.path, 'changed.txt'), 'x\n');
+
+		const { GET } = await import('../src/routes/api/conversations/[id]/git/changes/+server');
+		const body = await (await GET(ctx(`?worktree=${lease.id}`))).json();
+
+		expect(body.entries.map((c: { path: string }) => c.path)).toContain('changed.txt');
+	});
+
+	it('reverts the lease it was pointed at, never the conversation workspace', async () => {
+		// The data-loss case: if revert ignored the selector it would discard the
+		// tree the user was NOT looking at and leave the one they were.
+		const lease = await makeLease();
+		writeFileSync(join(lease.path, 'README.md'), 'lease edit\n');
+		writeFileSync(join(source, 'README.md'), 'primary edit\n');
+
+		const { POST } =
+			await import('../src/routes/api/conversations/[id]/git/changes/revert/+server');
+		await POST(ctx(`?worktree=${lease.id}`));
+
+		expect(readFileSync(join(lease.path, 'README.md'), 'utf8')).toBe('base\n');
+		expect(readFileSync(join(source, 'README.md'), 'utf8')).toBe('primary edit\n');
+	});
+
+	describe('ownership', () => {
+		it('404s a lease held by a different conversation', async () => {
+			const foreign = await makeLease(otherConversationId, 'foreign');
+			const { GET } = await import('../src/routes/api/conversations/[id]/fs/tree/+server');
+
+			await expect(GET(ctx(`?worktree=${foreign.id}`))).rejects.toMatchObject({ status: 404 });
+		});
+
+		it('404s an unknown lease id', async () => {
+			const { GET } = await import('../src/routes/api/conversations/[id]/fs/tree/+server');
+			await expect(GET(ctx('?worktree=01NOSUCHLEASE'))).rejects.toMatchObject({ status: 404 });
+		});
+
+		it('404s a lease belonging to another user', async () => {
+			const lease = await makeLease();
+			const { GET } = await import('../src/routes/api/conversations/[id]/fs/tree/+server');
+			const foreignCtx = {
+				params: { id: conversationId },
+				locals: { userId: 'someone-else' },
+				url: new URL(`http://localhost/x?worktree=${lease.id}`)
+			} as never;
+
+			await expect(GET(foreignCtx)).rejects.toMatchObject({ status: 404 });
+		});
+	});
+
+	describe('DELETE', () => {
+		it('refuses a dirty lease, then removes it when forced', async () => {
+			const lease = await makeLease();
+			writeFileSync(join(lease.path, 'wip.txt'), 'unsaved\n');
+			const { DELETE } =
+				await import('../src/routes/api/conversations/[id]/worktrees/[leaseId]/+server');
+
+			await expect(DELETE(ctx('', { leaseId: lease.id }))).rejects.toMatchObject({ status: 409 });
+			expect(existsSync(lease.path)).toBe(true);
+
+			const res = await DELETE(ctx('?force=1', { leaseId: lease.id }));
+			expect((await res.json()).ok).toBe(true);
+			expect(existsSync(lease.path)).toBe(false);
+		});
+
+		it('404s a lease held by another conversation', async () => {
+			const foreign = await makeLease(otherConversationId, 'foreign');
+			const { DELETE } =
+				await import('../src/routes/api/conversations/[id]/worktrees/[leaseId]/+server');
+
+			await expect(DELETE(ctx('', { leaseId: foreign.id }))).rejects.toMatchObject({
+				status: 404
+			});
+			expect(existsSync(foreign.path)).toBe(true);
+		});
+	});
+});

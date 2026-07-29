@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
+import { authorizeConversationWorkspace, leaseIdFromUrl } from '$lib/server/conversation-auth';
 import { diff, GitError, type DiffTarget } from '$lib/server/git';
 
 const VALID_TARGETS = new Set([
@@ -14,7 +14,7 @@ const VALID_TARGETS = new Set([
 const SHA_RE = /^[0-9a-f]{4,64}$/;
 
 export const GET: RequestHandler = async ({ params, locals, url }) => {
-	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
+	const { workdir } = authorizeConversationWorkspace(params.id, locals.userId, leaseIdFromUrl(url));
 	const targetKind = url.searchParams.get('target') ?? 'worktree-vs-head';
 	if (!VALID_TARGETS.has(targetKind)) throw error(400, 'invalid target');
 	const sha = url.searchParams.get('sha') ?? '';

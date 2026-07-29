@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
+import { authorizeConversationWorkspace, leaseIdFromUrl } from '$lib/server/conversation-auth';
 import { listDir } from '$lib/server/files';
 import {
 	status as gitStatus,
@@ -12,7 +12,7 @@ import {
 import type { ChangeStatus } from '$lib/types';
 
 export const GET: RequestHandler = async ({ params, locals, url }) => {
-	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
+	const { workdir } = authorizeConversationWorkspace(params.id, locals.userId, leaseIdFromUrl(url));
 	const relPath = url.searchParams.get('path') ?? '';
 	const includeHidden = url.searchParams.get('hidden') === '1';
 	const includeIgnored = url.searchParams.get('ignored') === '1';

@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
+import { authorizeConversationWorkspace, leaseIdFromUrl } from '$lib/server/conversation-auth';
 import { log, isGitRepo, GitError } from '$lib/server/git';
 
 // Coerce then clamp into range. Non-numeric/missing values fall back to the
@@ -20,7 +20,7 @@ const skipSchema = z.coerce
 	.transform((n) => Math.max(n, 0));
 
 export const GET: RequestHandler = async ({ params, locals, url }) => {
-	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
+	const { workdir } = authorizeConversationWorkspace(params.id, locals.userId, leaseIdFromUrl(url));
 	if (!(await isGitRepo(workdir))) return json({ initialized: false, commits: [] });
 	const limit = limitSchema.parse(url.searchParams.get('limit') ?? '20');
 	const skip = skipSchema.parse(url.searchParams.get('skip') ?? '0');

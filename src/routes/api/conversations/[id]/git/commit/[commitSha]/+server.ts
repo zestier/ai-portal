@@ -1,10 +1,10 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
+import { authorizeConversationWorkspace, leaseIdFromUrl } from '$lib/server/conversation-auth';
 import { showCommit, GitError } from '$lib/server/git';
 
-export const GET: RequestHandler = async ({ params, locals }) => {
-	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
+export const GET: RequestHandler = async ({ params, locals, url }) => {
+	const { workdir } = authorizeConversationWorkspace(params.id, locals.userId, leaseIdFromUrl(url));
 	const sha = params.commitSha;
 	if (!sha) throw error(400, 'commitSha required');
 	try {

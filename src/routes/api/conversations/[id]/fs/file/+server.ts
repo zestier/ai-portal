@@ -1,11 +1,11 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
+import { authorizeConversationWorkspace, leaseIdFromUrl } from '$lib/server/conversation-auth';
 import { readFileSafe, readImageFileSafe } from '$lib/server/files';
 import { showFile, GitError } from '$lib/server/git';
 
 export const GET: RequestHandler = async ({ params, locals, url }) => {
-	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
+	const { workdir } = authorizeConversationWorkspace(params.id, locals.userId, leaseIdFromUrl(url));
 	const relPath = url.searchParams.get('path');
 	if (!relPath) throw error(400, 'path is required');
 	const ref = url.searchParams.get('ref');
