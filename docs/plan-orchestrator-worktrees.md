@@ -2,6 +2,10 @@
 
 Ticket: `01KYP20N7QRHSAY1F0SKP6B0E1`
 
+**Part I (§1–11)** is the design spec: what we are building and why.
+**Part II (§12–20)** is the implementation plan: the ordered, commit-sized work
+breakdown. Read Part I once; work from Part II.
+
 ## Problem
 
 An _orchestrator_ is an agent that fans work out in parallel — today via the CLI
@@ -353,3 +357,379 @@ worth announcing. Phases 4–6 are independently valuable.
 | Branch namespace pollution (`portal/lease/*`)                  | `-d` merged-only deletion; unmerged branches reported, not hidden               |
 | Users assume "Changes" covers leases                           | Explicit UI note; revisit per-lease snapshots later                             |
 | Permission refactor regresses the containment boundary         | It is a security boundary — the sibling-prefix and symlink-escape tests above are non-negotiable |
+
+---
+
+# Part II — Implementation plan
+
+Work items are **commit-sized**: each is one reviewable change that leaves the
+repo green (`pnpm run verify`). IDs (`W0.1`, `W1.2`, …) are stable references for
+commit messages and ticket checklists.
+
+Conventions for every item:
+
+- Tests land **in the same commit** as the behavior they cover (CONTRIBUTING).
+- Run `pnpm test <path>` for the touched file, then `pnpm run verify` before
+  declaring an item done.
+- Commit subject: `<area>: <what>` with a `Ticket: <id>` line.
+
+## 12. Phase 0 — the spike (GATE)
+
+Everything downstream assumes a sub-agent honors an instructed absolute path.
+Nothing enforces it. **Do not start Phase 1 until this answers yes.**
+
+### W0.1 — Sub-agent path-adherence spike
+
+Not a code change. Timebox to one session.
+
+1. `pnpm dev:isolated` in a scratch git repo with a managed-worktree conversation.
+2. By hand: `git worktree add /tmp/spike-a -b spike/a` from that repo.
+3. Launch a background sub-agent (`task`, `mode: background`) with a prompt of the
+   form: _"All work happens in `/tmp/spike-a`. Create `probe.txt` there. Do not
+   touch any other directory."_
+4. Repeat ~5× across the models an orchestrator would realistically use, and
+   include one prompt where the sub-agent must **read** an existing file in the
+   lease and one where it must **edit** it (editing is likelier to drift back to
+   the session cwd than creating).
+
+Record per run: did the file land in the lease, did anything land in the session
+cwd, and did the agent need reminding.
+
+**Exit criteria.** Green: ≥80% clean adherence, and stray writes land in the
+session cwd (visible, recoverable) rather than somewhere unexpected → proceed.
+Amber: adherence only with heavy prompt scaffolding → proceed, but W3.4's system
+guidance becomes load-bearing and needs the winning phrasing verbatim. Red:
+sub-agents routinely ignore the path → **stop and re-scope**; the fallback is
+Phase 6 (conversation-per-work-unit), where cwd is set by the portal rather than
+requested of the model.
+
+Write the outcome into this section as a dated note. A red result should update
+the ticket, not quietly stall.
+
+## 13. Phase 1 — the lease primitive
+
+Behavior-neutral: no agent surface, no UI. Ships invisibly.
+
+### W1.1 — Generalize worktree derivation over a slot
+
+`src/lib/server/worktrees.ts`, `tests/worktrees.test.ts`
+
+- Add `WorktreeSlot` (§1) and `slotPath(slot)` / `slotBranch(slot, label?)`.
+- Reimplement `generatedPath` / `expectedManagedWorktreePath` in terms of the
+  `conversation` slot so the existing path is provably unchanged.
+- Generalize `prepareGeneratedParent` to assert the slot's expected parent.
+- Add `sanitizeLeaseLabel` (`^[a-z0-9][a-z0-9-]{0,32}$`, reject don't coerce).
+- **Reject `conversationId === 'leases'`** in the conversation slot.
+
+Tests: conversation paths byte-identical to before; lease path/branch shape;
+`'leases'` rejected; label accept/reject table; parent-escape still throws.
+
+Acceptance: no caller outside `worktrees.ts` changes.
+
+### W1.2 — Config knobs
+
+`src/lib/server/config.ts`, `tests/worktrees.test.ts`, `README`/`docs/deployment.md`
+
+`WORKTREE_MAX_LEASES_PER_CONVERSATION` (8), `WORKTREE_MAX_LEASES_PER_USER` (32),
+`WORKTREE_LEASE_TTL_MS` (86_400_000). Same `z.coerce.number().int().positive()`
+style as `WORKTREE_CREATE_TIMEOUT_MS`. There is no dedicated config test file;
+assert the defaults alongside the worktree tests that consume them.
+
+### W1.3 — Migration + repo
+
+`src/lib/server/db/migrations/063_workspace_leases.sql`,
+`src/lib/server/db/repos/leases.ts`, `tests/leases-repo.test.ts`
+
+DDL exactly as §2. Repo: `insert`, `getById(id, userId)`,
+`listByConversation(convId, userId)`, `countByConversation`, `countByUser`,
+`touch(id)`, `setState`, `remove`, `listAll` (reconciliation).
+
+Note: the migration runner (`db/index.ts`) picks files up by sorted filename —
+no registration step.
+
+### W1.4 — Lease service: create + resolve
+
+`src/lib/server/leases.ts`, `tests/leases.test.ts`
+
+`createLease`, `getLease`, `listLeases`, `resolveLeaseWorkspace`, `inspectLease`.
+
+Critical details:
+
+- Source repo resolved from the **holding conversation** — never an argument.
+- Reuse `withRepositoryLock` on `gitCommonDir`.
+- Quota check inside the lock, before `git worktree add`.
+- `resolveLeaseWorkspace` mirrors `resolveConversationWorkspace` clause for
+  clause (recompute expected path, realpath both sides, `isDirectory()`, strict
+  containment, throw `WorkspaceUnavailableError` — no fallback).
+- Roll back the checkout if the row insert throws (mirror the create-route
+  pattern).
+
+Tests: happy path; quota exceeded; concurrent creates serialize; every
+fail-closed branch (outside root, symlink swap, missing, non-directory, other
+user's lease).
+
+### W1.5 — Lease removal
+
+`src/lib/server/leases.ts`, `tests/leases-remove.test.ts`
+
+`removeLease` (dirty refuses without `force`), `removeLeasesForConversation`
+(returns `retained` so the route can 409 precisely).
+
+Branch cleanup is `git branch -d` (merged-only); on failure keep the branch and
+return `branchDeleted: false`. Never `-D`.
+
+Tests: clean removal deletes branch; unmerged branch retained + reported; dirty
+refused; `force` removes; missing directory prunes without throwing.
+
+### W1.6 — Containment set helper
+
+`src/lib/server/workdir.ts` (or `leases.ts`), `tests/workdir.test.ts`
+
+`conversationWorkspaceRoots(conversation): string[]` — primary first, then each
+active lease that resolves. A lease that fails to resolve is **skipped, not
+fatal**: one broken lease must not lock the user out of their primary workspace.
+Deduplicate.
+
+This is the single seam Phase 2 consumes.
+
+### W1.7 — Reaper + startup reconciliation
+
+`src/lib/server/leases.ts`, `src/lib/server/runtime/pool.ts` (or a sibling
+`runtime/lease-maintenance.ts`), `src/hooks.server.ts`, `tests/lease-gc.test.ts`
+
+- `reapIdleLeases(now)`: `state='active'`, `dirtyCount === 0`,
+  `last_used_at` older than TTL. **Never** auto-removes a dirty lease.
+- `reconcileLeases()`: `git worktree prune` per distinct `git_common_dir`; drop
+  rows whose path is gone; remove orphan dirs under
+  `WORKTREE_ROOT/<user>/leases/` guarded by the same derived-path check as
+  `removeUnavailableOwnedWorktree`.
+- Wire reconciliation into `boot()` in `hooks.server.ts` (next to
+  `startIdleReaper()`), and the reaper onto a 60s interval with `timer.unref?.()`,
+  following the existing pool-reaper shape.
+
+Tests use fake timers, mirroring `tests/interactive-idle-reaper-repro.test.ts`.
+
+### W1.8 — Conversation DELETE removes leases
+
+`src/routes/api/conversations/[id]/+server.ts`, `tests/worktree-routes.test.ts`
+
+After the existing primary removal, call `removeLeasesForConversation` with the
+same `forceWorktree` flag. Dirty → `409 { code: 'worktree_dirty' }` listing the
+retained leases. Audit `worktree_remove` per lease.
+
+Ordering: leases first, then primary, then `convs.remove`. Leases are children of
+the same repo; failing after the primary is gone leaves a messier state.
+
+**Phase 1 acceptance:** `pnpm run verify` green; no user-visible change; a lease
+can be created, resolved, inspected, and removed from a unit test.
+
+## 14. Phase 2 — multi-root permission containment
+
+The usability gate. Behavior-neutral on its own (one root in, one root out).
+
+### W2.1 — `isPathInAnyWorkspace`
+
+`src/lib/server/permissions/workspace.ts`, `tests/workspace-permission.test.ts`
+
+Add the plural helper; keep `isPathInWorkspace` as the singular case. Empty array
+→ `false` (fail closed).
+
+### W2.2 — Thread the root set through the matcher
+
+`permissions/matcher.ts`, `permissions/predicates/fs.ts`,
+`permissions/predicates/shell.ts`, `tests/permission-matcher.test.ts`,
+`tests/predicates-fs-url.test.ts`, `tests/predicates-shell.test.ts`,
+`tests/seed-grants.test.ts`
+
+`workspaceRoot: string | null` → `workspaceRoots: readonly string[] | null` at
+matcher L67/186/288/298; `predicates/fs.ts` L41; `predicates/shell.ts` L164/222.
+`sessionWorkspaceRoot` stays singular.
+
+Do this as a **mechanical rename with no behavior change** — pass a single-element
+array at every call site — so the diff is reviewable as a refactor.
+
+### W2.3 — Policy path
+
+`runtime/interactive-requests.ts` (L586, L605), `tests/interactive-requests.test.ts`
+
+`PolicyContext.workspaceRoots`; `decideByPolicy` uses `isPathInAnyWorkspace`.
+
+### W2.4 — Provider adapters supply live roots
+
+`copilot/interactive-adapter.ts` (L67, L296, L309),
+`providers/openai-compatible-provider.ts` (L569),
+`tests/permission-live-roots.test.ts`
+
+Replace `workingDirectory: string` in `InteractiveAdapterOptions` with
+`getWorkspaceRoots(): string[]`, alongside the existing `getSessionWorkspacePath`
+callback. Both providers pass
+`() => conversationWorkspaceRoots(conversation)`.
+
+**`workingDirectory` is still needed** at L119 for `maybeCaptureImage` — that
+guard is deliberately anchored to the session cwd. Keep the field; add the
+callback. Do not collapse them.
+
+The regression test that matters: a lease created **mid-session** is auto-allowed
+within the same turn. That is what proves a callback rather than a captured value.
+
+### W2.5 — Sibling-prefix and symlink-escape hardening tests
+
+`tests/workspace-permission.test.ts`
+
+`/…/leases/AB` must not match a root of `/…/leases/ABC`; a symlink inside a lease
+pointing out must not auto-allow; empty root set prompts. This is a security
+boundary — these are non-negotiable.
+
+**Phase 2 acceptance:** `pnpm run verify` green; writes inside a lease auto-allow
+under the default `prompt` policy; writes outside every root still prompt.
+
+## 15. Phase 3 — the `worktree` tool group
+
+First user-visible capability.
+
+### W3.1 — Register the group
+
+`src/lib/tools/groups.ts`, `tests/conversation-tool-groups.test.ts`
+
+Add `'worktree'` to `PortalToolGroupId` + `PORTAL_TOOL_GROUPS`. The
+`GroupedPortalTools` `Record` type makes the compiler force both providers to
+populate the key; the settings UI and `sanitizeDisabledToolGroups` follow for
+free.
+
+### W3.2 — The tools
+
+`src/lib/server/tools/worktree.ts`, `tests/worktree-tools.test.ts`,
+`tests/tool-schema-errors.test.ts`
+
+`buildWorktreeTools({ userId, conversationId })` returning the four tools of §5.
+Zod schemas `.strict()`, `parameters` JSON Schema, `project()`-style compact
+results with `FIELDS_PARAM` on `worktree_list`.
+
+`worktree_remove` sets `permissionBehavior: 'always-prompt'`.
+
+Quota rejections return `err(msg, { code: 'lease_quota_exceeded' })` so the model
+can react rather than retry blindly.
+
+`worktree_create` sets the `followUpHint` from §5 — that hint is what makes the
+orchestrator hand the path to a sub-agent.
+
+### W3.3 — Wire into both providers
+
+`copilot/copilot-provider.ts` (~L241), `providers/openai-compatible-provider.ts`
+(~L979)
+
+Add `worktree: buildWorktreeTools(...)` to the `filterPortalToolGroups` record.
+
+### W3.4 — System guidance + audit
+
+`runtime/system-guidance.ts`, `tests/system-guidance.test.ts`; audit detail in
+`tools/worktree.ts`
+
+Orchestrator paragraph gated on the `worktree_create` marker tool (§8). If W0.1
+came back amber, use the phrasing that actually worked in the spike.
+
+Audit `worktree_create` / `worktree_remove` with `leaseId` + `label`.
+
+**Phase 3 acceptance:** in `pnpm dev:isolated`, an agent creates a worktree,
+writes in it without prompting, and removes it (with a prompt). Group can be
+disabled from settings.
+
+## 16. Phase 4 — read surfaces and UI
+
+### W4.1 — Lease-aware authorization helper
+
+`src/lib/server/conversation-auth.ts`, `tests/conversation-auth.test.ts`
+
+`authorizeConversationWorkspace(convId, userId, leaseId?)`: no `leaseId` →
+today's behavior exactly; with one → verify
+`lease.userId === conv.userId && lease.heldByConversationId === conv.id` (404
+otherwise), resolve via `resolveLeaseWorkspace`, bump `last_used_at`.
+
+Keep `authorizeConversationWorkdir` as a thin delegate so **no existing caller
+changes in this commit**.
+
+### W4.2 — Accept `?worktree=` on the read routes
+
+`fs/tree`, `fs/file`, `fs/diff`, `git/changes`, `git/changes/revert`,
+`git/status`, `git/log`, `git/commit/[sha]`; `tests/worktree-routes.test.ts`
+
+One-line change per route. Test the cross-user and cross-conversation 404s once,
+centrally.
+
+### W4.3 — Lease list/delete endpoints
+
+`src/routes/api/conversations/[id]/worktrees/+server.ts` and
+`.../worktrees/[leaseId]/+server.ts`
+
+`GET` (list + dirty counts) and `DELETE ?force=1` — the human escape hatch for a
+dirty lease the agent refused to drop.
+
+### W4.4 — Files/Changes workspace switcher
+
+`src/lib/components/FileBrowser.svelte`, the Changes view, `+page.svelte`
+
+Dropdown: primary + leases with dirty counts; selection appends `?worktree=`.
+Show the **"Not snapshotted per message"** note on a lease (decision 5).
+
+Per AGENTS.md: iterate visually with `playwright-cli` (Firefox) at 390px and
+desktop, light and dark, before calling it done.
+
+### W4.5 — E2E
+
+`e2e/worktrees.spec.ts` — create a managed-worktree conversation, exercise a
+lease, assert the switcher lists both and diffs render per-tree.
+
+## 17. Phase 5 — integration
+
+### W5.1 — `worktree_integrate` (report-only)
+
+Commit lease work to its branch, return branch + diffstat. No merge. Low risk,
+most of the value.
+
+### W5.2 — Portal-driven merge (gated)
+
+`git merge --no-ff` of a lease branch into the primary. Requires a clean primary;
+`always-prompt`; **aborts and reports** on conflict — never leaves a half-merged
+tree for an agent to clean up.
+
+Reassess whether W5.2 is wanted at all after W5.1 has been used in anger.
+
+## 18. Phase 6 (optional) — conversation-per-work-unit
+
+Spawn a child conversation bound to an existing lease.
+`held_by_conversation_id` is already the hand-off pointer. Scope this only after
+Phases 3–4 have real usage — and treat it as the **fallback plan if W0.1 came
+back red**, since there the portal sets cwd instead of asking the model to honor
+a path.
+
+## 19. Sequencing and parallelism
+
+```
+W0.1 (gate)
+  └─> W1.1 ─> W1.3 ─> W1.4 ─> W1.5 ─┬─> W1.7
+      W1.2 ─┘                W1.6 ──┴─> W1.8
+                                        │
+                       W2.1 ─> W2.2 ─> W2.3 ─> W2.4 ─> W2.5
+                                                 │
+                              W3.1 ─> W3.2 ─> W3.3 ─> W3.4
+                                                 │
+                              W4.1 ─> W4.2 ─> W4.3 ─> W4.4 ─> W4.5
+                                                 │
+                                       W5.1 ─> W5.2 ─> (W6)
+```
+
+- `W1.2` (config) is independent — do it first to unblock quota work.
+- `W2.1`–`W2.3` can start once `W1.6` exists; only `W2.4` needs the real
+  containment set.
+- `W4.2` is mechanical and parallelizable across routes once `W4.1` lands.
+
+## 20. Definition of done (per phase)
+
+| Phase | Done when                                                                                                   |
+| ----- | ----------------------------------------------------------------------------------------------------------- |
+| 0     | Spike result written into §12 with a verdict; ticket updated                                                 |
+| 1     | Lease create/resolve/inspect/remove + GC covered by unit tests; zero user-visible change; `verify` green      |
+| 2     | Write inside a lease auto-allows; outside every root still prompts; mid-session lease covered; `verify` green |
+| 3     | Agent creates/uses/removes a worktree end-to-end in `dev:isolated`; group disable-able; `verify` green        |
+| 4     | Switcher lists primary + leases with correct per-tree diffs at mobile and desktop widths; e2e green           |
+| 5     | Lease work reaches a branch the human can merge; no half-merged state reachable by an agent                   |
