@@ -10,6 +10,7 @@ import { parseBody } from '$lib/server/validate';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { getManagedWorktree } from '$lib/server/db/repos/conversations';
 import { removeManagedWorktree, WorktreeError } from '$lib/server/worktrees';
+import { removeLeasesForConversation } from '$lib/server/leases';
 import { error } from '@sveltejs/kit';
 import { audit } from '$lib/server/audit';
 
@@ -64,12 +65,53 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 	// A provider subprocess may have this directory as its cwd. Dispose it
 	// before asking Git to remove the linked worktree.
 	await pool.release(conv.id);
+	const force = url.searchParams.get('forceWorktree') === '1';
+
+	// Leases first: they are children of the same repository, and failing after
+	// the conversation's own checkout is gone would leave a messier state to
+	// reconcile. A dirty lease blocks deletion the same way a dirty primary does.
+	const leaseResult = await removeLeasesForConversation(conv.id, conv.userId, { force });
+	for (const leaseId of leaseResult.removed) {
+		audit({
+			event_type: 'worktree_remove',
+			actor_login: locals.user?.githubLogin ?? null,
+			actor_ip: getClientAddress(),
+			resource: leaseId,
+			outcome: 'success',
+			detail: { conversationId: conv.id, leaseId, forced: force }
+		});
+	}
+	if (leaseResult.retained.length > 0) {
+		for (const { lease } of leaseResult.retained) {
+			audit({
+				event_type: 'worktree_remove',
+				actor_login: locals.user?.githubLogin ?? null,
+				actor_ip: getClientAddress(),
+				resource: lease.id,
+				outcome: 'denied',
+				detail: { conversationId: conv.id, leaseId: lease.id, code: 'worktree_dirty' }
+			});
+		}
+		throw error(409, {
+			message: 'conversation holds worktrees with uncommitted changes',
+			code: 'worktree_dirty',
+			// Name the holdouts so the client can offer a precise force prompt
+			// instead of an all-or-nothing one.
+			leases: leaseResult.retained.map(({ lease, dirtyCount }) => ({
+				id: lease.id,
+				label: lease.label,
+				branch: lease.branch,
+				dirtyCount
+			}))
+		} as App.Error);
+	}
+
 	const managed = getManagedWorktree(conv.id, conv.userId);
 	if (managed) {
 		try {
 			await removeManagedWorktree(managed, {
-				force: url.searchParams.get('forceWorktree') === '1',
-				owner: { userId: conv.userId, conversationId: conv.id }
+				force,
+				owner: { kind: 'conversation', userId: conv.userId, conversationId: conv.id }
 			});
 		} catch (cause) {
 			if (cause instanceof WorktreeError) {

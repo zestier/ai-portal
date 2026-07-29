@@ -59,6 +59,17 @@ const Schema = z
 		// allowlist. The final default is derived from DATA_DIR after parsing.
 		WORKTREE_ROOT: z.string().trim().optional(),
 		WORKTREE_CREATE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+		// Quotas on agent-created worktree leases. A runaway orchestrator that
+		// fans out without bound would otherwise fill the disk with checkouts.
+		WORKTREE_MAX_LEASES_PER_CONVERSATION: z.coerce.number().int().positive().default(8),
+		WORKTREE_MAX_LEASES_PER_USER: z.coerce.number().int().positive().default(32),
+		// Idle leases with no uncommitted changes are reaped after this long.
+		// Dirty leases are never auto-removed regardless of age.
+		WORKTREE_LEASE_TTL_MS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(24 * 60 * 60_000),
 		LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
 		AUTH_MODE: z.enum(['github', 'shared-secret', 'none']).default('none'),

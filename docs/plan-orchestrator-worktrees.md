@@ -403,8 +403,49 @@ sub-agents routinely ignore the path → **stop and re-scope**; the fallback is
 Phase 6 (conversation-per-work-unit), where cwd is set by the portal rather than
 requested of the model.
 
-Write the outcome into this section as a dated note. A red result should update
-the ticket, not quietly stall.
+### Result — 2026-07-29: AMBER-GREEN, proceed
+
+Run as three parallel background sub-agents told to create, read back, and then
+edit a file in an absolute path outside the session cwd.
+
+| Run | Model | Outcome |
+| --- | ----- | ------- |
+| A | claude-sonnet-4.6 | Blocked at directory bootstrap. Wrote nothing anywhere. |
+| B | gpt-5.6-terra | **Clean.** Created, read back, and edited the file at the instructed path. No strays. |
+| C | claude-haiku-4.5 | Blocked at directory bootstrap — and **wrote `calc.js` into the repo root instead.** |
+
+**Adherence itself is not the risk.** No agent ever decided to ignore the
+instructed path. B complied exactly, including the edit step. A and C both
+*tried* to comply and reported the blockage honestly. The design's core
+assumption — that a sub-agent will work where it is told — held in every run.
+
+**The blocker was directory bootstrap, not writing.** A's investigation is
+conclusive: `create` (fs-write) *is* auto-allowed for out-of-workspace
+session-workspace paths, but it requires the parent to already exist;
+`create_directory` and `move` are workspace-relative only; shell `mkdir` is
+auto-denied under `best-effort`. B only succeeded because GPT-family models
+carry a native `apply_patch` that implicitly creates parent directories —
+a tool Claude-family agents are not given. So bootstrap capability varies by
+model family, which is not something to build on.
+
+Two consequences, both already satisfied by the design but worth stating:
+
+1. **Phase 2 is a correctness prerequisite, not a usability nicety.** The spec
+   called it "the usability gate" on the theory that a missing root only costs
+   extra prompts. That holds only in interactive mode. Under `best-effort` /
+   autopilot the out-of-root write is *auto-denied*, and C's observed fallback
+   was a silent stray write into the shared workspace — precisely the collision
+   leases exist to prevent. §14 is reclassified as blocking for correctness, and
+   W2.5 must include a stray-write regression.
+2. **The portal must pre-create the lease directory** — which is exactly what
+   `git worktree add` does before any agent sees the path, so no design change
+   is needed. This is independently the top recommendation from run A. W3.2's
+   `followUpHint` must state that the directory already exists and is writable,
+   so a sub-agent never attempts to create it and never concludes the path is
+   unusable.
+
+Verdict: **proceed to Phase 1**, with §14 promoted to a correctness gate.
+
 
 ## 13. Phase 1 — the lease primitive
 
@@ -525,7 +566,11 @@ can be created, resolved, inspected, and removed from a unit test.
 
 ## 14. Phase 2 — multi-root permission containment
 
-The usability gate. Behavior-neutral on its own (one root in, one root out).
+**Correctness gate** (promoted from "usability gate" by the Phase 0 result,
+§12). Without the lease in the agent's allowed roots, an out-of-root write is
+auto-denied under non-interactive modes and the observed fallback is a stray
+write into the shared workspace — the exact collision leases exist to prevent.
+Behavior-neutral on its own (one root in, one root out).
 
 ### W2.1 — `isPathInAnyWorkspace`
 
