@@ -208,6 +208,31 @@ describe('workspace leases', () => {
 			expect(roots).toContain(good.path);
 			expect(roots).not.toContain(broken.path);
 		});
+
+		it('reflects a lease created mid-session without re-resolving anything', async () => {
+			// This is what forces `getWorkspaceRoots` to be a CALLBACK rather than a
+			// value captured at session establishment. An orchestrator creates
+			// leases during a turn, and a lease created in turn N must be writable
+			// within turn N — a snapshot would be stale exactly when it matters.
+			const conversation = await makeConversation();
+			const { createLease, workspaceRootsFor } = await import('../src/lib/server/leases');
+
+			const before = workspaceRootsFor(conversation.id, userId, source);
+			expect(before).toEqual([source]);
+
+			const lease = await createLease({ conversation, label: 'midturn' });
+
+			const after = workspaceRootsFor(conversation.id, userId, source);
+			expect(after).toContain(lease.path);
+			expect(after[0]).toBe(source);
+		});
+
+		it('falls back to the session workdir when the conversation is unreadable', async () => {
+			const { workspaceRootsFor } = await import('../src/lib/server/leases');
+			// Never narrower than pre-lease behavior: an unknown conversation still
+			// gets its working directory as a root rather than an empty set.
+			expect(workspaceRootsFor('missing-conversation', userId, source)).toEqual([source]);
+		});
 	});
 
 	describe('garbage collection', () => {

@@ -35,6 +35,8 @@ import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildFilesystemTools } from '../tools/filesystem';
+import { buildWorktreeTools } from '../tools/worktree';
+import { workspaceRootsFor } from '../leases';
 import { filterPortalToolGroups } from '../tools/filter-groups';
 import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
@@ -242,6 +244,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		{
 			git: buildGitTools(opts.workingDirectory),
 			filesystem: buildFilesystemTools(opts.workingDirectory),
+			worktree: buildWorktreeTools({
+				userId: opts.userId,
+				conversationId: opts.conversationId
+			}),
 			tickets: buildTicketTools({
 				userId: opts.userId,
 				workspaceKey: opts.workspaceKey ?? ticketWorkspaceFromConversation(opts.workingDirectory),
@@ -276,6 +282,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		conversationId: opts.conversationId,
 		userId: opts.userId,
 		workingDirectory: opts.workingDirectory,
+		getWorkspaceRoots: () =>
+			workspaceRootsFor(opts.conversationId, opts.userId, opts.workingDirectory),
 		policy: opts.policy,
 		emit,
 		getApproveAll: () => approveAllTools,

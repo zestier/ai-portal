@@ -322,16 +322,16 @@ Every phase ends with `pnpm run verify`.
 
 ## 10. Phasing
 
-- [ ] **Phase 0 — spike (gate).** Confirm a background sub-agent reliably does
+- [x] **Phase 0 — spike (gate).** Confirm a background sub-agent reliably does
       its work in an instructed absolute path outside the session cwd. If it does
       not, stop: the whole plan rests on this. Timebox; write the finding into
-      this doc.
-- [ ] **Phase 1 — lease primitive.** Migration 063, `leases.ts`, slot-based
+      this doc. **Done — AMBER-GREEN, see §12.**
+- [x] **Phase 1 — lease primitive.** Migration 063, `leases.ts`, slot-based
       derivation, fail-closed resolution, reaper, reconciliation, conversation
       DELETE integration. No agent surface. Ships invisibly.
-- [ ] **Phase 2 — multi-root permission containment.** §4. Ship with or
+- [x] **Phase 2 — multi-root permission containment.** §4. Ship with or
       immediately after phase 1; phase 3 is unusable without it.
-- [ ] **Phase 3 — `worktree` tool group.** Tools, quotas, audit, system
+- [x] **Phase 3 — `worktree` tool group.** Tools, quotas, audit, system
       guidance. First user-visible capability.
 - [ ] **Phase 4 — read surfaces + UI switcher.** Makes orchestrator runs
       reviewable.

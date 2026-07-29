@@ -17,6 +17,7 @@ export interface PortalToolGroup {
 export type PortalToolGroupId =
 	| 'git'
 	| 'filesystem'
+	| 'worktree'
 	| 'tickets'
 	| 'permissions'
 	| 'memory'
@@ -28,6 +29,11 @@ export const PORTAL_TOOL_GROUPS: readonly PortalToolGroup[] = [
 		id: 'filesystem',
 		label: 'Filesystem',
 		hint: 'Workspace-scoped create/move/trash helpers.'
+	},
+	{
+		id: 'worktree',
+		label: 'Worktrees',
+		hint: 'Create and manage isolated checkouts so parallel sub-agents don’t collide in one tree.'
 	},
 	{ id: 'tickets', label: 'Tickets', hint: 'Durable workspace ticket create/list/update tools.' },
 	{

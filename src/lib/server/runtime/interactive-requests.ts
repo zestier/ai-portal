@@ -577,13 +577,16 @@ function normalizeResponse(response: InteractiveResponse): InteractiveResponse {
 // If the caller can't supply a workspace root or scope key, the file-system
 // kinds fall back to 'ask' (safer default).
 
-import { isPathInWorkspace } from '../permissions/workspace';
+import { isPathInAnyWorkspace } from '../permissions/workspace';
 
 export interface PolicyContext {
 	/** The runtime scope key (file path / command / URL) for this request. */
 	scopeKey?: string | null;
-	/** The conversation's absolute working directory. */
-	workspaceRoot?: string | null;
+	/**
+	 * Every absolute root the conversation may write inside: its own workspace
+	 * plus any worktree leases it holds. Empty/missing fails closed to 'ask'.
+	 */
+	workspaceRoots?: readonly string[] | null;
 }
 
 export function decideByPolicy(
@@ -602,9 +605,8 @@ export function decideByPolicy(
 		case 'prompt':
 		default:
 			if (isFilesystemPermissionKind(pk)) {
-				const root = ctx?.workspaceRoot;
 				const target = ctx?.scopeKey;
-				if (root && target && isPathInWorkspace(target, root)) return 'approved';
+				if (target && isPathInAnyWorkspace(target, ctx?.workspaceRoots)) return 'approved';
 				return 'ask';
 			}
 			return 'ask';

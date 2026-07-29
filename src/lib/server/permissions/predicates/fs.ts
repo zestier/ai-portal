@@ -7,7 +7,16 @@ import { isPathInWorkspace, resolveWithParentFallback } from '../workspace';
 export interface FsMatchContext {
 	permissionKind: 'read' | 'write' | 'edit';
 	target: string;
-	workspaceRoot: string | null;
+	/**
+	 * Every root the conversation may write inside: its own workspace plus any
+	 * worktree leases it holds. A `workspace`-rooted rule matches inside ANY of
+	 * them; an empty list matches nothing.
+	 */
+	workspaceRoots: readonly string[] | null;
+	/**
+	 * The provider session's actual cwd. Deliberately singular — `session-workspace`
+	 * rules mean "the real working directory", which leases never widen.
+	 */
 	sessionWorkspaceRoot?: string | null;
 }
 
@@ -38,12 +47,19 @@ function pathRuleMatches(rule: FsRule, ctx: FsMatchContext): boolean {
 		return absolutePathBehaviorMatches(rule.behavior, rule.value, target);
 	}
 
-	const root = rule.root === 'workspace' ? ctx.workspaceRoot : ctx.sessionWorkspaceRoot;
-	if (!root) return false;
-	const rel = canonicalRelativePath(ctx.target, root);
-	if (rel === null) return false;
-	if (rule.behavior === 'any') return true;
-	return relativePathBehaviorMatches(rule.behavior, rule.value, rel);
+	// A `workspace` rule is satisfied by containment in any of the conversation's
+	// roots; `session-workspace` stays anchored to the single real cwd. Roots are
+	// disjoint directories, so at most one can contain the target — resolve the
+	// path relative to whichever one does.
+	const roots = rule.root === 'workspace' ? ctx.workspaceRoots : [ctx.sessionWorkspaceRoot];
+	for (const root of roots ?? []) {
+		if (!root) continue;
+		const rel = canonicalRelativePath(ctx.target, root);
+		if (rel === null) continue;
+		if (rule.behavior === 'any') return true;
+		return relativePathBehaviorMatches(rule.behavior, rule.value, rel);
+	}
+	return false;
 }
 
 function absolutePathBehaviorMatches(

@@ -14,11 +14,14 @@ import type {
 } from '../../../permissions/scope-types';
 import { looksLikeShellOptionToken, matchShellOptionToken } from '../../../permissions/shell-argv';
 import type { ParsedSegment } from '../shell-parser';
-import { isPathInWorkspace } from '../workspace';
+import { isPathInAnyWorkspace, isPathInWorkspace } from '../workspace';
 
 export interface ShellMatchContext {
-	/** Conversation's workspace root. `workspace-paths` fails closed when null. */
-	workspaceRoot: string | null;
+	/**
+	 * Every root the conversation may act inside: its own workspace plus any
+	 * worktree leases it holds. `workspace-paths` fails closed when empty/null.
+	 */
+	workspaceRoots: readonly string[] | null;
 	/** SDK session workspace root. `session-workspace-paths` fails closed when null. */
 	sessionWorkspaceRoot?: string | null;
 	/** Whether the segment being evaluated is part of a shell pipeline
@@ -161,7 +164,7 @@ function optionSpecMatchesValue(
 		case 'any':
 			return true;
 		case 'workspace-path':
-			return !!ctx.workspaceRoot && isPathInWorkspace(value, ctx.workspaceRoot);
+			return isPathInAnyWorkspace(value, ctx.workspaceRoots);
 	}
 }
 
@@ -219,9 +222,12 @@ function positionalsMatch(
 		case 'none':
 			return positionals.length === 0;
 		case 'workspace-paths': {
-			if (!ctx.workspaceRoot) return false;
+			if (!ctx.workspaceRoots || ctx.workspaceRoots.length === 0) return false;
+			// Every positional must land in SOME root. Mixing roots within one
+			// invocation is allowed (an orchestrator may diff a lease against the
+			// primary); escaping all of them is not.
 			for (const p of positionals) {
-				if (!isPathInWorkspace(p, ctx.workspaceRoot)) return false;
+				if (!isPathInAnyWorkspace(p, ctx.workspaceRoots)) return false;
 			}
 			return true;
 		}

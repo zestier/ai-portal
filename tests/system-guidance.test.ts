@@ -44,11 +44,27 @@ describe('buildPortalSystemGuidance', () => {
 		expect(guidance).not.toContain('request_permission_grant');
 	});
 
+	it('omits worktree guidance when worktree tools are absent', () => {
+		const guidance = buildPortalSystemGuidance(['git_status', 'ticket_add']);
+		expect(guidance).not.toContain('worktree_create');
+	});
+
+	it('includes the parallel-sub-agent worktree guidance when the tools are present', () => {
+		const guidance = buildPortalSystemGuidance(['worktree_create']);
+		expect(guidance).toContain('worktree_create');
+		// The two instructions the Phase 0 spike showed actually matter: hand over
+		// an absolute path, and never share one checkout between sub-agents.
+		expect(guidance).toContain('ABSOLUTE path');
+		expect(guidance).toContain('Never point');
+		expect(guidance).toContain('already exists and is writable');
+	});
+
 	it('produces only the base block when no optional tool groups are present', () => {
 		const guidance = buildPortalSystemGuidance([]);
 		expect(guidance).not.toContain('ticket_add');
 		expect(guidance).not.toContain('git_status');
 		expect(guidance).not.toContain('permission_capabilities');
+		expect(guidance).not.toContain('worktree_create');
 	});
 
 	it('PORTAL_SYSTEM_GUIDANCE is the full guidance with every optional section', () => {

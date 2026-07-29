@@ -206,8 +206,8 @@ export interface MatchGrantContext {
 	target?: string | null;
 	/** Target URL for url requests. */
 	url?: string | null;
-	/** Conversation's working directory. */
-	workspaceRoot?: string | null;
+	/** Every root the conversation may act inside (workspace + held leases). */
+	workspaceRoots?: readonly string[] | null;
 	/** SDK session workspace directory. */
 	sessionWorkspaceRoot?: string | null;
 	/** Canonical SHA-256 of the requested tool args. */
@@ -256,7 +256,7 @@ export function matchGrantDetailed(
 		shellSegments: ctx.shellSegments ?? null,
 		target: ctx.target ?? null,
 		url: ctx.url ?? null,
-		workspaceRoot: ctx.workspaceRoot ?? null,
+		workspaceRoots: ctx.workspaceRoots ?? null,
 		sessionWorkspaceRoot: ctx.sessionWorkspaceRoot ?? null,
 		argsHash: ctx.argsHash ?? null,
 		now

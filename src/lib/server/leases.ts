@@ -285,6 +285,30 @@ export function conversationWorkspaceRoots(conversation: Conversation): string[]
 }
 
 /**
+ * Live containment roots for a conversation id, for the provider permission
+ * adapters. Falls back to `fallback` (the session's working directory) when the
+ * conversation row can't be read or contributes no roots, so permission
+ * behavior is never *narrower* than it was before leases existed.
+ *
+ * Called per permission request rather than cached: a lease created mid-turn
+ * must be writable within that same turn.
+ */
+export function workspaceRootsFor(
+	conversationId: string,
+	userId: string,
+	fallback: string
+): string[] {
+	try {
+		const conversation = convs.get(conversationId, userId);
+		if (!conversation) return [fallback];
+		const roots = conversationWorkspaceRoots(conversation);
+		return roots.length > 0 ? roots : [fallback];
+	} catch {
+		return [fallback];
+	}
+}
+
+/**
  * Remove idle, clean leases. Dirty leases are NEVER auto-removed — they are
  * left for the user to review, since uncommitted work is unrecoverable.
  */

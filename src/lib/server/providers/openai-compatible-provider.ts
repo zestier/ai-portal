@@ -12,6 +12,8 @@ import {
 } from '../tools/types';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildFilesystemTools } from '../tools/filesystem';
+import { buildWorktreeTools } from '../tools/worktree';
+import { workspaceRootsFor } from '../leases';
 import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
 import { buildMemoryTools } from '../tools/memory';
@@ -567,6 +569,8 @@ export function openOpenAICompatibleSession(
 		conversationId: opts.conversationId,
 		userId: opts.userId,
 		workingDirectory: opts.workingDirectory,
+		getWorkspaceRoots: () =>
+			workspaceRootsFor(opts.conversationId, opts.userId, opts.workingDirectory),
 		policy: opts.policy,
 		emit,
 		getApproveAll: () => approveAllTools,
@@ -980,6 +984,10 @@ function buildOpenAITools(opts: {
 		{
 			git: buildGitTools(opts.opts.workingDirectory),
 			filesystem: buildFilesystemTools(opts.opts.workingDirectory),
+			worktree: buildWorktreeTools({
+				userId: opts.opts.userId,
+				conversationId: opts.opts.conversationId
+			}),
 			tickets: buildTicketTools({
 				userId: opts.opts.userId,
 				workspaceKey:

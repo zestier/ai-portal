@@ -65,6 +65,16 @@ interface InteractiveAdapterOptions {
 	conversationId: string;
 	userId: string;
 	workingDirectory: string;
+	/**
+	 * Every root the conversation may write inside RIGHT NOW: its workspace plus
+	 * any worktree leases it currently holds.
+	 *
+	 * Deliberately a callback, not a captured value. An orchestrator creates
+	 * leases mid-turn, and a lease created during turn N must be auto-allowed
+	 * within turn N — a snapshot taken at session establishment would be stale
+	 * exactly when it matters. Mirrors `getSessionWorkspacePath`.
+	 */
+	getWorkspaceRoots(): string[];
 	policy: PermissionPolicy;
 	emit(ev: PortalEvent): void;
 	getApproveAll(): boolean;
@@ -293,7 +303,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					shellSegments,
 					target,
 					url,
-					workspaceRoot: opts.workingDirectory ?? null,
+					workspaceRoots: opts.getWorkspaceRoots(),
 					sessionWorkspaceRoot: opts.getSessionWorkspacePath(),
 					argsHash: hash
 				}
@@ -306,7 +316,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			if (opts.getApproveAll()) return { kind: 'allow' };
 			const decision = decideByPolicy(opts.policy, 'permission', permissionKind, {
 				scopeKey: key,
-				workspaceRoot: opts.workingDirectory
+				workspaceRoots: opts.getWorkspaceRoots()
 			});
 			if (decision === 'approved') return { kind: 'allow' };
 			if (decision === 'denied') return { kind: 'deny' };

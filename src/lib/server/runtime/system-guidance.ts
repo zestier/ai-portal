@@ -31,6 +31,7 @@
 // Checking one representative name per group avoids re-listing every tool.
 const GIT_TOOL_MARKER = 'git_status';
 const TICKET_TOOL_MARKER = 'ticket_add';
+const WORKTREE_TOOL_MARKER = 'worktree_create';
 const PERMISSION_TOOL_MARKERS = ['permission_capabilities', 'request_permission_grant'] as const;
 
 /**
@@ -73,6 +74,21 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 		);
 	}
 
+	if (names.has(WORKTREE_TOOL_MARKER)) {
+		blocks.push(
+			[
+				'When you delegate work to several sub-agents at once, give each one its own worktree',
+				'(worktree_create) instead of letting them all edit the shared working tree — concurrent',
+				'edits to one tree corrupt each other, and git state is per-tree. Pass the sub-agent the',
+				'ABSOLUTE path you got back and tell it to do all of its work there and nowhere else; the',
+				'directory already exists and is writable, so it should not try to create it. Never point',
+				'two sub-agents at the same worktree. When a unit of work is done, report its branch name,',
+				'then worktree_remove it. For a single sequential task, just work in the normal workspace —',
+				'worktrees are for parallelism, not a default.'
+			].join('\n')
+		);
+	}
+
 	if (PERMISSION_TOOL_MARKERS.some((name) => names.has(name))) {
 		blocks.push(
 			[
@@ -93,5 +109,6 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 export const PORTAL_SYSTEM_GUIDANCE = buildPortalSystemGuidance([
 	GIT_TOOL_MARKER,
 	TICKET_TOOL_MARKER,
+	WORKTREE_TOOL_MARKER,
 	...PERMISSION_TOOL_MARKERS
 ]);

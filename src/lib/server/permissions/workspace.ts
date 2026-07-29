@@ -46,6 +46,27 @@ export function isPathInWorkspace(target: string, workspaceRoot: string): boolea
 	return resolvedTarget.startsWith(root + sep);
 }
 
+/**
+ * True when `target` resolves inside ANY of `roots`.
+ *
+ * A conversation's writable area is a SET of roots — its own workspace plus
+ * every worktree lease it holds — because an orchestrator hands leases to
+ * parallel sub-agents. Containment is evaluated per-root with the same
+ * symlink-safe check as the single-root case, so widening the set never
+ * loosens the test applied to any individual root.
+ *
+ * An empty/missing set fails CLOSED (returns false → the caller prompts).
+ * That matters: a conversation whose roots could not be resolved must not
+ * silently gain blanket write access.
+ */
+export function isPathInAnyWorkspace(
+	target: string,
+	roots: readonly string[] | null | undefined
+): boolean {
+	if (!roots || roots.length === 0) return false;
+	return roots.some((root) => isPathInWorkspace(target, root));
+}
+
 function safeRealpath(p: string): string | null {
 	try {
 		return realpathSync(p);

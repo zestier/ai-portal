@@ -1,0 +1,208 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetServerSingletons, setupLocalEnv } from './helpers/env';
+import { makeTmpDir } from './helpers/tmp';
+import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
+
+function git(cwd: string, args: string[]): string {
+	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+function committedRepository(): string {
+	const source = makeTmpDir('portal-wt-tool-source-');
+	git(source, ['init', '-q', '-b', 'main']);
+	git(source, ['config', 'user.name', 'Portal Test']);
+	git(source, ['config', 'user.email', 'portal-test@localhost']);
+	writeFileSync(join(source, 'README.md'), 'base\n');
+	git(source, ['add', 'README.md']);
+	git(source, ['commit', '-q', '-m', 'initial']);
+	return source;
+}
+
+function result(r: ToolResult): Record<string, unknown> {
+	if (!r.ok) throw new Error(`expected ok, got: ${r.error.message}`);
+	return r.result as Record<string, unknown>;
+}
+
+describe('worktree tools', () => {
+	let source: string;
+	let userId: string;
+	let conversationId: string;
+	let tools: Map<string, PortalTool>;
+
+	async function tool(name: string): Promise<PortalTool> {
+		const t = tools.get(name);
+		if (!t) throw new Error(`missing tool ${name}`);
+		return t;
+	}
+
+	beforeEach(async () => {
+		const dataDir = await setupLocalEnv('portal-wt-tools-');
+		source = committedRepository();
+		process.env.PROJECT_ROOT = source;
+		process.env.WORKTREE_ROOT = join(dataDir, 'worktrees');
+		await resetServerSingletons();
+		vi.resetModules();
+
+		const users = await import('../src/lib/server/db/repos/users');
+		userId = users.ensureLocalUser().id;
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const conv = convs.create(userId, {
+			id: convs.newId(),
+			title: 'orchestrator',
+			workdir: source,
+			model: 'test-model',
+			workspaceKind: 'shared',
+			workspaceKey: source
+		});
+		conversationId = conv.id;
+
+		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
+		tools = new Map(buildWorktreeTools({ userId, conversationId }).map((t) => [t.name, t]));
+	});
+
+	it('exposes exactly the four worktree tools', () => {
+		expect([...tools.keys()].sort()).toEqual([
+			'worktree_create',
+			'worktree_list',
+			'worktree_remove',
+			'worktree_status'
+		]);
+	});
+
+	it('creates a worktree and reports a usable absolute path', async () => {
+		const create = await tool('worktree_create');
+		const res = await create.handler({ label: 'api' });
+		const payload = result(res);
+
+		expect(existsSync(payload.path as string)).toBe(true);
+		expect(payload.branch).toMatch(/^portal\/lease\/.*--api$/);
+		expect(payload.dirtyCount).toBe(0);
+	});
+
+	it('tells the orchestrator the directory already exists and is writable', async () => {
+		// The Phase 0 spike showed sub-agents cannot reliably create directories
+		// outside their allowed roots, so this hint is load-bearing, not decoration.
+		const create = await tool('worktree_create');
+		const res = await create.handler({ label: 'api' });
+		if (!res.ok) throw new Error('expected ok');
+
+		expect(res.followUpHint).toContain('already exists and is writable');
+		expect(res.followUpHint).toMatch(/absolute path/i);
+		expect(res.followUpHint).toContain('Do not point two sub-agents at the same worktree');
+	});
+
+	it('rejects a malformed label instead of silently rewriting it', async () => {
+		const create = await tool('worktree_create');
+		const res = await create.handler({ label: 'Not A Slug' });
+		expect(res.ok).toBe(false);
+		if (res.ok) return;
+		expect(res.error.code).toBe('invalid_identifier');
+	});
+
+	it('reports the quota as a coded error the model can act on', async () => {
+		process.env.WORKTREE_MAX_LEASES_PER_CONVERSATION = '1';
+		const { resetConfigForTests } = await import('../src/lib/server/config');
+		resetConfigForTests();
+
+		const create = await tool('worktree_create');
+		await create.handler({ label: 'one' });
+		const res = await create.handler({ label: 'two' });
+
+		expect(res.ok).toBe(false);
+		if (res.ok) return;
+		expect(res.error.code).toBe('lease_quota_exceeded');
+		delete process.env.WORKTREE_MAX_LEASES_PER_CONVERSATION;
+	});
+
+	it('lists held worktrees with their dirty counts', async () => {
+		const create = await tool('worktree_create');
+		const created = result(await create.handler({ label: 'api' }));
+		writeFileSync(join(created.path as string, 'wip.txt'), 'x\n');
+
+		const list = await tool('worktree_list');
+		const payload = result(await list.handler({}));
+		const rows = payload.worktrees as Array<Record<string, unknown>>;
+
+		expect(rows).toHaveLength(1);
+		expect(rows[0].label).toBe('api');
+		expect(rows[0].dirtyCount).toBe(1);
+	});
+
+	it('refuses to remove a dirty worktree without force', async () => {
+		const create = await tool('worktree_create');
+		const created = result(await create.handler({ label: 'api' }));
+		writeFileSync(join(created.path as string, 'wip.txt'), 'x\n');
+
+		const remove = await tool('worktree_remove');
+		const res = await remove.handler({ leaseId: created.leaseId });
+
+		expect(res.ok).toBe(false);
+		if (res.ok) return;
+		expect(res.error.code).toBe('worktree_dirty');
+		// The message must tell the model how to proceed deliberately.
+		expect(res.error.message).toMatch(/force/);
+		expect(existsSync(created.path as string)).toBe(true);
+	});
+
+	it('always prompts before removing, since force destroys work', async () => {
+		const remove = await tool('worktree_remove');
+		expect(remove.permissionBehavior).toBe('always-prompt');
+	});
+
+	it('keeps an unmerged branch and says so when removing', async () => {
+		const create = await tool('worktree_create');
+		const created = result(await create.handler({ label: 'api' }));
+		const path = created.path as string;
+		writeFileSync(join(path, 'feature.txt'), 'real work\n');
+		git(path, ['add', 'feature.txt']);
+		git(path, ['commit', '-q', '-m', 'feature']);
+
+		const remove = await tool('worktree_remove');
+		const res = await remove.handler({ leaseId: created.leaseId });
+		const payload = result(res);
+
+		expect(payload.branchDeleted).toBe(false);
+		expect(existsSync(path)).toBe(false);
+		if (!res.ok) return;
+		expect(res.followUpHint).toContain('unmerged');
+		expect(git(source, ['branch', '--list', payload.branch as string])).toContain(
+			payload.branch as string
+		);
+	});
+
+	it('refuses to address a worktree held by another conversation', async () => {
+		const create = await tool('worktree_create');
+		const created = result(await create.handler({ label: 'api' }));
+
+		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const other = convs.create(userId, {
+			id: convs.newId(),
+			title: 'other',
+			workdir: source,
+			model: 'test-model',
+			workspaceKind: 'shared',
+			workspaceKey: source
+		});
+		const otherTools = new Map(
+			buildWorktreeTools({ userId, conversationId: other.id }).map((t) => [t.name, t])
+		);
+
+		const status = otherTools.get('worktree_status')!;
+		const res = await status.handler({ leaseId: created.leaseId });
+
+		expect(res.ok).toBe(false);
+		if (res.ok) return;
+		expect(res.error.code).toBe('lease_not_found');
+	});
+
+	it('never accepts a source repository from tool arguments', async () => {
+		// Accepting one would make this group an ALLOWED_WORKDIRS bypass.
+		const create = await tool('worktree_create');
+		const params = create.parameters as { properties: Record<string, unknown> };
+		expect(Object.keys(params.properties).sort()).toEqual(['baseRef', 'label']);
+	});
+});

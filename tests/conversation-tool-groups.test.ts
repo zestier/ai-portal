@@ -23,11 +23,11 @@ function grouped(): Record<PortalToolGroupId, PortalTool[]> {
 	return {
 		git: [tool('git_status'), tool('git_commit')],
 		filesystem: [tool('create_directory')],
+		worktree: [tool('worktree_create')],
 		tickets: [tool('ticket_add'), tool('ticket_list')],
 		permissions: [tool('request_permission_grant')],
 		memory: [tool('memory_upsert')],
-		'prompt-templates': [tool('template_list')],
-		worktree: []
+		'prompt-templates': [tool('template_list')]
 	};
 }
 
@@ -40,6 +40,7 @@ describe('filterPortalToolGroups', () => {
 			'git_status',
 			'git_commit',
 			'create_directory',
+			'worktree_create',
 			'ticket_add',
 			'ticket_list',
 			'request_permission_grant',
@@ -55,9 +56,20 @@ describe('filterPortalToolGroups', () => {
 		expect(out).toContain('ticket_add');
 	});
 
+	it('drops the worktree group when disabled', () => {
+		const out = names(filterPortalToolGroups(grouped(), ['worktree']));
+		expect(out).not.toContain('worktree_create');
+		expect(out).toContain('create_directory');
+	});
+
 	it('drops multiple disabled groups', () => {
 		const out = names(filterPortalToolGroups(grouped(), ['git', 'tickets', 'memory']));
-		expect(out).toEqual(['create_directory', 'request_permission_grant', 'template_list']);
+		expect(out).toEqual([
+			'create_directory',
+			'worktree_create',
+			'request_permission_grant',
+			'template_list'
+		]);
 	});
 
 	it('ignores unknown group ids', () => {
@@ -77,13 +89,14 @@ describe('filterPortalToolGroups', () => {
 			memory: [tool('memory_upsert')],
 			permissions: [tool('request_permission_grant')],
 			tickets: [tool('ticket_add')],
+			worktree: [tool('worktree_create')],
 			filesystem: [tool('create_directory')],
-			git: [tool('git_status')],
-			worktree: []
+			git: [tool('git_status')]
 		} as Record<PortalToolGroupId, PortalTool[]>;
 		expect(names(filterPortalToolGroups(shuffled, []))).toEqual([
 			'git_status',
 			'create_directory',
+			'worktree_create',
 			'ticket_add',
 			'request_permission_grant',
 			'memory_upsert',
