@@ -15,6 +15,7 @@
 		ChangeEntry,
 		ChangeStatus
 	} from '$lib/client/file-browser';
+	import { worktreeParams } from '$lib/client/file-browser';
 	import { reviewStore } from '$lib/client/review.svelte';
 	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
 
@@ -22,8 +23,15 @@
 	let {
 		conversationId,
 		pane = 'changes',
+		worktree = null,
 		onSendToChat
-	}: { conversationId: string; pane?: Pane; onSendToChat?: () => void } = $props();
+	}: {
+		conversationId: string;
+		pane?: Pane;
+		/** Selected worktree lease id, or null for the conversation's own workspace. */
+		worktree?: string | null;
+		onSendToChat?: () => void;
+	} = $props();
 
 	type ViewMode = 'content' | 'diff';
 
@@ -89,7 +97,7 @@
 		fileError = null;
 		fileData = null;
 		try {
-			const params = new URLSearchParams({ path });
+			const params = worktreeParams(worktree, { path });
 			const res = await fetch(`/api/conversations/${conversationId}/fs/file?${params}`, {
 				signal: controller.signal
 			});
@@ -118,7 +126,7 @@
 		diffError = null;
 		diffText = '';
 		try {
-			const params = new URLSearchParams({ target: 'worktree-vs-head', path });
+			const params = worktreeParams(worktree, { target: 'worktree-vs-head', path });
 			const res = await fetch(`/api/conversations/${conversationId}/fs/diff?${params}`, {
 				signal: controller.signal
 			});
@@ -185,9 +193,14 @@
 		commitFilePath = null;
 		commitFileDiff = '';
 		try {
-			const res = await fetch(`/api/conversations/${conversationId}/git/commit/${sha}`, {
-				signal: controller.signal
-			});
+			const commitParams = worktreeParams(worktree);
+			const commitQuery = commitParams.size > 0 ? `?${commitParams}` : '';
+			const res = await fetch(
+				`/api/conversations/${conversationId}/git/commit/${sha}${commitQuery}`,
+				{
+					signal: controller.signal
+				}
+			);
 			if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
 			const data = (await res.json()) as { commit: CommitDetail };
 			if (requestSeq !== commitRequestSeq || controller.signal.aborted || selectedSha !== sha)
@@ -213,7 +226,7 @@
 		commitFilePath = path;
 		commitFileDiff = '';
 		try {
-			const params = new URLSearchParams({
+			const params = worktreeParams(worktree, {
 				target: 'commit-vs-parent',
 				sha,
 				path
@@ -273,7 +286,7 @@
 	// are served (authed) by the `fs/file?raw=1` mode.
 	const imageSrc = $derived.by(() => {
 		if (!fileData || !fileData.binary || !fileData.imageMimeType || !selectedPath) return null;
-		const params = new URLSearchParams({ path: selectedPath, raw: '1' });
+		const params = worktreeParams(worktree, { path: selectedPath, raw: '1' });
 		return `/api/conversations/${conversationId}/fs/file?${params}`;
 	});
 
@@ -323,6 +336,7 @@
 	<div class="left">
 		<GitStatusHeader
 			{conversationId}
+			{worktree}
 			refreshToken={gitRefreshToken}
 			onrevert={clearSelectionAndRefresh}
 		/>
@@ -330,6 +344,7 @@
 			<div class="pane-body">
 				<FileTree
 					{conversationId}
+					{worktree}
 					{selectedPath}
 					bind:showHidden
 					bind:showIgnored
@@ -341,6 +356,7 @@
 			<div class="pane-body">
 				<ChangeList
 					{conversationId}
+					{worktree}
 					{selectedPath}
 					refreshToken={gitRefreshToken}
 					onselect={pickChange}
@@ -349,7 +365,7 @@
 			</div>
 		{:else}
 			<div class="pane-body">
-				<CommitList {conversationId} {selectedSha} onselect={loadCommit} />
+				<CommitList {conversationId} {worktree} {selectedSha} onselect={loadCommit} />
 			</div>
 		{/if}
 	</div>

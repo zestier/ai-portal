@@ -4,6 +4,49 @@ import type { ChangeStatus, ChangeEntry, ChangesResponse } from '$lib/types';
 
 export type { ChangeStatus, ChangeEntry, ChangesResponse };
 
+/**
+ * A worktree lease held by the conversation, as returned by
+ * `GET /api/conversations/<id>/worktrees`. `available: false` means the
+ * checkout could not be resolved; it is still listed so a vanished worktree is
+ * visible rather than silently absent.
+ */
+export interface WorktreeOption {
+	id: string;
+	label: string;
+	branch: string;
+	path: string;
+	baseSha: string;
+	state: 'active' | 'releasing';
+	createdAt: number;
+	lastUsedAt: number;
+	available: boolean;
+	dirtyCount: number | null;
+}
+
+/**
+ * Build the query string for a conversation-scoped read, carrying the selected
+ * worktree.
+ *
+ * Every file/git fetch in the browser MUST go through this: a call site that
+ * forgets the selector silently reads (or, for revert, writes) the wrong tree.
+ * Passing null selects the conversation's own workspace, which is the
+ * pre-lease behavior.
+ */
+export function worktreeParams(
+	worktree: string | null | undefined,
+	init?: Record<string, string>
+): URLSearchParams {
+	const params = new URLSearchParams(init);
+	if (worktree) params.set('worktree', worktree);
+	return params;
+}
+
+export async function fetchWorktrees(conversationId: string): Promise<WorktreeOption[]> {
+	const res = await fetch(`/api/conversations/${conversationId}/worktrees`);
+	if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+	return ((await res.json()) as { worktrees: WorktreeOption[] }).worktrees;
+}
+
 export interface FsEntry {
 	name: string;
 	relPath: string;
@@ -35,8 +78,13 @@ export interface HeadInfo {
 }
 export type HeadStatus = HeadInfo | { initialized: false };
 
-export async function fetchHeadStatus(conversationId: string): Promise<HeadStatus> {
-	const res = await fetch(`/api/conversations/${conversationId}/git/status`);
+export async function fetchHeadStatus(
+	conversationId: string,
+	worktree?: string | null
+): Promise<HeadStatus> {
+	const params = worktreeParams(worktree);
+	const query = params.size > 0 ? `?${params}` : '';
+	const res = await fetch(`/api/conversations/${conversationId}/git/status${query}`);
 	if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
 	return ((await res.json()) as { status: HeadStatus }).status;
 }

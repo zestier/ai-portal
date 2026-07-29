@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { LogEntry } from '$lib/client/file-browser';
+	import { worktreeParams } from '$lib/client/file-browser';
 	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
+		worktree = null,
 		selectedSha = null,
 		onselect
 	}: {
 		conversationId: string;
+		worktree?: string | null;
 		selectedSha?: string | null;
 		onselect?: (sha: string) => void;
 	} = $props();
@@ -23,7 +26,7 @@
 		if (loading || !canLoadMore) return;
 		loading = true;
 		try {
-			const params = new URLSearchParams({
+			const params = worktreeParams(worktree, {
 				limit: '20',
 				skip: String(commits.length)
 			});
@@ -47,6 +50,7 @@
 
 	$effect(() => {
 		void conversationId;
+		void worktree;
 		untrack(() => {
 			commits = [];
 			canLoadMore = true;

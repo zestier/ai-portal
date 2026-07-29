@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { fetchHeadStatus, type HeadStatus } from '$lib/client/file-browser';
+	import { fetchHeadStatus, worktreeParams, type HeadStatus } from '$lib/client/file-browser';
 	import Alert from './ui/Alert.svelte';
 	import ConfirmDialog from './ui/ConfirmDialog.svelte';
 
 	let {
 		conversationId,
+		worktree = null,
 		refreshToken = 0,
 		onrevert
 	}: {
 		conversationId: string;
+		worktree?: string | null;
 		refreshToken?: number;
 		onrevert?: () => void;
 	} = $props();
@@ -24,7 +26,7 @@
 		loading = true;
 		error = null;
 		try {
-			head = await fetchHeadStatus(conversationId);
+			head = await fetchHeadStatus(conversationId, worktree);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -34,6 +36,7 @@
 
 	$effect(() => {
 		void conversationId;
+		void worktree;
 		void refreshToken;
 		untrack(() => {
 			head = null;
@@ -56,7 +59,11 @@
 		reverting = true;
 		error = null;
 		try {
-			const res = await fetch(`/api/conversations/${conversationId}/git/changes/revert`, {
+			// Must carry the worktree selector: this discards uncommitted work, and
+			// reverting a tree other than the one on screen would be silent data loss.
+			const params = worktreeParams(worktree);
+			const query = params.size > 0 ? `?${params}` : '';
+			const res = await fetch(`/api/conversations/${conversationId}/git/changes/revert${query}`, {
 				method: 'POST'
 			});
 			if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);

@@ -1,18 +1,21 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { ChangeEntry, ChangesResponse } from '$lib/client/file-browser';
+	import { worktreeParams } from '$lib/client/file-browser';
 	import DiffStat from './DiffStat.svelte';
 	import StatusBadge from './StatusBadge.svelte';
 	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
+		worktree = null,
 		selectedPath = null,
 		refreshToken = 0,
 		onselect,
 		onrefresh
 	}: {
 		conversationId: string;
+		worktree?: string | null;
 		selectedPath?: string | null;
 		refreshToken?: number;
 		onselect?: (entry: ChangeEntry) => void;
@@ -29,7 +32,9 @@
 		loading = true;
 		error = null;
 		try {
-			const res = await fetch(`/api/conversations/${conversationId}/git/changes`);
+			const params = worktreeParams(worktree);
+			const query = params.size > 0 ? `?${params}` : '';
+			const res = await fetch(`/api/conversations/${conversationId}/git/changes${query}`);
 			if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
 			const data = (await res.json()) as ChangesResponse;
 			entries = data.entries;
@@ -43,6 +48,7 @@
 
 	$effect(() => {
 		void conversationId;
+		void worktree;
 		void refreshToken;
 		untrack(() => {
 			entries = [];

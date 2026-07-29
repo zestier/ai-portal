@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { FsEntry, TreeResponse } from '$lib/client/file-browser';
+	import { worktreeParams } from '$lib/client/file-browser';
 	import DiffStat from './DiffStat.svelte';
 	import StatusBadge from './StatusBadge.svelte';
 	import Alert from './ui/Alert.svelte';
 
 	let {
 		conversationId,
+		worktree = null,
 		selectedPath = null,
 		showIgnored = $bindable(false),
 		showHidden = $bindable(false),
@@ -14,6 +16,7 @@
 		onrefresh
 	}: {
 		conversationId: string;
+		worktree?: string | null;
 		selectedPath?: string | null;
 		showIgnored?: boolean;
 		showHidden?: boolean;
@@ -39,7 +42,7 @@
 		dirs[key].loading = true;
 		dirs[key].error = null;
 		try {
-			const params = new URLSearchParams();
+			const params = worktreeParams(worktree);
 			if (path) params.set('path', path);
 			if (showHidden) params.set('hidden', '1');
 			if (showIgnored) params.set('ignored', '1');
@@ -62,8 +65,9 @@
 	}
 
 	$effect(() => {
-		// Reload root when conversation or toggles change.
+		// Reload root when conversation, selected worktree, or toggles change.
 		void conversationId;
+		void worktree;
 		void showHidden;
 		void showIgnored;
 		void refreshToken;

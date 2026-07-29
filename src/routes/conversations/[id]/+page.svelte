@@ -4,6 +4,7 @@
 	import Chat from '$lib/components/Chat.svelte';
 	import ChangesTabIndicator from '$lib/components/ChangesTabIndicator.svelte';
 	import FileBrowser from '$lib/components/FileBrowser.svelte';
+	import WorktreeSwitcher from '$lib/components/WorktreeSwitcher.svelte';
 	import MemoryInspector from '$lib/components/MemoryInspector.svelte';
 	import ActionsPanel from '$lib/components/ActionsPanel.svelte';
 	import type { PageData } from './$types';
@@ -17,6 +18,18 @@
 	}
 
 	const tab = $derived(readTab($page.url.searchParams.get('tab')));
+
+	// Selected worktree lease, kept in the URL so a reload or shared link lands
+	// on the same tree the user was looking at.
+	const worktree = $derived($page.url.searchParams.get('worktree'));
+
+	async function selectWorktree(leaseId: string | null) {
+		if (leaseId === worktree) return;
+		const nextUrl = new URL($page.url);
+		if (leaseId) nextUrl.searchParams.set('worktree', leaseId);
+		else nextUrl.searchParams.delete('worktree');
+		await goto(nextUrl, { keepFocus: true, noScroll: true, replaceState: true });
+	}
 
 	async function selectTab(nextTab: Tab) {
 		if (nextTab === tab) return;
@@ -146,9 +159,15 @@
 			aria-labelledby="conversation-tab-{tab}"
 			class="tab-body"
 		>
+			<WorktreeSwitcher
+				conversationId={data.conversation.id}
+				selected={worktree}
+				onselect={selectWorktree}
+			/>
 			<FileBrowser
 				conversationId={data.conversation.id}
 				pane={tab}
+				{worktree}
 				onSendToChat={() => selectTab('chat')}
 			/>
 		</div>

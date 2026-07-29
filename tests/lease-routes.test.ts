@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
@@ -80,6 +80,53 @@ describe('lease-scoped conversation routes', () => {
 			branch: lease.branch,
 			available: true,
 			dirtyCount: 1
+		});
+	});
+
+	it('still lists a lease whose checkout has vanished, flagged unavailable', async () => {
+		const lease = await makeLease();
+		rmSync(lease.path, { recursive: true, force: true });
+
+		const { GET } = await import('../src/routes/api/conversations/[id]/worktrees/+server');
+		const body = await (await GET(ctx())).json();
+
+		// Omitting it would make the work look like it never existed.
+		expect(body.worktrees).toHaveLength(1);
+		expect(body.worktrees[0]).toMatchObject({ id: lease.id, available: false, dirtyCount: null });
+	});
+
+	describe('POST', () => {
+		it('creates a lease rooted in the conversation repository', async () => {
+			const { POST } = await import('../src/routes/api/conversations/[id]/worktrees/+server');
+			const res = await POST({
+				...(ctx() as unknown as Record<string, unknown>),
+				request: new Request('http://localhost/x', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ label: 'manual' })
+				})
+			} as never);
+
+			expect(res.status).toBe(201);
+			const { worktree } = await res.json();
+			expect(worktree.label).toBe('manual');
+			// The repository is derived, never supplied by the caller.
+			expect(worktree.sourceWorkdir).toBe(source);
+			expect(existsSync(worktree.path)).toBe(true);
+		});
+
+		it('rejects a malformed label', async () => {
+			const { POST } = await import('../src/routes/api/conversations/[id]/worktrees/+server');
+			await expect(
+				POST({
+					...(ctx() as unknown as Record<string, unknown>),
+					request: new Request('http://localhost/x', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ label: 'Not A Slug' })
+					})
+				} as never)
+			).rejects.toMatchObject({ status: 400 });
 		});
 	});
 
