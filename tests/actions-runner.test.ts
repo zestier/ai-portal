@@ -155,7 +155,13 @@ describe('runStep cwd selection', () => {
 		const out = logsOf(events)
 			.map((ev) => ev.text)
 			.join('');
-		expect(out).toContain(process.cwd());
+		// Compare against the SCRUBBED cwd: step output is passed through
+		// `scrubLog`, which replaces any sensitive env-var value it finds. If the
+		// checkout path happens to contain such a value (e.g. a CI/agent session id
+		// used as the directory name), the raw cwd would never appear verbatim.
+		// Scrubbing both sides keeps this asserting "ran in the default cwd"
+		// without depending on what the path happens to spell.
+		expect(out).toContain(scrubLog(process.cwd()));
 	});
 });
 
