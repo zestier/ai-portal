@@ -7,6 +7,10 @@
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { setAwaitingInput } from '$lib/client/awaiting-input';
+	import {
+		clearConversationActivityOverrides,
+		setConversationActivity
+	} from '$lib/client/conversation-activity';
 	import { createTrailingDebounce } from '$lib/client/ticket-refresh';
 	import { reconnectDelayMs } from '$lib/client/sse';
 	import type { AppEvent } from '$lib/types';
@@ -93,6 +97,7 @@
 		let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 		let lastEventId = '';
 		let stopped = false;
+		let reconnected = false;
 
 		const connect = () => {
 			if (stopped) return;
@@ -100,6 +105,16 @@
 				? `/api/events?last-event-id=${encodeURIComponent(lastEventId)}`
 				: '/api/events';
 			source = new EventSource(url);
+			source.onopen = () => {
+				// A gap longer than the bus's replay buffer / channel TTL can leave
+				// the sidebar's activity overrides pinned to stale values (they beat
+				// the server `load` set by design). Re-sync from the server once the
+				// feed is healthy again: drop the overrides, then re-run `load`.
+				if (!reconnected) return;
+				reconnected = false;
+				clearConversationActivityOverrides();
+				void invalidateAll();
+			};
 			source.onmessage = (e) => {
 				if (e.lastEventId) lastEventId = e.lastEventId;
 				let ev: AppEvent;
@@ -111,6 +126,11 @@
 				if (!ev) return;
 				if (ev.type === 'awaiting.changed') {
 					setAwaitingInput(ev.conversationId, ev.awaiting);
+				} else if (ev.type === 'activity.changed') {
+					setConversationActivity(ev.conversationId, {
+						running: ev.running,
+						unread: ev.unread
+					});
 				} else if (ev.type === 'tickets.changed') {
 					// Re-run the layout `load` so the sidebar ticket list/count reflects
 					// the change — regardless of which page or conversation is focused.
@@ -129,6 +149,7 @@
 				if (stopped) return;
 				source?.close();
 				source = null;
+				reconnected = true;
 				clearTimeout(reconnectTimer);
 				reconnectTimer = setTimeout(connect, reconnectDelayMs());
 			};
@@ -217,6 +238,8 @@
 			<Sidebar
 				conversations={data.conversations}
 				awaitingConversationIds={data.awaitingConversationIds}
+				runningConversationIds={data.runningConversationIds}
+				unreadConversationIds={data.unreadConversationIds}
 				tickets={data.tickets}
 				ticketCount={data.ticketCount}
 				ticketWorkspace={data.ticketWorkspace}

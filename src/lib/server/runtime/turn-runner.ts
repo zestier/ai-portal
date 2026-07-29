@@ -20,6 +20,7 @@ import * as turnInputs from '../db/repos/turn-inputs';
 import * as memory from '../db/repos/memory';
 import * as pool from './pool';
 import * as interactiveRequests from './interactive-requests';
+import { publishConversationActivity } from './conversation-activity';
 import { PORTAL_PRELUDE } from './portal-prelude';
 import { AsyncQueue } from './async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
@@ -221,6 +222,22 @@ export function getTurn(conversationId: string): Turn | null {
 	return turns.get(conversationId) ?? null;
 }
 
+/**
+ * Conversation ids with a turn actively running — the "agent is working" half
+ * of the sidebar's active indicator. Excludes finished-but-still-cached turns
+ * (the {@link FINISHED_GRACE_MS} window) and synchronous reservations, which
+ * are an internal concurrency detail rather than an observable running turn.
+ *
+ * SINGLE-INSTANCE, like every other consumer of this registry.
+ */
+export function runningConversationIds(): Set<string> {
+	const out = new Set<string>();
+	for (const [conversationId, turn] of turns) {
+		if (turn.status === 'running') out.add(conversationId);
+	}
+	return out;
+}
+
 // Look up a turn by its own id (the ulid in `turn.id`), scoped to a
 // conversation. Used by the streaming endpoint, which keys URLs by
 // `turnId` so reconnects always land on the same logical stream even
@@ -364,6 +381,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	};
 
 	turns.set(opts.conversationId, turn);
+	publishConversationActivity(opts.bridge.userId, opts.conversationId, true);
 	for (const ev of opts.initialEvents ?? []) emit(ev);
 
 	// Accumulators for persistence.
@@ -751,7 +769,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			// that late interrupt so the turn ends `interrupted`.
 			turn.status = turnAc.signal.aborted ? 'interrupted' : status;
 			turn.endedAt = Date.now();
-
+			// The turn is no longer running; the assistant message (if any) is
+			// persisted by now, so `unread` resolves correctly for the sidebar.
+			publishConversationActivity(opts.bridge.userId, opts.conversationId, false);
 			// We always emit our own terminal `done` here: `dispatch` suppresses
 			// the SDK's `done` so this runs after persistence work completes. We
 			// carry the terminal status so clients can distinguish a clean finish
@@ -1492,6 +1512,7 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 	};
 
 	turns.set(opts.conversationId, turn);
+	publishConversationActivity(opts.userId, opts.conversationId, true);
 
 	const dispatch = makeExtractorCardDispatch(emit, opts.assistantMessageId);
 	const cfg = loadConfig();
@@ -1563,6 +1584,7 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 			}
 			turn.status = turnAc.signal.aborted ? 'interrupted' : 'complete';
 			turn.endedAt = Date.now();
+			publishConversationActivity(opts.userId, opts.conversationId, false);
 			if (!eventLog.some((e) => e.type === 'done')) {
 				emit({ type: 'done', status: turn.status === 'interrupted' ? 'interrupted' : 'complete' });
 			}

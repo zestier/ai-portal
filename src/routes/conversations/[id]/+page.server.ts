@@ -21,6 +21,10 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const conv = convs.get(params.id, locals.userId);
 	if (!conv) throw error(404);
 	const msgs = messages.listByConversation(conv.id);
+	// Opening a conversation counts as seeing it: clears the sidebar's unseen
+	// indicator. Output that streams in *after* this load is covered by the
+	// client's post-turn POST to `/read`.
+	convs.markRead(conv.id, locals.userId);
 	const contextUsage = usage.get(conv.id);
 	const memorySnapshot = memory.listSnapshot(conv.id, { userId: conv.userId });
 	let initialComposer = '';

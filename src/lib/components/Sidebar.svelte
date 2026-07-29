@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { onMount, onDestroy, tick } from 'svelte';
 	import type {
 		ChatPromptTemplate,
@@ -14,12 +15,18 @@
 	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
 	import { awaitingInputOverrides, isAwaitingInput } from '$lib/client/awaiting-input';
+	import {
+		conversationActivityOverrides,
+		resolveConversationActivity
+	} from '$lib/client/conversation-activity';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 
 	let {
 		conversations,
 		awaitingConversationIds = [],
+		runningConversationIds = [],
+		unreadConversationIds = [],
 		tickets,
 		ticketCount,
 		ticketWorkspace,
@@ -29,6 +36,8 @@
 	}: {
 		conversations: Conversation[];
 		awaitingConversationIds?: string[];
+		runningConversationIds?: string[];
+		unreadConversationIds?: string[];
 		tickets: SidebarTicket[];
 		ticketCount: number;
 		ticketWorkspace: string | null;
@@ -67,6 +76,62 @@
 	const archived = $derived(conversations.filter((c) => c.archivedAt != null));
 	const serverAwaiting = $derived(new Set(awaitingConversationIds));
 	const awaiting = (id: string) => isAwaitingInput(id, serverAwaiting, $awaitingInputOverrides);
+	const serverRunning = $derived(new Set(runningConversationIds));
+	const serverUnread = $derived(new Set(unreadConversationIds));
+	const openConversationId = $derived(
+		$page.url.pathname.match(/^\/conversations\/([^/]+)/)?.[1] ?? null
+	);
+
+	type ActivityIndicator = {
+		kind: 'awaiting' | 'running' | 'unseen';
+		tone: 'warning' | 'accent';
+		/** Tooltip text. */
+		label: string;
+		/** Screen-reader text; short and stable enough to assert against. */
+		srLabel: string;
+	};
+
+	/**
+	 * The single indicator a conversation row shows, or null when it's idle and
+	 * fully read. Only one is rendered: they're ordered by how much they want the
+	 * user's attention (a prompt is blocked on them, an agent is working, there's
+	 * something new to read), and stacking dots would just add noise.
+	 */
+	function indicatorFor(id: string): ActivityIndicator | null {
+		if (awaiting(id)) {
+			return {
+				kind: 'awaiting',
+				tone: 'warning',
+				label: 'Awaiting your input',
+				srLabel: 'Awaiting input'
+			};
+		}
+		const activity = resolveConversationActivity(
+			id,
+			serverRunning,
+			serverUnread,
+			$conversationActivityOverrides
+		);
+		if (activity.running) {
+			return {
+				kind: 'running',
+				tone: 'accent',
+				label: 'Agent is running',
+				srLabel: 'Agent running'
+			};
+		}
+		// The conversation on screen is being read right now, so it is never
+		// "unseen" — even if a turn just landed a response into it.
+		if (activity.unread && id !== openConversationId) {
+			return {
+				kind: 'unseen',
+				tone: 'accent',
+				label: 'Unread response',
+				srLabel: 'Unread response'
+			};
+		}
+		return null;
+	}
 	const selectedActiveCount = $derived(active.filter((c) => selected.has(c.id)).length);
 	const allActiveSelected = $derived(active.length > 0 && selectedActiveCount === active.length);
 
@@ -616,6 +681,7 @@
 		{#each active as c (c.id)}
 			{@const isMenu = openMenuId === c.id}
 			{@const isRenaming = renamingId === c.id}
+			{@const indicator = indicatorFor(c.id)}
 			<div class="conv" class:selected={selected.has(c.id)}>
 				{#if selectMode}
 					<input
@@ -659,12 +725,16 @@
 						}}
 					>
 						<div class="title-row">
-							<span class="title">{c.title}</span>
-							{#if awaiting(c.id)}
-								<span class="awaiting-indicator" title="Awaiting your input">
-									<Pill tone="warning">
-										<span class="awaiting-dot" aria-hidden="true"></span>
-										<span class="visually-hidden">Awaiting input</span>
+							<span class="title" class:unseen={indicator?.kind === 'unseen'}>{c.title}</span>
+							{#if indicator}
+								<span class="activity-indicator" title={indicator.label}>
+									<Pill tone={indicator.tone}>
+										<span
+											class="activity-dot"
+											class:spinner={indicator.kind === 'running'}
+											aria-hidden="true"
+										></span>
+										<span class="visually-hidden">{indicator.srLabel}</span>
 									</Pill>
 								</span>
 							{/if}
@@ -1145,16 +1215,44 @@
 		min-width: 0;
 		flex: 1;
 	}
-	.awaiting-indicator {
+	.activity-indicator {
 		flex: none;
 		display: inline-flex;
 		align-items: center;
 	}
-	.awaiting-dot {
+	.activity-dot {
 		width: 0.45rem;
 		height: 0.45rem;
 		border-radius: 50%;
 		background: currentColor;
+	}
+	/* A running turn gets a spinning ring rather than a solid dot, so "an agent
+	   is working here" is distinguishable from "there's something new to read"
+	   by shape — not by color or motion alone. Under reduced motion the ring
+	   stops but stays a ring, so the distinction survives. */
+	.activity-dot.spinner {
+		width: 0.6rem;
+		height: 0.6rem;
+		background: none;
+		border: 1.5px solid currentColor;
+		border-top-color: transparent;
+		animation: activity-spin 0.9s linear infinite;
+	}
+	@keyframes activity-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.activity-dot.spinner {
+			animation: none;
+		}
+	}
+	/* Classic unread affordance, so the signal survives for users who can't
+	   distinguish the dot's tone. */
+	.title.unseen {
+		font-weight: 650;
+		color: var(--text);
 	}
 	.visually-hidden {
 		position: absolute;

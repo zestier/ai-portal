@@ -59,6 +59,19 @@ interface ConvRow {
 	worktree_base_sha: string | null;
 }
 
+// Correlated-EXISTS predicate over an outer `conversations c`: true when the
+// conversation carries assistant output newer than the user's last read. Only
+// `assistant` rows count (the user's own messages are seen by definition, and
+// system/tool rows aren't a response worth flagging); a NULL `last_read_at`
+// means "never read". Shared by the set and single-row queries so the two can't
+// drift. Served by `idx_messages_conv_created`.
+const HAS_UNSEEN_ASSISTANT = `EXISTS (
+	          SELECT 1 FROM messages m
+	           WHERE m.conversation_id = c.id
+	             AND m.role = 'assistant'
+	             AND m.created_at > COALESCE(c.last_read_at, 0)
+	        )`;
+
 const CONVERSATION_SELECT = `
 	SELECT conversations.*,
 	       (SELECT branch FROM managed_worktrees WHERE conversation_id = conversations.id)
@@ -401,6 +414,59 @@ export function updateSessionSettings(
 function normalizeOptionalModel(value: string | null | undefined): string | null {
 	const trimmed = value?.trim();
 	return trimmed ? trimmed : null;
+}
+
+/**
+ * Record that the user has seen this conversation up to `at` (defaults to now).
+ *
+ * Monotonic on purpose: concurrent writers (the page `load` and the client's
+ * post-turn POST) can settle out of order, and taking the max means a late
+ * request carrying an older timestamp can never resurrect an already-read
+ * conversation as unseen. Deliberately does NOT touch `updated_at` — reading a
+ * conversation must not reorder the sidebar.
+ */
+export function markRead(id: string, userId: string, at: number = Date.now()): boolean {
+	const r = getDb()
+		.prepare(
+			`UPDATE conversations
+			    SET last_read_at = MAX(COALESCE(last_read_at, 0), ?)
+			  WHERE id = ? AND user_id = ?`
+		)
+		.run(at, id, userId);
+	return r.changes > 0;
+}
+
+/**
+ * Ids of the user's non-archived conversations that have assistant output newer
+ * than the last time the user looked at them — the "unseen response" half of the
+ * sidebar's active indicator. See {@link HAS_UNSEEN_ASSISTANT}.
+ */
+export function unreadConversationIds(userId: string): Set<string> {
+	const rows = getDb()
+		.prepare(
+			`SELECT c.id AS id
+			   FROM conversations c
+			  WHERE c.user_id = ?
+			    AND c.archived_at IS NULL
+			    AND ${HAS_UNSEEN_ASSISTANT}`
+		)
+		.all(userId) as Array<{ id: string }>;
+	return new Set(rows.map((r) => r.id));
+}
+
+/** Single-conversation form of {@link unreadConversationIds}. */
+export function hasUnread(id: string, userId: string): boolean {
+	const row = getDb()
+		.prepare(
+			`SELECT 1 AS hit
+			   FROM conversations c
+			  WHERE c.id = ?
+			    AND c.user_id = ?
+			    AND c.archived_at IS NULL
+			    AND ${HAS_UNSEEN_ASSISTANT}`
+		)
+		.get(id, userId);
+	return row !== undefined;
 }
 
 export function touch(id: string) {

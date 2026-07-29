@@ -1045,7 +1045,7 @@ export type PortalEvent =
 // changed (add/update/status/block/unblock/remove, from a tool or the REST
 // endpoints) — a content-free nudge for the app shell to re-fetch the sidebar
 // ticket list. The channel is designed to carry further cross-conversation
-// signals later (turn-finished, title updates, memory status, …).
+// signals later (title updates, memory status, …).
 export type AppEvent =
 	| {
 			type: 'awaiting.changed';
@@ -1056,7 +1056,18 @@ export type AppEvent =
 	// is user-global (`invalidateAll()` re-runs the layout `load`). The repo
 	// notifier does pass a `ticketId`/`workspaceKey` for future filtering, but
 	// the feed deliberately doesn't expose them yet.
-	| { type: 'tickets.changed' };
+	| { type: 'tickets.changed' }
+	// A conversation's sidebar "active" state changed. Always a FULL snapshot of
+	// both dimensions (not a delta) so a client that missed an earlier event
+	// still converges: `running` = a turn is in flight, `unread` = there is
+	// assistant output the user hasn't seen. Emitted when a turn starts, when it
+	// finalizes, and when a conversation is marked read.
+	| {
+			type: 'activity.changed';
+			conversationId: string;
+			running: boolean;
+			unread: boolean;
+	  };
 
 // Latest context-window snapshot persisted per conversation. Mirrors the
 // shape of the `context.usage` PortalEvent (sans the `type` and `isInitial`
