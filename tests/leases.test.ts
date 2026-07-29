@@ -280,6 +280,46 @@ describe('workspace leases', () => {
 			expect(rowsDropped).toBe(1);
 			expect(getLease(lease.id, userId)).toBeNull();
 		});
+
+		it('never reaps a lease holding unmerged commits', async () => {
+			// The reaper runs with no user present, so silently collecting committed
+			// work is worse than the delete path: the branch survives (removal is
+			// merged-only) but nothing names it any more.
+			const conversation = await makeConversation();
+			const { createLease, reapIdleLeases, getLease } = await import('../src/lib/server/leases');
+			const leaseRepo = await import('../src/lib/server/db/repos/leases');
+
+			const lease = await createLease({ conversation, label: 'committed' });
+			writeFileSync(join(lease.path, 'feature.txt'), 'real work\n');
+			git(lease.path, ['add', 'feature.txt']);
+			git(lease.path, ['commit', '-q', '-m', 'feature']);
+			leaseRepo.touch(lease.id, Date.now() - 90 * 24 * 60 * 60_000);
+
+			const { removed } = await reapIdleLeases();
+
+			expect(removed).toBe(0);
+			expect(getLease(lease.id, userId)).not.toBeNull();
+			expect(existsSync(lease.path)).toBe(true);
+		});
+
+		it('reaps a lease once its work has been merged', async () => {
+			const conversation = await makeConversation();
+			const { createLease, mergeLease, reapIdleLeases, getLease } =
+				await import('../src/lib/server/leases');
+			const leaseRepo = await import('../src/lib/server/db/repos/leases');
+
+			const lease = await createLease({ conversation, label: 'collected' });
+			writeFileSync(join(lease.path, 'feature.txt'), 'real work\n');
+			git(lease.path, ['add', 'feature.txt']);
+			git(lease.path, ['commit', '-q', '-m', 'feature']);
+			await mergeLease(lease, conversation);
+			leaseRepo.touch(lease.id, Date.now() - 90 * 24 * 60 * 60_000);
+
+			const { removed } = await reapIdleLeases();
+
+			expect(removed).toBe(1);
+			expect(getLease(lease.id, userId)).toBeNull();
+		});
 	});
 
 	it('removes every lease held by a conversation, reporting dirty holdouts', async () => {

@@ -419,8 +419,15 @@ export async function leaseIntegrationStatus(
 }
 
 /**
- * Remove idle, clean leases. Dirty leases are NEVER auto-removed — they are
- * left for the user to review, since uncommitted work is unrecoverable.
+ * Remove idle leases that hold nothing worth keeping.
+ *
+ * Skips a lease with uncommitted changes (removal would destroy it outright)
+ * AND one with commits not yet merged into its holding conversation. The second
+ * guard matters more here than on the delete path: the reaper runs on a timer
+ * with nobody present, so collecting committed work would quietly turn it into
+ * a branch no one is left to look for. Removal itself is non-destructive —
+ * `deleteMergedBranch` is merged-only — but discoverability is the thing being
+ * lost, and that is exactly what an automatic sweep must not take away.
  */
 export async function reapIdleLeases(now = Date.now()): Promise<{ removed: number }> {
 	const cutoff = now - loadConfig().WORKTREE_LEASE_TTL_MS;
@@ -429,6 +436,12 @@ export async function reapIdleLeases(now = Date.now()): Promise<{ removed: numbe
 		try {
 			const { dirtyCount } = await inspectLease(lease);
 			if (dirtyCount > 0) continue;
+			const conversation = lease.heldByConversationId
+				? convs.get(lease.heldByConversationId, lease.userId)
+				: null;
+			// A lease whose conversation is gone has no counterpart to measure
+			// against; the FK cascade means the row is orphaned anyway, so let it go.
+			if (conversation && (await unmergedCommitCount(lease, conversation)) > 0) continue;
 			await removeLease(lease);
 			removed++;
 		} catch (cause) {

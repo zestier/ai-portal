@@ -238,6 +238,19 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 			description:
 				'Bring a worktree\'s commits back into this conversation\'s own workspace — the step that makes parallel work useful. Use direction "to-source" (the default) once a sub-agent has finished and COMMITTED its work: its branch is merged into this conversation\'s branch so results from several worktrees gather in one place to be reviewed and tested together. Use "from-source" to refresh a worktree with newer commits from this conversation before continuing in it. Refuses while either side has uncommitted changes. Merging into this conversation always rolls back on conflict; a "from-source" conflict can optionally be left in the worktree for a sub-agent to resolve there.',
 			argsSchema: MergeArgs,
+			// Always prompts, matching `git_worktree_merge` and `git_commit`.
+			//
+			// This is not merely symmetry: for a SHARED-workdir conversation the
+			// counterpart is the repository's main checkout, so an unprompted
+			// `worktree_merge` would mutate the human's tree via exactly the
+			// operation `git_worktree_merge` gates. PortalTool exposes a static
+			// behavior, so — as with `worktree_remove` and its `force` — the only
+			// way to guarantee that case is confirmed is to confirm every merge.
+			//
+			// Relaxing this for isolated workspaces is plausible but is a decision
+			// about how much approval an agent needs for its own actions; it belongs
+			// to the open design ticket on that question, not to this tool.
+			permissionBehavior: 'always-prompt',
 			parameters: {
 				type: 'object',
 				properties: {

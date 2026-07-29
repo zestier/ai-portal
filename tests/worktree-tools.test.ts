@@ -153,6 +153,13 @@ describe('worktree tools', () => {
 		expect(remove.permissionBehavior).toBe('always-prompt');
 	});
 
+	it('always prompts before merging, since the target can be the shared checkout', async () => {
+		// For a shared-workdir conversation the merge target IS the main
+		// checkout, i.e. the same tree `git_worktree_merge` gates.
+		const merge = await tool('worktree_merge');
+		expect(merge.permissionBehavior).toBe('always-prompt');
+	});
+
 	it('keeps an unmerged branch and says so when removing', async () => {
 		const create = await tool('worktree_create');
 		const created = result(await create.handler({ label: 'api' }));
