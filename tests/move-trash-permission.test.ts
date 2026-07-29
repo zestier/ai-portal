@@ -42,6 +42,7 @@ async function makeHarness(mode: 'interactive' | 'best-effort' = 'interactive') 
 		conversationId,
 		userId: user.id,
 		workingDirectory: workspaceRoot,
+		getWorkspaceRoots: () => [workspaceRoot],
 		policy: 'prompt',
 		emit: (ev) => events.push(ev),
 		getApproveAll: () => false,

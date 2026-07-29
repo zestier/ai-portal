@@ -445,7 +445,7 @@ describe('matchGrants — shell segments: most-restrictive combine and per-segme
 		const rows = [shellGrant('cd', 'allow'), shellGrant('git', 'prompt')];
 		const out = matchGrantsDetailed(rows, {
 			...query('cd ./src && git push'),
-			workspaceRoot: '/workspaces/repo'
+			workspaceRoots: ['/workspaces/repo']
 		});
 		expect(out.outcome).toBe('prompt');
 	});
@@ -550,7 +550,7 @@ describe('matchGrants — pipeline lever and denyReason', () => {
 			permissionKind: 'shell',
 			scopeKey: command,
 			shellSegments: parsed.segments,
-			workspaceRoot: '/tmp',
+			workspaceRoots: ['/tmp'],
 			now: NOW
 		};
 	}
@@ -619,7 +619,7 @@ describe('matchGrants — git pre-subcommand globals', () => {
 			permissionKind: 'shell',
 			scopeKey: command,
 			shellSegments: parsed.segments,
-			workspaceRoot: '/workspaces/repo',
+			workspaceRoots: ['/workspaces/repo'],
 			now: NOW
 		};
 	}

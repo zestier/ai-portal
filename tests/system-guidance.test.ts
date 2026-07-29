@@ -8,7 +8,8 @@ const ALL_TOOLS = [
 	'git_status',
 	'ticket_add',
 	'permission_capabilities',
-	'request_permission_grant'
+	'request_permission_grant',
+	'worktree_create'
 ];
 
 describe('buildPortalSystemGuidance', () => {

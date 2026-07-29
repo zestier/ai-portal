@@ -48,6 +48,7 @@ async function makeHarness(overrides: HarnessOverrides = {}) {
 		conversationId,
 		userId: user.id,
 		workingDirectory: '/tmp',
+		getWorkspaceRoots: () => ['/tmp'],
 		policy: overrides.policy ?? 'prompt',
 		emit: (ev) => events.push(ev),
 		getApproveAll: () => overrides.approveAll ?? false,

@@ -26,7 +26,8 @@ function grouped(): Record<PortalToolGroupId, PortalTool[]> {
 		tickets: [tool('ticket_add'), tool('ticket_list')],
 		permissions: [tool('request_permission_grant')],
 		memory: [tool('memory_upsert')],
-		'prompt-templates': [tool('template_list')]
+		'prompt-templates': [tool('template_list')],
+		worktree: []
 	};
 }
 
@@ -77,7 +78,8 @@ describe('filterPortalToolGroups', () => {
 			permissions: [tool('request_permission_grant')],
 			tickets: [tool('ticket_add')],
 			filesystem: [tool('create_directory')],
-			git: [tool('git_status')]
+			git: [tool('git_status')],
+			worktree: []
 		} as Record<PortalToolGroupId, PortalTool[]>;
 		expect(names(filterPortalToolGroups(shuffled, []))).toEqual([
 			'git_status',

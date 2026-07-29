@@ -23,7 +23,7 @@ function match(
 ): boolean {
 	const parsed = parseShellCommand(command);
 	if (parsed.kind !== 'parsed') return false;
-	return shellRuleMatches(rule, parsed.segments, { workspaceRoot: ws, sessionWorkspaceRoot });
+	return shellRuleMatches(rule, parsed.segments, { workspaceRoots: [ws], sessionWorkspaceRoot });
 }
 
 function shell(tokens: string[], rest: Omit<ShellRule, 'command'> = {}): ShellRule {
@@ -258,7 +258,7 @@ describe('shell predicate — positionals', () => {
 		const rule = shell(['cat'], { positionals: { kind: 'workspace-paths' } });
 		const parsed = parseShellCommand('cat README.md');
 		if (parsed.kind !== 'parsed') throw new Error('parse');
-		expect(shellRuleMatches(rule, parsed.segments, { workspaceRoot: null })).toBe(false);
+		expect(shellRuleMatches(rule, parsed.segments, { workspaceRoots: null })).toBe(false);
 	});
 
 	it('positionals=session-workspace-paths only accepts paths inside the session workspace', () => {

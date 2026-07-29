@@ -28,6 +28,7 @@ async function makeHarness() {
 		conversationId,
 		userId: user.id,
 		workingDirectory: '/tmp',
+		getWorkspaceRoots: () => ['/tmp'],
 		policy: 'prompt',
 		emit: () => {},
 		getApproveAll: () => false,

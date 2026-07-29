@@ -27,10 +27,10 @@ describe('fs predicate', () => {
 			}
 		};
 		expect(
-			fsScopeMatches(scope, { permissionKind: 'read', target: '/tmp/x', workspaceRoot: ws })
+			fsScopeMatches(scope, { permissionKind: 'read', target: '/tmp/x', workspaceRoots: [ws] })
 		).toBe(true);
 		expect(
-			fsScopeMatches(scope, { permissionKind: 'read', target: '/tmp/y', workspaceRoot: ws })
+			fsScopeMatches(scope, { permissionKind: 'read', target: '/tmp/y', workspaceRoots: [ws] })
 		).toBe(false);
 	});
 
@@ -43,14 +43,14 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', 'a.ts'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(true);
 		expect(
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: '/etc/passwd',
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(false);
 	});
@@ -69,7 +69,7 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', 'a.ts'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(true);
 		// File is in workspace but doesn't match the glob.
@@ -78,14 +78,14 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'other.txt'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(false);
 		expect(
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', '..', 'top.txt'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(false);
 	});
@@ -104,28 +104,28 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', 'a.ts'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(true);
 		expect(
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'top.txt'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(false);
 		expect(
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', '..', 'top.txt'),
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(false);
 		expect(
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: '/etc/passwd',
-				workspaceRoot: ws
+				workspaceRoots: [ws]
 			})
 		).toBe(false);
 	});
@@ -148,7 +148,7 @@ describe('fs predicate', () => {
 				fsScopeMatches(scope, {
 					permissionKind: 'read',
 					target: join(ws, 'src', 'escape', 'secret.txt'),
-					workspaceRoot: ws
+					workspaceRoots: [ws]
 				})
 			).toBe(false);
 		} finally {
@@ -164,8 +164,10 @@ describe('fs predicate', () => {
 			rule: { kind: 'path' as const, root: 'workspace' as const, behavior: 'any' as const }
 		};
 		const target = join(ws, 'src', 'a.ts');
-		expect(fsScopeMatches(scope, { permissionKind: 'read', target, workspaceRoot: ws })).toBe(true);
-		expect(fsScopeMatches(scope, { permissionKind: 'write', target, workspaceRoot: ws })).toBe(
+		expect(fsScopeMatches(scope, { permissionKind: 'read', target, workspaceRoots: [ws] })).toBe(
+			true
+		);
+		expect(fsScopeMatches(scope, { permissionKind: 'write', target, workspaceRoots: [ws] })).toBe(
 			false
 		);
 	});
@@ -174,13 +176,13 @@ describe('fs predicate', () => {
 		expect(
 			fsScopeMatches(
 				{ kind: 'fs', rule: { kind: 'path', root: 'workspace', behavior: 'any' } },
-				{ permissionKind: 'read', target: '/tmp/x', workspaceRoot: null }
+				{ permissionKind: 'read', target: '/tmp/x', workspaceRoots: null }
 			)
 		).toBe(false);
 		expect(
 			fsScopeMatches(
 				{ kind: 'fs', rule: { kind: 'path', root: 'workspace', behavior: 'glob', value: '**' } },
-				{ permissionKind: 'read', target: '/tmp/x', workspaceRoot: null }
+				{ permissionKind: 'read', target: '/tmp/x', workspaceRoots: null }
 			)
 		).toBe(false);
 	});
@@ -194,7 +196,7 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', 'a.ts'),
-				workspaceRoot: null,
+				workspaceRoots: null,
 				sessionWorkspaceRoot: ws
 			})
 		).toBe(true);
@@ -202,7 +204,7 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: '/etc/passwd',
-				workspaceRoot: ws,
+				workspaceRoots: [ws],
 				sessionWorkspaceRoot: ws
 			})
 		).toBe(false);
@@ -210,7 +212,7 @@ describe('fs predicate', () => {
 			fsScopeMatches(scope, {
 				permissionKind: 'read',
 				target: join(ws, 'src', 'a.ts'),
-				workspaceRoot: ws,
+				workspaceRoots: [ws],
 				sessionWorkspaceRoot: null
 			})
 		).toBe(false);
@@ -236,13 +238,13 @@ describe('fs predicate', () => {
 				}
 			};
 			expect(
-				fsScopeMatches(scope, { permissionKind: 'read', target: outside, workspaceRoot: null })
+				fsScopeMatches(scope, { permissionKind: 'read', target: outside, workspaceRoots: null })
 			).toBe(true);
 			expect(
 				fsScopeMatches(scope, {
 					permissionKind: 'read',
 					target: join(outside, 'sub', 'a.txt'),
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(true);
 		});
@@ -261,7 +263,7 @@ describe('fs predicate', () => {
 				fsScopeMatches(scope, {
 					permissionKind: 'read',
 					target: '/etc/passwd',
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(false);
 			// Sibling whose name shares the prefix's basename as a prefix
@@ -270,7 +272,7 @@ describe('fs predicate', () => {
 				fsScopeMatches(scope, {
 					permissionKind: 'read',
 					target: `${outside}-evil/file`,
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(false);
 		});
@@ -289,7 +291,7 @@ describe('fs predicate', () => {
 				fsScopeMatches(scope, {
 					permissionKind: 'write',
 					target: join(outside, 'does-not-exist-yet', 'new.txt'),
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(true);
 		});
@@ -305,7 +307,7 @@ describe('fs predicate', () => {
 				}
 			};
 			expect(
-				fsScopeMatches(scope, { permissionKind: 'read', target: outside, workspaceRoot: null })
+				fsScopeMatches(scope, { permissionKind: 'read', target: outside, workspaceRoots: null })
 			).toBe(false);
 			const absScope = {
 				kind: 'fs' as const,
@@ -320,7 +322,7 @@ describe('fs predicate', () => {
 				fsScopeMatches(absScope, {
 					permissionKind: 'read',
 					target: 'relative/path',
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(false);
 		});
@@ -340,14 +342,14 @@ describe('fs predicate', () => {
 				fsScopeMatches(scope, {
 					permissionKind: 'read',
 					target: join(outside, 'sub', 'a.txt'),
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(true);
 			expect(
 				fsScopeMatches(scope, {
 					permissionKind: 'write',
 					target: join(outside, 'sub', 'a.txt'),
-					workspaceRoot: null
+					workspaceRoots: null
 				})
 			).toBe(false);
 		});

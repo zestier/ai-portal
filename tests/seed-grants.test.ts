@@ -84,7 +84,7 @@ describe('seed grants — installation', () => {
 		expect(
 			reSettings.matchGrant(userId, 'conv-x', 'shell', 'shell', 'cat README.md', {
 				shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
-				workspaceRoot: '/tmp'
+				workspaceRoots: ['/tmp']
 			})
 		).toBe('allow');
 	});
@@ -121,7 +121,7 @@ describe('seed grants — runtime behaviour', () => {
 		const parsed = parseShellCommand(command);
 		return settings.matchGrant(userId, 'conv-x', 'shell', 'shell', command, {
 			shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
-			workspaceRoot,
+			workspaceRoots: workspaceRoot ? [workspaceRoot] : null,
 			sessionWorkspaceRoot
 		});
 	}
@@ -133,7 +133,7 @@ describe('seed grants — runtime behaviour', () => {
 		const parsed = parseShellCommand(command);
 		return settings.matchGrantDetailed(userId, 'conv-x', 'shell', 'shell', command, {
 			shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
-			workspaceRoot,
+			workspaceRoots: workspaceRoot ? [workspaceRoot] : null,
 			sessionWorkspaceRoot
 		});
 	}

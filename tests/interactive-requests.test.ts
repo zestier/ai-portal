@@ -57,25 +57,25 @@ describe('decideByPolicy', () => {
 		expect(decideByPolicy('prompt', 'permission', 'url')).toBe('ask');
 	});
 	it('prompt policy auto-allows file ops only inside the workspace', () => {
-		const ctx = { workspaceRoot: wsRoot, scopeKey: join(wsRoot, 'src', 'a.ts') };
+		const ctx = { workspaceRoots: [wsRoot], scopeKey: join(wsRoot, 'src', 'a.ts') };
 		expect(decideByPolicy('prompt', 'permission', 'read', ctx)).toBe('approved');
 		expect(decideByPolicy('prompt', 'permission', 'write', ctx)).toBe('approved');
 		expect(decideByPolicy('prompt', 'permission', 'edit', ctx)).toBe('approved');
 	});
 	it('prompt policy auto-allows not-yet-existing files inside the workspace', () => {
-		const ctx = { workspaceRoot: wsRoot, scopeKey: join(wsRoot, 'src', 'new.ts') };
+		const ctx = { workspaceRoots: [wsRoot], scopeKey: join(wsRoot, 'src', 'new.ts') };
 		expect(decideByPolicy('prompt', 'permission', 'write', ctx)).toBe('approved');
 	});
 	it('prompt policy prompts for file ops outside the workspace', () => {
 		expect(
 			decideByPolicy('prompt', 'permission', 'read', {
-				workspaceRoot: wsRoot,
+				workspaceRoots: [wsRoot],
 				scopeKey: '/etc/passwd'
 			})
 		).toBe('ask');
 		expect(
 			decideByPolicy('prompt', 'permission', 'write', {
-				workspaceRoot: wsRoot,
+				workspaceRoots: [wsRoot],
 				scopeKey: '../other/x'
 			})
 		).toBe('ask');
@@ -84,7 +84,7 @@ describe('decideByPolicy', () => {
 		expect(decideByPolicy('prompt', 'permission', 'write')).toBe('ask');
 	});
 	it('allow-all / deny-all ignore workspace context', () => {
-		const ctx = { workspaceRoot: wsRoot, scopeKey: '/etc/passwd' };
+		const ctx = { workspaceRoots: [wsRoot], scopeKey: '/etc/passwd' };
 		expect(decideByPolicy('allow-all', 'permission', 'write', ctx)).toBe('approved');
 		expect(decideByPolicy('deny-all', 'permission', 'read', ctx)).toBe('denied');
 	});
@@ -806,6 +806,7 @@ describe('interactive permission adapter feedback', () => {
 			conversationId,
 			userId,
 			workingDirectory: '/tmp',
+			getWorkspaceRoots: () => ['/tmp'],
 			policy: opts.policy ?? 'prompt',
 			emit: (ev) => events.push(ev),
 			getApproveAll: () => false,
