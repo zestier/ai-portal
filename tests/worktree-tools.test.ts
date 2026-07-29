@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
@@ -310,6 +310,21 @@ describe('worktree tools', () => {
 
 			// `ahead` is the orchestrator's cue that something is ready to collect.
 			expect(rows[0].ahead).toBe(1);
+		});
+
+		it('flags a worktree whose counts could not be determined', async () => {
+			// Absent counts must not read as "nothing to merge". An agent that saw a
+			// bare row with no `ahead` would conclude the worktree was collected and
+			// move on, silently abandoning whatever was committed in it.
+			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
+			rmSync(created.path as string, { recursive: true, force: true });
+
+			const listed = result(await (await tool('worktree_list')).handler({}));
+			const row = (listed.worktrees as Array<Record<string, unknown>>)[0];
+
+			expect(row.unavailable).toBe(true);
+			expect(row.ahead).toBeUndefined();
+			expect(row.dirtyCount).toBeUndefined();
 		});
 	});
 });

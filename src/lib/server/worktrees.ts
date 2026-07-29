@@ -517,6 +517,27 @@ export async function deleteMergedBranch(cwd: string, branch: string): Promise<b
 	});
 }
 
+/**
+ * Drop git's administrative entries for worktrees whose directory is gone.
+ *
+ * Removing a checkout out-of-band (a crash, a manual `rm -rf`) leaves
+ * `.git/worktrees/<name>` behind, so `git worktree list` keeps reporting a tree
+ * that does not exist. Nothing reads those stale records incorrectly today, but
+ * they accumulate for the life of the repository, so startup reconciliation
+ * clears them. Best-effort: a prune failure is not worth failing boot over.
+ */
+export async function pruneWorktrees(cwd: string): Promise<boolean> {
+	try {
+		const { gitCommonDir } = await inspectRepository(cwd);
+		return await withRepositoryLock(gitCommonDir, async () => {
+			const result = await runGit(cwd, ['worktree', 'prune']);
+			return result.code === 0;
+		});
+	} catch {
+		return false;
+	}
+}
+
 export function expectedManagedWorktreePath(userId: string, conversationId: string): string {
 	return generatedPath(userId, conversationId);
 }

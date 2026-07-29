@@ -28,6 +28,7 @@ import {
 	createWorktreeForSlot,
 	deleteMergedBranch,
 	inspectManagedWorktree,
+	pruneWorktrees,
 	removeManagedWorktree,
 	sanitizeLeaseLabel,
 	slotPath,
@@ -428,6 +429,17 @@ export async function leaseIntegrationStatus(
  * a branch no one is left to look for. Removal itself is non-destructive —
  * `deleteMergedBranch` is merged-only — but discoverability is the thing being
  * lost, and that is exactly what an automatic sweep must not take away.
+ *
+ * Note that `last_used_at` is bumped by lease tools and by browsing a lease in
+ * the UI, but NOT by a sub-agent's ordinary file writes (those go through the
+ * provider, which knows nothing about leases). So a sub-agent could in principle
+ * still be using a lease the reaper collects. That is deliberate rather than
+ * overlooked: reaching this point requires the tree to be clean AND fully merged
+ * AND untouched for TTL, which together mean there is no work left to lose. A
+ * sub-agent's cwd is the session workspace, not the lease, so nothing is
+ * stranded either. Guarding on "is a turn running" would need a cross-module
+ * predicate (leases -> turn-runner -> provider -> leases is a cycle), which is
+ * more machinery than a no-loss inconvenience justifies.
  */
 export async function reapIdleLeases(now = Date.now()): Promise<{ removed: number }> {
 	const cutoff = now - loadConfig().WORKTREE_LEASE_TTL_MS;
@@ -455,18 +467,29 @@ export async function reapIdleLeases(now = Date.now()): Promise<{ removed: numbe
 /**
  * Reconcile persisted leases with the filesystem after a restart: drop rows
  * whose checkout is gone (a crash between `worktree add` and row insert, or an
- * FK cascade that removed the row's owner). Runs once at boot.
+ * FK cascade that removed the row's owner), then clear git's administrative
+ * entries for those checkouts. Runs once at boot.
+ *
+ * Pruning is deliberately keyed on the distinct repositories the dropped rows
+ * came from, and happens AFTER the rows are gone: a prune is only correct once
+ * nothing expects the registration to still be there.
  */
-export async function reconcileLeases(): Promise<{ rowsDropped: number }> {
+export async function reconcileLeases(): Promise<{ rowsDropped: number; reposPruned: number }> {
 	let rowsDropped = 0;
+	const staleRepos = new Set<string>();
 	for (const lease of leaseRepo.listAll()) {
 		try {
 			resolveLeaseWorkspace(lease);
 		} catch {
 			leaseRepo.remove(lease.id);
+			staleRepos.add(lease.sourceWorkdir);
 			rowsDropped++;
 		}
 	}
-	if (rowsDropped > 0) log.info('lease.reconciled', { rowsDropped });
-	return { rowsDropped };
+	let reposPruned = 0;
+	for (const repo of staleRepos) {
+		if (await pruneWorktrees(repo)) reposPruned++;
+	}
+	if (rowsDropped > 0) log.info('lease.reconciled', { rowsDropped, reposPruned });
+	return { rowsDropped, reposPruned };
 }

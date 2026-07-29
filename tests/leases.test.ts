@@ -281,6 +281,21 @@ describe('workspace leases', () => {
 			expect(getLease(lease.id, userId)).toBeNull();
 		});
 
+		it("clears git's registration for a vanished checkout, not just the row", async () => {
+			// Dropping the row alone leaves `.git/worktrees/<name>` behind, so git
+			// keeps reporting a tree that no longer exists — forever.
+			const conversation = await makeConversation();
+			const { createLease, reconcileLeases } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'ghost' });
+			rmSync(lease.path, { recursive: true, force: true });
+			expect(git(source, ['worktree', 'list', '--porcelain'])).toContain(lease.path);
+
+			const { reposPruned } = await reconcileLeases();
+
+			expect(reposPruned).toBe(1);
+			expect(git(source, ['worktree', 'list', '--porcelain'])).not.toContain(lease.path);
+		});
+
 		it('never reaps a lease holding unmerged commits', async () => {
 			// The reaper runs with no user present, so silently collecting committed
 			// work is worse than the delete path: the branch survives (removal is

@@ -514,12 +514,18 @@ const statusCache = new Map<string, { at: number; value: Promise<WorktreeIntegra
 
 export async function cachedWorktreeIntegrationStatus(
 	cwd: string,
-	maxAgeMs: number = DEFAULT_STATUS_TTL_MS
+	maxAgeMs: number = DEFAULT_STATUS_TTL_MS,
+	opts: WorktreeIntegrationStatusOptions = {}
 ): Promise<WorktreeIntegrationStatus> {
-	const key = resolve(cwd);
+	// The upstream is part of the identity of the answer, not just of the query:
+	// the same tree measured against two different upstreams has different
+	// ahead/behind counts. Keying on the path alone would serve one caller's
+	// answer to another. No caller passes an upstream today, but the option
+	// exists, so the key accounts for it rather than waiting to be a bug.
+	const key = opts.upstreamPath ? `${resolve(cwd)}\0${resolve(opts.upstreamPath)}` : resolve(cwd);
 	const hit = statusCache.get(key);
 	if (hit && Date.now() - hit.at < maxAgeMs) return hit.value;
-	const value = worktreeIntegrationStatus(key);
+	const value = worktreeIntegrationStatus(resolve(cwd), opts);
 	statusCache.set(key, { at: Date.now(), value });
 	// A rejected read must not be cached, or a transient failure sticks for the
 	// whole TTL.

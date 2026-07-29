@@ -37,8 +37,17 @@ import * as convs from '../db/repos/conversations';
 
 // Model-relevant lease fields. Ids/timestamps stay recoverable via `fields`.
 // `ahead` is in the compact view because it is the orchestrator's cue that a
-// worktree has finished work waiting to be merged back.
-const LEASE_KEEP = ['leaseId', 'label', 'path', 'branch', 'dirtyCount', 'ahead'] as const;
+// worktree has finished work waiting to be merged back, and `unavailable`
+// because an absent count must not be mistaken for a zero one.
+const LEASE_KEEP = [
+	'leaseId',
+	'label',
+	'path',
+	'branch',
+	'dirtyCount',
+	'ahead',
+	'unavailable'
+] as const;
 
 const CreateArgs = z
 	.object({
@@ -72,12 +81,21 @@ const MergeArgs = z
 	})
 	.strict();
 
-/** Shape a lease + its live counts into the model-facing record. */
+/**
+ * Shape a lease + its live counts into the model-facing record.
+ *
+ * `unavailable: true` is set when the checkout could not be inspected. It
+ * exists because counts are reported by ABSENCE rather than as zero: a bare row
+ * with no `ahead` would otherwise read as "nothing to merge", and an agent
+ * would move on having silently abandoned whatever was committed there. Present
+ * only when something is wrong, so its mere presence is the signal.
+ */
 function leaseView(
 	lease: Lease,
 	dirtyCount: number | null,
 	counts?: { ahead: number; behind: number }
 ) {
+	const unavailable = dirtyCount === null || counts === undefined;
 	return {
 		leaseId: lease.id,
 		label: lease.label,
@@ -86,6 +104,7 @@ function leaseView(
 		baseSha: lease.baseSha,
 		...(dirtyCount === null ? {} : { dirtyCount }),
 		...(counts ? { ahead: counts.ahead, behind: counts.behind } : {}),
+		...(unavailable ? { unavailable: true } : {}),
 		createdAt: lease.createdAt,
 		lastUsedAt: lease.lastUsedAt
 	};
@@ -163,21 +182,25 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 			async handler(args) {
 				const parsed = ListArgs.parse(args);
 				const conv = conversation();
+				// Without the conversation there is no counterpart to measure against,
+				// so every row would report unknown counts. Fail loudly instead —
+				// matching worktree_create — rather than returning a listing whose
+				// numbers are all missing for a reason the model cannot see.
+				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
 				const leases = listLeases(ctx.conversationId, ctx.userId);
 				const views = [];
 				for (const lease of leases) {
 					// A checkout that has gone missing should not fail the whole listing —
-					// report it with unknown counts so the agent can still act.
+					// report it as unavailable so the agent can still act on the rest.
 					let dirtyCount: number | null;
 					let counts: { ahead: number; behind: number } | undefined;
 					try {
 						({ dirtyCount } = await inspectLease(lease));
-						if (conv) {
-							const status = await leaseIntegrationStatus(lease, conv);
-							counts = { ahead: status.ahead, behind: status.behind };
-						}
+						const status = await leaseIntegrationStatus(lease, conv);
+						counts = { ahead: status.ahead, behind: status.behind };
 					} catch {
 						dirtyCount = null;
+						counts = undefined;
 					}
 					views.push(leaseView(lease, dirtyCount, counts));
 				}
@@ -206,6 +229,8 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 			},
 			async handler(args) {
 				const { leaseId } = StatusArgs.parse(args);
+				const conv = conversation();
+				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
 				const lease = getLease(leaseId, ctx.userId);
 				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
 					return err(`no worktree with id ${leaseId} in this conversation`, {
@@ -215,15 +240,8 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 				touchLease(lease.id);
 				try {
 					const { dirtyCount } = await inspectLease(lease);
-					const conv = conversation();
-					const status = conv ? await leaseIntegrationStatus(lease, conv) : null;
-					return ok(
-						leaseView(
-							lease,
-							dirtyCount,
-							status ? { ahead: status.ahead, behind: status.behind } : undefined
-						)
-					);
+					const status = await leaseIntegrationStatus(lease, conv);
+					return ok(leaseView(lease, dirtyCount, { ahead: status.ahead, behind: status.behind }));
 				} catch (cause) {
 					const described = describeWorktreeError(cause);
 					if (described) {
