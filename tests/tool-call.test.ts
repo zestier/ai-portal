@@ -89,6 +89,18 @@ describe('summarizeToolCall', () => {
 			summarizeToolCall('git_commit', JSON.stringify({ subject: 'Add feature', paths: 'all' }))
 		).toBe('Add feature · all changes');
 		expect(
+			summarizeToolCall('git_worktree_merge', JSON.stringify({ direction: 'to-source' }))
+		).toBe('integrate into source branch');
+		expect(
+			summarizeToolCall('git_worktree_merge', JSON.stringify({ direction: 'from-source' }))
+		).toBe('sync from source branch');
+		expect(
+			summarizeToolCall(
+				'git_worktree_merge',
+				JSON.stringify({ direction: 'to-source', allowMergeCommit: true })
+			)
+		).toBe('integrate into source branch (allow merge commit)');
+		expect(
 			summarizeToolCall(
 				'git_commit',
 				JSON.stringify({

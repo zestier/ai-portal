@@ -159,6 +159,16 @@ describe('seed grants — runtime behaviour', () => {
 		expect(customToolMatch('git_log')).toBe('allow');
 		expect(customToolMatch('git_show_commit')).toBe('allow');
 		expect(customToolMatch('git_show_file')).toBe('allow');
+		expect(customToolMatch('git_worktree_status')).toBe('allow');
+	});
+
+	// The mutating git tools must never be seeded: both declare
+	// `permissionBehavior: 'always-prompt'`, and an allow seed would defeat that.
+	// git_worktree_merge writes to the SHARED source checkout, so this is the
+	// seed most important to keep absent.
+	it('does not auto-approve mutating git tools', () => {
+		expect(customToolMatch('git_commit')).not.toBe('allow');
+		expect(customToolMatch('git_worktree_merge')).not.toBe('allow');
 	});
 
 	it('auto-approves workspace ticket tools by default', () => {
