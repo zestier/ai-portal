@@ -5,6 +5,7 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
 import {
 	createLease,
 	inspectLease,
+	leaseIntegrationStatus,
 	listLeases,
 	resolveLeaseWorkspace,
 	LeaseQuotaError
@@ -27,9 +28,14 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 	for (const lease of listLeases(conversation.id, conversation.userId)) {
 		let available = true;
 		let dirtyCount: number | null = null;
+		let ahead: number | null = null;
+		let behind: number | null = null;
 		try {
 			resolveLeaseWorkspace(lease);
 			({ dirtyCount } = await inspectLease(lease));
+			const status = await leaseIntegrationStatus(lease, conversation);
+			ahead = status.ahead;
+			behind = status.behind;
 		} catch {
 			available = false;
 		}
@@ -43,7 +49,11 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 			createdAt: lease.createdAt,
 			lastUsedAt: lease.lastUsedAt,
 			available,
-			dirtyCount
+			dirtyCount,
+			// Commits waiting to be merged back into this conversation, which is
+			// what the UI offers a merge action for.
+			ahead,
+			behind
 		});
 	}
 	return json({ worktrees: leases });

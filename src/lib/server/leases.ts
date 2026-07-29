@@ -36,7 +36,13 @@ import {
 	type WorktreeSlot
 } from './worktrees';
 import { resolveConversationWorkspace, WorkspaceUnavailableError } from './workdir';
-import { worktreeIntegrationStatus } from './worktree-integration';
+import {
+	mergeWorktree,
+	worktreeIntegrationStatus,
+	type MergeDirection,
+	type MergeWorktreeResult,
+	type WorktreeIntegrationStatus
+} from './worktree-integration';
 import type { Conversation } from '$lib/types';
 
 export type Lease = LeaseRow;
@@ -57,23 +63,23 @@ function leaseSlot(lease: Pick<Lease, 'userId' | 'id'>): WorktreeSlot {
 }
 
 /**
- * The repository a conversation's leases are cut from.
+ * The tree a conversation's leases are cut from and merge back into.
  *
- * For a managed-worktree conversation this is the SOURCE repository, not the
- * conversation's own checkout: that checkout is disposable and removed with the
- * conversation, so cutting leases from it would tie their lifetime to it.
+ * This is the conversation's OWN workspace, including when that is a managed
+ * worktree. Sub-agents working in parallel leases are working on sub-tasks of
+ * whatever the conversation is doing, so they must start from its current state
+ * and their results must gather back into its branch — to be reviewed and
+ * tested together before any of it reaches the shared checkout.
+ *
+ * (An earlier version cut leases from the source repository instead, on the
+ * theory that branching from a disposable checkout would tie the lease's
+ * lifetime to it. That was wrong on the mechanism: git worktrees are flat
+ * siblings sharing one common dir, so removing one does not affect another.
+ * Registering in the same repository does not require branching from the same
+ * commit — and branching from main meant sub-agents could not see the
+ * orchestrator's in-progress work.)
  */
-function sourceRepositoryFor(conversation: Conversation): string {
-	if (conversation.workspaceKind === 'managed-worktree') {
-		const managed = convs.getManagedWorktree(conversation.id, conversation.userId);
-		if (!managed) {
-			throw new WorktreeError('worktree_unavailable', 'managed source workspace is unavailable');
-		}
-		return managed.sourceWorkdir;
-	}
-	// A shared-workdir conversation resolves through the normal allowlist, so a
-	// stale / out-of-allowlist stored value has already been folded back to
-	// PROJECT_ROOT by the time we see it.
+function leaseCounterpartWorkspace(conversation: Conversation): string {
 	return resolveConversationWorkspace(conversation);
 }
 
@@ -99,7 +105,7 @@ export interface CreateLeaseInput {
 export async function createLease(input: CreateLeaseInput): Promise<Lease> {
 	const { conversation } = input;
 	const label = sanitizeLeaseLabel(input.label);
-	const sourceWorkdir = sourceRepositoryFor(conversation);
+	const sourceWorkdir = leaseCounterpartWorkspace(conversation);
 	const cfg = loadConfig();
 	const id = ulid();
 
@@ -246,13 +252,13 @@ export interface RemoveLeasesResult {
 }
 
 /**
- * Commits on a lease's branch that its source branch does not have. A missing
- * or broken checkout reports 0 so a stale lease stays deletable — the guard
- * exists to prevent surprise, not to strand the user.
+ * Commits on a lease's branch that its counterpart — the conversation holding
+ * it — does not have. A missing or broken checkout reports 0 so a stale lease
+ * stays deletable; the guard exists to prevent surprise, not to strand the user.
  */
-async function unmergedCommitCount(lease: Lease): Promise<number> {
+async function unmergedCommitCount(lease: Lease, conversation: Conversation): Promise<number> {
 	try {
-		return (await worktreeIntegrationStatus(lease.path)).ahead;
+		return (await leaseIntegrationStatus(lease, conversation)).ahead;
 	} catch {
 		return 0;
 	}
@@ -276,9 +282,10 @@ export async function removeLeasesForConversation(
 	opts: { force?: boolean } = {}
 ): Promise<RemoveLeasesResult> {
 	const result: RemoveLeasesResult = { removed: [], retained: [] };
+	const conversation = convs.get(conversationId, userId);
 	for (const lease of leaseRepo.listByConversation(conversationId, userId)) {
-		if (!opts.force) {
-			const ahead = await unmergedCommitCount(lease);
+		if (!opts.force && conversation) {
+			const ahead = await unmergedCommitCount(lease, conversation);
 			if (ahead > 0) {
 				result.retained.push({ lease, reason: 'unmerged', ahead, dirtyCount: 0 });
 				continue;
@@ -352,6 +359,63 @@ export function workspaceRootsFor(
 	} catch {
 		return [fallback];
 	}
+}
+
+/**
+ * Merge a lease's branch back into the conversation that holds it — the point
+ * of fanning work out in the first place.
+ *
+ * The counterpart is the HOLDING CONVERSATION's workspace, not the repository's
+ * main checkout, so parallel sub-agent results gather into one branch that can
+ * be reviewed and tested together before any of it reaches the shared tree.
+ *
+ * Direction mirrors `git_worktree_merge` and keeps the same asymmetry:
+ *  - `to-source` moves the lease's commits into the conversation. A conflict
+ *    there is always rolled back, because that tree is the one the user (and
+ *    the orchestrator's own turns) are working in.
+ *  - `from-source` refreshes the lease with the conversation's newer commits,
+ *    and may leave a conflict in place for a sub-agent to resolve, since the
+ *    lease is isolated — that is where conflict resolution belongs.
+ */
+export async function mergeLease(
+	lease: Lease,
+	conversation: Conversation,
+	opts: {
+		direction?: MergeDirection;
+		allowMergeCommit?: boolean;
+		onConflict?: 'abort' | 'keep';
+	} = {}
+): Promise<MergeWorktreeResult> {
+	const leasePath = resolveLeaseWorkspace(lease);
+	const counterpart = leaseCounterpartWorkspace(conversation);
+	const result = await mergeWorktree(leasePath, {
+		direction: opts.direction ?? 'to-source',
+		...(opts.allowMergeCommit === undefined ? {} : { allowMergeCommit: opts.allowMergeCommit }),
+		...(opts.onConflict === undefined ? {} : { onConflict: opts.onConflict }),
+		upstreamPath: counterpart
+	});
+	touchLease(lease.id);
+	log.info('lease.merged', {
+		leaseId: lease.id,
+		conversationId: conversation.id,
+		direction: result.direction,
+		merged: result.merged,
+		into: result.into
+	});
+	return result;
+}
+
+/**
+ * Where a lease sits relative to the conversation holding it: how many commits
+ * it carries that the conversation lacks, and vice versa.
+ */
+export async function leaseIntegrationStatus(
+	lease: Lease,
+	conversation: Conversation
+): Promise<WorktreeIntegrationStatus> {
+	return worktreeIntegrationStatus(resolveLeaseWorkspace(lease), {
+		upstreamPath: leaseCounterpartWorkspace(conversation)
+	});
 }
 
 /**

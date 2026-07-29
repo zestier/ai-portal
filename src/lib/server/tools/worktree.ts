@@ -23,17 +23,22 @@ import {
 	createLease,
 	getLease,
 	inspectLease,
+	leaseIntegrationStatus,
 	listLeases,
+	mergeLease,
 	removeLease,
 	touchLease,
 	LeaseQuotaError,
 	type Lease
 } from '../leases';
 import { WorktreeError } from '../worktrees';
+import { WorktreeIntegrationError } from '../worktree-integration';
 import * as convs from '../db/repos/conversations';
 
 // Model-relevant lease fields. Ids/timestamps stay recoverable via `fields`.
-const LEASE_KEEP = ['leaseId', 'label', 'path', 'branch', 'dirtyCount'] as const;
+// `ahead` is in the compact view because it is the orchestrator's cue that a
+// worktree has finished work waiting to be merged back.
+const LEASE_KEEP = ['leaseId', 'label', 'path', 'branch', 'dirtyCount', 'ahead'] as const;
 
 const CreateArgs = z
 	.object({
@@ -58,8 +63,21 @@ const RemoveArgs = z
 	})
 	.strict();
 
-/** Shape a lease + its dirty count into the model-facing record. */
-function leaseView(lease: Lease, dirtyCount: number | null) {
+const MergeArgs = z
+	.object({
+		leaseId: z.string().trim().min(1).max(64),
+		direction: z.enum(['to-source', 'from-source']).optional(),
+		allowMergeCommit: z.boolean().optional(),
+		onConflict: z.enum(['abort', 'keep']).optional()
+	})
+	.strict();
+
+/** Shape a lease + its live counts into the model-facing record. */
+function leaseView(
+	lease: Lease,
+	dirtyCount: number | null,
+	counts?: { ahead: number; behind: number }
+) {
 	return {
 		leaseId: lease.id,
 		label: lease.label,
@@ -67,6 +85,7 @@ function leaseView(lease: Lease, dirtyCount: number | null) {
 		branch: lease.branch,
 		baseSha: lease.baseSha,
 		...(dirtyCount === null ? {} : { dirtyCount }),
+		...(counts ? { ahead: counts.ahead, behind: counts.behind } : {}),
 		createdAt: lease.createdAt,
 		lastUsedAt: lease.lastUsedAt
 	};
@@ -75,6 +94,9 @@ function leaseView(lease: Lease, dirtyCount: number | null) {
 function describeWorktreeError(cause: unknown): { message: string; code?: string } | null {
 	if (cause instanceof LeaseQuotaError) return { message: cause.message, code: cause.code };
 	if (cause instanceof WorktreeError) return { message: cause.message, code: cause.code };
+	if (cause instanceof WorktreeIntegrationError) {
+		return { message: cause.message, code: cause.code };
+	}
 	return null;
 }
 
@@ -117,8 +139,8 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 					});
 					return ok(leaseView(lease, 0), `Created worktree ${lease.label} on ${lease.branch}`, {
 						followUpHint:
-							`The directory ${lease.path} already exists and is writable. Hand that ABSOLUTE path to one sub-agent and tell it to do all of its work there and nowhere else. ` +
-							'Do not point two sub-agents at the same worktree. When the work is done, report the branch name, then call worktree_remove.'
+							`The directory ${lease.path} already exists and is writable. Hand that ABSOLUTE path to one sub-agent and tell it to do all of its work there and nowhere else, and to COMMIT when it is done. ` +
+							'Do not point two sub-agents at the same worktree. When it finishes, worktree_merge the work back into this conversation, then worktree_remove the worktree.'
 					});
 				} catch (cause) {
 					const described = describeWorktreeError(cause);
@@ -131,7 +153,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 		},
 		{
 			name: 'worktree_list',
-			description: `List the worktrees this conversation currently holds, with the number of uncommitted changes in each. ${FIELDS_NOTE}`,
+			description: `List the worktrees this conversation currently holds. \`dirtyCount\` is uncommitted files; \`ahead\` is committed work waiting to be merged back into this conversation with worktree_merge. ${FIELDS_NOTE}`,
 			argsSchema: ListArgs,
 			parameters: {
 				type: 'object',
@@ -140,18 +162,24 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 			},
 			async handler(args) {
 				const parsed = ListArgs.parse(args);
+				const conv = conversation();
 				const leases = listLeases(ctx.conversationId, ctx.userId);
 				const views = [];
 				for (const lease of leases) {
 					// A checkout that has gone missing should not fail the whole listing —
-					// report it with an unknown dirty count so the agent can still act.
+					// report it with unknown counts so the agent can still act.
 					let dirtyCount: number | null;
+					let counts: { ahead: number; behind: number } | undefined;
 					try {
 						({ dirtyCount } = await inspectLease(lease));
+						if (conv) {
+							const status = await leaseIntegrationStatus(lease, conv);
+							counts = { ahead: status.ahead, behind: status.behind };
+						}
 					} catch {
 						dirtyCount = null;
 					}
-					views.push(leaseView(lease, dirtyCount));
+					views.push(leaseView(lease, dirtyCount, counts));
 				}
 				const projected = project(views, {
 					keep: [...LEASE_KEEP],
@@ -187,11 +215,93 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 				touchLease(lease.id);
 				try {
 					const { dirtyCount } = await inspectLease(lease);
-					return ok(leaseView(lease, dirtyCount));
+					const conv = conversation();
+					const status = conv ? await leaseIntegrationStatus(lease, conv) : null;
+					return ok(
+						leaseView(
+							lease,
+							dirtyCount,
+							status ? { ahead: status.ahead, behind: status.behind } : undefined
+						)
+					);
 				} catch (cause) {
 					const described = describeWorktreeError(cause);
 					if (described) {
 						return err(described.message, described.code ? { code: described.code } : undefined);
+					}
+					throw cause;
+				}
+			}
+		},
+		{
+			name: 'worktree_merge',
+			description:
+				'Bring a worktree\'s commits back into this conversation\'s own workspace — the step that makes parallel work useful. Use direction "to-source" (the default) once a sub-agent has finished and COMMITTED its work: its branch is merged into this conversation\'s branch so results from several worktrees gather in one place to be reviewed and tested together. Use "from-source" to refresh a worktree with newer commits from this conversation before continuing in it. Refuses while either side has uncommitted changes. Merging into this conversation always rolls back on conflict; a "from-source" conflict can optionally be left in the worktree for a sub-agent to resolve there.',
+			argsSchema: MergeArgs,
+			parameters: {
+				type: 'object',
+				properties: {
+					leaseId: { type: 'string', description: 'The worktree id returned by worktree_create.' },
+					direction: {
+						type: 'string',
+						enum: ['to-source', 'from-source'],
+						description:
+							'"to-source" (default) merges the worktree into this conversation; "from-source" merges this conversation into the worktree.'
+					},
+					allowMergeCommit: {
+						type: 'boolean',
+						description:
+							'direction="to-source" only. Defaults to false, requiring a fast-forward. Set true to allow a merge commit when this conversation has moved on — usually needed when collecting the second and later worktrees.'
+					},
+					onConflict: {
+						type: 'string',
+						enum: ['abort', 'keep'],
+						description:
+							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in the worktree so a sub-agent can resolve it there.'
+					}
+				},
+				required: ['leaseId'],
+				additionalProperties: false
+			},
+			async handler(args) {
+				const parsed = MergeArgs.parse(args);
+				const conv = conversation();
+				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
+				const lease = getLease(parsed.leaseId, ctx.userId);
+				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
+					return err(`no worktree with id ${parsed.leaseId} in this conversation`, {
+						code: 'lease_not_found'
+					});
+				}
+				try {
+					const result = await mergeLease(lease, conv, {
+						...(parsed.direction ? { direction: parsed.direction } : {}),
+						...(parsed.allowMergeCommit === undefined
+							? {}
+							: { allowMergeCommit: parsed.allowMergeCommit }),
+						...(parsed.onConflict ? { onConflict: parsed.onConflict } : {})
+					});
+					if (!result.merged) {
+						return ok(result, `Already up to date: nothing to merge into ${result.into}`);
+					}
+					return ok(
+						result,
+						`Merged ${result.from} into ${result.into}${result.fastForward ? ' (fast-forward)' : ''}`,
+						result.direction === 'to-source'
+							? {
+									followUpHint: `${lease.label}'s work is now in this conversation. Remove the worktree with worktree_remove once you no longer need it.`
+								}
+							: undefined
+					);
+				} catch (cause) {
+					const described = describeWorktreeError(cause);
+					if (described) {
+						return err(
+							described.code === 'not_fast_forwardable'
+								? `${described.message}. When collecting several worktrees, retry with allowMergeCommit: true.`
+								: described.message,
+							described.code ? { code: described.code } : undefined
+						);
 					}
 					throw cause;
 				}

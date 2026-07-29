@@ -23,6 +23,9 @@
 	// on the same tree the user was looking at.
 	const worktree = $derived($page.url.searchParams.get('worktree'));
 
+	// Bumped after a merge so the file/change panes re-read both trees.
+	let browserRefresh = $state(0);
+
 	async function selectWorktree(leaseId: string | null) {
 		if (leaseId === worktree) return;
 		const nextUrl = new URL($page.url);
@@ -163,11 +166,13 @@
 				conversationId={data.conversation.id}
 				selected={worktree}
 				onselect={selectWorktree}
+				onmerged={() => (browserRefresh += 1)}
 			/>
 			<FileBrowser
 				conversationId={data.conversation.id}
 				pane={tab}
 				{worktree}
+				refreshToken={browserRefresh}
 				onSendToChat={() => selectTab('chat')}
 			/>
 		</div>

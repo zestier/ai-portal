@@ -82,9 +82,16 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 				'edits to one tree corrupt each other, and git state is per-tree. Pass the sub-agent the',
 				'ABSOLUTE path you got back and tell it to do all of its work there and nowhere else; the',
 				'directory already exists and is writable, so it should not try to create it. Never point',
-				'two sub-agents at the same worktree. When a unit of work is done, report its branch name,',
-				'then worktree_remove it. For a single sequential task, just work in the normal workspace —',
-				'worktrees are for parallelism, not a default.'
+				'two sub-agents at the same worktree.',
+				'',
+				'Finish the loop: a worktree whose work you never merge is work you threw away. Tell each',
+				'sub-agent to COMMIT in its worktree when done (uncommitted changes cannot be merged), then',
+				'worktree_merge it back into this conversation and worktree_remove it. Collecting several',
+				'usually needs allowMergeCommit after the first. worktree_list shows `ahead` — commits',
+				'waiting to be merged — so you can see what is outstanding.',
+				'',
+				'For a single sequential task, just work in the normal workspace — worktrees are for',
+				'parallelism, not a default.'
 			].join('\n')
 		);
 	}

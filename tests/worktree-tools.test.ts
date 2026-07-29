@@ -63,10 +63,11 @@ describe('worktree tools', () => {
 		tools = new Map(buildWorktreeTools({ userId, conversationId }).map((t) => [t.name, t]));
 	});
 
-	it('exposes exactly the four worktree tools', () => {
+	it('exposes exactly the five worktree tools', () => {
 		expect([...tools.keys()].sort()).toEqual([
 			'worktree_create',
 			'worktree_list',
+			'worktree_merge',
 			'worktree_remove',
 			'worktree_status'
 		]);
@@ -204,5 +205,104 @@ describe('worktree tools', () => {
 		const create = await tool('worktree_create');
 		const params = create.parameters as { properties: Record<string, unknown> };
 		expect(Object.keys(params.properties).sort()).toEqual(['baseRef', 'label']);
+	});
+
+	describe('worktree_merge', () => {
+		it('merges committed work back and tells the agent to clean up', async () => {
+			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
+			const path = created.path as string;
+			writeFileSync(join(path, 'done.txt'), 'work\n');
+			git(path, ['add', 'done.txt']);
+			git(path, ['commit', '-q', '-m', 'done']);
+
+			const res = await (await tool('worktree_merge')).handler({ leaseId: created.leaseId });
+			const payload = result(res);
+
+			expect(payload.merged).toBe(true);
+			// A shared-workdir conversation's counterpart IS the checkout.
+			expect(existsSync(join(source, 'done.txt'))).toBe(true);
+			if (!res.ok) return;
+			expect(res.followUpHint).toContain('worktree_remove');
+		});
+
+		it('surfaces the fast-forward failure with actionable advice', async () => {
+			const create = await tool('worktree_create');
+			const alpha = result(await create.handler({ label: 'alpha' }));
+			const beta = result(await create.handler({ label: 'beta' }));
+			for (const [lease, name] of [
+				[alpha, 'alpha'],
+				[beta, 'beta']
+			] as const) {
+				const p = lease.path as string;
+				writeFileSync(join(p, `${name}.txt`), `${name}\n`);
+				git(p, ['add', `${name}.txt`]);
+				git(p, ['commit', '-q', '-m', name]);
+			}
+
+			const merge = await tool('worktree_merge');
+			await merge.handler({ leaseId: alpha.leaseId });
+			const blocked = await merge.handler({ leaseId: beta.leaseId });
+
+			expect(blocked.ok).toBe(false);
+			if (blocked.ok) return;
+			expect(blocked.error.code).toBe('not_fast_forwardable');
+			// The model must be told how to proceed, not just that it failed.
+			expect(blocked.error.message).toContain('allowMergeCommit');
+
+			const forced = await merge.handler({
+				leaseId: beta.leaseId,
+				allowMergeCommit: true
+			});
+			expect(forced.ok).toBe(true);
+			expect(existsSync(join(source, 'beta.txt'))).toBe(true);
+		});
+
+		it('reports uncommitted work rather than silently skipping it', async () => {
+			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
+			writeFileSync(join(created.path as string, 'wip.txt'), 'unsaved\n');
+
+			const res = await (await tool('worktree_merge')).handler({ leaseId: created.leaseId });
+
+			expect(res.ok).toBe(false);
+			if (res.ok) return;
+			expect(res.error.code).toBe('worktree_dirty');
+		});
+
+		it('refuses a worktree held by another conversation', async () => {
+			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
+			const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const other = convs.create(userId, {
+				id: convs.newId(),
+				title: 'other',
+				workdir: source,
+				model: 'test-model',
+				workspaceKind: 'shared',
+				workspaceKey: source
+			});
+			const otherTools = new Map(
+				buildWorktreeTools({ userId, conversationId: other.id }).map((t) => [t.name, t])
+			);
+
+			const res = await otherTools.get('worktree_merge')!.handler({ leaseId: created.leaseId });
+
+			expect(res.ok).toBe(false);
+			if (res.ok) return;
+			expect(res.error.code).toBe('lease_not_found');
+		});
+
+		it('reports commits waiting to be merged in the listing', async () => {
+			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
+			const path = created.path as string;
+			writeFileSync(join(path, 'done.txt'), 'work\n');
+			git(path, ['add', 'done.txt']);
+			git(path, ['commit', '-q', '-m', 'done']);
+
+			const listed = result(await (await tool('worktree_list')).handler({}));
+			const rows = listed.worktrees as Array<Record<string, unknown>>;
+
+			// `ahead` is the orchestrator's cue that something is ready to collect.
+			expect(rows[0].ahead).toBe(1);
+		});
 	});
 });

@@ -340,4 +340,165 @@ describe('workspace leases', () => {
 		expect(result.removed).toEqual([lease.id]);
 		expect(result.retained).toEqual([]);
 	});
+
+	describe('merge back', () => {
+		/** A conversation whose own workspace is an isolated managed worktree. */
+		async function makeWorktreeConversation() {
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const { createManagedWorktree } = await import('../src/lib/server/worktrees');
+			const id = convs.newId();
+			const managedWorktree = await createManagedWorktree({
+				sourceWorkdir: source,
+				userId,
+				conversationId: id
+			});
+			return convs.create(userId, {
+				id,
+				title: 'orchestrator',
+				workdir: managedWorktree.path,
+				model: 'test-model',
+				workspaceKind: 'managed-worktree',
+				workspaceKey: source,
+				managedWorktree
+			});
+		}
+
+		it('cuts a lease from the holding conversation, not the main checkout', async () => {
+			// The orchestrator's in-progress work must be visible to its sub-agents.
+			const conversation = await makeWorktreeConversation();
+			writeFileSync(join(conversation.workdir, 'in-progress.txt'), 'orchestrator work\n');
+			git(conversation.workdir, ['add', 'in-progress.txt']);
+			git(conversation.workdir, ['commit', '-q', '-m', 'orchestrator wip']);
+
+			const { createLease } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+
+			expect(existsSync(join(lease.path, 'in-progress.txt'))).toBe(true);
+		});
+
+		it('merges a lease into the holding conversation, not into main', async () => {
+			const conversation = await makeWorktreeConversation();
+			const { createLease, mergeLease } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+
+			writeFileSync(join(lease.path, 'sub-work.txt'), 'done\n');
+			git(lease.path, ['add', 'sub-work.txt']);
+			git(lease.path, ['commit', '-q', '-m', 'sub work']);
+
+			const result = await mergeLease(lease, conversation);
+
+			expect(result.merged).toBe(true);
+			expect(result.into).toBe(`portal/${conversation.id}`);
+			// Landed in the orchestrator's tree…
+			expect(existsSync(join(conversation.workdir, 'sub-work.txt'))).toBe(true);
+			// …and NOT in the shared checkout, which the human still controls.
+			expect(existsSync(join(source, 'sub-work.txt'))).toBe(false);
+		});
+
+		it('gathers several parallel leases into one branch', async () => {
+			const conversation = await makeWorktreeConversation();
+			const { createLease, mergeLease } = await import('../src/lib/server/leases');
+			const alpha = await createLease({ conversation, label: 'alpha' });
+			const beta = await createLease({ conversation, label: 'beta' });
+
+			for (const [lease, name] of [
+				[alpha, 'alpha'],
+				[beta, 'beta']
+			] as const) {
+				writeFileSync(join(lease.path, `${name}.txt`), `${name}\n`);
+				git(lease.path, ['add', `${name}.txt`]);
+				git(lease.path, ['commit', '-q', '-m', `${name} work`]);
+			}
+
+			await mergeLease(alpha, conversation);
+			// The second collection is no longer a fast-forward, which is exactly
+			// what `allowMergeCommit` is for.
+			await expect(mergeLease(beta, conversation)).rejects.toMatchObject({
+				code: 'not_fast_forwardable'
+			});
+			await mergeLease(beta, conversation, { allowMergeCommit: true });
+
+			expect(existsSync(join(conversation.workdir, 'alpha.txt'))).toBe(true);
+			expect(existsSync(join(conversation.workdir, 'beta.txt'))).toBe(true);
+		});
+
+		it('reports a lease as no longer ahead once merged', async () => {
+			const conversation = await makeWorktreeConversation();
+			const { createLease, mergeLease, leaseIntegrationStatus } =
+				await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+			writeFileSync(join(lease.path, 'sub.txt'), 'x\n');
+			git(lease.path, ['add', 'sub.txt']);
+			git(lease.path, ['commit', '-q', '-m', 'sub']);
+
+			expect((await leaseIntegrationStatus(lease, conversation)).ahead).toBe(1);
+			await mergeLease(lease, conversation);
+			expect((await leaseIntegrationStatus(lease, conversation)).ahead).toBe(0);
+		});
+
+		it('refuses to merge a lease with uncommitted changes', async () => {
+			const conversation = await makeWorktreeConversation();
+			const { createLease, mergeLease } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+			writeFileSync(join(lease.path, 'wip.txt'), 'unsaved\n');
+
+			await expect(mergeLease(lease, conversation)).rejects.toMatchObject({
+				code: 'worktree_dirty'
+			});
+		});
+
+		it('refreshes a lease from the conversation with from-source', async () => {
+			const conversation = await makeWorktreeConversation();
+			const { createLease, mergeLease } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+
+			// The orchestrator moves on after the lease was cut.
+			writeFileSync(join(conversation.workdir, 'later.txt'), 'later\n');
+			git(conversation.workdir, ['add', 'later.txt']);
+			git(conversation.workdir, ['commit', '-q', '-m', 'later']);
+			expect(existsSync(join(lease.path, 'later.txt'))).toBe(false);
+
+			await mergeLease(lease, conversation, { direction: 'from-source' });
+
+			expect(existsSync(join(lease.path, 'later.txt'))).toBe(true);
+		});
+
+		it('rolls back a conflicting merge into the conversation', async () => {
+			const conversation = await makeWorktreeConversation();
+			const { createLease, mergeLease } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+
+			// Both sides edit the same line.
+			writeFileSync(join(lease.path, 'README.md'), 'from the lease\n');
+			git(lease.path, ['add', 'README.md']);
+			git(lease.path, ['commit', '-q', '-m', 'lease edit']);
+			writeFileSync(join(conversation.workdir, 'README.md'), 'from the conversation\n');
+			git(conversation.workdir, ['add', 'README.md']);
+			git(conversation.workdir, ['commit', '-q', '-m', 'conversation edit']);
+
+			await expect(
+				mergeLease(lease, conversation, { allowMergeCommit: true })
+			).rejects.toMatchObject({ code: 'merge_conflict' });
+
+			// The orchestrator's tree is never left mid-merge.
+			expect(readFileSync(join(conversation.workdir, 'README.md'), 'utf8')).toBe(
+				'from the conversation\n'
+			);
+			expect(git(conversation.workdir, ['status', '--porcelain'])).toBe('');
+		});
+
+		it('still works for a shared-workdir conversation, where the counterpart is the checkout', async () => {
+			const conversation = await makeConversation();
+			const { createLease, mergeLease } = await import('../src/lib/server/leases');
+			const lease = await createLease({ conversation, label: 'sub' });
+			writeFileSync(join(lease.path, 'sub.txt'), 'x\n');
+			git(lease.path, ['add', 'sub.txt']);
+			git(lease.path, ['commit', '-q', '-m', 'sub']);
+
+			const result = await mergeLease(lease, conversation);
+
+			expect(result.merged).toBe(true);
+			expect(existsSync(join(source, 'sub.txt'))).toBe(true);
+		});
+	});
 });

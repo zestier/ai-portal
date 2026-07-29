@@ -1,6 +1,6 @@
 import { test, expect } from './helpers/fixtures';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { uniqueTitle } from './helpers/conversations';
@@ -71,4 +71,37 @@ test('the workspace switcher browses a lease without disturbing the main workspa
 	// panes are really reading different trees.
 	await switcher.selectOption('');
 	await expect(page.getByText('only-in-lease.txt')).toHaveCount(0);
+});
+
+test('the switcher merges a worktree back into the conversation', async ({ page, request }) => {
+	const repo = sourceRepository();
+	const created = await request.post('/api/conversations', {
+		data: { title: uniqueTitle('E2E lease merge'), workdir: repo }
+	});
+	const { conversation } = await created.json();
+
+	const leaseRes = await request.post(`/api/conversations/${conversation.id}/worktrees`, {
+		data: { label: 'alpha' }
+	});
+	expect(leaseRes.ok()).toBeTruthy();
+	const lease = (await leaseRes.json()).worktree;
+
+	// A sub-agent finishes and commits inside its worktree.
+	writeFileSync(join(lease.path, 'delivered.txt'), 'sub-agent work\n');
+	git(lease.path, ['add', 'delivered.txt']);
+	git(lease.path, ['commit', '-q', '-m', 'deliver']);
+	// Not in the conversation's own workspace yet — that is what merging is for.
+	expect(existsSync(join(repo, 'delivered.txt'))).toBe(false);
+
+	await page.goto(`/conversations/${conversation.id}?tab=files&worktree=${lease.id}`);
+	const merge = page.getByTestId('worktree-merge');
+	await expect(merge).toBeVisible();
+	await expect(merge).toHaveText(/Merge 1 commit/);
+
+	await merge.click();
+
+	await expect(page.getByText(/Merged into/)).toBeVisible();
+	await expect(page.getByTestId('worktree-merged')).toBeVisible();
+	// The work is now in the conversation's workspace, which is the whole point.
+	expect(existsSync(join(repo, 'delivered.txt'))).toBe(true);
 });

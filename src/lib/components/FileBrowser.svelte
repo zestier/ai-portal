@@ -24,12 +24,15 @@
 		conversationId,
 		pane = 'changes',
 		worktree = null,
+		refreshToken = 0,
 		onSendToChat
 	}: {
 		conversationId: string;
 		pane?: Pane;
 		/** Selected worktree lease id, or null for the conversation's own workspace. */
 		worktree?: string | null;
+		/** Bumped by the parent to force a re-read (e.g. after a merge). */
+		refreshToken?: number;
 		onSendToChat?: () => void;
 	} = $props();
 
@@ -71,6 +74,15 @@
 	function bumpGitRefresh() {
 		gitRefreshToken++;
 	}
+
+	// A merge (or any parent-driven refresh) changes both trees, so re-read the
+	// panes and drop a selection that may no longer exist.
+	$effect(() => {
+		void refreshToken;
+		untrack(() => {
+			if (refreshToken > 0) clearSelectionAndRefresh();
+		});
+	});
 
 	function clearSelectionAndRefresh() {
 		fileAbortController?.abort();

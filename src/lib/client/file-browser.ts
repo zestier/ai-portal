@@ -21,6 +21,10 @@ export interface WorktreeOption {
 	lastUsedAt: number;
 	available: boolean;
 	dirtyCount: number | null;
+	/** Commits waiting to be merged back into the holding conversation. */
+	ahead: number | null;
+	/** Commits the holding conversation has that this worktree does not. */
+	behind: number | null;
 }
 
 /**

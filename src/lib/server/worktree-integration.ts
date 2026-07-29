@@ -103,6 +103,12 @@ export interface MergeWorktreeOptions {
 	 * `to-source` — the shared source checkout is always rolled back.
 	 */
 	onConflict?: 'abort' | 'keep';
+	/**
+	 * Tree to merge with instead of the repository's main worktree. Used for
+	 * worktree leases, whose counterpart is the conversation holding them. See
+	 * {@link WorktreeIntegrationStatusOptions.upstreamPath}.
+	 */
+	upstreamPath?: string;
 }
 
 export interface MergeWorktreeResult {
@@ -208,11 +214,35 @@ async function dirtyCount(cwd: string): Promise<number> {
 }
 
 /**
- * Describe a tree's position relative to the branch checked out in the
- * repository's main worktree. Cheap enough (a handful of plumbing calls) to run
- * per conversation on a list view, but see the TTL cache in the bulk route.
+ * Options for {@link worktreeIntegrationStatus}.
  */
-export async function worktreeIntegrationStatus(cwd: string): Promise<WorktreeIntegrationStatus> {
+export interface WorktreeIntegrationStatusOptions {
+	/**
+	 * Tree to treat as "upstream" instead of the repository's main worktree.
+	 *
+	 * Exists for worktree *leases*, whose counterpart is the conversation that
+	 * holds them rather than the repository's main checkout: several sub-agents
+	 * work in parallel leases off one conversation, and their results should
+	 * gather into that conversation's branch to be reviewed together before any
+	 * of it reaches the shared tree.
+	 *
+	 * `isLinkedWorktree` is deliberately still computed against the real main
+	 * worktree, so it keeps meaning "is this a linked worktree of this
+	 * repository" rather than "does this differ from the target".
+	 */
+	upstreamPath?: string;
+}
+
+/**
+ * Describe a tree's position relative to the branch checked out in the
+ * repository's main worktree (or in `opts.upstreamPath`). Cheap enough (a
+ * handful of plumbing calls) to run per conversation on a list view, but see
+ * the TTL cache in the bulk route.
+ */
+export async function worktreeIntegrationStatus(
+	cwd: string,
+	opts: WorktreeIntegrationStatusOptions = {}
+): Promise<WorktreeIntegrationStatus> {
 	const inside = await git(cwd, ['rev-parse', '--is-inside-work-tree']);
 	if (inside.code !== 0 || inside.stdout.trim() !== 'true') {
 		throw new WorktreeIntegrationError('not_git_repository', 'not a git repository');
@@ -223,10 +253,23 @@ export async function worktreeIntegrationStatus(cwd: string): Promise<WorktreeIn
 	if (!main) {
 		throw new WorktreeIntegrationError('git_failed', 'could not determine the main worktree');
 	}
-	const upstreamPath = resolve(main.path);
-	const isLinkedWorktree = upstreamPath !== path;
+	// Containment is judged against the real main worktree even when a different
+	// tree is the merge target.
+	const isLinkedWorktree = resolve(main.path) !== path;
+	const requestedUpstream = opts.upstreamPath ? resolve(opts.upstreamPath) : null;
+	const upstreamRecord =
+		requestedUpstream === null
+			? main
+			: (records.find((r) => resolve(r.path) === requestedUpstream) ?? null);
+	if (!upstreamRecord) {
+		throw new WorktreeIntegrationError(
+			'not_a_worktree',
+			'the requested upstream is not a worktree of this repository'
+		);
+	}
+	const upstreamPath = resolve(upstreamRecord.path);
 	const branch = records.find((r) => resolve(r.path) === path)?.branch ?? null;
-	const upstreamBranch = main.branch;
+	const upstreamBranch = upstreamRecord.branch;
 	// Resolved through realpath so it matches the key `worktrees.ts` locks on
 	// (which realpaths too) — an unresolved symlink here would silently produce a
 	// second, non-excluding lock key.
@@ -236,7 +279,7 @@ export async function worktreeIntegrationStatus(cwd: string): Promise<WorktreeIn
 
 	const [dirty, upstreamDirty] = await Promise.all([
 		dirtyCount(path),
-		isLinkedWorktree ? dirtyCount(upstreamPath).catch(() => 0) : Promise.resolve(0)
+		upstreamPath !== path ? dirtyCount(upstreamPath).catch(() => 0) : Promise.resolve(0)
 	]);
 	const counts =
 		branch && upstreamBranch && branch !== upstreamBranch
@@ -285,9 +328,9 @@ export async function mergeWorktree(
 	// and ahead/behind), so evaluating them against a status read before the lock
 	// was held would let a concurrent merge or worktree removal invalidate them
 	// between the check and the merge.
-	const key = (await worktreeIntegrationStatus(cwd)).gitCommonDir;
+	const key = (await worktreeIntegrationStatus(cwd, opts)).gitCommonDir;
 	return withRepositoryLock(key, async () => {
-		const status = await worktreeIntegrationStatus(cwd);
+		const status = await worktreeIntegrationStatus(cwd, opts);
 		if (!status.isLinkedWorktree) {
 			throw new WorktreeIntegrationError(
 				'not_a_worktree',
@@ -329,14 +372,18 @@ async function mergeFromSource(
 ): Promise<MergeWorktreeResult> {
 	const { branch, upstreamBranch } = status;
 	if (status.behind === 0) {
-		return finish(status, {
-			direction: 'from-source',
-			merged: false,
-			into: branch,
-			from: upstreamBranch,
-			path: status.path,
-			fastForward: false
-		});
+		return finish(
+			status,
+			{
+				direction: 'from-source',
+				merged: false,
+				into: branch,
+				from: upstreamBranch,
+				path: status.path,
+				fastForward: false
+			},
+			opts
+		);
 	}
 	const merge = await git(status.path, [
 		'merge',
@@ -360,15 +407,19 @@ async function mergeFromSource(
 			{ stderr: merge.stderr.trim(), conflicts }
 		);
 	}
-	return finish(status, {
-		direction: 'from-source',
-		merged: true,
-		into: branch,
-		from: upstreamBranch,
-		path: status.path,
-		// A sync is a fast-forward whenever the worktree had no commits of its own.
-		fastForward: status.ahead === 0
-	});
+	return finish(
+		status,
+		{
+			direction: 'from-source',
+			merged: true,
+			into: branch,
+			from: upstreamBranch,
+			path: status.path,
+			// A sync is a fast-forward whenever the worktree had no commits of its own.
+			fastForward: status.ahead === 0
+		},
+		opts
+	);
 }
 
 async function mergeToSource(
@@ -377,14 +428,18 @@ async function mergeToSource(
 ): Promise<MergeWorktreeResult> {
 	const { branch, upstreamBranch } = status;
 	if (status.ahead === 0) {
-		return finish(status, {
-			direction: 'to-source',
-			merged: false,
-			into: upstreamBranch,
-			from: branch,
-			path: status.upstreamPath,
-			fastForward: false
-		});
+		return finish(
+			status,
+			{
+				direction: 'to-source',
+				merged: false,
+				into: upstreamBranch,
+				from: branch,
+				path: status.upstreamPath,
+				fastForward: false
+			},
+			opts
+		);
 	}
 	if (status.upstreamDirtyCount > 0) {
 		throw new WorktreeIntegrationError(
@@ -420,23 +475,31 @@ async function mergeToSource(
 			{ stderr: merge.stderr.trim(), conflicts }
 		);
 	}
-	return finish(status, {
-		direction: 'to-source',
-		merged: true,
-		into: upstreamBranch,
-		from: branch,
-		path: status.upstreamPath,
-		fastForward: !allowMergeCommit
-	});
+	return finish(
+		status,
+		{
+			direction: 'to-source',
+			merged: true,
+			into: upstreamBranch,
+			from: branch,
+			path: status.upstreamPath,
+			fastForward: !allowMergeCommit
+		},
+		opts
+	);
 }
 
 async function finish(
 	status: WorktreeIntegrationStatus,
-	partial: Omit<MergeWorktreeResult, 'headSha' | 'status'>
+	partial: Omit<MergeWorktreeResult, 'headSha' | 'status'>,
+	opts: WorktreeIntegrationStatusOptions = {}
 ): Promise<MergeWorktreeResult> {
 	const headSha = await gitOk(partial.path, ['rev-parse', 'HEAD']);
 	invalidateIntegrationStatus();
-	return { ...partial, headSha, status: await worktreeIntegrationStatus(status.path) };
+	// Re-read against the SAME upstream the merge used, or the caller would get
+	// back a status measured against a different branch than the one it merged
+	// with.
+	return { ...partial, headSha, status: await worktreeIntegrationStatus(status.path, opts) };
 }
 
 // ---------- Cached reads ----------

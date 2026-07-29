@@ -83,7 +83,17 @@ Path derivation, containment, locking, and rollback are shared with the
 conversation primary via `createWorktreeForSlot`, and resolution fails closed the
 same way.
 
-Two properties are load-bearing rather than incidental:
+A lease's counterpart in both directions is the **holding conversation's
+workspace**, not the repository's main checkout: it is cut from that tree's HEAD
+and merges back into that tree's branch. Sub-agents therefore start from the
+orchestrator's current state, and their results gather into one branch to be
+reviewed and tested together before any of it reaches the shared checkout. For a
+shared-workdir conversation the counterpart *is* the main checkout, so this
+degenerates to the obvious behavior. `worktree-integration.ts` supports this via
+an optional `upstreamPath`; without it, "to-source" would mean the repository's
+main worktree and every lease would bypass the conversation that owns it.
+
+Three properties are load-bearing rather than incidental:
 
 - **Leases widen the permission boundary, not just the file browser.** A
   conversation's writable area is the SET of roots returned by
@@ -92,18 +102,24 @@ Two properties are load-bearing rather than incidental:
   mid-turn is writable within that turn. Without this an agent cannot use a
   lease at all: the write is auto-denied under non-interactive modes, and the
   observed fallback is a stray write into the shared tree.
+- **Merging back is the point.** A lease whose work is never merged is work
+  thrown away, so `worktree_merge` (and the switcher's merge action) close the
+  loop. Collecting the second and later leases of a parallel run is not a
+  fast-forward, so `allowMergeCommit` is expected there rather than exceptional.
+  A conflict merging *into* the conversation is always rolled back; the lease is
+  where an agent is supposed to resolve conflicts.
 - **Leases are not snapshotted per message.** Per-turn snapshots capture the
   conversation's own tree only, so the workspace switcher labels a selected
   lease accordingly rather than letting "Changes" imply full coverage.
 
 Agents manage leases with the `worktree` tool group
-(`worktree_create`/`_list`/`_status`/`_remove`); humans get the same operations
-over `/api/conversations/<id>/worktrees`, and the Files/Changes/Commits panes
-take an optional `?worktree=<leaseId>` selector. Quotas
-(`WORKTREE_MAX_LEASES_PER_*`) plus an idle reaper bound disk growth; the reaper
-never collects a lease with uncommitted changes, and removal only ever deletes a
-fully merged branch, so committed work survives as a branch rather than being
-destroyed.
+(`worktree_create`/`_list`/`_status`/`_merge`/`_remove`); humans get the same
+operations over `/api/conversations/<id>/worktrees`, and the
+Files/Changes/Commits panes take an optional `?worktree=<leaseId>` selector.
+Quotas (`WORKTREE_MAX_LEASES_PER_*`) plus an idle reaper bound disk growth; the
+reaper never collects a lease with uncommitted changes, and removal only ever
+deletes a fully merged branch, so committed work survives as a branch rather
+than being destroyed.
 
 Isolation is only half a lifecycle, so `src/lib/server/worktree-integration.ts`
 covers the other half: getting the work back. It derives a worktree's position
