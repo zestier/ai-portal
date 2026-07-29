@@ -99,6 +99,40 @@ export interface Conversation {
 	worktreeBaseSha: string | null;
 }
 
+/**
+ * A workspace's position relative to the branch checked out in its repository's
+ * main checkout. Mirrors the server's `WorktreeIntegrationStatus`; see
+ * `src/lib/server/worktree-integration.ts` for how each field is derived.
+ */
+export interface WorktreeIntegration {
+	path: string;
+	isLinkedWorktree: boolean;
+	branch: string | null;
+	upstreamPath: string;
+	/** Repository-lock key; shared by the main worktree and every linked worktree. */
+	gitCommonDir: string;
+	upstreamBranch: string | null;
+	ahead: number;
+	behind: number;
+	dirtyCount: number;
+	upstreamDirtyCount: number;
+	/** Holds commits or uncommitted changes the source branch does not have. */
+	unmerged: boolean;
+}
+
+/** One row of `GET /api/worktrees/status`, the sidebar's unmerged-work badge feed. */
+export interface WorktreeStatusSummary {
+	conversationId: string;
+	/** False when the checkout is missing or unreadable; every other field is then absent. */
+	available: boolean;
+	unmerged: boolean;
+	branch?: string | null;
+	upstreamBranch?: string | null;
+	ahead?: number;
+	behind?: number;
+	dirtyCount?: number;
+}
+
 export type WorkspaceTicketStatus = 'open' | 'done' | 'archived';
 
 /**
@@ -1045,7 +1079,7 @@ export type PortalEvent =
 // changed (add/update/status/block/unblock/remove, from a tool or the REST
 // endpoints) — a content-free nudge for the app shell to re-fetch the sidebar
 // ticket list. The channel is designed to carry further cross-conversation
-// signals later (turn-finished, title updates, memory status, …).
+// signals later (title updates, memory status, …).
 export type AppEvent =
 	| {
 			type: 'awaiting.changed';
@@ -1056,7 +1090,18 @@ export type AppEvent =
 	// is user-global (`invalidateAll()` re-runs the layout `load`). The repo
 	// notifier does pass a `ticketId`/`workspaceKey` for future filtering, but
 	// the feed deliberately doesn't expose them yet.
-	| { type: 'tickets.changed' };
+	| { type: 'tickets.changed' }
+	// A conversation's sidebar "active" state changed. Always a FULL snapshot of
+	// both dimensions (not a delta) so a client that missed an earlier event
+	// still converges: `running` = a turn is in flight, `unread` = there is
+	// assistant output the user hasn't seen. Emitted when a turn starts, when it
+	// finalizes, and when a conversation is marked read.
+	| {
+			type: 'activity.changed';
+			conversationId: string;
+			running: boolean;
+			unread: boolean;
+	  };
 
 // Latest context-window snapshot persisted per conversation. Mirrors the
 // shape of the `context.usage` PortalEvent (sans the `type` and `isInitial`

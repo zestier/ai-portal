@@ -55,6 +55,7 @@ const summaryHandlers: Record<string, SummaryHandler> = {
 	git_show_commit: gitShowCommitSummary,
 	git_commit: gitCommitSummary,
 	git_show_file: gitShowFileSummary,
+	git_worktree_merge: gitWorktreeMergeSummary,
 	memory_search: memoryQuerySummary,
 	memory_global_search: memoryQuerySummary,
 	memory_get_transcript: memoryQuerySummary,
@@ -196,6 +197,16 @@ function gitLogSummary(args: Record<string, unknown>): string | null {
 function gitShowCommitSummary(args: Record<string, unknown>): string | null {
 	const sha = str(args.sha);
 	return args.includePatch === true && sha ? `${sha} · patch` : sha;
+}
+
+// The bare `direction` value ("to-source") reads as jargon in a collapsed line,
+// so spell out which way the work is moving.
+function gitWorktreeMergeSummary(args: Record<string, unknown>): string | null {
+	const direction = str(args.direction);
+	if (!direction) return null;
+	const label =
+		direction === 'to-source' ? 'integrate into source branch' : 'sync from source branch';
+	return args.allowMergeCommit === true ? `${label} (allow merge commit)` : label;
 }
 
 function gitCommitSummary(args: Record<string, unknown>): string | null {

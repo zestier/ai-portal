@@ -67,6 +67,39 @@ The logical ticket workspace is stored separately from `workdir`. A managed
 worktree inherits its source repository's workspace key, so conversations on
 different branches still share one ticket backlog.
 
+Isolation is only half a lifecycle, so `src/lib/server/worktree-integration.ts`
+covers the other half: getting the work back. It derives a worktree's position
+from git rather than from `managed_worktrees` — `git worktree list --porcelain`
+names the repository's main checkout, and the branch checked out there is
+treated as "upstream" — then reports ahead/behind/dirty counts and merges in
+either direction.
+
+The two merge directions are deliberately asymmetric, because only one of the
+two trees is shared with a human:
+
+- `from-source` merges upstream into the worktree. A conflict may be left in
+  place (opt-in) since that isolated tree is exactly where an agent should
+  resolve it.
+- `to-source` merges the worktree branch into the source checkout. It must
+  fast-forward by default, refuses when either tree is dirty, and always rolls
+  a conflict back — the source checkout is never left mid-merge.
+
+Every operation that mutates a repository — `git worktree add`, `git worktree
+remove`, and either merge direction — serializes on the shared, in-process
+`withRepositoryLock` (`src/lib/server/repo-lock.ts`), keyed on the repository's
+git common dir so a repository's main worktree and all of its linked worktrees
+share one key. A merge re-reads its status *inside* that lock, because the
+dirty/ahead/behind guards are a check-then-act on state another operation could
+otherwise invalidate. This is a same-process mutex only; git's own `index.lock`
+is what guards against unrelated processes.
+
+Agents drive this with `git_worktree_status` / `git_worktree_merge`, and`git_commit` adds a follow-up hint pointing at integration whenever it commits
+inside a linked worktree. `GET /api/worktrees/status` feeds the sidebar's
+"unmerged" badge, `GET|POST /api/conversations/<id>/worktree[/merge]` back the
+chat header's integration panel, and deleting a conversation whose worktree
+still holds unmerged commits requires the same `forceWorktree=1` confirmation
+that a dirty one does.
+
 ### 5. Cloudflare Tunnel (optional, deployment-time)
 
 `cloudflared` runs as a sidecar container, exposing the SvelteKit port over

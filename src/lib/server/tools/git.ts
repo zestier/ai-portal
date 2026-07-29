@@ -15,8 +15,13 @@ import {
 	status,
 	type DiffTarget
 } from '../git';
-import { COMMIT_TICKET_FOLLOW_UP_HINT } from './follow-up-hints';
-import { ok, type PortalTool } from './types';
+import { COMMIT_TICKET_FOLLOW_UP_HINT, WORKTREE_INTEGRATE_FOLLOW_UP_HINT } from './follow-up-hints';
+import {
+	mergeWorktree,
+	worktreeIntegrationStatus,
+	WorktreeIntegrationError
+} from '../worktree-integration';
+import { ok, err, type PortalTool } from './types';
 
 // Re-exported so existing importers of these symbols from `./git` keep
 // compiling now that the canonical definitions live in `./types`.
@@ -113,6 +118,16 @@ const GitCommitArgs = z
 			)
 			.max(50)
 			.optional()
+	})
+	.strict();
+
+const NoArgs = z.object({}).strict().optional().default({});
+
+const GitWorktreeMergeArgs = z
+	.object({
+		direction: z.enum(['from-source', 'to-source']),
+		allowMergeCommit: z.boolean().optional().default(false),
+		onConflict: z.enum(['abort', 'keep']).optional().default('abort')
 	})
 	.strict();
 
@@ -333,12 +348,93 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			},
 			async handler(args, ctx) {
 				const parsed = GitCommitArgs.parse(args);
-				return ok(await commitChanges(cwd, parsed, ctx), undefined, {
-					followUpHint: COMMIT_TICKET_FOLLOW_UP_HINT
+				const result = await commitChanges(cwd, parsed, ctx);
+				// Only worktree sessions get the integrate nudge; in the main checkout
+				// a commit is already where the user can see it.
+				const linked = await isLinkedWorktree(cwd);
+				return ok(result, undefined, {
+					followUpHint: linked
+						? `${COMMIT_TICKET_FOLLOW_UP_HINT}\n\n${WORKTREE_INTEGRATE_FOLLOW_UP_HINT}`
+						: COMMIT_TICKET_FOLLOW_UP_HINT
 				});
+			}
+		},
+		{
+			name: 'git_worktree_status',
+			description:
+				'Report how this workspace relates to the branch checked out in the repository’s main checkout: whether it is a linked worktree, its branch, how many commits it is ahead/behind, and whether it holds unmerged work. Read-only.',
+			argsSchema: NoArgs,
+			parameters: { type: 'object', properties: {}, additionalProperties: false },
+			async handler() {
+				try {
+					return ok(await worktreeIntegrationStatus(cwd));
+				} catch (cause) {
+					return toolErrorFor(cause);
+				}
+			}
+		},
+		{
+			name: 'git_worktree_merge',
+			description:
+				'Merge between this linked worktree’s branch and the branch checked out in the repository’s main checkout. Use direction "to-source" to integrate finished work back (the normal end-of-session step), or "from-source" to first pull in upstream commits and resolve conflicts inside the isolated worktree. Refuses to merge with uncommitted changes on either side, and never leaves the main checkout mid-merge.',
+			argsSchema: GitWorktreeMergeArgs,
+			permissionBehavior: 'always-prompt',
+			parameters: {
+				type: 'object',
+				properties: {
+					direction: {
+						type: 'string',
+						enum: ['from-source', 'to-source'],
+						description:
+							'"to-source" merges this worktree branch into the main checkout’s branch; "from-source" merges the main checkout’s branch into this worktree.'
+					},
+					allowMergeCommit: {
+						type: 'boolean',
+						description:
+							'direction="to-source" only. Defaults to false, which requires a fast-forward so the main checkout stays linear and can never be left mid-merge. Set true to allow a --no-ff merge commit when the source branch has moved on.'
+					},
+					onConflict: {
+						type: 'string',
+						enum: ['abort', 'keep'],
+						description:
+							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in this worktree for you to resolve and commit. "to-source" always rolls back.'
+					}
+				},
+				required: ['direction'],
+				additionalProperties: false
+			},
+			async handler(args) {
+				const parsed = GitWorktreeMergeArgs.parse(args);
+				try {
+					const result = await mergeWorktree(cwd, parsed);
+					return ok(
+						result,
+						result.merged
+							? `Merged ${result.from} into ${result.into}${result.fastForward ? ' (fast-forward)' : ''}`
+							: `Already up to date: nothing to merge into ${result.into}`
+					);
+				} catch (cause) {
+					return toolErrorFor(cause);
+				}
 			}
 		}
 	];
+}
+
+/** Normalize an integration failure into the tool envelope, preserving its code. */
+function toolErrorFor(cause: unknown) {
+	if (cause instanceof WorktreeIntegrationError) {
+		return err(cause.message, { code: cause.code, details: cause.detail });
+	}
+	throw cause;
+}
+
+async function isLinkedWorktree(cwd: string): Promise<boolean> {
+	try {
+		return (await worktreeIntegrationStatus(cwd)).isLinkedWorktree;
+	} catch {
+		return false;
+	}
 }
 
 function toDiffTarget(kind: z.infer<typeof TargetKind>, sha: string | undefined): DiffTarget {

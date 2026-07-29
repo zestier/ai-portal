@@ -128,4 +128,138 @@ describe('managed worktree conversation routes', () => {
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		expect(convs.get(conversation.id, userId)).toBeNull();
 	});
+
+	describe('integration endpoints', () => {
+		async function createWorktreeConversation(title: string) {
+			const { POST } = await import('../src/routes/api/conversations/+server');
+			const response = await POST({
+				locals: {
+					userId,
+					user: { id: userId, githubLogin: 'local-dev', displayName: null, avatarUrl: null }
+				},
+				request: new Request('http://localhost/api/conversations', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ title, workspace: { kind: 'worktree' } })
+				}),
+				getClientAddress: () => '127.0.0.1'
+			} as never);
+			return (await response.json()).conversation;
+		}
+
+		function commitInWorktree(conversation: { workdir: string }, name: string) {
+			writeFileSync(join(conversation.workdir, name), 'work\n');
+			git(conversation.workdir, ['add', name]);
+			git(conversation.workdir, ['commit', '-q', '-m', `add ${name}`]);
+		}
+
+		it('reports and then integrates a worktree session', async () => {
+			const conversation = await createWorktreeConversation('integrate me');
+			commitInWorktree(conversation, 'feature.txt');
+
+			const { GET } = await import('../src/routes/api/conversations/[id]/worktree/+server');
+			const before = await (
+				await GET({ params: { id: conversation.id }, locals: { userId } } as never)
+			).json();
+			expect(before.worktree).toMatchObject({
+				isLinkedWorktree: true,
+				ahead: 1,
+				unmerged: true,
+				upstreamBranch: 'main'
+			});
+
+			const { POST: MERGE } =
+				await import('../src/routes/api/conversations/[id]/worktree/merge/+server');
+			const merged = await (
+				await MERGE({
+					params: { id: conversation.id },
+					locals: { userId },
+					request: new Request('http://localhost/merge', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ direction: 'to-source' })
+					}),
+					getClientAddress: () => '127.0.0.1'
+				} as never)
+			).json();
+			expect(merged.merge).toMatchObject({ merged: true, into: 'main', fastForward: true });
+			expect(existsSync(join(source, 'feature.txt'))).toBe(true);
+
+			const after = await (
+				await GET({ params: { id: conversation.id }, locals: { userId } } as never)
+			).json();
+			expect(after.worktree.unmerged).toBe(false);
+		});
+
+		it('surfaces a refusal as a 409 with its code rather than merging', async () => {
+			const conversation = await createWorktreeConversation('dirty merge');
+			commitInWorktree(conversation, 'feature.txt');
+			writeFileSync(join(conversation.workdir, 'scratch.txt'), 'wip\n');
+
+			const { POST: MERGE } =
+				await import('../src/routes/api/conversations/[id]/worktree/merge/+server');
+			await expect(
+				MERGE({
+					params: { id: conversation.id },
+					locals: { userId },
+					request: new Request('http://localhost/merge', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ direction: 'to-source' })
+					}),
+					getClientAddress: () => '127.0.0.1'
+				} as never)
+			).rejects.toMatchObject({ status: 409, body: { code: 'worktree_dirty' } });
+			expect(existsSync(join(source, 'feature.txt'))).toBe(false);
+		});
+
+		it('lists unmerged work for the sidebar and drops it once integrated', async () => {
+			const conversation = await createWorktreeConversation('badge me');
+			commitInWorktree(conversation, 'feature.txt');
+
+			const { GET: BULK } = await import('../src/routes/api/worktrees/status/+server');
+			const listed = await (await BULK({ locals: { userId } } as never)).json();
+			expect(listed.worktrees).toContainEqual(
+				expect.objectContaining({ conversationId: conversation.id, unmerged: true, ahead: 1 })
+			);
+		});
+
+		it('refuses to delete a clean worktree that still holds unmerged commits', async () => {
+			const conversation = await createWorktreeConversation('unmerged delete');
+			commitInWorktree(conversation, 'feature.txt');
+
+			const { DELETE } = await import('../src/routes/api/conversations/[id]/+server');
+			await expect(
+				DELETE({
+					params: { id: conversation.id },
+					locals: { userId },
+					url: new URL(`http://localhost/api/conversations/${conversation.id}`),
+					getClientAddress: () => '127.0.0.1'
+				} as never)
+			).rejects.toMatchObject({ status: 409, body: { code: 'worktree_unmerged' } });
+			expect(existsSync(conversation.workdir)).toBe(true);
+
+			const forced = await DELETE({
+				params: { id: conversation.id },
+				locals: { userId },
+				url: new URL(`http://localhost/api/conversations/${conversation.id}?forceWorktree=1`),
+				getClientAddress: () => '127.0.0.1'
+			} as never);
+			expect(forced.ok).toBe(true);
+		});
+
+		// The guard exists to prevent surprise, not to protect an empty branch.
+		it('deletes a clean, fully merged worktree without a force flag', async () => {
+			const conversation = await createWorktreeConversation('nothing to lose');
+			const { DELETE } = await import('../src/routes/api/conversations/[id]/+server');
+			const response = await DELETE({
+				params: { id: conversation.id },
+				locals: { userId },
+				url: new URL(`http://localhost/api/conversations/${conversation.id}`),
+				getClientAddress: () => '127.0.0.1'
+			} as never);
+			expect(response.ok).toBe(true);
+			expect(existsSync(conversation.workdir)).toBe(false);
+		});
+	});
 });

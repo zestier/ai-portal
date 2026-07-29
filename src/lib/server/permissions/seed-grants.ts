@@ -1,7 +1,13 @@
 // Seed grants: the curated set of structured permission grants that
-// every user starts with. Inserted on user creation and idempotently
-// backfilled for existing users; visible in the settings page so users
-// can audit / revoke them.
+// every user starts with. Inserted when a user row is first created, and
+// visible in the settings page so users can audit / revoke them.
+//
+// NOTE ON ROLLOUT: seeding runs on user *creation* only (see the call sites in
+// `db/repos/users.ts`), not on every login. So adding a seed here does NOT
+// retroactively grant it to existing users — they pick it up via the Settings
+// "Restore default seed grants" button (`restoreSeedGrantsForUser`). That is
+// deliberate: re-running the seeder on each login would resurrect seeds a user
+// intentionally revoked, silently handing back an auto-approval they removed.
 //
 // These replace the old hand-curated shell safe-list (which lived in
 // code, was invisible to users, and ran *before* the matcher). By
@@ -99,7 +105,11 @@ const GIT_STRUCTURED_TOOLS = [
 	'git_diff',
 	'git_log',
 	'git_show_commit',
-	'git_show_file'
+	'git_show_file',
+	// Read-only, like the rest of this list. The mutating worktree tool
+	// (`git_worktree_merge`) is deliberately absent, same as `git_commit`: it
+	// declares `permissionBehavior: 'always-prompt'` and must stay promptable.
+	'git_worktree_status'
 ];
 const TICKET_STRUCTURED_TOOLS = ['ticket_add', 'ticket_list', 'ticket_get', 'ticket_update'];
 const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];

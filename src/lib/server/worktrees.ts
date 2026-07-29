@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { loadConfig } from './config';
+import { withRepositoryLock } from './repo-lock';
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const IDENTIFIER_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -267,24 +268,6 @@ export async function inspectRepository(sourceWorkdir: string): Promise<{
 	};
 }
 
-type LockMap = Map<string, Promise<void>>;
-const locks: LockMap = new Map();
-
-async function withRepositoryLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-	const previous = locks.get(key) ?? Promise.resolve();
-	let release!: () => void;
-	const current = new Promise<void>((done) => (release = done));
-	const queued = previous.then(() => current);
-	locks.set(key, queued);
-	await previous;
-	try {
-		return await fn();
-	} finally {
-		release();
-		if (locks.get(key) === queued) locks.delete(key);
-	}
-}
-
 /**
  * Create a portal-owned linked worktree for any slot. Shared by conversation
  * primaries and leases so both get identical containment, locking, and
@@ -501,9 +484,24 @@ export async function rollbackManagedWorktree(metadata: ManagedWorktreeMetadata)
  * goes away, but committed work survives under its branch name for the user to
  * merge or delete deliberately.
  */
+/**
+ * Delete a branch only if it is fully merged (`git branch -d`, never `-D`).
+ *
+ * Returns false when the branch was kept because it still holds unmerged
+ * commits. This is what makes dropping a lease non-destructive: the checkout
+ * goes away, but committed work survives under its branch name for the user to
+ * merge or delete deliberately.
+ *
+ * Takes the repository lock, like every other mutation in this module: ref
+ * deletion must not interleave with a `to-source` merge or a concurrent
+ * `worktree add`/`remove` on the same repository.
+ */
 export async function deleteMergedBranch(cwd: string, branch: string): Promise<boolean> {
-	const result = await runGit(cwd, ['branch', '-d', branch]);
-	return result.code === 0;
+	const { gitCommonDir } = await inspectRepository(cwd);
+	return withRepositoryLock(gitCommonDir, async () => {
+		const result = await runGit(cwd, ['branch', '-d', branch]);
+		return result.code === 0;
+	});
 }
 
 export function expectedManagedWorktreePath(userId: string, conversationId: string): string {

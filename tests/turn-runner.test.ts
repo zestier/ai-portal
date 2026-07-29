@@ -74,6 +74,62 @@ describe('turn-runner', () => {
 		}
 	});
 
+	it('reports a running turn in runningConversationIds and publishes activity transitions', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const appEvents = await import('../src/lib/server/runtime/app-events');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, { title: 'c', workdir: wd, model: 'gpt-4' });
+
+		const seen: Array<{ running: boolean; unread: boolean }> = [];
+		const ac = new AbortController();
+		const drained = (async () => {
+			for await (const { event } of appEvents.getAppEventBus().subscribe(user.id, {
+				signal: ac.signal
+			})) {
+				if (event.type === 'activity.changed' && event.conversationId === conv.id) {
+					seen.push({ running: event.running, unread: event.unread });
+				}
+			}
+		})();
+		await Promise.resolve();
+
+		let resolveAcquire: (session: ReturnType<typeof makeFakeSession>) => void = () => {};
+		acquireMock.mockReturnValue(
+			new Promise((resolve) => {
+				resolveAcquire = resolve;
+			})
+		);
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		expect(turnRunner.runningConversationIds()).toEqual(new Set([conv.id]));
+
+		resolveAcquire(makeFakeSession([{ type: 'done' }], conv.id, wd));
+		for await (const { event } of turn.subscribe()) {
+			if (event.type === 'done') break;
+		}
+		// The finalizer sets `status` and publishes the leaving transition before
+		// it emits the terminal `done`, so both are already observable here.
+		// A finished-but-still-cached turn (the replay grace window) must not keep
+		// the conversation flagged as running.
+		expect(turnRunner.runningConversationIds()).toEqual(new Set());
+
+		ac.abort();
+		await drained;
+		expect(seen[0]).toEqual({ running: true, unread: false });
+		expect(seen.at(-1)?.running).toBe(false);
+	});
+
 	it('reserveTurn throws a typed TurnAlreadyInProgressError on a second reservation', async () => {
 		const { turnRunner } = await freshImports();
 		const id = 'conv-reserve';

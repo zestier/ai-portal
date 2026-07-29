@@ -21,6 +21,7 @@
 	import { PORTAL_TOOL_GROUP_IDS, type PortalToolGroupId } from '$lib/tools/groups';
 	import { isBlockingKind } from '$lib/interactive/request-registry';
 	import { setAwaitingInput, clearAwaitingInput } from '$lib/client/awaiting-input';
+	import { markConversationRead } from '$lib/client/conversation-activity';
 	import { findToolCallRecord } from '$lib/client/tool-call-record';
 	import { resolveAssistantTarget } from '$lib/client/assistant-target';
 	import {
@@ -247,6 +248,14 @@
 		return () => clearAwaitingInput(id);
 	});
 
+	// Opening a conversation clears its sidebar "unseen response" flag. The page
+	// `load` already marks it read server-side, but this also fires on a
+	// client-side conversation switch that reuses the component, and it drops the
+	// local indicator immediately rather than after the round-trip.
+	$effect(() => {
+		void markConversationRead(conversation.id);
+	});
+
 	// Foreground/network resume listeners. Registered once for the component's
 	// lifetime (independent of which conversation is loaded) so a tab that was
 	// frozen during a screen lock re-syncs the moment it comes back, instead of
@@ -423,6 +432,11 @@
 				// here so Stop removes them promptly without a reload.
 				if (stopping) clearAllPendingInteractive();
 				closeStream();
+				// The response landed while the user was looking at it, so keep the
+				// sidebar from flagging this conversation as unseen once they
+				// navigate away. The server publishes `unread: true` at turn end
+				// (it can't know who's watching); this is the correction.
+				void markConversationRead(conversation.id);
 				flushArmed(failed);
 			} else {
 				scheduleStreamStallTimeout();

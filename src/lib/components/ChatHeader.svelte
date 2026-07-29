@@ -6,8 +6,10 @@
 		ProviderCapabilities,
 		MemoryExtractorBackend,
 		MemoryMode,
-		SessionMode
+		SessionMode,
+		WorktreeIntegration
 	} from '$lib/types';
+	import { onDestroy } from 'svelte';
 	import ContextMeter from './ContextMeter.svelte';
 	import ConfirmDialog from './ui/ConfirmDialog.svelte';
 	import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
@@ -414,6 +416,93 @@
 		}
 	}
 
+	// ---- Worktree integration ----
+	//
+	// Only meaningful for a session that owns an isolated checkout. The status is
+	// fetched lazily rather than shipped in the page load because it costs git
+	// subprocesses (see the route comment) and only matters once the user is
+	// actually looking at the session's workspace details.
+	let worktree = $state<WorktreeIntegration | null>(null);
+	let merging = $state(false);
+	let mergeError = $state<string | null>(null);
+	let mergeFlash = $state<string | null>(null);
+	let mergeTimer: ReturnType<typeof setTimeout> | null = null;
+
+	async function loadWorktree(id: string) {
+		try {
+			const res = await fetch(`/api/conversations/${id}/worktree`);
+			if (!res.ok) return;
+			const next = (await res.json()).worktree ?? null;
+			// A slow response for a conversation the user has already navigated away
+			// from must not overwrite the current one.
+			if (conversation.id === id) worktree = next;
+		} catch {
+			worktree = null;
+		}
+	}
+
+	$effect(() => {
+		// Tracks the conversation id so switching sessions refetches.
+		const id = conversation.id;
+		if (conversation.workspaceKind !== 'managed-worktree') {
+			worktree = null;
+			return;
+		}
+		worktree = null;
+		mergeError = null;
+		mergeFlash = null;
+		void loadWorktree(id);
+	});
+
+	onDestroy(() => {
+		if (mergeTimer) clearTimeout(mergeTimer);
+	});
+
+	async function integrate(allowMergeCommit: boolean) {
+		if (merging) return;
+		merging = true;
+		mergeError = null;
+		mergeFlash = null;
+		try {
+			const res = await fetch(`/api/conversations/${conversation.id}/worktree/merge`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ direction: 'to-source', allowMergeCommit })
+			});
+			const payload = await res.json().catch(() => null);
+			if (!res.ok) {
+				mergeError = payload?.message ?? `merge failed (${res.status})`;
+				return;
+			}
+			const merge = payload?.merge;
+			mergeFlash = merge?.merged ? `Merged ${merge.from} into ${merge.into}` : 'Already up to date';
+			worktree = merge?.status ?? worktree;
+			if (mergeTimer) clearTimeout(mergeTimer);
+			mergeTimer = setTimeout(() => (mergeFlash = null), 4000);
+		} catch (e) {
+			mergeError = e instanceof Error ? e.message : 'merge failed';
+		} finally {
+			merging = false;
+		}
+	}
+
+	/** Human summary of what this worktree holds that the source branch doesn't. */
+	const unmergedLabel = $derived.by(() => {
+		if (!worktree?.unmerged) return '';
+		const parts: string[] = [];
+		if (worktree.ahead > 0) {
+			parts.push(
+				`${worktree.ahead} commit${worktree.ahead === 1 ? '' : 's'} not in ${worktree.upstreamBranch ?? 'the source branch'}`
+			);
+		}
+		if (worktree.dirtyCount > 0) {
+			parts.push(
+				`${worktree.dirtyCount} uncommitted change${worktree.dirtyCount === 1 ? '' : 's'}`
+			);
+		}
+		return parts.join(', ');
+	});
+
 	const miniPct = $derived.by(() => {
 		if (!usage || usage.tokenLimit <= 0) return 0;
 		return Math.min(100, (usage.currentTokens / usage.tokenLimit) * 100);
@@ -434,6 +523,16 @@
 		aria-controls="chat-header-details"
 	>
 		<span class="title-wrap"><h2>{title}</h2></span>
+		{#if worktree?.unmerged}
+			<span
+				class="unmerged-pill"
+				data-testid="header-unmerged"
+				title={unmergedLabel}
+				aria-label={`Unmerged worktree work: ${unmergedLabel}`}
+			>
+				unmerged
+			</span>
+		{/if}
 		{#if usage}
 			<span
 				class="mini-meter"
@@ -481,9 +580,45 @@
 						<dt>Base</dt>
 						<dd class="mono">{conversation.worktreeBaseSha.slice(0, 8)}</dd>
 					{/if}
+					{#if worktree?.isLinkedWorktree}
+						<dt>Source branch</dt>
+						<dd class="mono">{worktree.upstreamBranch ?? '(detached)'}</dd>
+						<dt>Integration</dt>
+						<dd>
+							{#if worktree.unmerged}
+								{unmergedLabel}
+							{:else}
+								Fully merged{worktree.behind > 0 ? `, ${worktree.behind} behind` : ''}
+							{/if}
+						</dd>
+					{/if}
 					<dt>ID</dt>
 					<dd class="mono">{conversation.id}</dd>
 				</dl>
+				{#if worktree?.isLinkedWorktree}
+					<div class="worktree-actions">
+						<button
+							type="button"
+							class="worktree-merge"
+							disabled={merging || worktree.ahead === 0}
+							onclick={() => integrate(false)}
+						>
+							{merging ? 'Merging…' : `Merge into ${worktree.upstreamBranch ?? 'source'}`}
+						</button>
+						{#if worktree.behind > 0}
+							<button
+								type="button"
+								class="worktree-merge secondary"
+								disabled={merging || worktree.ahead === 0}
+								onclick={() => integrate(true)}
+							>
+								Allow merge commit
+							</button>
+						{/if}
+						{#if mergeFlash}<span class="worktree-flash ok">{mergeFlash}</span>{/if}
+						{#if mergeError}<span class="worktree-flash err">{mergeError}</span>{/if}
+					</div>
+				{/if}
 				{#if parent}
 					<div class="parent-crumb">
 						<svg
@@ -953,6 +1088,49 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
 		background: var(--surface-2);
+	}
+	.unmerged-pill {
+		flex: none;
+		font-size: var(--fs-xs);
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		padding: 0.1rem 0.4rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+		color: var(--warning);
+		background: var(--warning-bg);
+	}
+	.worktree-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		flex-wrap: wrap;
+	}
+	.worktree-merge {
+		font: inherit;
+		font-size: var(--fs-sm);
+		padding: 0.25rem 0.6rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--border);
+		background: var(--surface-2);
+		color: inherit;
+		cursor: pointer;
+	}
+	.worktree-merge:disabled {
+		opacity: 0.55;
+		cursor: default;
+	}
+	.worktree-merge.secondary {
+		background: transparent;
+	}
+	.worktree-flash {
+		font-size: var(--fs-sm);
+	}
+	.worktree-flash.ok {
+		color: var(--success);
+	}
+	.worktree-flash.err {
+		color: var(--danger);
 	}
 	.capability-notes strong {
 		display: block;

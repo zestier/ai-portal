@@ -11,6 +11,7 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
 import { getManagedWorktree } from '$lib/server/db/repos/conversations';
 import { removeManagedWorktree, WorktreeError } from '$lib/server/worktrees';
 import { removeLeasesForConversation } from '$lib/server/leases';
+import { worktreeIntegrationStatus } from '$lib/server/worktree-integration';
 import { error } from '@sveltejs/kit';
 import { audit } from '$lib/server/audit';
 
@@ -65,12 +66,12 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 	// A provider subprocess may have this directory as its cwd. Dispose it
 	// before asking Git to remove the linked worktree.
 	await pool.release(conv.id);
-	const force = url.searchParams.get('forceWorktree') === '1';
+	const forced = url.searchParams.get('forceWorktree') === '1';
 
 	// Leases first: they are children of the same repository, and failing after
 	// the conversation's own checkout is gone would leave a messier state to
 	// reconcile. A dirty lease blocks deletion the same way a dirty primary does.
-	const leaseResult = await removeLeasesForConversation(conv.id, conv.userId, { force });
+	const leaseResult = await removeLeasesForConversation(conv.id, conv.userId, { force: forced });
 	for (const leaseId of leaseResult.removed) {
 		audit({
 			event_type: 'worktree_remove',
@@ -78,7 +79,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 			actor_ip: getClientAddress(),
 			resource: leaseId,
 			outcome: 'success',
-			detail: { conversationId: conv.id, leaseId, forced: force }
+			detail: { conversationId: conv.id, leaseId, forced }
 		});
 	}
 	if (leaseResult.retained.length > 0) {
@@ -108,9 +109,31 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 
 	const managed = getManagedWorktree(conv.id, conv.userId);
 	if (managed) {
+		// Removing the checkout leaves the branch behind, so commits are not
+		// destroyed — but the conversation that named them is, which turns them
+		// into an orphan branch nobody will look for. Treat that like the dirty
+		// case: refuse once, and let the client re-confirm.
+		if (!forced) {
+			const unmerged = await unmergedCommitCount(managed.path);
+			if (unmerged > 0) {
+				audit({
+					event_type: 'worktree_remove',
+					actor_login: locals.user?.githubLogin ?? null,
+					actor_ip: getClientAddress(),
+					resource: managed.path,
+					outcome: 'denied',
+					detail: { conversationId: conv.id, code: 'worktree_unmerged', ahead: unmerged }
+				});
+				throw error(409, {
+					message: `this worktree has ${unmerged} commit(s) not merged into the source branch`,
+					code: 'worktree_unmerged',
+					detail: { ahead: unmerged, branch: managed.branch }
+				});
+			}
+		}
 		try {
 			await removeManagedWorktree(managed, {
-				force,
+				force: forced,
 				owner: { kind: 'conversation', userId: conv.userId, conversationId: conv.id }
 			});
 		} catch (cause) {
@@ -145,3 +168,16 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 	convs.remove(conv.id, conv.userId);
 	return json({ ok: true });
 };
+
+/**
+ * Commits on the worktree's branch that the source branch doesn't have. A
+ * missing/broken checkout returns 0 so a stale worktree stays deletable — the
+ * guard exists to prevent surprise, not to strand the user.
+ */
+async function unmergedCommitCount(path: string): Promise<number> {
+	try {
+		return (await worktreeIntegrationStatus(path)).ahead;
+	} catch {
+		return 0;
+	}
+}
