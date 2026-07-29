@@ -113,6 +113,21 @@ const GIT_STRUCTURED_TOOLS = [
 ];
 const TICKET_STRUCTURED_TOOLS = ['ticket_add', 'ticket_list', 'ticket_get', 'ticket_update'];
 const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];
+
+/**
+ * Read-only worktree-lease inspection, seeded for the same reason as
+ * `git_worktree_status`: an orchestrator polls these to find out which of its
+ * parallel sub-agents have finished. Unseeded they require a prompt, which
+ * under `best-effort`/autopilot is an auto-deny — so an unattended orchestrator
+ * could not even enumerate its own worktrees.
+ *
+ * The mutating tools (`worktree_create`, `_merge`, `_remove`) are deliberately
+ * absent, matching `git_commit` / `git_worktree_merge`: they create or destroy
+ * checkouts and branches, and `_merge`/`_remove` declare
+ * `permissionBehavior: 'always-prompt'` so a grant could not auto-approve them
+ * anyway.
+ */
+const WORKTREE_STRUCTURED_TOOLS = ['worktree_list', 'worktree_status'];
 const RISKY_GIT_GLOBAL_OPTIONS = [
 	'--bare',
 	'--no-replace-objects',
@@ -272,6 +287,9 @@ export function defaultSeedGrants(): SeedSpec[] {
 		seeds.push({ tool, permissionKind: 'custom-tool', scope: { kind: 'any' } });
 	}
 	for (const tool of TICKET_STRUCTURED_TOOLS) {
+		seeds.push({ tool, permissionKind: 'custom-tool', scope: { kind: 'any' } });
+	}
+	for (const tool of WORKTREE_STRUCTURED_TOOLS) {
 		seeds.push({ tool, permissionKind: 'custom-tool', scope: { kind: 'any' } });
 	}
 	for (const tool of PERMISSION_STRUCTURED_TOOLS) {

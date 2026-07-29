@@ -171,6 +171,23 @@ describe('seed grants — runtime behaviour', () => {
 		expect(customToolMatch('git_worktree_merge')).not.toBe('allow');
 	});
 
+	it('auto-approves read-only worktree-lease inspection', () => {
+		// An orchestrator polls these to see which parallel sub-agents finished.
+		// Requiring a prompt makes them auto-denied under best-effort, so an
+		// unattended run could not enumerate its own worktrees.
+		expect(customToolMatch('worktree_list')).toBe('allow');
+		expect(customToolMatch('worktree_status')).toBe('allow');
+	});
+
+	// Same rule as the git tools above: anything that creates or destroys a
+	// checkout or branch stays promptable. `_merge` and `_remove` also declare
+	// `permissionBehavior: 'always-prompt'`, which a seed must not undermine.
+	it('does not auto-approve mutating worktree tools', () => {
+		expect(customToolMatch('worktree_create')).not.toBe('allow');
+		expect(customToolMatch('worktree_merge')).not.toBe('allow');
+		expect(customToolMatch('worktree_remove')).not.toBe('allow');
+	});
+
 	it('auto-approves workspace ticket tools by default', () => {
 		expect(customToolMatch('ticket_add')).toBe('allow');
 		expect(customToolMatch('ticket_list')).toBe('allow');
