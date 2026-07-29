@@ -33,7 +33,7 @@ test('worktree creation surfaces the server error message', async ({ page }) => 
 	);
 });
 
-test('bulk deletion confirms and retries dirty worktrees', async ({ page }) => {
+test('bulk deletion confirms and retries worktrees holding work', async ({ page }) => {
 	await page.goto('/');
 	await page.getByRole('button', { name: 'New shared chat' }).first().click();
 	await page.waitForURL(/\/conversations\/[A-Z0-9]+/);
@@ -71,9 +71,55 @@ test('bulk deletion confirms and retries dirty worktrees', async ({ page }) => {
 
 	expect(dialogs).toEqual([
 		'Delete 1 conversation? This cannot be undone.',
-		'1 worktree has uncommitted changes. Delete it anyway?'
+		'1 worktree has uncommitted or unmerged work. Delete it anyway?'
 	]);
 	expect(deleteUrls[0]).not.toContain('forceWorktree=1');
+	expect(deleteUrls[1]).toContain('forceWorktree=1');
+});
+
+// The unmerged guard is a second, independent reason the endpoint can 409, and
+// the client must force-retry it exactly like the dirty case rather than
+// treating it as an ordinary failure.
+test('bulk deletion retries worktrees blocked for unmerged commits', async ({ page }) => {
+	await page.goto('/');
+	await page.getByRole('button', { name: 'New shared chat' }).first().click();
+	await page.waitForURL(/\/conversations\/[A-Z0-9]+/);
+	const conversationPath = new URL(page.url()).pathname;
+
+	const deleteUrls: string[] = [];
+	await page.route('**/api/conversations/*', async (route) => {
+		if (route.request().method() !== 'DELETE') return route.continue();
+		deleteUrls.push(route.request().url());
+		if (route.request().url().includes('forceWorktree=1')) {
+			return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+		}
+		return route.fulfill({
+			status: 409,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				code: 'worktree_unmerged',
+				message: 'unmerged commits',
+				detail: { ahead: 2 }
+			})
+		});
+	});
+	const dialogs: string[] = [];
+	page.on('dialog', async (dialog) => {
+		dialogs.push(dialog.message());
+		await dialog.accept();
+	});
+
+	await page.getByRole('button', { name: 'Select' }).click();
+	await page
+		.locator(`.conv:has(a[href="${conversationPath}"])`)
+		.getByRole('checkbox', { name: 'Select New chat' })
+		.check();
+	await page
+		.getByRole('toolbar', { name: 'Bulk actions' })
+		.getByRole('button', { name: 'Delete' })
+		.click();
+	await expect.poll(() => deleteUrls.length).toBe(2);
+
 	expect(deleteUrls[1]).toContain('forceWorktree=1');
 });
 

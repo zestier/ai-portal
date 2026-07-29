@@ -7,7 +7,8 @@
 		Conversation,
 		SidebarTicket,
 		User,
-		WorkspaceTicket
+		WorkspaceTicket,
+		WorktreeStatusSummary
 	} from '$lib/types';
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
@@ -62,12 +63,33 @@
 	let expandedTicketIds = $state(new Set<string>());
 	let errorMsg = $state<string | null>(null);
 	let mounted = $state(false);
+	// Unmerged-work state for managed-worktree sessions, keyed by conversation id.
+	// Fetched client-side (see the route comment) and refreshed on a slow poll —
+	// the answer only changes when an agent commits or someone merges.
+	let worktreeStatuses = $state(new Map<string, WorktreeStatusSummary>());
+	const WORKTREE_POLL_MS = 30_000;
+	let worktreeTimer: ReturnType<typeof setInterval> | null = null;
+
+	async function refreshWorktreeStatuses() {
+		try {
+			const res = await fetch('/api/worktrees/status');
+			if (!res.ok) return;
+			const body = (await res.json()) as { worktrees?: WorktreeStatusSummary[] };
+			worktreeStatuses = new Map((body.worktrees ?? []).map((w) => [w.conversationId, w]));
+		} catch {
+			// A failed poll just leaves the previous badges in place.
+		}
+	}
+
 	onMount(() => {
 		mounted = true;
+		void refreshWorktreeStatuses();
+		worktreeTimer = setInterval(() => void refreshWorktreeStatuses(), WORKTREE_POLL_MS);
 	});
 	let errorTimer: ReturnType<typeof setTimeout> | null = null;
 	onDestroy(() => {
 		if (errorTimer) clearTimeout(errorTimer);
+		if (worktreeTimer) clearInterval(worktreeTimer);
 	});
 	let firstMenuItem: HTMLButtonElement | null = $state(null);
 	let renameInput: HTMLInputElement | null = $state(null);
@@ -131,6 +153,28 @@
 			};
 		}
 		return null;
+	}
+
+	/**
+	 * Tooltip for the unmerged badge, or null when this conversation's worktree
+	 * (if any) holds nothing the source branch lacks. Separate from
+	 * {@link indicatorFor} on purpose: that indicator answers "does this want my
+	 * attention right now?" and is exclusive, whereas unmerged work is a durable
+	 * property of the session's checkout and can coexist with any of them.
+	 */
+	function unmergedLabelFor(id: string): string | null {
+		const status = worktreeStatuses.get(id);
+		if (!status?.unmerged) return null;
+		const parts: string[] = [];
+		if (status.ahead) {
+			parts.push(
+				`${status.ahead} commit${status.ahead === 1 ? '' : 's'} not in ${status.upstreamBranch ?? 'the source branch'}`
+			);
+		}
+		if (status.dirtyCount) {
+			parts.push(`${status.dirtyCount} uncommitted change${status.dirtyCount === 1 ? '' : 's'}`);
+		}
+		return `Unmerged worktree work: ${parts.join(', ')}`;
 	}
 	const selectedActiveCount = $derived(active.filter((c) => selected.has(c.id)).length);
 	const allActiveSelected = $derived(active.length > 0 && selectedActiveCount === active.length);
@@ -357,6 +401,22 @@
 		if (ok) await invalidateAll();
 	}
 
+	/**
+	 * Prose for a 409 the delete endpoint raised to protect worktree contents, or
+	 * null when the conflict was something else (which must not be force-retried).
+	 */
+	function worktreeBlockReason(
+		code: unknown,
+		detail: { ahead?: number } | undefined
+	): string | null {
+		if (code === 'worktree_dirty') return 'This worktree has uncommitted changes.';
+		if (code === 'worktree_unmerged') {
+			const ahead = detail?.ahead ?? 0;
+			return `This worktree has ${ahead} commit${ahead === 1 ? '' : 's'} not merged into the source branch.`;
+		}
+		return null;
+	}
+
 	async function deleteConv(id: string) {
 		closeMenu();
 		if (!confirm('Delete this conversation? This cannot be undone.')) return;
@@ -365,11 +425,12 @@
 			res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
 			if (res.status === 409) {
 				const body = await res.json().catch(() => null);
-				if (body?.code !== 'worktree_dirty') {
+				const reason = worktreeBlockReason(body?.code, body?.detail);
+				if (!reason) {
 					flashError('Delete failed (409)');
 					return;
 				}
-				if (!confirm('This worktree has uncommitted changes. Delete it anyway?')) return;
+				if (!confirm(`${reason} Delete it anyway?`)) return;
 				res = await fetch(`/api/conversations/${id}?forceWorktree=1`, { method: 'DELETE' });
 			}
 		} catch {
@@ -426,29 +487,33 @@
 					if (action === 'delete') {
 						const response = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
 						const body = response.status === 409 ? await response.json().catch(() => null) : null;
-						return { id, ok: response.ok, dirty: body?.code === 'worktree_dirty' };
+						return {
+							id,
+							ok: response.ok,
+							blocked: worktreeBlockReason(body?.code, body?.detail) !== null
+						};
 					}
 					const response = await fetch(`/api/conversations/${id}`, {
 						method: 'PATCH',
 						headers: { 'content-type': 'application/json' },
 						body: JSON.stringify({ archived: action === 'archive' })
 					});
-					return { id, ok: response.ok, dirty: false };
+					return { id, ok: response.ok, blocked: false };
 				})
 			);
-			const dirtyIds = results.filter((result) => result.dirty).map((result) => result.id);
+			const blockedIds = results.filter((result) => result.blocked).map((result) => result.id);
 			if (
 				action === 'delete' &&
-				dirtyIds.length > 0 &&
+				blockedIds.length > 0 &&
 				confirm(
-					`${dirtyIds.length} worktree${dirtyIds.length === 1 ? ' has' : 's have'} uncommitted changes. Delete ${dirtyIds.length === 1 ? 'it' : 'them'} anyway?`
+					`${blockedIds.length} worktree${blockedIds.length === 1 ? ' has' : 's have'} uncommitted or unmerged work. Delete ${blockedIds.length === 1 ? 'it' : 'them'} anyway?`
 				)
 			) {
 				const forced = await Promise.all(
-					dirtyIds.map(async (id) => ({
+					blockedIds.map(async (id) => ({
 						id,
 						ok: (await fetch(`/api/conversations/${id}?forceWorktree=1`, { method: 'DELETE' })).ok,
-						dirty: false
+						blocked: false
 					}))
 				);
 				const forcedById = new Map(forced.map((result) => [result.id, result]));
@@ -682,6 +747,7 @@
 			{@const isMenu = openMenuId === c.id}
 			{@const isRenaming = renamingId === c.id}
 			{@const indicator = indicatorFor(c.id)}
+			{@const unmergedLabel = unmergedLabelFor(c.id)}
 			<div class="conv" class:selected={selected.has(c.id)}>
 				{#if selectMode}
 					<input
@@ -739,7 +805,15 @@
 								</span>
 							{/if}
 						</div>
-						<div class="meta muted">{fmt(c.updatedAt)}</div>
+						<div class="meta muted">
+							<span>{fmt(c.updatedAt)}</span>
+							{#if unmergedLabel}
+								<span class="unmerged-badge" title={unmergedLabel} data-testid="unmerged-badge">
+									unmerged
+									<span class="visually-hidden">{unmergedLabel}</span>
+								</span>
+							{/if}
+						</div>
 					</a>
 				{/if}
 				{#if !selectMode && !isRenaming}
@@ -1267,6 +1341,23 @@
 	}
 	.meta {
 		font-size: var(--fs-xs);
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-width: 0;
+	}
+	/* Distinct from `.activity-indicator`: that flags attention, this flags a
+	   durable property of the session's checkout, so the two can co-occur. */
+	.unmerged-badge {
+		flex: none;
+		font-size: var(--fs-xs);
+		font-weight: 600;
+		line-height: 1.4;
+		padding: 0 0.3rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+		color: var(--warning);
+		background: var(--warning-bg);
 	}
 	.rename-input {
 		flex: 1;

@@ -99,6 +99,38 @@ export interface Conversation {
 	worktreeBaseSha: string | null;
 }
 
+/**
+ * A workspace's position relative to the branch checked out in its repository's
+ * main checkout. Mirrors the server's `WorktreeIntegrationStatus`; see
+ * `src/lib/server/worktree-integration.ts` for how each field is derived.
+ */
+export interface WorktreeIntegration {
+	path: string;
+	isLinkedWorktree: boolean;
+	branch: string | null;
+	upstreamPath: string;
+	upstreamBranch: string | null;
+	ahead: number;
+	behind: number;
+	dirtyCount: number;
+	upstreamDirtyCount: number;
+	/** Holds commits or uncommitted changes the source branch does not have. */
+	unmerged: boolean;
+}
+
+/** One row of `GET /api/worktrees/status`, the sidebar's unmerged-work badge feed. */
+export interface WorktreeStatusSummary {
+	conversationId: string;
+	/** False when the checkout is missing or unreadable; every other field is then absent. */
+	available: boolean;
+	unmerged: boolean;
+	branch?: string | null;
+	upstreamBranch?: string | null;
+	ahead?: number;
+	behind?: number;
+	dirtyCount?: number;
+}
+
 export type WorkspaceTicketStatus = 'open' | 'done' | 'archived';
 
 /**

@@ -12,6 +12,8 @@ declare global {
 		interface Error {
 			message: string;
 			code?: string;
+			/** Structured, code-specific context (e.g. a worktree's ahead count). */
+			detail?: unknown;
 		}
 		// interface PageState {}
 		// interface Platform {}

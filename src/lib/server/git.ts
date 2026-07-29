@@ -34,7 +34,7 @@ export class GitError extends Error {
 	}
 }
 
-interface RunOptions {
+export interface RunOptions {
 	cwd: string;
 	timeoutMs?: number | undefined;
 	maxBytes?: number | undefined;
@@ -174,6 +174,12 @@ function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
 		});
 	});
 }
+
+// Exposed for sibling server modules (e.g. `worktree-integration`) that need the
+// same hardened spawn wrapper — no shell, explicit cwd, hard timeout, capped
+// output — rather than re-implementing it. Not for route/tool code, which should
+// use the typed helpers below.
+export { runGit as runGitRaw };
 
 async function runGitOk(args: string[], opts: RunOptions): Promise<string> {
 	const r = await runGit(args, opts);
