@@ -109,6 +109,8 @@ export interface WorktreeIntegration {
 	isLinkedWorktree: boolean;
 	branch: string | null;
 	upstreamPath: string;
+	/** Repository-lock key; shared by the main worktree and every linked worktree. */
+	gitCommonDir: string;
 	upstreamBranch: string | null;
 	ahead: number;
 	behind: number;

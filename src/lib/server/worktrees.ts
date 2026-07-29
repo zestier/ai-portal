@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { loadConfig } from './config';
+import { withRepositoryLock } from './repo-lock';
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const IDENTIFIER_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -174,24 +175,6 @@ export async function inspectRepository(sourceWorkdir: string): Promise<{
 		gitCommonDir: realpathOrResolve(commonRaw),
 		baseSha: head.stdout.trim()
 	};
-}
-
-type LockMap = Map<string, Promise<void>>;
-const locks: LockMap = new Map();
-
-async function withRepositoryLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-	const previous = locks.get(key) ?? Promise.resolve();
-	let release!: () => void;
-	const current = new Promise<void>((done) => (release = done));
-	const queued = previous.then(() => current);
-	locks.set(key, queued);
-	await previous;
-	try {
-		return await fn();
-	} finally {
-		release();
-		if (locks.get(key) === queued) locks.delete(key);
-	}
 }
 
 export async function createManagedWorktree(

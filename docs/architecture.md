@@ -84,8 +84,16 @@ two trees is shared with a human:
   fast-forward by default, refuses when either tree is dirty, and always rolls
   a conflict back — the source checkout is never left mid-merge.
 
-Agents drive this with `git_worktree_status` / `git_worktree_merge`, and
-`git_commit` adds a follow-up hint pointing at integration whenever it commits
+Every operation that mutates a repository — `git worktree add`, `git worktree
+remove`, and either merge direction — serializes on the shared, in-process
+`withRepositoryLock` (`src/lib/server/repo-lock.ts`), keyed on the repository's
+git common dir so a repository's main worktree and all of its linked worktrees
+share one key. A merge re-reads its status *inside* that lock, because the
+dirty/ahead/behind guards are a check-then-act on state another operation could
+otherwise invalidate. This is a same-process mutex only; git's own `index.lock`
+is what guards against unrelated processes.
+
+Agents drive this with `git_worktree_status` / `git_worktree_merge`, and`git_commit` adds a follow-up hint pointing at integration whenever it commits
 inside a linked worktree. `GET /api/worktrees/status` feeds the sidebar's
 "unmerged" badge, `GET|POST /api/conversations/<id>/worktree[/merge]` back the
 chat header's integration panel, and deleting a conversation whose worktree

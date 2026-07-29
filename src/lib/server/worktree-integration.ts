@@ -19,7 +19,9 @@
 // means in practice.
 
 import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { runGitRaw, type GitRunResult } from './git';
+import { withRepositoryLock } from './repo-lock';
 
 const TIMEOUT_MS = 20_000;
 
@@ -60,6 +62,12 @@ export interface WorktreeIntegrationStatus {
 	branch: string | null;
 	/** Absolute path of the repository's main worktree. */
 	upstreamPath: string;
+	/**
+	 * The repository's git common dir — shared by the main worktree and every
+	 * linked worktree. Used as the repository-lock key so merges serialize
+	 * against worktree add/remove.
+	 */
+	gitCommonDir: string;
 	/** Branch checked out in the main worktree, or null when detached. */
 	upstreamBranch: string | null;
 	/** Commits on `branch` that `upstreamBranch` does not have. */
@@ -162,6 +170,15 @@ function countLines(text: string): number {
 	return text ? text.split('\n').filter(Boolean).length : 0;
 }
 
+/** Realpath when possible, lexical resolve otherwise (mirrors `worktrees.ts`). */
+function realpathOrResolve(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return resolve(path);
+	}
+}
+
 /**
  * Ahead/behind between two branches, as `git rev-list --left-right --count`
  * reports it: left = commits only on `upstream`, right = commits only on
@@ -210,6 +227,12 @@ export async function worktreeIntegrationStatus(cwd: string): Promise<WorktreeIn
 	const isLinkedWorktree = upstreamPath !== path;
 	const branch = records.find((r) => resolve(r.path) === path)?.branch ?? null;
 	const upstreamBranch = main.branch;
+	// Resolved through realpath so it matches the key `worktrees.ts` locks on
+	// (which realpaths too) — an unresolved symlink here would silently produce a
+	// second, non-excluding lock key.
+	const gitCommonDir = realpathOrResolve(
+		await gitOk(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+	);
 
 	const [dirty, upstreamDirty] = await Promise.all([
 		dirtyCount(path),
@@ -225,6 +248,7 @@ export async function worktreeIntegrationStatus(cwd: string): Promise<WorktreeIn
 		isLinkedWorktree,
 		branch,
 		upstreamPath,
+		gitCommonDir,
 		upstreamBranch,
 		ahead: counts.ahead,
 		behind: counts.behind,
@@ -256,36 +280,44 @@ export async function mergeWorktree(
 	cwd: string,
 	opts: MergeWorktreeOptions
 ): Promise<MergeWorktreeResult> {
-	const status = await worktreeIntegrationStatus(cwd);
-	if (!status.isLinkedWorktree) {
-		throw new WorktreeIntegrationError(
-			'not_a_worktree',
-			'this workspace is the repository’s main checkout, not a linked worktree'
-		);
-	}
-	if (!status.branch) {
-		throw new WorktreeIntegrationError('detached_head', 'the worktree has a detached HEAD');
-	}
-	if (!status.upstreamBranch) {
-		throw new WorktreeIntegrationError(
-			'upstream_detached',
-			'the source checkout has a detached HEAD, so there is no upstream branch to merge with'
-		);
-	}
-	// Uncommitted work in the worktree is never safe to merge in either
-	// direction: it would be clobbered by an incoming merge, and it silently
-	// would not be part of an outgoing one.
-	if (status.dirtyCount > 0) {
-		throw new WorktreeIntegrationError(
-			'worktree_dirty',
-			'commit or discard the worktree’s uncommitted changes first',
-			{ dirtyCount: status.dirtyCount }
-		);
-	}
+	// Resolve the lock key first, then re-read the status *inside* the lock. The
+	// guards below are a check-then-act on shared state (both trees' dirty counts
+	// and ahead/behind), so evaluating them against a status read before the lock
+	// was held would let a concurrent merge or worktree removal invalidate them
+	// between the check and the merge.
+	const key = (await worktreeIntegrationStatus(cwd)).gitCommonDir;
+	return withRepositoryLock(key, async () => {
+		const status = await worktreeIntegrationStatus(cwd);
+		if (!status.isLinkedWorktree) {
+			throw new WorktreeIntegrationError(
+				'not_a_worktree',
+				'this workspace is the repository’s main checkout, not a linked worktree'
+			);
+		}
+		if (!status.branch) {
+			throw new WorktreeIntegrationError('detached_head', 'the worktree has a detached HEAD');
+		}
+		if (!status.upstreamBranch) {
+			throw new WorktreeIntegrationError(
+				'upstream_detached',
+				'the source checkout has a detached HEAD, so there is no upstream branch to merge with'
+			);
+		}
+		// Uncommitted work in the worktree is never safe to merge in either
+		// direction: it would be clobbered by an incoming merge, and it silently
+		// would not be part of an outgoing one.
+		if (status.dirtyCount > 0) {
+			throw new WorktreeIntegrationError(
+				'worktree_dirty',
+				'commit or discard the worktree’s uncommitted changes first',
+				{ dirtyCount: status.dirtyCount }
+			);
+		}
 
-	return opts.direction === 'from-source'
-		? mergeFromSource(status as MergeableStatus, opts)
-		: mergeToSource(status as MergeableStatus, opts);
+		return opts.direction === 'from-source'
+			? mergeFromSource(status as MergeableStatus, opts)
+			: mergeToSource(status as MergeableStatus, opts);
+	});
 }
 
 /** A status already validated by {@link mergeWorktree} to have both branches. */

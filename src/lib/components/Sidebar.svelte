@@ -856,6 +856,7 @@
 				{#each archived as c (c.id)}
 					{@const isMenu = openMenuId === c.id}
 					{@const isRenaming = renamingId === c.id}
+					{@const archivedUnmerged = unmergedLabelFor(c.id)}
 					<div class="conv archived" class:selected={selected.has(c.id)}>
 						{#if selectMode}
 							<input
@@ -899,7 +900,19 @@
 								}}
 							>
 								<div class="title">{c.title}</div>
-								<div class="meta muted">{fmt(c.updatedAt)}</div>
+								<div class="meta muted">
+									<span>{fmt(c.updatedAt)}</span>
+									{#if archivedUnmerged}
+										<span
+											class="unmerged-badge"
+											title={archivedUnmerged}
+											data-testid="unmerged-badge"
+										>
+											unmerged
+											<span class="visually-hidden">{archivedUnmerged}</span>
+										</span>
+									{/if}
+								</div>
 							</a>
 						{/if}
 						{#if !selectMode && !isRenaming}

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
@@ -234,6 +234,64 @@ describe('worktree integration', () => {
 			const integrated = await mergeWorktree(path, { direction: 'to-source' });
 			expect(integrated).toMatchObject({ merged: true, fastForward: true });
 			expect(readFileSync(join(source, 'feature.txt'), 'utf8')).toBe('work\n');
+		});
+	});
+
+	describe('repository locking', () => {
+		it('reports the git common dir so merges share the worktree lock key', async () => {
+			const path = await worktree();
+			const { worktreeIntegrationStatus } = await service();
+			const status = await worktreeIntegrationStatus(path);
+			// Must match what `worktrees.ts` locks on, or the two would take
+			// different keys and provide no mutual exclusion at all.
+			expect(status.gitCommonDir).toBe(realpathSync(join(source, '.git')));
+		});
+
+		// Two concurrent to-source merges from different worktrees: without the
+		// lock both would read `behind: 0`, and the second would fail its
+		// --ff-only merge after the first advanced main.
+		it('serializes concurrent merges into the same source checkout', async () => {
+			const first = await worktree('01FIRST');
+			const second = await worktree('01SECOND');
+			commit(first, 'first.txt', 'one\n', 'first commit');
+			commit(second, 'second.txt', 'two\n', 'second commit');
+
+			const { mergeWorktree } = await service();
+			const results = await Promise.allSettled([
+				mergeWorktree(first, { direction: 'to-source', allowMergeCommit: true }),
+				mergeWorktree(second, { direction: 'to-source', allowMergeCommit: true })
+			]);
+
+			expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+			expect(readFileSync(join(source, 'first.txt'), 'utf8')).toBe('one\n');
+			expect(readFileSync(join(source, 'second.txt'), 'utf8')).toBe('two\n');
+			expect(git(source, ['status', '--porcelain=v1'])).toBe('');
+		});
+
+		it('serializes a merge against a concurrent worktree removal', async () => {
+			const keep = await worktree('01KEEP');
+			const doomed = await worktree('01DOOMED');
+			commit(keep, 'kept.txt', 'kept\n', 'keep commit');
+
+			const { mergeWorktree } = await service();
+			const { removeManagedWorktree } = await import('../src/lib/server/worktrees');
+			const { worktreeIntegrationStatus } = await service();
+			const doomedStatus = await worktreeIntegrationStatus(doomed);
+
+			const outcomes = await Promise.allSettled([
+				mergeWorktree(keep, { direction: 'to-source' }),
+				removeManagedWorktree({
+					sourceWorkdir: source,
+					path: doomed,
+					gitCommonDir: doomedStatus.gitCommonDir,
+					branch: 'portal/01DOOMED',
+					baseSha: git(source, ['rev-parse', 'HEAD'])
+				})
+			]);
+
+			expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled']);
+			expect(readFileSync(join(source, 'kept.txt'), 'utf8')).toBe('kept\n');
+			expect(existsSync(doomed)).toBe(false);
 		});
 	});
 
