@@ -6,6 +6,23 @@ Ticket: `01KYP20N7QRHSAY1F0SKP6B0E1`
 **Part II (§12–20)** is the implementation plan: the ordered, commit-sized work
 breakdown. Read Part I once; work from Part II.
 
+> **Status (2026-07-29): Phases 0–4 shipped; Phase 5 superseded by upstream.**
+> An agent can create isolated worktrees, hand them to parallel sub-agents,
+> write in them without prompting, review the result in the UI, and tear them
+> down safely. Only the optional Phase 6 remains.
+>
+> Two decisions were revised by evidence during implementation, and both are
+> recorded where they were made:
+>
+> - **§14 (Phase 2) is a correctness gate, not a usability one.** The Phase 0
+>   spike (§12) showed an out-of-root write is auto-*denied* under
+>   best-effort/autopilot, and the observed sub-agent fallback was a stray write
+>   into the shared tree.
+> - **Leases must not have their own repository lock.** Upstream extracted
+>   `withRepositoryLock` into `repo-lock.ts` so every module mutating a
+>   repository takes the SAME lock; two same-keyed locks in different modules
+>   give no mutual exclusion and fail silently.
+
 ## Problem
 
 An _orchestrator_ is an agent that fans work out in parallel — today via the CLI
@@ -333,13 +350,11 @@ Every phase ends with `pnpm run verify`.
       immediately after phase 1; phase 3 is unusable without it.
 - [x] **Phase 3 — `worktree` tool group.** Tools, quotas, audit, system
       guidance. First user-visible capability.
-- [ ] **Phase 4 — read surfaces + UI switcher.** Makes orchestrator runs
+- [x] **Phase 4 — read surfaces + UI switcher.** Makes orchestrator runs
       reviewable.
-- [ ] **Phase 5 — integration.** `worktree_integrate` = commit lease work to its
-      branch and return the diff/branch. Portal-driven `git merge --no-ff` only
-      behind an always-prompt tool, requiring a clean primary and **aborting and
-      reporting** on conflict — never leaving a half-merged tree for an agent to
-      clean up.
+- [x] **Phase 5 — integration.** Superseded: upstream landed equivalent
+      merge-back tooling independently (`35f5e5a6`, `9ea8444a`), deriving a
+      tree's position from `git worktree list --porcelain` rather than the DB.
 - [ ] **Phase 6 (optional) — conversation-per-work-unit.** Spawn a child
       conversation bound to an existing lease (`held_by_conversation_id` is
       already the hand-off pointer).
@@ -772,9 +787,9 @@ W0.1 (gate)
 
 | Phase | Done when                                                                                                   |
 | ----- | ----------------------------------------------------------------------------------------------------------- |
-| 0     | Spike result written into §12 with a verdict; ticket updated                                                 |
-| 1     | Lease create/resolve/inspect/remove + GC covered by unit tests; zero user-visible change; `verify` green      |
-| 2     | Write inside a lease auto-allows; outside every root still prompts; mid-session lease covered; `verify` green |
-| 3     | Agent creates/uses/removes a worktree end-to-end in `dev:isolated`; group disable-able; `verify` green        |
-| 4     | Switcher lists primary + leases with correct per-tree diffs at mobile and desktop widths; e2e green           |
-| 5     | Lease work reaches a branch the human can merge; no half-merged state reachable by an agent                   |
+| 0     | ✅ Spike result written into §12 with a verdict; ticket updated                                               |
+| 1     | ✅ Lease create/resolve/inspect/remove + GC covered by unit tests; zero user-visible change; `verify` green    |
+| 2     | ✅ Write inside a lease auto-allows; outside every root still prompts; mid-session lease covered; `verify` green |
+| 3     | ✅ Agent creates/uses/removes a worktree end-to-end; group disable-able; `verify` green                       |
+| 4     | ✅ Switcher lists primary + leases with correct per-tree diffs at mobile and desktop widths; e2e green         |
+| 5     | ✅ (upstream) Lease work reaches a branch the human can merge; no half-merged state reachable by an agent      |

@@ -67,6 +67,44 @@ The logical ticket workspace is stored separately from `workdir`. A managed
 worktree inherits its source repository's workspace key, so conversations on
 different branches still share one ticket backlog.
 
+### Worktree leases (parallel sub-agent work)
+
+A conversation's own workspace is one tree, which is a problem for an
+_orchestrator_ — an agent that fans work out to several sub-agents at once,
+since concurrent edits to one tree corrupt each other and git state (index,
+HEAD, branch) is per-tree.
+
+A **lease** (`workspace_leases`, `src/lib/server/leases.ts`) is a second kind of
+portal-owned checkout, addressed by its own ULID rather than by the conversation
+id: `WORKTREE_ROOT/<userId>/leases/<leaseId>` on branch
+`portal/lease/<leaseId>[--<label>]`. It is held by a conversation but stored as
+a user-owned row, so it can later be handed to a spawned child conversation.
+Path derivation, containment, locking, and rollback are shared with the
+conversation primary via `createWorktreeForSlot`, and resolution fails closed the
+same way.
+
+Two properties are load-bearing rather than incidental:
+
+- **Leases widen the permission boundary, not just the file browser.** A
+  conversation's writable area is the SET of roots returned by
+  `conversationWorkspaceRoots` — its own workspace plus every lease it holds —
+  supplied to the permission matcher as a live callback so a lease created
+  mid-turn is writable within that turn. Without this an agent cannot use a
+  lease at all: the write is auto-denied under non-interactive modes, and the
+  observed fallback is a stray write into the shared tree.
+- **Leases are not snapshotted per message.** Per-turn snapshots capture the
+  conversation's own tree only, so the workspace switcher labels a selected
+  lease accordingly rather than letting "Changes" imply full coverage.
+
+Agents manage leases with the `worktree` tool group
+(`worktree_create`/`_list`/`_status`/`_remove`); humans get the same operations
+over `/api/conversations/<id>/worktrees`, and the Files/Changes/Commits panes
+take an optional `?worktree=<leaseId>` selector. Quotas
+(`WORKTREE_MAX_LEASES_PER_*`) plus an idle reaper bound disk growth; the reaper
+never collects a lease with uncommitted changes, and removal only ever deletes a
+fully merged branch, so committed work survives as a branch rather than being
+destroyed.
+
 Isolation is only half a lifecycle, so `src/lib/server/worktree-integration.ts`
 covers the other half: getting the work back. It derives a worktree's position
 from git rather than from `managed_worktrees` — `git worktree list --porcelain`
