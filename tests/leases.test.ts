@@ -293,10 +293,51 @@ describe('workspace leases', () => {
 
 		expect(result.removed).toEqual([clean.id]);
 		expect(result.retained.map((r) => r.lease.id)).toEqual([dirty.id]);
+		expect(result.retained[0]).toMatchObject({ reason: 'dirty', dirtyCount: 1 });
 		expect(existsSync(dirty.path)).toBe(true);
 
 		const forced = await removeLeasesForConversation(conversation.id, userId, { force: true });
 		expect(forced.removed).toEqual([dirty.id]);
 		expect(existsSync(dirty.path)).toBe(false);
+	});
+
+	it('retains a lease holding unmerged commits, so the branch is not orphaned', async () => {
+		// Removing the checkout would leave the branch behind — but deleting the
+		// conversation destroys the only thing naming it, and
+		// `portal/lease/<ulid>--<label>` is not a name anyone will guess.
+		const conversation = await makeConversation();
+		const { createLease, removeLeasesForConversation } = await import('../src/lib/server/leases');
+		const lease = await createLease({ conversation, label: 'committed' });
+		writeFileSync(join(lease.path, 'feature.txt'), 'real work\n');
+		git(lease.path, ['add', 'feature.txt']);
+		git(lease.path, ['commit', '-q', '-m', 'feature']);
+
+		const result = await removeLeasesForConversation(conversation.id, userId);
+
+		expect(result.removed).toEqual([]);
+		expect(result.retained[0]).toMatchObject({ reason: 'unmerged', ahead: 1 });
+		expect(existsSync(lease.path)).toBe(true);
+
+		// Forcing removes the checkout; the branch still survives, because removal
+		// only ever deletes a merged branch.
+		const forced = await removeLeasesForConversation(conversation.id, userId, { force: true });
+		expect(forced.removed).toEqual([lease.id]);
+		expect(existsSync(lease.path)).toBe(false);
+		expect(git(source, ['branch', '--list', lease.branch])).toContain(lease.branch);
+	});
+
+	it('does not block on a lease whose commits are already merged', async () => {
+		const conversation = await makeConversation();
+		const { createLease, removeLeasesForConversation } = await import('../src/lib/server/leases');
+		const lease = await createLease({ conversation, label: 'merged' });
+		writeFileSync(join(lease.path, 'feature.txt'), 'work\n');
+		git(lease.path, ['add', 'feature.txt']);
+		git(lease.path, ['commit', '-q', '-m', 'feature']);
+		git(source, ['merge', '--no-ff', '-q', '-m', 'merge lease', lease.branch]);
+
+		const result = await removeLeasesForConversation(conversation.id, userId);
+
+		expect(result.removed).toEqual([lease.id]);
+		expect(result.retained).toEqual([]);
 	});
 });

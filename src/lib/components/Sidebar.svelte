@@ -407,8 +407,25 @@
 	 */
 	function worktreeBlockReason(
 		code: unknown,
-		detail: { ahead?: number } | undefined
+		detail: { ahead?: number } | undefined,
+		leases?: Array<{ label?: string; reason?: string; dirtyCount?: number; ahead?: number }>
 	): string | null {
+		// A conversation's own worktree reports through `detail`; its worktree
+		// leases report through `leases`, which names each holdout and why. Read
+		// the lease list first — otherwise an unmerged lease falls through to
+		// `detail.ahead` and claims "0 commits".
+		if (leases && leases.length > 0) {
+			const parts = leases.map((l) => {
+				const name = l.label ? `"${l.label}"` : 'a worktree';
+				if (l.reason === 'dirty') {
+					const n = l.dirtyCount ?? 0;
+					return `${name} has ${n} uncommitted file${n === 1 ? '' : 's'}`;
+				}
+				const n = l.ahead ?? 0;
+				return `${name} has ${n} unmerged commit${n === 1 ? '' : 's'}`;
+			});
+			return `This conversation holds worktrees with work in them: ${parts.join('; ')}.`;
+		}
 		if (code === 'worktree_dirty') return 'This worktree has uncommitted changes.';
 		if (code === 'worktree_unmerged') {
 			const ahead = detail?.ahead ?? 0;
@@ -425,7 +442,7 @@
 			res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
 			if (res.status === 409) {
 				const body = await res.json().catch(() => null);
-				const reason = worktreeBlockReason(body?.code, body?.detail);
+				const reason = worktreeBlockReason(body?.code, body?.detail, body?.leases);
 				if (!reason) {
 					flashError('Delete failed (409)');
 					return;
@@ -490,7 +507,7 @@
 						return {
 							id,
 							ok: response.ok,
-							blocked: worktreeBlockReason(body?.code, body?.detail) !== null
+							blocked: worktreeBlockReason(body?.code, body?.detail, body?.leases) !== null
 						};
 					}
 					const response = await fetch(`/api/conversations/${id}`, {

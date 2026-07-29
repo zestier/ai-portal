@@ -232,4 +232,83 @@ describe('lease-scoped conversation routes', () => {
 			expect(existsSync(foreign.path)).toBe(true);
 		});
 	});
+
+	describe('conversation delete', () => {
+		function convCtx(query = '') {
+			return {
+				params: { id: conversationId },
+				locals: {
+					userId,
+					user: { id: userId, githubLogin: 'local-dev', displayName: null, avatarUrl: null }
+				},
+				url: new URL(`http://localhost/api/conversations/${conversationId}${query}`),
+				getClientAddress: () => '127.0.0.1'
+			} as never;
+		}
+
+		function commitInLease(path: string) {
+			writeFileSync(join(path, 'feature.txt'), 'work\n');
+			git(path, ['add', 'feature.txt']);
+			git(path, ['commit', '-q', '-m', 'feature']);
+		}
+
+		/** Invoke DELETE and return the thrown HttpError rather than a response. */
+		async function expectDeleteRejection(query = ''): Promise<{
+			status: number;
+			body: {
+				code: string;
+				leases: Array<{ id: string; reason: string; dirtyCount: number; ahead: number }>;
+			};
+		}> {
+			const { DELETE } = await import('../src/routes/api/conversations/[id]/+server');
+			try {
+				await DELETE(convCtx(query));
+			} catch (e) {
+				return e as { status: number; body: never };
+			}
+			throw new Error('expected DELETE to reject');
+		}
+
+		it('refuses when a lease holds unmerged commits, naming the reason', async () => {
+			const lease = await makeLease();
+			commitInLease(lease.path);
+
+			const err = await expectDeleteRejection();
+
+			expect(err.status).toBe(409);
+			expect(err.body.code).toBe('worktree_unmerged');
+			expect(err.body.leases[0]).toMatchObject({ id: lease.id, reason: 'unmerged', ahead: 1 });
+			expect(existsSync(lease.path)).toBe(true);
+		});
+
+		it('leads with the dirty reason when both kinds are present', async () => {
+			// Losing uncommitted work is worse than orphaning a branch, so that is
+			// the reason the user should see first.
+			const unmerged = await makeLease(conversationId, 'committed');
+			commitInLease(unmerged.path);
+			const dirty = await makeLease(conversationId, 'wip');
+			writeFileSync(join(dirty.path, 'wip.txt'), 'unsaved\n');
+
+			const err = await expectDeleteRejection();
+
+			expect(err.status).toBe(409);
+			expect(err.body.code).toBe('worktree_dirty');
+			const reasons = Object.fromEntries(err.body.leases.map((l) => [l.id, l.reason]));
+			expect(reasons[unmerged.id]).toBe('unmerged');
+			expect(reasons[dirty.id]).toBe('dirty');
+		});
+
+		it('deletes with force, leaving the unmerged branch behind', async () => {
+			const lease = await makeLease();
+			commitInLease(lease.path);
+
+			const { DELETE } = await import('../src/routes/api/conversations/[id]/+server');
+			const res = await DELETE(convCtx('?forceWorktree=1'));
+
+			expect((await res.json()).ok).toBe(true);
+			expect(existsSync(lease.path)).toBe(false);
+			// The commits themselves survive; only the checkout is gone.
+			expect(git(source, ['branch', '--list', lease.branch])).toContain(lease.branch);
+		});
+	});
 });

@@ -470,10 +470,23 @@ function removeUnavailableOwnedWorktree(path: string, owner: WorktreeSlot): void
 	rmSync(stored, { recursive: true, force: true });
 }
 
-/** Roll back a just-created worktree when later persistence fails. */
+/**
+ * Roll back a just-created worktree when later persistence fails.
+ *
+ * Uses `-D` rather than `-d` because the branch is unmerged by construction —
+ * it was created moments ago at `baseSha` and never used. That is safe ONLY on
+ * this path; every other caller must go through {@link deleteMergedBranch}.
+ *
+ * The ref deletion takes the repository lock like every other mutation here:
+ * `removeManagedWorktree` releases the lock before returning, so without this
+ * the delete could interleave with a merge into the source checkout or a
+ * concurrent worktree add/remove.
+ */
 export async function rollbackManagedWorktree(metadata: ManagedWorktreeMetadata): Promise<void> {
 	await removeManagedWorktree(metadata, { force: true });
-	await runGit(metadata.sourceWorkdir, ['branch', '-D', metadata.branch]);
+	await withRepositoryLock(realpathOrResolve(metadata.gitCommonDir), async () => {
+		await runGit(metadata.sourceWorkdir, ['branch', '-D', metadata.branch]);
+	});
 }
 
 /**

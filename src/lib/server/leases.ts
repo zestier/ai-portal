@@ -36,6 +36,7 @@ import {
 	type WorktreeSlot
 } from './worktrees';
 import { resolveConversationWorkspace, WorkspaceUnavailableError } from './workdir';
+import { worktreeIntegrationStatus } from './worktree-integration';
 import type { Conversation } from '$lib/types';
 
 export type Lease = LeaseRow;
@@ -226,15 +227,48 @@ async function deleteBranchIfMerged(lease: Lease): Promise<boolean> {
 	return deleteMergedBranch(lease.sourceWorkdir, lease.branch);
 }
 
+/** Why a lease was left in place instead of being removed. */
+export type LeaseRetentionReason = 'dirty' | 'unmerged';
+
+export interface RetainedLease {
+	lease: Lease;
+	reason: LeaseRetentionReason;
+	/** Uncommitted files, for `reason: 'dirty'`. */
+	dirtyCount: number;
+	/** Commits not present on the source branch, for `reason: 'unmerged'`. */
+	ahead: number;
+}
+
 export interface RemoveLeasesResult {
 	removed: string[];
-	/** Leases left in place because they were dirty and `force` was not set. */
-	retained: Array<{ lease: Lease; dirtyCount: number }>;
+	/** Leases left in place because removing them would lose sight of work. */
+	retained: RetainedLease[];
+}
+
+/**
+ * Commits on a lease's branch that its source branch does not have. A missing
+ * or broken checkout reports 0 so a stale lease stays deletable — the guard
+ * exists to prevent surprise, not to strand the user.
+ */
+async function unmergedCommitCount(lease: Lease): Promise<number> {
+	try {
+		return (await worktreeIntegrationStatus(lease.path)).ahead;
+	} catch {
+		return 0;
+	}
 }
 
 /**
  * Remove every lease held by a conversation. Used by conversation deletion,
  * which must not orphan checkouts on disk.
+ *
+ * Refuses on two counts unless forced:
+ *  - uncommitted changes, which removal would destroy outright;
+ *  - commits not merged into the source branch. Those survive as a branch
+ *    (removal only ever deletes a merged one), but deleting the conversation
+ *    destroys the only thing that named them — and a lease branch
+ *    (`portal/lease/<ulid>--<label>`) is even less discoverable than a
+ *    conversation's own. Same reasoning as the primary worktree's guard.
  */
 export async function removeLeasesForConversation(
 	conversationId: string,
@@ -243,12 +277,24 @@ export async function removeLeasesForConversation(
 ): Promise<RemoveLeasesResult> {
 	const result: RemoveLeasesResult = { removed: [], retained: [] };
 	for (const lease of leaseRepo.listByConversation(conversationId, userId)) {
+		if (!opts.force) {
+			const ahead = await unmergedCommitCount(lease);
+			if (ahead > 0) {
+				result.retained.push({ lease, reason: 'unmerged', ahead, dirtyCount: 0 });
+				continue;
+			}
+		}
 		try {
 			await removeLease(lease, opts);
 			result.removed.push(lease.id);
 		} catch (cause) {
 			if (cause instanceof WorktreeError && cause.code === 'worktree_dirty') {
-				result.retained.push({ lease, dirtyCount: cause.detail?.dirtyCount ?? 1 });
+				result.retained.push({
+					lease,
+					reason: 'dirty',
+					dirtyCount: cause.detail?.dirtyCount ?? 1,
+					ahead: 0
+				});
 				continue;
 			}
 			throw cause;

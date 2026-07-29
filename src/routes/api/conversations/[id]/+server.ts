@@ -70,7 +70,8 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 
 	// Leases first: they are children of the same repository, and failing after
 	// the conversation's own checkout is gone would leave a messier state to
-	// reconcile. A dirty lease blocks deletion the same way a dirty primary does.
+	// reconcile. A lease blocks deletion on the same two counts the primary
+	// does — uncommitted changes, or commits not merged into the source branch.
 	const leaseResult = await removeLeasesForConversation(conv.id, conv.userId, { force: forced });
 	for (const leaseId of leaseResult.removed) {
 		audit({
@@ -83,26 +84,39 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 		});
 	}
 	if (leaseResult.retained.length > 0) {
-		for (const { lease } of leaseResult.retained) {
+		// Report the stricter-sounding reason when both kinds are present: losing
+		// uncommitted work is worse than orphaning a branch, so it should lead.
+		const anyDirty = leaseResult.retained.some((r) => r.reason === 'dirty');
+		const code = anyDirty ? 'worktree_dirty' : 'worktree_unmerged';
+		for (const retained of leaseResult.retained) {
 			audit({
 				event_type: 'worktree_remove',
 				actor_login: locals.user?.githubLogin ?? null,
 				actor_ip: getClientAddress(),
-				resource: lease.id,
+				resource: retained.lease.id,
 				outcome: 'denied',
-				detail: { conversationId: conv.id, leaseId: lease.id, code: 'worktree_dirty' }
+				detail: {
+					conversationId: conv.id,
+					leaseId: retained.lease.id,
+					code: retained.reason === 'dirty' ? 'worktree_dirty' : 'worktree_unmerged'
+				}
 			});
 		}
 		throw error(409, {
-			message: 'conversation holds worktrees with uncommitted changes',
-			code: 'worktree_dirty',
-			// Name the holdouts so the client can offer a precise force prompt
-			// instead of an all-or-nothing one.
-			leases: leaseResult.retained.map(({ lease, dirtyCount }) => ({
+			message: anyDirty
+				? 'conversation holds worktrees with uncommitted changes'
+				: 'conversation holds worktrees with unmerged commits',
+			code,
+			// Name the holdouts, with the per-lease reason, so the client can
+			// explain precisely what would be lost rather than offering an
+			// all-or-nothing force.
+			leases: leaseResult.retained.map(({ lease, reason, dirtyCount, ahead }) => ({
 				id: lease.id,
 				label: lease.label,
 				branch: lease.branch,
-				dirtyCount
+				reason,
+				dirtyCount,
+				ahead
 			}))
 		} as App.Error);
 	}
