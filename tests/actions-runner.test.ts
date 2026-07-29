@@ -155,7 +155,14 @@ describe('runStep cwd selection', () => {
 		const out = logsOf(events)
 			.map((ev) => ev.text)
 			.join('');
-		expect(out).toContain(process.cwd());
+		// Compare against the *scrubbed* cwd, because that's what the step's log
+		// events actually carry. `scrubLog` redacts the value of any env var whose
+		// name looks sensitive, and nothing stops such a value from appearing in
+		// the portal's own path — e.g. a checkout under a directory named after
+		// `COPILOT_AGENT_SESSION_ID`, which the `/copilot/i` rule matches. Asserting
+		// on the raw cwd made this test fail purely because of where the repo
+		// happened to live.
+		expect(out).toContain(scrubLog(process.cwd()));
 	});
 });
 
