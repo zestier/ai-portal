@@ -254,7 +254,10 @@ Permission behavior:
 - `worktree_remove` — **`permissionBehavior: 'always-prompt'`**. `PortalTool`
   exposes a static behavior, not an arg-dependent one, so "force must always
   prompt" is implemented by prompting for every removal. Acceptable: removal is
-  destructive and rare.
+  destructive and rare. _(Revisited — this over-confirms the non-forced path, and
+  because `always-prompt` precedes grant matching no grant can ever relax it;
+  ticket `01KYRQ6D493JHNRVSJY4VW7S15` makes the behavior arg-aware, after first
+  closing the gap that non-forced removal is not quite as safe as it looks.)_
 - `worktree_list` / `worktree_status` — read-only; candidates for a
   `custom-tool` allow seed alongside the git/ticket structured tools.
 
@@ -265,6 +268,111 @@ Quotas (rejected with a `code` the model can act on):
 
 Audit: reuse `worktree_create` / `worktree_remove` event types, adding `leaseId`
 and `label` to `detail`.
+
+### Why these tools stay singular
+
+_(Added after the fact — ticket `01KYRDQVTY67J7699KQN8R2024`.)_
+
+An orchestrator fans out in batches, so it is natural to ask whether
+`worktree_create` and `worktree_remove` should take `leaseIds: string[]`. The
+answer is **no** for create and **not justified yet** for remove, and the honest
+reasons are narrower than the obvious ones, so they are worth writing down.
+
+**`worktree_create`.**
+
+- **No correctness gain.** `createLease` performs the checkout _and_ the row
+  insert inside the repository lock (§3), so N concurrent creates already
+  serialize and the quota check cannot be raced.
+- **Little wall-clock gain.** The dominant mutation (`git worktree add`) runs
+  inside that lock, so N array items and N calls queue behind the same lock. The
+  runtimes differ on concurrency — the OpenAI-compatible provider awaits a turn's
+  tool calls one at a time, while the Copilot SDK dispatches each external tool
+  request fire-and-forget, so handlers there can overlap — but neither changes
+  that outcome. Overlapping calls also offset the one thing a batch could
+  amortize, the per-call preflight that runs _outside_ the lock
+  (`inspectRepository` + `rev-parse` in `createWorktreeForSlot`).
+- **The approval cost is already fixable without a new API.** `worktree_create`
+  is `'normal'` and unseeded, so under the default `prompt` policy N creates do
+  cost N dialogs. But because it is `'normal'` it is _grant-matchable_: a user
+  who wants it to stop prompting authors one custom-tool grant in
+  Settings → Permissions and is done forever (`seed-grants.ts` says so
+  explicitly). A batch argument would be a second, worse mechanism for a problem
+  an existing one already solves permanently.
+- **A batch must pick a failure model, and both cost something.** Per-item
+  results (quota exhaustion partway through the array) put partial-success
+  plumbing on the first tool an orchestrator ever calls. Transactional
+  all-or-nothing is _safe_ — nothing it force-removes has been handed to a
+  sub-agent yet, and `createWorktreeForSlot` already rolls back that way — but it
+  is more machinery again.
+- Softer, but worth naming: the per-call `followUpHint` pairs one path with one
+  sub-agent, and placement is only advisory (locked decision 7). A batch _can_
+  repeat that hint per item, so this is a reason to be careful about the result
+  shape rather than a reason not to batch.
+
+**`worktree_remove`.** The verdict here is **not justified yet** rather than a
+flat never. The strongest thing a batch buys that parallel calls cannot is fewer
+human approval dialogs — and the asymmetry with create is real: `always-prompt`
+is evaluated _before_ grant matching in `decideCore`, so no grant, seed, or
+policy can ever auto-approve a removal. That tax is genuinely unfixable from the
+outside today. It should still not be paid for with a batch as proposed:
+
+- **One approval covering N destructive removals is coarser than N approvals**:
+  it loses the per-item decision, whatever either prompt says. `force: true` —
+  the argument the gate exists for — would be authorized once for a whole sweep.
+  (The prompts are not especially legible today either: with no preview the
+  dialog renders raw ULIDs. That is a reason to fix the preview,
+  `01KYRQ6D555SFR255Q85J5C4WE`, not a reason to have fewer of them.)
+- **The tax is an artifact of a static `permissionBehavior`, so fix that**
+  (`01KYRQ6D493JHNRVSJY4VW7S15`): an arg-aware behavior can escalate only on
+  `force`, which makes ordinary removal grant-matchable like every other tool.
+  That is not _safer_ than one batch approval — a standing grant is the broader
+  authorization of the two — but it is the human's own standing decision, made
+  once in Settings, rather than an approval the agent has to solicit per fan-out.
+  Note it does not silently stop prompting either: `'normal'` still prompts under
+  the default `prompt` policy until such a grant exists.
+- **The safety argument for that relaxation is narrower than it first looks**,
+  and the ticket must close the gap before relaxing anything. A non-forced
+  removal never discards status-visible changes (`removeManagedWorktree` refuses
+  while `dirtyCount > 0`) and never deletes an unmerged branch
+  (`deleteMergedBranch` is `git branch -d`). It is not unconditionally safe:
+  `git status --porcelain -uall` does not count **ignored** files, which go with
+  the tree; and `removeLease` lacks the **unmerged guard** that
+  `removeLeasesForConversation` and `reapIdleLeases` both have (§6), so it can
+  delete the checkout of a lease holding unmerged commits and leave only an
+  obscure `portal/lease/<ulid>--<label>` branch — precisely the discoverability
+  loss the other two paths refuse to take.
+- **The batch premise is weak on timing.** Removes trickle: sub-agents finish at
+  different times and the guidance prescribes a per-agent merge → remove loop. A
+  deferred sweep is the unusual shape, not the usual one.
+- **And unattended cleanup is already handled server-side**, if not promptly:
+  `reapIdleLeases` collects clean, fully-merged, idle leases once
+  `WORKTREE_LEASE_TTL_MS` has passed, and `removeLeasesForConversation` runs on
+  conversation delete (§6). Neither is an immediate end-of-fan-out sweep, so this
+  bounds the leak rather than serving the use case.
+
+**The variant that is _not_ excluded** is a batch that refuses `force` and
+removes only leases proven clean and fully merged, reporting the rest as retained
+— close to `removeLeasesForConversation`'s contract, though not identical: that
+helper's unmerged check fails _open_ (`unmergedCommitCount` swallows an
+inspection failure as `ahead = 0`), which is right for a delete path that must
+not strand the user but wrong for a guarded batch, which should fail closed and
+retain what it could not inspect. So constructed, nothing it removes is
+destructive, so the coarse-approval objection above does not apply. It is left
+open deliberately, and belongs with the collect design below rather than as an
+array argument here: remove-after-merge is the actual pattern, and a guarded
+batch remove is one half of it.
+
+**A batched collect (`worktree_merge`, or a `worktree_collect`) is sequenced
+later, not rejected.** It is the strongest batch candidate, because it would
+encapsulate the `--ff-only`-then-`from-source`-then-`squash` sequencing that today
+lives in system guidance and in the `not_fast_forwardable` / `squash_behind_source`
+error hints. It wants the merge preview first (`01KYQC3EGWA1V3C6H40TKXT523`) — a
+single approval that merges N branches into the human's own checkout should say
+what it is merging — and it batches the one operation whose per-item failure, a
+conflict, most needs human judgment. Before building it, check transcripts for
+whether orchestrators actually stall on the sequencing now that the error hints
+name the exact recovery call (`01KYRQ77QCQD4VKAKQ2DS4ZD7B`). If it ships it
+should be a distinct tool, so the singular tools keep their contract.
 
 ### Working inside a lease: the `worktree` selector on the git tools
 

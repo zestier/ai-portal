@@ -15,6 +15,18 @@
 //     Phase 0 spike found sub-agents cannot reliably create directories outside
 //     their allowed roots, so `worktree_create` pre-creating the tree (via
 //     `git worktree add`) is what makes the whole pattern work.
+//
+// Every tool here is deliberately SINGULAR — no `leaseIds: string[]`. An
+// orchestrator fans out in batches, but batching these earns little: the
+// dominant mutation is serialized by the repository lock either way, so the
+// saving is turn overhead rather than wall-clock. The strongest thing a batch
+// would buy that parallel calls cannot is fewer approval dialogs on
+// `worktree_remove` — a symptom of static permission behavior (see the note on
+// that tool), and one that should not be paid for by folding N destructive
+// approvals into one. A force-less batch limited to clean, fully-merged leases
+// is the variant NOT ruled out; it belongs with a future collect tool. Reasoning
+// in full: docs/plan-orchestrator-worktrees.md §5, "Why these tools stay
+// singular".
 
 import { z } from 'zod';
 import { err, ok, type PortalTool } from './types';
@@ -403,6 +415,17 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 			// Always prompts. PortalTool exposes a static behavior rather than an
 			// arg-dependent one, so the only way to guarantee `force: true` (which
 			// destroys uncommitted work) is confirmed is to confirm every removal.
+			// Because `always-prompt` is evaluated before grant matching, no grant
+			// or policy can ever relax this — unlike `worktree_create`, which is
+			// grant-matchable.
+			//
+			// It over-confirms, but less than it looks: a removal WITHOUT `force`
+			// keeps status-visible changes (refuses while dirty) and never deletes
+			// an unmerged branch, yet it still drops ignored files with the tree
+			// and — unlike `removeLeasesForConversation` and the reaper — carries
+			// no unmerged guard, so it can leave committed work reachable only via
+			// an obscure branch name. Making the behavior arg-aware is the fix, but
+			// it has to close that gap first: ticket 01KYRQ6D493JHNRVSJY4VW7S15.
 			permissionBehavior: 'always-prompt',
 			parameters: {
 				type: 'object',
