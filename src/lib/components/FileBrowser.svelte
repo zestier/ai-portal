@@ -18,6 +18,12 @@
 	import { worktreeParams } from '$lib/client/file-browser';
 	import { reviewStore } from '$lib/client/review.svelte';
 	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
+	import {
+		escapeHtml,
+		highlightCodeLines,
+		languageForPath,
+		type HighlightedLines
+	} from '$lib/client/syntax-highlight';
 
 	type Pane = 'changes' | 'files' | 'commits';
 	let {
@@ -292,6 +298,27 @@
 			? fileData.content.replace(/\n$/u, '').split('\n')
 			: []
 	);
+	const contentLanguage = $derived(languageForPath(selectedPath));
+	let highlightedContent = $state<HighlightedLines | null>(null);
+	let highlightRequestSeq = 0;
+
+	$effect(() => {
+		const path = selectedPath;
+		const lines = contentLines;
+		const language = contentLanguage;
+		const seq = ++highlightRequestSeq;
+		highlightedContent = null;
+		if (!path || lines.length === 0) return;
+		void highlightCodeLines(lines, language).then((result) => {
+			if (seq === highlightRequestSeq && selectedPath === path) {
+				highlightedContent = result;
+			}
+		});
+	});
+
+	function highlightedContentLine(text: string, idx: number): string {
+		return highlightedContent?.html[idx] ?? escapeHtml(text);
+	}
 
 	// URL for an inline image preview of the selected worktree file. Only set
 	// when the server flagged the binary file as a renderable image; the bytes
@@ -526,10 +553,19 @@
 											{commented ? '●' : '+'}
 										</button>
 										<span class="gutter" role="cell" aria-label="line number">{lineNo}</span>
-										<span class="text" role="cell">{text}</span>
+										<!-- Safe: highlightedContentLine returns either escapeHtml()
+										     output or highlight.js markup, which escapes the source
+										     text it wraps. No file content reaches the DOM unescaped. -->
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+										<span class="text" role="cell">{@html highlightedContentLine(text, idx)}</span>
 									</div>
 								{/each}
 							</div>
+							{#if highlightedContent?.skipped}
+								<div class="muted small truncated-note">
+									Syntax highlighting skipped for this large file.
+								</div>
+							{/if}
 						{:else}
 							<pre class="file-view">{fileData.content}</pre>
 						{/if}

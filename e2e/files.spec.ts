@@ -441,6 +441,67 @@ test('Changes tab "Revert all" requires confirmation and then discards changes',
 	expect(changes.entries.length).toBe(0);
 });
 
+test('Files and Changes views syntax-highlight recognised code, and screenshot both themes', async ({
+	page,
+	request
+}) => {
+	const workdir = createWorkdir();
+	const { id } = await createConversation(request, workdir);
+	const g = (args: string[]) => execFileSync('git', args, { cwd: workdir, stdio: 'pipe' });
+	g(['init', '-q', '-b', 'main']);
+	g(['config', 'user.email', 'e2e@example.com']);
+	g(['config', 'user.name', 'E2E']);
+	g(['config', 'commit.gpgsign', 'false']);
+	writeFileSync(join(workdir, 'sample.ts'), 'const greeting = "hello";\n');
+	writeFileSync(join(workdir, 'plain'), 'no extension here\n');
+	g(['add', 'sample.ts', 'plain']);
+	g(['commit', '-q', '-m', 'baseline']);
+	writeFileSync(
+		join(workdir, 'sample.ts'),
+		'const greeting = "hello";\nexport const count = 42;\n'
+	);
+
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.goto(`/conversations/${id}`);
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+	// --- Files tab: the content pane highlights a recognised language --------
+	await page.getByRole('tab', { name: 'Files' }).click();
+	await expect(page.getByRole('button', { name: /sample\.ts/ })).toBeVisible();
+	await page.getByRole('button', { name: /sample\.ts/ }).click();
+	// A modified file opens on its Diff sub-tab; the content pane is behind Content.
+	await page.getByRole('tab', { name: 'Content' }).click();
+	const fileView = page.locator('.file-view');
+	await expect(fileView).toContainText('greeting');
+	await expect(fileView.locator('.hljs-keyword').first()).toBeVisible();
+	await expect(fileView.locator('.hljs-string').first()).toBeVisible();
+	await page.screenshot({ path: 'test-results/highlight-files-dark.png' });
+
+	// A file with no detectable language still renders its text, unhighlighted.
+	await page.getByRole('button', { name: /plain/ }).click();
+	await expect(page.locator('.file-view')).toContainText('no extension here');
+	await expect(page.locator('.file-view .hljs-keyword')).toHaveCount(0);
+
+	// --- Changes tab: diff lines are highlighted without losing diff state ---
+	await page.getByRole('tab', { name: 'Changes' }).click();
+	await expect(page.getByRole('button', { name: /sample\.ts/ })).toBeVisible();
+	await page.getByRole('button', { name: /sample\.ts/ }).click();
+	const diff = page.locator('.diff');
+	await expect(diff).toBeVisible();
+	const addLine = diff.locator('.line.add').first();
+	await expect(addLine).toBeVisible();
+	// Highlighting must not erase the add/del classification or the gutter.
+	await expect(addLine.locator('.hljs-keyword').first()).toBeVisible();
+	await expect(addLine.locator('.gutter').first()).not.toHaveText('');
+	await page.screenshot({ path: 'test-results/highlight-diff-dark.png' });
+
+	// --- The palette is theme-driven, so it must survive a light-mode switch --
+	await page.emulateMedia({ colorScheme: 'light' });
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+	await expect(diff.locator('.hljs-keyword').first()).toBeVisible();
+	await page.screenshot({ path: 'test-results/highlight-diff-light.png' });
+});
+
 test('Review comments on file lines can be sent to the chat composer', async ({
 	page,
 	request

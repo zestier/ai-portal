@@ -8,6 +8,12 @@
 		type DiffLine
 	} from '$lib/client/diff-parser';
 	import { lineKey, type ReviewLocation } from '$lib/client/review-format';
+	import {
+		escapeHtml,
+		highlightCodeLines,
+		languageForPath,
+		type HighlightedLines
+	} from '$lib/client/syntax-highlight';
 	import EmptyState from './ui/EmptyState.svelte';
 
 	let {
@@ -48,8 +54,37 @@
 		const split = splitUnifiedDiffByFile(diff, path);
 		return split.length > 0 ? split : [{ path, diff }];
 	});
+	const parsedChunks = $derived.by(() =>
+		chunks.map((chunk, chunkIndex) => {
+			const parsed = parseUnifiedDiff(chunk.diff);
+			return {
+				...chunk,
+				chunkIndex,
+				key: chunkKey(chunk.path, chunkIndex),
+				parsed,
+				stats: diffStats(parsed),
+				empty: parsed.length === 0 || parsed.every((l) => l.kind === 'meta'),
+				language: languageForPath(chunk.path)
+			};
+		})
+	);
 	const tooLarge = $derived(!isRenderableDiff(diff));
 	let collapsedFiles = $state<Record<string, boolean>>({});
+	let highlightedChunks = $state<Record<string, HighlightedLines>>({});
+	let highlightRequestSeq = 0;
+
+	$effect(() => {
+		const chunksToHighlight = parsedChunks;
+		const seq = ++highlightRequestSeq;
+		highlightedChunks = {};
+		for (const chunk of chunksToHighlight) {
+			const lines = chunk.parsed.map((line) => line.text);
+			void highlightCodeLines(lines, chunk.language).then((result) => {
+				if (seq !== highlightRequestSeq) return;
+				highlightedChunks = { ...highlightedChunks, [chunk.key]: result };
+			});
+		}
+	});
 
 	function fmtNo(n: number | null): string {
 		return n == null ? '' : String(n);
@@ -62,6 +97,15 @@
 	function toggleCollapsed(key: string) {
 		collapsedFiles = { ...collapsedFiles, [key]: !collapsedFiles[key] };
 	}
+
+	// Only real code lines are highlighted: meta and hunk headers keep their
+	// literal text so the diff's own structure is never restyled away.
+	function highlightedDiffLine(chunkKey: string, line: DiffLine, idx: number): string {
+		if (line.kind !== 'add' && line.kind !== 'del' && line.kind !== 'context') {
+			return escapeHtml(line.text);
+		}
+		return highlightedChunks[chunkKey]?.html[idx] ?? escapeHtml(line.text);
+	}
 </script>
 
 <div class="diff-set">
@@ -71,12 +115,9 @@
 			{MAX_RENDERABLE_DIFF_CHARS.toLocaleString()}).
 		</div>
 	{/if}
-	{#each chunks as chunk, chunkIndex (chunk.path + ':' + chunkIndex)}
-		{@const key = chunkKey(chunk.path, chunkIndex)}
+	{#each parsedChunks as chunk (chunk.key)}
+		{@const key = chunk.key}
 		{@const collapsed = collapsible && collapsedFiles[key] === true}
-		{@const parsed = parseUnifiedDiff(chunk.diff)}
-		{@const stats = diffStats(parsed)}
-		{@const empty = parsed.length === 0 || parsed.every((l) => l.kind === 'meta')}
 		<div class="diff" class:collapsed>
 			<div class="path-bar">
 				{#if collapsible}
@@ -92,12 +133,12 @@
 				{/if}
 				<code class="path">{chunk.path}</code>
 				<span class="stats">
-					<span class="added">+{stats.added}</span>
-					<span class="removed">−{stats.removed}</span>
+					<span class="added">+{chunk.stats.added}</span>
+					<span class="removed">−{chunk.stats.removed}</span>
 				</span>
 			</div>
 			{#if !collapsed}
-				{#if empty}
+				{#if chunk.empty}
 					<EmptyState
 						size="sm"
 						description="No textual diff (file may be binary, empty, or unchanged)."
@@ -111,7 +152,7 @@
 						aria-label="diff lines"
 					>
 						<div class="rows">
-							{#each parsed as l, i (i)}
+							{#each chunk.parsed as l, i (i)}
 								{#if l.kind === 'hunk' && !showLineNumbers}
 									<!-- Suppress the @@ -L,N +L,N @@ header when we don't trust the
 									     line ranges (e.g. for diffs synthesized from edit args
@@ -152,12 +193,20 @@
 														? '@'
 														: ' '}</span
 										>
-										<span class="text" role="cell">{l.text}</span>
+										<!-- Safe: every branch of highlightedDiffLine returns either
+										     escapeHtml() output or highlight.js markup, which escapes
+										     the source text it wraps. No file content reaches the DOM
+										     unescaped. -->
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+										<span class="text" role="cell">{@html highlightedDiffLine(key, l, i)}</span>
 									</div>
 								{/if}
 							{/each}
 						</div>
 					</div>
+					{#if highlightedChunks[key]?.skipped}
+						<div class="highlight-note">Syntax highlighting skipped for this large diff.</div>
+					{/if}
 				{/if}
 			{/if}
 		</div>
@@ -177,6 +226,13 @@
 		border-radius: 6px;
 		background: var(--surface);
 		color: var(--text-muted);
+	}
+	.highlight-note {
+		padding: 0.35rem 0.6rem;
+		border-top: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-muted);
+		font-size: var(--fs-sm);
 	}
 	.diff {
 		display: flex;

@@ -104,6 +104,16 @@
 	--code-bg: var(--surface-2);
 	--code-border: var(--border);
 	--code-fs: 0.8125rem;
+	--syntax-keyword: #ff7b72;
+	--syntax-built-in: #d2a8ff;
+	--syntax-string: #a5d6ff;
+	--syntax-number: #79c0ff;
+	--syntax-comment: #8b949e;
+	--syntax-title: #d2a8ff;
+	--syntax-attr: #7ee787;
+	--syntax-symbol: #ffa657;
+	--syntax-deletion: var(--danger);
+	--syntax-addition: var(--success);
 
 	/* eyebrow / section label (uppercase small-caps) */
 	--eyebrow-fs: var(--fs-xs);
@@ -134,6 +144,16 @@
 
 	--shadow-1: 0 1px 2px rgb(31 35 40 / 0.08);
 	--shadow-2: 0 4px 14px rgb(31 35 40 / 0.12);
+	--syntax-keyword: #cf222e;
+	--syntax-built-in: #8250df;
+	--syntax-string: #0a3069;
+	--syntax-number: #0550ae;
+	--syntax-comment: #6e7781;
+	--syntax-title: #8250df;
+	--syntax-attr: #116329;
+	--syntax-symbol: #953800;
+	--syntax-deletion: var(--danger);
+	--syntax-addition: var(--success);
 }
 
 /* Accent palettes (orthogonal to dark/light mode). Each overrides only the
@@ -223,6 +243,70 @@ pre code {
 	font-size: inherit;
 }
 
+/* Syntax tokens. Mapped onto theme tokens rather than importing a vendor
+   highlight.js stylesheet, so light/dark and the accent palettes stay in
+   charge of the surface these render against. */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst {
+	color: var(--syntax-keyword);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-class .hljs-title {
+	color: var(--syntax-built-in);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-template-variable {
+	color: var(--syntax-string);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-params {
+	color: var(--syntax-number);
+}
+
+.hljs-comment,
+.hljs-quote {
+	color: var(--syntax-comment);
+	font-style: italic;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title {
+	color: var(--syntax-title);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-name,
+.hljs-property,
+.hljs-selector-class,
+.hljs-selector-id {
+	color: var(--syntax-attr);
+}
+
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta {
+	color: var(--syntax-symbol);
+}
+
+.hljs-deletion {
+	color: var(--syntax-deletion);
+}
+
+.hljs-addition {
+	color: var(--syntax-addition);
+}
+
 input,
 textarea,
 select {
@@ -266,6 +350,18 @@ textarea {
 	--surface-2: color-mix(in srgb, var(--warning) 12%, var(--bg));
 	--code-bg: var(--surface-2);
 	--code-border: var(--border);
+	/* The gold surface stays light in both themes, so pin the syntax palette to
+	   its light-mode values or dark-mode tokens would be unreadable on it. */
+	--syntax-keyword: #cf222e;
+	--syntax-built-in: #8250df;
+	--syntax-string: #0a3069;
+	--syntax-number: #0550ae;
+	--syntax-comment: #6e7781;
+	--syntax-title: #8250df;
+	--syntax-attr: #116329;
+	--syntax-symbol: #953800;
+	--syntax-deletion: var(--danger);
+	--syntax-addition: var(--success);
 }
 
 .btn {

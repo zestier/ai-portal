@@ -59,9 +59,8 @@ let toolCalls = $state<Record<string, ToolCallView>>({});
 
 Renders one message. Assistant content is markdown → sanitized HTML
 (`marked` → `DOMPurify`, client-side). Code blocks render as plain
-`<pre><code>` with copy buttons; syntax highlighting is a Phase 4
-enhancement. Tool calls and file edits are rendered as folded inline
-cards.
+`<pre><code>` with copy buttons. Tool calls and file edits are rendered as
+folded inline cards.
 
 ### `ToolCall.svelte`
 
@@ -70,9 +69,12 @@ expanding to show arguments and result/output.
 
 ### `DiffView.svelte`
 
-Renders unified diff with side-by-side or inline toggle. Per-edit
-"open in editor" link is just informational on the web build; on desktop,
-clicking the path copies it to clipboard.
+Renders unified diff with side-by-side or inline toggle. Code lines are
+syntax-highlighted with a lazy `highlight.js` core bundle plus an explicit
+language allow-list; add/remove/context backgrounds, gutters, comment
+affordances, and diff signs remain the diff semantics. Per-edit "open in
+editor" link is just informational on the web build; on desktop, clicking the
+path copies it to clipboard.
 
 ### `FileBrowser.svelte`
 
@@ -93,6 +95,11 @@ content + binary placeholder, capped at 1 MiB) with a **Content** /
 **Diff** toggle, or a selected commit's detail with its file list and
 per-file diff. The shared `GitStatusHeader` sits above the left rail on
 all three tabs. Mobile collapses both grids into stacked single-pane rows.
+Text file content and the Changes/Commits diff surfaces use the shared
+`src/lib/client/syntax-highlight.ts` helper, which detects languages from file
+extensions, lazy-loads only the requested `highlight.js` language module, escapes
+all fallback text, and skips highlighting above the configured size caps to keep
+large files responsive.
 
 Backed by:
 
