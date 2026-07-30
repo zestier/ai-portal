@@ -32,6 +32,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 		conversationMode: null,
 		model: null,
 		disabledToolGroups: [],
+		workspaceMode: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,

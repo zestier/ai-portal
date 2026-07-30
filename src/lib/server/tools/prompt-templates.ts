@@ -30,15 +30,21 @@ const TEMPLATE_KEEP = [
 	'conversationMode',
 	'model',
 	'disabledToolGroups',
+	'workspaceMode',
 	'status',
 	'pinned'
 ] as const;
 
 const Type = z.enum(['chat', 'ticket-action']);
 const Status = z.enum(['open', 'archived']);
-const LaunchBehavior = z.enum(['send', 'draft']);
+const LaunchBehavior = z.enum(['send', 'draft', 'review']);
 const ConversationMode = z.enum(['interactive', 'plan', 'autopilot', 'best-effort']);
 const ToolGroupId = z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]);
+const WorkspaceMode = z.enum(['shared', 'worktree']);
+
+const WORKSPACE_MODE_DESCRIPTION =
+	'Git workspace style for chats launched from this template: "shared" (the shared checkout) or ' +
+	'"worktree" (a fresh isolated Git worktree). Omit/null for no preference (shared).';
 
 const ListArgs = z
 	.object({
@@ -64,6 +70,7 @@ const CreateArgs = z.object({
 	conversationMode: ConversationMode.nullable().optional(),
 	model: z.string().trim().max(200).nullable().optional(),
 	disabledToolGroups: z.array(ToolGroupId).optional(),
+	workspaceMode: WorkspaceMode.nullable().optional(),
 	pinned: z.boolean().optional()
 });
 
@@ -77,6 +84,7 @@ const UpdateArgs = z
 		conversationMode: ConversationMode.nullable().optional(),
 		model: z.string().trim().max(200).nullable().optional(),
 		disabledToolGroups: z.array(ToolGroupId).optional(),
+		workspaceMode: WorkspaceMode.nullable().optional(),
 		status: Status.optional(),
 		pinned: z.boolean().optional()
 	})
@@ -89,6 +97,7 @@ const UpdateArgs = z
 			a.conversationMode !== undefined ||
 			a.model !== undefined ||
 			a.disabledToolGroups !== undefined ||
+			a.workspaceMode !== undefined ||
 			a.status !== undefined ||
 			a.pinned !== undefined,
 		{ message: 'No fields to update' }
@@ -243,20 +252,28 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 					},
 					launchBehavior: {
 						type: 'string',
-						enum: ['send', 'draft'],
-						description: 'ticket-action only: send immediately or pre-fill a draft. Default send.'
+						enum: ['send', 'draft', 'review'],
+						description:
+							'How the template launches: send the prompt immediately, open a draft in the composer, ' +
+							'or review (edit the prompt and launch options) before sending. Defaults to draft for ' +
+							'chat templates and send for ticket actions.'
 					},
 					conversationMode: {
 						type: 'string',
 						enum: ['interactive', 'plan', 'autopilot', 'best-effort'],
-						description: 'ticket-action only: conversation mode override.'
+						description: 'Conversation mode override for launched chats.'
 					},
-					model: { type: 'string', description: 'ticket-action only: model override.' },
+					model: { type: 'string', description: 'Model override for launched chats.' },
 					disabledToolGroups: {
 						type: 'array',
 						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
 						description:
 							'chat only: portal tool groups to disable on conversations launched from this template (seed, not a lock).'
+					},
+					workspaceMode: {
+						type: 'string',
+						enum: ['shared', 'worktree', 'ask'],
+						description: WORKSPACE_MODE_DESCRIPTION
 					},
 					pinned: { type: 'boolean', description: 'Pin to the top of its list.' }
 				},
@@ -277,6 +294,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						...(p.disabledToolGroups !== undefined
 							? { disabledToolGroups: p.disabledToolGroups }
 							: {}),
+						...(p.workspaceMode !== undefined ? { workspaceMode: p.workspaceMode } : {}),
 						...(p.pinned !== undefined ? { pinned: p.pinned } : {})
 					});
 					return ok(summarize(tpl), `Created ${tpl.type} template ${tpl.id}: ${tpl.title}`);
@@ -307,20 +325,25 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 					},
 					launchBehavior: {
 						type: 'string',
-						enum: ['send', 'draft'],
-						description: 'ticket-action only: new launch behavior.'
+						enum: ['send', 'draft', 'review'],
+						description: 'New launch behavior: send, draft, or review before sending.'
 					},
 					conversationMode: {
 						type: 'string',
 						enum: ['interactive', 'plan', 'autopilot', 'best-effort'],
-						description: 'ticket-action only: new conversation mode override.'
+						description: 'New conversation mode override for launched chats.'
 					},
-					model: { type: 'string', description: 'ticket-action only: new model override.' },
+					model: { type: 'string', description: 'New model override for launched chats.' },
 					disabledToolGroups: {
 						type: 'array',
 						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
 						description:
 							'chat only: new set of portal tool groups to disable on launched conversations (replaces the existing set).'
+					},
+					workspaceMode: {
+						type: 'string',
+						enum: ['shared', 'worktree', 'ask'],
+						description: WORKSPACE_MODE_DESCRIPTION
 					},
 					status: {
 						type: 'string',

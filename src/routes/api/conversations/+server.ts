@@ -67,19 +67,26 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 
 	// Seed tool-group scoping from a chat template when one is supplied and owned
 	// by the caller. Non-chat / missing / other-user templates seed nothing.
+	// A template that pins `workspaceMode: 'worktree'` also seeds the workspace
+	// when the request didn't state one explicitly (an explicit `workspace`
+	// always wins — that's how a resolved `ask` launch is expressed).
 	let disabledToolGroups: string[] = [];
+	let workspace = body.workspace;
 	if (body.promptTemplateId) {
 		const tpl = promptTemplates.get(body.promptTemplateId, userId);
 		if (tpl && tpl.type === 'chat') disabledToolGroups = tpl.disabledToolGroups;
+		if (tpl && !workspace && !body.workdir && tpl.workspaceMode === 'worktree') {
+			workspace = { kind: 'worktree' };
+		}
 	}
 
 	const id = convs.newId();
 	// Precedence: explicit body.workdir > user's defaultWorkdir > PROJECT_ROOT.
 	const requested =
-		body.workspace?.kind === 'shared'
-			? (body.workspace.path ?? userSettings.defaultWorkdir ?? null)
-			: body.workspace?.kind === 'worktree'
-				? (body.workspace.sourcePath ?? userSettings.defaultWorkdir ?? null)
+		workspace?.kind === 'shared'
+			? (workspace.path ?? userSettings.defaultWorkdir ?? null)
+			: workspace?.kind === 'worktree'
+				? (workspace.sourcePath ?? userSettings.defaultWorkdir ?? null)
 				: (body.workdir ?? userSettings.defaultWorkdir ?? null);
 	let workdir: string;
 	if (requested) {
@@ -109,13 +116,13 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 	}
 
 	let managedWorktree;
-	if (body.workspace?.kind === 'worktree') {
+	if (workspace?.kind === 'worktree') {
 		try {
 			managedWorktree = await createManagedWorktree({
 				sourceWorkdir: workdir,
 				userId,
 				conversationId: id,
-				...(body.workspace.baseRef ? { baseRef: body.workspace.baseRef } : {})
+				...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
 			});
 		} catch (cause) {
 			if (cause instanceof WorktreeError) {

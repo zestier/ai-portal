@@ -179,5 +179,58 @@ describe('chat template tool-group presets', () => {
 			const body = await (res as Response).json();
 			expect(body.conversation.disabledToolGroups).toEqual([]);
 		});
+
+		it('creates a managed worktree when the template pins workspaceMode: worktree', async () => {
+			const users = await import('../src/lib/server/db/repos/users');
+			const templates = await import('../src/lib/server/db/repos/prompt-templates');
+			const { POST } = await import('../src/routes/api/conversations/+server');
+			const user = users.ensureLocalUser();
+			const tpl = templates.create(user.id, {
+				title: 'Isolated',
+				prompt: 'Work in isolation.',
+				workspaceMode: 'worktree'
+			});
+
+			const res = await POST({
+				locals: { userId: user.id, user: { githubLogin: 'local' } },
+				request: new Request('http://localhost/api/conversations', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ title: 'Isolated chat', promptTemplateId: tpl.id })
+				}),
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof POST>[0]);
+			const body = await (res as Response).json();
+			expect(body.conversation.workspaceKind).toBe('managed-worktree');
+		});
+
+		it('lets an explicit workspace override the template preference', async () => {
+			const users = await import('../src/lib/server/db/repos/users');
+			const templates = await import('../src/lib/server/db/repos/prompt-templates');
+			const { POST } = await import('../src/routes/api/conversations/+server');
+			const user = users.ensureLocalUser();
+			const tpl = templates.create(user.id, {
+				title: 'Isolated',
+				prompt: 'Work in isolation.',
+				workspaceMode: 'worktree'
+			});
+
+			// A review launch that switched back to the shared checkout must win.
+			const res = await POST({
+				locals: { userId: user.id, user: { githubLogin: 'local' } },
+				request: new Request('http://localhost/api/conversations', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						title: 'Shared chat',
+						promptTemplateId: tpl.id,
+						workspace: { kind: 'shared' }
+					})
+				}),
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof POST>[0]);
+			const body = await (res as Response).json();
+			expect(body.conversation.workspaceKind).toBe('shared');
+		});
 	});
 });

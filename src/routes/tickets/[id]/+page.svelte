@@ -18,7 +18,13 @@
 	import { ticketStatusActions, type TicketStatusAction } from '$lib/tickets/actions';
 	import { patchTicketStatus, patchTicketPriority } from '$lib/client/ticket-status';
 	import { deleteWorkspaceTicket } from '$lib/client/ticket-archive';
-	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
+	import {
+		createTicketDraftChat,
+		createTicketLaunchChat,
+		defaultOptions as ticketLaunchDefaults
+	} from '$lib/client/ticket-chat-launch';
+	import LaunchReviewDialog from '$lib/components/LaunchReviewDialog.svelte';
+	import type { TemplateLaunchOptions } from '$lib/prompt-templates';
 	import { onMount } from 'svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -57,6 +63,8 @@
 	let errorMsg = $state<string | null>(null);
 	let archiveOpen = $state(false);
 	let deleteOpen = $state(false);
+	// Ticket action awaiting confirmation in the review dialog.
+	let reviewingAction = $state<ChatPromptTemplate | null>(null);
 
 	function flashError(msg: string) {
 		errorMsg = msg;
@@ -161,7 +169,21 @@
 		}
 	}
 
-	async function runChatAction(action: ChatPromptTemplate) {
+	/**
+	 * Entry point for the ticket-action buttons. `review` actions open the review
+	 * dialog first; the rest launch with the action's own settings.
+	 */
+	function startChatAction(action: ChatPromptTemplate) {
+		if (busy) return;
+		errorMsg = null;
+		if (action.launchBehavior === 'review') {
+			reviewingAction = action;
+			return;
+		}
+		void runChatAction(action, ticketLaunchDefaults(action, ticket as WorkspaceTicket));
+	}
+
+	async function runChatAction(action: ChatPromptTemplate, options: TemplateLaunchOptions) {
 		if (busy) return;
 		busy = true;
 		errorMsg = null;
@@ -171,18 +193,21 @@
 					ticket: ticket as WorkspaceTicket,
 					template: action,
 					workdir: ticket.workspaceKey,
+					options,
 					fetcher: fetch
 				});
 				if (!result.ok) {
 					flashError(`Could not create chat (${result.status ?? 'network'})`);
 					return;
 				}
+				reviewingAction = null;
 				location.href = result.href;
 			} else {
 				const result = await createTicketLaunchChat({
 					ticket: ticket as WorkspaceTicket,
 					template: action,
 					workdir: ticket.workspaceKey,
+					options,
 					fetcher: fetch
 				});
 				if (!result.ok) {
@@ -193,6 +218,7 @@
 					);
 					return;
 				}
+				reviewingAction = null;
 				location.href = result.href;
 			}
 		} catch {
@@ -260,7 +286,7 @@
 				class="btn sm"
 				title={action.description || action.title}
 				disabled={busy}
-				onclick={() => runChatAction(action)}
+				onclick={() => startChatAction(action)}
 			>
 				{action.title}
 			</button>
@@ -447,6 +473,24 @@
 		</div>
 	</div>
 </Modal>
+
+{#if reviewingAction}
+	<LaunchReviewDialog
+		open
+		templateTitle={reviewingAction.title}
+		defaults={ticketLaunchDefaults(reviewingAction, ticket as WorkspaceTicket)}
+		{busy}
+		error={errorMsg}
+		onLaunch={(options) => {
+			const action = reviewingAction;
+			if (action) void runChatAction(action, options);
+		}}
+		onCancel={() => {
+			reviewingAction = null;
+			errorMsg = null;
+		}}
+	/>
+{/if}
 
 <style>
 	.wrap {

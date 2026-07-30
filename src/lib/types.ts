@@ -221,15 +221,53 @@ export function normalizePromptTemplateType(raw: string | null | undefined): Pro
 }
 
 /**
- * How a ticket-action template launches: `send` posts the interpolated prompt as
- * a turn immediately; `draft` pre-fills the composer for the user to edit/send.
+ * How a prompt template launches the chat it creates:
+ * - `send`: post the (interpolated) prompt as a turn immediately;
+ * - `draft`: pre-fill the composer for the user to edit and send;
+ * - `review`: open a pre-launch dialog to edit the prompt *and* the launch
+ *   options (conversation mode, model, Git workspace) before sending.
+ *
+ * Applies to both template types. Stored `null` means "type default": `draft`
+ * for chat templates (their historical behavior) and `send` for ticket actions.
  */
-export type TicketLaunchBehavior = 'send' | 'draft';
+export type PromptLaunchBehavior = 'send' | 'draft' | 'review';
 
-export function normalizeTicketLaunchBehavior(
+export const PROMPT_LAUNCH_BEHAVIORS: readonly PromptLaunchBehavior[] = ['send', 'draft', 'review'];
+
+/** The launch behavior used when a template stores none. */
+export function defaultLaunchBehavior(type: PromptTemplateType): PromptLaunchBehavior {
+	return type === 'chat' ? 'draft' : 'send';
+}
+
+export function normalizeLaunchBehavior(
+	raw: string | null | undefined,
+	type: PromptTemplateType
+): PromptLaunchBehavior {
+	if (raw === 'send' || raw === 'draft' || raw === 'review') return raw;
+	return defaultLaunchBehavior(type);
+}
+
+/**
+ * Git workspace style a prompt template launches its conversation into:
+ * - `shared`: the shared checkout (today's default),
+ * - `worktree`: a fresh managed Git worktree, isolated from the shared checkout.
+ *
+ * `null` on a template means "no preference" and behaves like `shared`. Picking
+ * a workspace per launch is not a mode here — that is `launchBehavior: 'review'`,
+ * which lets the user change this (and the other options) before sending.
+ */
+export type PromptTemplateWorkspaceMode = 'shared' | 'worktree';
+
+export const PROMPT_TEMPLATE_WORKSPACE_MODES: readonly PromptTemplateWorkspaceMode[] = [
+	'shared',
+	'worktree'
+];
+
+/** Parse a stored/submitted workspace mode, collapsing anything unknown to `null`. */
+export function normalizePromptTemplateWorkspaceMode(
 	raw: string | null | undefined
-): TicketLaunchBehavior {
-	return raw === 'draft' ? 'draft' : 'send';
+): PromptTemplateWorkspaceMode | null {
+	return raw === 'shared' || raw === 'worktree' ? raw : null;
 }
 
 export interface ChatPromptTemplate {
@@ -241,17 +279,17 @@ export interface ChatPromptTemplate {
 	description: string;
 	prompt: string;
 	/**
-	 * Ticket-action launch behavior (`send` | `draft`). `null` for `chat`
-	 * templates, which are always pre-filled into the composer.
+	 * How this template launches its chat (`send` | `draft` | `review`). Applies
+	 * to both template types; always resolved (never `null`) on a loaded row.
 	 */
-	launchBehavior: TicketLaunchBehavior | null;
+	launchBehavior: PromptLaunchBehavior;
 	/**
-	 * Optional conversation-mode override applied when a ticket-action template
-	 * creates its conversation. `null` means use the user's default mode.
+	 * Optional conversation-mode override applied when this template creates its
+	 * conversation. `null` means use the user's default mode.
 	 */
 	conversationMode: SessionMode | null;
 	/**
-	 * Optional model override applied when a ticket-action template creates its
+	 * Optional model override applied when this template creates its
 	 * conversation. `null` means use the user's default model. A stale id (no
 	 * longer offered by the provider) is passed through unchanged.
 	 */
@@ -264,6 +302,12 @@ export interface ChatPromptTemplate {
 	 * source of truth and the user can change it afterward.
 	 */
 	disabledToolGroups: PortalToolGroupId[];
+	/**
+	 * Git workspace style for chats launched from this template. `null` means no
+	 * preference — the launcher uses the shared checkout. Applies to both
+	 * template types since both create conversations.
+	 */
+	workspaceMode: PromptTemplateWorkspaceMode | null;
 	status: PromptTemplateStatus;
 	pinned: boolean;
 	orderIndex: number;

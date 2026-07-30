@@ -108,7 +108,7 @@ describe('prompt templates', () => {
 		).toThrow(/don't support placeholders/i);
 	});
 
-	it('persists, updates, and clears the ticket-action model override; ignores it for chat', async () => {
+	it('persists, updates, and clears the model override for both template types', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const promptTemplates = await import('../src/lib/server/db/repos/prompt-templates');
 		const user = users.ensureLocalUser();
@@ -126,14 +126,52 @@ describe('prompt templates', () => {
 		// Empty/whitespace clears back to "use my default model".
 		expect(promptTemplates.update(action.id, user.id, { model: '   ' })?.model).toBeNull();
 
-		// Chat templates never carry a model override even if one is supplied.
+		// Chat templates carry the same overrides: they create conversations too.
 		const chat = promptTemplates.create(user.id, {
 			type: 'chat',
 			title: 'Plain',
 			prompt: 'No placeholders here',
 			model: 'claude-sonnet-4.6'
 		});
-		expect(chat.model).toBeNull();
+		expect(chat.model).toBe('claude-sonnet-4.6');
+		expect(promptTemplates.get(chat.id, user.id)?.model).toBe('claude-sonnet-4.6');
+	});
+
+	it('defaults launch behavior per type and persists the workspace mode', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const promptTemplates = await import('../src/lib/server/db/repos/prompt-templates');
+		const user = users.ensureLocalUser();
+
+		// Chat templates historically pre-filled the composer, so `draft` is their
+		// default; ticket actions keep firing immediately with `send`.
+		const chat = promptTemplates.create(user.id, { title: 'Chat', prompt: 'Hi' });
+		expect(chat.launchBehavior).toBe('draft');
+		expect(chat.workspaceMode).toBeNull();
+
+		const action = promptTemplates.create(user.id, {
+			type: 'ticket-action',
+			title: 'Do',
+			prompt: 'Do {{ticket.title}}'
+		});
+		expect(action.launchBehavior).toBe('send');
+
+		// Review + worktree round-trip through a fresh read.
+		const reviewed = promptTemplates.update(chat.id, user.id, {
+			launchBehavior: 'review',
+			workspaceMode: 'worktree'
+		});
+		expect(reviewed?.launchBehavior).toBe('review');
+		expect(reviewed?.workspaceMode).toBe('worktree');
+		const reread = promptTemplates.get(chat.id, user.id);
+		expect(reread?.launchBehavior).toBe('review');
+		expect(reread?.workspaceMode).toBe('worktree');
+
+		// An unknown workspace mode collapses to "no preference" (shared).
+		expect(
+			promptTemplates.update(chat.id, user.id, {
+				workspaceMode: 'ask' as unknown as 'shared'
+			})?.workspaceMode
+		).toBeNull();
 	});
 
 	it('API lists built-ins and performs user-scoped custom CRUD', async () => {

@@ -6,6 +6,7 @@ import DiffView from '../src/lib/components/DiffView.svelte';
 import FileBrowser from '../src/lib/components/FileBrowser.svelte';
 import GitToolResult from '../src/lib/components/tool/GitToolResult.svelte';
 import InteractiveRequestDialog from '../src/lib/components/InteractiveRequestDialog.svelte';
+import LaunchReviewDialog from '../src/lib/components/LaunchReviewDialog.svelte';
 import PromptTemplateLauncher from '../src/lib/components/PromptTemplateLauncher.svelte';
 import ToolCall from '../src/lib/components/ToolCall.svelte';
 import PromptsSettings from '../src/routes/settings/PromptsSettings.svelte';
@@ -714,10 +715,11 @@ describe('Svelte component regression coverage', () => {
 						title: 'Weekly review',
 						description: 'Summarize changes',
 						prompt: 'Review this week of work.',
-						launchBehavior: null,
+						launchBehavior: 'draft',
 						conversationMode: null,
 						model: null,
 						disabledToolGroups: [],
+						workspaceMode: null,
 						status: 'open',
 						pinned: true,
 						orderIndex: 1,
@@ -736,6 +738,7 @@ describe('Svelte component regression coverage', () => {
 						conversationMode: null,
 						model: null,
 						disabledToolGroups: [],
+						workspaceMode: null,
 						status: 'open',
 						pinned: true,
 						orderIndex: 10,
@@ -755,5 +758,36 @@ describe('Svelte component regression coverage', () => {
 		expect(body).toContain('Ticket actions');
 		expect(body).toContain('Restore default actions');
 		expect(body).toContain('Archive');
+		// Both template types expose the same launch-behavior + Git-workspace
+		// controls, including the review option.
+		expect(body).toContain('Review before sending');
+		expect(body).toContain('New isolated worktree');
+		expect(body).not.toContain('Ask me at launch');
+	});
+
+	test('Launch review dialog seeds the prompt and options from the template', () => {
+		const body = render(LaunchReviewDialog, {
+			props: {
+				open: true,
+				templateTitle: 'Weekly review',
+				defaults: {
+					prompt: 'Review this week of work.',
+					workspace: 'worktree',
+					conversationMode: 'plan',
+					model: 'gpt-5.5'
+				},
+				onLaunch: () => {},
+				onCancel: () => {}
+			}
+		}).body;
+
+		expect(body).toContain('Review before sending');
+		expect(body).toContain('Launching “Weekly review”');
+		expect(body).toContain('Review this week of work.');
+		expect(body).toContain('Git workspace');
+		expect(body).toContain('New isolated worktree');
+		expect(body).toContain('Launch chat');
+		// A stale/unlisted model override still shows up as the selected option.
+		expect(body).toContain('gpt-5.5');
 	});
 });

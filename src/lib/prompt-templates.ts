@@ -1,8 +1,8 @@
 import type {
 	ChatPromptTemplate,
+	PromptLaunchBehavior,
 	PromptTemplateType,
 	SessionMode,
-	TicketLaunchBehavior,
 	WorkspaceTicket
 } from './types';
 
@@ -21,10 +21,11 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		description: 'Review changed code for bugs, regressions, and security issues.',
 		prompt:
 			'Review the current code changes for correctness, security, and maintainability. Focus on issues that matter and suggest concrete fixes.',
-		launchBehavior: null,
+		launchBehavior: 'draft',
 		conversationMode: null,
 		model: null,
 		disabledToolGroups: [],
+		workspaceMode: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,
@@ -40,10 +41,11 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		description: 'Investigate a failing command, stack trace, or unexpected behavior.',
 		prompt:
 			'I need help debugging an error. Start by asking for or inspecting the failing command/output, identify likely root causes, and propose the smallest safe fix.',
-		launchBehavior: null,
+		launchBehavior: 'draft',
 		conversationMode: null,
 		model: null,
 		disabledToolGroups: [],
+		workspaceMode: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 20,
@@ -59,10 +61,11 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		description: 'Create a focused implementation plan before changing code.',
 		prompt:
 			'Help plan this implementation. Inspect the relevant code paths, call out risks or open questions, and propose a concise step-by-step approach before editing.',
-		launchBehavior: null,
+		launchBehavior: 'draft',
 		conversationMode: null,
 		model: null,
 		disabledToolGroups: [],
+		workspaceMode: null,
 		status: 'open',
 		pinned: false,
 		orderIndex: 30,
@@ -78,10 +81,11 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		description: 'Explain how a feature, file, or flow works in this repository.',
 		prompt:
 			'Explain how this part of the codebase works. Trace the important files and data flow, and summarize the behavior, extension points, and gotchas.',
-		launchBehavior: null,
+		launchBehavior: 'draft',
 		conversationMode: null,
 		model: null,
 		disabledToolGroups: [],
+		workspaceMode: null,
 		status: 'open',
 		pinned: false,
 		orderIndex: 40,
@@ -97,6 +101,69 @@ export function listBuiltInPromptTemplates(): PromptTemplateListItem[] {
 
 export function getBuiltInPromptTemplate(id: string): ChatPromptTemplate | null {
 	return BUILT_IN_PROMPT_TEMPLATES.find((template) => template.id === id) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Launch resolution (Git workspace + per-launch overrides)
+//
+// A template pins the Git workspace its chats launch into (`shared` by default)
+// and how it launches (`send`, `draft`, or `review`). A `review` launch collects
+// the same values from the user first, so both paths funnel into one
+// `TemplateLaunchOptions` shape that the client launchers consume.
+// ---------------------------------------------------------------------------
+
+/** Concrete workspace kinds a conversation can be created with. */
+export type LaunchWorkspaceKind = 'shared' | 'worktree';
+
+/** Prompt + settings a launch actually uses, after any review-dialog edits. */
+export interface TemplateLaunchOptions {
+	prompt: string;
+	workspace: LaunchWorkspaceKind;
+	conversationMode: SessionMode | null;
+	model: string | null;
+}
+
+/** A template's effective workspace, collapsing "no preference" to `shared`. */
+export function templateWorkspace(
+	template: Pick<ChatPromptTemplate, 'workspaceMode'>
+): LaunchWorkspaceKind {
+	return template.workspaceMode ?? 'shared';
+}
+
+/** True when launching this template opens the review dialog first. */
+export function templateNeedsReview(template: Pick<ChatPromptTemplate, 'launchBehavior'>): boolean {
+	return template.launchBehavior === 'review';
+}
+
+/**
+ * The launch options a template starts from: its stored settings plus the
+ * already-interpolated prompt. Used directly for `send`/`draft` launches and as
+ * the initial state of the review dialog.
+ */
+export function templateLaunchDefaults(
+	template: Pick<ChatPromptTemplate, 'workspaceMode' | 'conversationMode' | 'model'>,
+	prompt: string
+): TemplateLaunchOptions {
+	return {
+		prompt,
+		workspace: templateWorkspace(template),
+		conversationMode: template.conversationMode ?? null,
+		model: template.model ?? null
+	};
+}
+
+/** Human-readable label for a launch behavior, used in settings and launchers. */
+export function launchBehaviorLabel(behavior: PromptLaunchBehavior): string {
+	if (behavior === 'draft') return 'Open draft';
+	if (behavior === 'review') return 'Review before sending';
+	return 'Send immediately';
+}
+
+/** Short launcher tag for a template's workspace preference, or `null` for the default. */
+export function workspaceModeLabel(
+	template: Pick<ChatPromptTemplate, 'workspaceMode'>
+): string | null {
+	return templateWorkspace(template) === 'worktree' ? 'Isolated worktree' : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +279,7 @@ export interface TicketActionDefault {
 	title: string;
 	description: string;
 	prompt: string;
-	launchBehavior: TicketLaunchBehavior;
+	launchBehavior: PromptLaunchBehavior;
 	conversationMode: SessionMode | null;
 	/** Optional model override; `null` keeps the user's default model. */
 	model: string | null;

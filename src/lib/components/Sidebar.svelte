@@ -13,7 +13,13 @@
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import PromptTemplateLauncher from '$lib/components/PromptTemplateLauncher.svelte';
-	import { createTicketDraftChat, createTicketLaunchChat } from '$lib/client/ticket-chat-launch';
+	import {
+		createTicketDraftChat,
+		createTicketLaunchChat,
+		defaultOptions as ticketLaunchDefaults
+	} from '$lib/client/ticket-chat-launch';
+	import LaunchReviewDialog from '$lib/components/LaunchReviewDialog.svelte';
+	import type { TemplateLaunchOptions } from '$lib/prompt-templates';
 	import { archiveWorkspaceTicket } from '$lib/client/ticket-archive';
 	import { awaitingInputOverrides, isAwaitingInput } from '$lib/client/awaiting-input';
 	import {
@@ -60,6 +66,8 @@
 	let ticketBusy = $state(false);
 	let ticketLaunchId = $state<string | null>(null);
 	let ticketArchiveId = $state<string | null>(null);
+	// Ticket action awaiting confirmation in the review dialog.
+	let reviewing = $state<{ ticket: WorkspaceTicket; action: ChatPromptTemplate } | null>(null);
 	let expandedTicketIds = $state(new Set<string>());
 	let errorMsg = $state<string | null>(null);
 	let mounted = $state(false);
@@ -258,7 +266,11 @@
 		expandedTicketIds = next;
 	}
 
-	async function launchTicketChat(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
+	async function launchTicketChat(
+		ticket: WorkspaceTicket,
+		action: ChatPromptTemplate,
+		options: TemplateLaunchOptions
+	) {
 		if (ticketLaunchId || ticketArchiveId === ticket.id) return;
 		ticketLaunchId = ticket.id;
 		try {
@@ -266,6 +278,7 @@
 				ticket,
 				template: action,
 				workdir: ticketWorkspace,
+				options,
 				fetcher: fetch
 			});
 			if (!result.ok) {
@@ -276,6 +289,7 @@
 				);
 				return;
 			}
+			reviewing = null;
 			await invalidateAll();
 			onnavigate?.();
 			location.href = result.href;
@@ -286,7 +300,11 @@
 		}
 	}
 
-	async function openTicketDraft(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
+	async function openTicketDraft(
+		ticket: WorkspaceTicket,
+		action: ChatPromptTemplate,
+		options: TemplateLaunchOptions
+	) {
 		if (ticketLaunchId || ticketArchiveId === ticket.id) return;
 		ticketLaunchId = ticket.id;
 		try {
@@ -294,12 +312,14 @@
 				ticket,
 				template: action,
 				workdir: ticketWorkspace,
+				options,
 				fetcher: fetch
 			});
 			if (!result.ok) {
 				flashError(`Could not create chat (${result.status ?? 'network'})`);
 				return;
 			}
+			reviewing = null;
 			await invalidateAll();
 			onnavigate?.();
 			location.href = result.href;
@@ -310,11 +330,27 @@
 		}
 	}
 
-	function runTicketAction(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
+	/**
+	 * Entry point for the sidebar ticket-action buttons. `review` actions open
+	 * the review dialog first; the rest launch with the action's own settings.
+	 */
+	function startTicketAction(ticket: WorkspaceTicket, action: ChatPromptTemplate) {
+		if (action.launchBehavior === 'review') {
+			reviewing = { ticket, action };
+			return;
+		}
+		runTicketAction(ticket, action, ticketLaunchDefaults(action, ticket));
+	}
+
+	function runTicketAction(
+		ticket: WorkspaceTicket,
+		action: ChatPromptTemplate,
+		options: TemplateLaunchOptions
+	) {
 		if (action.launchBehavior === 'draft') {
-			void openTicketDraft(ticket, action);
+			void openTicketDraft(ticket, action, options);
 		} else {
-			void launchTicketChat(ticket, action);
+			void launchTicketChat(ticket, action, options);
 		}
 	}
 
@@ -704,7 +740,7 @@
 													title={action.description || action.title}
 													aria-label={`${action.title} ticket: ${ticket.title}`}
 													disabled={ticketLaunchId !== null || ticketArchiveId === ticket.id}
-													onclick={() => runTicketAction(ticket, action)}
+													onclick={() => startTicketAction(ticket, action)}
 												>
 													{action.title}
 												</button>
@@ -1012,6 +1048,20 @@
 		{/if}
 	</div>
 </div>
+
+{#if reviewing}
+	<LaunchReviewDialog
+		open
+		templateTitle={reviewing.action.title}
+		defaults={ticketLaunchDefaults(reviewing.action, reviewing.ticket)}
+		busy={ticketLaunchId !== null}
+		onLaunch={(options) => {
+			const pending = reviewing;
+			if (pending) runTicketAction(pending.ticket, pending.action, options);
+		}}
+		onCancel={() => (reviewing = null)}
+	/>
+{/if}
 
 <style>
 	.sidebar-inner {

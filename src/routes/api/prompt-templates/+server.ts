@@ -36,12 +36,13 @@ const CreateBody = z
 		title: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
-		launchBehavior: z.enum(['send', 'draft']).optional(),
+		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
 		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
 		model: z.string().trim().max(200).nullable().optional(),
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
 			.optional(),
+		workspaceMode: z.enum(['shared', 'worktree']).nullable().optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
 	})
@@ -70,6 +71,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		...(body.disabledToolGroups !== undefined
 			? { disabledToolGroups: body.disabledToolGroups }
 			: {}),
+		...(body.workspaceMode !== undefined ? { workspaceMode: body.workspaceMode } : {}),
 		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
 		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})
 	});
