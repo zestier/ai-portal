@@ -33,6 +33,13 @@
 	import { decideArmedFlush, decideComposerAction } from '$lib/client/composer-arming';
 	import { createConversationResetGate } from '$lib/client/conversation-reset';
 	import { reviewStore } from '$lib/client/review.svelte';
+	import {
+		DEFAULT_STICKY_BOTTOM_THRESHOLD_PX,
+		planStickyBottomContentUpdate,
+		shouldShowJumpToLatest,
+		updateStickyBottomFromScroll,
+		type ScrollMetrics
+	} from '$lib/client/sticky-bottom';
 
 	const INTERACTIVE_REVEAL_DELAY_MS = 150;
 	// Upper bound on how long a user-initiated Stop waits for the server's
@@ -210,6 +217,7 @@
 			visibleInteractive = [...initialPendingInteractive];
 			clearInteractiveRevealTimers();
 			clearCompactionTimer();
+			void scrollToBottom({ force: true });
 			// Reattach the EventSource to any in-progress turn so a
 			// refresh-mid-stream resumes seamlessly.
 			if (initialActiveTurnId) {
@@ -231,6 +239,7 @@
 			closeStream();
 			clearCompactionTimer();
 			clearInteractiveRevealTimers();
+			clearProgrammaticScrollGuard();
 		};
 	});
 
@@ -341,39 +350,80 @@
 	// yank them away from content they're reading.
 	let pinnedToBottom = $state(true);
 	let hasNewBelow = $state(false);
-	const STICK_THRESHOLD_PX = 40;
+	let programmaticScrollGuardTimer: ReturnType<typeof setTimeout> | null = null;
+	let programmaticScrollGuardUntil = 0;
+	type TranscriptScrollBehavior = 'auto' | 'smooth';
 
-	function isNearBottom(el: HTMLElement): boolean {
-		return el.scrollHeight - el.clientHeight - el.scrollTop <= STICK_THRESHOLD_PX;
+	function scrollMetrics(el: HTMLElement): ScrollMetrics {
+		return {
+			scrollHeight: el.scrollHeight,
+			clientHeight: el.clientHeight,
+			scrollTop: el.scrollTop
+		};
+	}
+
+	function clearProgrammaticScrollGuard() {
+		if (programmaticScrollGuardTimer) {
+			clearTimeout(programmaticScrollGuardTimer);
+			programmaticScrollGuardTimer = null;
+		}
+		programmaticScrollGuardUntil = 0;
+	}
+
+	// A programmatic scroll fires the same `scroll` events a user drag does. If
+	// we let those through, a smooth jump-to-latest would read as "user scrolled
+	// away" mid-animation and immediately unpin. Suppress handling until the
+	// animation has had time to settle, then re-sync from the real position.
+	function setProgrammaticScrollGuard(durationMs: number) {
+		clearProgrammaticScrollGuard();
+		programmaticScrollGuardUntil = performance.now() + durationMs;
+		programmaticScrollGuardTimer = setTimeout(() => {
+			programmaticScrollGuardTimer = null;
+			programmaticScrollGuardUntil = 0;
+			const el = scrollEl;
+			if (!el) return;
+			const next = updateStickyBottomFromScroll(
+				{ pinnedToBottom, hasNewBelow },
+				scrollMetrics(el),
+				{ thresholdPx: DEFAULT_STICKY_BOTTOM_THRESHOLD_PX }
+			);
+			pinnedToBottom = next.pinnedToBottom;
+			hasNewBelow = next.hasNewBelow;
+		}, durationMs);
 	}
 
 	function onMessagesScroll() {
 		const el = scrollEl;
 		if (!el) return;
-		const near = isNearBottom(el);
-		pinnedToBottom = near;
-		if (near) hasNewBelow = false;
+		const next = updateStickyBottomFromScroll({ pinnedToBottom, hasNewBelow }, scrollMetrics(el), {
+			programmatic: performance.now() < programmaticScrollGuardUntil,
+			thresholdPx: DEFAULT_STICKY_BOTTOM_THRESHOLD_PX
+		});
+		pinnedToBottom = next.pinnedToBottom;
+		hasNewBelow = next.hasNewBelow;
+	}
+
+	function setScrollToBottom(behavior: TranscriptScrollBehavior = 'auto') {
+		const el = scrollEl;
+		if (!el) return;
+		setProgrammaticScrollGuard(behavior === 'smooth' ? 700 : 80);
+		el.scrollTo({ top: el.scrollHeight, behavior });
+		pinnedToBottom = true;
+		hasNewBelow = false;
 	}
 
 	async function scrollToBottom(opts: { force?: boolean } = {}) {
 		await tick();
 		const el = scrollEl;
 		if (!el) return;
-		if (opts.force || pinnedToBottom) {
-			el.scrollTo({ top: el.scrollHeight });
-			pinnedToBottom = true;
-			hasNewBelow = false;
-		} else {
-			hasNewBelow = true;
-		}
+		const update = planStickyBottomContentUpdate({ pinnedToBottom, hasNewBelow }, opts);
+		pinnedToBottom = update.state.pinnedToBottom;
+		hasNewBelow = update.state.hasNewBelow;
+		if (update.shouldScroll) setScrollToBottom();
 	}
 
 	function jumpToLatest() {
-		const el = scrollEl;
-		if (!el) return;
-		el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-		pinnedToBottom = true;
-		hasNewBelow = false;
+		setScrollToBottom('smooth');
 	}
 
 	// Open an EventSource against an in-flight turn and route its events
@@ -1224,7 +1274,7 @@
 		const el = scrollEl;
 		if (!el || typeof ResizeObserver === 'undefined') return;
 		const ro = new ResizeObserver(() => {
-			if (pinnedToBottom) el.scrollTo({ top: el.scrollHeight });
+			if (pinnedToBottom) setScrollToBottom();
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
@@ -1351,14 +1401,14 @@
 			</div>
 		</div>
 		<div class="jump-latest-region" role="status">
-			{#if hasNewBelow && !pinnedToBottom}
+			{#if shouldShowJumpToLatest({ pinnedToBottom, hasNewBelow })}
 				<button
 					type="button"
 					class="jump-latest"
 					onclick={jumpToLatest}
 					aria-label="Jump to latest messages"
 				>
-					New messages
+					Jump to latest
 					<svg
 						width="12"
 						height="12"
