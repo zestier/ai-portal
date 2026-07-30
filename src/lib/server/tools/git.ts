@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+	abortMerge,
 	aggregateStatus,
 	commitChanges,
 	diff,
@@ -7,6 +8,7 @@ import {
 	headInfo,
 	isGitRepo,
 	log,
+	mergeState,
 	nameOnly,
 	nameStatus,
 	numstat,
@@ -14,11 +16,15 @@ import {
 	showCommit,
 	showFile,
 	status,
-	type DiffTarget
+	type DiffTarget,
+	type MergeState
 } from '../git';
 import {
 	COMMIT_TICKET_FOLLOW_UP_HINT,
 	leaseIntegrateFollowUpHint,
+	mergeInProgressFollowUpHint,
+	sequencerFollowUpHint,
+	unmergedPathsFollowUpHint,
 	WORKTREE_INTEGRATE_FOLLOW_UP_HINT
 } from './follow-up-hints';
 import {
@@ -158,9 +164,18 @@ const GitCommitArgs = z
 			)
 			.max(50)
 			.optional(),
-		worktree: WorktreeSelector
+		worktree: WorktreeSelector,
+		allowConflictMarkers: z.boolean().optional()
 	})
 	.strict();
+
+const GitMergeAbortArgs = z
+	.object({
+		worktree: WorktreeSelector
+	})
+	.strict()
+	.optional()
+	.default({});
 
 const GitWorktreeStatusArgs = z
 	.object({
@@ -254,7 +269,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_status',
 			description:
-				'Structured replacement for `git status`. Reports repository head and changed files without allowing arbitrary git shell flags or mutating subcommands.',
+				'Structured replacement for `git status`. Reports repository head, changed files, and any in-progress merge (with its still-conflicted paths) without allowing arbitrary git shell flags or mutating subcommands.',
 			argsSchema: GitStatusArgs,
 			parameters: {
 				type: 'object',
@@ -275,18 +290,24 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 				if (!(await isGitRepo(tree.cwd))) {
 					return ok({ initialized: false, changes: [] });
 				}
-				const [head, entries] = await Promise.all([
+				const [head, entries, merge] = await Promise.all([
 					headInfo(tree.cwd),
-					status(tree.cwd, { includeIgnored })
+					status(tree.cwd, { includeIgnored }),
+					mergeState(tree.cwd)
 				]);
-				return ok({
-					initialized: true,
-					head,
-					changes: entries.map((e) => ({
-						...e,
-						status: aggregateStatus(e, { includeIgnored })
-					}))
-				});
+				return ok(
+					{
+						initialized: true,
+						head,
+						merge,
+						changes: entries.map((e) => ({
+							...e,
+							status: aggregateStatus(e, { includeIgnored })
+						}))
+					},
+					undefined,
+					mergeStatusFollowUpHint(merge, parsed.worktree)
+				);
 			}
 		},
 		{
@@ -438,7 +459,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_commit',
 			description:
-				'Structured replacement for `git add` plus `git commit`. Creates a normal commit from a deterministic structured message and either all current changes or explicitly named whole-file workspace paths. Pass `worktree` to commit inside a worktree this conversation holds — the only sanctioned way for a sub-agent working in a lease to land its work so it can be merged back.',
+				'Structured replacement for `git add` plus `git commit`. Creates a normal commit from a deterministic structured message and either all current changes or explicitly named whole-file workspace paths. Pass `worktree` to commit inside a worktree this conversation holds — the only sanctioned way for a sub-agent working in a lease to land its work so it can be merged back. This is also how an in-progress merge is concluded: once every conflicted file is edited to remove its conflict markers, `paths: "all"` stages exactly those resolutions (unrelated edits stay uncommitted) and creates the merge commit — a merge commit cannot be partial, so naming paths is rejected mid-merge.',
 			argsSchema: GitCommitArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -456,7 +477,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 							}
 						],
 						description:
-							'Use "all" to commit all current workspace changes, or a non-empty array of workspace-relative file paths.'
+							'Use "all" to commit all current workspace changes, or a non-empty array of workspace-relative file paths. While concluding a merge or other conflicted state, "all" narrows to the conflicted files\' resolutions — unrelated unstaged edits are left dirty rather than swept into the merge commit.'
 					},
 					subject: {
 						type: 'string',
@@ -479,7 +500,12 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 						},
 						description: 'Optional structured commit trailers.'
 					},
-					worktree: WORKTREE_COMMIT_PARAM
+					worktree: WORKTREE_COMMIT_PARAM,
+					allowConflictMarkers: {
+						type: 'boolean',
+						description:
+							'Allow a previously-conflicted file to be committed while it still contains <<<<<<< / ======= / >>>>>>> lines. Defaults to false, because that almost always means the file was never actually resolved. Set true only when such lines are genuinely part of the file.'
+					}
 				},
 				required: ['paths', 'subject'],
 				additionalProperties: false
@@ -509,6 +535,41 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 				if (worktree) hints.push(leaseIntegrateFollowUpHint(worktree));
 				if (await isLinkedWorktree(cwd)) hints.push(WORKTREE_INTEGRATE_FOLLOW_UP_HINT);
 				return ok(result, undefined, { followUpHint: hints.join('\n\n') });
+			}
+		},
+		{
+			name: 'git_merge_abort',
+			description:
+				'Structured replacement for `git merge --abort`. Rolls an in-progress merge back to the pre-merge HEAD, discarding the merge and any resolution work in the tree. Use it to escape a conflict left behind by a merge with onConflict: "keep" when you decide not to resolve it; to FINISH such a merge instead, resolve the conflicted files and call git_commit with paths: "all".',
+			argsSchema: GitMergeAbortArgs,
+			// Destructive: it throws away whatever resolution the tree holds, so it
+			// is confirmed for the same reason `git_commit` is.
+			permissionBehavior: 'always-prompt',
+			parameters: {
+				type: 'object',
+				properties: { worktree: WORKTREE_PARAM },
+				additionalProperties: false
+			},
+			async handler(args) {
+				const parsed = GitMergeAbortArgs.parse(args);
+				const tree = treeFor(parsed.worktree);
+				if (tree.error) return tree.error;
+				// Same lock as `git_commit` and the worktree merges: aborting rewrites
+				// the index and working tree of a repository another session may be
+				// mid-operation on.
+				const cwdForAbort = tree.cwd;
+				const outcome = await withRepositoryLock(await repositoryLockKey(cwdForAbort), async () =>
+					(await mergeState(cwdForAbort)).inProgress
+						? { aborted: true as const, result: await abortMerge(cwdForAbort) }
+						: { aborted: false as const }
+				);
+				if (!outcome.aborted) {
+					return err('no merge is in progress in this tree', { code: 'no_merge_in_progress' });
+				}
+				return ok(
+					outcome.result,
+					`Aborted the in-progress merge; tree is back at ${outcome.result.headSha}`
+				);
 			}
 		},
 		{
@@ -584,7 +645,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 						type: 'string',
 						enum: ['abort', 'keep'],
 						description:
-							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in this worktree for you to resolve and commit. "to-source" always rolls back.'
+							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in this worktree, which you then finish by editing each conflicted file and calling git_commit with paths: "all" (or give up with git_merge_abort). "to-source" always rolls back.'
 					}
 				},
 				required: ['direction'],
@@ -601,11 +662,46 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 							: `Already up to date: nothing to merge into ${result.into}`
 					);
 				} catch (cause) {
+					// A kept conflict is the one failure that leaves state behind, and
+					// it is a dead end unless the agent is told how to leave it.
+					if (
+						cause instanceof WorktreeIntegrationError &&
+						cause.code === 'merge_conflict' &&
+						parsed.direction === 'from-source' &&
+						parsed.onConflict === 'keep'
+					) {
+						return err(`${cause.message}. ${mergeInProgressFollowUpHint()}`, {
+							code: cause.code,
+							details: cause.detail
+						});
+					}
 					return toolErrorFor(cause);
 				}
 			}
 		}
 	];
+}
+
+/**
+ * The `git_status` nudge for a tree that cannot simply be committed: mid-merge
+ * (finish or abort), mid-sequencer (a rebase/cherry-pick the portal cannot
+ * continue), or merely holding unmerged paths (finish only). Absent for an
+ * ordinary tree, so its presence is the signal.
+ *
+ * The sequencer case is checked first: a conflicted rebase also has unmerged
+ * paths, and the generic "resolve and commit" advice would imply the commit
+ * finishes an operation it does not finish.
+ */
+function mergeStatusFollowUpHint(
+	merge: MergeState,
+	leaseId: string | undefined
+): { followUpHint: string } | undefined {
+	if (merge.sequencer) return { followUpHint: sequencerFollowUpHint(merge.sequencer, leaseId) };
+	if (merge.inProgress) return { followUpHint: mergeInProgressFollowUpHint(leaseId) };
+	if (merge.conflictedPaths.length > 0) {
+		return { followUpHint: unmergedPathsFollowUpHint(leaseId) };
+	}
+	return undefined;
 }
 
 /** Normalize an integration failure into the tool envelope, preserving its code. */

@@ -468,7 +468,9 @@ describe('Svelte component regression coverage', () => {
 			files: [],
 			fileStats: [],
 			diffStat: { filesChanged: 1, added: 1, removed: 0 },
-			remainingDirtyFiles: []
+			remainingDirtyFiles: [],
+			mergeCommit: false,
+			resolvedConflicts: []
 		};
 		const withHint = render(GitToolResult, {
 			props: { result: { ...base, followUpHint: 'reconcile your tickets' } }
@@ -477,6 +479,14 @@ describe('Svelte component regression coverage', () => {
 
 		const withoutHint = render(GitToolResult, { props: { result: base } }).body;
 		expect(withoutHint).not.toContain('reconcile your tickets');
+		// A merge commit says so, and names what it resolved — the file list on
+		// the card is only the first-parent diff, so the label is what explains it.
+		expect(withoutHint).not.toContain('Merge commit');
+		const merge = render(GitToolResult, {
+			props: { result: { ...base, mergeCommit: true, resolvedConflicts: ['a.txt'] } }
+		}).body;
+		expect(merge).toContain('Merge commit');
+		expect(merge).toContain('a.txt');
 	});
 
 	test('ToolCall surfaces a generic followUpHint for non-git tools', () => {

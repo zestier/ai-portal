@@ -7,7 +7,8 @@ describe('gitCommitPreview', () => {
 		expect(preview).not.toBeNull();
 		expect(preview?.paths).toBeNull();
 		expect(preview?.targetSummary).toBe(
-			'All tracked, staged, unstaged, deleted, and untracked workspace changes'
+			'All tracked, staged, unstaged, deleted, and untracked workspace changes' +
+				' (while concluding a merge: only the conflicted files’ resolutions)'
 		);
 	});
 
@@ -117,5 +118,20 @@ describe('summarizeGitCommitPermission', () => {
 			}
 		);
 		expect(inLease).toContain('Destination: worktree api on branch portal/lease/x--api');
+	});
+
+	// The opt-out changes what "resolved" means, so the human approving a
+	// mid-merge commit has to see it in the dialog and in the audit row.
+	it('flags an opt-out of the conflict-marker guard', () => {
+		expect(
+			summarizeGitCommitPermission({ subject: 'wip', paths: 'all', allowConflictMarkers: true })
+		).toContain('Conflict markers: allowed');
+		expect(summarizeGitCommitPermission({ subject: 'wip', paths: 'all' })).not.toContain(
+			'Conflict markers'
+		);
+		// Only the strict boolean opts out, matching the tool schema.
+		expect(
+			summarizeGitCommitPermission({ subject: 'wip', paths: 'all', allowConflictMarkers: 'yes' })
+		).not.toContain('Conflict markers');
 	});
 });

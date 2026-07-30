@@ -28,3 +28,58 @@ export function leaseIntegrateFollowUpHint(leaseId: string): string {
 		`Collect it with worktree_merge (leaseId: "${leaseId}"), then worktree_remove the worktree once you no longer need it.`
 	);
 }
+
+/**
+ * The recovery path out of a tree left mid-merge (by `onConflict: "keep"`, or by
+ * a merge an agent started itself). Spelled out because the state is otherwise a
+ * dead end: such a tree cannot be merged (it is dirty) and, until every conflict
+ * is resolved, cannot be committed either — and shell `git` is not granted, so
+ * `git add` / `git merge --continue` are not available to escape it by hand.
+ *
+ * `selector` is the `worktree: "<leaseId>"` fragment to repeat in the follow-up
+ * calls, so a hint read inside a lease names the same tree it described.
+ */
+export function mergeInProgressFollowUpHint(leaseId?: string | undefined): string {
+	const selector = leaseId ? `worktree: "${leaseId}", ` : '';
+	return (
+		'A merge is in progress in this tree. Resolve each conflicted file by editing it — keep the intended content and ' +
+		'delete the <<<<<<< / ======= / >>>>>>> lines — then conclude the merge with ' +
+		`git_commit { ${selector}paths: "all", subject: "<message>" }, which stages those resolutions (only the conflicted files) and creates the merge commit. ` +
+		`To give up on the merge instead and return the tree to its pre-merge state, use git_merge_abort { ${leaseId ? `worktree: "${leaseId}"` : ''} }.`
+	);
+}
+
+/**
+ * Unmerged paths with no merge to abort — a conflicted `git stash pop`,
+ * cherry-pick, or rebase. Committing the resolution is the only structured way
+ * forward, and saying so is better than a hint that names `git_merge_abort`,
+ * which would fail here.
+ */
+export function unmergedPathsFollowUpHint(leaseId?: string | undefined): string {
+	const selector = leaseId ? `worktree: "${leaseId}", ` : '';
+	return (
+		'This tree has unmerged (conflicted) paths but no merge in progress, so git will refuse every commit until they are resolved. ' +
+		'Edit each conflicted file to keep the intended content and delete the <<<<<<< / ======= / >>>>>>> lines, then commit with ' +
+		`git_commit { ${selector}paths: "all", subject: "<message>" }. git_merge_abort does not apply here — there is no merge to roll back.`
+	);
+}
+
+/**
+ * A rebase / multi-step cherry-pick / revert is in flight. Committing clears the
+ * CURRENT conflict but does not advance the sequencer, and the portal exposes no
+ * `--continue` or `--abort` for one — so the hint says exactly that instead of
+ * implying `git_commit` finishes the job. The portal never starts these
+ * operations itself; a tree in one got there from outside.
+ */
+export function sequencerFollowUpHint(
+	sequencer: 'rebase' | 'cherry-pick' | 'revert',
+	leaseId?: string | undefined
+): string {
+	const selector = leaseId ? `worktree: "${leaseId}", ` : '';
+	return (
+		`This tree is in the middle of a ${sequencer}, which the portal did not start and has no structured tool to continue or abort. ` +
+		`git_commit { ${selector}paths: "all", subject: "<message>" } commits the current conflict resolution, but it does NOT advance the ${sequencer}: ` +
+		`any remaining steps still need \`git ${sequencer} --continue\` or \`--abort\`, which this portal does not expose. ` +
+		'Report that rather than treating the operation as finished — a human has to drive the rest.'
+	);
+}

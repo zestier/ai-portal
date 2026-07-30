@@ -33,6 +33,7 @@ import {
 } from '../leases';
 import { WorktreeError } from '../worktrees';
 import { WorktreeIntegrationError } from '../worktree-integration';
+import { mergeInProgressFollowUpHint } from './follow-up-hints';
 import * as convs from '../db/repos/conversations';
 
 // Model-relevant lease fields. Ids/timestamps stay recoverable via `fields`.
@@ -137,10 +138,19 @@ function describeWorktreeError(
  */
 function mergeErrorMessage(
 	described: { message: string; code?: string; dirtyCount?: number },
-	leaseId: string
+	leaseId: string,
+	kept: boolean
 ): string {
 	if (described.code === 'not_fast_forwardable') {
 		return `${described.message}. When collecting several worktrees, retry with allowMergeCommit: true.`;
+	}
+	if (described.code === 'merge_conflict' && kept) {
+		// Only a KEPT from-source conflict leaves state behind; every other
+		// conflict has already been rolled back, and telling the agent to resolve
+		// a tree that is no longer mid-merge would send it chasing nothing. The
+		// calls that finish or discard the kept merge each need this lease's id,
+		// so name them with it.
+		return `${described.message}. ${mergeInProgressFollowUpHint(leaseId)}`;
 	}
 	if (described.code === 'worktree_dirty') {
 		const count = described.dirtyCount;
@@ -288,7 +298,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 		{
 			name: 'worktree_merge',
 			description:
-				'Bring a worktree\'s commits back into this conversation\'s own workspace — the step that makes parallel work useful. Use direction "to-source" (the default) once a sub-agent has finished and COMMITTED its work: its branch is merged into this conversation\'s branch so results from several worktrees gather in one place to be reviewed and tested together. Use "from-source" to refresh a worktree with newer commits from this conversation before continuing in it. Refuses while either side has uncommitted changes. Merging into this conversation always rolls back on conflict; a "from-source" conflict can optionally be left in the worktree for a sub-agent to resolve there.',
+				'Bring a worktree\'s commits back into this conversation\'s own workspace — the step that makes parallel work useful. Use direction "to-source" (the default) once a sub-agent has finished and COMMITTED its work: its branch is merged into this conversation\'s branch so results from several worktrees gather in one place to be reviewed and tested together. Use "from-source" to refresh a worktree with newer commits from this conversation before continuing in it. Refuses while either side has uncommitted changes. Merging into this conversation always rolls back on conflict; a "from-source" conflict can optionally be left in the worktree, where a sub-agent resolves the files and concludes the merge with git_commit (paths: "all") or discards it with git_merge_abort.',
 			argsSchema: MergeArgs,
 			// Always prompts, matching `git_worktree_merge` and `git_commit`.
 			//
@@ -322,7 +332,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 						type: 'string',
 						enum: ['abort', 'keep'],
 						description:
-							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in the worktree so a sub-agent can resolve it there.'
+							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in the worktree, which a sub-agent finishes by editing each conflicted file and calling git_commit { worktree: "<leaseId>", paths: "all" }, or discards with git_merge_abort { worktree: "<leaseId>" }.'
 					}
 				},
 				required: ['leaseId'],
@@ -362,7 +372,11 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 					const described = describeWorktreeError(cause);
 					if (described) {
 						return err(
-							mergeErrorMessage(described, parsed.leaseId),
+							mergeErrorMessage(
+								described,
+								parsed.leaseId,
+								parsed.direction === 'from-source' && parsed.onConflict === 'keep'
+							),
 							described.code ? { code: described.code } : undefined
 						);
 					}

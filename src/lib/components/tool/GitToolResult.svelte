@@ -139,6 +139,18 @@
 			{/if}
 		</div>
 		<div class="muted small">Created commit {result.sha}</div>
+		{#if result.mergeCommit}
+			{@const shown = result.resolvedConflicts.slice(0, 5)}
+			<div class="muted small">
+				Merge commit{result.resolvedConflicts.length > 0
+					? `, resolving ${result.resolvedConflicts.length} conflicted file(s): ${shown.join(', ')}${
+							result.resolvedConflicts.length > shown.length
+								? `, …and ${result.resolvedConflicts.length - shown.length} more`
+								: ''
+						}`
+					: ''}. Files below are compared against the first parent.
+			</div>
+		{/if}
 		{#if result.body}
 			<div class="message-block">
 				<div class="muted small">Body</div>

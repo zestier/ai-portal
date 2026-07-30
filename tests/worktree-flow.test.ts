@@ -14,7 +14,7 @@
 // sub-agent's fallback is to write into the shared tree instead.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
@@ -428,6 +428,103 @@ describe('orchestrator worktree flow (acceptance)', () => {
 			const merged = payload(await tools.get('worktree_merge')!.handler({ leaseId }));
 			expect(merged.merged).toBe(true);
 			expect(existsSync(join(source, 'a.ts'))).toBe(true);
+		});
+	});
+
+	describe('a lease left mid-merge by onConflict: "keep"', () => {
+		/**
+		 * Put the lease and the conversation on conflicting edits of the same
+		 * file, then sync the lease with `onConflict: "keep"` so the conflict is
+		 * left in the lease — the state a sub-agent is expected to resolve.
+		 */
+		async function conflictedLease() {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const leasePath = created.path as string;
+			const leaseId = created.leaseId as string;
+
+			writeFileSync(join(leasePath, 'README.md'), 'base\nfrom the sub-agent\n');
+			expect(
+				(
+					await gitTools
+						.get('git_commit')!
+						.handler({ worktree: leaseId, paths: 'all', subject: 'sub-agent edit' })
+				).ok
+			).toBe(true);
+
+			writeFileSync(join(source, 'README.md'), 'base\nfrom the orchestrator\n');
+			git(source, ['commit', '-q', '-am', 'orchestrator edit']);
+
+			const res = await tools
+				.get('worktree_merge')!
+				.handler({ leaseId, direction: 'from-source', onConflict: 'keep' });
+			expect(res).toMatchObject({ ok: false, error: { code: 'merge_conflict' } });
+			return { leaseId, leasePath, res };
+		}
+
+		// The acceptance case: conflict → resolved → committed → merged, using
+		// only structured tools. Before this, `commitChanges` rejected any
+		// conflicted entry up front, so the lease could not be committed, could
+		// not be merged (dirty), and could only be force-removed.
+		it('can be resolved, committed, and merged back with structured tools alone', async () => {
+			const { leaseId, leasePath, res } = await conflictedLease();
+
+			// The failure names both ways out, with this lease's id in them.
+			if (res.ok) return;
+			expect(res.error.message).toContain(
+				`git_commit { worktree: "${leaseId}", paths: "all", subject:`
+			);
+			expect(res.error.message).toContain(`git_merge_abort { worktree: "${leaseId}" }`);
+
+			// The orchestrator can see the state from outside the lease.
+			const status = payload(await gitTools.get('git_status')!.handler({ worktree: leaseId }));
+			expect(status.merge).toMatchObject({ inProgress: true, conflictedPaths: ['README.md'] });
+
+			// Committing the raw conflict is refused — that is silent corruption.
+			await expect(
+				gitTools.get('git_commit')!.handler({ worktree: leaseId, paths: 'all', subject: 'resolve' })
+			).rejects.toThrow('unresolved conflict markers');
+
+			// The sub-agent resolves by editing the file, then commits.
+			writeFileSync(join(leasePath, 'README.md'), 'base\nfrom both\n');
+			const commit = await gitTools
+				.get('git_commit')!
+				.handler({ worktree: leaseId, paths: 'all', subject: 'merge orchestrator edit' });
+			expect(commit.ok).toBe(true);
+			expect(commit.ok && (commit.result as { mergeCommit: boolean }).mergeCommit).toBe(true);
+
+			// The lease is clean again, so it is mergeable — and the merge lands
+			// the resolution in the conversation's own workspace.
+			const leaseStatus = payload(await tools.get('worktree_status')!.handler({ leaseId }));
+			expect(leaseStatus.dirtyCount).toBe(0);
+			const merged = payload(
+				await tools.get('worktree_merge')!.handler({ leaseId, allowMergeCommit: true })
+			);
+			expect(merged.merged).toBe(true);
+			expect(readFileSync(join(source, 'README.md'), 'utf8')).toBe('base\nfrom both\n');
+		});
+
+		it('can be abandoned with git_merge_abort, leaving the lease mergeable', async () => {
+			const { leaseId, leasePath } = await conflictedLease();
+
+			const aborted = await gitTools.get('git_merge_abort')!.handler({ worktree: leaseId });
+			expect(aborted.ok).toBe(true);
+			// Back to the sub-agent's own commit, with nothing left in the tree.
+			expect(readFileSync(join(leasePath, 'README.md'), 'utf8')).toBe('base\nfrom the sub-agent\n');
+			const status = payload(await gitTools.get('git_status')!.handler({ worktree: leaseId }));
+			expect(status.merge).toMatchObject({ inProgress: false, conflictedPaths: [] });
+
+			// Not merely "not stuck": the lease is clean and its own commit is
+			// still there to collect. Collecting it conflicts again — the edits
+			// really are incompatible — but the SHARED checkout is rolled back and
+			// reported without the mid-merge advice, because nothing is left mid-merge.
+			const leaseStatus = payload(await tools.get('worktree_status')!.handler({ leaseId }));
+			expect(leaseStatus).toMatchObject({ dirtyCount: 0, ahead: 1 });
+			const collect = await tools
+				.get('worktree_merge')!
+				.handler({ leaseId, allowMergeCommit: true });
+			expect(collect).toMatchObject({ ok: false, error: { code: 'merge_conflict' } });
+			expect(collect.ok || collect.error.message).not.toContain('git_merge_abort');
+			expect(git(source, ['status', '--porcelain'])).toBe('');
 		});
 	});
 });

@@ -283,6 +283,10 @@ conversation can never reach a lease it does not hold:
 - Write: **`git_commit`**. Without it a sub-agent could edit a lease but never
   commit, `worktree_merge` had nothing to collect (`ahead: 0`), and the work was
   discarded — the fan-out looked like it worked and silently did not.
+  `git_merge_abort` is the small companion to it: a lease synced with
+  `onConflict: "keep"` is left mid-merge, and a mid-merge tree can neither be
+  merged (dirty) nor committed until every conflict is resolved, so without a
+  structured abort the only exit was a force-remove that threw the work away.
 
 Two guards keep that failure mode from recurring quietly:
 

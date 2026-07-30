@@ -344,6 +344,14 @@
 							<dd>{gitCommit.trailers.length}</dd>
 						</div>
 					{/if}
+					{#if gitCommit.allowConflictMarkers}
+						<div>
+							<dt>Conflict markers</dt>
+							<dd>
+								Allowed — files may still contain <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> markers.
+							</dd>
+						</div>
+					{/if}
 					<div>
 						<dt>Approval</dt>
 						<dd>One-time only; stored grants are disabled for this tool.</dd>

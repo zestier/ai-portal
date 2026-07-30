@@ -132,14 +132,26 @@ The two merge directions are deliberately asymmetric, because only one of the
 two trees is shared with a human:
 
 - `from-source` merges upstream into the worktree. A conflict may be left in
-  place (opt-in) since that isolated tree is exactly where an agent should
-  resolve it.
+  place (opt-in, `onConflict: "keep"`) since that isolated tree is exactly where
+  an agent should resolve it. Leaving it there is only useful if the agent can
+  also get *out* of it, so the tool surface closes that loop without shell git:
+  `git_status` reports the in-progress merge and its still-conflicted paths,
+  `git_commit` with `paths: "all"` stages exactly the resolved conflicts and
+  creates the merge commit (mid-merge it deliberately does NOT sweep the rest of
+  the tree, refuses a path selection, and refuses a "resolved" file that still
+  contains conflict markers unless `allowConflictMarkers` says the markers are
+  deliberate), and `git_merge_abort` rolls the whole merge back. A tree that is
+  instead mid-*sequencer* — a rebase or multi-step cherry-pick, which the portal
+  never starts — is reported as such by `git_status`, with guidance that says
+  plainly that committing does not advance it and no structured `--continue`
+  exists, rather than implying a recovery the tool surface does not have.
 - `to-source` merges the worktree branch into the source checkout. It must
   fast-forward by default, refuses when either tree is dirty, and always rolls
   a conflict back — the source checkout is never left mid-merge.
 
 Every operation that mutates a repository — `git worktree add`, `git worktree
-remove`, and either merge direction — serializes on the shared, in-process
+remove`, either merge direction, and the commit/abort pair that concludes or
+discards a merge — serializes on the shared, in-process
 `withRepositoryLock` (`src/lib/server/repo-lock.ts`), keyed on the repository's
 git common dir so a repository's main worktree and all of its linked worktrees
 share one key. A merge re-reads its status *inside* that lock, because the

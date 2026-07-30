@@ -62,6 +62,10 @@ export type GitRenderedResult =
 			fileStats: GitFileStat[];
 			diffStat: { filesChanged: number; added: number; removed: number } | null;
 			remainingDirtyFiles: GitNameStatusEntry[];
+			/** True when the commit concluded a merge; its file list is vs the first parent. */
+			mergeCommit: boolean;
+			/** Paths that were conflicted going in and were resolved by this commit. */
+			resolvedConflicts: string[];
 			followUpHint?: string | undefined;
 	  };
 
@@ -267,6 +271,10 @@ export function parseGitToolResult(
 			diffStat,
 			remainingDirtyFiles: Array.isArray(result.remainingDirtyFiles)
 				? result.remainingDirtyFiles.map(nameStatusEntry).filter((f) => f !== null)
+				: [],
+			mergeCommit: result.mergeCommit === true,
+			resolvedConflicts: Array.isArray(result.resolvedConflicts)
+				? result.resolvedConflicts.map(str).filter((p): p is string => p !== null)
 				: [],
 			followUpHint
 		};

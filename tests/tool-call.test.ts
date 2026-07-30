@@ -298,6 +298,53 @@ describe('parseGitToolResult', () => {
 		});
 	});
 
+	it('surfaces a merge commit and the conflicts it resolved', () => {
+		expect(
+			parseGitToolResult(
+				'git_commit',
+				'{}',
+				JSON.stringify({
+					ok: true,
+					result: {
+						sha: 'abcdef123456',
+						shortSha: 'abcdef12',
+						subject: 'resolve conflict',
+						body: '',
+						trailers: [],
+						files: [],
+						fileStats: [],
+						diffStat: { filesChanged: 0, added: 0, removed: 0 },
+						remainingDirtyFiles: [],
+						mergeCommit: true,
+						resolvedConflicts: ['a.txt']
+					}
+				})
+			)
+		).toMatchObject({ kind: 'commit-created', mergeCommit: true, resolvedConflicts: ['a.txt'] });
+		// An ordinary commit reports the absence rather than omitting the fields,
+		// so the card never has to guess.
+		expect(
+			parseGitToolResult(
+				'git_commit',
+				'{}',
+				JSON.stringify({
+					ok: true,
+					result: {
+						sha: 'abcdef123456',
+						shortSha: 'abcdef12',
+						subject: 'ordinary',
+						body: '',
+						trailers: [],
+						files: [],
+						fileStats: [],
+						diffStat: { filesChanged: 1, added: 1, removed: 0 },
+						remainingDirtyFiles: []
+					}
+				})
+			)
+		).toMatchObject({ mergeCommit: false, resolvedConflicts: [] });
+	});
+
 	it('returns null for an errored envelope', () => {
 		expect(
 			parseGitToolResult(

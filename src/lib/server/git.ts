@@ -643,6 +643,129 @@ export interface CommitChangesOptions {
 	subject: string;
 	body?: string | undefined;
 	trailers?: CommitTrailer[] | undefined;
+	/**
+	 * Allow committing a previously-conflicted file that still contains conflict
+	 * markers. Off by default: the overwhelmingly likely reason a resolved file
+	 * still has `<<<<<<<` in it is that it was never actually resolved, and
+	 * committing that is silent corruption. The escape hatch exists because a
+	 * file can legitimately contain marker-shaped lines (documentation about
+	 * conflicts, test fixtures).
+	 */
+	allowConflictMarkers?: boolean | undefined;
+}
+
+/** In-progress merge state for a tree, as needed to finish or roll one back. */
+export interface MergeState {
+	/** True when the tree is mid-merge (a `MERGE_HEAD` exists). */
+	inProgress: boolean;
+	/** The commit being merged in, when one is recorded. */
+	mergeHeadSha: string | null;
+	/** Paths git still considers unmerged (conflicted). */
+	conflictedPaths: string[];
+	/**
+	 * The sequenced operation the tree is in the middle of, when it is not a
+	 * plain merge. A rebase or a multi-commit cherry-pick/revert has MORE work
+	 * queued after the current conflict is committed, and the portal has no
+	 * structured `--continue` for it — so it must be reported rather than
+	 * described as finishable, which is the difference between honest guidance
+	 * and pointing an agent at a dead end.
+	 */
+	sequencer: 'rebase' | 'cherry-pick' | 'revert' | null;
+}
+
+/**
+ * Report whether a tree is mid-merge, mid-sequencer, and which paths are still
+ * unmerged.
+ *
+ * The parts matter independently: a merge can be in progress with every conflict
+ * already staged (ready to commit), and unmerged index entries can exist with no
+ * `MERGE_HEAD` (a conflicted `git stash pop`, cherry-pick, or rebase).
+ */
+export async function mergeState(cwd: string): Promise<MergeState> {
+	const repoRoot = await repositoryRoot(cwd);
+	const head = await runGit(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], { cwd: repoRoot });
+	const mergeHeadSha = head.code === 0 ? head.stdout.trim() || null : null;
+	return {
+		inProgress: mergeHeadSha !== null,
+		mergeHeadSha,
+		conflictedPaths: await unmergedPaths(repoRoot),
+		sequencer: await sequencerState(repoRoot)
+	};
+}
+
+/** Which sequenced operation (if any) the tree is in the middle of. */
+async function sequencerState(
+	repoRoot: string
+): Promise<'rebase' | 'cherry-pick' | 'revert' | null> {
+	const gitPath = async (name: string): Promise<string | null> => {
+		const r = await runGit(['rev-parse', '--git-path', name], { cwd: repoRoot });
+		if (r.code !== 0) return null;
+		const raw = r.stdout.trim();
+		if (!raw) return null;
+		return isAbsolute(raw) ? raw : resolve(repoRoot, raw);
+	};
+	for (const dir of ['rebase-merge', 'rebase-apply']) {
+		const path = await gitPath(dir);
+		if (path && existsSync(path)) return 'rebase';
+	}
+	// `CHERRY_PICK_HEAD`/`REVERT_HEAD` mark the current conflicted pick; the
+	// `sequencer` directory means further picks are still queued behind it.
+	for (const [file, kind] of [
+		['CHERRY_PICK_HEAD', 'cherry-pick'],
+		['REVERT_HEAD', 'revert']
+	] as const) {
+		const path = await gitPath(file);
+		if (path && existsSync(path)) return kind;
+	}
+	const seq = await gitPath('sequencer');
+	if (seq && existsSync(seq)) return 'cherry-pick';
+	return null;
+}
+
+/**
+ * `git merge --abort` — roll an in-progress merge back to pre-merge HEAD.
+ *
+ * The counterpart to committing a resolution: without it a tree left mid-merge
+ * by `onConflict: "keep"` has no structured way out, since a conflicted tree can
+ * neither be committed (until resolved) nor merged (it is dirty).
+ *
+ * Destructive by nature — it discards whatever resolution work is in the tree —
+ * so it refuses when no merge is in progress rather than falling through to
+ * git's own broader reset behavior.
+ */
+export async function abortMerge(cwd: string): Promise<{ headSha: string }> {
+	const repoRoot = await repositoryRoot(cwd);
+	const state = await mergeState(repoRoot);
+	if (!state.inProgress) {
+		throw new GitError('no merge is in progress in this tree', emptyResult());
+	}
+	await runGitOk(['merge', '--abort'], { cwd: repoRoot, timeoutMs: 60_000 });
+	return { headSha: (await runGitOk(['rev-parse', 'HEAD'], { cwd: repoRoot })).trim() };
+}
+
+/** Paths with unmerged index entries, relative to the repo root. */
+async function unmergedPaths(repoRoot: string): Promise<string[]> {
+	const out = await runGit(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: repoRoot });
+	if (out.code !== 0) return [];
+	return out.stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * True when `content` still carries git's conflict markers.
+ *
+ * Matches a line STARTING with `<<<<<<<`, `|||||||`, or `>>>>>>>`, so a
+ * half-cleaned conflict — the realistic botched resolution — is caught, not just
+ * an untouched one. A bare `=======` is deliberately not a marker on its own:
+ * it is a Markdown/RST heading underline, and flagging it would refuse ordinary
+ * documentation commits.
+ */
+export function hasConflictMarkers(content: string): boolean {
+	for (const line of content.split('\n')) {
+		if (line.startsWith('<<<<<<<') || line.startsWith('>>>>>>>') || line.startsWith('|||||||')) {
+			return true;
+		}
+	}
+	return false;
 }
 
 export interface CommitChangesResult {
@@ -655,6 +778,10 @@ export interface CommitChangesResult {
 	fileStats: NumstatEntry[];
 	diffStat: DiffStat['total'];
 	remainingDirtyFiles: Array<StatusEntry & { status: ReturnType<typeof aggregateStatus> }>;
+	/** True when this commit concluded an in-progress merge (it has 2+ parents). */
+	mergeCommit: boolean;
+	/** Paths that were unmerged going in and were resolved by this commit. */
+	resolvedConflicts: string[];
 }
 
 const TRAILER_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
@@ -710,12 +837,39 @@ export async function commitChanges(
 	const repoRoot = await repositoryRoot(cwd);
 	const commitMessage = formatCommitMessage(opts);
 	const entries = await status(repoRoot);
+	const merge = await mergeState(repoRoot);
+	const mergeInProgress = merge.inProgress;
 	const conflicts = entries.filter((e) => e.index === 'conflicted' || e.worktree === 'conflicted');
-	if (conflicts.length > 0) {
-		throw new GitError(
-			`cannot commit while conflicted files are present: ${conflicts.map((e) => e.path).join(', ')}`,
-			emptyResult()
-		);
+	// True when this commit is the one that concludes a merge / clears a
+	// conflicted index, which changes what `paths: "all"` may stage and whether
+	// an empty staged diff is a reason to refuse.
+	const concludesMerge = mergeInProgress || conflicts.length > 0;
+	if (concludesMerge) {
+		// A conflicted tree is committable — that is how a merge left by
+		// `onConflict: "keep"` is finished — but only as a whole. Git refuses to
+		// commit anything at all while paths remain unmerged, and mid-merge the
+		// index already holds every cleanly-merged path, so a path selection here
+		// would quietly commit far more than it named.
+		if (opts.paths !== 'all') {
+			throw new GitError(
+				(conflicts.length > 0
+					? `this tree has ${conflicts.length} unmerged (conflicted) file(s): ${conflicts.map((e) => e.path).join(', ')}. Resolve them and `
+					: 'this tree has an in-progress merge; ') +
+					'commit with paths: "all" (a commit that concludes a merge cannot be partial)',
+				emptyResult()
+			);
+		}
+		if (opts.allowConflictMarkers !== true) {
+			const unresolved = conflicts.filter((entry) => fileHasConflictMarkers(repoRoot, entry.path));
+			if (unresolved.length > 0) {
+				throw new GitError(
+					`cannot commit unresolved conflict markers in: ${unresolved.map((e) => e.path).join(', ')}. ` +
+						'Edit each file to keep the intended content and delete the <<<<<<< / ======= / >>>>>>> lines, ' +
+						'or pass allowConflictMarkers: true if the markers are genuinely part of the file.',
+					emptyResult()
+				);
+			}
+		}
 	}
 
 	const selectedPaths = opts.paths === 'all' ? null : validateCommitPaths(repoRoot, opts.paths);
@@ -723,7 +877,11 @@ export async function commitChanges(
 		selectedPaths === null
 			? entries
 			: entries.filter((entry) => statusEntryMatches(entry, selectedPaths));
-	if (selectedEntries.length === 0) {
+	// Mid-merge there may be nothing in `status` at all (every conflict already
+	// resolved and staged, or a clean `--no-commit` merge) and the commit is
+	// still required to conclude the merge. Bailing there would strand the tree
+	// in the unfinishable state this path exists to leave.
+	if (selectedEntries.length === 0 && !concludesMerge) {
 		throw new GitError('no selected changes to commit', emptyResult());
 	}
 
@@ -740,6 +898,7 @@ export async function commitChanges(
 	}
 
 	const snapshot = await snapshotIndex(repoRoot);
+	const headBefore = (await runGit(['rev-parse', 'HEAD'], { cwd: repoRoot })).stdout.trim();
 	let messageDir: string | null = null;
 
 	try {
@@ -747,16 +906,42 @@ export async function commitChanges(
 		const messagePath = join(messageDir, 'message.txt');
 		writeFileSync(messagePath, commitMessage, 'utf8');
 		ctx?.progress?.('staging changes…');
-		if (selectedPaths === null) {
-			await runGitOk(['add', '-A', '--', '.'], { cwd: repoRoot });
-		} else {
+		if (selectedPaths !== null) {
 			await runGitOk(['--literal-pathspecs', 'add', '-A', '--', ...selectedPaths], {
 				cwd: repoRoot
 			});
+		} else if (concludesMerge) {
+			// Mid-merge, `paths: "all"` means "stage my resolutions", NOT "sweep
+			// the tree": the index already holds the merge result, and a merge
+			// commit that also absorbed unrelated edits an agent happened to make
+			// while resolving would be a worse trap than the one this path fixes.
+			// Anything else stays dirty and is reported in `remainingDirtyFiles`.
+			if (conflicts.length > 0) {
+				await runGitOk(
+					['--literal-pathspecs', 'add', '-A', '--', ...conflicts.map((entry) => entry.path)],
+					{ cwd: repoRoot }
+				);
+			}
+		} else {
+			await runGitOk(['add', '-A', '--', '.'], { cwd: repoRoot });
 		}
 		const stagedFiles = await nameStatus(repoRoot, { kind: 'index-vs-head' });
-		if (stagedFiles.length === 0) {
+		// An empty staged diff normally means the caller selected nothing real.
+		// Mid-merge it does not: a resolution that lands back on HEAD's content
+		// still has to be committed to conclude the merge.
+		if (stagedFiles.length === 0 && !concludesMerge) {
 			throw new GitError('no selected changes to commit', emptyResult());
+		}
+		// `git add` above is what resolves an unmerged entry. A backstop for the
+		// paths git could not stage (skip-worktree / sparse entries): git would
+		// otherwise fail the commit with a bare "cannot commit with unmerged
+		// files" that names nothing.
+		const stillUnmerged = await unmergedPaths(repoRoot);
+		if (stillUnmerged.length > 0) {
+			throw new GitError(
+				`cannot commit while paths remain unmerged: ${stillUnmerged.join(', ')}`,
+				emptyResult()
+			);
 		}
 		ctx?.progress?.('running git commit (pre-commit / commit-msg hooks)…');
 		await runGitOk(['commit', '-F', messagePath], {
@@ -767,6 +952,27 @@ export async function commitChanges(
 		});
 		ctx?.progress?.('finalizing commit…');
 	} catch (err) {
+		// Restoring the pre-commit index is right only while the commit did NOT
+		// land. An abort (or a hook timing out after the ref moved) can leave HEAD
+		// advanced — restoring a stale, possibly unmerged index over a landed
+		// commit would manufacture phantom changes and, after a merge, resurrect
+		// conflicts git has already recorded as resolved.
+		const headAfterRun = await runGit(['rev-parse', 'HEAD'], { cwd: repoRoot });
+		const headAfter = headAfterRun.code === 0 ? headAfterRun.stdout.trim() : null;
+		if (headAfter !== null && headAfter !== headBefore) {
+			logger.warn('git.commit.head_advanced_on_failure', {
+				headBefore,
+				headAfter,
+				originalErr: String(err)
+			});
+			// Surfaced, not swallowed: the caller must not retry blindly and create
+			// a second commit of the same work.
+			throw new GitError(
+				`${err instanceof Error ? err.message : String(err)} — but HEAD advanced from ${headBefore || '(none)'} to ${headAfter}, so the commit may have landed. ` +
+					'Inspect the history before retrying; the index was left as git wrote it.',
+				err instanceof GitError ? err.result : emptyResult()
+			);
+		}
 		try {
 			restoreIndex(snapshot);
 		} catch (restoreErr) {
@@ -781,9 +987,20 @@ export async function commitChanges(
 	}
 
 	const sha = (await runGitOk(['rev-parse', 'HEAD'], { cwd: repoRoot })).trim();
+	const parents = (await runGitOk(['rev-list', '-1', '--parents', sha], { cwd: repoRoot }))
+		.trim()
+		.split(/\s+/)
+		.slice(1);
+	const mergeCommit = parents.length > 1;
+	// `<sha>^!` expands to the commit plus every parent negated, which `git diff`
+	// cannot take for a merge. Diff a merge against its FIRST parent instead —
+	// "what this commit brought into the branch it landed on".
+	const fileTarget: DiffTarget = mergeCommit
+		? { kind: 'commit-vs-parent', sha }
+		: { kind: 'commit', sha };
 	const [files, fileStats, remaining] = await Promise.all([
-		nameStatus(repoRoot, { kind: 'commit', sha }),
-		numstat(repoRoot, { kind: 'commit', sha }),
+		nameStatus(repoRoot, fileTarget),
+		numstat(repoRoot, fileTarget),
 		status(repoRoot)
 	]);
 	const diffStatTotal = fileStats.reduce(
@@ -808,7 +1025,9 @@ export async function commitChanges(
 		remainingDirtyFiles: remaining.map((entry) => ({
 			...entry,
 			status: aggregateStatus(entry)
-		}))
+		})),
+		mergeCommit,
+		resolvedConflicts: conflicts.map((entry) => entry.path)
 	};
 }
 
@@ -969,6 +1188,25 @@ function validateCommitPaths(repoRoot: string, paths: string[]): string[] {
 
 function statusEntryMatches(entry: StatusEntry, selectedPaths: string[]): boolean {
 	return selectedPaths.some((path) => entry.path === path || entry.origPath === path);
+}
+
+/**
+ * Read a repo-relative working-tree file and look for conflict markers.
+ *
+ * Missing/unreadable (a delete/modify conflict resolved by deleting) and binary
+ * content both count as marker-free: the point is to catch a text file the agent
+ * forgot to edit, not to second-guess a deliberate deletion.
+ */
+function fileHasConflictMarkers(repoRoot: string, relPath: string): boolean {
+	const resolved = safeResolve(repoRoot, relPath);
+	if (!resolved.ok) return false;
+	try {
+		const buf = readFileSync(resolved.abs);
+		if (buf.includes(0)) return false;
+		return hasConflictMarkers(buf.toString('utf-8'));
+	} catch {
+		return false;
+	}
 }
 
 function hasIndexChange(entry: StatusEntry): boolean {

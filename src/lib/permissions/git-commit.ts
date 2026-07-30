@@ -27,6 +27,12 @@ export interface GitCommitPreview {
 	worktree: GitCommitTargetSnapshot | null;
 	/** One-line description of the destination checkout, always present. */
 	destinationSummary: string;
+	/**
+	 * True when the request opts out of the conflict-marker guard. Surfaced
+	 * because it is the one argument that changes what "resolved" means: with it
+	 * set, a file that still contains `<<<<<<<` lines is committed as-is.
+	 */
+	allowConflictMarkers: boolean;
 }
 
 export function gitCommitPreview(
@@ -57,12 +63,17 @@ export function gitCommitPreview(
 		bodyLineCount: body ? body.split(/\r\n|\r|\n/).length : 0,
 		trailers,
 		targetSummary: isAllChanges
-			? 'All tracked, staged, unstaged, deleted, and untracked workspace changes'
+			? 'All tracked, staged, unstaged, deleted, and untracked workspace changes' +
+				// The tool narrows this while concluding a merge, and the dialog is
+				// built from arguments alone (no repository read), so the caveat has
+				// to be stated rather than detected.
+				' (while concluding a merge: only the conflicted files’ resolutions)'
 			: paths
 				? `${paths.length} selected ${paths.length === 1 ? 'path' : 'paths'}`
 				: 'Selected paths',
 		worktree,
-		destinationSummary: describeDestination(worktree)
+		destinationSummary: describeDestination(worktree),
+		allowConflictMarkers: args.allowConflictMarkers === true
 	};
 }
 
@@ -107,6 +118,11 @@ export function summarizeGitCommitPermission(
 		const tokens = preview.trailers.map((trailer) => trailer.token).filter(Boolean);
 		lines.push(
 			`Trailers: ${preview.trailers.length}${tokens.length ? ` (${tokens.slice(0, 5).join(', ')}${tokens.length > 5 ? ', ...' : ''})` : ''}`
+		);
+	}
+	if (preview.allowConflictMarkers) {
+		lines.push(
+			'Conflict markers: allowed — files may still contain <<<<<<< / ======= / >>>>>>> lines.'
 		);
 	}
 	lines.push('Approval: one-time only; stored grants are disabled for git_commit.');
