@@ -148,7 +148,18 @@ otherwise invalidate. This is a same-process mutex only; git's own `index.lock`
 is what guards against unrelated processes.
 
 Agents drive this with `git_worktree_status` / `git_worktree_merge`, and`git_commit` adds a follow-up hint pointing at integration whenever it commits
-inside a linked worktree. `GET /api/worktrees/status` feeds the sidebar's
+inside a linked worktree. `git_worktree_list` covers discovery: it enumerates
+every worktree of the repository (main plus linked, with branch/HEAD and
+detached/locked/prunable flags) straight from `git worktree list`, so unlike the
+lease-oriented `worktree_list` it also sees trees the portal did not create.
+Every read-only git tool additionally takes an optional `worktree: <leaseId>`
+selector that runs it inside a lease this conversation holds, so an orchestrator
+can `git_status` / `git_diff` / `git_log` a sub-agent's checkout instead of being
+blind to it until the merge — the tool-side counterpart of the `?worktree=`
+selector on the Files/Changes/Commits routes. The lease must be held by the
+calling conversation (same check as `worktree_status`), which is why the
+selector cannot widen reach: those paths are already among the roots
+`workspaceRootsFor` grants it. `GET /api/worktrees/status` feeds the sidebar's
 "unmerged" badge, `GET|POST /api/conversations/<id>/worktree[/merge]` back the
 chat header's integration panel, and deleting a conversation whose worktree
 still holds unmerged commits requires the same `forceWorktree=1` confirmation

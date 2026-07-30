@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
@@ -93,6 +93,89 @@ describe('worktree integration', () => {
 		it('rejects a non-repository', async () => {
 			const { worktreeIntegrationStatus } = await service();
 			await expect(worktreeIntegrationStatus(makeTmpDir('portal-plain-'))).rejects.toMatchObject({
+				code: 'not_git_repository'
+			});
+		});
+	});
+
+	describe('listWorktrees', () => {
+		it('reports a plain repository as a single main worktree', async () => {
+			const { listWorktrees } = await service();
+			const result = await listWorktrees(source);
+			expect(result.mainPath).toBe(source);
+			expect(result.currentPath).toBe(source);
+			expect(result.worktrees).toHaveLength(1);
+			expect(result.worktrees[0]).toMatchObject({
+				path: source,
+				isMain: true,
+				isCurrent: true,
+				branch: 'main',
+				detached: false,
+				bare: false,
+				locked: false,
+				prunable: false,
+				dirtyCount: null
+			});
+			expect(result.worktrees[0].head).toMatch(/^[0-9a-f]{40}$/);
+		});
+
+		// Discovery is the point of this function: asked from inside a linked
+		// worktree it must still see the whole repository, not just itself.
+		it('sees every worktree from any of them, and marks main and current', async () => {
+			const path = await worktree();
+			const { listWorktrees } = await service();
+			const result = await listWorktrees(path);
+			expect(result.mainPath).toBe(source);
+			expect(result.currentPath).toBe(path);
+			expect(result.worktrees.map((w) => w.path).sort()).toEqual([source, path].sort());
+			expect(result.worktrees.find((w) => w.isMain)?.path).toBe(source);
+			expect(result.worktrees.find((w) => w.isCurrent)?.path).toBe(path);
+			expect(result.worktrees.find((w) => w.path === path)?.branch).toBe('portal/01CONV');
+		});
+
+		it('counts uncommitted changes only when asked', async () => {
+			const path = await worktree();
+			writeFileSync(join(path, 'scratch.txt'), 'wip\n');
+			const { listWorktrees } = await service();
+			const without = await listWorktrees(source);
+			expect(without.worktrees.every((w) => w.dirtyCount === null)).toBe(true);
+			const withDirty = await listWorktrees(source, { includeDirty: true });
+			expect(withDirty.worktrees.find((w) => w.path === path)?.dirtyCount).toBe(1);
+			expect(withDirty.worktrees.find((w) => w.isMain)?.dirtyCount).toBe(0);
+		});
+
+		it('reports detached, locked, and prunable worktrees', async () => {
+			const detached = join(makeTmpDir('portal-detached-'), 'wt');
+			git(source, ['worktree', 'add', '--detach', '-q', detached, 'HEAD']);
+			const locked = join(makeTmpDir('portal-locked-'), 'wt');
+			git(source, ['worktree', 'add', '-q', '-b', 'locked-branch', locked]);
+			git(source, ['worktree', 'lock', '--reason', 'held for review', locked]);
+			const detachedPath = realpathSync(detached);
+			const lockedPath = realpathSync(locked);
+
+			const { listWorktrees } = await service();
+			const result = await listWorktrees(source);
+			const detachedEntry = result.worktrees.find((w) => w.path === detachedPath);
+			expect(detachedEntry).toMatchObject({ detached: true, branch: null, locked: false });
+			const lockedEntry = result.worktrees.find((w) => w.path === lockedPath);
+			expect(lockedEntry).toMatchObject({
+				locked: true,
+				lockedReason: 'held for review',
+				branch: 'locked-branch'
+			});
+
+			// A worktree whose directory is gone is still a record git knows about;
+			// it must be listed (and flagged) rather than crashing the read.
+			rmSync(detached, { recursive: true, force: true });
+			const afterRemoval = await listWorktrees(source, { includeDirty: true });
+			const gone = afterRemoval.worktrees.find((w) => w.path === detachedPath);
+			expect(gone?.prunable).toBe(true);
+			expect(gone?.dirtyCount).toBe(null);
+		});
+
+		it('rejects a non-repository', async () => {
+			const { listWorktrees } = await service();
+			await expect(listWorktrees(makeTmpDir('portal-plain-'))).rejects.toMatchObject({
 				code: 'not_git_repository'
 			});
 		});
@@ -333,10 +416,26 @@ describe('worktree integration', () => {
 			expect(result).toMatchObject({ ok: false, error: { code: 'not_a_worktree' } });
 		});
 
+		it('git_worktree_list enumerates the repository from inside a worktree', async () => {
+			const path = await worktree();
+			const result = await (await tool(path, 'git_worktree_list')).handler({});
+			expect(result.ok).toBe(true);
+			const listing = result.ok && (result.result as { worktrees: { path: string }[] });
+			expect(listing && listing.worktrees.map((w) => w.path).sort()).toEqual([source, path].sort());
+		});
+
+		it('git_worktree_list surfaces a non-repository as a coded tool error', async () => {
+			const result = await (
+				await tool(makeTmpDir('portal-plain-'), 'git_worktree_list')
+			).handler({});
+			expect(result).toMatchObject({ ok: false, error: { code: 'not_git_repository' } });
+		});
+
 		it('git_worktree_merge is always-prompt while status is not', async () => {
 			const path = await worktree();
 			expect((await tool(path, 'git_worktree_merge')).permissionBehavior).toBe('always-prompt');
 			expect((await tool(path, 'git_worktree_status')).permissionBehavior).toBeUndefined();
+			expect((await tool(path, 'git_worktree_list')).permissionBehavior).toBeUndefined();
 		});
 
 		it('git_commit nudges toward integration only inside a worktree', async () => {

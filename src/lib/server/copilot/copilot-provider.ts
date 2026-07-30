@@ -242,7 +242,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	});
 	const portalTools = filterPortalToolGroups(
 		{
-			git: buildGitTools(opts.workingDirectory),
+			git: buildGitTools(opts.workingDirectory, {
+				userId: opts.userId,
+				conversationId: opts.conversationId
+			}),
 			filesystem: buildFilesystemTools(opts.workingDirectory),
 			worktree: buildWorktreeTools({
 				userId: opts.userId,

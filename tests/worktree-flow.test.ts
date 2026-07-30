@@ -46,6 +46,7 @@ describe('orchestrator worktree flow (acceptance)', () => {
 	let userId: string;
 	let conversationId: string;
 	let tools: Map<string, PortalTool>;
+	let gitTools: Map<string, PortalTool>;
 	let decide: typeof import('../src/lib/server/runtime/interactive-requests').decideByPolicy;
 	let rootsFor: typeof import('../src/lib/server/leases').workspaceRootsFor;
 
@@ -71,6 +72,8 @@ describe('orchestrator worktree flow (acceptance)', () => {
 
 		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
 		tools = new Map(buildWorktreeTools({ userId, conversationId }).map((t) => [t.name, t]));
+		const { buildGitTools } = await import('../src/lib/server/tools/git');
+		gitTools = new Map(buildGitTools(source, { userId, conversationId }).map((t) => [t.name, t]));
 		({ decideByPolicy: decide } = await import('../src/lib/server/runtime/interactive-requests'));
 		({ workspaceRootsFor: rootsFor } = await import('../src/lib/server/leases'));
 	});
@@ -158,5 +161,79 @@ describe('orchestrator worktree flow (acceptance)', () => {
 		if (res.ok) return;
 		expect(res.error.code).toBe('worktree_dirty');
 		expect(existsSync(created.path as string)).toBe(true);
+	});
+
+	// Fanning work out is only useful if the orchestrator can then SEE it. Shell
+	// `git` is not a fallback here (no seeded git shell grant), so without the
+	// `worktree` selector a sub-agent's work is invisible until it is merged.
+	describe('git read tools targeting a lease', () => {
+		it('inspects a lease without disturbing the conversation-local reads', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const leasePath = created.path as string;
+			const leaseId = created.leaseId as string;
+			writeFileSync(join(leasePath, 'feature.ts'), 'export const x = 1;\n');
+			git(leasePath, ['add', 'feature.ts']);
+			git(leasePath, ['commit', '-q', '-m', 'sub-agent work']);
+			writeFileSync(join(leasePath, 'scratch.ts'), 'wip\n');
+
+			const inLease = payload(await gitTools.get('git_status')!.handler({ worktree: leaseId }));
+			expect((inLease.changes as unknown[]).length).toBe(1);
+			const inMain = payload(await gitTools.get('git_status')!.handler({}));
+			expect(inMain.changes).toEqual([]);
+
+			const leaseLog = payload(await gitTools.get('git_log')!.handler({ worktree: leaseId }));
+			const leaseSubjects = (leaseLog.commits as Array<{ subject: string }>).map((c) => c.subject);
+			expect(leaseSubjects).toContain('sub-agent work');
+			const mainLog = payload(await gitTools.get('git_log')!.handler({}));
+			expect((mainLog.commits as Array<{ subject: string }>).map((c) => c.subject)).not.toContain(
+				'sub-agent work'
+			);
+
+			const patch = await gitTools.get('git_diff')!.handler({
+				worktree: leaseId,
+				target: 'commit-vs-parent',
+				sha: git(leasePath, ['rev-parse', 'HEAD'])
+			});
+			expect(patch.ok && String(patch.result)).toContain('feature.ts');
+		});
+
+		it('refuses a lease this conversation does not hold', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const other = convs.create(userId, {
+				id: convs.newId(),
+				title: 'other',
+				workdir: source,
+				model: 'test-model',
+				workspaceKind: 'shared',
+				workspaceKey: source
+			});
+			const { buildGitTools } = await import('../src/lib/server/tools/git');
+			const otherTools = new Map(
+				buildGitTools(source, { userId, conversationId: other.id }).map((t) => [t.name, t])
+			);
+
+			const res = await otherTools
+				.get('git_status')!
+				.handler({ worktree: created.leaseId as string });
+			expect(res).toMatchObject({ ok: false, error: { code: 'lease_not_found' } });
+			expect(await gitTools.get('git_status')!.handler({ worktree: 'nope' })).toMatchObject({
+				ok: false,
+				error: { code: 'lease_not_found' }
+			});
+		});
+
+		// Without session context the selector cannot be authorized, so it must
+		// fail loudly rather than silently reading the conversation's own tree and
+		// reporting it as the lease's.
+		it('rejects the selector when the session context is unavailable', async () => {
+			const { buildGitTools } = await import('../src/lib/server/tools/git');
+			const bare = new Map(buildGitTools(source).map((t) => [t.name, t]));
+			expect(await bare.get('git_status')!.handler({ worktree: 'anything' })).toMatchObject({
+				ok: false,
+				error: { code: 'worktree_unavailable' }
+			});
+			expect((await bare.get('git_status')!.handler({})).ok).toBe(true);
+		});
 	});
 });

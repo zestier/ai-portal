@@ -982,7 +982,10 @@ function buildOpenAITools(opts: {
 }): PortalTool[] {
 	return filterPortalToolGroups(
 		{
-			git: buildGitTools(opts.opts.workingDirectory),
+			git: buildGitTools(opts.opts.workingDirectory, {
+				userId: opts.opts.userId,
+				conversationId: opts.opts.conversationId
+			}),
 			filesystem: buildFilesystemTools(opts.opts.workingDirectory),
 			worktree: buildWorktreeTools({
 				userId: opts.opts.userId,

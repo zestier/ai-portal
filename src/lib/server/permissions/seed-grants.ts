@@ -109,7 +109,8 @@ const GIT_STRUCTURED_TOOLS = [
 	// Read-only, like the rest of this list. The mutating worktree tool
 	// (`git_worktree_merge`) is deliberately absent, same as `git_commit`: it
 	// declares `permissionBehavior: 'always-prompt'` and must stay promptable.
-	'git_worktree_status'
+	'git_worktree_status',
+	'git_worktree_list'
 ];
 const TICKET_STRUCTURED_TOOLS = ['ticket_add', 'ticket_list', 'ticket_get', 'ticket_update'];
 const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];

@@ -160,6 +160,7 @@ describe('seed grants — runtime behaviour', () => {
 		expect(customToolMatch('git_show_commit')).toBe('allow');
 		expect(customToolMatch('git_show_file')).toBe('allow');
 		expect(customToolMatch('git_worktree_status')).toBe('allow');
+		expect(customToolMatch('git_worktree_list')).toBe('allow');
 	});
 
 	// The mutating git tools must never be seeded: both declare

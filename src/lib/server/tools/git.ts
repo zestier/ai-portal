@@ -17,11 +17,13 @@ import {
 } from '../git';
 import { COMMIT_TICKET_FOLLOW_UP_HINT, WORKTREE_INTEGRATE_FOLLOW_UP_HINT } from './follow-up-hints';
 import {
+	listWorktrees,
 	mergeWorktree,
 	worktreeIntegrationStatus,
 	WorktreeIntegrationError
 } from '../worktree-integration';
-import { ok, err, type PortalTool } from './types';
+import { getLease, touchLease } from '../leases';
+import { ok, err, type PortalTool, type ToolResult } from './types';
 
 // Re-exported so existing importers of these symbols from `./git` keep
 // compiling now that the canonical definitions live in `./types`.
@@ -37,9 +39,27 @@ const TargetKind = z.enum([
 ]);
 const DiffOutput = z.enum(['patch', 'stat', 'numstat', 'name-only', 'name-status']);
 
+/**
+ * Optional lease selector accepted by every read-only git tool.
+ *
+ * Without it these tools can only ever describe the conversation's own
+ * workspace, which leaves an orchestrator blind to the worktrees it handed to
+ * sub-agents: it could create a worktree and merge it back, but not look inside
+ * it. Shell `git` is not a fallback here — this portal deliberately does not
+ * seed a git shell grant.
+ */
+const WorktreeSelector = z.string().trim().min(1).max(64).optional();
+
+const WORKTREE_PARAM = {
+	type: 'string',
+	description:
+		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to read instead of this conversation's own workspace."
+} as const;
+
 const GitStatusArgs = z
 	.object({
-		includeIgnored: z.boolean().optional().default(false)
+		includeIgnored: z.boolean().optional().default(false),
+		worktree: WorktreeSelector
 	})
 	.strict()
 	.optional()
@@ -50,7 +70,8 @@ const GitDiffArgs = z
 		target: TargetKind.optional().default('worktree-vs-head'),
 		sha: z.string().min(4).max(64).optional(),
 		path: z.string().min(1).max(4096).optional(),
-		output: DiffOutput.optional().default('patch')
+		output: DiffOutput.optional().default('patch'),
+		worktree: WorktreeSelector
 	})
 	.strict()
 	.refine((args) => !requiresSha(args.target) || args.sha !== undefined, {
@@ -65,7 +86,8 @@ const GitLogArgs = z
 		limit: z.number().int().min(1).max(50).optional().default(20),
 		skip: z.number().int().min(0).max(1000).optional().default(0),
 		ref: z.string().min(1).max(200).optional(),
-		path: z.string().min(1).max(4096).optional()
+		path: z.string().min(1).max(4096).optional(),
+		worktree: WorktreeSelector
 	})
 	.strict()
 	.optional()
@@ -74,14 +96,16 @@ const GitLogArgs = z
 const GitShowCommitArgs = z
 	.object({
 		sha: z.string().min(4).max(64),
-		includePatch: z.boolean().optional().default(false)
+		includePatch: z.boolean().optional().default(false),
+		worktree: WorktreeSelector
 	})
 	.strict();
 
 const GitShowFileArgs = z
 	.object({
 		ref: z.string().min(1).max(200),
-		path: z.string().min(1).max(4096)
+		path: z.string().min(1).max(4096),
+		worktree: WorktreeSelector
 	})
 	.strict();
 
@@ -121,7 +145,22 @@ const GitCommitArgs = z
 	})
 	.strict();
 
-const NoArgs = z.object({}).strict().optional().default({});
+const GitWorktreeStatusArgs = z
+	.object({
+		worktree: WorktreeSelector
+	})
+	.strict()
+	.optional()
+	.default({});
+
+const GitWorktreeListArgs = z
+	.object({
+		includeDirty: z.boolean().optional().default(false),
+		worktree: WorktreeSelector
+	})
+	.strict()
+	.optional()
+	.default({});
 
 const GitWorktreeMergeArgs = z
 	.object({
@@ -131,7 +170,52 @@ const GitWorktreeMergeArgs = z
 	})
 	.strict();
 
-export function buildGitTools(cwd: string): PortalTool[] {
+/**
+ * Session context needed to resolve the optional `worktree` selector. Optional
+ * so callers that only have a directory (tests, one-off tooling) keep working —
+ * without it the selector is rejected rather than silently ignored.
+ */
+export interface GitToolContext {
+	userId: string;
+	conversationId: string;
+}
+
+/** Either the directory to run in, or the error envelope to return instead. */
+type TreeSelection = { cwd: string; error?: undefined } | { cwd?: undefined; error: ToolResult };
+
+export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
+	/**
+	 * Resolve a `worktree` selector to a directory.
+	 *
+	 * The lease must be held by THIS conversation, matching `worktree_status` /
+	 * `worktree_merge`. That check is what keeps the selector from becoming a way
+	 * to read an arbitrary path: lease paths are portal-created checkouts of the
+	 * conversation's own repository, and are already inside the roots
+	 * `workspaceRootsFor` grants it.
+	 */
+	function treeFor(leaseId: string | undefined): TreeSelection {
+		if (!leaseId) return { cwd };
+		if (!ctx) {
+			return {
+				error: err('worktree selection is not available in this session', {
+					code: 'worktree_unavailable'
+				})
+			};
+		}
+		const lease = getLease(leaseId, ctx.userId);
+		if (!lease || lease.heldByConversationId !== ctx.conversationId) {
+			return {
+				error: err(`no worktree with id ${leaseId} in this conversation`, {
+					code: 'lease_not_found'
+				})
+			};
+		}
+		// Reading a worktree is using it; without this the idle reaper could
+		// collect a lease an orchestrator is actively polling.
+		touchLease(lease.id);
+		return { cwd: lease.path };
+	}
+
 	return [
 		{
 			name: 'git_status',
@@ -144,16 +228,23 @@ export function buildGitTools(cwd: string): PortalTool[] {
 					includeIgnored: {
 						type: 'boolean',
 						description: 'Include ignored files in the changed-file list. Defaults to false.'
-					}
+					},
+					worktree: WORKTREE_PARAM
 				},
 				additionalProperties: false
 			},
 			async handler(args) {
-				const { includeIgnored } = GitStatusArgs.parse(args);
-				if (!(await isGitRepo(cwd))) {
+				const parsed = GitStatusArgs.parse(args);
+				const tree = treeFor(parsed.worktree);
+				if (tree.error) return tree.error;
+				const includeIgnored = parsed.includeIgnored;
+				if (!(await isGitRepo(tree.cwd))) {
 					return ok({ initialized: false, changes: [] });
 				}
-				const [head, entries] = await Promise.all([headInfo(cwd), status(cwd, { includeIgnored })]);
+				const [head, entries] = await Promise.all([
+					headInfo(tree.cwd),
+					status(tree.cwd, { includeIgnored })
+				]);
 				return ok({
 					initialized: true,
 					head,
@@ -190,26 +281,29 @@ export function buildGitTools(cwd: string): PortalTool[] {
 						enum: DiffOutput.options,
 						description:
 							'Output format. Defaults to patch. stat, numstat, name-only, and name-status return JSON.'
-					}
+					},
+					worktree: WORKTREE_PARAM
 				},
 				additionalProperties: false
 			},
 			async handler(args) {
 				const parsed = GitDiffArgs.parse(args);
+				const tree = treeFor(parsed.worktree);
+				if (tree.error) return tree.error;
 				const target = toDiffTarget(parsed.target, parsed.sha);
 				switch (parsed.output) {
 					case 'patch': {
-						const out = await diff(cwd, target, parsed.path);
+						const out = await diff(tree.cwd, target, parsed.path);
 						return ok(out || '(no diff)');
 					}
 					case 'stat':
-						return ok(await diffStat(cwd, target, parsed.path));
+						return ok(await diffStat(tree.cwd, target, parsed.path));
 					case 'numstat':
-						return ok({ files: await numstat(cwd, target, parsed.path) });
+						return ok({ files: await numstat(tree.cwd, target, parsed.path) });
 					case 'name-only':
-						return ok({ files: await nameOnly(cwd, target, parsed.path) });
+						return ok({ files: await nameOnly(tree.cwd, target, parsed.path) });
 					case 'name-status':
-						return ok({ files: await nameStatus(cwd, target, parsed.path) });
+						return ok({ files: await nameStatus(tree.cwd, target, parsed.path) });
 				}
 			}
 		},
@@ -236,13 +330,16 @@ export function buildGitTools(cwd: string): PortalTool[] {
 					path: {
 						type: 'string',
 						description: 'Optional workspace-relative path to filter commit history.'
-					}
+					},
+					worktree: WORKTREE_PARAM
 				},
 				additionalProperties: false
 			},
 			async handler(args) {
-				const parsed = GitLogArgs.parse(args);
-				const entries = await log(cwd, parsed);
+				const { worktree, ...parsed } = GitLogArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				const entries = await log(tree.cwd, parsed);
 				return ok({ commits: entries });
 			}
 		},
@@ -262,14 +359,17 @@ export function buildGitTools(cwd: string): PortalTool[] {
 						type: 'boolean',
 						description:
 							'When true, include the commit patch. Defaults to false to keep output smaller.'
-					}
+					},
+					worktree: WORKTREE_PARAM
 				},
 				required: ['sha'],
 				additionalProperties: false
 			},
 			async handler(args) {
-				const { sha, includePatch } = GitShowCommitArgs.parse(args);
-				const commit = await showCommit(cwd, sha, { includePatch });
+				const { sha, includePatch, worktree } = GitShowCommitArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				const commit = await showCommit(tree.cwd, sha, { includePatch });
 				return ok(commit);
 			}
 		},
@@ -288,14 +388,17 @@ export function buildGitTools(cwd: string): PortalTool[] {
 					path: {
 						type: 'string',
 						description: 'Workspace-relative file path.'
-					}
+					},
+					worktree: WORKTREE_PARAM
 				},
 				required: ['ref', 'path'],
 				additionalProperties: false
 			},
 			async handler(args) {
-				const { ref, path } = GitShowFileArgs.parse(args);
-				return ok(await showFile(cwd, ref, path));
+				const { ref, path, worktree } = GitShowFileArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				return ok(await showFile(tree.cwd, ref, path));
 			}
 		},
 		{
@@ -363,11 +466,46 @@ export function buildGitTools(cwd: string): PortalTool[] {
 			name: 'git_worktree_status',
 			description:
 				'Report how this workspace relates to the branch checked out in the repository’s main checkout: whether it is a linked worktree, its branch, how many commits it is ahead/behind, and whether it holds unmerged work. Read-only.',
-			argsSchema: NoArgs,
-			parameters: { type: 'object', properties: {}, additionalProperties: false },
-			async handler() {
+			argsSchema: GitWorktreeStatusArgs,
+			parameters: {
+				type: 'object',
+				properties: { worktree: WORKTREE_PARAM },
+				additionalProperties: false
+			},
+			async handler(args) {
+				const { worktree } = GitWorktreeStatusArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
 				try {
-					return ok(await worktreeIntegrationStatus(cwd));
+					return ok(await worktreeIntegrationStatus(tree.cwd));
+				} catch (cause) {
+					return toolErrorFor(cause);
+				}
+			}
+		},
+		{
+			name: 'git_worktree_list',
+			description:
+				'List every worktree of this repository (the main checkout plus each linked worktree), with the branch and commit checked out in each and whether it is detached, locked, or prunable. Read-only. Unlike `worktree_list`, which shows only portal-managed worktrees held by this conversation, this sees all of them — including ones created outside the portal.',
+			argsSchema: GitWorktreeListArgs,
+			parameters: {
+				type: 'object',
+				properties: {
+					includeDirty: {
+						type: 'boolean',
+						description:
+							'Also count uncommitted changes in each worktree. Defaults to false because it costs one status read per worktree.'
+					},
+					worktree: WORKTREE_PARAM
+				},
+				additionalProperties: false
+			},
+			async handler(args) {
+				const parsed = GitWorktreeListArgs.parse(args);
+				const tree = treeFor(parsed.worktree);
+				if (tree.error) return tree.error;
+				try {
+					return ok(await listWorktrees(tree.cwd, { includeDirty: parsed.includeDirty }));
 				} catch (cause) {
 					return toolErrorFor(cause);
 				}

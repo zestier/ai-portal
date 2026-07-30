@@ -148,6 +148,23 @@ async function gitOk(cwd: string, args: string[]): Promise<string> {
 interface WorktreeRecord {
 	path: string;
 	branch: string | null;
+	/** Commit checked out in the tree, or null for a bare repository. */
+	head: string | null;
+	/** True for the record describing a bare repository (it has no working tree). */
+	bare: boolean;
+	/** True when HEAD points at a commit rather than a branch. */
+	detached: boolean;
+	/** Reason given to `git worktree lock`, '' when locked without one, null when unlocked. */
+	lockedReason: string | null;
+	/** Why git considers the record removable (e.g. its directory is gone), else null. */
+	prunableReason: string | null;
+}
+
+/** `<keyword>` alone or `<keyword> <value>`; returns the value ('' when bare). */
+function porcelainValue(line: string, keyword: string): string | null {
+	if (line === keyword) return '';
+	if (line.startsWith(`${keyword} `)) return line.slice(keyword.length + 1).trim();
+	return null;
 }
 
 /**
@@ -158,18 +175,139 @@ interface WorktreeRecord {
 function parseWorktreeList(stdout: string): WorktreeRecord[] {
 	const records: WorktreeRecord[] = [];
 	let current: WorktreeRecord | null = null;
-	for (const line of stdout.split('\n')) {
+	for (const raw of stdout.split('\n')) {
+		const line = raw.trimEnd();
 		if (line.startsWith('worktree ')) {
-			current = { path: line.slice('worktree '.length).trim(), branch: null };
+			current = {
+				path: line.slice('worktree '.length).trim(),
+				branch: null,
+				head: null,
+				bare: false,
+				detached: false,
+				lockedReason: null,
+				prunableReason: null
+			};
 			records.push(current);
-		} else if (line.startsWith('branch ') && current) {
+			continue;
+		}
+		if (!current) continue;
+		if (line.startsWith('branch ')) {
 			current.branch = line
 				.slice('branch '.length)
 				.trim()
 				.replace(/^refs\/heads\//, '');
+		} else if (line.startsWith('HEAD ')) {
+			current.head = line.slice('HEAD '.length).trim();
+		} else if (line === 'bare') {
+			current.bare = true;
+		} else if (line === 'detached') {
+			current.detached = true;
+		} else {
+			const locked = porcelainValue(line, 'locked');
+			if (locked !== null) {
+				current.lockedReason = locked;
+				continue;
+			}
+			const prunable = porcelainValue(line, 'prunable');
+			if (prunable !== null) current.prunableReason = prunable;
 		}
 	}
 	return records;
+}
+
+/** One tree in {@link listWorktrees}. */
+export interface WorktreeListEntry {
+	/** Absolute path of the tree (as git reports it). */
+	path: string;
+	/** True for the repository's main checkout — always exactly one entry. */
+	isMain: boolean;
+	/** True for the tree the query ran in. */
+	isCurrent: boolean;
+	/** Branch checked out there, or null when detached or bare. */
+	branch: string | null;
+	/** Commit checked out there, or null for a bare repository. */
+	head: string | null;
+	detached: boolean;
+	bare: boolean;
+	locked: boolean;
+	/** Lock reason, '' when locked without one, null when unlocked. */
+	lockedReason: string | null;
+	/** True when git considers the record removable (its directory is gone). */
+	prunable: boolean;
+	prunableReason: string | null;
+	/**
+	 * Uncommitted (including untracked) entries. Only populated when
+	 * `includeDirty` is set, and null for trees that cannot be inspected (bare,
+	 * prunable, or unreadable).
+	 */
+	dirtyCount: number | null;
+}
+
+export interface ListWorktreesResult {
+	/** Absolute path of the repository's main worktree. */
+	mainPath: string;
+	/** Tree the query ran in, or null when it was run from a bare repository. */
+	currentPath: string | null;
+	worktrees: WorktreeListEntry[];
+}
+
+export interface ListWorktreesOptions {
+	/**
+	 * Also count uncommitted changes in each tree. Off by default: it costs one
+	 * `git status` per worktree, while the listing itself is a single call.
+	 */
+	includeDirty?: boolean;
+}
+
+/**
+ * Enumerate every worktree of the repository containing `cwd`.
+ *
+ * Derived from `git worktree list`, not from `managed_worktrees`, so it sees
+ * trees the portal did not create — the human's own, and those belonging to
+ * other conversations. That is the difference from `worktree_list`, which
+ * reports portal-managed leases held by one conversation.
+ */
+export async function listWorktrees(
+	cwd: string,
+	opts: ListWorktreesOptions = {}
+): Promise<ListWorktreesResult> {
+	const inside = await git(cwd, ['rev-parse', '--is-inside-work-tree']);
+	if (inside.code !== 0) {
+		throw new WorktreeIntegrationError('not_git_repository', 'not a git repository');
+	}
+	const currentPath =
+		inside.stdout.trim() === 'true'
+			? resolve(await gitOk(cwd, ['rev-parse', '--show-toplevel']))
+			: null;
+	const records = parseWorktreeList(await gitOk(cwd, ['worktree', 'list', '--porcelain']));
+	const main = records[0];
+	if (!main) {
+		throw new WorktreeIntegrationError('git_failed', 'could not determine the main worktree');
+	}
+	const worktrees = await Promise.all(
+		records.map(async (record): Promise<WorktreeListEntry> => {
+			const path = resolve(record.path);
+			// A bare or already-gone tree has nothing to run `git status` in.
+			const inspectable = !record.bare && record.prunableReason === null;
+			const dirty =
+				opts.includeDirty && inspectable ? await dirtyCount(path).catch(() => null) : null;
+			return {
+				path,
+				isMain: record === main,
+				isCurrent: currentPath !== null && path === currentPath,
+				branch: record.branch,
+				head: record.head,
+				detached: record.detached,
+				bare: record.bare,
+				locked: record.lockedReason !== null,
+				lockedReason: record.lockedReason,
+				prunable: record.prunableReason !== null,
+				prunableReason: record.prunableReason,
+				dirtyCount: dirty
+			};
+		})
+	);
+	return { mainPath: resolve(main.path), currentPath, worktrees };
 }
 
 function countLines(text: string): number {
