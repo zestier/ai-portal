@@ -264,6 +264,68 @@ describe('worktree tools', () => {
 			expect(existsSync(join(source, 'beta.txt'))).toBe(true);
 		});
 
+		it('squashes a lease into one commit when asked', async () => {
+			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
+			const path = created.path as string;
+			for (const name of ['one', 'two', 'three']) {
+				writeFileSync(join(path, `${name}.txt`), `${name}\n`);
+				git(path, ['add', `${name}.txt`]);
+				git(path, ['commit', '-q', '-m', `wip ${name}`]);
+			}
+
+			const res = await (
+				await tool('worktree_merge')
+			).handler({
+				leaseId: created.leaseId,
+				squash: { subject: 'Land the api work' }
+			});
+
+			expect(res.ok).toBe(true);
+			expect(res.summary).toContain('squashed from 3 commit(s)');
+			expect(git(source, ['log', '--format=%s'])).toBe('Land the api work\ninitial');
+		});
+
+		// Collecting the second lease is the case the squash flow exists for, so
+		// the refusal has to name the sync that unblocks it.
+		it('points a behind lease at the from-source sync before retrying the squash', async () => {
+			const create = await tool('worktree_create');
+			const alpha = result(await create.handler({ label: 'alpha' }));
+			const beta = result(await create.handler({ label: 'beta' }));
+			for (const [lease, name] of [
+				[alpha, 'alpha'],
+				[beta, 'beta']
+			] as const) {
+				const p = lease.path as string;
+				writeFileSync(join(p, `${name}.txt`), `${name}\n`);
+				git(p, ['add', `${name}.txt`]);
+				git(p, ['commit', '-q', '-m', name]);
+			}
+
+			const merge = await tool('worktree_merge');
+			await merge.handler({ leaseId: alpha.leaseId, squash: { subject: 'Land alpha' } });
+			const blocked = await merge.handler({
+				leaseId: beta.leaseId,
+				squash: { subject: 'Land beta' }
+			});
+
+			expect(blocked.ok).toBe(false);
+			if (blocked.ok) return;
+			expect(blocked.error.code).toBe('squash_behind_source');
+			expect(blocked.error.message).toContain('"from-source"');
+
+			await merge.handler({ leaseId: beta.leaseId, direction: 'from-source' });
+			const retried = await merge.handler({
+				leaseId: beta.leaseId,
+				squash: { subject: 'Land beta' }
+			});
+
+			expect(retried.ok).toBe(true);
+			expect(existsSync(join(source, 'beta.txt'))).toBe(true);
+			// One commit per lease, and no merge commit from beta's sync.
+			expect(git(source, ['log', '--format=%s'])).toBe('Land beta\nLand alpha\ninitial');
+			expect(git(source, ['rev-list', '--merges', 'HEAD'])).toBe('');
+		});
+
 		it('reports uncommitted work rather than silently skipping it', async () => {
 			const created = result(await (await tool('worktree_create')).handler({ label: 'api' }));
 			writeFileSync(join(created.path as string, 'wip.txt'), 'unsaved\n');

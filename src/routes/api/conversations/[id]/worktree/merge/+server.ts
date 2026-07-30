@@ -5,11 +5,13 @@ import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
 import { parseBody } from '$lib/server/validate';
 import { audit } from '$lib/server/audit';
 import { mergeWorktree, WorktreeIntegrationError } from '$lib/server/worktree-integration';
+import { SquashArg } from '$lib/server/tools/commit-message-args';
 
 const MergeBody = z
 	.object({
 		direction: z.enum(['from-source', 'to-source']).default('to-source'),
-		allowMergeCommit: z.boolean().optional().default(false)
+		allowMergeCommit: z.boolean().optional().default(false),
+		squash: SquashArg
 	})
 	.strict();
 
@@ -24,8 +26,12 @@ const MergeBody = z
 export const POST: RequestHandler = async ({ params, locals, request, getClientAddress }) => {
 	const { conversation, workdir } = authorizeConversationWorkdir(params.id, locals.userId);
 	const body = await parseBody(request, MergeBody);
+	const { squash, ...merge } = body;
 	try {
-		const result = await mergeWorktree(workdir, body);
+		const result = await mergeWorktree(workdir, {
+			...merge,
+			...(squash === undefined ? {} : { squash })
+		});
 		audit({
 			event_type: 'worktree_merge',
 			actor_login: locals.user?.githubLogin ?? null,

@@ -57,6 +57,10 @@ describe('buildPortalSystemGuidance', () => {
 		expect(guidance).toContain('ABSOLUTE path');
 		expect(guidance).toContain('Never point');
 		expect(guidance).toContain('already exists and is writable');
+		// Merging back is the step that makes the fan-out worth anything, and
+		// squashing is what keeps collecting several from shredding the history.
+		expect(guidance).toContain('squash');
+		expect(guidance).toContain('"from-source"');
 	});
 
 	it('produces only the base block when no optional tool groups are present', () => {

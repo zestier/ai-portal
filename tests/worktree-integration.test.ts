@@ -272,6 +272,231 @@ describe('worktree integration', () => {
 		});
 	});
 
+	describe('mergeWorktree to-source with squash', () => {
+		/** Subjects of `branch`'s commits, newest first. */
+		function subjects(cwd: string, ref = 'HEAD'): string[] {
+			return git(cwd, ['log', '--format=%s', ref]).split('\n').filter(Boolean);
+		}
+
+		it('collapses the branch into one commit and fast-forwards the source', async () => {
+			const path = await worktree();
+			commit(path, 'a.txt', 'one\n', 'wip 1');
+			commit(path, 'b.txt', 'two\n', 'wip 2');
+			commit(path, 'c.txt', 'three\n', 'wip 3');
+			const { mergeWorktree } = await service();
+			const result = await mergeWorktree(path, {
+				direction: 'to-source',
+				squash: { subject: 'Land the feature' }
+			});
+
+			expect(result).toMatchObject({ merged: true, fastForward: true, squashedCommits: 3 });
+			expect(subjects(source)).toEqual(['Land the feature', 'initial']);
+			for (const [file, contents] of [
+				['a.txt', 'one\n'],
+				['b.txt', 'two\n'],
+				['c.txt', 'three\n']
+			]) {
+				expect(readFileSync(join(source, file!), 'utf8')).toBe(contents);
+			}
+			// The branch ref moved WITH the squash (rather than being left behind by
+			// a `merge --squash`), so the worktree reads as fully merged afterwards.
+			expect(result.status).toMatchObject({ ahead: 0, behind: 0, unmerged: false });
+		});
+
+		it('writes the caller’s body and trailers into the squashed commit', async () => {
+			const path = await worktree();
+			commit(path, 'a.txt', 'one\n', 'wip 1');
+			const { mergeWorktree } = await service();
+			await mergeWorktree(path, {
+				direction: 'to-source',
+				squash: {
+					subject: 'Land the feature',
+					body: 'Why it was done.',
+					trailers: [{ token: 'Co-authored-by', value: 'Someone <someone@localhost>' }]
+				}
+			});
+			expect(git(source, ['log', '-1', '--format=%B'])).toBe(
+				'Land the feature\n\nWhy it was done.\n\nCo-authored-by: Someone <someone@localhost>'
+			);
+		});
+
+		// The whole point: a sync leaves a merge commit inside the worktree, and
+		// squashing onto the source's TIP (not the merge base) is what keeps it
+		// from surfacing in the source's history.
+		it('absorbs a from-source merge commit, leaving the source linear', async () => {
+			const path = await worktree();
+			commit(path, 'feature.txt', 'work\n', 'worktree commit');
+			commit(source, 'upstream.txt', 'moved on\n', 'upstream commit');
+			const { mergeWorktree } = await service();
+			await mergeWorktree(path, { direction: 'from-source' });
+			const result = await mergeWorktree(path, {
+				direction: 'to-source',
+				squash: { subject: 'Land the feature' }
+			});
+
+			expect(result).toMatchObject({ merged: true, fastForward: true, squashedCommits: 2 });
+			expect(git(source, ['rev-list', '--merges', 'HEAD'])).toBe('');
+			expect(subjects(source)).toEqual(['Land the feature', 'upstream commit', 'initial']);
+			expect(readFileSync(join(source, 'feature.txt'), 'utf8')).toBe('work\n');
+			expect(readFileSync(join(source, 'upstream.txt'), 'utf8')).toBe('moved on\n');
+		});
+
+		// Squashing onto a tip this branch has not seen would commit a tree that
+		// silently reverts the source's own commits.
+		it('refuses to squash while behind the source, leaving the branch untouched', async () => {
+			const path = await worktree();
+			commit(path, 'feature.txt', 'work\n', 'worktree commit');
+			commit(source, 'upstream.txt', 'moved on\n', 'upstream commit');
+			const head = git(path, ['rev-parse', 'HEAD']);
+			const { mergeWorktree } = await service();
+			await expect(
+				mergeWorktree(path, { direction: 'to-source', squash: { subject: 'Land it' } })
+			).rejects.toMatchObject({ code: 'squash_behind_source', detail: { ahead: 1, behind: 1 } });
+			expect(git(path, ['rev-parse', 'HEAD'])).toBe(head);
+		});
+
+		// Even with allowMergeCommit, which would otherwise permit the merge.
+		it('refuses to squash while behind even when a merge commit is allowed', async () => {
+			const path = await worktree();
+			commit(path, 'feature.txt', 'work\n', 'worktree commit');
+			commit(source, 'upstream.txt', 'moved on\n', 'upstream commit');
+			const { mergeWorktree } = await service();
+			await expect(
+				mergeWorktree(path, {
+					direction: 'to-source',
+					allowMergeCommit: true,
+					squash: { subject: 'Land it' }
+				})
+			).rejects.toMatchObject({ code: 'squash_behind_source' });
+		});
+
+		it('fast-forwards rather than making a merge commit when both options are set', async () => {
+			const path = await worktree();
+			commit(path, 'a.txt', 'one\n', 'wip 1');
+			commit(path, 'b.txt', 'two\n', 'wip 2');
+			const { mergeWorktree } = await service();
+			const result = await mergeWorktree(path, {
+				direction: 'to-source',
+				allowMergeCommit: true,
+				squash: { subject: 'Land the feature' }
+			});
+			expect(result).toMatchObject({ merged: true, fastForward: true, squashedCommits: 2 });
+			expect(subjects(source)).toEqual(['Land the feature', 'initial']);
+		});
+
+		it('refuses a dirty worktree before rewriting anything', async () => {
+			const path = await worktree();
+			commit(path, 'feature.txt', 'work\n', 'worktree commit');
+			writeFileSync(join(path, 'scratch.txt'), 'wip\n');
+			const head = git(path, ['rev-parse', 'HEAD']);
+			const { mergeWorktree } = await service();
+			await expect(
+				mergeWorktree(path, { direction: 'to-source', squash: { subject: 'Land it' } })
+			).rejects.toMatchObject({ code: 'worktree_dirty' });
+			expect(git(path, ['rev-parse', 'HEAD'])).toBe(head);
+			expect(subjects(path)).toEqual(['worktree commit', 'initial']);
+		});
+
+		it('is a no-op with nothing to integrate, and creates no empty commit', async () => {
+			const path = await worktree();
+			const { mergeWorktree } = await service();
+			const result = await mergeWorktree(path, {
+				direction: 'to-source',
+				squash: { subject: 'Land nothing' }
+			});
+			expect(result.merged).toBe(false);
+			expect(result.squashedCommits).toBeUndefined();
+			expect(subjects(path)).toEqual(['initial']);
+		});
+
+		// Commits that cancel out have nothing to collapse; squashing them would
+		// mean an empty commit, so the plain fast-forward is left to it.
+		it('skips the squash when the branch’s tree already matches the source', async () => {
+			const path = await worktree();
+			commit(path, 'feature.txt', 'work\n', 'worktree commit');
+			git(path, ['rm', '-q', 'feature.txt']);
+			git(path, ['commit', '-q', '-m', 'revert it']);
+			const { mergeWorktree } = await service();
+			const result = await mergeWorktree(path, {
+				direction: 'to-source',
+				squash: { subject: 'Land nothing' }
+			});
+			expect(result).toMatchObject({ merged: true, fastForward: true });
+			expect(result.squashedCommits).toBeUndefined();
+			expect(subjects(source)).toEqual(['revert it', 'worktree commit', 'initial']);
+		});
+
+		it('rejects an unusable commit message without touching the branch', async () => {
+			const path = await worktree();
+			commit(path, 'feature.txt', 'work\n', 'worktree commit');
+			const head = git(path, ['rev-parse', 'HEAD']);
+			const { mergeWorktree } = await service();
+			await expect(
+				mergeWorktree(path, { direction: 'to-source', squash: { subject: 'two\nlines' } })
+			).rejects.toMatchObject({ code: 'invalid_squash_message' });
+			expect(git(path, ['rev-parse', 'HEAD'])).toBe(head);
+		});
+
+		it('restores the branch when the squash commit itself fails', async () => {
+			const path = await worktree();
+			commit(path, 'a.txt', 'one\n', 'wip 1');
+			commit(path, 'b.txt', 'two\n', 'wip 2');
+			const head = git(path, ['rev-parse', 'HEAD']);
+			// Force `git commit` to fail without touching anything else: signing is
+			// requested, and the "gpg" it must call always exits non-zero.
+			git(source, ['config', 'commit.gpgsign', 'true']);
+			git(source, ['config', 'gpg.program', '/bin/false']);
+			const { mergeWorktree } = await service();
+			await expect(
+				mergeWorktree(path, { direction: 'to-source', squash: { subject: 'Land it' } })
+			).rejects.toMatchObject({ code: 'git_failed' });
+			git(source, ['config', '--unset', 'commit.gpgsign']);
+			git(source, ['config', '--unset', 'gpg.program']);
+
+			expect(git(path, ['rev-parse', 'HEAD'])).toBe(head);
+			expect(subjects(path)).toEqual(['wip 2', 'wip 1', 'initial']);
+			expect(git(path, ['status', '--porcelain=v1'])).toBe('');
+			// The source never saw the failed attempt.
+			expect(subjects(source)).toEqual(['initial']);
+		});
+
+		// The squash commit's tree is already-committed content, but its message is
+		// brand new — and after the squash it is the ONLY message on the branch, so
+		// it must not be the one commit that skips the repository's message policy.
+		it('runs the repository’s commit-msg hook on the squashed commit', async () => {
+			const path = await worktree();
+			commit(path, 'a.txt', 'one\n', 'wip 1');
+			commit(path, 'b.txt', 'two\n', 'wip 2');
+			const head = git(path, ['rev-parse', 'HEAD']);
+			const hook = join(source, '.git', 'hooks', 'commit-msg');
+			writeFileSync(hook, '#!/bin/sh\ngrep -q "^OK: " "$1"\n', { mode: 0o755 });
+			const { mergeWorktree } = await service();
+
+			await expect(
+				mergeWorktree(path, { direction: 'to-source', squash: { subject: 'nope' } })
+			).rejects.toMatchObject({ code: 'git_failed' });
+			expect(git(path, ['rev-parse', 'HEAD'])).toBe(head);
+			expect(git(path, ['status', '--porcelain=v1'])).toBe('');
+
+			const result = await mergeWorktree(path, {
+				direction: 'to-source',
+				squash: { subject: 'OK: land the feature' }
+			});
+			expect(result).toMatchObject({ merged: true, squashedCommits: 2 });
+			expect(subjects(source)).toEqual(['OK: land the feature', 'initial']);
+		});
+
+		it('refuses to squash a from-source sync', async () => {
+			const path = await worktree();
+			commit(source, 'upstream.txt', 'moved on\n', 'upstream commit');
+			const { mergeWorktree } = await service();
+			await expect(
+				mergeWorktree(path, { direction: 'from-source', squash: { subject: 'Land it' } })
+			).rejects.toMatchObject({ code: 'squash_not_applicable' });
+			expect(subjects(path)).toEqual(['initial']);
+		});
+	});
+
 	describe('mergeWorktree from-source', () => {
 		it('pulls upstream commits into the worktree', async () => {
 			const path = await worktree();
@@ -407,6 +632,18 @@ describe('worktree integration', () => {
 			expect(result.ok).toBe(true);
 			expect(result.summary).toContain('fast-forward');
 			expect(readFileSync(join(source, 'feature.txt'), 'utf8')).toBe('work\n');
+		});
+
+		it('git_worktree_merge squashes when asked and says so', async () => {
+			const path = await worktree();
+			commit(path, 'a.txt', 'one\n', 'wip 1');
+			commit(path, 'b.txt', 'two\n', 'wip 2');
+			const result = await (
+				await tool(path, 'git_worktree_merge')
+			).handler({ direction: 'to-source', squash: { subject: 'Land the feature' } });
+			expect(result.ok).toBe(true);
+			expect(result.summary).toContain('squashed from 2 commit(s)');
+			expect(git(source, ['log', '--format=%s'])).toBe('Land the feature\ninitial');
 		});
 
 		it('git_worktree_merge surfaces refusals as coded tool errors, not throws', async () => {

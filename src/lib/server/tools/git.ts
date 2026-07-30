@@ -37,6 +37,13 @@ import { getLease, resolveLeaseWorkspace, touchLease } from '../leases';
 import { WorkspaceUnavailableError } from '../workdir';
 import { withRepositoryLock } from '../repo-lock';
 import { ok, err, type PortalTool, type ToolResult } from './types';
+import {
+	CommitBody,
+	CommitSubject,
+	CommitTrailers,
+	SquashArg,
+	SQUASH_PARAM
+} from './commit-message-args';
 
 // Re-exported so existing importers of these symbols from `./git` keep
 // compiling now that the canonical definitions live in `./types`.
@@ -131,39 +138,12 @@ const GitShowFileArgs = z
 	})
 	.strict();
 
-const TrailerToken = z
-	.string()
-	.min(1)
-	.max(100)
-	.regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/, 'invalid trailer token');
-
 const GitCommitArgs = z
 	.object({
 		paths: z.union([z.literal('all'), z.array(z.string().min(1).max(4096)).min(1)]),
-		subject: z
-			.string()
-			.min(1)
-			.max(200)
-			.refine((s) => !hasControlCharacter(s), {
-				message: 'subject must be a single line without control characters'
-			}),
-		body: z.string().max(100_000).optional(),
-		trailers: z
-			.array(
-				z
-					.object({
-						token: TrailerToken,
-						value: z
-							.string()
-							.max(1000)
-							.refine((s) => !hasControlCharacter(s), {
-								message: 'trailer value must be a single line without control characters'
-							})
-					})
-					.strict()
-			)
-			.max(50)
-			.optional(),
+		subject: CommitSubject,
+		body: CommitBody,
+		trailers: CommitTrailers,
 		worktree: WorktreeSelector,
 		allowConflictMarkers: z.boolean().optional()
 	})
@@ -198,7 +178,8 @@ const GitWorktreeMergeArgs = z
 	.object({
 		direction: z.enum(['from-source', 'to-source']),
 		allowMergeCommit: z.boolean().optional().default(false),
-		onConflict: z.enum(['abort', 'keep']).optional().default('abort')
+		onConflict: z.enum(['abort', 'keep']).optional().default('abort'),
+		squash: SquashArg
 	})
 	.strict();
 
@@ -624,7 +605,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_merge',
 			description:
-				'Merge between this linked worktree’s branch and the branch checked out in the repository’s main checkout. Use direction "to-source" to integrate finished work back (the normal end-of-session step), or "from-source" to first pull in upstream commits and resolve conflicts inside the isolated worktree. Refuses to merge with uncommitted changes on either side, and never leaves the main checkout mid-merge.',
+				'Merge between this linked worktree’s branch and the branch checked out in the repository’s main checkout. Use direction "to-source" to integrate finished work back (the normal end-of-session step), or "from-source" to first pull in upstream commits and resolve conflicts inside the isolated worktree. Prefer passing `squash` on the way back so the main checkout gains one commit per unit of work instead of the worktree’s intermediate history. Refuses to merge with uncommitted changes on either side, and never leaves the main checkout mid-merge.',
 			argsSchema: GitWorktreeMergeArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -639,8 +620,9 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 					allowMergeCommit: {
 						type: 'boolean',
 						description:
-							'direction="to-source" only. Defaults to false, which requires a fast-forward so the main checkout stays linear and can never be left mid-merge. Set true to allow a --no-ff merge commit when the source branch has moved on.'
+							'direction="to-source" only. Defaults to false, which requires a fast-forward so the main checkout stays linear and can never be left mid-merge. Set true to allow a --no-ff merge commit when the source branch has moved on. Prefer `squash` (after a from-source sync) when you want linear history instead.'
 					},
+					squash: SQUASH_PARAM,
 					onConflict: {
 						type: 'string',
 						enum: ['abort', 'keep'],
@@ -652,13 +634,20 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 				additionalProperties: false
 			},
 			async handler(args) {
-				const parsed = GitWorktreeMergeArgs.parse(args);
+				const { squash, ...parsed } = GitWorktreeMergeArgs.parse(args);
 				try {
-					const result = await mergeWorktree(cwd, parsed);
+					const result = await mergeWorktree(cwd, {
+						...parsed,
+						...(squash === undefined ? {} : { squash })
+					});
 					return ok(
 						result,
 						result.merged
-							? `Merged ${result.from} into ${result.into}${result.fastForward ? ' (fast-forward)' : ''}`
+							? `Merged ${result.from} into ${result.into}${result.fastForward ? ' (fast-forward)' : ''}${
+									result.squashedCommits === undefined
+										? ''
+										: `, squashed from ${result.squashedCommits} commit(s)`
+								}`
 							: `Already up to date: nothing to merge into ${result.into}`
 					);
 				} catch (cause) {
@@ -735,12 +724,4 @@ function toDiffTarget(kind: z.infer<typeof TargetKind>, sha: string | undefined)
 
 function requiresSha(kind: z.infer<typeof TargetKind>): boolean {
 	return kind === 'commit' || kind === 'commit-vs-parent';
-}
-
-function hasControlCharacter(value: string): boolean {
-	for (const char of value) {
-		const code = char.charCodeAt(0);
-		if (code <= 0x1f || code === 0x7f) return true;
-	}
-	return false;
 }

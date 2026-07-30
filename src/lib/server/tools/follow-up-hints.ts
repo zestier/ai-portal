@@ -16,7 +16,7 @@ export const COMMIT_TICKET_FOLLOW_UP_HINT =
 // are merged back, which is the single easiest thing for an agent to forget at
 // the end of a worktree session.
 export const WORKTREE_INTEGRATE_FOLLOW_UP_HINT =
-	'This commit landed on a linked worktree branch, so it is not yet in the source checkout. When the work is complete, integrate it with git_worktree_merge (direction "to-source"); use git_worktree_status first if you need the ahead/behind counts.';
+	'This commit landed on a linked worktree branch, so it is not yet in the source checkout. When the work is complete, integrate it with git_worktree_merge (direction "to-source"), passing `squash` with a subject if the branch\'s intermediate commits should land as one; use git_worktree_status first if you need the ahead/behind counts.';
 
 // Set by `git_commit` when the commit was made INTO a lease this conversation
 // holds (`worktree: <leaseId>`). The collecting call there is `worktree_merge`
@@ -25,7 +25,7 @@ export const WORKTREE_INTEGRATE_FOLLOW_UP_HINT =
 export function leaseIntegrateFollowUpHint(leaseId: string): string {
 	return (
 		`This commit landed on worktree ${leaseId}'s branch, not in this conversation's workspace. ` +
-		`Collect it with worktree_merge (leaseId: "${leaseId}"), then worktree_remove the worktree once you no longer need it.`
+		`Collect it with worktree_merge (leaseId: "${leaseId}"), adding \`squash\` with a subject to land the worktree's commits as one, then worktree_remove the worktree once you no longer need it.`
 	);
 }
 

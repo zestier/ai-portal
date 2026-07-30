@@ -191,6 +191,37 @@ describe('managed worktree conversation routes', () => {
 			expect(after.worktree.unmerged).toBe(false);
 		});
 
+		it('accepts a squash message and lands one commit in the source', async () => {
+			const conversation = await createWorktreeConversation('squash me');
+			commitInWorktree(conversation, 'one.txt');
+			commitInWorktree(conversation, 'two.txt');
+
+			const { POST: MERGE } =
+				await import('../src/routes/api/conversations/[id]/worktree/merge/+server');
+			const merged = await (
+				await MERGE({
+					params: { id: conversation.id },
+					locals: { userId },
+					request: new Request('http://localhost/merge', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							direction: 'to-source',
+							squash: { subject: 'Land the session' }
+						})
+					}),
+					getClientAddress: () => '127.0.0.1'
+				} as never)
+			).json();
+
+			expect(merged.merge).toMatchObject({
+				merged: true,
+				fastForward: true,
+				squashedCommits: 2
+			});
+			expect(git(source, ['log', '--format=%s'])).toBe('Land the session\ninitial');
+		});
+
 		it('surfaces a refusal as a 409 with its code rather than merging', async () => {
 			const conversation = await createWorktreeConversation('dirty merge');
 			commitInWorktree(conversation, 'feature.txt');

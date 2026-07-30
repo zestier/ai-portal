@@ -18,12 +18,19 @@
 // the tree a human is looking at, so it is what "merge my session's work back"
 // means in practice.
 
-import { resolve } from 'node:path';
-import { realpathSync } from 'node:fs';
-import { runGitRaw, type GitRunResult } from './git';
+import { join, resolve } from 'node:path';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { formatCommitMessage, runGitRaw, type CommitTrailer, type GitRunResult } from './git';
 import { withRepositoryLock } from './repo-lock';
 
 const TIMEOUT_MS = 20_000;
+/**
+ * Longer budget for the one call here that runs repository hooks (the squash
+ * commit). Matches `commitChanges`, whose `pre-commit` can be a whole test
+ * suite; the plumbing calls around it stay on the short timeout.
+ */
+const HOOK_TIMEOUT_MS = 60_000;
 
 export type WorktreeIntegrationErrorCode =
 	| 'not_git_repository'
@@ -34,6 +41,9 @@ export type WorktreeIntegrationErrorCode =
 	| 'upstream_dirty'
 	| 'not_fast_forwardable'
 	| 'merge_conflict'
+	| 'squash_not_applicable'
+	| 'squash_behind_source'
+	| 'invalid_squash_message'
 	| 'git_failed';
 
 export class WorktreeIntegrationError extends Error {
@@ -109,6 +119,35 @@ export interface MergeWorktreeOptions {
 	 * {@link WorktreeIntegrationStatusOptions.upstreamPath}.
 	 */
 	upstreamPath?: string;
+	/**
+	 * `to-source` only. Collapse the worktree's commits into a single commit
+	 * *on the worktree's own branch* before merging, so the source checkout
+	 * gains exactly one commit per unit of work.
+	 *
+	 * The squash happens in-branch (`reset --soft` to the source branch's tip,
+	 * then commit) rather than as `git merge --squash` into the source: that
+	 * keeps the branch ref pointing at the squashed commit, so `ahead` /
+	 * `unmerged` still read correctly afterwards. A `merge --squash` would leave
+	 * the branch permanently reporting unmerged work.
+	 *
+	 * Requires the worktree to be level with the source branch (`behind === 0`),
+	 * because squashing onto a stale base would reverse the commits the source
+	 * has and this branch does not — sync with `from-source` first. Since that
+	 * guarantees the follow-up merge fast-forwards, `allowMergeCommit` has no
+	 * effect when squashing.
+	 */
+	squash?: SquashMessage;
+}
+
+/**
+ * Message for the squash commit. Mirrors `git_commit`'s shape: the subject is
+ * required rather than generated, so the collapsed commit can name the ticket
+ * the work belongs to.
+ */
+export interface SquashMessage {
+	subject: string;
+	body?: string | undefined;
+	trailers?: CommitTrailer[] | undefined;
 }
 
 export interface MergeWorktreeResult {
@@ -123,18 +162,24 @@ export interface MergeWorktreeResult {
 	path: string;
 	/** True when the merge was a fast-forward rather than a merge commit. */
 	fastForward: boolean;
+	/**
+	 * Number of commits collapsed into one by `squash` before the merge. Absent
+	 * when no squash ran — either it was not asked for, or the branch's tree
+	 * already matched the source's, so there was nothing to collapse.
+	 */
+	squashedCommits?: number;
 	/** HEAD of the receiving tree after the merge. */
 	headSha: string;
 	/** Status recomputed after the merge. */
 	status: WorktreeIntegrationStatus;
 }
 
-async function git(cwd: string, args: string[]): Promise<GitRunResult> {
-	return runGitRaw(args, { cwd, timeoutMs: TIMEOUT_MS });
+async function git(cwd: string, args: string[], timeoutMs = TIMEOUT_MS): Promise<GitRunResult> {
+	return runGitRaw(args, { cwd, timeoutMs });
 }
 
-async function gitOk(cwd: string, args: string[]): Promise<string> {
-	const result = await git(cwd, args);
+async function gitOk(cwd: string, args: string[], timeoutMs = TIMEOUT_MS): Promise<string> {
+	const result = await git(cwd, args, timeoutMs);
 	if (result.code !== 0) {
 		throw new WorktreeIntegrationError(
 			'git_failed',
@@ -495,6 +540,13 @@ export async function mergeWorktree(
 			);
 		}
 
+		if (opts.squash && opts.direction !== 'to-source') {
+			throw new WorktreeIntegrationError(
+				'squash_not_applicable',
+				'squash applies to direction "to-source" only'
+			);
+		}
+
 		return opts.direction === 'from-source'
 			? mergeFromSource(status as MergeableStatus, opts)
 			: mergeToSource(status as MergeableStatus, opts);
@@ -587,6 +639,13 @@ async function mergeToSource(
 		);
 	}
 	const allowMergeCommit = opts.allowMergeCommit === true;
+	if (status.behind > 0 && opts.squash) {
+		throw new WorktreeIntegrationError(
+			'squash_behind_source',
+			`the source branch has ${status.behind} commit(s) this worktree does not, so squashing onto it would revert them; merge direction "from-source" first, then retry the squash`,
+			{ ahead: status.ahead, behind: status.behind }
+		);
+	}
 	if (status.behind > 0 && !allowMergeCommit) {
 		throw new WorktreeIntegrationError(
 			'not_fast_forwardable',
@@ -594,11 +653,22 @@ async function mergeToSource(
 			{ ahead: status.ahead, behind: status.behind }
 		);
 	}
+	// Squashing guarantees `behind === 0`, so the merge below always
+	// fast-forwards; a merge commit on top of that would reintroduce exactly the
+	// noise the squash was asked for.
+	//
+	// A failure of that merge deliberately leaves the branch squashed rather than
+	// restoring it: the squashed commit holds the identical tree, so nothing is
+	// lost, and the retry is the same call again (which re-squashes the one
+	// commit). Undoing it would move a ref for no gain while the caller is
+	// already handling an error.
+	const squashedCommits = opts.squash ? await squashBranch(status, opts.squash) : null;
+	const mergeCommit = allowMergeCommit && !opts.squash;
 	const merge = await git(status.upstreamPath, [
 		'merge',
 		'--no-edit',
-		allowMergeCommit ? '--no-ff' : '--ff-only',
-		...(allowMergeCommit ? ['-m', `Merge branch '${branch}'`] : []),
+		mergeCommit ? '--no-ff' : '--ff-only',
+		...(mergeCommit ? ['-m', `Merge branch '${branch}'`] : []),
 		`refs/heads/${branch}`
 	]);
 	if (merge.code !== 0) {
@@ -621,10 +691,86 @@ async function mergeToSource(
 			into: upstreamBranch,
 			from: branch,
 			path: status.upstreamPath,
-			fastForward: !allowMergeCommit
+			fastForward: !mergeCommit,
+			...(squashedCommits === null ? {} : { squashedCommits })
 		},
 		opts
 	);
+}
+
+/**
+ * Collapse a worktree branch's commits into one, in place.
+ *
+ * `reset --soft` to the source branch's tip and commit: the branch ref ends up
+ * one commit ahead of the source with the same tree it had, which is exactly
+ * what the following `--ff-only` merge wants. Squashing onto the source's TIP
+ * (rather than the merge base) is what absorbs any merge commit an earlier
+ * `from-source` sync left behind, so nothing of it reaches the source checkout.
+ *
+ * Returns the number of commits collapsed, or null when the branch's tree
+ * already matches the source's — squashing that to an empty commit would add
+ * noise, so the caller's plain fast-forward is left to handle it.
+ *
+ * Only ever called for a linked worktree's own branch, never the source branch,
+ * and only with a clean tree and `behind === 0` (both checked by the caller):
+ * this rewrites history, so it must not run anywhere it could be shared.
+ */
+async function squashBranch(
+	status: MergeableStatus,
+	squash: SquashMessage
+): Promise<number | null> {
+	const upstreamRef = `refs/heads/${status.upstreamBranch}`;
+	// Validate (and render) the message BEFORE touching any ref, so a bad
+	// subject cannot leave the branch reset with nothing committed.
+	let message: string;
+	try {
+		message = formatCommitMessage(squash);
+	} catch (cause) {
+		throw new WorktreeIntegrationError(
+			'invalid_squash_message',
+			cause instanceof Error ? cause.message : 'invalid squash commit message'
+		);
+	}
+	const diff = await git(status.path, ['diff', '--quiet', upstreamRef, 'HEAD']);
+	if (diff.code === 0) return null;
+	if (diff.code !== 1) {
+		throw new WorktreeIntegrationError(
+			'git_failed',
+			'could not compare the branch with the source',
+			{
+				stderr: diff.stderr.trim()
+			}
+		);
+	}
+	const headBefore = await gitOk(status.path, ['rev-parse', 'HEAD']);
+	// The message file is written BEFORE the branch is moved: everything that can
+	// fail without a rollback (temp dir, disk) must happen while the branch is
+	// still where the caller left it. Only the reset/commit pair below is
+	// recoverable, and only that pair is inside the try.
+	const messageDir = mkdtempSync(join(tmpdir(), 'portal-worktree-squash-'));
+	try {
+		const messagePath = join(messageDir, 'message.txt');
+		writeFileSync(messagePath, message, 'utf8');
+		await gitOk(status.path, ['reset', '--soft', upstreamRef]);
+		try {
+			// Hooks run, exactly as they do for `git_commit`. `--no-verify` would
+			// be tempting — the tree is byte-identical to one the branch already
+			// committed, so `pre-commit` has nothing new to check — but the MESSAGE
+			// is brand new, and after the squash it is the only message left on the
+			// branch. Skipping `commit-msg` would make the squashed commit the one
+			// commit reaching the source that never passed the repository's message
+			// policy.
+			await gitOk(status.path, ['commit', '-F', messagePath], HOOK_TIMEOUT_MS);
+		} catch (cause) {
+			// Put the branch back where it was; the index and working tree already
+			// hold that content, so this restores the pre-squash state exactly.
+			await git(status.path, ['reset', '--soft', headBefore]);
+			throw cause;
+		}
+	} finally {
+		rmSync(messageDir, { recursive: true, force: true });
+	}
+	return status.ahead;
 }
 
 async function finish(

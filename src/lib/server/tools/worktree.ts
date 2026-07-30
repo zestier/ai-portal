@@ -33,6 +33,7 @@ import {
 } from '../leases';
 import { WorktreeError } from '../worktrees';
 import { WorktreeIntegrationError } from '../worktree-integration';
+import { SquashArg, SQUASH_PARAM } from './commit-message-args';
 import { mergeInProgressFollowUpHint } from './follow-up-hints';
 import * as convs from '../db/repos/conversations';
 
@@ -78,7 +79,8 @@ const MergeArgs = z
 		leaseId: z.string().trim().min(1).max(64),
 		direction: z.enum(['to-source', 'from-source']).optional(),
 		allowMergeCommit: z.boolean().optional(),
-		onConflict: z.enum(['abort', 'keep']).optional()
+		onConflict: z.enum(['abort', 'keep']).optional(),
+		squash: SquashArg
 	})
 	.strict();
 
@@ -142,7 +144,10 @@ function mergeErrorMessage(
 	kept: boolean
 ): string {
 	if (described.code === 'not_fast_forwardable') {
-		return `${described.message}. When collecting several worktrees, retry with allowMergeCommit: true.`;
+		return `${described.message}. When collecting several worktrees, either sync this one with direction: "from-source" and retry with squash, or retry with allowMergeCommit: true.`;
+	}
+	if (described.code === 'squash_behind_source') {
+		return `${described.message}: worktree_merge { leaseId: "${leaseId}", direction: "from-source" } first, then retry this call unchanged.`;
 	}
 	if (described.code === 'merge_conflict' && kept) {
 		// Only a KEPT from-source conflict leaves state behind; every other
@@ -298,7 +303,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 		{
 			name: 'worktree_merge',
 			description:
-				'Bring a worktree\'s commits back into this conversation\'s own workspace — the step that makes parallel work useful. Use direction "to-source" (the default) once a sub-agent has finished and COMMITTED its work: its branch is merged into this conversation\'s branch so results from several worktrees gather in one place to be reviewed and tested together. Use "from-source" to refresh a worktree with newer commits from this conversation before continuing in it. Refuses while either side has uncommitted changes. Merging into this conversation always rolls back on conflict; a "from-source" conflict can optionally be left in the worktree, where a sub-agent resolves the files and concludes the merge with git_commit (paths: "all") or discards it with git_merge_abort.',
+				'Bring a worktree\'s commits back into this conversation\'s own workspace — the step that makes parallel work useful. Use direction "to-source" (the default) once a sub-agent has finished and COMMITTED its work: its branch is merged into this conversation\'s branch so results from several worktrees gather in one place to be reviewed and tested together. Pass `squash` with a subject to collapse the worktree\'s commits into one first, which keeps this conversation\'s history linear and one-commit-per-unit-of-work. Use "from-source" to refresh a worktree with newer commits from this conversation before continuing in it. Refuses while either side has uncommitted changes. Merging into this conversation always rolls back on conflict; a "from-source" conflict can optionally be left in the worktree, where a sub-agent resolves the files and concludes the merge with git_commit (paths: "all") or discards it with git_merge_abort.',
 			argsSchema: MergeArgs,
 			// Always prompts, matching `git_worktree_merge` and `git_commit`.
 			//
@@ -326,8 +331,9 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 					allowMergeCommit: {
 						type: 'boolean',
 						description:
-							'direction="to-source" only. Defaults to false, requiring a fast-forward. Set true to allow a merge commit when this conversation has moved on — usually needed when collecting the second and later worktrees.'
+							'direction="to-source" only. Defaults to false, requiring a fast-forward. Set true to allow a merge commit when this conversation has moved on — usually needed when collecting the second and later worktrees, unless you sync with "from-source" and `squash` instead.'
 					},
+					squash: SQUASH_PARAM,
 					onConflict: {
 						type: 'string',
 						enum: ['abort', 'keep'],
@@ -354,14 +360,19 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 						...(parsed.allowMergeCommit === undefined
 							? {}
 							: { allowMergeCommit: parsed.allowMergeCommit }),
-						...(parsed.onConflict ? { onConflict: parsed.onConflict } : {})
+						...(parsed.onConflict ? { onConflict: parsed.onConflict } : {}),
+						...(parsed.squash === undefined ? {} : { squash: parsed.squash })
 					});
 					if (!result.merged) {
 						return ok(result, `Already up to date: nothing to merge into ${result.into}`);
 					}
 					return ok(
 						result,
-						`Merged ${result.from} into ${result.into}${result.fastForward ? ' (fast-forward)' : ''}`,
+						`Merged ${result.from} into ${result.into}${result.fastForward ? ' (fast-forward)' : ''}${
+							result.squashedCommits === undefined
+								? ''
+								: `, squashed from ${result.squashedCommits} commit(s)`
+						}`,
 						result.direction === 'to-source'
 							? {
 									followUpHint: `${lease.label}'s work is now in this conversation. Remove the worktree with worktree_remove once you no longer need it.`

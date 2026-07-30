@@ -7,12 +7,14 @@ import { WorktreeIntegrationError } from '$lib/server/worktree-integration';
 import { WorkspaceUnavailableError } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { audit } from '$lib/server/audit';
+import { SquashArg } from '$lib/server/tools/commit-message-args';
 
 const Body = z
 	.object({
 		direction: z.enum(['to-source', 'from-source']).optional(),
 		allowMergeCommit: z.boolean().optional(),
-		onConflict: z.enum(['abort', 'keep']).optional()
+		onConflict: z.enum(['abort', 'keep']).optional(),
+		squash: SquashArg
 	})
 	.strict();
 
@@ -37,7 +39,8 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 		const result = await mergeLease(lease, conversation, {
 			...(body.direction ? { direction: body.direction } : {}),
 			...(body.allowMergeCommit === undefined ? {} : { allowMergeCommit: body.allowMergeCommit }),
-			...(body.onConflict ? { onConflict: body.onConflict } : {})
+			...(body.onConflict ? { onConflict: body.onConflict } : {}),
+			...(body.squash === undefined ? {} : { squash: body.squash })
 		});
 		audit({
 			event_type: 'worktree_merge',

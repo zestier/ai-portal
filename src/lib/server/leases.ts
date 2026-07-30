@@ -42,6 +42,7 @@ import {
 	worktreeIntegrationStatus,
 	type MergeDirection,
 	type MergeWorktreeResult,
+	type SquashMessage,
 	type WorktreeIntegrationStatus
 } from './worktree-integration';
 import type { Conversation } from '$lib/types';
@@ -385,6 +386,7 @@ export async function mergeLease(
 		direction?: MergeDirection;
 		allowMergeCommit?: boolean;
 		onConflict?: 'abort' | 'keep';
+		squash?: SquashMessage;
 	} = {}
 ): Promise<MergeWorktreeResult> {
 	const leasePath = resolveLeaseWorkspace(lease);
@@ -393,6 +395,7 @@ export async function mergeLease(
 		direction: opts.direction ?? 'to-source',
 		...(opts.allowMergeCommit === undefined ? {} : { allowMergeCommit: opts.allowMergeCommit }),
 		...(opts.onConflict === undefined ? {} : { onConflict: opts.onConflict }),
+		...(opts.squash === undefined ? {} : { squash: opts.squash }),
 		upstreamPath: counterpart
 	});
 	touchLease(lease.id);

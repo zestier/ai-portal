@@ -105,9 +105,11 @@ Three properties are load-bearing rather than incidental:
 - **Merging back is the point.** A lease whose work is never merged is work
   thrown away, so `worktree_merge` (and the switcher's merge action) close the
   loop. Collecting the second and later leases of a parallel run is not a
-  fast-forward, so `allowMergeCommit` is expected there rather than exceptional.
-  A conflict merging *into* the conversation is always rolled back; the lease is
-  where an agent is supposed to resolve conflicts.
+  fast-forward: sync the lease with `from-source` and merge it back with
+  `squash` to keep the conversation's history linear and one-commit-per-lease,
+  or fall back to `allowMergeCommit`, which is expected there rather than
+  exceptional. A conflict merging *into* the conversation is always rolled back;
+  the lease is where an agent is supposed to resolve conflicts.
 - **Leases are not snapshotted per message.** Per-turn snapshots capture the
   conversation's own tree only, so the workspace switcher labels a selected
   lease accordingly rather than letting "Changes" imply full coverage.
@@ -148,6 +150,20 @@ two trees is shared with a human:
 - `to-source` merges the worktree branch into the source checkout. It must
   fast-forward by default, refuses when either tree is dirty, and always rolls
   a conflict back — the source checkout is never left mid-merge.
+- `squash` (a `to-source` option, with a caller-supplied commit subject)
+  collapses the worktree's commits into one **on the worktree's own branch**
+  first — `reset --soft` to the source branch's tip, then commit — so the
+  following fast-forward hands the source exactly one commit per unit of work,
+  absorbing any merge commit an earlier `from-source` sync left behind. It is
+  in-branch rather than `git merge --squash` into the source deliberately: the
+  branch ref keeps pointing at the squashed commit, so `ahead` / `unmerged` stay
+  correct afterwards, where `merge --squash` would leave the branch reporting
+  unmerged work forever. It refuses when the worktree is `behind` (squashing
+  onto a stale tip would revert the source's own commits — sync first) and
+  forces the fast-forward, so `allowMergeCommit` has no effect alongside it.
+  The squash commit runs the repository's hooks like any other: its tree is
+  already-committed content, but its *message* is new, and after the squash it
+  is the only message on the branch.
 
 Every operation that mutates a repository — `git worktree add`, `git worktree
 remove`, either merge direction, and the commit/abort pair that concludes or
