@@ -12,10 +12,12 @@
 		type BackendProviderId,
 		type MemoryExtractorBackend,
 		type ProviderRuntimeFeatureStatus,
-		type SessionMode
+		type SessionMode,
+		type ThemeAccent
 	} from '$lib/types';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
+	import { applyLiveThemePreference, type ThemeMode } from '$lib/client/theme-preview';
 
 	const CUSTOM_MODEL_OPTION = '__custom__';
 	const DEFAULT_EXTRACTOR_OPTION = '';
@@ -65,8 +67,24 @@
 	let selectedExtractorBackend = $state<MemoryExtractorBackend | ''>('');
 	let selectedExtractorModelChoice = $state('');
 	let customExtractorModel = $state('');
+	// svelte-ignore state_referenced_locally
+	let selectedTheme = $state<ThemeMode>(settings.theme);
+	// svelte-ignore state_referenced_locally
+	let selectedAccent = $state<ThemeAccent>(settings.accent);
 	$effect(() => {
 		selectedProvider = settings.defaultProvider;
+	});
+	$effect(() => {
+		selectedTheme = settings.theme;
+		selectedAccent = settings.accent;
+	});
+	$effect(() => {
+		return applyLiveThemePreference({
+			theme: selectedTheme,
+			accent: selectedAccent,
+			fallbackTheme: settings.theme,
+			fallbackAccent: settings.accent
+		});
 	});
 	$effect(() => {
 		selectedExtractorBackend = settings.defaultMemoryExtractorBackend ?? '';
@@ -372,7 +390,7 @@
 		</label>
 		<label>
 			Theme
-			<select name="theme" value={settings.theme}>
+			<select name="theme" bind:value={selectedTheme}>
 				<option value="system">System</option>
 				<option value="dark">Dark</option>
 				<option value="light">Light</option>
@@ -380,7 +398,7 @@
 		</label>
 		<label>
 			Accent color
-			<select name="accent" value={settings.accent}>
+			<select name="accent" bind:value={selectedAccent}>
 				{#each THEME_ACCENTS as accent (accent.value)}
 					<option value={accent.value}>{accent.label}</option>
 				{/each}

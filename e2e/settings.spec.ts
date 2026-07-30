@@ -94,3 +94,42 @@ test('settings tab selection survives reload and deep links', async ({ page }) =
 	);
 	await expect(page.getByRole('heading', { name: 'Saved permission grants' })).toBeVisible();
 });
+
+test('theme and accent settings preview immediately and revert when abandoned', async ({
+	page
+}) => {
+	await page.emulateMedia({ colorScheme: 'light' });
+	await page.goto('/settings');
+
+	const root = page.locator('html');
+	const accentSelect = page.locator('select[name="accent"]');
+	await expect(root).toHaveAttribute('data-theme-mode', 'system');
+	await expect(root).toHaveAttribute('data-theme', 'light');
+	await expect(root).toHaveAttribute('data-accent', 'default');
+
+	const themeSelect = page.locator('select[name="theme"]');
+	await themeSelect.selectOption('dark');
+	await expect(root).toHaveAttribute('data-theme-mode', 'dark');
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+
+	await themeSelect.selectOption('system');
+	await expect(root).toHaveAttribute('data-theme-mode', 'system');
+	await expect(root).toHaveAttribute('data-theme', 'light');
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+
+	await themeSelect.selectOption('light');
+	await expect(root).toHaveAttribute('data-theme-mode', 'light');
+	await expect(root).toHaveAttribute('data-theme', 'light');
+	await accentSelect.selectOption('violet');
+	await expect(root).toHaveAttribute('data-accent', 'violet');
+
+	await page.getByRole('tab', { name: /Permissions/ }).click();
+	await expect(root).toHaveAttribute('data-theme-mode', 'system');
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+	await expect(root).toHaveAttribute('data-accent', 'default');
+
+	await page.getByRole('tab', { name: 'General', exact: true }).click();
+	await expect(page.locator('select[name="theme"]')).toHaveValue('system');
+	await expect(page.locator('select[name="accent"]')).toHaveValue('default');
+});
