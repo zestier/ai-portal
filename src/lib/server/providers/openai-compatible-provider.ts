@@ -986,7 +986,10 @@ function buildOpenAITools(opts: {
 				userId: opts.opts.userId,
 				conversationId: opts.opts.conversationId
 			}),
-			filesystem: buildFilesystemTools(opts.opts.workingDirectory),
+			filesystem: buildFilesystemTools(opts.opts.workingDirectory, {
+				userId: opts.opts.userId,
+				conversationId: opts.opts.conversationId
+			}),
 			worktree: buildWorktreeTools({
 				userId: opts.opts.userId,
 				conversationId: opts.opts.conversationId

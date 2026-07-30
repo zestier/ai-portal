@@ -246,7 +246,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 				userId: opts.userId,
 				conversationId: opts.conversationId
 			}),
-			filesystem: buildFilesystemTools(opts.workingDirectory),
+			filesystem: buildFilesystemTools(opts.workingDirectory, {
+				userId: opts.userId,
+				conversationId: opts.conversationId
+			}),
 			worktree: buildWorktreeTools({
 				userId: opts.userId,
 				conversationId: opts.conversationId

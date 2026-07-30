@@ -582,6 +582,12 @@ carry a native `apply_patch` that implicitly creates parent directories —
 a tool Claude-family agents are not given. So bootstrap capability varies by
 model family, which is not something to build on.
 
+> **Since resolved.** The filesystem tools (`create_directory`, `move`, `trash`)
+> now take the same optional `worktree: "<leaseId>"` selector the git tools
+> take, resolved by the shared `src/lib/server/tools/worktree-selector.ts`, so
+> paths inside a lease are addressable without an absolute path and without a
+> shell. The finding above stands as the reason the selector exists.
+
 Two consequences, both already satisfied by the design but worth stating:
 
 1. **Phase 2 is a correctness prerequisite, not a usability nicety.** The spec

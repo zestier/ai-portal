@@ -33,10 +33,16 @@ import {
 	worktreeIntegrationStatus,
 	WorktreeIntegrationError
 } from '../worktree-integration';
-import { getLease, resolveLeaseWorkspace, touchLease } from '../leases';
-import { WorkspaceUnavailableError } from '../workdir';
 import { withRepositoryLock } from '../repo-lock';
-import { ok, err, type PortalTool, type ToolResult } from './types';
+import {
+	createTreeResolver,
+	WorktreeSelector,
+	WORKTREE_COMMIT_PARAM,
+	WORKTREE_PARAM,
+	type TreeSelection,
+	type WorktreeToolContext
+} from './worktree-selector';
+import { ok, err, type PortalTool } from './types';
 import {
 	CommitBody,
 	CommitSubject,
@@ -60,30 +66,10 @@ const TargetKind = z.enum([
 const DiffOutput = z.enum(['patch', 'stat', 'numstat', 'name-only', 'name-status']);
 
 /**
- * Optional lease selector accepted by every git tool.
- *
- * Without it the read tools could only ever describe the conversation's own
- * workspace, which leaves an orchestrator blind to the worktrees it handed to
- * sub-agents: it could create a worktree and merge it back, but not look inside
- * it. `git_commit` takes the same selector for the mirror-image reason — a
- * sub-agent given only a lease path could edit there but never commit, so its
- * work stayed unmergeable and was silently thrown away at merge time. Shell
- * `git` is not a fallback for either: this portal deliberately does not seed a
- * git shell grant.
+ * Optional lease selector accepted by every git tool. Shared with the
+ * filesystem tools — see `./worktree-selector` for why the resolution rules
+ * live in one place.
  */
-const WorktreeSelector = z.string().trim().min(1).max(64).optional();
-
-const WORKTREE_PARAM = {
-	type: 'string',
-	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to read instead of this conversation's own workspace."
-} as const;
-
-const WORKTREE_COMMIT_PARAM = {
-	type: 'string',
-	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to commit in instead of this conversation's own workspace. Paths are resolved relative to that worktree."
-} as const;
 
 const GitStatusArgs = z
 	.object({
@@ -188,63 +174,14 @@ const GitWorktreeMergeArgs = z
  * so callers that only have a directory (tests, one-off tooling) keep working —
  * without it the selector is rejected rather than silently ignored.
  */
-export interface GitToolContext {
-	userId: string;
-	conversationId: string;
-}
-
-/** Either the directory to run in, or the error envelope to return instead. */
-type TreeSelection = { cwd: string; error?: undefined } | { cwd?: undefined; error: ToolResult };
+export type GitToolContext = WorktreeToolContext;
 
 export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
-	/**
-	 * Resolve a `worktree` selector to a directory.
-	 *
-	 * The lease must be held by THIS conversation, matching `worktree_status` /
-	 * `worktree_merge`. That check is what keeps the selector from becoming a way
-	 * to read an arbitrary path: lease paths are portal-created checkouts of the
-	 * conversation's own repository, and are already inside the roots
-	 * `workspaceRootsFor` grants it.
-	 *
-	 * The stored path is never trusted on its own either — `resolveLeaseWorkspace`
-	 * re-derives it from (userId, leaseId) and checks containment under
-	 * WORKTREE_ROOT, failing closed. That matters most on the write path: a
-	 * tampered or replaced row must not be able to steer a commit somewhere the
-	 * approval dialog never named.
-	 */
-	function treeFor(leaseId: string | undefined): TreeSelection {
-		if (!leaseId) return { cwd };
-		if (!ctx) {
-			return {
-				error: err('worktree selection is not available in this session', {
-					code: 'worktree_unavailable'
-				})
-			};
-		}
-		const lease = getLease(leaseId, ctx.userId);
-		if (!lease || lease.heldByConversationId !== ctx.conversationId) {
-			return {
-				error: err(`no worktree with id ${leaseId} in this conversation`, {
-					code: 'lease_not_found'
-				})
-			};
-		}
-		let path: string;
-		try {
-			path = resolveLeaseWorkspace(lease);
-		} catch (cause) {
-			if (!(cause instanceof WorkspaceUnavailableError)) throw cause;
-			return {
-				error: err(`worktree ${leaseId} is no longer available: ${cause.message}`, {
-					code: 'worktree_unavailable'
-				})
-			};
-		}
-		// Reading a worktree is using it; without this the idle reaper could
-		// collect a lease an orchestrator is actively polling.
-		touchLease(lease.id);
-		return { cwd: path };
-	}
+	// Resolves a `worktree` selector to the directory to run in — no selector
+	// means this conversation's own workspace. See `./worktree-selector` for the
+	// held-by-this-conversation rule that keeps the selector from becoming a way
+	// to reach an arbitrary path.
+	const treeFor: (leaseId: string | undefined) => TreeSelection = createTreeResolver(cwd, ctx);
 
 	return [
 		{

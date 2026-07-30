@@ -33,7 +33,10 @@ const STUB = {
 function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 	return {
 		git: buildGitTools(STUB.cwd, { userId: STUB.userId, conversationId: STUB.conversationId }),
-		filesystem: buildFilesystemTools(STUB.cwd),
+		filesystem: buildFilesystemTools(STUB.cwd, {
+			userId: STUB.userId,
+			conversationId: STUB.conversationId
+		}),
 		worktree: buildWorktreeTools({ userId: STUB.userId, conversationId: STUB.conversationId }),
 		tickets: buildTicketTools({
 			userId: STUB.userId,

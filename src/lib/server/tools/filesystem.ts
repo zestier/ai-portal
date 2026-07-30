@@ -2,12 +2,20 @@ import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
-import { err, ok, type PortalTool, type ToolPermissionRequest } from './types';
+import { err, ok, type PortalTool, type ToolPermissionRequest, type ToolResult } from './types';
 import { scratchSubdir, ensureZapGitignore } from './zap-dir';
+import {
+	createTreeResolver,
+	resolveWorktreeDir,
+	WorktreeSelector,
+	WORKTREE_WRITE_PARAM,
+	type WorktreeToolContext
+} from './worktree-selector';
 
 const CreateDirectoryArgs = z
 	.object({
-		path: z.string().min(1).max(4096)
+		path: z.string().min(1).max(4096),
+		worktree: WorktreeSelector
 	})
 	.strict();
 
@@ -15,13 +23,15 @@ const MoveArgs = z
 	.object({
 		source: z.string().min(1).max(4096),
 		destination: z.string().min(1).max(4096),
-		overwrite: z.boolean().optional()
+		overwrite: z.boolean().optional(),
+		worktree: WorktreeSelector
 	})
 	.strict();
 
 const TrashArgs = z
 	.object({
-		path: z.string().min(1).max(4096)
+		path: z.string().min(1).max(4096),
+		worktree: WorktreeSelector
 	})
 	.strict();
 
@@ -113,12 +123,39 @@ function trashRelation(rel: string, dir: string): 'inside' | 'ancestor' | null {
 	return null;
 }
 
-export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
+export function buildFilesystemTools(
+	workspaceRoot: string,
+	ctx?: WorktreeToolContext
+): PortalTool[] {
+	// Resolves a `worktree` selector to the root every path in the call is
+	// relative to — no selector means this conversation's own workspace. Without
+	// it these tools could only ever act in the conversation's workspace, which
+	// left a sub-agent working in a lease unable to mkdir, move, or delete at
+	// all: paths here are workspace-relative by design, and shell
+	// `mkdir`/`mv`/`rm` are not a fallback (this portal does not seed them).
+	const treeFor = createTreeResolver(workspaceRoot, ctx);
+
+	// The permission-side twin of `treeFor`. `derivePermissionRequest` must not
+	// mutate anything (no `touchLease`) and cannot return an error envelope, so
+	// an unresolvable selector yields null — the gateway then falls back to its
+	// default custom-tool request and PROMPTS. That is the fail-closed direction:
+	// deriving against `workspaceRoot` instead would describe a path the handler
+	// will never touch, and could be auto-approved by the workspace fs-write seed
+	// while the real write lands elsewhere.
+	//
+	// A resolved lease root needs no special seed: `workspaceRootsFor` already
+	// includes every lease a conversation holds, so the standard fs-write seed
+	// covers it exactly as it covers the primary workspace.
+	function permissionRoot(leaseId: string | undefined): string | null {
+		if (!leaseId) return workspaceRoot;
+		return resolveWorktreeDir(leaseId, ctx);
+	}
+
 	return [
 		{
 			name: 'create_directory',
 			description:
-				"Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`: missing parent directories are created and an already-existing directory is a successful no-op. The path must be workspace-relative (absolute paths and `..` escapes outside the workspace are rejected). Prefer this over `bash mkdir` so directory creation routes through the structured, auto-approved write path. The `create` file tool, by contrast, requires parent directories to already exist. On success returns `{ path, outcome }` where `outcome` is `'created'` (the directory was newly made) or `'already-present'` (it already existed, so nothing was created).",
+				"Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`: missing parent directories are created and an already-existing directory is a successful no-op. The path must be workspace-relative (absolute paths and `..` escapes outside the workspace are rejected). Pass `worktree` to act inside a worktree this conversation holds instead. Prefer this over `bash mkdir` so directory creation routes through the structured, auto-approved write path. The `create` file tool, by contrast, requires parent directories to already exist. On success returns `{ path, outcome }` where `outcome` is `'created'` (the directory was newly made) or `'already-present'` (it already existed, so nothing was created).",
 			argsSchema: CreateDirectoryArgs,
 			parameters: {
 				type: 'object',
@@ -127,7 +164,8 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 						type: 'string',
 						description:
 							'Workspace-relative path of the directory to create. Parent directories are created as needed.'
-					}
+					},
+					worktree: WORKTREE_WRITE_PARAM
 				},
 				required: ['path'],
 				additionalProperties: false
@@ -135,13 +173,17 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 			derivePermissionRequest(args): ToolPermissionRequest | null {
 				const parsed = CreateDirectoryArgs.safeParse(args);
 				if (!parsed.success) return null;
-				const abs = resolveAbsoluteTarget(workspaceRoot, parsed.data.path);
+				const root = permissionRoot(parsed.data.worktree);
+				if (root === null) return null;
+				const abs = resolveAbsoluteTarget(root, parsed.data.path);
 				if (abs === null) return null;
 				return { permissionKind: 'write', path: abs };
 			},
 			async handler(args) {
-				const { path: rawPath } = CreateDirectoryArgs.parse(args);
-				const resolved = resolveWorkspaceTarget(workspaceRoot, rawPath);
+				const { path: rawPath, worktree } = CreateDirectoryArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				const resolved = resolveWorkspaceTarget(tree.cwd, rawPath);
 				if (!resolved.ok) return err(resolved.message);
 				try {
 					const existing = await stat(resolved.abs).catch(() => null);
@@ -167,7 +209,7 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 		{
 			name: 'move',
 			description:
-				'Move (rename) a file or directory within the workspace. Both `source` and `destination` must be workspace-relative; absolute paths and `..` escapes outside the workspace are rejected on either side. Missing parent directories of the destination are created automatically. Refuses to overwrite an existing destination unless `overwrite` is true, and never overwrites a directory. Prefer this over `bash mv` so the move routes through the structured, auto-approved write path. Permission is gated on BOTH paths: a move that touches anything outside the workspace prompts.',
+				'Move (rename) a file or directory within the workspace. Both `source` and `destination` must be workspace-relative; absolute paths and `..` escapes outside the workspace are rejected on either side. Pass `worktree` to act inside a worktree this conversation holds instead (both paths resolve in that tree). Missing parent directories of the destination are created automatically. Refuses to overwrite an existing destination unless `overwrite` is true, and never overwrites a directory. Prefer this over `bash mv` so the move routes through the structured, auto-approved write path. Permission is gated on BOTH paths: a move that touches anything outside the workspace prompts.',
 			argsSchema: MoveArgs,
 			parameters: {
 				type: 'object',
@@ -185,7 +227,8 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 						type: 'boolean',
 						description:
 							'When true, replace an existing destination FILE. Directories are never overwritten. Defaults to false.'
-					}
+					},
+					worktree: WORKTREE_WRITE_PARAM
 				},
 				required: ['source', 'destination'],
 				additionalProperties: false
@@ -193,11 +236,9 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 			derivePermissionRequest(args): ToolPermissionRequest | null {
 				const parsed = MoveArgs.safeParse(args);
 				if (!parsed.success) return null;
-				const targets = resolveMoveTargets(
-					workspaceRoot,
-					parsed.data.source,
-					parsed.data.destination
-				);
+				const root = permissionRoot(parsed.data.worktree);
+				if (root === null) return null;
+				const targets = resolveMoveTargets(root, parsed.data.source, parsed.data.destination);
 				if (targets === null) return null;
 				// Gate on BOTH paths: the gateway evaluates source + destination
 				// against the real grants and combines most-restrictively.
@@ -208,10 +249,12 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 				};
 			},
 			async handler(args) {
-				const { source, destination, overwrite } = MoveArgs.parse(args);
-				const src = resolveWorkspaceTarget(workspaceRoot, source);
+				const { source, destination, overwrite, worktree } = MoveArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				const src = resolveWorkspaceTarget(tree.cwd, source);
 				if (!src.ok) return err(`source: ${src.message}`);
-				const dst = resolveWorkspaceTarget(workspaceRoot, destination);
+				const dst = resolveWorkspaceTarget(tree.cwd, destination);
 				if (!dst.ok) return err(`destination: ${dst.message}`);
 				if (src.abs === dst.abs) {
 					return err('source and destination resolve to the same path');
@@ -242,7 +285,7 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 		{
 			name: 'trash',
 			description:
-				'Safely delete a file or directory by moving it into the workspace `.zap/scratch/trash/` directory instead of unlinking it. Reversible: each entry is stored under `.zap/scratch/trash/<entryId>/` alongside a `meta.json` recording its original path, so it can be restored or purged later. The path must be workspace-relative (absolute paths and `..` escapes are rejected), and the trash store itself cannot be trashed. Prefer this over `bash rm` — it never destroys data irrecoverably.',
+				"Safely delete a file or directory by moving it into the workspace `.zap/scratch/trash/` directory instead of unlinking it. Reversible: each entry is stored under `.zap/scratch/trash/<entryId>/` alongside a `meta.json` recording its original path, so it can be restored or purged later. The path must be workspace-relative (absolute paths and `..` escapes are rejected), and the trash store itself cannot be trashed. Pass `worktree` to delete inside a worktree this conversation holds instead — the entry then lands in that tree's own trash store, so it travels with the tree. Prefer this over `bash rm` — it never destroys data irrecoverably.",
 			argsSchema: TrashArgs,
 			parameters: {
 				type: 'object',
@@ -250,7 +293,8 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 					path: {
 						type: 'string',
 						description: 'Workspace-relative path of the file or directory to delete (trash).'
-					}
+					},
+					worktree: WORKTREE_WRITE_PARAM
 				},
 				required: ['path'],
 				additionalProperties: false
@@ -260,71 +304,83 @@ export function buildFilesystemTools(workspaceRoot: string): PortalTool[] {
 				if (!parsed.success) return null;
 				// Gate on the ORIGINAL path: trashing a path you may write is a
 				// delete of that path, so it inherits the write grant (delete ⊆ write).
-				const abs = resolveAbsoluteTarget(workspaceRoot, parsed.data.path);
+				const root = permissionRoot(parsed.data.worktree);
+				if (root === null) return null;
+				const abs = resolveAbsoluteTarget(root, parsed.data.path);
 				if (abs === null) return null;
 				return { permissionKind: 'write', path: abs };
 			},
 			async handler(args) {
-				const { path: rawPath } = TrashArgs.parse(args);
-				const target = resolveWorkspaceTarget(workspaceRoot, rawPath);
-				if (!target.ok) return err(target.message);
-				if (target.rel === '.' || target.rel === '') {
-					return err('refusing to trash the workspace root');
-				}
-				const dir = trashDir();
-				// Compare `target.rel` against the REALPATH-resolved trash dir, not
-				// the lexical `.zap/scratch/trash` string. `target.rel` is already
-				// symlink-resolved (resolveWorkspaceTarget realpaths existing
-				// ancestors), so if `.zap` is itself a symlink a lexical compare
-				// would miss — letting the tool re-bury an already-trashed entry and
-				// stamp meta.json with the wrong originalPath. Resolving the store
-				// the same way keeps both sides in the same (real) namespace.
-				const resolvedDir = resolveWorkspaceTarget(workspaceRoot, dir);
-				const dirForCompare = resolvedDir.ok ? resolvedDir.rel : dir;
-				const relation = trashRelation(target.rel, dirForCompare);
-				if (relation === 'inside') {
-					return err('refusing to trash the trash store itself');
-				}
-				if (relation === 'ancestor') {
-					return err(`refusing to trash ${target.rel}: it contains the trash store`);
-				}
-				try {
-					const targetStat = await stat(target.abs).catch(() => null);
-					if (!targetStat) return err(`path does not exist: ${target.rel}`);
-					const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-					const entryDirRel = `${dir}/${entryId}`;
-					const entryDir = resolveWorkspaceTarget(workspaceRoot, entryDirRel);
-					if (!entryDir.ok) return err(entryDir.message);
-					const name = basename(target.rel);
-					const trashedRel = `${entryDirRel}/${name}`;
-					const trashedAbs = resolve(entryDir.abs, name);
-					// Drop a self-contained .zap/.gitignore so the scratch tree
-					// (this trash store included) stays out of the host repo
-					// without us touching its root .gitignore.
-					await ensureZapGitignore(workspaceRoot);
-					await mkdir(entryDir.abs, { recursive: true });
-					await writeFile(
-						resolve(entryDir.abs, 'meta.json'),
-						JSON.stringify(
-							{
-								originalPath: target.rel,
-								name,
-								type: targetStat.isDirectory() ? 'directory' : 'file',
-								trashedAt: new Date().toISOString()
-							},
-							null,
-							2
-						)
-					);
-					await rename(target.abs, trashedAbs);
-					return ok(
-						{ originalPath: target.rel, entryId, trashPath: trashedRel },
-						`Trashed ${target.rel}`
-					);
-				} catch (e) {
-					return err(e instanceof Error ? e.message : String(e));
-				}
+				const { path: rawPath, worktree } = TrashArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				return trashInto(tree.cwd, rawPath);
 			}
 		}
 	];
+}
+
+// The `trash` handler body, parameterized on the resolved root so the lease and
+// non-lease paths cannot drift: an entry trashed in a worktree lands in THAT
+// tree's `.zap/scratch/trash`, keeping the deletion reversible from inside the
+// tree it belongs to (and travelling with it if the tree is later inspected).
+async function trashInto(root: string, rawPath: string): Promise<ToolResult> {
+	const target = resolveWorkspaceTarget(root, rawPath);
+	if (!target.ok) return err(target.message);
+	if (target.rel === '.' || target.rel === '') {
+		return err('refusing to trash the workspace root');
+	}
+	const dir = trashDir();
+	// Compare `target.rel` against the REALPATH-resolved trash dir, not
+	// the lexical `.zap/scratch/trash` string. `target.rel` is already
+	// symlink-resolved (resolveWorkspaceTarget realpaths existing
+	// ancestors), so if `.zap` is itself a symlink a lexical compare
+	// would miss — letting the tool re-bury an already-trashed entry and
+	// stamp meta.json with the wrong originalPath. Resolving the store
+	// the same way keeps both sides in the same (real) namespace.
+	const resolvedDir = resolveWorkspaceTarget(root, dir);
+	const dirForCompare = resolvedDir.ok ? resolvedDir.rel : dir;
+	const relation = trashRelation(target.rel, dirForCompare);
+	if (relation === 'inside') {
+		return err('refusing to trash the trash store itself');
+	}
+	if (relation === 'ancestor') {
+		return err(`refusing to trash ${target.rel}: it contains the trash store`);
+	}
+	try {
+		const targetStat = await stat(target.abs).catch(() => null);
+		if (!targetStat) return err(`path does not exist: ${target.rel}`);
+		const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+		const entryDirRel = `${dir}/${entryId}`;
+		const entryDir = resolveWorkspaceTarget(root, entryDirRel);
+		if (!entryDir.ok) return err(entryDir.message);
+		const name = basename(target.rel);
+		const trashedRel = `${entryDirRel}/${name}`;
+		const trashedAbs = resolve(entryDir.abs, name);
+		// Drop a self-contained .zap/.gitignore so the scratch tree
+		// (this trash store included) stays out of the host repo
+		// without us touching its root .gitignore.
+		await ensureZapGitignore(root);
+		await mkdir(entryDir.abs, { recursive: true });
+		await writeFile(
+			resolve(entryDir.abs, 'meta.json'),
+			JSON.stringify(
+				{
+					originalPath: target.rel,
+					name,
+					type: targetStat.isDirectory() ? 'directory' : 'file',
+					trashedAt: new Date().toISOString()
+				},
+				null,
+				2
+			)
+		);
+		await rename(target.abs, trashedAbs);
+		return ok(
+			{ originalPath: target.rel, entryId, trashPath: trashedRel },
+			`Trashed ${target.rel}`
+		);
+	} catch (e) {
+		return err(e instanceof Error ? e.message : String(e));
+	}
 }
