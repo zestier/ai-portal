@@ -11,7 +11,14 @@ import {
 	FS_RULE_BEHAVIORS_WITH_VALUE,
 	FS_RULE_CONTAINER_ROOTS
 } from './scope-types';
-import { GRANT_TOOLS, expectedScopeKind, permissionKindForTool } from './metadata';
+import {
+	CUSTOM_TOOL_KIND,
+	GRANT_FORM_TOOLS,
+	customToolNameError,
+	expectedScopeKind,
+	permissionKindForTool,
+	persistedGrantTool
+} from './metadata';
 import type { GrantTool } from './metadata';
 import type { GrantScope } from './scope-types';
 
@@ -203,17 +210,35 @@ export const GrantScopeSchema: z.ZodType<Exclude<GrantScope, { kind: 'any' }>> =
 	z.discriminatedUnion('kind', [ShellScopeSchema, FsScopeSchema, UrlScopeSchema]);
 
 /**
+ * The one place `{kind:'any'}` IS legitimate to author: a custom-tool grant,
+ * where the tool name is the whole scope. Kept out of `GrantScopeSchema` so a
+ * shell/fs/url grant can never carry it.
+ */
+const AnyScopeSchema = z.object({ kind: z.literal('any') });
+
+/**
  * Full payload for the "create grant" form action. Validates that the
  * chosen `tool` / `permissionKind` are consistent with the scope shape;
  * the matcher relies on this alignment (a `tool='shell'` row with an
  * fs-shaped scope would simply never match anything, but we reject it
  * up front so the user sees a clear error).
+ *
+ * `tool: 'custom-tool'` is the exception: it names a portal tool in
+ * `toolName` and carries the `{kind:'any'}` scope, matching the shape
+ * `defaultSeedGrants()` writes for structured tools.
  */
 export const GrantInputSchema = z
 	.object({
-		tool: z.enum(GRANT_TOOLS),
+		tool: z.enum(GRANT_FORM_TOOLS),
+		/** Required for (and only meaningful on) `tool: 'custom-tool'`. */
+		toolName: z
+			.string()
+			.trim()
+			.nullable()
+			.optional()
+			.transform((v) => (v === undefined || v === null || v === '' ? null : v)),
 		decision: z.enum(['allow', 'deny', 'prompt']),
-		scope: GrantScopeSchema,
+		scope: z.union([GrantScopeSchema, AnyScopeSchema]),
 		/** Unix ms. `null` = never expires. */
 		expiresAt: z
 			.number()
@@ -236,7 +261,34 @@ export const GrantInputSchema = z
 			.transform((v) => (v === undefined || v === null || v === '' ? null : v))
 	})
 	.superRefine((val, ctx) => {
-		refineScopeToolAlignment(val, ctx);
+		if (val.tool === CUSTOM_TOOL_KIND) {
+			const nameError = customToolNameError(val.toolName ?? '');
+			if (nameError) {
+				ctx.addIssue({ code: 'custom', path: ['toolName'], message: nameError });
+			}
+			if (val.scope.kind !== 'any') {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['scope', 'kind'],
+					message: `tool=custom-tool requires scope.kind=any, got ${val.scope.kind}`
+				});
+			}
+		} else if (val.scope.kind === 'any') {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['scope', 'kind'],
+				message: `scope.kind=any may only be authored for tool=custom-tool, not ${val.tool}`
+			});
+		} else {
+			if (val.toolName !== null) {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['toolName'],
+					message: 'toolName is only allowed on custom-tool grants'
+				});
+			}
+			refineScopeToolAlignment({ tool: val.tool, scope: val.scope }, ctx);
+		}
 
 		// Expiry sanity: must be in the future when provided.
 		if (val.expiresAt !== null && val.expiresAt !== undefined && val.expiresAt <= Date.now()) {
@@ -259,4 +311,4 @@ export const GrantInputSchema = z
 	});
 
 export type GrantInput = z.infer<typeof GrantInputSchema>;
-export { expectedScopeKind, permissionKindForTool };
+export { expectedScopeKind, permissionKindForTool, persistedGrantTool };

@@ -4,6 +4,24 @@ export const GRANT_TOOLS = ['shell', 'read', 'write', 'edit', 'url'] as const;
 export type GrantTool = (typeof GRANT_TOOLS)[number];
 export type GrantScopeKind = Exclude<GrantScope['kind'], 'any'>;
 
+/**
+ * The permission kind portal-injected structured tools (`worktree_create`,
+ * `git_status`, `ticket_add`, …) are evaluated under. Unlike the five scoped
+ * kinds above it is not a scope shape: a custom-tool grant is keyed by the
+ * TOOL NAME in the row's `tool` column and carries the `{kind:'any'}` scope,
+ * because the tool itself is the unit of authorization — there is nothing
+ * finer to scope. `defaultSeedGrants()` writes exactly this shape.
+ */
+export const CUSTOM_TOOL_KIND = 'custom-tool';
+
+/**
+ * Tool options the grant-authoring form offers. Broader than `GRANT_TOOLS`,
+ * which stays the set of *scoped* kinds that `expectedScopeKind` /
+ * `refineScopeToolAlignment` are defined over.
+ */
+export const GRANT_FORM_TOOLS = [...GRANT_TOOLS, CUSTOM_TOOL_KIND] as const;
+export type GrantFormTool = (typeof GRANT_FORM_TOOLS)[number];
+
 export interface PermissionScopeKeyRequest {
 	fullCommandText?: string;
 	fileName?: string;
@@ -70,8 +88,47 @@ const permissionKindDescriptors = {
 const fsPermissionKindSet = new Set<string>(FS_PERMISSIONS);
 const grantToolSet = new Set<string>(GRANT_TOOLS);
 
+/**
+ * Bare tool name: what an SDK/portal tool call is keyed by. Deliberately
+ * excludes `*` — the matcher treats a `*` tool as a wildcard over every tool,
+ * and the form should not be able to mint one (same reasoning as omitting
+ * `{kind:'any'}` from `GrantScopeSchema`).
+ */
+const CUSTOM_TOOL_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;
+const CUSTOM_TOOL_NAME_MAX = 128;
+
+/**
+ * Validate a custom-tool grant's tool name, returning a human-readable message
+ * or `null` when it's usable. Shared by the client form (live feedback) and
+ * `GrantInputSchema` (authoritative check) so the two can't disagree.
+ */
+export function customToolNameError(name: string): string | null {
+	const trimmed = name.trim();
+	if (!trimmed) return 'tool name is required';
+	if (trimmed.length > CUSTOM_TOOL_NAME_MAX) {
+		return `tool name must be at most ${CUSTOM_TOOL_NAME_MAX} characters`;
+	}
+	if (!CUSTOM_TOOL_NAME_RE.test(trimmed)) {
+		return 'tool name must be a bare tool name like `worktree_create` (letters, digits, `_`, `.`, `:`, `-`; no spaces and no `*` wildcard)';
+	}
+	return null;
+}
+
 export function isGrantTool(tool: string): tool is GrantTool {
 	return grantToolSet.has(tool);
+}
+
+/**
+ * The value a grant row's `tool` column takes for a form submission. Scoped
+ * kinds store the kind itself; a custom-tool grant stores the tool name, which
+ * is what `matchGrants` compares against the request's tool.
+ */
+export function persistedGrantTool(input: {
+	tool: GrantFormTool;
+	toolName?: string | null;
+}): string {
+	if (input.tool !== CUSTOM_TOOL_KIND) return input.tool;
+	return (input.toolName ?? '').trim();
 }
 
 export function isFilesystemPermissionKind(kind: string): kind is FsPermission {
@@ -82,7 +139,7 @@ export function expectedScopeKind(tool: GrantTool): GrantScopeKind {
 	return permissionKindDescriptors[tool].scopeKind;
 }
 
-export function permissionKindForTool(tool: GrantTool): string {
+export function permissionKindForTool(tool: GrantFormTool): string {
 	return tool;
 }
 
@@ -105,7 +162,8 @@ export function bestEffortAlternativeHint(permissionKind: string): string {
 		: 'Try another approach that stays within the current permission set first.';
 }
 
-export function grantToolLabel(tool: GrantTool): string {
+export function grantToolLabel(tool: GrantFormTool): string {
+	if (tool === CUSTOM_TOOL_KIND) return 'custom-tool (a portal tool, by name)';
 	return permissionKindDescriptors[tool].grantFormLabel;
 }
 

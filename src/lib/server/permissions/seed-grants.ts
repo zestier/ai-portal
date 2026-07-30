@@ -146,7 +146,9 @@ const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];
  * absent, matching `git_commit` / `git_worktree_merge`: they create or destroy
  * checkouts and branches, and `_merge`/`_remove` declare
  * `permissionBehavior: 'always-prompt'` so a grant could not auto-approve them
- * anyway.
+ * anyway. Absent from the DEFAULTS is not the same as unreachable: a user who
+ * wants `worktree_create` to stop prompting can author the same
+ * custom-tool grant by hand in Settings → Permissions.
  */
 const WORKTREE_STRUCTURED_TOOLS = ['worktree_list', 'worktree_status'];
 const RISKY_GIT_GLOBAL_OPTIONS = [

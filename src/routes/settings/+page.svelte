@@ -92,7 +92,7 @@
 	{:else if activeTab === 'memory'}
 		<MemoryProfilesSettings profiles={data.customMemoryProfiles} {form} />
 	{:else if activeTab === 'permissions'}
-		<PermissionGrants grants={data.grants} {form} />
+		<PermissionGrants grants={data.grants} portalTools={data.portalTools} {form} />
 	{:else if activeTab === 'activity'}
 		<ActivityPanel decisions={data.recentDecisions} />
 	{:else if activeTab === 'update' && data.enableRedeploy}

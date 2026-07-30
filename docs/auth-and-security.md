@@ -193,6 +193,22 @@ first after process boot.
   auto-allow.
 - "Allow always" decisions are scoped to a single conversation by default;
   promoting to "global allow" requires confirmation in settings.
+- Grants can also be authored directly in **Settings → Permissions**. The
+  "Tool" selector offers the five scoped permission kinds (`shell`, `read`,
+  `write`, `edit`, `url`), each with a structured scope editor, plus
+  **custom-tool**: a grant naming a portal tool (`worktree_create`,
+  `git_status`, an MCP tool, …). A portal tool has no finer scope than itself,
+  so a custom-tool grant is stored as `tool = <the tool name>`,
+  `permission_kind = 'custom-tool'`, `scope = {kind:'any'}` — the same shape
+  `defaultSeedGrants()` writes. This is what lets a user opt into a tool the
+  default seed set deliberately withholds (the mutating worktree tools), rather
+  than only being able to reach it through a live "Allow always" prompt.
+- A grant cannot defeat a tool that declares
+  `permissionBehavior: 'always-prompt'` (`git_commit`, `worktree_merge`,
+  `worktree_remove`, …): the always-prompt branch is evaluated *before* grant
+  matching. The form warns when the named tool is in that category, or is
+  already never-prompt, or is permission-checked as a filesystem write instead
+  — cases where the saved row would never fire.
 - The full permission decision log is persisted (see
   [persistence.md](persistence.md)) and viewable in the conversation
   detail page.

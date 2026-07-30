@@ -37,9 +37,14 @@ import {
 	type SessionMode,
 	type UserSettings
 } from '$lib/types';
-import { GrantInputSchema, permissionKindForTool } from '$lib/permissions/scope-schema';
+import {
+	GrantInputSchema,
+	permissionKindForTool,
+	persistedGrantTool
+} from '$lib/permissions/scope-schema';
 import { stableScopeKey } from '$lib/permissions/scope-codec';
 import { defaultSeedGrants, restoreSeedGrantsForUser } from '$lib/server/permissions/seed-grants';
+import { portalToolCatalog } from '$lib/server/tools/catalog';
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.userId) throw redirect(302, '/login');
 	const userId = locals.userId;
@@ -93,6 +98,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		defaultProviderStatus,
 		recentDecisions: settings.listRecentDecisionsForUser(userId, 25),
 		grants: markSeedGrants(settings.listGrantsForUser(userId)),
+		portalTools: portalToolCatalog(),
 		builtInPromptTemplates: listBuiltInPromptTemplates(),
 		promptTemplates: promptTemplates.list(userId, { status: 'all' }),
 		customMemoryProfiles: memoryProfiles.listCustomProfiles(userId, { status: 'all' }),
@@ -502,8 +508,8 @@ export const actions: Actions = {
 
 		// Dedup against existing user-global grants with identical
 		// (tool, kind, scope_json). Mirrors `ensureSeedGrantsForUser`.
-		const tool = input.tool;
-		const permissionKind = permissionKindForTool(tool);
+		const tool = persistedGrantTool(input);
+		const permissionKind = permissionKindForTool(input.tool);
 		const scopeKey = stableScopeKey(input.scope);
 		const existing = settings.listGrantsForUser(locals.userId);
 		const duplicate = existing.find(
@@ -559,8 +565,8 @@ export const actions: Actions = {
 		if (!parsedInput.ok) return parsedInput.failure;
 		const { input } = parsedInput;
 
-		const tool = input.tool;
-		const permissionKind = permissionKindForTool(tool);
+		const tool = persistedGrantTool(input);
+		const permissionKind = permissionKindForTool(input.tool);
 		const updated = settings.updateGrant(locals.userId, id, {
 			tool,
 			permissionKind,
@@ -616,6 +622,7 @@ function parseGrantFormData(data: FormData, formId: string): ParseGrantResult {
 
 	const parsed = GrantInputSchema.safeParse({
 		tool: data.get('tool'),
+		toolName: data.get('toolName'),
 		decision: data.get('decision'),
 		scope,
 		expiresAt,

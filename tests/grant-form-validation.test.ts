@@ -5,9 +5,15 @@ import {
 	GrantScopeSchema,
 	expectedScopeKind,
 	permissionKindForTool,
+	persistedGrantTool,
 	refineScopeToolAlignment
 } from '../src/lib/permissions/scope-schema';
-import { GRANT_TOOLS, grantToolLabel } from '../src/lib/permissions/metadata';
+import {
+	GRANT_FORM_TOOLS,
+	GRANT_TOOLS,
+	customToolNameError,
+	grantToolLabel
+} from '../src/lib/permissions/metadata';
 import {
 	buildGrantScopeJson,
 	defaultGrantScopeFormFields,
@@ -532,5 +538,121 @@ describe('grant form metadata helpers', () => {
 		};
 		expect(describeGrantScope({ scope, scopePattern: null })).toBe('[read] <workspace>/src/**');
 		expect(capabilityRuleKindForScope(scope)).toBe('filesystem');
+	});
+});
+
+describe('GrantInputSchema — custom-tool grants', () => {
+	const customTool = (over: Record<string, unknown> = {}) => ({
+		tool: 'custom-tool',
+		toolName: 'worktree_create',
+		decision: 'allow',
+		scope: { kind: 'any' },
+		...over
+	});
+
+	it('accepts a named portal tool with the any scope', () => {
+		const parsed = GrantInputSchema.parse(customTool());
+		expect(parsed.tool).toBe('custom-tool');
+		expect(parsed.toolName).toBe('worktree_create');
+		expect(parsed.scope.kind).toBe('any');
+	});
+
+	it('persists under the tool NAME, with custom-tool as the permission kind', () => {
+		// This pairing is what makes a user-authored row indistinguishable from a
+		// seeded one, so `matchGrants` (which compares the request's tool against
+		// the row's `tool`) can find it.
+		const parsed = GrantInputSchema.parse(customTool());
+		expect(persistedGrantTool(parsed)).toBe('worktree_create');
+		expect(permissionKindForTool(parsed.tool)).toBe('custom-tool');
+	});
+
+	it('trims surrounding whitespace off the tool name', () => {
+		const parsed = GrantInputSchema.parse(customTool({ toolName: '  worktree_remove  ' }));
+		expect(persistedGrantTool(parsed)).toBe('worktree_remove');
+	});
+
+	it('accepts deny and prompt decisions with feedback', () => {
+		const parsed = GrantInputSchema.parse(
+			customTool({ decision: 'deny', denyReason: 'ask me first' })
+		);
+		expect(parsed.decision).toBe('deny');
+		expect(parsed.denyReason).toBe('ask me first');
+	});
+
+	it('requires a tool name, citing toolName', () => {
+		const r = GrantInputSchema.safeParse(customTool({ toolName: '' }));
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'toolName')).toBe(true);
+		}
+	});
+
+	// A `*` tool is a wildcard in `matchGrants` — a grant over EVERY tool. The
+	// form must not be able to mint one, same reasoning as excluding
+	// `{kind:'any'}` from GrantScopeSchema.
+	it.each(['*', 'worktree *', 'worktree/create', 'a b'])('rejects %j as a tool name', (name) => {
+		const r = GrantInputSchema.safeParse(customTool({ toolName: name }));
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'toolName')).toBe(true);
+		}
+	});
+
+	it('rejects a structured scope on a custom-tool grant', () => {
+		const r = GrantInputSchema.safeParse(
+			customTool({ scope: { kind: 'shell', rule: shell('git') } })
+		);
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'scope.kind')).toBe(true);
+		}
+	});
+
+	it('rejects the any scope on a scoped tool, so only custom-tool can author it', () => {
+		const r = GrantInputSchema.safeParse({
+			tool: 'shell',
+			decision: 'allow',
+			scope: { kind: 'any' }
+		});
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'scope.kind')).toBe(true);
+		}
+	});
+
+	it('rejects a toolName on a scoped tool', () => {
+		const r = GrantInputSchema.safeParse({
+			tool: 'shell',
+			toolName: 'worktree_create',
+			decision: 'allow',
+			scope: { kind: 'shell', rule: shell('git') }
+		});
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.issues.some((i) => i.path.join('.') === 'toolName')).toBe(true);
+		}
+	});
+
+	it('leaves scoped tools persisting under their own kind', () => {
+		const parsed = GrantInputSchema.parse({
+			tool: 'shell',
+			decision: 'allow',
+			scope: { kind: 'shell', rule: shell('pnpm') }
+		});
+		expect(persistedGrantTool(parsed)).toBe('shell');
+		expect(parsed.toolName).toBeNull();
+	});
+
+	it('offers custom-tool in the form tool list without widening the scoped kinds', () => {
+		expect(GRANT_FORM_TOOLS).toEqual([...GRANT_TOOLS, 'custom-tool']);
+		expect(grantToolLabel('custom-tool')).toBe('custom-tool (a portal tool, by name)');
+	});
+
+	it('shares one tool-name validator between the live form and the schema', () => {
+		expect(customToolNameError('worktree_create')).toBeNull();
+		expect(customToolNameError('mcp.server:do-thing')).toBeNull();
+		expect(customToolNameError('  ')).toBe('tool name is required');
+		expect(customToolNameError('*')).toMatch(/bare tool name/);
+		expect(customToolNameError('x'.repeat(129))).toMatch(/at most 128/);
 	});
 });

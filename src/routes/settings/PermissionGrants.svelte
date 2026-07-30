@@ -9,20 +9,32 @@
 	} from './settings-types';
 	import type { GrantScope } from '$lib/permissions/scope-types';
 	import {
-		GRANT_TOOLS,
+		GRANT_FORM_TOOLS,
+		customToolNameError,
 		grantToolLabel,
 		isGrantTool,
-		type GrantTool
+		type GrantFormTool
 	} from '$lib/permissions/metadata';
+	import type { PortalToolCatalogEntry } from '$lib/tools/catalog-types';
+	import { customToolGrantCaveat } from '$lib/tools/catalog-types';
 	import GrantScopeEditor from '$lib/components/GrantScopeEditor.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 
-	let { grants, form }: { grants: PermissionGrant[]; form: FormResult | null } = $props();
+	let {
+		grants,
+		portalTools,
+		form
+	}: {
+		grants: PermissionGrant[];
+		portalTools: PortalToolCatalogEntry[];
+		form: FormResult | null;
+	} = $props();
 
 	type GrantDecision = 'allow' | 'force-allow' | 'deny' | 'prompt';
 
-	let newGrantTool = $state<GrantTool>('shell');
+	let newGrantTool = $state<GrantFormTool>('shell');
+	let newGrantToolName = $state('');
 	let newGrantDecision = $state<GrantDecision>('allow');
 	let newGrantExpiry = $state('');
 	let newGrantDenyReason = $state('');
@@ -51,10 +63,22 @@
 	let scopeError = $state<string | null>(null);
 
 	let userTouched = $state(false);
-	const buildError = $derived(userTouched ? scopeError : null);
+
+	// A custom-tool grant is keyed by tool NAME and always carries the
+	// `{kind:'any'}` scope, so it bypasses the structured scope editor entirely.
+	const isCustomTool = $derived(newGrantTool === 'custom-tool');
+	const customToolError = $derived(isCustomTool ? customToolNameError(newGrantToolName) : null);
+	const submittedScopeJson = $derived(isCustomTool ? '{"kind":"any"}' : scopeJson);
+	const canSubmitGrant = $derived(isCustomTool ? customToolError === null : scopeJson !== '');
+	const buildError = $derived(userTouched ? (isCustomTool ? customToolError : scopeError) : null);
+	const portalToolsByName = $derived(new Map(portalTools.map((t) => [t.name, t])));
+	const selectedPortalTool = $derived(portalToolsByName.get(newGrantToolName.trim()) ?? null);
+	const customToolCaveat = $derived(
+		selectedPortalTool ? customToolGrantCaveat(selectedPortalTool) : null
+	);
 
 	function onSubmitCreateGrant(e: SubmitEvent) {
-		if (!scopeJson) {
+		if (!canSubmitGrant) {
 			userTouched = true;
 			e.preventDefault();
 		}
@@ -64,6 +88,7 @@
 		editingGrantId = null;
 		editingGrantMeta = null;
 		newGrantTool = 'shell';
+		newGrantToolName = '';
 		newGrantDecision = 'allow';
 		newGrantExpiry = '';
 		newGrantDenyReason = '';
@@ -91,6 +116,9 @@
 
 		if (isGrantTool(g.tool)) {
 			newGrantTool = g.tool;
+		} else if (g.permissionKind === 'custom-tool') {
+			newGrantTool = 'custom-tool';
+			newGrantToolName = g.tool;
 		}
 
 		seedScope = g.scope;
@@ -120,6 +148,11 @@
 
 	function canEditGrant(g: PermissionGrant): boolean {
 		if (g.scope === null) return false;
+		// A custom-tool row's whole scope is its tool name, so `{kind:'any'}` is
+		// editable here even though it isn't authorable for the scoped kinds.
+		if (g.permissionKind === 'custom-tool') {
+			return g.scope.kind === 'any' && customToolNameError(g.tool) === null;
+		}
 		if (g.scope.kind === 'any') return false;
 		if (!isGrantTool(g.tool)) return false;
 		if (g.scope.kind === 'fs' && g.scope.perms && g.scope.perms.length > 1) return false;
@@ -379,7 +412,7 @@
 					<label>
 						Tool
 						<select name="tool" bind:value={newGrantTool}>
-							{#each GRANT_TOOLS as tool}
+							{#each GRANT_FORM_TOOLS as tool}
 								<option value={tool}>{grantToolLabel(tool)}</option>
 							{/each}
 						</select>
@@ -420,22 +453,53 @@
 					<input type="hidden" name="denyReason" value="" />
 				{/if}
 
-				<GrantScopeEditor
-					tool={newGrantTool}
-					{seedScope}
-					{seedEpoch}
-					onChange={(r) => {
-						scopeJson = r.json;
-						scopeError = r.error;
-					}}
-				/>
+				{#if newGrantTool === 'custom-tool'}
+					<fieldset class="scope-fields custom-tool-fields">
+						<legend>Custom-tool scope</legend>
+						<label>
+							Tool name
+							<input
+								type="text"
+								name="toolName"
+								list="portal-tool-names"
+								bind:value={newGrantToolName}
+								oninput={() => (userTouched = true)}
+								placeholder="worktree_create"
+								spellcheck="false"
+								autocomplete="off"
+							/>
+							<span class="muted small">
+								A portal tool is authorized as a whole — there is no finer scope, so the name is the
+								scope. Names not in the list are accepted too (MCP / provider tools).
+							</span>
+						</label>
+						<datalist id="portal-tool-names">
+							{#each portalTools as tool}
+								<option value={tool.name}>{tool.group}</option>
+							{/each}
+						</datalist>
+						{#if customToolCaveat}
+							<p class="tool-caveat">⚠️ {customToolCaveat}</p>
+						{/if}
+					</fieldset>
+				{:else}
+					<GrantScopeEditor
+						tool={newGrantTool}
+						{seedScope}
+						{seedEpoch}
+						onChange={(r) => {
+							scopeJson = r.json;
+							scopeError = r.error;
+						}}
+					/>
+				{/if}
 
-				<input type="hidden" name="scopeJson" value={scopeJson} />
+				<input type="hidden" name="scopeJson" value={submittedScopeJson} />
 
-				{#if scopeJson}
+				{#if submittedScopeJson}
 					<details class="scope-preview">
 						<summary>Preview JSON</summary>
-						<pre><code>{scopeJson}</code></pre>
+						<pre><code>{submittedScopeJson}</code></pre>
 					</details>
 				{/if}
 				{#if buildError}
@@ -457,7 +521,7 @@
 				{/if}
 
 				<div class="form-actions">
-					<button class="btn primary" type="submit" disabled={!scopeJson}>
+					<button class="btn primary" type="submit" disabled={!canSubmitGrant}>
 						{editingGrantId !== null ? 'Save changes' : 'Add grant'}
 					</button>
 					{#if editingGrantId !== null}
@@ -826,6 +890,41 @@
 		border-radius: 4px;
 		overflow-x: auto;
 		font-size: var(--fs-md);
+	}
+	.custom-tool-fields {
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 0.5rem 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		min-width: 0;
+	}
+	.custom-tool-fields legend {
+		padding: 0 0.25rem;
+		font-size: var(--fs-md);
+		color: var(--text-muted);
+	}
+	.custom-tool-fields label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+	.custom-tool-fields input {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+	}
+	.tool-caveat {
+		margin: 0;
+		padding: 0.4rem 0.6rem;
+		border: 1px solid var(--warning);
+		border-radius: 6px;
+		background: var(--warning-bg);
+		color: var(--text);
+		font-size: var(--fs-md);
+		line-height: 1.4;
 	}
 	.err {
 		color: var(--danger);

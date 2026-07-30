@@ -66,6 +66,41 @@ test('creating a shell+workspace-paths grant adds a row to the list', async ({ p
 	await expect(row).toHaveCount(0);
 });
 
+test('a custom-tool grant can be authored by tool name and warns about always-prompt tools', async ({
+	page
+}) => {
+	await page.goto('/settings?tab=permissions');
+	await page.locator('details.add-grant > summary').click();
+
+	await page.getByRole('combobox', { name: 'Tool', exact: true }).selectOption('custom-tool');
+
+	// The structured scope editor is replaced by the tool-name field: a portal
+	// tool is authorized as a whole, so the name IS the scope.
+	await expect(page.getByRole('textbox', { name: /argv0/ })).toBeHidden();
+	const toolName = page.locator('input[name="toolName"]');
+	await expect(toolName).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Add grant', exact: true })).toBeDisabled();
+
+	// `worktree_remove` is always-prompt, so a grant on it could never fire —
+	// the form has to say so rather than silently saving a dead row.
+	await toolName.fill('worktree_remove');
+	await expect(page.locator('.tool-caveat')).toContainText('always prompts');
+
+	// `worktree_create` is the real target: deliberately unseeded, but grantable.
+	await toolName.fill('worktree_create');
+	await expect(page.locator('.tool-caveat')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+
+	const row = page
+		.locator('.grant-list .grant-row')
+		.filter({ has: page.locator('code.tool:text-is("worktree_create")') });
+	await expect(row).toBeVisible();
+
+	page.once('dialog', (dialog) => dialog.accept());
+	await row.getByRole('button', { name: 'Revoke' }).click();
+	await expect(row).toHaveCount(0);
+});
+
 test('settings tabs isolate activity from general settings', async ({ page }) => {
 	await page.goto('/settings');
 
