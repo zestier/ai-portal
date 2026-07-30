@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	createPromptTemplateDraftChat,
+	createPromptTemplateLaunchChat,
 	createPromptTemplateRefineChat,
 	promptTemplateDraftUrl,
 	promptTemplateRefineUrl
 } from '../src/lib/client/prompt-template-launch';
+import { templateLaunchDefaults } from '../src/lib/prompt-templates';
 
 describe('prompt template chat launcher', () => {
 	it('creates a conversation and returns a draft URL without posting a turn', async () => {
@@ -133,5 +135,86 @@ describe('prompt template refine launcher', () => {
 		expect(promptTemplateRefineUrl('conv/3', 'tmpl/3')).toBe(
 			'/conversations/conv%2F3?refinePromptTemplateId=tmpl%2F3'
 		);
+	});
+});
+
+describe('prompt template send/review launcher', () => {
+	const template = { id: 'tmpl-1', title: 'Weekly review' };
+	const options = {
+		prompt: 'Reviewed prompt',
+		workspace: 'worktree' as const,
+		conversationMode: 'plan' as const,
+		model: 'claude-sonnet-4.6'
+	};
+
+	it('creates a conversation with the resolved options and posts the prompt as a turn', async () => {
+		const calls: Array<{ url: string; init?: RequestInit }> = [];
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push({ url: String(url), ...(init !== undefined ? { init } : {}) });
+			if (String(url) === '/api/conversations') {
+				return Response.json({ conversation: { id: 'conv-1' } }, { status: 201 });
+			}
+			return new Response(null, { status: 200 });
+		});
+
+		const result = await createPromptTemplateLaunchChat({ template, options, fetcher });
+
+		expect(result).toEqual({ ok: true, href: '/conversations/conv-1' });
+		expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+			title: 'Weekly review',
+			promptTemplateId: 'tmpl-1',
+			workspace: { kind: 'worktree' },
+			mode: 'plan',
+			model: 'claude-sonnet-4.6'
+		});
+		expect(calls[1].url).toBe('/api/conversations/conv-1/turns');
+		expect(JSON.parse(calls[1].init?.body as string)).toEqual({ content: 'Reviewed prompt' });
+	});
+
+	it('deletes the new conversation when the first turn fails', async () => {
+		const calls: string[] = [];
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
+			if (String(url) === '/api/conversations' && init?.method === 'POST') {
+				return Response.json({ conversation: { id: 'conv-2' } }, { status: 201 });
+			}
+			if (String(url).endsWith('/turns')) return new Response(null, { status: 500 });
+			return new Response(null, { status: 200 });
+		});
+
+		const result = await createPromptTemplateLaunchChat({ template, options, fetcher });
+
+		expect(result).toEqual({ ok: false, stage: 'launch', status: 500 });
+		// No orphan chat is left behind when the launch turn fails.
+		expect(calls).toContain('DELETE /api/conversations/conv-2');
+	});
+
+	it('reports a failed create as the create stage without posting a turn', async () => {
+		const fetcher = vi.fn(async () => new Response(null, { status: 500 }));
+		const result = await createPromptTemplateLaunchChat({ template, options, fetcher });
+		expect(result).toEqual({ ok: false, stage: 'create', status: 500 });
+		expect(fetcher).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('templateLaunchDefaults', () => {
+	it('collapses a missing workspace preference to the shared checkout', () => {
+		expect(
+			templateLaunchDefaults({ workspaceMode: null, conversationMode: null, model: null }, 'Prompt')
+		).toEqual({ prompt: 'Prompt', workspace: 'shared', conversationMode: null, model: null });
+	});
+
+	it('carries the template’s pinned workspace and overrides', () => {
+		expect(
+			templateLaunchDefaults(
+				{ workspaceMode: 'worktree', conversationMode: 'plan', model: 'gpt-5.5' },
+				'Prompt'
+			)
+		).toEqual({
+			prompt: 'Prompt',
+			workspace: 'worktree',
+			conversationMode: 'plan',
+			model: 'gpt-5.5'
+		});
 	});
 });

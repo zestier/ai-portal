@@ -1,10 +1,15 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import { createPromptTemplateDraftChat } from '$lib/client/prompt-template-launch';
-	import type { PromptTemplateListItem } from '$lib/prompt-templates';
+	import {
+		createPromptTemplateDraftChat,
+		createPromptTemplateLaunchChat
+	} from '$lib/client/prompt-template-launch';
+	import type { PromptTemplateListItem, TemplateLaunchOptions } from '$lib/prompt-templates';
+	import { templateLaunchDefaults, workspaceModeLabel } from '$lib/prompt-templates';
 	import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 	import Modal from './ui/Modal.svelte';
 	import EmptyState from './ui/EmptyState.svelte';
+	import LaunchReviewDialog from './LaunchReviewDialog.svelte';
 
 	type Variant = 'home' | 'sidebar' | 'rail';
 
@@ -26,6 +31,8 @@
 	let templates = $state<PromptTemplateListItem[] | null>(null);
 	let localError = $state<string | null>(null);
 	let launchError = $state<string | null>(null);
+	// Template awaiting a `review` launch, with the values seeding the dialog.
+	let reviewing = $state<PromptTemplateListItem | null>(null);
 
 	const builtIns = $derived(templates?.filter((template) => template.source === 'builtin') ?? []);
 	const customTemplates = $derived(
@@ -108,28 +115,59 @@
 			launchController.abort();
 			launchController = null;
 		}
+		reviewing = null;
 		launchingTemplateId = null;
 		launchError = null;
 		pickerOpen = false;
 	}
 
-	async function launchTemplate(template: PromptTemplateListItem) {
+	/**
+	 * Entry point for the template cards. `review` templates open the review
+	 * dialog first; everything else launches straight away with the template's
+	 * own settings.
+	 */
+	function startLaunch(template: PromptTemplateListItem) {
+		if (launchingTemplateId) return;
+		launchError = null;
+		if (template.launchBehavior === 'review') {
+			reviewing = template;
+			return;
+		}
+		void launchTemplate(template, templateLaunchDefaults(template, template.prompt));
+	}
+
+	async function launchTemplate(template: PromptTemplateListItem, options: TemplateLaunchOptions) {
 		if (launchingTemplateId) return;
 		launchingTemplateId = template.id;
 		launchError = null;
 		const controller = new AbortController();
 		launchController = controller;
 		try {
-			const result = await createPromptTemplateDraftChat({
-				template,
-				fetcher: fetch,
-				signal: controller.signal
-			});
+			// `send` (and a confirmed `review`) posts the prompt as the first turn;
+			// `draft` only pre-fills the composer.
+			const result =
+				template.launchBehavior === 'draft'
+					? await createPromptTemplateDraftChat({
+							template,
+							fetcher: fetch,
+							signal: controller.signal,
+							options
+						})
+					: await createPromptTemplateLaunchChat({
+							template,
+							options,
+							fetcher: fetch,
+							signal: controller.signal
+						});
 			if (controller.signal.aborted) return;
 			if (!result.ok) {
-				launchError = `Could not create chat (${result.status ?? 'network'})`;
+				launchError =
+					'stage' in result && result.stage === 'launch'
+						? `Could not launch chat (${result.status ?? 'network'})`
+						: `Could not create chat (${result.status ?? 'network'})`;
 				return;
 			}
+			reviewing = null;
 			await invalidateAll();
 			onNavigate?.();
 			pickerOpen = false;
@@ -250,11 +288,14 @@
 						<button
 							type="button"
 							class="template-card"
-							onclick={() => launchTemplate(template)}
+							onclick={() => startLaunch(template)}
 							disabled={launchingTemplateId !== null}
 						>
 							<strong>{template.title}</strong>
 							<span>{template.description}</span>
+							{#if workspaceModeLabel(template)}
+								<span class="tool-groups-tag">{workspaceModeLabel(template)}</span>
+							{/if}
 						</button>
 					{/each}
 				</div>
@@ -271,13 +312,16 @@
 							<button
 								type="button"
 								class="template-card"
-								onclick={() => launchTemplate(template)}
+								onclick={() => startLaunch(template)}
 								disabled={launchingTemplateId !== null}
 							>
 								<strong>{template.title}</strong>
 								<span>{template.description || 'Custom prompt template'}</span>
 								{#if disabledGroupsSummary(template)}
 									<span class="tool-groups-tag">{disabledGroupsSummary(template)}</span>
+								{/if}
+								{#if workspaceModeLabel(template)}
+									<span class="tool-groups-tag">{workspaceModeLabel(template)}</span>
 								{/if}
 							</button>
 						{/each}
@@ -291,6 +335,24 @@
 			</section>
 		{/if}
 	</Modal>
+{/if}
+
+{#if reviewing}
+	<LaunchReviewDialog
+		open
+		templateTitle={reviewing.title}
+		defaults={templateLaunchDefaults(reviewing, reviewing.prompt)}
+		busy={launchingTemplateId !== null}
+		error={launchError}
+		onLaunch={(options) => {
+			const template = reviewing;
+			if (template) void launchTemplate(template, options);
+		}}
+		onCancel={() => {
+			reviewing = null;
+			launchError = null;
+		}}
+	/>
 {/if}
 
 <style>

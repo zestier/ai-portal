@@ -8,14 +8,16 @@ import {
 	type TicketActionDefault
 } from '$lib/prompt-templates';
 import {
+	normalizeLaunchBehavior,
 	normalizePromptTemplateType,
+	normalizePromptTemplateWorkspaceMode,
 	normalizeSessionMode,
-	normalizeTicketLaunchBehavior,
 	type ChatPromptTemplate,
+	type PromptLaunchBehavior,
 	type PromptTemplateStatus,
 	type PromptTemplateType,
-	type SessionMode,
-	type TicketLaunchBehavior
+	type PromptTemplateWorkspaceMode,
+	type SessionMode
 } from '$lib/types';
 import { sanitizeDisabledToolGroups, type PortalToolGroupId } from '$lib/tools/groups';
 
@@ -30,6 +32,7 @@ interface PromptTemplateRow {
 	conversation_mode: string | null;
 	model: string | null;
 	disabled_tool_groups: string | null;
+	workspace_mode: string | null;
 	status: string;
 	pinned: number;
 	order_index: number;
@@ -67,14 +70,11 @@ function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 		title: row.title,
 		description: row.description,
 		prompt: row.prompt,
-		launchBehavior:
-			type === 'ticket-action' ? normalizeTicketLaunchBehavior(row.launch_behavior) : null,
-		conversationMode:
-			type === 'ticket-action' && row.conversation_mode
-				? normalizeSessionMode(row.conversation_mode)
-				: null,
-		model: type === 'ticket-action' ? (row.model ?? null) : null,
+		launchBehavior: normalizeLaunchBehavior(row.launch_behavior, type),
+		conversationMode: row.conversation_mode ? normalizeSessionMode(row.conversation_mode) : null,
+		model: row.model ?? null,
 		disabledToolGroups: type === 'chat' ? parseDisabledToolGroups(row.disabled_tool_groups) : [],
+		workspaceMode: normalizePromptTemplateWorkspaceMode(row.workspace_mode),
 		status: normalizeStatus(row.status),
 		pinned: row.pinned === 1,
 		orderIndex: row.order_index,
@@ -140,10 +140,11 @@ export interface CreateInput {
 	title: string;
 	description?: string;
 	prompt: string;
-	launchBehavior?: TicketLaunchBehavior | null;
+	launchBehavior?: PromptLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
 	model?: string | null;
 	disabledToolGroups?: string[];
+	workspaceMode?: PromptTemplateWorkspaceMode | null;
 	pinned?: boolean;
 	orderIndex?: number;
 }
@@ -156,11 +157,12 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 	if (!title) throw new Error('prompt template title cannot be empty');
 	if (!prompt) throw new Error('prompt template body cannot be empty');
 	assertPlaceholders(prompt, type);
-	const launchBehavior = type === 'ticket-action' ? (input.launchBehavior ?? 'send') : null;
-	const conversationMode = type === 'ticket-action' ? (input.conversationMode ?? null) : null;
-	const model = type === 'ticket-action' ? normalizeModelOverride(input.model) : null;
+	const launchBehavior = normalizeLaunchBehavior(input.launchBehavior, type);
+	const conversationMode = input.conversationMode ?? null;
+	const model = normalizeModelOverride(input.model);
 	const disabledToolGroups =
 		type === 'chat' ? sanitizeDisabledToolGroups(input.disabledToolGroups) : [];
+	const workspaceMode = normalizePromptTemplateWorkspaceMode(input.workspaceMode);
 	const id = input.id ?? ulid();
 	const now = Date.now();
 	const orderIndex = Number.isFinite(input.orderIndex) ? Math.trunc(input.orderIndex ?? 0) : 0;
@@ -168,8 +170,9 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		.prepare(
 			`INSERT INTO prompt_templates(
 			   id, user_id, type, title, description, prompt, launch_behavior, conversation_mode,
-			   model, disabled_tool_groups, status, pinned, order_index, created_at, updated_at, archived_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+			   model, disabled_tool_groups, workspace_mode, status, pinned, order_index,
+			   created_at, updated_at, archived_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 		)
 		.run(
 			id,
@@ -182,6 +185,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 			conversationMode,
 			model,
 			JSON.stringify(disabledToolGroups),
+			workspaceMode,
 			input.pinned ? 1 : 0,
 			orderIndex,
 			now,
@@ -198,6 +202,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		conversationMode,
 		model,
 		disabledToolGroups,
+		workspaceMode,
 		status: 'open',
 		pinned: input.pinned ?? false,
 		orderIndex,
@@ -211,10 +216,11 @@ export interface UpdateInput {
 	title?: string;
 	description?: string;
 	prompt?: string;
-	launchBehavior?: TicketLaunchBehavior | null;
+	launchBehavior?: PromptLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
 	model?: string | null;
 	disabledToolGroups?: string[];
+	workspaceMode?: PromptTemplateWorkspaceMode | null;
 	status?: PromptTemplateStatus;
 	pinned?: boolean;
 	orderIndex?: number;
@@ -237,35 +243,29 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 			? Math.trunc(patch.orderIndex)
 			: current.orderIndex;
 	const launchBehavior =
-		current.type === 'ticket-action'
-			? patch.launchBehavior !== undefined
-				? patch.launchBehavior
-				: current.launchBehavior
-			: null;
+		patch.launchBehavior !== undefined
+			? normalizeLaunchBehavior(patch.launchBehavior, current.type)
+			: current.launchBehavior;
 	const conversationMode =
-		current.type === 'ticket-action'
-			? patch.conversationMode !== undefined
-				? patch.conversationMode
-				: current.conversationMode
-			: null;
-	const model =
-		current.type === 'ticket-action'
-			? patch.model !== undefined
-				? normalizeModelOverride(patch.model)
-				: current.model
-			: null;
+		patch.conversationMode !== undefined ? patch.conversationMode : current.conversationMode;
+	const model = patch.model !== undefined ? normalizeModelOverride(patch.model) : current.model;
 	const disabledToolGroups =
 		current.type === 'chat'
 			? patch.disabledToolGroups !== undefined
 				? sanitizeDisabledToolGroups(patch.disabledToolGroups)
 				: current.disabledToolGroups
 			: [];
+	const workspaceMode =
+		patch.workspaceMode !== undefined
+			? normalizePromptTemplateWorkspaceMode(patch.workspaceMode)
+			: current.workspaceMode;
 
 	getDb()
 		.prepare(
 			`UPDATE prompt_templates
 			 SET title = ?, description = ?, prompt = ?, launch_behavior = ?, conversation_mode = ?,
-			     model = ?, disabled_tool_groups = ?, status = ?, pinned = ?, order_index = ?,
+			     model = ?, disabled_tool_groups = ?, workspace_mode = ?, status = ?, pinned = ?,
+			     order_index = ?,
 			     updated_at = ?, archived_at = ?
 			 WHERE id = ? AND user_id = ?`
 		)
@@ -277,6 +277,7 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 			conversationMode,
 			model,
 			JSON.stringify(disabledToolGroups),
+			workspaceMode,
 			nextStatus,
 			(patch.pinned ?? current.pinned) ? 1 : 0,
 			orderIndex,

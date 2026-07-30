@@ -4,7 +4,7 @@
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
 	import type { FormResult, PromptTemplate } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
-	import { placeholdersForType } from '$lib/prompt-templates';
+	import { placeholdersForType, launchBehaviorLabel } from '$lib/prompt-templates';
 	import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { createPromptTemplateRefineChat } from '$lib/client/prompt-template-launch';
@@ -49,6 +49,17 @@
 		return ids;
 	}
 
+	const workspaceModeOptions: { value: string; label: string }[] = [
+		{ value: '', label: 'Shared checkout (default)' },
+		{ value: 'worktree', label: 'New isolated worktree' }
+	];
+
+	const launchBehaviorOptions: { value: string; label: string }[] = [
+		{ value: 'send', label: 'Send immediately' },
+		{ value: 'draft', label: 'Open draft in composer' },
+		{ value: 'review', label: 'Review before sending' }
+	];
+
 	let refiningId = $state<string | null>(null);
 	let refineError = $state<string | null>(null);
 	let refineErrorId = $state<string | null>(null);
@@ -89,6 +100,65 @@
 
 	onDestroy(() => refineController?.abort());
 </script>
+
+{#snippet launchFields(
+	current: {
+		launchBehavior?: string | null;
+		conversationMode?: string | null;
+		model?: string | null;
+		workspaceMode?: string | null;
+	},
+	defaultBehavior: string
+)}
+	<div class="inline-fields">
+		<label>
+			Launch behavior
+			<select name="launchBehavior">
+				{#each launchBehaviorOptions as opt (opt.value)}
+					<option
+						value={opt.value}
+						selected={(current.launchBehavior ?? defaultBehavior) === opt.value}
+					>
+						{opt.label}
+					</option>
+				{/each}
+			</select>
+		</label>
+		<label>
+			Git workspace
+			<select name="workspaceMode">
+				{#each workspaceModeOptions as opt (opt.value)}
+					<option value={opt.value} selected={(current.workspaceMode ?? '') === opt.value}>
+						{opt.label}
+					</option>
+				{/each}
+			</select>
+		</label>
+		<label>
+			Conversation mode
+			<select name="conversationMode">
+				{#each conversationModeOptions as opt (opt.value)}
+					<option value={opt.value} selected={(current.conversationMode ?? '') === opt.value}>
+						{opt.label}
+					</option>
+				{/each}
+			</select>
+		</label>
+		<label>
+			Model
+			<select name="model">
+				<option value="" selected={!current.model}>Use my default model</option>
+				{#each modelOptionsFor(current.model) as modelId (modelId)}
+					<option value={modelId} selected={current.model === modelId}>{modelId}</option>
+				{/each}
+			</select>
+		</label>
+	</div>
+	<p class="muted small">
+		"Review before sending" opens a dialog to edit the prompt and these settings — including the Git
+		workspace — before the chat is created.
+	</p>
+{/snippet}
 
 {#snippet toolGroupFieldset(disabled: string[])}
 	<fieldset class="tool-groups-fieldset">
@@ -157,6 +227,7 @@
 					placeholder="Describe the recurring task or workflow..."
 				></textarea>
 			</label>
+			{@render launchFields({}, 'draft')}
 			<div class="inline-fields">
 				<label class="checkbox">
 					<input name="pinned" type="checkbox" />
@@ -219,6 +290,7 @@
 									>{template.prompt}</textarea
 								>
 							</label>
+							{@render launchFields(template, 'draft')}
 							<div class="inline-fields">
 								<label class="checkbox">
 									<input name="pinned" type="checkbox" checked={template.pinned} />
@@ -290,9 +362,10 @@
 							<span>
 								<strong>{action.title}</strong>
 								<small>
-									{action.launchBehavior === 'draft' ? 'Draft' : 'Send'}
+									{launchBehaviorLabel(action.launchBehavior)}
 									· {action.conversationMode ?? 'default mode'}
 									· {action.model ?? 'default model'}
+									· {action.workspaceMode === 'worktree' ? 'worktree' : 'shared checkout'}
 								</small>
 							</span>
 							{#if action.pinned}<Pill tone="accent">Pinned</Pill>{/if}
@@ -315,43 +388,7 @@
 								>
 							</label>
 							<p class="muted small">Placeholders: <code>{ticketPlaceholderHint}</code></p>
-							<div class="inline-fields">
-								<label>
-									Launch behavior
-									<select name="launchBehavior">
-										<option value="send" selected={action.launchBehavior !== 'draft'}>
-											Send immediately
-										</option>
-										<option value="draft" selected={action.launchBehavior === 'draft'}>
-											Open draft
-										</option>
-									</select>
-								</label>
-								<label>
-									Conversation mode
-									<select name="conversationMode">
-										{#each conversationModeOptions as opt (opt.value)}
-											<option
-												value={opt.value}
-												selected={(action.conversationMode ?? '') === opt.value}
-											>
-												{opt.label}
-											</option>
-										{/each}
-									</select>
-								</label>
-								<label>
-									Model
-									<select name="model">
-										<option value="" selected={!action.model}>Use my default model</option>
-										{#each modelOptionsFor(action.model) as modelId (modelId)}
-											<option value={modelId} selected={action.model === modelId}>
-												{modelId}
-											</option>
-										{/each}
-									</select>
-								</label>
-							</div>
+							{@render launchFields(action, 'send')}
 							<div class="inline-fields">
 								<label class="checkbox">
 									<input name="pinned" type="checkbox" checked={action.pinned} />
@@ -412,32 +449,7 @@
 					></textarea>
 				</label>
 				<p class="muted small">Placeholders: <code>{ticketPlaceholderHint}</code></p>
-				<div class="inline-fields">
-					<label>
-						Launch behavior
-						<select name="launchBehavior">
-							<option value="send">Send immediately</option>
-							<option value="draft">Open draft</option>
-						</select>
-					</label>
-					<label>
-						Conversation mode
-						<select name="conversationMode">
-							{#each conversationModeOptions as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					</label>
-					<label>
-						Model
-						<select name="model">
-							<option value="">Use my default model</option>
-							{#each modelOptions as modelId (modelId)}
-								<option value={modelId}>{modelId}</option>
-							{/each}
-						</select>
-					</label>
-				</div>
+				{@render launchFields({}, 'send')}
 				<div class="inline-fields">
 					<label class="checkbox">
 						<input name="pinned" type="checkbox" />

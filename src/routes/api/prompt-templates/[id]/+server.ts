@@ -19,7 +19,7 @@ const PatchBody = z
 		title: z.string().trim().min(1).max(120).optional(),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000).optional(),
-		launchBehavior: z.enum(['send', 'draft']).optional(),
+		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
 		conversationMode: z
 			.enum(['interactive', 'plan', 'autopilot', 'best-effort'])
 			.nullable()
@@ -28,6 +28,7 @@ const PatchBody = z
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
 			.optional(),
+		workspaceMode: z.enum(['shared', 'worktree']).nullable().optional(),
 		status: z.enum(['open', 'archived']).optional(),
 		pinned: z.boolean().optional(),
 		orderIndex: z.number().int().min(-1_000_000).max(1_000_000).optional()
@@ -41,6 +42,7 @@ const PatchBody = z
 			body.conversationMode !== undefined ||
 			body.model !== undefined ||
 			body.disabledToolGroups !== undefined ||
+			body.workspaceMode !== undefined ||
 			body.status !== undefined ||
 			body.pinned !== undefined ||
 			body.orderIndex !== undefined,
@@ -68,6 +70,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.disabledToolGroups !== undefined
 			? { disabledToolGroups: body.disabledToolGroups }
 			: {}),
+		...(body.workspaceMode !== undefined ? { workspaceMode: body.workspaceMode } : {}),
 		...(body.status !== undefined ? { status: body.status } : {}),
 		...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
 		...(body.orderIndex !== undefined ? { orderIndex: body.orderIndex } : {})

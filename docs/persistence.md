@@ -205,6 +205,29 @@ Existing conversations migrate as `shared`; no existing checkout is adopted
 or deleted by the portal. A directory supplied through the legacy `workdir`
 field is always shared even if it happens to be a Git worktree.
 
+## Prompt template launch settings
+
+Prompt templates (`chat` and `ticket-action` alike) carry the settings the chats
+they launch are created with:
+
+- `launch_behavior` — `send` (post the prompt as the first turn), `draft`
+  (pre-fill the composer), or `review` (added in migration
+  `065_prompt_template_workspace_mode.sql`'s era; opens a pre-launch dialog where
+  the prompt **and** the settings below can be edited before sending). `NULL`
+  means the per-type default: `draft` for chat templates, `send` for ticket
+  actions, preserving the behavior each type had before the column applied to
+  both.
+- `workspace_mode` — `shared` or `worktree` (migration
+  `065_prompt_template_workspace_mode.sql`). `NULL` means no preference and
+  behaves like `shared`, so the column is a no-op for existing rows. A
+  `worktree` template makes `POST /api/conversations` provision a managed
+  worktree; an explicit `workspace` in the request always wins, which is how a
+  review launch expresses a changed choice.
+- `conversation_mode` / `model` — optional per-launch overrides. These were
+  originally ticket-action-only and now apply to both types, since chat
+  templates create conversations too. Existing chat rows hold `NULL` and keep
+  using the user's defaults.
+
 
 ## Turn input capture (observability)
 

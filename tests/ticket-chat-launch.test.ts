@@ -31,6 +31,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 		conversationMode: null,
 		model: null,
 		disabledToolGroups: [],
+		workspaceMode: null,
 		status: 'open',
 		pinned: true,
 		orderIndex: 10,
@@ -97,6 +98,60 @@ describe('createTicketDraftChat', () => {
 			title: 'Fix sidebar actions',
 			workdir: '/workspace',
 			mode: 'interactive'
+		});
+	});
+
+	it('sends the ticket workspace as the worktree source when the action pins a worktree', async () => {
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			void url;
+			void init;
+			return Response.json({ conversation: { id: 'conv-3' } }, { status: 201 });
+		});
+
+		await createTicketDraftChat({
+			ticket,
+			template: action({ workspaceMode: 'worktree' }),
+			workdir: '/workspace',
+			fetcher
+		});
+
+		// `workdir` and `workspace` are mutually exclusive server-side, so the
+		// ticket's workspace has to travel as the worktree's source path.
+		const [, init] = fetcher.mock.calls[0];
+		expect(JSON.parse(init?.body as string)).toEqual({
+			title: 'Fix sidebar actions',
+			workspace: { kind: 'worktree', sourcePath: '/workspace' }
+		});
+	});
+
+	it('prefers explicit launch options over the action’s stored settings', async () => {
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			void url;
+			void init;
+			return Response.json({ conversation: { id: 'conv-4' } }, { status: 201 });
+		});
+
+		// This is what a confirmed review dialog produces: edited prompt + options.
+		const result = await createTicketDraftChat({
+			ticket,
+			template: action({ workspaceMode: 'worktree', conversationMode: 'plan' }),
+			workdir: '/workspace',
+			options: {
+				prompt: 'Edited prompt',
+				workspace: 'shared',
+				conversationMode: 'interactive',
+				model: 'claude-sonnet-4.6'
+			},
+			fetcher
+		});
+
+		expect(result.ok && result.prompt).toBe('Edited prompt');
+		const [, init] = fetcher.mock.calls[0];
+		expect(JSON.parse(init?.body as string)).toEqual({
+			title: 'Fix sidebar actions',
+			workdir: '/workspace',
+			mode: 'interactive',
+			model: 'claude-sonnet-4.6'
 		});
 	});
 });
