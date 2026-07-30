@@ -9,7 +9,8 @@
 		SessionMode,
 		WorktreeIntegration
 	} from '$lib/types';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
+	import { invalidateWorktreeStatus, worktreeStatusRevision } from '$lib/client/worktree-status';
 	import ContextMeter from './ContextMeter.svelte';
 	import ConfirmDialog from './ui/ConfirmDialog.svelte';
 	import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
@@ -423,6 +424,8 @@
 	// subprocesses (see the route comment) and only matters once the user is
 	// actually looking at the session's workspace details.
 	let worktree = $state<WorktreeIntegration | null>(null);
+	// Last refresh signal acted on; see the effect below.
+	let seenWorktreeRevision = 0;
 	let merging = $state(false);
 	let mergeError = $state<string | null>(null);
 	let mergeFlash = $state<string | null>(null);
@@ -454,6 +457,18 @@
 		void loadWorktree(id);
 	});
 
+	$effect(() => {
+		// Something (usually a turn that just ended) says the answer may have
+		// moved. Refetch WITHOUT clearing first: the pill should update in place,
+		// not flicker off and back on for a state that didn't actually change.
+		const revision = $worktreeStatusRevision;
+		if (revision === seenWorktreeRevision) return;
+		seenWorktreeRevision = revision;
+		const id = untrack(() => conversation.id);
+		if (untrack(() => conversation.workspaceKind) !== 'managed-worktree') return;
+		void loadWorktree(id);
+	});
+
 	onDestroy(() => {
 		if (mergeTimer) clearTimeout(mergeTimer);
 	});
@@ -477,6 +492,9 @@
 			const merge = payload?.merge;
 			mergeFlash = merge?.merged ? `Merged ${merge.from} into ${merge.into}` : 'Already up to date';
 			worktree = merge?.status ?? worktree;
+			// The sidebar badge for this session (and every other worktree's
+			// ahead/behind against the source branch) just changed.
+			invalidateWorktreeStatus();
 			if (mergeTimer) clearTimeout(mergeTimer);
 			mergeTimer = setTimeout(() => (mergeFlash = null), 4000);
 		} catch (e) {

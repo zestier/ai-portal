@@ -28,6 +28,7 @@
 	} from '$lib/client/conversation-activity';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
+	import { worktreeStatusRevision } from '$lib/client/worktree-status';
 
 	let {
 		conversations,
@@ -78,9 +79,12 @@
 	const WORKTREE_POLL_MS = 30_000;
 	let worktreeTimer: ReturnType<typeof setInterval> | null = null;
 
-	async function refreshWorktreeStatuses() {
+	async function refreshWorktreeStatuses(fresh = false) {
 		try {
-			const res = await fetch('/api/worktrees/status');
+			// A signal-driven refresh must bypass the route's TTL cache: it fires
+			// precisely because something just changed, and a cached answer from
+			// seconds ago is the stale one we're trying to replace.
+			const res = await fetch(`/api/worktrees/status${fresh ? '?fresh=1' : ''}`);
 			if (!res.ok) return;
 			const body = (await res.json()) as { worktrees?: WorktreeStatusSummary[] };
 			worktreeStatuses = new Map((body.worktrees ?? []).map((w) => [w.conversationId, w]));
@@ -88,6 +92,18 @@
 			// A failed poll just leaves the previous badges in place.
 		}
 	}
+
+	// Last refresh signal acted on. Starts equal to the store's initial value so
+	// the effect's first run (at mount, where onMount already fetches) is a no-op.
+	let seenWorktreeRevision = 0;
+
+	$effect(() => {
+		// A turn ended or a merge landed somewhere: the badges may be wrong now.
+		const revision = $worktreeStatusRevision;
+		if (revision === seenWorktreeRevision) return;
+		seenWorktreeRevision = revision;
+		void refreshWorktreeStatuses(true);
+	});
 
 	onMount(() => {
 		mounted = true;

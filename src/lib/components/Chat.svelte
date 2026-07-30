@@ -22,6 +22,7 @@
 	import { isBlockingKind } from '$lib/interactive/request-registry';
 	import { setAwaitingInput, clearAwaitingInput } from '$lib/client/awaiting-input';
 	import { markConversationRead } from '$lib/client/conversation-activity';
+	import { invalidateWorktreeStatus } from '$lib/client/worktree-status';
 	import { findToolCallRecord } from '$lib/client/tool-call-record';
 	import { resolveAssistantTarget } from '$lib/client/assistant-target';
 	import {
@@ -487,6 +488,11 @@
 				// navigate away. The server publishes `unread: true` at turn end
 				// (it can't know who's watching); this is the correction.
 				void markConversationRead(conversation.id);
+				// A turn is the usual way work becomes unmerged (the agent
+				// committed in its worktree) or stops being unmerged (it
+				// merged). Tell the indicators to refetch instead of leaving
+				// them stale until the sidebar's slow poll comes round.
+				invalidateWorktreeStatus();
 				flushArmed(failed);
 			} else {
 				scheduleStreamStallTimeout();

@@ -194,10 +194,14 @@ knowing which tree it lands in. The lease must be held by the
 calling conversation (same check as `worktree_status`), which is why the
 selector cannot widen reach: those paths are already among the roots
 `workspaceRootsFor` grants it. `GET /api/worktrees/status` feeds the sidebar's
-"unmerged" badge, `GET|POST /api/conversations/<id>/worktree[/merge]` back the
+"unmerged" badge (`?fresh=1` skips its short TTL cache),
+`GET|POST /api/conversations/<id>/worktree[/merge]` back the
 chat header's integration panel, and deleting a conversation whose worktree
 still holds unmerged commits requires the same `forceWorktree=1` confirmation
-that a dirty one does.
+that a dirty one does. Both indicators are event-driven as well as polled: a
+turn ending or a merge landing bumps `worktreeStatusRevision`
+(`$lib/client/worktree-status`) and they refetch, since git changes underneath
+the UI and a badge that only updates on reload is worse than no badge.
 
 ### 5. Cloudflare Tunnel (optional, deployment-time)
 

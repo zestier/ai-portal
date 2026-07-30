@@ -17,9 +17,16 @@ import { cachedWorktreeIntegrationStatus } from '$lib/server/worktree-integratio
  * A worktree whose checkout has gone missing yields `available: false` rather
  * than failing the whole response — one broken session must not blank the
  * indicator for the rest.
+ *
+ * `?fresh=1` skips the TTL cache, for a client refreshing because it just saw
+ * something (a turn ending, a merge) that changes the answer.
  */
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, url }) => {
 	const userId = requireUserId(locals);
+	// A client refreshing in response to an event (a turn ended, a merge landed)
+	// is asking precisely because the answer just changed, so it opts out of the
+	// TTL — otherwise the refresh can return the stale value it was sent to fix.
+	const maxAgeMs = url.searchParams.get('fresh') === '1' ? 0 : undefined;
 	const managed = convs
 		.list(userId, { includeArchived: true })
 		.filter((c) => c.workspaceKind === 'managed-worktree');
@@ -28,7 +35,8 @@ export const GET: RequestHandler = async ({ locals }) => {
 		managed.map(async (conversation) => {
 			try {
 				const status = await cachedWorktreeIntegrationStatus(
-					resolveConversationWorkspace(conversation)
+					resolveConversationWorkspace(conversation),
+					maxAgeMs
 				);
 				return {
 					conversationId: conversation.id,

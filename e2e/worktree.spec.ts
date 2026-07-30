@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { uniqueTitle } from './helpers/conversations';
+import { uniqueTitle, waitForAssistantMessage } from './helpers/conversations';
 
 // The server runs with cwd=DATA_DIR (playwright.config.ts), so PROJECT_ROOT —
 // and therefore the workdir allowlist — is this directory. A repository created
@@ -80,4 +80,58 @@ test('a worktree session reports, badges, and merges back its unmerged work', as
 	await expect(merge).toBeDisabled();
 	await expect(page.getByText('Fully merged')).toBeVisible();
 	expect(existsSync(join(repo, 'feature.txt'))).toBe(true);
+
+	// The sidebar badge must clear off the back of the merge itself, not the slow
+	// background poll — this expect times out well before the next poll tick.
+	await expect(
+		page
+			.locator(`.conv:has(a[href="/conversations/${conversation.id}"])`)
+			.getByTestId('unmerged-badge')
+	).toHaveCount(0);
+});
+
+test('unmerged indicators appear at turn end without a reload', async ({ page, request }) => {
+	const repo = sourceRepository();
+	const title = uniqueTitle('E2E worktree refresh');
+	const created = await request.post('/api/conversations', {
+		data: { title, workspace: { kind: 'worktree', sourcePath: repo } }
+	});
+	expect(created.ok()).toBeTruthy();
+	const { conversation } = await created.json();
+
+	// Wait out the sidebar's mount-time poll before touching git, so a badge
+	// later on can only have come from a refresh, not from a lucky race with the
+	// very first read.
+	const firstPoll = page.waitForResponse((r) => r.url().includes('/api/worktrees/status'));
+	await page.goto(`/conversations/${conversation.id}`);
+	await firstPoll;
+
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	// Spend the auto-title turn first: it triggers `invalidateAll()`, which
+	// refreshes the indicators as a side effect and would mask the bug.
+	await composer.click();
+	await composer.fill('first message');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, conversation.id, 'Stubbed reply to: first message');
+	await expect(page.getByTestId('header-unmerged')).toHaveCount(0);
+
+	// Stand in for the agent committing mid-turn: the checkout gains work while
+	// the page is already open, which is exactly when the indicators used to go
+	// stale until a manual reload.
+	writeFileSync(join(conversation.workdir, 'feature.txt'), 'work\n');
+	git(conversation.workdir, ['add', 'feature.txt']);
+	git(conversation.workdir, ['commit', '-q', '-m', 'add feature']);
+
+	await composer.fill('commit something');
+	await composer.press('Enter');
+	await waitForAssistantMessage(request, conversation.id, 'Stubbed reply to: commit something');
+
+	// Both indicators must catch up off the turn-end signal — far sooner than the
+	// sidebar's background poll would deliver.
+	await expect(page.getByTestId('header-unmerged')).toBeVisible();
+	await expect(
+		page
+			.locator(`.conv:has(a[href="/conversations/${conversation.id}"])`)
+			.getByTestId('unmerged-badge')
+	).toBeVisible();
 });

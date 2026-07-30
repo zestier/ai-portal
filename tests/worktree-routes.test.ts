@@ -249,10 +249,39 @@ describe('managed worktree conversation routes', () => {
 			commitInWorktree(conversation, 'feature.txt');
 
 			const { GET: BULK } = await import('../src/routes/api/worktrees/status/+server');
-			const listed = await (await BULK({ locals: { userId } } as never)).json();
+			const listed = await (
+				await BULK({
+					locals: { userId },
+					url: new URL('http://localhost/api/worktrees/status')
+				} as never)
+			).json();
 			expect(listed.worktrees).toContainEqual(
 				expect.objectContaining({ conversationId: conversation.id, unmerged: true, ahead: 1 })
 			);
+		});
+
+		it('serves the sidebar a cached status by default and a fresh one on request', async () => {
+			const conversation = await createWorktreeConversation('refresh me');
+			const { GET: BULK } = await import('../src/routes/api/worktrees/status/+server');
+			const read = async (fresh: boolean) => {
+				const response = await BULK({
+					locals: { userId },
+					url: new URL(`http://localhost/api/worktrees/status${fresh ? '?fresh=1' : ''}`)
+				} as never);
+				const body = await response.json();
+				return body.worktrees.find(
+					(w: { conversationId: string }) => w.conversationId === conversation.id
+				);
+			};
+
+			// Warm the TTL cache while the worktree still has nothing to merge.
+			expect(await read(false)).toMatchObject({ unmerged: false });
+			commitInWorktree(conversation, 'feature.txt');
+
+			// The poll is allowed to lag; an event-driven refresh is not, because it
+			// fires precisely because the answer just changed.
+			expect(await read(false)).toMatchObject({ unmerged: false });
+			expect(await read(true)).toMatchObject({ unmerged: true, ahead: 1 });
 		});
 
 		it('refuses to delete a clean worktree that still holds unmerged commits', async () => {

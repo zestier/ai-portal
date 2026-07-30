@@ -11,6 +11,7 @@
 
 	import { untrack } from 'svelte';
 	import { fetchWorktrees, type WorktreeOption } from '$lib/client/file-browser';
+	import { invalidateWorktreeStatus } from '$lib/client/worktree-status';
 
 	let {
 		conversationId,
@@ -97,6 +98,9 @@
 				? `Merged into ${merge.into}`
 				: `Already up to date with ${merge.into}`;
 			await load();
+			// Merging a lease into the conversation's branch moves that branch, so
+			// the conversation's own unmerged indicators are now out of date.
+			invalidateWorktreeStatus();
 			onmerged?.();
 		} catch (e) {
 			mergeError = e instanceof Error ? e.message : String(e);
