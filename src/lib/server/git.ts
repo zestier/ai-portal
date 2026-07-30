@@ -204,6 +204,33 @@ export async function repositoryRoot(cwd: string): Promise<string> {
 	return (await runGitOk(['rev-parse', '--show-toplevel'], { cwd })).trim();
 }
 
+/**
+ * The repository's git common dir — the key every mutating operation locks on.
+ *
+ * Shared by a repository's main checkout and all of its linked worktrees, so a
+ * commit in a lease serializes against a merge or worktree removal in the same
+ * repository. Realpath'd to match `worktrees.ts` / `worktree-integration.ts`,
+ * which resolve it too: an unresolved symlink would silently produce a second,
+ * non-excluding lock key.
+ *
+ * Throws rather than falling back to the cwd when git cannot answer. A fallback
+ * key would look like locking while excluding nothing — the exact silent,
+ * timing-dependent failure `repo-lock.ts` exists to prevent — and a caller that
+ * cannot reach git has nothing to commit anyway.
+ */
+export async function repositoryLockKey(cwd: string): Promise<string> {
+	const r = await runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd });
+	const raw = r.code === 0 ? r.stdout.trim() : '';
+	if (!raw) {
+		throw new GitError('not a git repository: could not determine the git common dir', r);
+	}
+	try {
+		return realpathSync(raw);
+	} catch {
+		return resolve(raw);
+	}
+}
+
 export interface HeadInfo {
 	initialized: true;
 	branch: string | null;

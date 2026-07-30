@@ -34,13 +34,17 @@ import {
 	bestEffortPermissionKindLabel,
 	isFilesystemPermissionKind
 } from '$lib/permissions/metadata';
-import { summarizeGitCommitPermission } from '$lib/permissions/git-commit';
+import {
+	summarizeGitCommitPermission,
+	type GitCommitTargetSnapshot
+} from '$lib/permissions/git-commit';
 import {
 	summarizeTemplatePermission,
 	templateBeforeSnapshot,
 	type TemplateBeforeSnapshot
 } from '$lib/permissions/prompt-template';
 import * as promptTemplatesRepo from '../db/repos/prompt-templates';
+import { getLease } from '../leases';
 import type { ToolPermissionRequest } from '../tools/types';
 
 interface PermissionRequestLike {
@@ -182,7 +186,14 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		const permissionKind = override ? override.permissionKind : (req.kind ?? 'unknown');
 		const matchTool = override ? override.permissionKind : tool;
 		const scopeRequest: PermissionRequestLike = override ? { ...req, path: override.path } : req;
-		const summary = summarizePermissionRequest(scopeRequest, tool);
+		// Resolved before the summary because a `git_commit` into a lease lands in
+		// a different checkout and branch than this conversation's workspace, and
+		// nothing else in the request says so — not the summary, not the audit row.
+		const commitTarget =
+			tool === 'git_commit'
+				? loadCommitTargetSnapshot(req.args, opts.userId, opts.conversationId)
+				: undefined;
+		const summary = summarizePermissionRequest(scopeRequest, tool, commitTarget);
 		const scopeKey = deriveScopeKey(permissionKind, scopeRequest);
 		const hash = hashPermissionArgs(req);
 		const alwaysPrompt = opts.getPermissionBehavior(tool) === 'always-prompt';
@@ -251,7 +262,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					escalationReason: forceEscalationReason,
 					defaultDenyFeedback,
 					shellAnalysis,
-					imagePreview
+					imagePreview,
+					...(commitTarget !== undefined ? { commitTarget } : {})
 				}
 			);
 			if (response.decision === 'deny' || response.decision === 'deny-always') {
@@ -408,7 +420,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					canPersistDecision: false,
 					shellAnalysis,
 					imagePreview,
-					...(templateBefore !== undefined ? { templateBefore } : {})
+					...(templateBefore !== undefined ? { templateBefore } : {}),
+					...(commitTarget !== undefined ? { commitTarget } : {})
 				}
 			);
 			if (response.decision === 'deny' || response.decision === 'deny-always') {
@@ -721,9 +734,13 @@ function bestEffortPromptGrantFeedback(view: { permissionKind: string }): string
 	);
 }
 
-function summarizePermissionRequest(req: PermissionRequestLike, tool: string): string {
+function summarizePermissionRequest(
+	req: PermissionRequestLike,
+	tool: string,
+	commitTarget?: GitCommitTargetSnapshot | undefined
+): string {
 	if (tool === 'git_commit') {
-		const summary = summarizeGitCommitPermission(req.args);
+		const summary = summarizeGitCommitPermission(req.args, commitTarget ?? null);
 		if (summary) return summary;
 	}
 	if (tool === 'template_create' || tool === 'template_update') {
@@ -731,6 +748,40 @@ function summarizePermissionRequest(req: PermissionRequestLike, tool: string): s
 		if (summary) return summary;
 	}
 	return req.fullCommandText ?? req.fileName ?? req.path ?? req.url ?? req.toolDescription ?? tool;
+}
+
+/**
+ * Resolve a `git_commit` request's `worktree` lease id into what the dialog
+ * needs to name the destination: label, branch, and checkout path.
+ *
+ * Strictly read-only, and scoped to leases held by THIS conversation — the same
+ * check the tool itself enforces, so the dialog cannot be used to probe another
+ * conversation's leases. A lease id that does not resolve still yields a
+ * snapshot carrying the raw id: the call will fail, but the human should see
+ * that a worktree was targeted rather than assume the commit lands locally.
+ */
+function loadCommitTargetSnapshot(
+	args: unknown,
+	userId: string,
+	conversationId: string
+): GitCommitTargetSnapshot | undefined {
+	if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined;
+	const raw = (args as Record<string, unknown>).worktree;
+	if (typeof raw !== 'string') return undefined;
+	// Normalized exactly as the tool's own schema normalizes it. Resolving the
+	// raw value instead would let `"  <id>  "` render as an unresolved id — which
+	// reads like the "lease you don't hold" case — while the handler trims it and
+	// commits into the real worktree.
+	const leaseId = raw.trim();
+	if (leaseId.length === 0) return undefined;
+	try {
+		const lease = getLease(leaseId, userId);
+		if (!lease || lease.heldByConversationId !== conversationId) return { leaseId };
+		return { leaseId, label: lease.label, branch: lease.branch, path: lease.path };
+	} catch (e) {
+		log.warn('copilot.commit_target_load_failed', { conversationId, err: String(e) });
+		return { leaseId };
+	}
 }
 
 /**

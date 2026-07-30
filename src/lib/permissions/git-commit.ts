@@ -1,3 +1,21 @@
+/**
+ * Where a `git_commit` will land, resolved server-side from the request's
+ * `worktree` lease id.
+ *
+ * The dialog is a human's only chance to see the destination: a commit made
+ * into a lease touches a different checkout and a different branch than the
+ * conversation's own workspace, and the args alone carry nothing but an opaque
+ * ULID. Resolved fields are optional because a stale/foreign id still deserves
+ * to be shown (the tool call will fail, but the human should see what was
+ * asked).
+ */
+export interface GitCommitTargetSnapshot {
+	leaseId: string;
+	label?: string | null;
+	branch?: string | null;
+	path?: string | null;
+}
+
 export interface GitCommitPreview {
 	subject: string;
 	paths: string[] | null;
@@ -5,9 +23,16 @@ export interface GitCommitPreview {
 	bodyLineCount: number;
 	trailers: Array<{ token: string; value: string }>;
 	targetSummary: string;
+	/** The lease this commit lands in, or null for the conversation's workspace. */
+	worktree: GitCommitTargetSnapshot | null;
+	/** One-line description of the destination checkout, always present. */
+	destinationSummary: string;
 }
 
-export function gitCommitPreview(args: unknown): GitCommitPreview | null {
+export function gitCommitPreview(
+	args: unknown,
+	target?: GitCommitTargetSnapshot | null
+): GitCommitPreview | null {
 	if (!isRecord(args)) return null;
 	const subject =
 		typeof args.subject === 'string' && args.subject.length > 0 ? args.subject : '(missing)';
@@ -20,6 +45,11 @@ export function gitCommitPreview(args: unknown): GitCommitPreview | null {
 	// sentinel. Exotic coercible objects (e.g. `{ toString() { return 'all' } }`)
 	// are likewise NOT treated as the sentinel — the `===` comparison is strict.
 	const isAllChanges = args.paths === 'all';
+	// Prefer the server-resolved snapshot, but never let a missing one hide the
+	// fact that a worktree was requested: fall back to the raw arg, normalized
+	// the same way the tool's schema normalizes it.
+	const rawWorktree = typeof args.worktree === 'string' ? args.worktree.trim() : '';
+	const worktree = target ?? (rawWorktree.length > 0 ? { leaseId: rawWorktree } : null);
 	return {
 		subject,
 		paths,
@@ -30,16 +60,36 @@ export function gitCommitPreview(args: unknown): GitCommitPreview | null {
 			? 'All tracked, staged, unstaged, deleted, and untracked workspace changes'
 			: paths
 				? `${paths.length} selected ${paths.length === 1 ? 'path' : 'paths'}`
-				: 'Selected paths'
+				: 'Selected paths',
+		worktree,
+		destinationSummary: describeDestination(worktree)
 	};
 }
 
-export function summarizeGitCommitPermission(args: unknown): string | null {
-	const preview = gitCommitPreview(args);
+/**
+ * One line naming the checkout a commit lands in.
+ *
+ * The path is deliberately NOT folded in: it is long enough to push the line
+ * past the width of both the dialog and the audit list, and the dialog renders
+ * it separately from the structured snapshot. Label + branch is what identifies
+ * the destination.
+ */
+function describeDestination(target: GitCommitTargetSnapshot | null): string {
+	if (!target) return "This conversation's workspace";
+	const name = target.label ? `worktree ${target.label}` : `worktree ${target.leaseId}`;
+	return target.branch ? `${name} on branch ${target.branch}` : name;
+}
+
+export function summarizeGitCommitPermission(
+	args: unknown,
+	target?: GitCommitTargetSnapshot | null
+): string | null {
+	const preview = gitCommitPreview(args, target);
 	if (!preview) return null;
 	const lines = [
 		'Create Git commit',
-		`Subject: ${preview.subject === '(missing)' ? 'commit' : preview.subject}`
+		`Subject: ${preview.subject === '(missing)' ? 'commit' : preview.subject}`,
+		`Destination: ${preview.destinationSummary}`
 	];
 	if (preview.paths) {
 		lines.push(

@@ -111,6 +111,14 @@ describe('summarizeToolCall', () => {
 				})
 			)
 		).toBe('Add feature · src/a.ts +1 more · body · 1 trailers');
+		// A commit into a lease lands in a different checkout; the transcript row
+		// is the only place a reader sees that.
+		expect(
+			summarizeToolCall(
+				'git_commit',
+				JSON.stringify({ subject: 'Add feature', paths: 'all', worktree: 'lease-1' })
+			)
+		).toBe('Add feature · all changes · in worktree lease-1');
 	});
 
 	it('summarizes portal memory tool options', () => {

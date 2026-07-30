@@ -2,6 +2,7 @@
 
 import type { GrantScope } from './permissions/scope-types';
 import type { TemplateBeforeSnapshot } from './permissions/prompt-template';
+import type { GitCommitTargetSnapshot } from './permissions/git-commit';
 import type { PortalToolGroupId } from './tools/groups';
 
 export type Role = 'user' | 'assistant' | 'system';
@@ -716,6 +717,14 @@ export interface InteractivePermissionView {
 	 * missing/deleted (the dialog then falls back to the patch view).
 	 */
 	templateBefore?: TemplateBeforeSnapshot | undefined;
+	/**
+	 * For `git_commit` with a `worktree` selector: the lease's label, branch, and
+	 * checkout path, resolved server-side from the id in the args. Lets the dialog
+	 * name WHERE the commit lands — a commit into a worktree touches a different
+	 * checkout and branch than the conversation's own workspace, and the raw args
+	 * carry only an opaque id. Omitted when no worktree was requested.
+	 */
+	commitTarget?: GitCommitTargetSnapshot | undefined;
 }
 
 export interface ImagePreview {

@@ -105,3 +105,36 @@ test('the switcher merges a worktree back into the conversation', async ({ page,
 	// The work is now in the conversation's workspace, which is the whole point.
 	expect(existsSync(join(repo, 'delivered.txt'))).toBe(true);
 });
+
+// A commit into a worktree lands in a different checkout on a different branch
+// than the one the user is looking at, and the tool args carry only an opaque
+// lease id. Approving it blind is exactly the failure this row exists to
+// prevent, so the dialog must name the destination.
+test('the git_commit dialog names the worktree the commit lands in', async ({ page, request }) => {
+	const repo = sourceRepository();
+	const created = await request.post('/api/conversations', {
+		data: { title: uniqueTitle('E2E commit target'), workdir: repo }
+	});
+	const { conversation } = await created.json();
+
+	const leaseRes = await request.post(`/api/conversations/${conversation.id}/worktrees`, {
+		data: { label: 'alpha' }
+	});
+	expect(leaseRes.ok()).toBeTruthy();
+	const lease = (await leaseRes.json()).worktree;
+
+	await page.goto(`/conversations/${conversation.id}`);
+	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	await composer.fill(`commit it @trigger-git-commit-permission:${lease.id}`);
+	await composer.press('Enter');
+
+	const dialog = page.getByRole('alertdialog');
+	await expect(dialog).toBeVisible();
+	const destination = dialog.getByTestId('git-commit-destination');
+	await expect(destination).toContainText(`worktree alpha on branch ${lease.branch}`);
+	// The checkout path is shown too, since two leases can share a label.
+	await expect(destination).toContainText(lease.path);
+
+	await page.getByRole('button', { name: /allow once/i }).click();
+	await expect(dialog).toHaveCount(0);
+});

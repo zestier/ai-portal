@@ -14,7 +14,7 @@
 // sub-agent's fallback is to write into the shared tree instead.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
@@ -234,6 +234,200 @@ describe('orchestrator worktree flow (acceptance)', () => {
 				error: { code: 'worktree_unavailable' }
 			});
 			expect((await bare.get('git_status')!.handler({})).ok).toBe(true);
+		});
+	});
+
+	// The write half of the same problem. A sub-agent handed only a lease path
+	// has no shell git (no seeded grant) and, before `git_commit` took a
+	// `worktree`, no structured way to commit either — so its work stayed
+	// uncommitted, `worktree_merge` found `ahead: 0`, and the whole fan-out was
+	// silently discarded.
+	describe('git_commit targeting a lease', () => {
+		it('commits a sub-agent’s work in the lease and leaves it mergeable', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const leasePath = created.path as string;
+			const leaseId = created.leaseId as string;
+			// The sub-agent only ever touches its own directory.
+			writeFileSync(join(leasePath, 'feature.ts'), 'export const x = 1;\n');
+
+			const res = await gitTools.get('git_commit')!.handler({
+				worktree: leaseId,
+				paths: 'all',
+				subject: 'feature: add x'
+			});
+
+			expect(res.ok).toBe(true);
+			if (!res.ok) return;
+			// The commit landed in the lease, not in the conversation's workspace.
+			expect(git(leasePath, ['log', '-1', '--format=%s'])).toBe('feature: add x');
+			expect(git(source, ['log', '-1', '--format=%s'])).toBe('initial');
+			expect(existsSync(join(source, 'feature.ts'))).toBe(false);
+			// The nudge names the call that collects it — `git_worktree_merge`
+			// would act on the session's own workspace and miss the lease.
+			expect(res.followUpHint).toContain(`worktree_merge (leaseId: "${leaseId}")`);
+
+			// Acceptance: the orchestrator now sees work waiting, and can take it.
+			const listed = payload(await tools.get('worktree_list')!.handler({}));
+			const row = (listed.worktrees as Array<Record<string, unknown>>)[0];
+			expect(row.ahead).toBe(1);
+			expect(row.dirtyCount).toBe(0);
+
+			const merged = payload(await tools.get('worktree_merge')!.handler({ leaseId }));
+			expect(merged.merged).toBe(true);
+			expect(existsSync(join(source, 'feature.ts'))).toBe(true);
+		});
+
+		it('commits explicitly named paths relative to the lease', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const leasePath = created.path as string;
+			writeFileSync(join(leasePath, 'wanted.ts'), 'yes\n');
+			writeFileSync(join(leasePath, 'unwanted.ts'), 'no\n');
+
+			const res = await gitTools.get('git_commit')!.handler({
+				worktree: created.leaseId as string,
+				paths: ['wanted.ts'],
+				subject: 'feature: only the wanted file'
+			});
+
+			expect(res.ok).toBe(true);
+			expect(git(leasePath, ['show', '--name-only', '--format=', 'HEAD'])).toBe('wanted.ts');
+			expect(git(leasePath, ['status', '--porcelain'])).toContain('unwanted.ts');
+		});
+
+		it('refuses to commit into a lease this conversation does not hold', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			writeFileSync(join(created.path as string, 'feature.ts'), 'export const x = 1;\n');
+			const convs = await import('../src/lib/server/db/repos/conversations');
+			const other = convs.create(userId, {
+				id: convs.newId(),
+				title: 'other',
+				workdir: source,
+				model: 'test-model',
+				workspaceKind: 'shared',
+				workspaceKey: source
+			});
+			const { buildGitTools } = await import('../src/lib/server/tools/git');
+			const otherTools = new Map(
+				buildGitTools(source, { userId, conversationId: other.id }).map((t) => [t.name, t])
+			);
+
+			const res = await otherTools.get('git_commit')!.handler({
+				worktree: created.leaseId as string,
+				paths: 'all',
+				subject: 'not mine'
+			});
+
+			expect(res).toMatchObject({ ok: false, error: { code: 'lease_not_found' } });
+			// Nothing was committed anywhere: not in the lease, and — the failure
+			// that would matter most — not in the caller's own workspace either.
+			expect(git(created.path as string, ['log', '-1', '--format=%s'])).toBe('initial');
+			expect(git(source, ['log', '-1', '--format=%s'])).toBe('initial');
+		});
+
+		// The lock is only worth taking if a commit and a merge agree on the KEY.
+		// A mismatched key looks exactly like locking while excluding nothing —
+		// silent and timing-dependent — so assert the shared key directly, and
+		// that a commit really does queue behind a held lock.
+		it('serializes a lease commit against the repository lock', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const leasePath = created.path as string;
+			writeFileSync(join(leasePath, 'feature.ts'), 'export const x = 1;\n');
+
+			const { repositoryLockKey } = await import('../src/lib/server/git');
+			const { withRepositoryLock } = await import('../src/lib/server/repo-lock');
+			// Main checkout and lease share one key: that is what makes a commit in
+			// the lease exclude a merge or worktree removal in the same repository.
+			const leaseKey = await repositoryLockKey(leasePath);
+			expect(await repositoryLockKey(source)).toBe(leaseKey);
+
+			let releaseHolder!: () => void;
+			const held = new Promise<void>((r) => (releaseHolder = r));
+			let committed = false;
+			const holder = withRepositoryLock(leaseKey, () => held);
+			await new Promise((r) => setTimeout(r, 0));
+
+			const commit = gitTools
+				.get('git_commit')!
+				.handler({
+					worktree: created.leaseId as string,
+					paths: 'all',
+					subject: 'feature: add x'
+				})
+				.then((res) => {
+					committed = true;
+					return res;
+				});
+
+			await new Promise((r) => setTimeout(r, 50));
+			expect(committed).toBe(false);
+
+			releaseHolder();
+			await holder;
+			expect((await commit).ok).toBe(true);
+			expect(git(leasePath, ['log', '-1', '--format=%s'])).toBe('feature: add x');
+		});
+
+		it('rejects the selector when the session context is unavailable', async () => {
+			const { buildGitTools } = await import('../src/lib/server/tools/git');
+			const bare = new Map(buildGitTools(source).map((t) => [t.name, t]));
+			expect(
+				await bare.get('git_commit')!.handler({
+					worktree: 'anything',
+					paths: 'all',
+					subject: 'nope'
+				})
+			).toMatchObject({ ok: false, error: { code: 'worktree_unavailable' } });
+		});
+
+		// The stored path is never trusted on its own — it is re-derived from
+		// (userId, leaseId) and checked for containment. On the write path that
+		// matters more than on the read path: a commit must never land somewhere
+		// the approval dialog did not name.
+		it('fails closed when the lease checkout is gone', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			rmSync(created.path as string, { recursive: true, force: true });
+
+			const res = await gitTools.get('git_commit')!.handler({
+				worktree: created.leaseId as string,
+				paths: 'all',
+				subject: 'into thin air'
+			});
+
+			expect(res).toMatchObject({ ok: false, error: { code: 'worktree_unavailable' } });
+		});
+	});
+
+	describe('merging a lease that was never committed', () => {
+		// The silent version of this is the expensive one: a no-op merge reads as
+		// "nothing to do" and the orchestrator tears the worktree down believing
+		// it collected the work.
+		it('fails loudly and names the fix', async () => {
+			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
+			const leaseId = created.leaseId as string;
+			writeFileSync(join(created.path as string, 'a.ts'), 'one\n');
+			writeFileSync(join(created.path as string, 'b.ts'), 'two\n');
+
+			const res = await tools.get('worktree_merge')!.handler({ leaseId });
+
+			expect(res.ok).toBe(false);
+			if (res.ok) return;
+			expect(res.error.code).toBe('worktree_dirty');
+			expect(res.error.message).toContain('2 uncommitted file(s)');
+			// The message must carry the exact call that unblocks it.
+			expect(res.error.message).toContain(
+				`git_commit { worktree: "${leaseId}", paths: "all", subject:`
+			);
+
+			// And that call does unblock it.
+			const commit = await gitTools.get('git_commit')!.handler({
+				worktree: leaseId,
+				paths: 'all',
+				subject: 'sub-agent work'
+			});
+			expect(commit.ok).toBe(true);
+			const merged = payload(await tools.get('worktree_merge')!.handler({ leaseId }));
+			expect(merged.merged).toBe(true);
+			expect(existsSync(join(source, 'a.ts'))).toBe(true);
 		});
 	});
 });

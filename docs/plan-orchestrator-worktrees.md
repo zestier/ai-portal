@@ -266,6 +266,33 @@ Quotas (rejected with a `code` the model can act on):
 Audit: reuse `worktree_create` / `worktree_remove` event types, adding `leaseId`
 and `label` to `detail`.
 
+### Working inside a lease: the `worktree` selector on the git tools
+
+_(Added after the fact — ticket `01KYRA0AAPG220K5SV7B5D23NN`.)_
+
+A lease path alone is not enough to close the loop. The portal seeds no git
+**shell** grant, so every git operation a sub-agent needs must exist as a
+structured tool, and each of those tools defaults to the conversation's own
+workspace. Every one of them therefore takes an optional
+`worktree: <leaseId>` selector, resolved through the same ownership check
+(`getLease(id, userId)` + `heldByConversationId === conversationId`) so a
+conversation can never reach a lease it does not hold:
+
+- Read: `git_status`, `git_diff`, `git_log`, `git_show_commit`, `git_show_file`,
+  `git_worktree_status`, `git_worktree_list`.
+- Write: **`git_commit`**. Without it a sub-agent could edit a lease but never
+  commit, `worktree_merge` had nothing to collect (`ahead: 0`), and the work was
+  discarded — the fan-out looked like it worked and silently did not.
+
+Two guards keep that failure mode from recurring quietly:
+
+- `git_commit`'s approval prompt names the destination (lease label, branch, and
+  checkout path, resolved server-side from the id), so a human never approves a
+  commit without knowing which tree it lands in.
+- `worktree_merge` on a lease with uncommitted changes fails with the file count
+  and the exact `git_commit` call that fixes it, rather than returning a
+  no-op "already up to date".
+
 ## 6. Lifecycle
 
 - **Conversation DELETE** (`api/conversations/[id]/+server.ts`): after

@@ -61,7 +61,11 @@
 		}
 	}
 
-	const gitCommit = $derived(request.tool === 'git_commit' ? gitCommitPreview(request.args) : null);
+	const gitCommit = $derived(
+		request.tool === 'git_commit'
+			? gitCommitPreview(request.args, request.commitTarget ?? null)
+			: null
+	);
 	const templatePreview = $derived(
 		templatePermissionPreview(request.tool, request.args, request.templateBefore ?? null)
 	);
@@ -308,6 +312,18 @@
 					<div>
 						<dt>Subject</dt>
 						<dd>{gitCommit.subject}</dd>
+					</div>
+					<div>
+						<dt>Destination</dt>
+						<dd
+							data-testid="git-commit-destination"
+							class:worktree-destination={gitCommit.worktree !== null}
+						>
+							{gitCommit.destinationSummary}
+							{#if gitCommit.worktree?.path}
+								<code class="destination-path">{gitCommit.worktree.path}</code>
+							{/if}
+						</dd>
 					</div>
 					<div>
 						<dt>Target</dt>
@@ -803,6 +819,20 @@
 		margin: 0;
 		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+	/* A commit into a worktree lands somewhere other than the workspace the user
+	   is looking at, so the destination is emphasized rather than blending into
+	   the rest of the preview. */
+	.git-commit-preview dd.worktree-destination {
+		font-weight: 600;
+		color: var(--warning);
+	}
+	.git-commit-preview .destination-path {
+		display: block;
+		margin-top: 0.15rem;
+		color: var(--text-muted);
+		font-weight: 400;
+		font-size: var(--fs-sm, 0.85em);
 	}
 	.template-preview {
 		padding: 0.5rem 0.6rem;

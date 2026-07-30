@@ -10,19 +10,26 @@ import {
 	nameOnly,
 	nameStatus,
 	numstat,
+	repositoryLockKey,
 	showCommit,
 	showFile,
 	status,
 	type DiffTarget
 } from '../git';
-import { COMMIT_TICKET_FOLLOW_UP_HINT, WORKTREE_INTEGRATE_FOLLOW_UP_HINT } from './follow-up-hints';
+import {
+	COMMIT_TICKET_FOLLOW_UP_HINT,
+	leaseIntegrateFollowUpHint,
+	WORKTREE_INTEGRATE_FOLLOW_UP_HINT
+} from './follow-up-hints';
 import {
 	listWorktrees,
 	mergeWorktree,
 	worktreeIntegrationStatus,
 	WorktreeIntegrationError
 } from '../worktree-integration';
-import { getLease, touchLease } from '../leases';
+import { getLease, resolveLeaseWorkspace, touchLease } from '../leases';
+import { WorkspaceUnavailableError } from '../workdir';
+import { withRepositoryLock } from '../repo-lock';
 import { ok, err, type PortalTool, type ToolResult } from './types';
 
 // Re-exported so existing importers of these symbols from `./git` keep
@@ -40,13 +47,16 @@ const TargetKind = z.enum([
 const DiffOutput = z.enum(['patch', 'stat', 'numstat', 'name-only', 'name-status']);
 
 /**
- * Optional lease selector accepted by every read-only git tool.
+ * Optional lease selector accepted by every git tool.
  *
- * Without it these tools can only ever describe the conversation's own
+ * Without it the read tools could only ever describe the conversation's own
  * workspace, which leaves an orchestrator blind to the worktrees it handed to
  * sub-agents: it could create a worktree and merge it back, but not look inside
- * it. Shell `git` is not a fallback here — this portal deliberately does not
- * seed a git shell grant.
+ * it. `git_commit` takes the same selector for the mirror-image reason — a
+ * sub-agent given only a lease path could edit there but never commit, so its
+ * work stayed unmergeable and was silently thrown away at merge time. Shell
+ * `git` is not a fallback for either: this portal deliberately does not seed a
+ * git shell grant.
  */
 const WorktreeSelector = z.string().trim().min(1).max(64).optional();
 
@@ -54,6 +64,12 @@ const WORKTREE_PARAM = {
 	type: 'string',
 	description:
 		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to read instead of this conversation's own workspace."
+} as const;
+
+const WORKTREE_COMMIT_PARAM = {
+	type: 'string',
+	description:
+		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to commit in instead of this conversation's own workspace. Paths are resolved relative to that worktree."
 } as const;
 
 const GitStatusArgs = z
@@ -141,7 +157,8 @@ const GitCommitArgs = z
 					.strict()
 			)
 			.max(50)
-			.optional()
+			.optional(),
+		worktree: WorktreeSelector
 	})
 	.strict();
 
@@ -192,6 +209,12 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 	 * to read an arbitrary path: lease paths are portal-created checkouts of the
 	 * conversation's own repository, and are already inside the roots
 	 * `workspaceRootsFor` grants it.
+	 *
+	 * The stored path is never trusted on its own either — `resolveLeaseWorkspace`
+	 * re-derives it from (userId, leaseId) and checks containment under
+	 * WORKTREE_ROOT, failing closed. That matters most on the write path: a
+	 * tampered or replaced row must not be able to steer a commit somewhere the
+	 * approval dialog never named.
 	 */
 	function treeFor(leaseId: string | undefined): TreeSelection {
 		if (!leaseId) return { cwd };
@@ -210,10 +233,21 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 				})
 			};
 		}
+		let path: string;
+		try {
+			path = resolveLeaseWorkspace(lease);
+		} catch (cause) {
+			if (!(cause instanceof WorkspaceUnavailableError)) throw cause;
+			return {
+				error: err(`worktree ${leaseId} is no longer available: ${cause.message}`, {
+					code: 'worktree_unavailable'
+				})
+			};
+		}
 		// Reading a worktree is using it; without this the idle reaper could
 		// collect a lease an orchestrator is actively polling.
 		touchLease(lease.id);
-		return { cwd: lease.path };
+		return { cwd: path };
 	}
 
 	return [
@@ -404,7 +438,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_commit',
 			description:
-				'Structured replacement for `git add` plus `git commit`. Creates a normal commit from a deterministic structured message and either all current changes or explicitly named whole-file workspace paths.',
+				'Structured replacement for `git add` plus `git commit`. Creates a normal commit from a deterministic structured message and either all current changes or explicitly named whole-file workspace paths. Pass `worktree` to commit inside a worktree this conversation holds — the only sanctioned way for a sub-agent working in a lease to land its work so it can be merged back.',
 			argsSchema: GitCommitArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -444,22 +478,37 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 							additionalProperties: false
 						},
 						description: 'Optional structured commit trailers.'
-					}
+					},
+					worktree: WORKTREE_COMMIT_PARAM
 				},
 				required: ['paths', 'subject'],
 				additionalProperties: false
 			},
 			async handler(args, ctx) {
-				const parsed = GitCommitArgs.parse(args);
-				const result = await commitChanges(cwd, parsed, ctx);
+				const { worktree, ...parsed } = GitCommitArgs.parse(args);
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				// Serialize against the other repository mutators (worktree add /
+				// remove, either merge direction) on the SAME lock they take. Without
+				// it a merge's dirty/ahead guards — a check-then-act re-read inside
+				// that lock — could be invalidated by a commit landing mid-merge, and
+				// this tool is now precisely the thing parallel sub-agents call.
+				const result = await withRepositoryLock(await repositoryLockKey(tree.cwd), () =>
+					commitChanges(tree.cwd, parsed, ctx)
+				);
 				// Only worktree sessions get the integrate nudge; in the main checkout
-				// a commit is already where the user can see it.
-				const linked = await isLinkedWorktree(cwd);
-				return ok(result, undefined, {
-					followUpHint: linked
-						? `${COMMIT_TICKET_FOLLOW_UP_HINT}\n\n${WORKTREE_INTEGRATE_FOLLOW_UP_HINT}`
-						: COMMIT_TICKET_FOLLOW_UP_HINT
-				});
+				// a commit is already where the user can see it. A commit made INTO a
+				// lease is nudged toward `worktree_merge` with that lease's id, since
+				// that (not `git_worktree_merge`, which acts on the session's own cwd)
+				// is what collects it.
+				//
+				// Both can apply at once: when the conversation's OWN workspace is a
+				// linked worktree, collecting a lease only gets the work as far as
+				// that worktree's branch, so the second leg is named too.
+				const hints = [COMMIT_TICKET_FOLLOW_UP_HINT];
+				if (worktree) hints.push(leaseIntegrateFollowUpHint(worktree));
+				if (await isLinkedWorktree(cwd)) hints.push(WORKTREE_INTEGRATE_FOLLOW_UP_HINT);
+				return ok(result, undefined, { followUpHint: hints.join('\n\n') });
 			}
 		},
 		{

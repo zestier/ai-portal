@@ -39,6 +39,42 @@ describe('gitCommitPreview', () => {
 		expect(gitCommitPreview('all')).toBeNull();
 		expect(gitCommitPreview(['all'])).toBeNull();
 	});
+
+	describe('destination', () => {
+		it('names the conversation workspace when no worktree is targeted', () => {
+			const preview = gitCommitPreview({ subject: 'wip', paths: 'all' });
+			expect(preview?.worktree).toBeNull();
+			expect(preview?.destinationSummary).toBe("This conversation's workspace");
+		});
+
+		it('names the resolved lease, branch, and path', () => {
+			const preview = gitCommitPreview(
+				{ subject: 'wip', paths: 'all', worktree: 'lease-1' },
+				{ leaseId: 'lease-1', label: 'api', branch: 'portal/lease/x--api', path: '/wt/api' }
+			);
+			expect(preview?.worktree).toMatchObject({ leaseId: 'lease-1', label: 'api' });
+			expect(preview?.destinationSummary).toBe('worktree api on branch portal/lease/x--api');
+		});
+
+		// An unresolvable id still has to be shown: the call will fail, but the
+		// human must not read the dialog as "commits into my workspace".
+		it('falls back to the raw id when no snapshot was resolved', () => {
+			const preview = gitCommitPreview({ subject: 'wip', paths: 'all', worktree: 'lease-9' });
+			expect(preview?.worktree).toEqual({ leaseId: 'lease-9' });
+			expect(preview?.destinationSummary).toBe('worktree lease-9');
+		});
+
+		// The tool's schema trims the selector, so the preview must too — or a
+		// padded id renders as unresolved while the commit lands in a real
+		// worktree.
+		it('normalizes the raw id the way the tool schema does', () => {
+			const preview = gitCommitPreview({ subject: 'wip', paths: 'all', worktree: '  lease-9  ' });
+			expect(preview?.worktree).toEqual({ leaseId: 'lease-9' });
+			expect(
+				gitCommitPreview({ subject: 'wip', paths: 'all', worktree: '   ' })?.worktree
+			).toBeNull();
+		});
+	});
 });
 
 describe('summarizeGitCommitPermission', () => {
@@ -63,5 +99,23 @@ describe('summarizeGitCommitPermission', () => {
 		expect(summary).toContain('Target: 2 selected paths');
 		expect(summary).toContain('- src/a.ts');
 		expect(summary).toContain('- src/b.ts');
+	});
+
+	// The audit row and the best-effort feedback are both built from this
+	// string, so the destination has to survive into it — not just the dialog.
+	it('always states the destination', () => {
+		expect(summarizeGitCommitPermission({ subject: 'wip', paths: 'all' })).toContain(
+			"Destination: This conversation's workspace"
+		);
+		const inLease = summarizeGitCommitPermission(
+			{ subject: 'wip', paths: 'all' },
+			{
+				leaseId: 'lease-1',
+				label: 'api',
+				branch: 'portal/lease/x--api',
+				path: '/wt/api'
+			}
+		);
+		expect(inLease).toContain('Destination: worktree api on branch portal/lease/x--api');
 	});
 });

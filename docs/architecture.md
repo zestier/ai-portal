@@ -156,7 +156,13 @@ Every read-only git tool additionally takes an optional `worktree: <leaseId>`
 selector that runs it inside a lease this conversation holds, so an orchestrator
 can `git_status` / `git_diff` / `git_log` a sub-agent's checkout instead of being
 blind to it until the merge — the tool-side counterpart of the `?worktree=`
-selector on the Files/Changes/Commits routes. The lease must be held by the
+selector on the Files/Changes/Commits routes. `git_commit` takes the same
+selector, and it is the only sanctioned way to commit inside a lease: no git
+shell grant is seeded, so without it a sub-agent could write in a worktree but
+never land the work, leaving `worktree_merge` nothing to collect. Its approval
+prompt therefore names the destination lease, branch, and path (resolved
+server-side from the id), so a human is never asked to approve a commit without
+knowing which tree it lands in. The lease must be held by the
 calling conversation (same check as `worktree_status`), which is why the
 selector cannot widen reach: those paths are already among the roots
 `workspaceRootsFor` grants it. `GET /api/worktrees/status` feeds the sidebar's

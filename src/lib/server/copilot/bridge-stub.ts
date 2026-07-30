@@ -8,6 +8,9 @@
 // Test triggers: include any of the following tokens in the prompt to drive
 // interactive flows from a Playwright test without a real Copilot CLI:
 //   @trigger-permission         -> onPermissionRequest fires (shell tool)
+//   @trigger-git-commit-permission:<leaseId>
+//                               -> onPermissionRequest fires for a git_commit
+//                                  targeting that worktree lease
 //   @trigger-auto-mode-switch   -> onAutoModeSwitchRequest fires
 //   @trigger-user-input         -> onUserInputRequest fires
 //   @trigger-elicitation        -> onElicitationRequest fires (simple form)
@@ -126,6 +129,21 @@ class StubSession {
 				// the dialog always renders. `npm` is not on the seed list,
 				// so this exercises the real interactive path.
 				fullCommandText: 'npm install left-pad'
+			});
+		}
+		// `@trigger-git-commit-permission:<leaseId>` raises the always-prompt
+		// git_commit dialog for a commit that lands in a worktree, so a test can
+		// assert the human is told WHERE it lands rather than just what it says.
+		const commitInLease = /@trigger-git-commit-permission:([A-Za-z0-9]+)/.exec(prompt);
+		if (commitInLease) {
+			await this.handlers.onPermissionRequest?.({
+				kind: 'custom',
+				toolName: 'git_commit',
+				args: {
+					worktree: commitInLease[1],
+					paths: 'all',
+					subject: 'feature: sub-agent work'
+				}
 			});
 		}
 		if (prompt.includes('@trigger-user-input')) {

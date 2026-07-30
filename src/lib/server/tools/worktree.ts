@@ -110,13 +110,47 @@ function leaseView(
 	};
 }
 
-function describeWorktreeError(cause: unknown): { message: string; code?: string } | null {
+function describeWorktreeError(
+	cause: unknown
+): { message: string; code?: string; dirtyCount?: number } | null {
 	if (cause instanceof LeaseQuotaError) return { message: cause.message, code: cause.code };
 	if (cause instanceof WorktreeError) return { message: cause.message, code: cause.code };
 	if (cause instanceof WorktreeIntegrationError) {
-		return { message: cause.message, code: cause.code };
+		return {
+			message: cause.message,
+			code: cause.code,
+			...(cause.detail?.dirtyCount === undefined ? {} : { dirtyCount: cause.detail.dirtyCount })
+		};
 	}
 	return null;
+}
+
+/**
+ * Rewrite an integration failure into something the orchestrator can act on
+ * without another round trip.
+ *
+ * `worktree_dirty` is the load-bearing one: uncommitted work in a lease is
+ * unmergeable, and the whole point of the fan-out is that it gets collected. The
+ * message therefore names the count AND the exact call that fixes it — a
+ * sub-agent that never committed is the common cause, and `git_commit` with this
+ * lease's id is the only sanctioned way to fix it (shell git is not granted).
+ */
+function mergeErrorMessage(
+	described: { message: string; code?: string; dirtyCount?: number },
+	leaseId: string
+): string {
+	if (described.code === 'not_fast_forwardable') {
+		return `${described.message}. When collecting several worktrees, retry with allowMergeCommit: true.`;
+	}
+	if (described.code === 'worktree_dirty') {
+		const count = described.dirtyCount;
+		return (
+			`worktree ${leaseId} has ${count === undefined ? '' : `${count} `}uncommitted file(s); ` +
+			`commit them before merging with git_commit { worktree: "${leaseId}", paths: "all", subject: "<message>" }, or discard them. ` +
+			'Merging now would silently leave that work behind.'
+		);
+	}
+	return described.message;
 }
 
 export function buildWorktreeTools(ctx: { userId: string; conversationId: string }): PortalTool[] {
@@ -328,9 +362,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 					const described = describeWorktreeError(cause);
 					if (described) {
 						return err(
-							described.code === 'not_fast_forwardable'
-								? `${described.message}. When collecting several worktrees, retry with allowMergeCommit: true.`
-								: described.message,
+							mergeErrorMessage(described, parsed.leaseId),
 							described.code ? { code: described.code } : undefined
 						);
 					}
@@ -386,7 +418,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 					if (described) {
 						return err(
 							described.code === 'worktree_dirty'
-								? `${described.message}. Commit the work first, or pass force: true to discard it.`
+								? `${described.message}. Commit the work first with git_commit { worktree: "${parsed.leaseId}", paths: "all", subject: "<message>" }, or pass force: true to discard it.`
 								: described.message,
 							described.code ? { code: described.code } : undefined
 						);

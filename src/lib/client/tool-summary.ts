@@ -222,9 +222,13 @@ function gitCommitSummary(args: Record<string, unknown>): string | null {
 					? String(paths[0])
 					: `${String(paths[0])} +${paths.length - 1} more`
 				: null;
-	const extras = [hasBody ? 'body' : null, trailers ? `${trailers} trailers` : null].filter(
-		Boolean
-	);
+	const extras = [
+		// The transcript row is the only place a reader sees that a commit went
+		// somewhere other than this conversation's workspace.
+		str(args.worktree) ? `in worktree ${truncate(String(args.worktree), 30)}` : null,
+		hasBody ? 'body' : null,
+		trailers ? `${trailers} trailers` : null
+	].filter(Boolean);
 	const main = [subject ? truncate(subject, 50) : null, target].filter(Boolean).join(' · ');
 	return [main || null, ...extras].filter(Boolean).join(' · ') || null;
 }
