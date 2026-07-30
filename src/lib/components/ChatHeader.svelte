@@ -343,9 +343,9 @@
 			return;
 		}
 		if (next) {
-			// Enabling auto-approve is a user-wide grant that leaks into every other
-			// conversation, so gate it behind an explicit confirmation. Snap the
-			// checkbox back until the user confirms.
+			// Enabling auto-approve stops permission prompts for this conversation
+			// until it is turned back off, so gate it behind one deliberate
+			// confirmation. Snap the checkbox back until the user confirms.
 			target.checked = approveAllTools;
 			approveConfirmOpen = true;
 			return;
@@ -968,7 +968,7 @@
 <ConfirmDialog
 	open={approveConfirmOpen}
 	title="Approve all tool calls?"
-	confirmLabel="Enable for my account"
+	confirmLabel="Enable for this conversation"
 	cancelLabel="Cancel"
 	danger
 	busy={savingApprove}
@@ -976,11 +976,14 @@
 	onCancel={cancelApproveAll}
 >
 	<p>
-		This blanket-approves every tool call without prompting. The grant is scoped to
-		<strong>your user account, not this conversation</strong>, so it takes effect in
-		<strong>all of your conversations</strong> — including future ones. Each auto-approved portal
-		tool is still recorded in the audit log as <code>auto-allow</code>. You can turn it back off at
-		any time.
+		This auto-approves tool calls in <strong>this conversation only</strong> — the agent stops asking
+		you to confirm them here, and your default permission policy is bypassed for it. Your other conversations
+		still prompt as usual, and it stays on until you turn it off, including across reloads and new sessions.
+	</p>
+	<p>
+		Deny and prompt grants in your permission settings still apply, and some high-impact portal
+		actions — commits, worktree merges and removals, template changes — always ask. Each
+		auto-approved portal tool is still recorded in the audit log as <code>auto-allow</code>.
 	</p>
 </ConfirmDialog>
 

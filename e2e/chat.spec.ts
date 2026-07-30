@@ -203,7 +203,7 @@ test('an armed follow-up auto-sends after the active turn finishes', async ({ pa
 	).toHaveCount(0);
 });
 
-test('"Approve all tool calls" is gated behind a user-wide confirmation', async ({
+test('"Approve all tool calls" is gated behind a conversation-scoped confirmation', async ({
 	page,
 	request
 }) => {
@@ -216,12 +216,16 @@ test('"Approve all tool calls" is gated behind a user-wide confirmation', async 
 	const toggle = page.getByRole('checkbox', { name: 'Approve all tool calls' });
 	await expect(toggle).not.toBeChecked();
 
-	// Clicking only opens a confirmation that spells out the user-wide blast
-	// radius; the toggle must snap back off until the user confirms.
+	// Clicking only opens a confirmation that spells out the blast radius —
+	// this conversation only; the toggle must snap back off until the user
+	// confirms.
 	await toggle.click();
 	const dialog = page.getByRole('alertdialog');
 	await expect(dialog).toBeVisible();
-	await expect(dialog).toContainText('all of your conversations');
+	await expect(dialog).toContainText('this conversation only');
+	// The bypass is conversation-scoped, so the copy must not claim otherwise.
+	await expect(dialog).not.toContainText('all of your conversations');
+	await expect(dialog).not.toContainText('your user account');
 	await expect(toggle).not.toBeChecked();
 
 	// Cancel: nothing changes.
@@ -229,10 +233,10 @@ test('"Approve all tool calls" is gated behind a user-wide confirmation', async 
 	await expect(dialog).toBeHidden();
 	await expect(toggle).not.toBeChecked();
 
-	// Confirm: the grant is applied and the toggle reflects it.
+	// Confirm: the bypass is applied to this conversation and the toggle reflects it.
 	await toggle.click();
 	await expect(dialog).toBeVisible();
-	await dialog.getByRole('button', { name: 'Enable for my account' }).click();
+	await dialog.getByRole('button', { name: 'Enable for this conversation' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(toggle).toBeChecked();
 
