@@ -112,7 +112,27 @@ const GIT_STRUCTURED_TOOLS = [
 	'git_worktree_status',
 	'git_worktree_list'
 ];
-const TICKET_STRUCTURED_TOOLS = ['ticket_add', 'ticket_list', 'ticket_get', 'ticket_update'];
+/**
+ * Workspace ticket bookkeeping. `ticket_block` / `ticket_unblock` are seeded
+ * alongside the rest because they are strictly less capable than the already
+ * seeded `ticket_update`, whose `blockedBy` / `blocks` fields replace whole
+ * edge sets declaratively — leaving them out withheld nothing and only made
+ * ordering follow-up work prompt, which is an auto-deny under
+ * `best-effort`/autopilot even though the portal guidance tells agents to link
+ * tickets with `ticket_block`.
+ *
+ * The attachment tools stay out on purpose: `ticket_attach` reads an arbitrary
+ * path off disk, so it belongs to the filesystem grants rather than this list,
+ * and `ticket_detach` destroys a stored blob.
+ */
+const TICKET_STRUCTURED_TOOLS = [
+	'ticket_add',
+	'ticket_list',
+	'ticket_get',
+	'ticket_update',
+	'ticket_block',
+	'ticket_unblock'
+];
 const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];
 
 /**
