@@ -894,7 +894,9 @@ function reconstructToolCalls(
 				type: 'function',
 				function: {
 					name: tool.tool,
-					arguments: tool.argsJson
+					// Only ever reached with untrimmed records (transcript replay
+					// reads the DB directly), so this is a type-level floor.
+					arguments: tool.argsJson ?? ''
 				}
 			}
 		}));

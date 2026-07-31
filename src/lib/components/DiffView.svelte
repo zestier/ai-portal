@@ -15,10 +15,13 @@
 		type HighlightedLines
 	} from '$lib/client/syntax-highlight';
 	import EmptyState from './ui/EmptyState.svelte';
-
+	import Alert from './ui/Alert.svelte';
+	import { formatFieldBytes } from '$lib/client/lazy-field';
+	import { lazyFieldState, loadLazyField } from '$lib/client/lazy-field.svelte';
 	let {
 		path = 'diff',
 		diff,
+		lazy = null,
 		showLineNumbers = true,
 		collapsible = false,
 		commentable = false,
@@ -27,7 +30,16 @@
 		onLineClick
 	}: {
 		path?: string;
-		diff: string;
+		/**
+		 * The unified diff, or null when the conversation payload trimmed it for
+		 * size. A null diff is never rendered as "no changes" — see `lazy`.
+		 */
+		diff: string | null;
+		/**
+		 * How to fetch a trimmed diff on demand. Supplying this turns a null
+		 * `diff` into an explicit "load diff" affordance rather than an error.
+		 */
+		lazy?: { conversationId: string; fileEditId: string; bytes?: number | undefined } | null;
 		showLineNumbers?: boolean;
 		collapsible?: boolean;
 		/** When true, each code line gets an affordance to attach a review comment. */
@@ -38,6 +50,24 @@
 		commentedKeys?: Set<string>;
 		onLineClick?: (location: ReviewLocation) => void;
 	} = $props();
+
+	// Lazily-fetched text for a trimmed diff. Seeded from the page-lifetime memo
+	// so a remount (progressive rendering, scroll) doesn't re-download it.
+	// Lazily-fetched text for a trimmed diff. Keyed by record in a shared store,
+	// never held on this instance: the transcript's each-blocks are index-keyed,
+	// so an instance can be re-bound to a different file edit and must not then
+	// render the previous edit's diff under the new path.
+	const lazyState = $derived(
+		lazy ? lazyFieldState(lazy.conversationId, 'file-diff', lazy.fileEditId) : null
+	);
+	const resolvedDiff = $derived(diff ?? lazyState?.value ?? null);
+	const lazyLoading = $derived(lazyState?.loading === true);
+	const lazyError = $derived(lazyState?.error ?? null);
+
+	function loadDiff() {
+		if (!lazy) return;
+		void loadLazyField(lazy.conversationId, 'file-diff', lazy.fileEditId);
+	}
 
 	function lineLocation(chunkPath: string, l: DiffLine): ReviewLocation | null {
 		if (l.kind === 'add' || l.kind === 'context') {
@@ -50,9 +80,9 @@
 	}
 
 	const chunks = $derived.by(() => {
-		if (!isRenderableDiff(diff)) return [];
-		const split = splitUnifiedDiffByFile(diff, path);
-		return split.length > 0 ? split : [{ path, diff }];
+		if (resolvedDiff === null || !isRenderableDiff(resolvedDiff)) return [];
+		const split = splitUnifiedDiffByFile(resolvedDiff, path);
+		return split.length > 0 ? split : [{ path, diff: resolvedDiff }];
 	});
 	const parsedChunks = $derived.by(() =>
 		chunks.map((chunk, chunkIndex) => {
@@ -68,7 +98,7 @@
 			};
 		})
 	);
-	const tooLarge = $derived(!isRenderableDiff(diff));
+	const tooLarge = $derived(resolvedDiff !== null && !isRenderableDiff(resolvedDiff));
 	let collapsedFiles = $state<Record<string, boolean>>({});
 	let highlightedChunks = $state<Record<string, HighlightedLines>>({});
 	let highlightRequestSeq = 0;
@@ -109,9 +139,33 @@
 </script>
 
 <div class="diff-set">
-	{#if tooLarge}
+	{#if resolvedDiff === null}
+		<div class="diff">
+			<div class="path-bar">
+				<code class="path">{path}</code>
+			</div>
+			<div class="diff-lazy">
+				{#if lazyLoading}
+					<span class="muted">Loading diff…</span>
+				{:else if lazyError}
+					<Alert kind="error">
+						{lazyError}
+						<button type="button" class="load-diff" onclick={loadDiff}>Retry</button>
+					</Alert>
+				{:else if lazy}
+					<button type="button" class="load-diff" onclick={loadDiff}>
+						Load diff{lazy.bytes ? ` (${formatFieldBytes(lazy.bytes)})` : ''}
+					</button>
+					<span class="muted">Not loaded on open, to keep the conversation fast.</span>
+				{:else}
+					<span class="muted">Diff is unavailable.</span>
+				{/if}
+			</div>
+		</div>
+	{/if}
+	{#if tooLarge && resolvedDiff !== null}
 		<div class="diff-too-large">
-			Diff is too large to render safely ({diff.length.toLocaleString()} characters; limit
+			Diff is too large to render safely ({resolvedDiff.length.toLocaleString()} characters; limit
 			{MAX_RENDERABLE_DIFF_CHARS.toLocaleString()}).
 		</div>
 	{/if}
@@ -226,6 +280,27 @@
 		border-radius: 6px;
 		background: var(--surface);
 		color: var(--text-muted);
+	}
+	.diff-lazy {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.6rem 0.75rem;
+		font-size: var(--fs-sm);
+	}
+	.diff-lazy .muted {
+		color: var(--text-muted);
+	}
+	.load-diff {
+		font: inherit;
+		font-size: var(--fs-sm);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-2);
+		color: var(--text);
+		padding: 0.2rem 0.5rem;
+		cursor: pointer;
 	}
 	.highlight-note {
 		padding: 0.35rem 0.6rem;

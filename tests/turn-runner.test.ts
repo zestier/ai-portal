@@ -1320,7 +1320,7 @@ describe('turn-runner', () => {
 			const parent = assistant?.toolCalls?.find((t) => {
 				if (t.tool !== 'task') return false;
 				try {
-					return JSON.parse(t.argsJson).agent_type === 'memory-extractor';
+					return JSON.parse(t.argsJson ?? '').agent_type === 'memory-extractor';
 				} catch {
 					return false;
 				}
@@ -1882,7 +1882,7 @@ describe('turn-runner', () => {
 			// The spinning subagent card was closed (not left running).
 			const parent = assistant?.toolCalls?.find((t) => {
 				try {
-					return JSON.parse(t.argsJson).agent_type === 'memory-extractor';
+					return JSON.parse(t.argsJson ?? '').agent_type === 'memory-extractor';
 				} catch {
 					return false;
 				}
@@ -2085,7 +2085,7 @@ describe('turn-runner', () => {
 			expect(assistants[0].content).toBe('Done.');
 			const parent = assistants[0].toolCalls?.find((t) => {
 				try {
-					return JSON.parse(t.argsJson).agent_type === 'memory-extractor';
+					return JSON.parse(t.argsJson ?? '').agent_type === 'memory-extractor';
 				} catch {
 					return false;
 				}

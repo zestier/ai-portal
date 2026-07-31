@@ -8,6 +8,8 @@ import { isHiddenVisibility } from '$lib/server/memory/engine';
 // summarizing the conversation.
 export const GET: RequestHandler = ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	// Untrimmed on purpose: an export must contain the full tool args/results
+	// and diffs, not the page payload's lazily-fetched markers.
 	const msgs = messages.listByConversation(conv.id);
 
 	const lines: string[] = [];
@@ -61,7 +63,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 		const emitTool = (tc: (typeof tools)[number]) => {
 			lines.push(`> tool: \`${tc.tool}\` — ${tc.status}`);
 			lines.push('```json');
-			lines.push(tc.argsJson);
+			lines.push(tc.argsJson ?? '');
 			lines.push('```');
 			if (tc.resultJson) {
 				lines.push('```json');
@@ -72,7 +74,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 		const emitEdit = (fe: (typeof edits)[number]) => {
 			lines.push(`> file edit: \`${fe.path}\``);
 			lines.push('```diff');
-			lines.push(fe.diff);
+			lines.push(fe.diff ?? '');
 			lines.push('```');
 		};
 

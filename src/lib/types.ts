@@ -566,8 +566,19 @@ export interface ToolCallRecord {
 	id: string;
 	messageId: string;
 	tool: string;
-	argsJson: string;
+	// NULL when the field was omitted from a trimmed page payload (see
+	// `argsTruncated`) — never for a live/streamed or untrimmed record.
+	argsJson: string | null;
 	resultJson: string | null;
+	// Set only on a trimmed conversation-open payload: the stored field
+	// exceeded INLINE_FIELD_MAX_BYTES and was replaced by this marker plus its
+	// byte size. The client fetches the real text on first expand. Deliberately
+	// a separate flag rather than a sentinel string so that anything which
+	// JSON.parses the field is a compile error, not a runtime throw.
+	argsTruncated?: boolean;
+	argsBytes?: number;
+	resultTruncated?: boolean;
+	resultBytes?: number;
 	status: 'pending' | 'ok' | 'error' | 'denied';
 	startedAt: number;
 	endedAt: number | null;
@@ -606,7 +617,11 @@ export interface FileEditRecord {
 	id: string;
 	messageId: string;
 	path: string;
-	diff: string;
+	// NULL when omitted from a trimmed page payload; see
+	// ToolCallRecord.argsTruncated.
+	diff: string | null;
+	diffTruncated?: boolean;
+	diffBytes?: number;
 	createdAt: number;
 	textOffset: number | null;
 	// See ReasoningBlockRecord.parentToolCallId.

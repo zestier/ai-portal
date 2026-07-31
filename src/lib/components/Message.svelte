@@ -560,7 +560,13 @@
 						durationMs={p.block.durationMs}
 					/>
 				{:else}
-					<DiffView path={p.edit.path} diff={p.edit.diff} />
+					<DiffView
+						path={p.edit.path}
+						diff={p.edit.diff}
+						lazy={p.edit.diffTruncated && conversationId
+							? { conversationId, fileEditId: p.edit.id, bytes: p.edit.diffBytes }
+							: null}
+					/>
 				{/if}
 			{/each}
 			{#if thinking}

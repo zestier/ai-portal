@@ -15,12 +15,27 @@ import { loadConfig } from '$lib/server/config';
 import { log } from '$lib/server/log';
 import { ticketWorkspaceFromConversation } from '$lib/server/ticket-workspace';
 import { interpolateTicketPrompt } from '$lib/tickets/chat';
+import {
+	INLINE_ARGS_MAX_BYTES,
+	INLINE_DIFF_MAX_BYTES,
+	INLINE_RESULT_MAX_BYTES
+} from '$lib/payload-limits';
 
 export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (!locals.userId) throw error(401);
 	const conv = convs.get(params.id, locals.userId);
 	if (!conv) throw error(404);
-	const msgs = messages.listByConversation(conv.id);
+	const msgs = messages.listByConversation(conv.id, {
+		// Oversized tool args/results and file diffs are collapsed by default in
+		// the UI, so shipping them in the page payload costs megabytes for
+		// content the reader rarely opens. Trim them to markers; ToolCall /
+		// DiffView fetch the full text on demand.
+		inlineMaxBytes: {
+			args: INLINE_ARGS_MAX_BYTES,
+			result: INLINE_RESULT_MAX_BYTES,
+			diff: INLINE_DIFF_MAX_BYTES
+		}
+	});
 	// Opening a conversation counts as seeing it: clears the sidebar's unseen
 	// indicator. Output that streams in *after* this load is covered by the
 	// client's post-turn POST to `/read`.

@@ -94,7 +94,8 @@ function unwrapEnvelopeResult(envelope: JsonRecord): JsonRecord | null {
 	return envelope;
 }
 
-function parseArgs(json: string): JsonRecord {
+function parseArgs(json: string | null): JsonRecord {
+	if (json === null) return {};
 	try {
 		const v = JSON.parse(json);
 		return isRecord(v) ? v : {};
@@ -188,7 +189,7 @@ function commitTrailer(v: unknown): GitCommitTrailer | null {
 
 export function parseGitToolResult(
 	tool: string,
-	argsJson: string,
+	argsJson: string | null,
 	resultText: string | null
 ): GitRenderedResult | null {
 	const t = tool.toLowerCase();

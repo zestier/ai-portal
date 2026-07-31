@@ -12,6 +12,8 @@
 	import DiffView from './DiffView.svelte';
 	import Pill from './ui/Pill.svelte';
 	import Alert from './ui/Alert.svelte';
+	import { formatFieldBytes } from '$lib/client/lazy-field';
+	import { ensureLazyField, lazyFieldState, loadLazyField } from '$lib/client/lazy-field.svelte';
 
 	let {
 		toolCall,
@@ -42,7 +44,19 @@
 	// their presentation entry and stay collapsed until the user opens them.
 	let userToggled = $state(false);
 	let manualOpen = $state(false);
-	const displayState = $derived(getSubagentDisplayState(toolCall));
+
+	// A subagent's result is only rendered once the card is open, so an
+	// oversized one is trimmed out of the page payload and fetched on expand.
+	// Its ARGUMENTS are never trimmed (see ALWAYS_INLINE_ARGS_TOOLS): they carry
+	// the card's headline, pills and retry affordance, all of which render while
+	// collapsed.
+	const resultTruncated = $derived(toolCall.resultTruncated === true);
+	const lazyResult = $derived(lazyFieldState(conversationId, 'tool-result', toolCall.id));
+	const resultJson = $derived(toolCall.resultJson ?? lazyResult.value);
+	// Everything downstream reads the *effective* record, so a lazily-loaded
+	// result flows through display state, markdown and the raw disclosure alike.
+	const effectiveToolCall = $derived<ToolCallRecord>({ ...toolCall, resultJson });
+	const displayState = $derived(getSubagentDisplayState(effectiveToolCall));
 	const pending = $derived(displayState.pending);
 
 	const args = $derived(parseSubagentArgs(toolCall.argsJson));
@@ -56,10 +70,15 @@
 
 	const open = $derived(userToggled ? manualOpen : pending && presentation.autoExpandWhilePending);
 
+	$effect(() => {
+		if (open && wantsLazyResult) ensureLazyField(conversationId, 'tool-result', toolCall.id);
+	});
+
 	function onToggle(e: Event) {
 		const el = e.currentTarget as HTMLDetailsElement;
 		userToggled = true;
 		manualOpen = el.open;
+		if (el.open && wantsLazyResult) ensureLazyField(conversationId, 'tool-result', toolCall.id);
 	}
 
 	const resultText = $derived(displayState.resultText);
@@ -136,6 +155,13 @@
 	// avoid showing it twice. Background launches (no streamed content) and
 	// agents whose only output is the final result still show it.
 	const showResultSection = $derived(resultHtml && childSpoken.length === 0);
+
+	// A trimmed result is only worth fetching when it would actually be shown.
+	// If the subagent streamed its answer as 'content' blocks, that same text is
+	// already rendered verbatim in the activity timeline, so offering to "load
+	// the response" would both duplicate it and — since `showResultSection`
+	// stays false once loaded — lead nowhere.
+	const wantsLazyResult = $derived(resultTruncated && childSpoken.length === 0);
 
 	// Sub-agent activity timeline: child content, reasoning bursts, tool calls,
 	// and edits in the order they happened, sorted purely by start timestamp.
@@ -331,9 +357,15 @@
 								{@html item.html}
 							</div>
 						{:else if item.kind === 'tool'}
-							<ToolCall toolCall={item.tool} />
+							<ToolCall toolCall={item.tool} {conversationId} />
 						{:else}
-							<DiffView path={item.edit.path} diff={item.edit.diff} />
+							<DiffView
+								path={item.edit.path}
+								diff={item.edit.diff}
+								lazy={item.edit.diffTruncated && conversationId
+									? { conversationId, fileEditId: item.edit.id, bytes: item.edit.diffBytes }
+									: null}
+							/>
 						{/if}
 					{/each}
 				</div>
@@ -366,13 +398,39 @@
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				<div class="markdown" use:copyableCodeBlocks>{@html resultHtml}</div>
 			</div>
+		{:else if resultJson === null && wantsLazyResult}
+			<div class="section response">
+				<div class="label static">Response</div>
+				{#if lazyResult.loading}
+					<div class="muted">Loading response ({formatFieldBytes(toolCall.resultBytes)})…</div>
+				{:else if lazyResult.error}
+					<Alert kind="error">
+						{lazyResult.error}
+						<button
+							type="button"
+							class="retry-btn"
+							onclick={() => loadLazyField(conversationId, 'tool-result', toolCall.id)}
+						>
+							Retry
+						</button>
+					</Alert>
+				{:else}
+					<button
+						type="button"
+						class="retry-btn"
+						onclick={() => loadLazyField(conversationId, 'tool-result', toolCall.id)}
+					>
+						Load response ({formatFieldBytes(toolCall.resultBytes)})
+					</button>
+				{/if}
+			</div>
 		{:else if toolCall.status === 'pending'}
 			<div class="section">
 				<div class="label static">Response</div>
 				<div class="muted">Waiting for subagent to finish…</div>
 			</div>
 		{/if}
-		{#if !resultHtml && toolCall.resultJson}
+		{#if !resultHtml && resultJson}
 			<details class="section raw">
 				<summary class="disclosure">
 					<svg
@@ -391,7 +449,7 @@
 					</svg>
 					<span class="label">Raw output</span>
 				</summary>
-				<pre><code>{toolCall.resultJson}</code></pre>
+				<pre><code>{resultJson}</code></pre>
 			</details>
 		{/if}
 	</div>

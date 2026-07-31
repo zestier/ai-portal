@@ -94,7 +94,8 @@ export function splitSummaryForWrap(summary: string): string[] {
 	return summary.match(/[^/\\]*[/\\]|[^/\\]+/g) ?? [];
 }
 
-export function summarizeToolCall(tool: string, argsJson: string): string | null {
+export function summarizeToolCall(tool: string, argsJson: string | null): string | null {
+	if (argsJson === null) return null;
 	const t = tool.toLowerCase();
 	if (t === 'apply_patch') {
 		const changes = parseApplyPatch(argsJson);

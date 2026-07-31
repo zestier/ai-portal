@@ -199,6 +199,7 @@
 			// the new conversation's `messages` array.
 			closeStream();
 			messages = [...initialMessages];
+			renderStartIndex = initialRenderStart(initialMessages.length);
 			title = conversation.title;
 			sessionModel = conversation.model ?? effectiveModel;
 			sessionMode = conversation.mode;
@@ -1329,6 +1330,75 @@
 	const renderedMessages = $derived(
 		thinking && !lastIsAssistant ? [...messages, thinkingPlaceholder] : messages
 	);
+
+	// --- Progressive rendering -------------------------------------------
+	//
+	// Mounting every <Message_> at once is O(history): each one interleaves its
+	// parts, runs `renderMarkdown` (marked + DOMPurify) and mounts a card per
+	// tool call. On a 100-message / 600-tool-call thread that is most of the
+	// time between "page loaded" and "page usable".
+	//
+	// So we mount the most recent slice immediately and let the older head in
+	// during idle time, oldest-last. This is deliberately NOT virtualization:
+	// nothing is ever unmounted, so in-page Ctrl+F and any future
+	// anchor/permalink scrolling still find old messages once the queue drains
+	// (a few frames), and there are no blank gaps to scroll into.
+	//
+	// `renderStartIndex` is an index into `renderedMessages`, not a count from
+	// the end, so a message arriving on the live stream never pushes an
+	// already-rendered one back out of the window.
+	const INITIAL_RENDER_TAIL = 20;
+	const DEFERRED_RENDER_CHUNK = 15;
+
+	let renderStartIndex = $state(0);
+
+	function initialRenderStart(total: number): number {
+		return Math.max(0, total - INITIAL_RENDER_TAIL);
+	}
+
+	// Clamped, because `messages` can SHRINK under a fixed start index: an inline
+	// edit or a regenerate truncates the array (`messages.slice(0, idx + 1)`),
+	// and an unclamped `slice(renderStartIndex)` would then return [] — a blank
+	// transcript, precisely while the replacement turn is streaming in.
+	const renderStart = $derived(
+		Math.min(renderStartIndex, initialRenderStart(renderedMessages.length))
+	);
+
+	const visibleMessages = $derived(
+		renderStart > 0 ? renderedMessages.slice(renderStart) : renderedMessages
+	);
+
+	function scheduleIdle(fn: () => void): () => void {
+		if (typeof requestIdleCallback === 'function') {
+			// The timeout keeps a busy main thread from starving the queue, so
+			// the transcript always finishes filling in.
+			const handle = requestIdleCallback(fn, { timeout: 250 });
+			return () => cancelIdleCallback(handle);
+		}
+		const handle = setTimeout(fn, 16);
+		return () => clearTimeout(handle);
+	}
+
+	// Mounting older messages above the viewport grows the document upward, so
+	// hold the distance to the bottom fixed — otherwise the reader's position
+	// slides as the head fills in.
+	async function renderMoreHistory() {
+		const el = scrollEl;
+		const distanceFromBottom = el ? el.scrollHeight - el.scrollTop : null;
+		renderStartIndex = Math.max(0, renderStart - DEFERRED_RENDER_CHUNK);
+		await tick();
+		if (el && distanceFromBottom !== null) {
+			setProgrammaticScrollGuard(120);
+			el.scrollTop = el.scrollHeight - distanceFromBottom;
+		}
+	}
+
+	$effect(() => {
+		if (renderStart <= 0) return;
+		return scheduleIdle(() => {
+			void renderMoreHistory();
+		});
+	});
 </script>
 
 <div class="chat">
@@ -1378,14 +1448,14 @@
 						/>
 					</div>
 				{/if}
-				{#each renderedMessages as m, i (m.id)}
+				{#each visibleMessages as m, i (m.id)}
 					<Message_
 						message={m}
 						conversationId={conversation.id}
 						inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
 						forks={forksByMessage[m.id] ?? []}
 						isInFlightTurnUser={m.id === inFlightUserMessageId}
-						thinking={thinking && i === renderedMessages.length - 1}
+						thinking={thinking && i === visibleMessages.length - 1}
 						canRetryMemory={!streaming && m.id === latestAssistantMessageId}
 						busy={streaming}
 						onForked={refreshForks}

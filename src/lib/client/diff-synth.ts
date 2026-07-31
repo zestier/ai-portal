@@ -14,7 +14,9 @@ import { parseApplyPatch } from './apply-patch';
 
 export interface SynthDiffInput {
 	tool: string;
-	argsJson: string;
+	// May be null when the page payload trimmed oversized args; a synthesized
+	// diff simply isn't available then.
+	argsJson: string | null;
 }
 
 export interface SynthDiff {
@@ -26,7 +28,8 @@ interface ParsedArgs {
 	[key: string]: unknown;
 }
 
-function parseArgs(json: string): ParsedArgs | null {
+function parseArgs(json: string | null): ParsedArgs | null {
+	if (json === null) return null;
 	try {
 		const v = JSON.parse(json);
 		return v && typeof v === 'object' && !Array.isArray(v) ? (v as ParsedArgs) : null;

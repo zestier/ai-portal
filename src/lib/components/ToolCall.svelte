@@ -10,6 +10,8 @@
 	import { summarizeToolCall, splitSummaryForWrap } from '$lib/client/tool-summary';
 	import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '$lib/client/tool-result';
 	import type { ResultBlock as ResultBlockData } from '$lib/client/tool-result';
+	import { formatFieldBytes, type LazyFieldKind } from '$lib/client/lazy-field';
+	import { ensureLazyField, lazyFieldState, loadLazyField } from '$lib/client/lazy-field.svelte';
 
 	let {
 		toolCall,
@@ -22,6 +24,31 @@
 	} = $props();
 	let rerunning = $state(false);
 	let rerunError = $state<string | null>(null);
+
+	// Oversized `args_json` / `result_json` are omitted from the conversation
+	// page payload and arrive as truncation markers (see INLINE_ARGS_MAX_BYTES).
+	// We fetch them the first time the card is expanded — which is also the
+	// first time anything actually renders them. Live streamed results are never
+	// marked truncated, so a turn in flight never touches this path.
+	//
+	// All lazy state is keyed by (conversation, kind, tool call id) in a shared
+	// store rather than held on this instance, so a component re-bound to a
+	// different record can never show the previous record's text.
+	const argsTruncated = $derived(toolCall.argsTruncated === true);
+	const resultTruncated = $derived(toolCall.resultTruncated === true);
+	const lazyArgs = $derived(lazyFieldState(conversationId, 'tool-args', toolCall.id));
+	const lazyResult = $derived(lazyFieldState(conversationId, 'tool-result', toolCall.id));
+	const argsJson = $derived(toolCall.argsJson ?? lazyArgs.value);
+	const resultJson = $derived(toolCall.resultJson ?? lazyResult.value);
+
+	function loadField(kind: LazyFieldKind) {
+		return loadLazyField(conversationId, kind, toolCall.id);
+	}
+
+	function hydrateTruncated() {
+		if (argsTruncated) ensureLazyField(conversationId, 'tool-args', toolCall.id);
+		if (resultTruncated) ensureLazyField(conversationId, 'tool-result', toolCall.id);
+	}
 
 	// Default-closed; users opt in to seeing args + result by clicking.
 	// We don't auto-expand while pending: the summary header already
@@ -36,10 +63,16 @@
 	const defaultOpen = $derived(toolCall.tool === 'task_complete');
 	const open = $derived(userToggled ? manualOpen : defaultOpen);
 
+	// A card that starts open (task_complete) needs its trimmed fields too.
+	$effect(() => {
+		if (open) hydrateTruncated();
+	});
+
 	function onToggle(e: Event) {
 		const el = e.currentTarget as HTMLDetailsElement;
 		userToggled = true;
 		manualOpen = el.open;
+		if (el.open) hydrateTruncated();
 	}
 
 	function statusEmoji(s: ToolCallRecord['status']) {
@@ -55,8 +88,11 @@
 		}
 	}
 
-	const summary = $derived(summarizeToolCall(toolCall.tool, toolCall.argsJson));
-	const decoded = $derived(decodeToolResult(toolCall.resultJson));
+	// The collapsed summary line degrades gracefully when args were trimmed:
+	// `summarizeToolCall` returns null for a null args string, and the header
+	// falls back to the tool name plus the withheld size.
+	const summary = $derived(summarizeToolCall(toolCall.tool, argsJson));
+	const decoded = $derived(decodeToolResult(resultJson));
 	const markdownResult = $derived(shouldRenderToolResultAsMarkdown(toolCall.tool));
 	const pending = $derived(toolCall.status === 'pending');
 	// Image attachments captured for this call (e.g. a `view`ed PNG). Rendered
@@ -76,11 +112,11 @@
 	// show the diff once the call succeeded; while pending we'd be
 	// rendering args that haven't been applied, and on error the result
 	// text usually explains the failure.
-	const renderedDiffs = $derived(toolCall.status === 'ok' ? synthesizeDiffs(toolCall) : []);
+	const renderedDiffs = $derived(
+		toolCall.status === 'ok' ? synthesizeDiffs({ tool: toolCall.tool, argsJson }) : []
+	);
 	const gitRenderedResult = $derived(
-		toolCall.status === 'ok'
-			? parseGitToolResult(toolCall.tool, toolCall.argsJson, toolCall.resultJson)
-			: null
+		toolCall.status === 'ok' ? parseGitToolResult(toolCall.tool, argsJson, resultJson) : null
 	);
 	const gitDiffText = $derived(
 		toolCall.status === 'ok' && toolCall.tool === 'git_diff' && gitRenderedResult === null
@@ -103,8 +139,9 @@
 	const shellCommand = $derived.by(() => {
 		const t = toolCall.tool.toLowerCase();
 		if (t !== 'bash' && t !== 'shell' && t !== 'run') return null;
+		if (argsJson === null) return null;
 		try {
-			const a = JSON.parse(toolCall.argsJson);
+			const a = JSON.parse(argsJson);
 			if (a && typeof a === 'object' && !Array.isArray(a)) {
 				const cmd = (a as Record<string, unknown>).command ?? (a as Record<string, unknown>).cmd;
 				return typeof cmd === 'string' && cmd.length > 0 ? cmd : null;
@@ -122,6 +159,13 @@
 	async function rerunWithApproval() {
 		if (!conversationId || rerunning || !canRerun) return;
 		rerunError = null;
+		// The confirmation must show the user the exact arguments they are
+		// approving, so a trimmed args field has to be resolved first.
+		if (argsJson === null && argsTruncated) await loadField('tool-args');
+		if (argsJson === null) {
+			rerunError = lazyArgs.error ?? 'Could not load the original tool arguments.';
+			return;
+		}
 		const sideEffect = requiresSideEffectConfirmation();
 		const ok = window.confirm(
 			[
@@ -133,7 +177,7 @@
 					: 'Risk: read-only rerun.',
 				'',
 				'Arguments:',
-				toolCall.argsJson
+				argsJson
 			].join('\n')
 		);
 		if (!ok) return;
@@ -171,6 +215,8 @@
 				>{#each splitSummaryForWrap(summary) as chunk, i (i)}{#if i > 0}<wbr
 						/>{/if}{chunk}{/each}</span
 			>
+		{:else if argsTruncated && argsJson === null}
+			<span class="muted">— {formatFieldBytes(toolCall.argsBytes)} of arguments</span>
 		{:else}
 			<span class="muted">— {toolCall.status}</span>
 		{/if}
@@ -181,7 +227,22 @@
 	<div class="content">
 		<details class="args">
 			<summary class="disclosure eyebrow">Arguments</summary>
-			<pre><code>{toolCall.argsJson}</code></pre>
+			{#if argsJson !== null}
+				<pre><code>{argsJson}</code></pre>
+			{:else if lazyArgs.loading}
+				<div class="muted lazy-note">Loading arguments…</div>
+			{:else if lazyArgs.error}
+				<Alert kind="error">
+					{lazyArgs.error}
+					<button type="button" class="rerun-btn" onclick={() => loadField('tool-args')}>
+						Retry
+					</button>
+				</Alert>
+			{:else if argsTruncated}
+				<button type="button" class="rerun-btn" onclick={() => loadField('tool-args')}>
+					Load arguments ({formatFieldBytes(toolCall.argsBytes)})
+				</button>
+			{/if}
 		</details>
 
 		{#if toolCall.status === 'denied' || toolCall.status === 'error'}
@@ -225,7 +286,24 @@
 			{:else}
 				<div class="muted">Running…</div>
 			{/if}
-		{:else if toolCall.resultJson}
+		{:else if resultJson === null && resultTruncated}
+			{#if lazyResult.loading}
+				<div class="muted lazy-note">
+					Loading result ({formatFieldBytes(toolCall.resultBytes)})…
+				</div>
+			{:else if lazyResult.error}
+				<Alert kind="error">
+					{lazyResult.error}
+					<button type="button" class="rerun-btn" onclick={() => loadField('tool-result')}>
+						Retry
+					</button>
+				</Alert>
+			{:else}
+				<button type="button" class="rerun-btn" onclick={() => loadField('tool-result')}>
+					Load result ({formatFieldBytes(toolCall.resultBytes)})
+				</button>
+			{/if}
+		{:else if resultJson}
 			{#if gitRenderedResult}
 				<GitToolResult result={gitRenderedResult} />
 			{:else if gitDiffText}
@@ -253,7 +331,7 @@
 			{/if}
 			<details class="raw">
 				<summary class="disclosure eyebrow">Raw output</summary>
-				<pre><code>{toolCall.resultJson}</code></pre>
+				<pre><code>{resultJson}</code></pre>
 			</details>
 		{/if}
 	</div>
@@ -319,6 +397,10 @@
 		font-style: italic;
 		font-size: var(--fs-sm);
 		margin: 0.4rem 0;
+	}
+	.lazy-note {
+		font-size: var(--fs-sm);
+		margin: 0.2rem 0;
 	}
 	.content {
 		margin-top: 0.4rem;
