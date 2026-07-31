@@ -3,6 +3,7 @@ import { setupLocalEnv } from './helpers/env';
 import {
 	INLINE_ARGS_MAX_BYTES,
 	INLINE_DIFF_MAX_BYTES,
+	INLINE_REASONING_MAX_BYTES,
 	INLINE_RESULT_MAX_BYTES
 } from '../src/lib/payload-limits';
 
@@ -14,7 +15,8 @@ import {
 const TRIM = {
 	args: INLINE_ARGS_MAX_BYTES,
 	result: INLINE_RESULT_MAX_BYTES,
-	diff: INLINE_DIFF_MAX_BYTES
+	diff: INLINE_DIFF_MAX_BYTES,
+	reasoning: INLINE_REASONING_MAX_BYTES
 };
 
 async function seed() {
@@ -82,7 +84,64 @@ async function seed() {
 	messages.insertFileEdit(msg.id, 'small.ts', 'd'.repeat(10), 0, null);
 	messages.insertFileEdit(msg.id, 'big.ts', 'D'.repeat(INLINE_DIFF_MAX_BYTES + 100), 1, null);
 
-	return { user, conv, msg, bigArgs, smallArgs, bigResult, smallResult, messages };
+	const bigReasoning = 'T'.repeat(INLINE_REASONING_MAX_BYTES + 100);
+	const smallReasoning = 'thinking briefly';
+	const bigSpoken = 'S'.repeat(INLINE_REASONING_MAX_BYTES + 100);
+	messages.insertReasoningBlock(msg.id, {
+		id: 'rb-small',
+		segmentIndex: 0,
+		text: smallReasoning,
+		kind: 'reasoning',
+		textOffset: 0,
+		startedAt: 1,
+		durationMs: 10,
+		parentToolCallId: null
+	});
+	messages.insertReasoningBlock(msg.id, {
+		id: 'rb-big',
+		segmentIndex: 1,
+		text: bigReasoning,
+		kind: 'reasoning',
+		textOffset: 1,
+		startedAt: 2,
+		durationMs: 20,
+		parentToolCallId: null
+	});
+	messages.insertReasoningBlock(msg.id, {
+		id: 'rb-spoken',
+		segmentIndex: 2,
+		text: bigSpoken,
+		kind: 'content',
+		textOffset: null,
+		startedAt: 3,
+		durationMs: null,
+		parentToolCallId: 'tc-task'
+	});
+
+	messages.insertReasoningBlock(msg.id, {
+		id: 'rb-open',
+		segmentIndex: 3,
+		text: 'O'.repeat(INLINE_REASONING_MAX_BYTES + 100),
+		kind: 'reasoning',
+		textOffset: 2,
+		startedAt: 4,
+		durationMs: null,
+		parentToolCallId: null
+	});
+
+	return {
+		user,
+		conv,
+		msg,
+		bigArgs,
+		smallArgs,
+		bigResult,
+		smallResult,
+		bigReasoning,
+		smallReasoning,
+		bigSpoken,
+		messages
+	};
 }
 
 describe('listByConversation payload trim', () => {
@@ -91,7 +150,7 @@ describe('listByConversation payload trim', () => {
 	});
 
 	it('leaves every field inline when no trim is requested', async () => {
-		const { conv, bigArgs, bigResult, messages } = await seed();
+		const { conv, bigArgs, bigResult, bigReasoning, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id);
 		const big = m.toolCalls!.find((t) => t.id === 'tc-big')!;
 		expect(big.argsJson).toBe(bigArgs);
@@ -101,6 +160,9 @@ describe('listByConversation payload trim', () => {
 		const bigEdit = m.fileEdits!.find((e) => e.path === 'big.ts')!;
 		expect(bigEdit.diff).toHaveLength(INLINE_DIFF_MAX_BYTES + 100);
 		expect(bigEdit.diffTruncated).toBeUndefined();
+		const bigBlock = m.reasoningBlocks!.find((r) => r.id === 'rb-big')!;
+		expect(bigBlock.text).toBe(bigReasoning);
+		expect(bigBlock.textTruncated).toBeUndefined();
 	});
 
 	it('replaces over-threshold fields with markers carrying the byte size', async () => {
@@ -119,10 +181,20 @@ describe('listByConversation payload trim', () => {
 		expect(bigEdit.diff).toBeNull();
 		expect(bigEdit.diffTruncated).toBe(true);
 		expect(bigEdit.diffBytes).toBe(INLINE_DIFF_MAX_BYTES + 100);
+
+		const bigBlock = m.reasoningBlocks!.find((r) => r.id === 'rb-big')!;
+		expect(bigBlock.text).toBeNull();
+		expect(bigBlock.textTruncated).toBe(true);
+		expect(bigBlock.textBytes).toBe(INLINE_REASONING_MAX_BYTES + 100);
+		// The collapsed row must look identical to an untrimmed one: its header
+		// is drawn entirely from these.
+		expect(bigBlock.durationMs).toBe(20);
+		expect(bigBlock.segmentIndex).toBe(1);
+		expect(bigBlock.textOffset).toBe(1);
 	});
 
 	it('keeps under-threshold fields inline and unmarked', async () => {
-		const { conv, smallArgs, smallResult, messages } = await seed();
+		const { conv, smallArgs, smallResult, smallReasoning, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
 
 		const small = m.toolCalls!.find((t) => t.id === 'tc-small')!;
@@ -135,6 +207,35 @@ describe('listByConversation payload trim', () => {
 		const smallEdit = m.fileEdits!.find((e) => e.path === 'small.ts')!;
 		expect(smallEdit.diff).toBe('d'.repeat(10));
 		expect(smallEdit.diffTruncated).toBeUndefined();
+
+		const smallBlock = m.reasoningBlocks!.find((r) => r.id === 'rb-small')!;
+		expect(smallBlock.text).toBe(smallReasoning);
+		expect(smallBlock.textTruncated).toBeUndefined();
+		expect(smallBlock.textBytes).toBeUndefined();
+	});
+
+	it('never trims a still-open reasoning block, whatever its size', async () => {
+		// A block with no durationMs is being streamed right now: it renders
+		// expanded, and the client appends further deltas to the text it already
+		// has. Trimming it would drop the streamed prefix on a mid-turn reload.
+		const { conv, messages } = await seed();
+		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
+		const open = m.reasoningBlocks!.find((r) => r.id === 'rb-open')!;
+		expect(open.durationMs).toBeNull();
+		expect(open.text).toBe('O'.repeat(INLINE_REASONING_MAX_BYTES + 100));
+		expect(open.textTruncated).toBeUndefined();
+	});
+
+	it('never trims a sub-agent’s spoken content block, whatever its size', async () => {
+		// `kind: 'content'` blocks are a sub-agent's answer, rendered as markdown
+		// in the card's activity timeline with no expand step — trimming them
+		// would blank out the response on reload.
+		const { conv, bigSpoken, messages } = await seed();
+		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
+		const spoken = m.reasoningBlocks!.find((r) => r.id === 'rb-spoken')!;
+		expect(spoken.kind).toBe('content');
+		expect(spoken.text).toBe(bigSpoken);
+		expect(spoken.textTruncated).toBeUndefined();
 	});
 
 	it('never trims a subagent launch\u2019s arguments, whatever their size', async () => {
@@ -192,6 +293,16 @@ describe('listByConversation payload trim', () => {
 		);
 		expect(trimmed.toolCalls!.map((t) => t.id)).toEqual(plain.toolCalls!.map((t) => t.id));
 		expect(trimmed.content).toBe(plain.content);
+
+		// Same for reasoning blocks: only `text` and its markers may differ.
+		expect(
+			trimmed.reasoningBlocks!.map((r) => ({
+				...r,
+				text: null,
+				textTruncated: undefined,
+				textBytes: undefined
+			}))
+		).toEqual(plain.reasoningBlocks!.map((r) => ({ ...r, text: null })));
 	});
 });
 
@@ -234,5 +345,24 @@ describe('lazy field lookups', () => {
 			'D'.repeat(INLINE_DIFF_MAX_BYTES + 100)
 		);
 		expect(messages.getFileEditDiffForOwner(conv.id, 'missing', conv.userId)).toBeNull();
+	});
+
+	it('resolves reasoning text by id, scoped to the conversation owner', async () => {
+		const users = await import('../src/lib/server/db/repos/users');
+		const { conv, bigReasoning, messages } = await seed();
+		expect(messages.getReasoningTextForOwner(conv.id, 'rb-big', conv.userId)?.value).toBe(
+			bigReasoning
+		);
+		const other = users.upsertGithub({
+			githubLogin: 'reasoning-intruder',
+			githubId: 4343,
+			displayName: null,
+			avatarUrl: null
+		});
+		expect(messages.getReasoningTextForOwner(conv.id, 'rb-big', other.id)).toBeNull();
+		expect(messages.getReasoningTextForOwner(conv.id, 'missing', conv.userId)).toBeNull();
+		expect(
+			messages.getReasoningTextForOwner('other-conversation', 'rb-big', conv.userId)
+		).toBeNull();
 	});
 });

@@ -1,7 +1,8 @@
 // Client half of the conversation-payload trim (see `INLINE_FIELD_MAX_BYTES`).
 //
-// Opening a long conversation ships only small tool args/results and file
-// diffs inline; anything larger arrives as a `*Truncated` marker. This module
+// Opening a long conversation ships only small tool args/results, file
+// diffs and reasoning text inline; anything larger arrives as a `*Truncated`
+// marker. This module
 // fetches the real text on demand from
 // `GET /api/conversations/:id/fields/:kind/:recordId`, which returns the raw
 // stored string as text/plain.
@@ -10,7 +11,7 @@
 // stored fields are immutable, and a component that remounts (scroll, keyed
 // re-render, progressive rendering) must not re-download hundreds of KB.
 
-export type LazyFieldKind = 'tool-args' | 'tool-result' | 'file-diff';
+export type LazyFieldKind = 'tool-args' | 'tool-result' | 'file-diff' | 'reasoning-text';
 
 const cache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string>>();

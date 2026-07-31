@@ -9,6 +9,7 @@ import { INLINE_ARGS_MAX_BYTES } from '../src/lib/payload-limits';
 const BIG_ARGS = JSON.stringify({ payload: 'a'.repeat(INLINE_ARGS_MAX_BYTES + 100) });
 const BIG_RESULT = JSON.stringify({ ok: true, result: 'r'.repeat(4096) });
 const BIG_DIFF = 'D'.repeat(9000);
+const BIG_REASONING = 'T'.repeat(4096);
 
 async function seed() {
 	const users = await import('../src/lib/server/db/repos/users');
@@ -41,6 +42,16 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertFileEdit(msg.id, 'big.ts', BIG_DIFF, 0, null);
+	messages.insertReasoningBlock(msg.id, {
+		id: 'rb-1',
+		segmentIndex: 0,
+		text: BIG_REASONING,
+		kind: 'reasoning',
+		textOffset: 0,
+		startedAt: 1,
+		durationMs: 100,
+		parentToolCallId: null
+	});
 	const [m] = messages.listByConversation(conv.id);
 	const fileEditId = m.fileEdits![0].id;
 	return { users, conv, user, fileEditId };
@@ -76,7 +87,7 @@ describe('conversation field endpoint', () => {
 		await setupLocalEnv('portal-fields-route-');
 	});
 
-	it('serves tool args, tool results and file diffs verbatim', async () => {
+	it('serves tool args, tool results, file diffs and reasoning text verbatim', async () => {
 		const { conv, user, fileEditId } = await seed();
 		const args = await callGet(conv.id, 'tool-args', 'tc-1', user.id);
 		expect(await args.text()).toBe(BIG_ARGS);
@@ -87,6 +98,9 @@ describe('conversation field endpoint', () => {
 
 		const diff = await callGet(conv.id, 'file-diff', fileEditId, user.id);
 		expect(await diff.text()).toBe(BIG_DIFF);
+
+		const reasoning = await callGet(conv.id, 'reasoning-text', 'rb-1', user.id);
+		expect(await reasoning.text()).toBe(BIG_REASONING);
 	});
 
 	it('404s an unknown field kind rather than guessing', async () => {

@@ -177,7 +177,14 @@
 			items.push({ kind: 'reasoning', ts: r.startedAt, block: r });
 		}
 		for (const r of childSpoken) {
-			items.push({ kind: 'content', ts: r.startedAt, block: r, html: renderMarkdown(r.text) });
+			// `kind: 'content'` blocks are never trimmed (they render without an
+			// expand), so the null branch here is unreachable in practice.
+			items.push({
+				kind: 'content',
+				ts: r.startedAt,
+				block: r,
+				html: renderMarkdown(r.text ?? '')
+			});
 		}
 		for (const t of childTools) {
 			items.push({ kind: 'tool', ts: t.startedAt, tool: t });
@@ -350,6 +357,9 @@
 								text={item.block.text}
 								streaming={item.block.segmentIndex === latestOpenChildReasoningIdx}
 								durationMs={item.block.durationMs}
+								lazy={item.block.textTruncated && conversationId
+									? { conversationId, reasoningBlockId: item.block.id, bytes: item.block.textBytes }
+									: null}
 							/>
 						{:else if item.kind === 'content'}
 							<div class="markdown agent-content" use:copyableCodeBlocks>

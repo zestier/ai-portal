@@ -545,10 +545,18 @@ export interface ReasoningBlockRecord {
 	id: string;
 	messageId: string;
 	segmentIndex: number;
-	text: string;
+	// Null only on a trimmed conversation-open payload (see `textTruncated`) —
+	// never for a live/streamed or untrimmed record.
+	text: string | null;
+	// Set only on a trimmed conversation-open payload: the stored text exceeded
+	// INLINE_REASONING_MAX_BYTES and was replaced by this marker plus its byte
+	// size. ReasoningBlock fetches the real text when the user expands it.
+	textTruncated?: boolean;
+	textBytes?: number;
 	// 'reasoning' = model thinking ("Thinking…"); 'content' = a sub-agent's
 	// spoken output, threaded into its card so a nested agent renders its
 	// response interleaved with its tools/reasoning like a top-level agent.
+	// 'content' blocks are rendered unconditionally, so they are never trimmed.
 	kind: 'reasoning' | 'content';
 	// Where this segment appeared within the assistant's accumulated content
 	// (mirrors ToolCallRecord.textOffset). NULL = legacy / unknown / child

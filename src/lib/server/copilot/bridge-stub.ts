@@ -27,6 +27,10 @@
 //                                  execution_start direct-capture fallback.
 //   @trigger-slow-start         -> delays the first delta so the pre-message
 //                                  "thinking" state is observable by tests
+//   @trigger-long-reasoning     -> emits one reasoning burst large enough to
+//                                  exceed INLINE_REASONING_MAX_BYTES, so tests
+//                                  can drive the conversation-open trim and the
+//                                  lazy fetch that rehydrates it on expand
 
 import { ulid } from 'ulid';
 import { writeFileSync } from 'node:fs';
@@ -264,6 +268,17 @@ class StubSession {
 		// while it's still "thinking" (no content/tools/reasoning yet).
 		if (prompt.includes('@trigger-slow-start')) {
 			await new Promise((r) => setTimeout(r, 800));
+			if (this.aborted) return;
+		}
+		if (prompt.includes('@trigger-long-reasoning')) {
+			// Comfortably over INLINE_REASONING_MAX_BYTES so the conversation-open
+			// payload trims it. Split across deltas like the real SDK does.
+			const burst = 'pondering the payload trim. '.repeat(40);
+			for (const part of burst.match(/.{1,64}/g) ?? [burst]) {
+				if (this.aborted) return;
+				this.emit('assistant.reasoning_delta', { deltaContent: part });
+				await new Promise((r) => setTimeout(r, 1));
+			}
 			if (this.aborted) return;
 		}
 		const chunks = reply.match(/.{1,16}/g) ?? [reply];

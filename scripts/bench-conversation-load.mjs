@@ -360,19 +360,24 @@ function measureInlineTranscriptBytes(db, conversationId, limits) {
 		'SELECT sum(length(CAST(content AS blob))) t FROM messages WHERE conversation_id = ?',
 		conversationId
 	);
-	const reasoning = g(
-		`SELECT sum(length(CAST(rb.text AS blob))) t FROM reasoning_blocks rb
-		   JOIN messages m ON m.id = rb.message_id WHERE m.conversation_id = ?`,
-		conversationId
-	);
-	const inlineSum = (table, col, join, max) =>
+	// `alwaysInline` mirrors the repo's keep-inline carve-outs (a `task` call's
+	// args, a sub-agent's spoken 'content' block): rows matching it count in
+	// full, whatever their size.
+	const inlineSum = (table, col, join, max, alwaysInline = '') =>
 		g(
-			`SELECT sum(CASE WHEN length(CAST(${col} AS blob)) <= ? THEN length(CAST(${col} AS blob)) ELSE 0 END) t
+			`SELECT sum(CASE WHEN ${alwaysInline ? `(${alwaysInline}) = 0 OR ` : ''}length(CAST(${col} AS blob)) <= ? THEN length(CAST(${col} AS blob)) ELSE 0 END) t
 			   FROM ${table} x JOIN messages m ON m.id = x.message_id WHERE m.conversation_id = ?`,
 			max,
 			conversationId
 		) + (join ?? 0);
-	const args = inlineSum('tool_calls', 'args_json', 0, limits.args);
+	const reasoning = inlineSum(
+		'reasoning_blocks',
+		'text',
+		0,
+		limits.reasoning,
+		"kind <> 'content' AND duration_ms IS NOT NULL"
+	);
+	const args = inlineSum('tool_calls', 'args_json', 0, limits.args, "tool <> 'task'");
 	const result = inlineSum('tool_calls', 'result_json', 0, limits.result);
 	const diff = inlineSum('file_edits', 'diff', 0, limits.diff);
 	return {
@@ -389,7 +394,8 @@ function measureStoredTranscriptBytes(db, conversationId) {
 	return measureInlineTranscriptBytes(db, conversationId, {
 		args: Number.MAX_SAFE_INTEGER,
 		result: Number.MAX_SAFE_INTEGER,
-		diff: Number.MAX_SAFE_INTEGER
+		diff: Number.MAX_SAFE_INTEGER,
+		reasoning: Number.MAX_SAFE_INTEGER
 	});
 }
 
@@ -450,7 +456,8 @@ function readInlineLimits() {
 	return {
 		args: read('INLINE_ARGS_MAX_BYTES'),
 		result: read('INLINE_RESULT_MAX_BYTES'),
-		diff: read('INLINE_DIFF_MAX_BYTES')
+		diff: read('INLINE_DIFF_MAX_BYTES'),
+		reasoning: read('INLINE_REASONING_MAX_BYTES')
 	};
 }
 
@@ -541,7 +548,8 @@ async function main() {
 				`diffs ${fmtBytes(stats.diffBytes)}`
 		);
 		console.log(
-			`[bench]   thresholds: args ≤${limits.args}B, result ≤${limits.result}B, diff ≤${limits.diff}B`
+			`[bench]   thresholds: args ≤${limits.args}B, result ≤${limits.result}B, ` +
+				`diff ≤${limits.diff}B, reasoning ≤${limits.reasoning}B`
 		);
 
 		const ssrBytes = await measureSsrBytes(baseUrl, conversationId);

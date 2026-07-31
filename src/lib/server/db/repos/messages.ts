@@ -61,7 +61,8 @@ interface ReasoningRow {
 	id: string;
 	message_id: string;
 	segment_index: number;
-	text: string;
+	text: string | null;
+	text_bytes?: number;
 	kind: string;
 	text_offset: number | null;
 	started_at: number;
@@ -144,6 +145,7 @@ export interface ListByConversationOptions {
 		args: number;
 		result: number;
 		diff: number;
+		reasoning: number;
 	};
 }
 
@@ -172,6 +174,17 @@ function trimmedColumn(col: string, alias: string, keepWhen = ''): string {
 // like any other.
 const ALWAYS_INLINE_ARGS_TOOLS = "tool <> 'task' AND ";
 
+// A `kind = 'content'` reasoning block is a sub-agent's spoken answer, rendered
+// as markdown in the card's activity timeline with no expand step. Only real
+// "thinking" blocks — collapsed until clicked — are trimmed.
+//
+// A block with no `duration_ms` is still open: the turn is streaming it right
+// now, so it renders EXPANDED and the client keeps appending deltas to it. Its
+// text has to arrive inline, or a reload mid-turn would append the rest of the
+// thought onto an empty string and silently lose the streamed prefix. There is
+// at most one such block per open, so keeping it costs nothing.
+const ALWAYS_INLINE_REASONING = "kind <> 'content' AND duration_ms IS NOT NULL AND ";
+
 export function listByConversation(
 	conversationId: string,
 	opts: ListByConversationOptions = {}
@@ -193,6 +206,11 @@ export function listByConversation(
 	const editCols = trim
 		? `id, message_id, path, ${trimmedColumn('diff', 'diff_bytes')}, ` +
 			`created_at, text_offset, parent_tool_call_id`
+		: '*';
+	const reasoningCols = trim
+		? `id, message_id, segment_index, ` +
+			`${trimmedColumn('text', 'text_bytes', ALWAYS_INLINE_REASONING)}, ` +
+			`kind, text_offset, started_at, duration_ms, parent_tool_call_id`
 		: '*';
 
 	const ids = msgs.map((m) => m.id);
@@ -223,7 +241,8 @@ export function listByConversation(
 		db,
 		ids,
 		(placeholders) =>
-			`SELECT * FROM reasoning_blocks WHERE message_id IN (${placeholders}) ORDER BY segment_index ASC`
+			`SELECT ${reasoningCols} FROM reasoning_blocks WHERE message_id IN (${placeholders}) ORDER BY segment_index ASC`,
+		limits ? [limits.reasoning] : []
 	);
 
 	const byMsgT: Record<string, ToolCallRecord[]> = {};
@@ -271,11 +290,14 @@ export function listByConversation(
 	}
 	const byMsgR: Record<string, ReasoningBlockRecord[]> = {};
 	for (const r of reasoningRows) {
+		// `text` is NOT NULL in the schema, so a NULL here can only be the trim.
+		const textTruncated = trim && r.text === null;
 		(byMsgR[r.message_id] ??= []).push({
 			id: r.id,
 			messageId: r.message_id,
 			segmentIndex: r.segment_index,
 			text: r.text,
+			...(textTruncated ? { textTruncated: true, textBytes: r.text_bytes } : {}),
 			kind: r.kind === 'content' ? 'content' : 'reasoning',
 			textOffset: r.text_offset,
 			startedAt: r.started_at,
@@ -707,6 +729,23 @@ export function getFileEditDiffForOwner(
 	return row ?? null;
 }
 
+export function getReasoningTextForOwner(
+	conversationId: string,
+	reasoningBlockId: string,
+	userId: string
+): { value: string | null } | null {
+	const row = getDb()
+		.prepare(
+			`SELECT rb.text AS value
+			   FROM reasoning_blocks rb
+			   JOIN messages m ON m.id = rb.message_id
+			   JOIN conversations c ON c.id = m.conversation_id
+			  WHERE rb.id = ? AND m.conversation_id = ? AND c.user_id = ?`
+		)
+		.get(reasoningBlockId, conversationId, userId) as { value: string | null } | undefined;
+	return row ?? null;
+}
+
 export function insertFileEdit(
 	messageId: string,
 	path: string,
@@ -723,10 +762,11 @@ export function insertFileEdit(
 		.run(id, messageId, path, diff, Date.now(), textOffset, parentToolCallId);
 }
 
-export function upsertReasoningBlock(
-	messageId: string,
-	r: Omit<ReasoningBlockRecord, 'messageId'>
-) {
+// Writes always carry real text: `reasoning_blocks.text` is NOT NULL, and only
+// a *trimmed read* (see `inlineMaxBytes`) ever hands back a null.
+type ReasoningBlockWrite = Omit<ReasoningBlockRecord, 'messageId' | 'text'> & { text: string };
+
+export function upsertReasoningBlock(messageId: string, r: ReasoningBlockWrite) {
 	getDb()
 		.prepare(
 			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
@@ -754,10 +794,7 @@ export function upsertReasoningBlock(
 		);
 }
 
-export function insertReasoningBlock(
-	messageId: string,
-	r: Omit<ReasoningBlockRecord, 'messageId'>
-) {
+export function insertReasoningBlock(messageId: string, r: ReasoningBlockWrite) {
 	getDb()
 		.prepare(
 			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)

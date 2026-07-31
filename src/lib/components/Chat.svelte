@@ -765,7 +765,7 @@
 						};
 						blocks.push(seg);
 					}
-					seg.text += ev.text;
+					seg.text = (seg.text ?? '') + ev.text;
 				} else {
 					m.content += ev.text;
 				}
@@ -808,7 +808,7 @@
 					};
 					blocks.push(seg);
 				}
-				seg.text += ev.text;
+				seg.text = (seg.text ?? '') + ev.text;
 				break;
 			}
 			case 'message.reasoning.end': {

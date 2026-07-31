@@ -346,7 +346,16 @@
 		const merged: Part[] = [];
 		for (const p of out) {
 			const prev = merged[merged.length - 1];
-			if (p.kind === 'reasoning' && prev && prev.kind === 'reasoning') {
+			// Two trimmed segments can't be merged: the merged part would carry a
+			// single record id, so only one of them could ever be fetched back.
+			// Leave them as separate boxes, each with its own lazy descriptor.
+			if (
+				p.kind === 'reasoning' &&
+				prev &&
+				prev.kind === 'reasoning' &&
+				prev.block.text !== null &&
+				p.block.text !== null
+			) {
 				// Concatenate text with a blank line separator so the two
 				// bursts remain visually distinct inside the same block.
 				const text = `${prev.block.text}\n\n${p.block.text}`;
@@ -558,6 +567,9 @@
 						text={p.block.text}
 						streaming={p.streaming}
 						durationMs={p.block.durationMs}
+						lazy={p.block.textTruncated && conversationId
+							? { conversationId, reasoningBlockId: p.block.id, bytes: p.block.textBytes }
+							: null}
 					/>
 				{:else}
 					<DiffView

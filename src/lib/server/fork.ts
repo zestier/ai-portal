@@ -345,7 +345,9 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string
 					ulid(),
 					newId,
 					r.segmentIndex,
-					r.text,
+					// Fork reads the transcript untrimmed, so `text` is always
+					// present; `?? ''` only satisfies the NOT NULL column typing.
+					r.text ?? '',
 					r.kind ?? 'reasoning',
 					r.textOffset,
 					r.startedAt,

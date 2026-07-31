@@ -18,6 +18,7 @@ import { interpolateTicketPrompt } from '$lib/tickets/chat';
 import {
 	INLINE_ARGS_MAX_BYTES,
 	INLINE_DIFF_MAX_BYTES,
+	INLINE_REASONING_MAX_BYTES,
 	INLINE_RESULT_MAX_BYTES
 } from '$lib/payload-limits';
 
@@ -26,14 +27,15 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const conv = convs.get(params.id, locals.userId);
 	if (!conv) throw error(404);
 	const msgs = messages.listByConversation(conv.id, {
-		// Oversized tool args/results and file diffs are collapsed by default in
-		// the UI, so shipping them in the page payload costs megabytes for
-		// content the reader rarely opens. Trim them to markers; ToolCall /
-		// DiffView fetch the full text on demand.
+		// Oversized tool args/results, file diffs and reasoning text are collapsed
+		// by default in the UI, so shipping them in the page payload costs
+		// megabytes for content the reader rarely opens. Trim them to markers;
+		// ToolCall / DiffView / ReasoningBlock fetch the full text on demand.
 		inlineMaxBytes: {
 			args: INLINE_ARGS_MAX_BYTES,
 			result: INLINE_RESULT_MAX_BYTES,
-			diff: INLINE_DIFF_MAX_BYTES
+			diff: INLINE_DIFF_MAX_BYTES,
+			reasoning: INLINE_REASONING_MAX_BYTES
 		}
 	});
 	// Opening a conversation counts as seeing it: clears the sidebar's unseen
