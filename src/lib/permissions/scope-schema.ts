@@ -75,10 +75,23 @@ const Argv0Schema = ArgvToken.refine(
 const PositionalsSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('none') }),
 	z.object({ kind: z.literal('any') }),
-	z.object({ kind: z.literal('pattern-only') }),
 	z.object({ kind: z.literal('workspace-paths') }),
 	z.object({ kind: z.literal('session-workspace-paths') })
 ]);
+
+const CountBound = z.number().int().nonnegative();
+
+const PositionalCountSchema = z
+	.object({
+		min: CountBound.optional(),
+		max: CountBound.optional()
+	})
+	.refine((c) => c.min !== undefined || c.max !== undefined, {
+		message: 'positionalCount must specify at least one of min/max'
+	})
+	.refine((c) => c.min === undefined || c.max === undefined || c.min <= c.max, {
+		message: 'positionalCount min must not exceed max'
+	});
 
 const FlagSchema = z
 	.string()
@@ -124,6 +137,7 @@ const ShellRuleSchema = z.object({
 			message: 'first command token must be a bare command name'
 		}),
 	positionals: PositionalsSchema.optional(),
+	positionalCount: PositionalCountSchema.optional(),
 	pipeline: z.enum(['must', 'forbid', 'pipe-target']).optional()
 });
 

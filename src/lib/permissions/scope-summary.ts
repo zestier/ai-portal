@@ -1,4 +1,4 @@
-import type { GrantScope } from './scope-types';
+import type { GrantScope, PositionalCountRule } from './scope-types';
 
 export type CapabilityScopeRuleKind =
 	| 'tool'
@@ -80,6 +80,9 @@ function describeShellRule(rule: Extract<GrantScope, { kind: 'shell' }>['rule'])
 	if (rule.positionals) {
 		parts.push(`positionals=${rule.positionals.kind}`);
 	}
+	if (rule.positionalCount) {
+		parts.push(`positional-count=${describePositionalCount(rule.positionalCount)}`);
+	}
 	if (rule.pipeline) {
 		parts.push(`pipeline=${rule.pipeline}`);
 	}
@@ -101,8 +104,17 @@ function capabilityShellRuleSummary(rule: Extract<GrantScope, { kind: 'shell' }>
 	const command = rule.command.map((step) => step.token).join(' ');
 	const parts = [`shell command \`${command}\``];
 	if (rule.positionals) parts.push(`positionals: ${rule.positionals.kind}`);
+	if (rule.positionalCount)
+		parts.push(`positional count: ${describePositionalCount(rule.positionalCount)}`);
 	if (rule.pipeline) parts.push(`pipeline: ${rule.pipeline}`);
 	return parts.join('; ');
+}
+
+function describePositionalCount(rule: PositionalCountRule): string {
+	const { min, max } = rule;
+	if (min !== undefined && max !== undefined) return min === max ? `${min}` : `${min}-${max}`;
+	if (min !== undefined) return `${min}+`;
+	return `up to ${max}`;
 }
 
 function capabilityFsScopeSummary(scope: Extract<GrantScope, { kind: 'fs' }>): string {

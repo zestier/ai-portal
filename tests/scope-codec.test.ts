@@ -67,6 +67,26 @@ describe('scope-codec roundtrip', () => {
 		});
 	});
 
+	it('shell with a positional count range', () => {
+		roundtrip({
+			kind: 'shell',
+			rule: {
+				command: [{ token: 'grep' }],
+				positionals: { kind: 'any' },
+				positionalCount: { max: 1 },
+				pipeline: 'pipe-target'
+			}
+		});
+		roundtrip({
+			kind: 'shell',
+			rule: {
+				command: [{ token: 'cat' }],
+				positionals: { kind: 'workspace-paths' },
+				positionalCount: { min: 1, max: 1 }
+			}
+		});
+	});
+
 	it('fs variants', () => {
 		roundtrip({
 			kind: 'fs',
@@ -134,6 +154,13 @@ describe('scope-codec decode — rejects malformed input', () => {
 		'{"kind":"shell","rule":{"command":[{"token":"git","options":{"allow":[1]}}]}}',
 		'{"kind":"shell","rule":{"command":[{"token":"git","options":{"allow":[{"name":"-C","kind":"option","value":{"kind":"weird"}}]}}]}}',
 		'{"kind":"shell","rule":{"command":[{"token":"git"}],"positionals":{"kind":"foo"}}}',
+		'{"kind":"shell","rule":{"command":[{"token":"grep"}],"positionalCount":{}}}',
+		'{"kind":"shell","rule":{"command":[{"token":"grep"}],"positionalCount":{"max":-1}}}',
+		'{"kind":"shell","rule":{"command":[{"token":"grep"}],"positionalCount":{"max":1.5}}}',
+		'{"kind":"shell","rule":{"command":[{"token":"grep"}],"positionalCount":{"max":"1"}}}',
+		'{"kind":"shell","rule":{"command":[{"token":"grep"}],"positionalCount":{"min":2,"max":1}}}',
+		// pattern-only was replaced by the orthogonal positionalCount range.
+		'{"kind":"shell","rule":{"command":[{"token":"grep"}],"positionals":{"kind":"pattern-only"}}}',
 		'{"kind":"fs","rule":{"kind":"exact"}}',
 		'{"kind":"fs","rule":{"kind":"exact","path":"/tmp/x"}}',
 		'{"kind":"fs","rule":{"kind":"workspace"}}',

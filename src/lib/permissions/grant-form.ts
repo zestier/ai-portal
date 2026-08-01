@@ -13,7 +13,6 @@ export type ShellPositionalsKind =
 	| 'unset'
 	| 'none'
 	| 'any'
-	| 'pattern-only'
 	| 'workspace-paths'
 	| 'session-workspace-paths';
 export type ShellPipelineKind = 'unset' | 'must' | 'forbid' | 'pipe-target';
@@ -26,6 +25,8 @@ export interface GrantScopeFormFields {
 	shellArgv0: string;
 	shellSubcommands: string;
 	shellPositionals: ShellPositionalsKind;
+	shellPositionalMin: string;
+	shellPositionalMax: string;
 	shellPipeline: ShellPipelineKind;
 	shellStepOptions: ShellStepOptionInput[];
 	fsRoot: FsRuleRoot;
@@ -42,6 +43,8 @@ export function defaultGrantScopeFormFields(): GrantScopeFormFields {
 		shellArgv0: '',
 		shellSubcommands: '',
 		shellPositionals: 'unset',
+		shellPositionalMin: '',
+		shellPositionalMax: '',
 		shellPipeline: 'unset',
 		shellStepOptions: [{ allow: '', deny: '' }],
 		fsRoot: 'workspace',
@@ -143,6 +146,8 @@ export function grantScopeToFormFields(scope: GrantScope | null): {
 			fields.shellArgv0 = scope.rule.command[0]?.token ?? '';
 			fields.shellSubcommands = commandTailToText(scope.rule.command);
 			fields.shellPositionals = scope.rule.positionals?.kind ?? 'unset';
+			fields.shellPositionalMin = countBoundToText(scope.rule.positionalCount?.min);
+			fields.shellPositionalMax = countBoundToText(scope.rule.positionalCount?.max);
 			fields.shellPipeline = scope.rule.pipeline ?? 'unset';
 			fields.shellStepOptions = scope.rule.command.map((step) => ({
 				allow: shellOptionSpecsToCsv(step.options?.allow ?? []),
@@ -186,11 +191,55 @@ export function nextShellStepOptions(
 	return next.length > 0 ? next : [{ allow: '', deny: '' }];
 }
 
+function countBoundToText(v: number | undefined): string {
+	return v === undefined ? '' : String(v);
+}
+
+/**
+ * Parse the two count inputs into a `positionalCount` rule. Blank means
+ * unconstrained on that end; blank on both ends omits the rule entirely.
+ */
+function parseCountBounds(fields: GrantScopeFormFields): {
+	value: { min?: number; max?: number } | null;
+	error: string | null;
+} {
+	const min = parseCountBound(fields.shellPositionalMin, 'minimum');
+	if (min.error) return { value: null, error: min.error };
+	const max = parseCountBound(fields.shellPositionalMax, 'maximum');
+	if (max.error) return { value: null, error: max.error };
+	if (min.value === undefined && max.value === undefined) return { value: null, error: null };
+	if (min.value !== undefined && max.value !== undefined && min.value > max.value) {
+		return { value: null, error: 'positional count minimum must not exceed the maximum' };
+	}
+	const value: { min?: number; max?: number } = {};
+	if (min.value !== undefined) value.min = min.value;
+	if (max.value !== undefined) value.max = max.value;
+	return { value, error: null };
+}
+
+function parseCountBound(
+	raw: string,
+	label: string
+): { value: number | undefined; error: string | null } {
+	// Tolerate a non-string binding (a `type="number"` input yields a number
+	// or null) so a stray input type can't throw out of form validation.
+	const text = String(raw ?? '').trim();
+	if (text === '') return { value: undefined, error: null };
+	const n = Number(text);
+	if (!Number.isInteger(n) || n < 0) {
+		return { value: undefined, error: `positional count ${label} must be a non-negative integer` };
+	}
+	return { value: n, error: null };
+}
+
 function buildShellScopeJson(fields: GrantScopeFormFields): BuildResult {
 	if (!fields.shellArgv0.trim()) return { json: null, error: 'argv0 is required' };
 	const command: ShellCommandStep[] = shellCommandTokens(fields).map((token) => ({ token }));
 	const rule: Record<string, unknown> = { command };
 	if (fields.shellPositionals !== 'unset') rule.positionals = { kind: fields.shellPositionals };
+	const count = parseCountBounds(fields);
+	if (count.error) return { json: null, error: count.error };
+	if (count.value) rule.positionalCount = count.value;
 	if (fields.shellPipeline !== 'unset') rule.pipeline = fields.shellPipeline;
 	for (let i = 0; i < command.length; i++) {
 		const allow = parseShellOptionSpecs(fields.shellStepOptions[i]?.allow ?? '');

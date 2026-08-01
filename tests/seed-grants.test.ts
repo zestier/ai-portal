@@ -329,8 +329,8 @@ describe('seed grants — runtime behaviour', () => {
 	});
 
 	it('does not let a pipe smuggle a file read into grep/rg', () => {
-		// The pipe makes grep a pipe target, but the file operand fails
-		// pattern-only, so the allow seed does not fire.
+		// The pipe makes grep a pipe target, but the file operand exceeds the
+		// seed's positional count of 1, so the allow seed does not fire.
 		expect(shellMatch('echo x | grep root /etc/shadow', '/tmp')).toBe('prompt');
 		// Producer side of a pipeline is not a pipe target.
 		expect(shellMatch('grep root /etc/shadow | head', '/tmp')).toBe('prompt');

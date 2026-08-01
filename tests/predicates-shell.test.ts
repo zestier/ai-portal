@@ -271,24 +271,48 @@ describe('shell predicate — positionals', () => {
 		expect(match(rule, `cat ${join(ws, 'README.md')}`, null)).toBe(false);
 	});
 
-	it('positionals=pattern-only accepts at most one non-path positional', () => {
-		const rule = shell(['grep'], { positionals: { kind: 'pattern-only' } });
-		expect(match(rule, 'grep')).toBe(true);
-		expect(match(rule, 'grep foo')).toBe(true);
-		// The lone positional is a pattern, NOT containment-checked: patterns
-		// that look like escaping paths are still just patterns.
+	it('positionals=any does not containment-check its operands', () => {
+		// Deliberate: an operand that isn't a path (a grep pattern, say) must
+		// not be resolved against the workspace. Bound the COUNT to keep such
+		// a rule narrow.
+		const rule = shell(['grep'], { positionals: { kind: 'any' } });
 		expect(match(rule, 'grep ../etc/passwd')).toBe(true);
 		expect(match(rule, 'grep "^root:"')).toBe(true);
-		// A second positional is a file operand — exactly what this rejects.
-		expect(match(rule, 'grep foo README.md')).toBe(false);
-		expect(match(rule, 'grep foo /etc/passwd')).toBe(false);
 	});
 
-	it('positionals=pattern-only needs no workspace root', () => {
-		const rule = shell(['grep'], { positionals: { kind: 'pattern-only' } });
-		const parsed = parseShellCommand('grep foo');
-		if (parsed.kind !== 'parsed') throw new Error('parse');
-		expect(shellRuleMatches(rule, parsed.segments, { workspaceRoots: null })).toBe(true);
+	it('positionalCount bounds the number of positionals, inclusively', () => {
+		const upTo1 = shell(['grep'], { positionalCount: { max: 1 } });
+		expect(match(upTo1, 'grep')).toBe(true);
+		expect(match(upTo1, 'grep foo')).toBe(true);
+		expect(match(upTo1, 'grep foo README.md')).toBe(false);
+
+		const exactly1 = shell(['grep'], { positionalCount: { min: 1, max: 1 } });
+		expect(match(exactly1, 'grep')).toBe(false);
+		expect(match(exactly1, 'grep foo')).toBe(true);
+		expect(match(exactly1, 'grep foo bar')).toBe(false);
+
+		const atLeast2 = shell(['grep'], { positionalCount: { min: 2 } });
+		expect(match(atLeast2, 'grep foo')).toBe(false);
+		expect(match(atLeast2, 'grep foo bar')).toBe(true);
+		expect(match(atLeast2, 'grep foo bar baz')).toBe(true);
+	});
+
+	it('positionalCount composes with the containment rule', () => {
+		// Exactly one workspace path — inexpressible before the count range
+		// was split out from the shape rule.
+		const oneWorkspacePath = shell(['cat'], {
+			positionals: { kind: 'workspace-paths' },
+			positionalCount: { min: 1, max: 1 }
+		});
+		expect(match(oneWorkspacePath, 'cat README.md')).toBe(true);
+		expect(match(oneWorkspacePath, 'cat README.md src/a.ts')).toBe(false);
+		expect(match(oneWorkspacePath, 'cat /etc/passwd')).toBe(false);
+		expect(match(oneWorkspacePath, 'cat')).toBe(false);
+	});
+
+	it('positionalCount is unconstrained on omitted ends and when absent', () => {
+		expect(match(shell(['echo']), 'echo a b c d')).toBe(true);
+		expect(match(shell(['echo'], { positionalCount: { min: 0 } }), 'echo a b c d')).toBe(true);
 	});
 });
 

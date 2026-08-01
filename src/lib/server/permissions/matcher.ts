@@ -14,6 +14,7 @@ export { deriveScopeKey } from '../../permissions/scope-key';
 import type { GrantScope } from '../../permissions/scope-types';
 import type { ParsedSegment } from './shell-parser';
 import { shellRuleMatches, shellRuleMatchesSegment } from './predicates/shell';
+import type { ShellMatchContext } from './predicates/shell';
 import { fsScopeMatches } from './predicates/fs';
 import { urlScopeMatches } from './predicates/url';
 
@@ -263,15 +264,7 @@ function grantApplies(r: GrantRow, q: MatchQuery): boolean {
 	return true;
 }
 
-function rowMatchesShellSegment(
-	r: GrantRow,
-	seg: ParsedSegment,
-	ctx: {
-		workspaceRoots: readonly string[] | null;
-		sessionWorkspaceRoot: string | null;
-		inPipeline: boolean;
-	}
-): boolean {
+function rowMatchesShellSegment(r: GrantRow, seg: ParsedSegment, ctx: ShellMatchContext): boolean {
 	if (r.scope) {
 		switch (r.scope.kind) {
 			case 'any':

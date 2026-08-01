@@ -49,6 +49,10 @@ test('creating a shell+workspace-paths grant adds a row to the list', async ({ p
 	const argv0 = `e2e${randomUUID().slice(0, 8)}`;
 	await page.getByLabel(/argv0/).fill(argv0);
 	await page.getByLabel(/Positional arguments/).selectOption('workspace-paths');
+	// The count range is orthogonal to the shape rule above: this authors
+	// "exactly one workspace path", which needs both controls.
+	await page.getByLabel(/Min positionals/).fill('1');
+	await page.getByLabel(/Max positionals/).fill('1');
 
 	await page.getByRole('button', { name: 'Add grant', exact: true }).click();
 
@@ -59,6 +63,7 @@ test('creating a shell+workspace-paths grant adds a row to the list', async ({ p
 		.filter({ has: page.locator(`code.pattern:has-text("command=${argv0}")`) });
 	await expect(row).toBeVisible();
 	await expect(row.locator('code.tool')).toHaveText('shell');
+	await expect(row.locator('code.pattern')).toContainText('positional-count=1');
 
 	// Revoking via the guarded button removes it after confirmation.
 	page.once('dialog', (dialog) => dialog.accept());

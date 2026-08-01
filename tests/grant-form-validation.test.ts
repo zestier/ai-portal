@@ -19,6 +19,7 @@ import {
 	defaultGrantScopeFormFields,
 	grantScopeToFormFields
 } from '../src/lib/permissions/grant-form';
+import { decodeScope } from '../src/lib/permissions/scope-codec';
 import {
 	capabilityRuleKindForScope,
 	describeGrantScope
@@ -502,6 +503,57 @@ describe('grant form metadata helpers', () => {
 			kind: 'url',
 			rule: { kind: 'host-suffix', suffix: 'github.com' }
 		});
+	});
+
+	it('builds and round-trips a positional count range', () => {
+		const fields = {
+			...defaultGrantScopeFormFields(),
+			shellArgv0: 'grep',
+			shellPositionals: 'any' as const,
+			shellPositionalMax: '1',
+			shellPipeline: 'pipe-target' as const
+		};
+		const json = buildGrantScopeJson('shell', fields).json ?? '';
+		expect(JSON.parse(json)).toEqual({
+			kind: 'shell',
+			rule: {
+				command: [{ token: 'grep' }],
+				positionals: { kind: 'any' },
+				positionalCount: { max: 1 },
+				pipeline: 'pipe-target'
+			}
+		});
+		const back = grantScopeToFormFields(decodeScope(json)).fields;
+		expect(back.shellPositionalMin).toBe('');
+		expect(back.shellPositionalMax).toBe('1');
+		expect(back.shellPipeline).toBe('pipe-target');
+	});
+
+	it('rejects malformed positional count bounds', () => {
+		const base = { ...defaultGrantScopeFormFields(), shellArgv0: 'grep' };
+		expect(buildGrantScopeJson('shell', { ...base, shellPositionalMax: '-1' }).error).toMatch(
+			/non-negative integer/
+		);
+		expect(buildGrantScopeJson('shell', { ...base, shellPositionalMin: '1.5' }).error).toMatch(
+			/non-negative integer/
+		);
+		// A non-string binding (e.g. a `type="number"` input, which yields a
+		// number or null) must not throw out of validation.
+		expect(
+			buildGrantScopeJson('shell', {
+				...base,
+				shellPositionalMin: null as unknown as string,
+				shellPositionalMax: 2 as unknown as string
+			}).error
+		).toBe(null);
+		expect(
+			buildGrantScopeJson('shell', { ...base, shellPositionalMin: '2', shellPositionalMax: '1' })
+				.error
+		).toMatch(/must not exceed/);
+		// Blank on both ends omits the rule entirely.
+		expect(JSON.parse(buildGrantScopeJson('shell', base).json ?? '').rule.positionalCount).toBe(
+			undefined
+		);
 	});
 
 	it('initializes edit form fields from existing grant scopes', () => {

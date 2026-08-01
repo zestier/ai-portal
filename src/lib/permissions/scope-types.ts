@@ -78,25 +78,34 @@ export interface ShellRule {
 	/**
 	 * What positional arguments (non-flag tokens other than argv[0], the
 	 * command-path tokens, and values consumed by matched option specs) are
-	 * allowed.
+	 * allowed. This constrains the SHAPE of each positional; use
+	 * `positionalCount` to constrain how many there are.
 	 *   none             — every positional must be absent
-	 *   any              — anything goes
-	 *   pattern-only     — at most ONE positional, treated as an opaque
-	 *                      non-path operand (a search pattern). Any further
-	 *                      positional is rejected. This is the rule for
-	 *                      stdin filters like `grep`/`rg`, whose first
-	 *                      positional is a regex — never a path — and whose
-	 *                      later positionals are the file operands we do not
-	 *                      want to auto-approve. Path-shaped rules are wrong
-	 *                      for them in both directions: a regex is not a path
-	 *                      to be containment-checked, and a file operand must
-	 *                      not slip through as one.
+	 *   any              — anything goes; positionals are opaque and are NOT
+	 *                      resolved or containment-checked. Correct for
+	 *                      operands that aren't paths at all, such as a
+	 *                      `grep` pattern
 	 *   workspace-paths          — every positional must resolve to a path
 	 *                              inside the conversation's workspace root
 	 *   session-workspace-paths  — every positional must resolve to a path
 	 *                              inside the SDK session workspace
 	 */
 	positionals?: PositionalsRule | undefined;
+	/**
+	 * Inclusive bounds on the NUMBER of positionals, orthogonal to the
+	 * containment rule above; omitted bounds are unconstrained. Composing
+	 * the two is what makes narrow rules expressible without inventing a
+	 * named variant per command shape:
+	 *
+	 *   `grep` as a pure stdin filter  — positionals `any` + max 1 (the lone
+	 *     operand is the pattern; a second one is a file to read, which the
+	 *     rule refuses)
+	 *   a single-file reader           — `workspace-paths` + min 1, max 1
+	 *
+	 * Note `{ kind: 'none' }` is equivalent to max 0 and is kept as the
+	 * clearer spelling of that case.
+	 */
+	positionalCount?: PositionalCountRule | undefined;
 	/**
 	 * Whether this segment must / must not be part of a shell pipeline
 	 * (i.e. connected to a neighboring command by `|`). Omitted = no
@@ -118,9 +127,15 @@ export interface ShellRule {
 export type PositionalsRule =
 	| { kind: 'none' }
 	| { kind: 'any' }
-	| { kind: 'pattern-only' }
 	| { kind: 'workspace-paths' }
 	| { kind: 'session-workspace-paths' };
+
+/** Inclusive positional-count bounds. Both ends are optional and each is a
+ * non-negative integer; `min` must not exceed `max`. */
+export interface PositionalCountRule {
+	min?: number | undefined;
+	max?: number | undefined;
+}
 
 /** Matches `read` / `write` / `edit` permission requests. */
 export interface FsScope {

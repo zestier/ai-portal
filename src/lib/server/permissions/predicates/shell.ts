@@ -8,6 +8,7 @@
 import type {
 	ShellRule,
 	PositionalsRule,
+	PositionalCountRule,
 	ShellOptionSpec,
 	ShellCommandStep,
 	ShellOptionRules
@@ -90,13 +91,13 @@ export function shellRuleMatchesSegment(
 		if (rule.pipeline === 'pipe-target' && ctx.isPipeTarget !== true) return false;
 	}
 
-	return commandPathMatches(path, argv, rule.positionals, ctx);
+	return commandPathMatches(path, argv, rule, ctx);
 }
 
 function commandPathMatches(
 	path: ShellCommandStep[],
 	argv: string[],
-	positionalsRule: PositionalsRule | undefined,
+	rule: ShellRule,
 	ctx: ShellMatchContext
 ): boolean {
 	if (path.length === 0 || argv[0] !== path[0].token) return false;
@@ -157,7 +158,22 @@ function commandPathMatches(
 		positionals.push(tok);
 	}
 
-	return positionalsMatch(positionalsRule, positionals, ctx);
+	return (
+		positionalCountMatches(rule.positionalCount, positionals.length) &&
+		positionalsMatch(rule.positionals, positionals, ctx)
+	);
+}
+
+/**
+ * Inclusive bounds check. Omitted bounds are unconstrained; an omitted rule
+ * constrains nothing. Bounds are validated at decode time, so a malformed
+ * range can't reach here.
+ */
+function positionalCountMatches(rule: PositionalCountRule | undefined, count: number): boolean {
+	if (!rule) return true;
+	if (rule.min !== undefined && count < rule.min) return false;
+	if (rule.max !== undefined && count > rule.max) return false;
+	return true;
 }
 
 function optionSpecMatchesValue(
@@ -228,11 +244,6 @@ function positionalsMatch(
 			return true;
 		case 'none':
 			return positionals.length === 0;
-		// At most one positional, and it is NOT containment-checked: for a
-		// stdin filter the lone positional is a regex, not a path. Anything
-		// beyond it is a file operand, which this rule exists to refuse.
-		case 'pattern-only':
-			return positionals.length <= 1;
 		case 'workspace-paths': {
 			if (!ctx.workspaceRoots || ctx.workspaceRoots.length === 0) return false;
 			// Every positional must land in SOME root. Mixing roots within one

@@ -121,13 +121,16 @@ const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] 
  * The one thing no structured tool can do is filter ANOTHER command's
  * stdout (`pnpm test | grep -c FAIL`).
  *
- * So the seed grants exactly that: `pipeline: 'pipe-target'` (must consume
- * a pipe — note `grep x file | head` does NOT qualify, since grep is the
- * producer there) plus `positionals: 'pattern-only'` (the lone positional
- * is the pattern; a file operand is refused, which is what stops
- * `echo | grep root /etc/shadow` from riding in on the pipe). Options that
- * make the command read files anyway are denied. Everything else falls
- * through to the prompt seed below, which points at the `grep` tool.
+ * So the seed grants exactly that capability: `pipeline: 'pipe-target'`
+ * (must consume a pipe — note `grep x file | head` does NOT qualify, since
+ * grep is the producer there) composed with `positionals: 'any'` and a
+ * positional count of at most 1. The count bound is what does the real
+ * work: the lone operand is the pattern, and a second one is a file to
+ * read, so `echo x | grep root /etc/shadow` can't ride in on the pipe.
+ * `any` is the right shape rule precisely because a regex is not a path and
+ * must not be containment-checked. Options that make the command read files
+ * anyway are denied. Everything else falls through to the prompt seed
+ * below, which points at the `grep` tool.
  */
 const STDIN_FILTER_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
 	{
@@ -438,7 +441,8 @@ export function defaultSeedGrants(): SeedSpec[] {
 	// pipeline's producer rather than its target — falls through to the
 	// prompt seed and is steered to the structured `grep` tool.
 	for (const { token, options } of STDIN_FILTER_TOOLS) {
-		const rule = shellCommand(token, { kind: 'pattern-only' }, options);
+		const rule = shellCommand(token, { kind: 'any' }, options);
+		rule.positionalCount = { max: 1 };
 		rule.pipeline = 'pipe-target';
 		seeds.push(shellGrant(rule));
 	}

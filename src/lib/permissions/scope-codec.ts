@@ -16,7 +16,8 @@ import {
 	type FsScope,
 	type UrlScope,
 	type UrlRule,
-	type PositionalsRule
+	type PositionalsRule,
+	type PositionalCountRule
 } from './scope-types';
 import { FsScopeSchema } from './scope-schema';
 
@@ -68,6 +69,12 @@ function validateShell(v: Record<string, unknown>): ShellScope | null {
 		const p = validatePositionals(rule.positionals);
 		if (!p) return null;
 		out.positionals = p;
+	}
+
+	if (rule.positionalCount !== undefined) {
+		const c = validatePositionalCount(rule.positionalCount);
+		if (!c) return null;
+		out.positionalCount = c;
 	}
 
 	if (rule.pipeline !== undefined) {
@@ -148,13 +155,33 @@ function validatePositionals(v: unknown): PositionalsRule | null {
 	if (
 		kind === 'none' ||
 		kind === 'any' ||
-		kind === 'pattern-only' ||
 		kind === 'workspace-paths' ||
 		kind === 'session-workspace-paths'
 	) {
 		return { kind } as PositionalsRule;
 	}
 	return null;
+}
+
+function validatePositionalCount(v: unknown): PositionalCountRule | null {
+	if (!isObject(v)) return null;
+	const raw = v as { min?: unknown; max?: unknown };
+	const out: PositionalCountRule = {};
+	if (raw.min !== undefined) {
+		if (!isCountBound(raw.min)) return null;
+		out.min = raw.min;
+	}
+	if (raw.max !== undefined) {
+		if (!isCountBound(raw.max)) return null;
+		out.max = raw.max;
+	}
+	if (out.min === undefined && out.max === undefined) return null;
+	if (out.min !== undefined && out.max !== undefined && out.min > out.max) return null;
+	return out;
+}
+
+function isCountBound(v: unknown): v is number {
+	return typeof v === 'number' && Number.isInteger(v) && v >= 0;
 }
 
 function validateFs(v: Record<string, unknown>): FsScope | null {

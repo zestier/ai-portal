@@ -55,6 +55,8 @@
 	let shellArgv0 = $state(initial.fields.shellArgv0);
 	let shellSubcommands = $state(initial.fields.shellSubcommands);
 	let shellPositionals = $state<ShellPositionalsKind>(initial.fields.shellPositionals);
+	let shellPositionalMin = $state(initial.fields.shellPositionalMin);
+	let shellPositionalMax = $state(initial.fields.shellPositionalMax);
 	let shellPipeline = $state<ShellPipelineKind>(initial.fields.shellPipeline);
 	let shellStepOptions = $state<ShellStepOptionInput[]>(initial.fields.shellStepOptions);
 	let originalShellCommand = $state<ShellCommandStep[] | null>(initial.originalShellCommand);
@@ -75,6 +77,8 @@
 			shellArgv0,
 			shellSubcommands,
 			shellPositionals,
+			shellPositionalMin,
+			shellPositionalMax,
 			shellPipeline,
 			shellStepOptions,
 			fsRoot,
@@ -91,6 +95,8 @@
 		shellArgv0 = fields.shellArgv0;
 		shellSubcommands = fields.shellSubcommands;
 		shellPositionals = fields.shellPositionals;
+		shellPositionalMin = fields.shellPositionalMin;
+		shellPositionalMax = fields.shellPositionalMax;
 		shellPipeline = fields.shellPipeline;
 		shellStepOptions = fields.shellStepOptions;
 		fsRoot = fields.fsRoot;
@@ -154,6 +160,8 @@
 	bind:shellArgv0
 	bind:shellSubcommands
 	bind:shellPositionals
+	bind:shellPositionalMin
+	bind:shellPositionalMax
 	bind:shellPipeline
 	bind:shellStepOptions
 	bind:fsRoot

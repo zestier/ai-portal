@@ -20,6 +20,8 @@
 		shellArgv0 = $bindable(),
 		shellSubcommands = $bindable(),
 		shellPositionals = $bindable(),
+		shellPositionalMin = $bindable(),
+		shellPositionalMax = $bindable(),
 		shellPipeline = $bindable(),
 		shellStepOptions = $bindable(),
 		fsRoot = $bindable(),
@@ -36,6 +38,8 @@
 		shellArgv0: string;
 		shellSubcommands: string;
 		shellPositionals: ShellPositionalsKind;
+		shellPositionalMin: string;
+		shellPositionalMax: string;
 		shellPipeline: ShellPipelineKind;
 		shellStepOptions: ShellStepOptionInput[];
 		fsRoot: GrantScopeFormFields['fsRoot'];
@@ -87,10 +91,6 @@
 				<option value="unset">(unconstrained — any positionals)</option>
 				<option value="none">none (the command takes no positional args)</option>
 				<option value="any">any (positionals are anything)</option>
-				<option value="pattern-only"
-					>pattern-only (at most one positional, treated as a search pattern — file operands are
-					rejected)</option
-				>
 				<option value="workspace-paths"
 					>workspace-paths (every positional must resolve inside the conversation's workspace)</option
 				>
@@ -99,6 +99,21 @@
 				>
 			</select>
 		</label>
+		<div class="count-range">
+			<label>
+				Min positionals
+				<input type="text" inputmode="numeric" bind:value={shellPositionalMin} placeholder="any" />
+			</label>
+			<label>
+				Max positionals
+				<input type="text" inputmode="numeric" bind:value={shellPositionalMax} placeholder="any" />
+			</label>
+			<span class="muted small"
+				>Inclusive bounds on how many positionals the command may take; leave blank for
+				unconstrained. Orthogonal to the shape rule above, so `any` + max 1 means "one opaque
+				operand" — e.g. a `grep` pattern with no file to read.</span
+			>
+		</div>
 		<label>
 			Pipeline constraint
 			<select bind:value={shellPipeline}>
@@ -280,6 +295,20 @@
 		flex-direction: column;
 		gap: 0.5rem;
 		min-width: 0;
+	}
+	.count-range {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.5rem 0.75rem;
+		min-width: 0;
+	}
+	.count-range > .muted {
+		grid-column: 1 / -1;
+	}
+	@media (max-width: 30rem) {
+		.count-range {
+			grid-template-columns: 1fr;
+		}
 	}
 	.step-option-fields {
 		border: 1px dashed var(--border);
