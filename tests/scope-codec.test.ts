@@ -67,6 +67,26 @@ describe('scope-codec roundtrip', () => {
 		});
 	});
 
+	it('shell with fs-deferred positionals', () => {
+		roundtrip({
+			kind: 'shell',
+			rule: { command: [{ token: 'cat' }], positionals: { kind: 'readable-paths' } }
+		});
+		roundtrip({
+			kind: 'shell',
+			rule: { command: [{ token: 'tee' }], positionals: { kind: 'writable-paths' } }
+		});
+		// The two levers compose: "exactly one path my read grants permit".
+		roundtrip({
+			kind: 'shell',
+			rule: {
+				command: [{ token: 'cat' }],
+				positionals: { kind: 'readable-paths' },
+				positionalCount: { min: 1, max: 1 }
+			}
+		});
+	});
+
 	it('shell with a positional count range', () => {
 		roundtrip({
 			kind: 'shell',

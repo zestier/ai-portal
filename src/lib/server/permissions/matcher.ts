@@ -11,12 +11,17 @@
 
 export { deriveScopeKey } from '../../permissions/scope-key';
 
-import type { GrantScope } from '../../permissions/scope-types';
+import type { GrantScope, FsPermission } from '../../permissions/scope-types';
 import type { ParsedSegment } from './shell-parser';
-import { shellRuleMatches, shellRuleMatchesSegment } from './predicates/shell';
-import type { ShellMatchContext } from './predicates/shell';
+import {
+	shellRuleMatches,
+	shellRuleMatchesSegment,
+	type ShellMatchContext,
+	type ShellMatchExplain
+} from './predicates/shell';
 import { fsScopeMatches } from './predicates/fs';
 import { urlScopeMatches } from './predicates/url';
+import { isAbsolute, resolve } from 'node:path';
 
 export type GrantDecision = 'allow' | 'force-allow' | 'deny' | 'prompt';
 export type MatchOutcome = 'allow' | 'deny' | 'prompt' | 'none';
@@ -182,20 +187,40 @@ function matchShellSegments(
 	let sawUncovered = false;
 	let sawPrompt = false;
 	let denyFeedback: string | null = null;
+	let uncoveredFeedback: string | null = null;
 	let promptFeedback: string | null = null;
+	const pathPermittedFor = buildFsPathPermitted(rows, q);
+	// A `cd` earlier in the chain moves the shell's working directory, so from
+	// that point on a relative operand no longer means what the session cwd says
+	// it means. Rather than model cwd (the target may itself be unresolvable), the
+	// fs-deferred kinds stop accepting relative operands after such a segment.
+	let cwdMoved = false;
 	for (let i = 0; i < segments.length; i++) {
 		const seg = segments[i];
 		const ctx = {
 			workspaceRoots: q.workspaceRoots ?? null,
 			sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
+			pathPermitted: pathPermittedFor(!cwdMoved),
 			inPipeline: segmentInPipeline(segments, i),
 			isPipeTarget: segmentIsPipeTarget(segments, i)
 		};
+		if (movesWorkingDirectory(seg)) cwdMoved = true;
 		let segDecision: GrantDecision | null = null;
 		let segFeedback: string | null = null;
+		let segNearMiss: string | null = null;
 		for (const r of rows) {
 			if (!grantApplies(r, q)) continue;
-			if (!rowMatchesShellSegment(r, seg, ctx)) continue;
+			// Only allow-shaped grants produce a near-miss explanation: a deny or
+			// prompt row that fails to match is not a capability the request was
+			// reaching for.
+			const explain: ShellMatchExplain | undefined =
+				r.decision === 'allow' || r.decision === 'force-allow' ? {} : undefined;
+			if (!rowMatchesShellSegment(r, seg, ctx, explain)) {
+				if (explain?.positionalRefusal && segNearMiss === null) {
+					segNearMiss = explain.positionalRefusal;
+				}
+				continue;
+			}
 			segDecision = r.decision;
 			segFeedback = r.denyReason;
 			break;
@@ -205,17 +230,38 @@ function matchShellSegments(
 			denyFeedback ??= segFeedback;
 		} else if (segDecision === null) {
 			sawUncovered = true;
+			// Attribution matters: the near-miss is only reported alongside the
+			// outcome of the SAME segment, so a chain can't explain one segment's
+			// refusal with another segment's reason.
+			uncoveredFeedback ??= segNearMiss;
 		} else if (segDecision === 'prompt') {
 			sawPrompt = true;
-			promptFeedback ??= segFeedback;
+			promptFeedback ??= combineFeedback(segFeedback, segNearMiss);
 		}
 		// 'allow' / 'force-allow' contribute the least-restrictive outcome and
 		// need no bookkeeping.
 	}
 	if (sawDeny) return withFeedback('deny', denyFeedback);
-	if (sawUncovered) return withFeedback('none', null);
+	// An uncovered chain carries no grant feedback, but it may carry the reason
+	// an fs-deferring allow grant declined it — which is what stops the caller
+	// from reporting a workspace-boundary problem for a missing fs permission.
+	if (sawUncovered) return withFeedback('none', uncoveredFeedback);
 	if (sawPrompt) return withFeedback('prompt', promptFeedback);
 	return withFeedback('allow', null);
+}
+
+/** Builtins that relocate the shell for every segment that follows them. */
+const CWD_MOVING_BUILTINS = new Set(['cd', 'pushd', 'popd', 'chdir']);
+
+function movesWorkingDirectory(seg: ParsedSegment): boolean {
+	return CWD_MOVING_BUILTINS.has(seg.argv[0]);
+}
+
+/** Keep a matched grant's own steer, but append the more specific near-miss. */
+function combineFeedback(feedback: string | null, nearMiss: string | null): string | null {
+	if (!feedback) return nearMiss;
+	if (!nearMiss) return feedback;
+	return `${feedback} (${nearMiss})`;
 }
 
 function sortGrantRows(rows: GrantRow[]): GrantRow[] {
@@ -227,6 +273,91 @@ function grantRank(r: GrantRow): number {
 	if (r.decision === 'deny') return 1;
 	if (r.decision === 'allow') return 2;
 	return 3;
+}
+
+/**
+ * Upper bound on distinct (permission, path) questions one request may ask the
+ * fs grant set. Each question costs a grant scan plus a realpath, and a normal
+ * command has a handful of positionals — a command with more than this is
+ * pathological, so it fails closed (→ prompt) rather than being allowed to burn
+ * time in the permission hot path. Repeated questions are memoized and don't
+ * count against the budget.
+ */
+const MAX_FS_DEFERRED_CHECKS = 64;
+
+/**
+ * Build the `pathPermitted` closures the shell predicate uses for
+ * `readable-paths` / `writable-paths`, from the SAME candidate grant rows the
+ * shell request is being matched against. The nested question is answered by
+ * re-entering `matchGrantsDetailed` as a plain fs request, so fs precedence
+ * (force-allow > deny > allow > prompt) is shared rather than reimplemented:
+ * only an `allow` outcome satisfies the shell rule, which is exactly the
+ * "an fs prompt/deny does not satisfy a shell allow" semantics documented on
+ * `PositionalsRule`.
+ *
+ * Returns a factory taking `allowRelative`, because a segment that runs after a
+ * `cd` no longer sits in the cwd we know about; the memo cache and the budget
+ * are shared across both modes.
+ *
+ * Recursion is impossible by construction, not by luck: shell-scoped rows are
+ * filtered out and the nested query carries no `shellSegments`, so the nested
+ * call cannot re-enter shell matching (and therefore cannot build another
+ * closure).
+ */
+function buildFsPathPermitted(
+	rows: GrantRow[],
+	q: MatchQuery
+): (allowRelative: boolean) => (perm: FsPermission, path: string) => boolean {
+	// Built lazily: most shell requests never reach a grant-deferring positional
+	// rule, and this is the permission hot path.
+	let fsRows: GrantRow[] | null = null;
+	const cache = new Map<string, boolean>();
+	let checks = 0;
+	const permitted = (allowRelative: boolean, perm: FsPermission, rawPath: string): boolean => {
+		const key = `${allowRelative ? 'r' : 'a'}\u0000${perm}\u0000${rawPath}`;
+		const cached = cache.get(key);
+		if (cached !== undefined) return cached;
+		if (checks >= MAX_FS_DEFERRED_CHECKS) return false;
+		checks += 1;
+		fsRows ??= rows.filter((r) => r.scope?.kind !== 'shell');
+		const target = absolutePositional(
+			rawPath,
+			allowRelative ? (q.sessionWorkspaceRoot ?? null) : null
+		);
+		const ok =
+			target !== null &&
+			matchGrantsDetailed(fsRows, {
+				tool: perm,
+				permissionKind: perm,
+				// fs requests carry the target path as their scope key. Note the
+				// nested key is always ABSOLUTE while a real fs request may pass a
+				// relative one, so a legacy `scope_pattern` grant written against
+				// relative paths simply doesn't fire here — a narrowing, which is
+				// the safe direction for a fail-closed check.
+				scopeKey: target,
+				target,
+				workspaceRoots: q.workspaceRoots ?? null,
+				sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
+				now: q.now
+			}).outcome === 'allow';
+		cache.set(key, ok);
+		return ok;
+	};
+	return (allowRelative) => (perm, rawPath) => permitted(allowRelative, perm, rawPath);
+}
+
+/**
+ * Resolve a positional as written on the command line to an absolute path.
+ * Relative operands are resolved against the shell's working directory (the
+ * SDK session workspace); when that is unknown — or when an earlier `cd` in the
+ * chain means we no longer know where the command runs — they fail closed,
+ * because a relative path has no meaning to compare against an absolute fs rule.
+ */
+function absolutePositional(rawPath: string, cwd: string | null): string | null {
+	if (!rawPath || rawPath.includes('\0')) return null;
+	if (isAbsolute(rawPath)) return resolve(rawPath);
+	if (!cwd || cwd.includes('\0')) return null;
+	return resolve(cwd, rawPath);
 }
 
 function withFeedback(outcome: MatchOutcome, feedback: string | null): DetailedMatchOutcome {
@@ -264,13 +395,18 @@ function grantApplies(r: GrantRow, q: MatchQuery): boolean {
 	return true;
 }
 
-function rowMatchesShellSegment(r: GrantRow, seg: ParsedSegment, ctx: ShellMatchContext): boolean {
+function rowMatchesShellSegment(
+	r: GrantRow,
+	seg: ParsedSegment,
+	ctx: ShellMatchContext,
+	explain?: ShellMatchExplain
+): boolean {
 	if (r.scope) {
 		switch (r.scope.kind) {
 			case 'any':
 				return true;
 			case 'shell':
-				return shellRuleMatchesSegment(r.scope.rule, seg, ctx);
+				return shellRuleMatchesSegment(r.scope.rule, seg, ctx, explain);
 			default:
 				return false;
 		}
@@ -290,6 +426,9 @@ function structuredScopeMatches(scope: GrantScope, q: MatchQuery): boolean {
 		case 'shell':
 			if (q.permissionKind !== 'shell') return false;
 			if (!q.shellSegments) return false;
+			// Reachable only for an empty segment list (non-empty lists are routed
+			// to `matchShellSegments`, which supplies `pathPermitted`), so the
+			// fs-deferring positional kinds correctly fail closed here.
 			return shellRuleMatches(scope.rule, q.shellSegments, {
 				workspaceRoots: q.workspaceRoots ?? null,
 				sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null

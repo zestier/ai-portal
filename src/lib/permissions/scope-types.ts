@@ -89,6 +89,12 @@ export interface ShellRule {
 	 *                              inside the conversation's workspace root
 	 *   session-workspace-paths  — every positional must resolve to a path
 	 *                              inside the SDK session workspace
+	 *   readable-paths           — every positional must be a path the user's
+	 *                              `read` grants already permit
+	 *   writable-paths           — same, for `write`
+	 *
+	 * See `PositionalsRule` for the precedence and fail-closed semantics of
+	 * the two grant-deferring kinds.
 	 */
 	positionals?: PositionalsRule | undefined;
 	/**
@@ -124,11 +130,77 @@ export interface ShellRule {
 	pipeline?: 'must' | 'forbid' | 'pipe-target' | undefined;
 }
 
+/**
+ * How a shell rule constrains a command's positional (non-option) operands.
+ *
+ * `workspace-paths` / `session-workspace-paths` describe containment in a
+ * hardcoded root. `readable-paths` / `writable-paths` instead DEFER to the
+ * user's filesystem grants, so a shell reader covers exactly the paths the
+ * `view` tool may read (or `create`/`edit` may write) without the user
+ * mirroring every fs rule into every shell grant.
+ *
+ * Semantics of the two deferring kinds:
+ *
+ *   * A positional is satisfied only when the fs grant set resolves that path
+ *     to an ALLOW (`allow` / `force-allow`). An fs `prompt` grant does NOT
+ *     silently satisfy a shell allow.
+ *   * An fs `deny` on the path does NOT turn the shell request into a deny —
+ *     it merely leaves this shell rule unmatched, so the request falls through
+ *     to the other shell grants and to policy. Shell-level denies stay owned by
+ *     the shell deny seeds, which is what makes their feedback accurate.
+ *   * Evaluation FAILS CLOSED. With no way to consult the fs grants
+ *     (`ShellMatchContext.pathPermitted` absent), the rule matches nothing —
+ *     the same posture `workspace-paths` takes when `workspaceRoots` is empty.
+ *   * Relative positionals are resolved against the shell's working directory
+ *     (the SDK session workspace); when that is unknown — or when an earlier
+ *     `cd` in the same chain moved the shell somewhere we don't model — a
+ *     relative positional fails closed.
+ *   * Zero positionals trivially satisfy the rule, matching the other
+ *     path-shaped kinds.
+ *   * Only POSITIONALS are checked. A path passed as an option value (`-f
+ *     /etc/shadow`) is governed by that step's `ShellOptionRules`, so a rule
+ *     that grants an open deny-list of options is not made safe by this kind.
+ */
 export type PositionalsRule =
 	| { kind: 'none' }
 	| { kind: 'any' }
 	| { kind: 'workspace-paths' }
-	| { kind: 'session-workspace-paths' };
+	| { kind: 'session-workspace-paths' }
+	| { kind: 'readable-paths' }
+	| { kind: 'writable-paths' };
+
+/**
+ * The `PositionalsRule` kinds that defer containment to the fs grants, mapped
+ * to the fs permission each one asks about. Shared by the schema, codec,
+ * predicate and UI so a new kind can't be added in one place and forgotten in
+ * another.
+ */
+export const FS_DEFERRED_POSITIONALS_KINDS = {
+	'readable-paths': 'read',
+	'writable-paths': 'write'
+} as const satisfies Record<string, FsPermission>;
+
+export type FsDeferredPositionalsKind = keyof typeof FS_DEFERRED_POSITIONALS_KINDS;
+
+/**
+ * Every `PositionalsRule` kind, in the order the grant form offers them.
+ * The two assertions below make this list the single source of truth: adding
+ * a variant to `PositionalsRule` without listing it here is a type error, and
+ * listing a kind that isn't a variant is too.
+ */
+export const POSITIONALS_KINDS = [
+	'none',
+	'any',
+	'workspace-paths',
+	'session-workspace-paths',
+	'readable-paths',
+	'writable-paths'
+] as const satisfies readonly PositionalsRule['kind'][];
+
+type _PositionalsKindsAreExhaustive =
+	PositionalsRule['kind'] extends (typeof POSITIONALS_KINDS)[number] ? true : never;
+const _positionalsKindsAreExhaustive: _PositionalsKindsAreExhaustive = true;
+void _positionalsKindsAreExhaustive;
 
 /** Inclusive positional-count bounds. Both ends are optional and each is a
  * non-negative integer; `min` must not exceed `max`. */

@@ -128,7 +128,7 @@ import {
 	type DetailedMatchOutcome
 } from '../../permissions/matcher';
 import { decodeScope, encodeScope } from '$lib/permissions/scope-codec';
-import type { GrantScope } from '$lib/permissions/scope-types';
+import { FS_PERMISSIONS, type GrantScope } from '$lib/permissions/scope-types';
 import type { ParsedSegment } from '../../permissions/shell-parser';
 
 export type GrantSource = 'seed' | 'prompt' | 'settings' | 'legacy';
@@ -182,8 +182,21 @@ function normalizeGrantDecision(decision: string): GrantDecision {
  * could possibly apply to (conversationId, tool). Filtering by kind /
  * pattern / expiry happens in app code so the matcher stays pure and
  * testable.
+ *
+ * `alsoTools` widens the pre-filter beyond the requested tool. A shell request
+ * needs the user's fs grants in the candidate set because the `readable-paths` /
+ * `writable-paths` positional kinds defer containment to them; those rows are
+ * inert for the shell match itself (the matcher's tool check drops them) and
+ * are only consulted through the nested fs question.
  */
-function loadCandidateGrants(userId: string, conversationId: string, tool: string): GrantRow[] {
+function loadCandidateGrants(
+	userId: string,
+	conversationId: string,
+	tool: string,
+	alsoTools: readonly string[] = []
+): GrantRow[] {
+	const extra = alsoTools.filter((t) => t !== tool && t !== '*');
+	const placeholders = extra.map(() => '?').join(', ');
 	const rows = getDb()
 		.prepare(
 			`SELECT user_id, conversation_id, tool, permission_kind, scope_pattern, scope_json,
@@ -191,10 +204,10 @@ function loadCandidateGrants(userId: string, conversationId: string, tool: strin
 			 FROM permission_grants
 			 WHERE user_id = ?
 			   AND (conversation_id = ? OR conversation_id IS NULL)
-			   AND (tool = ? OR tool = '*')
+			   AND (tool = ? OR tool = '*'${extra.length > 0 ? ` OR tool IN (${placeholders})` : ''})
 			 ORDER BY granted_at ASC, rowid ASC`
 		)
-		.all(userId, conversationId, tool) as GrantDbRow[];
+		.all(userId, conversationId, tool, ...extra) as GrantDbRow[];
 	return rows.map(dbRowToGrant);
 }
 
@@ -248,7 +261,14 @@ export function matchGrantDetailed(
 	ctx: MatchGrantContext = {},
 	now: number = Date.now()
 ): DetailedMatchOutcome {
-	const rows = loadCandidateGrants(userId, conversationId, tool);
+	const rows = loadCandidateGrants(
+		userId,
+		conversationId,
+		tool,
+		// Shell rules may defer their positional containment to the fs grants;
+		// see `buildFsPathPermitted` in the matcher.
+		permissionKind === 'shell' ? FS_PERMISSIONS : []
+	);
 	return matchGrantsDetailed(rows, {
 		tool,
 		permissionKind,

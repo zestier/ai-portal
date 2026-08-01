@@ -9,7 +9,8 @@ import { z } from 'zod';
 import {
 	FS_PERMISSIONS,
 	FS_RULE_BEHAVIORS_WITH_VALUE,
-	FS_RULE_CONTAINER_ROOTS
+	FS_RULE_CONTAINER_ROOTS,
+	POSITIONALS_KINDS
 } from './scope-types';
 import {
 	CUSTOM_TOOL_KIND,
@@ -72,12 +73,7 @@ const Argv0Schema = ArgvToken.refine(
 	'argv0 must be a bare command name (no slashes, no leading dot)'
 );
 
-const PositionalsSchema = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('none') }),
-	z.object({ kind: z.literal('any') }),
-	z.object({ kind: z.literal('workspace-paths') }),
-	z.object({ kind: z.literal('session-workspace-paths') })
-]);
+const PositionalsSchema = z.object({ kind: z.enum(POSITIONALS_KINDS) });
 
 const CountBound = z.number().int().nonnegative();
 

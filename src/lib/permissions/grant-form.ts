@@ -3,18 +3,14 @@ import {
 	type FsRuleBehaviorWithValue,
 	type FsRuleRoot,
 	type GrantScope,
+	type PositionalsRule,
 	type ShellCommandStep,
 	type ShellOptionRules,
 	type ShellOptionSpec
 } from './scope-types';
 import type { GrantTool } from './metadata';
 
-export type ShellPositionalsKind =
-	| 'unset'
-	| 'none'
-	| 'any'
-	| 'workspace-paths'
-	| 'session-workspace-paths';
+export type ShellPositionalsKind = 'unset' | PositionalsRule['kind'];
 export type ShellPipelineKind = 'unset' | 'must' | 'forbid' | 'pipe-target';
 export type FsBehaviorKind = 'any' | FsRuleBehaviorWithValue;
 export type UrlRuleKind = 'exact' | 'host' | 'host-suffix';

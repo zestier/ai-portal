@@ -1,4 +1,9 @@
-import type { GrantScope, PositionalCountRule } from './scope-types';
+import {
+	FS_DEFERRED_POSITIONALS_KINDS,
+	type FsDeferredPositionalsKind,
+	type GrantScope,
+	type PositionalCountRule
+} from './scope-types';
 
 export type CapabilityScopeRuleKind =
 	| 'tool'
@@ -103,11 +108,22 @@ function describeUrlRule(rule: Extract<GrantScope, { kind: 'url' }>['rule']): st
 function capabilityShellRuleSummary(rule: Extract<GrantScope, { kind: 'shell' }>['rule']): string {
 	const command = rule.command.map((step) => step.token).join(' ');
 	const parts = [`shell command \`${command}\``];
-	if (rule.positionals) parts.push(`positionals: ${rule.positionals.kind}`);
+	if (rule.positionals) parts.push(`positionals: ${describePositionalsKind(rule.positionals)}`);
 	if (rule.positionalCount)
 		parts.push(`positional count: ${describePositionalCount(rule.positionalCount)}`);
 	if (rule.pipeline) parts.push(`pipeline: ${rule.pipeline}`);
 	return parts.join('; ');
+}
+
+/**
+ * The grant-deferring positional kinds are opaque on their own — an agent
+ * reading `positionals: readable-paths` can't tell what it covers. Spell out
+ * that they resolve against the user's fs grants.
+ */
+function describePositionalsKind(rule: { kind: string }): string {
+	const perm = FS_DEFERRED_POSITIONALS_KINDS[rule.kind as FsDeferredPositionalsKind];
+	if (!perm) return rule.kind;
+	return `${rule.kind} (every positional must be a path your \`${perm}\` grants permit)`;
 }
 
 function describePositionalCount(rule: PositionalCountRule): string {

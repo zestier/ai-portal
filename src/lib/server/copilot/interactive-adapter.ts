@@ -297,7 +297,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			| { kind: 'allow' }
 			| { kind: 'deny'; feedback?: string | undefined }
 			| { kind: 'prompt-grant'; feedback?: string | undefined }
-			| { kind: 'prompt-policy' };
+			| { kind: 'prompt-policy'; feedback?: string | undefined };
 		const evalRank = { allow: 0, 'prompt-policy': 1, 'prompt-grant': 2, deny: 3 } as const;
 
 		// Mirrors the original single-path ordering exactly: explicit grant
@@ -326,13 +326,19 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				return { kind: 'prompt-grant', feedback: g.feedback ?? undefined };
 			}
 			if (opts.getApproveAll()) return { kind: 'allow' };
+			// `none` carries no grant decision, but the matcher may still have
+			// explained why an allow grant declined — e.g. a shell rule that
+			// defers to the fs grants naming the permission the path lacked.
+			// Without this the prompt would report a generic (and for such rules,
+			// wrong) workspace-boundary reason.
+			const nearMiss = g.feedback ?? undefined;
 			const decision = decideByPolicy(opts.policy, 'permission', permissionKind, {
 				scopeKey: key,
 				workspaceRoots: opts.getWorkspaceRoots()
 			});
 			if (decision === 'approved') return { kind: 'allow' };
-			if (decision === 'denied') return { kind: 'deny' };
-			return { kind: 'prompt-policy' };
+			if (decision === 'denied') return { kind: 'deny', feedback: nearMiss };
+			return { kind: 'prompt-policy', feedback: nearMiss };
 		};
 
 		// Combine per-target evaluations most-restrictively. Memoized so the
@@ -460,7 +466,10 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			// persistence is disabled.
 			promptRequest = {
 				canPersistDecision: !isMultiTarget,
-				bestEffortFeedback: bestEffortPermissionFeedback({ permissionKind })
+				bestEffortFeedback: evaluation.feedback
+					? `${bestEffortPermissionFeedback({ permissionKind })} ${evaluation.feedback}`
+					: bestEffortPermissionFeedback({ permissionKind }),
+				defaultDenyFeedback: evaluation.feedback
 			};
 		}
 

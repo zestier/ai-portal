@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	matchGrants,
 	matchGrantsDetailed,
@@ -689,5 +692,221 @@ describe('matchGrants — git pre-subcommand globals', () => {
 		expect(
 			matchGrantsDetailed([denyDashC, denyGitStatus], shellQuery('git -C /tmp status'))
 		).toMatchObject({ outcome: 'deny', feedback: 'Use structured Git tools.' });
+	});
+});
+
+describe('shell positionals deferring to the fs grants', () => {
+	// Real directories: the fs predicate realpaths both sides, so these paths
+	// must exist on disk for an absolute `prefix` rule to resolve.
+	let base: string;
+	let ws: string;
+	let outside: string;
+
+	beforeAll(() => {
+		base = realpathSync(mkdtempSync(join(tmpdir(), 'portal-fs-deferred-')));
+		ws = join(base, 'ws');
+		outside = join(base, 'corpus');
+		mkdirSync(ws);
+		mkdirSync(outside);
+		writeFileSync(join(ws, 'in.txt'), 'x');
+		writeFileSync(join(outside, 'out.txt'), 'x');
+	});
+	afterAll(() => rmSync(base, { recursive: true, force: true }));
+
+	const parseSegments = (cmd: string) => {
+		const r = parseShellCommand(cmd);
+		if (r.kind !== 'parsed') throw new Error(`parse failed for ${cmd}`);
+		return r.segments;
+	};
+
+	const fsQuery = (cmd: string, sessionWorkspaceRoot: string | null = ws): MatchQuery => ({
+		tool: 'shell',
+		permissionKind: 'shell',
+		scopeKey: cmd,
+		shellSegments: parseSegments(cmd),
+		workspaceRoots: [ws],
+		sessionWorkspaceRoot,
+		now: NOW
+	});
+
+	const catDeferred = (kind: 'readable-paths' | 'writable-paths' = 'readable-paths') =>
+		grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			scope: { kind: 'shell', rule: { command: [{ token: 'cat' }], positionals: { kind } } }
+		});
+
+	const fsGrant = (
+		perm: 'read' | 'write',
+		value: string,
+		decision: GrantRow['decision'] = 'allow'
+	) =>
+		grant({
+			tool: perm,
+			permissionKind: perm,
+			decision,
+			scope: {
+				kind: 'fs',
+				perms: [perm],
+				rule: { kind: 'path', root: 'absolute', behavior: 'prefix', value }
+			}
+		});
+
+	it('allows a positional outside the workspace when an fs read grant covers it', () => {
+		const rows = [catDeferred(), fsGrant('read', outside)];
+		expect(matchGrants(rows, fsQuery(`cat ${join(outside, 'out.txt')}`))).toBe('allow');
+	});
+
+	it('does not allow a positional no fs grant covers', () => {
+		const rows = [catDeferred(), fsGrant('read', outside)];
+		expect(matchGrants(rows, fsQuery('cat /etc/passwd'))).toBe('none');
+	});
+
+	it('an fs prompt grant does NOT satisfy a shell allow', () => {
+		const rows = [catDeferred(), fsGrant('read', outside, 'prompt')];
+		expect(matchGrants(rows, fsQuery(`cat ${join(outside, 'out.txt')}`))).toBe('none');
+	});
+
+	it('an fs deny leaves the shell grant unmatched rather than denying the shell request', () => {
+		// Shell-level denies stay owned by the shell deny seeds: an fs deny only
+		// withholds the allow, so the request falls through to policy.
+		const rows = [catDeferred(), fsGrant('read', outside, 'deny')];
+		expect(matchGrants(rows, fsQuery(`cat ${join(outside, 'out.txt')}`))).toBe('none');
+	});
+
+	it('an fs force-allow satisfies the shell rule', () => {
+		const rows = [catDeferred(), fsGrant('read', outside, 'force-allow')];
+		expect(matchGrants(rows, fsQuery(`cat ${join(outside, 'out.txt')}`))).toBe('allow');
+	});
+
+	it('asks the write grants for writable-paths, and read grants do not answer for them', () => {
+		expect(
+			matchGrants(
+				[catDeferred('writable-paths'), fsGrant('read', outside)],
+				fsQuery(`cat ${join(outside, 'out.txt')}`)
+			)
+		).toBe('none');
+		expect(
+			matchGrants(
+				[catDeferred('writable-paths'), fsGrant('write', outside)],
+				fsQuery(`cat ${join(outside, 'out.txt')}`)
+			)
+		).toBe('allow');
+	});
+
+	it('resolves a relative positional against the session workspace', () => {
+		const rows = [catDeferred(), fsGrant('read', ws)];
+		expect(matchGrants(rows, fsQuery('cat in.txt'))).toBe('allow');
+		// Without a known cwd a relative operand has no meaning to compare
+		// against an absolute rule, so it fails closed.
+		expect(matchGrants(rows, fsQuery('cat in.txt', null))).toBe('none');
+	});
+
+	it('fails closed for every positional when the fs grant set is empty', () => {
+		expect(matchGrants([catDeferred()], fsQuery('cat in.txt'))).toBe('none');
+	});
+
+	it('requires every positional to be covered', () => {
+		const rows = [catDeferred(), fsGrant('read', outside)];
+		expect(
+			matchGrants(rows, fsQuery(`cat ${join(outside, 'out.txt')} ${join(ws, 'in.txt')}`))
+		).toBe('none');
+	});
+
+	it('cannot recurse: a shell-scoped row never answers the fs question', () => {
+		// A row stored under tool='read' with a shell-shaped scope is filtered out
+		// of the nested fs evaluation, so shell matching can never re-enter itself.
+		const shellShapedFsRow = grant({
+			tool: 'read',
+			permissionKind: 'read',
+			scope: { kind: 'shell', rule: { command: [{ token: 'cat' }], positionals: { kind: 'any' } } }
+		});
+		expect(matchGrants([catDeferred(), shellShapedFsRow], fsQuery('cat in.txt'))).toBe('none');
+	});
+
+	it('bounds the number of distinct fs questions one request may ask', () => {
+		const rows = [catDeferred(), fsGrant('read', ws)];
+		const many = Array.from({ length: 65 }, (_, i) => `f${i}.txt`).join(' ');
+		expect(matchGrants(rows, fsQuery(`cat ${many}`))).toBe('none');
+		// Repeats are memoized, so the same path many times stays under budget.
+		const repeats = Array.from({ length: 200 }, () => 'in.txt').join(' ');
+		expect(matchGrants(rows, fsQuery(`cat ${repeats}`))).toBe('allow');
+	});
+
+	it('reports the missing fs permission instead of a workspace boundary', () => {
+		const out = matchGrantsDetailed(
+			[catDeferred(), fsGrant('read', outside)],
+			fsQuery('cat /etc/passwd')
+		);
+		expect(out.outcome).toBe('none');
+		expect(out.feedback).toContain('/etc/passwd');
+		expect(out.feedback).toContain('read');
+		expect(out.feedback).not.toContain('workspace');
+	});
+
+	it('appends the near-miss to a matched prompt grant feedback', () => {
+		const promptCat = grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			decision: 'prompt',
+			denyReason: 'Use `view` for file reads.',
+			scope: { kind: 'shell', rule: { command: [{ token: 'cat' }], positionals: { kind: 'any' } } }
+		});
+		const out = matchGrantsDetailed([catDeferred(), promptCat], fsQuery('cat /etc/passwd'));
+		expect(out.outcome).toBe('prompt');
+		expect(out.feedback).toContain('Use `view` for file reads.');
+		expect(out.feedback).toContain('not covered by your `read` grants');
+	});
+
+	it('does not treat a non-matching deny grant as a near-miss', () => {
+		const denyCat = grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			decision: 'deny',
+			denyReason: 'no cat',
+			scope: { kind: 'shell', rule: { command: [{ token: 'cat' }], positionals: { kind: 'any' } } }
+		});
+		const out = matchGrantsDetailed([catDeferred(), denyCat], fsQuery('cat /etc/passwd'));
+		expect(out).toMatchObject({ outcome: 'deny', feedback: 'no cat' });
+	});
+
+	it('stops trusting relative operands after a `cd` moved the shell', () => {
+		// `cd sub && cat in.txt` reads `<ws>/sub/in.txt`, not `<ws>/in.txt`. We
+		// don't model the moved cwd, so the relative operand must fail closed
+		// rather than be authorized against the wrong directory.
+		const cdGrant = grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			scope: { kind: 'shell', rule: { command: [{ token: 'cd' }], positionals: { kind: 'any' } } }
+		});
+		const rows = [catDeferred(), cdGrant, fsGrant('read', ws)];
+		expect(matchGrants(rows, fsQuery('cat in.txt'))).toBe('allow');
+		expect(matchGrants(rows, fsQuery('cd sub && cat in.txt'))).toBe('none');
+		// An absolute operand is unaffected — it means the same thing wherever
+		// the shell happens to stand.
+		expect(matchGrants(rows, fsQuery(`cd sub && cat ${join(ws, 'in.txt')}`))).toBe('allow');
+		// A `cd` LATER in the chain doesn't retroactively invalidate an earlier
+		// segment's operand.
+		expect(matchGrants(rows, fsQuery('cat in.txt && cd sub'))).toBe('allow');
+	});
+
+	it('attributes a near-miss to the segment it came from', () => {
+		// The prompt comes from the `git` segment; the near-miss from the `cat`
+		// segment. They must not be spliced together into one misleading reason.
+		const promptGit = grant({
+			tool: 'shell',
+			permissionKind: 'shell',
+			decision: 'prompt',
+			denyReason: 'git requires approval',
+			scope: { kind: 'shell', rule: { command: [{ token: 'git' }], positionals: { kind: 'any' } } }
+		});
+		const out = matchGrantsDetailed(
+			[catDeferred(), promptGit, fsGrant('read', ws)],
+			fsQuery('cat /etc/passwd && git status')
+		);
+		// The uncovered `cat` segment dominates, and carries its own reason.
+		expect(out.outcome).toBe('none');
+		expect(out.feedback).toContain('/etc/passwd');
+		expect(out.feedback).not.toContain('git requires approval');
 	});
 });

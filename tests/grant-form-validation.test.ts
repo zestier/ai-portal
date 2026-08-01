@@ -60,6 +60,17 @@ describe('GrantInputSchema — valid shapes', () => {
 		expect(parsed.scope.kind).toBe('shell');
 	});
 
+	it('shell with fs-deferred positionals', () => {
+		for (const kind of ['readable-paths', 'writable-paths']) {
+			const parsed = GrantInputSchema.parse({
+				tool: 'shell',
+				decision: 'allow',
+				scope: { kind: 'shell', rule: shell('cat', { positionals: { kind } }) }
+			});
+			expect(parsed.scope.kind).toBe('shell');
+		}
+	});
+
 	it('shell with pre-subcommand and post-subcommand option rules', () => {
 		const parsed = GrantInputSchema.parse({
 			tool: 'shell',

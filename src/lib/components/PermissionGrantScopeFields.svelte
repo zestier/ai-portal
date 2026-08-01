@@ -97,6 +97,12 @@
 				<option value="session-workspace-paths"
 					>session-workspace-paths (every positional must resolve inside the SDK session workspace)</option
 				>
+				<option value="readable-paths"
+					>readable-paths (every positional must be a path your read grants already permit)</option
+				>
+				<option value="writable-paths"
+					>writable-paths (every positional must be a path your write grants already permit)</option
+				>
 			</select>
 		</label>
 		<div class="count-range">

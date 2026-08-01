@@ -17,7 +17,8 @@ import {
 	type UrlScope,
 	type UrlRule,
 	type PositionalsRule,
-	type PositionalCountRule
+	type PositionalCountRule,
+	POSITIONALS_KINDS
 } from './scope-types';
 import { FsScopeSchema } from './scope-schema';
 
@@ -152,15 +153,9 @@ function validateShellOptionValue(v: unknown): ShellOptionValueRule | null {
 function validatePositionals(v: unknown): PositionalsRule | null {
 	if (!isObject(v)) return null;
 	const kind = (v as { kind?: unknown }).kind;
-	if (
-		kind === 'none' ||
-		kind === 'any' ||
-		kind === 'workspace-paths' ||
-		kind === 'session-workspace-paths'
-	) {
-		return { kind } as PositionalsRule;
-	}
-	return null;
+	if (typeof kind !== 'string') return null;
+	if (!(POSITIONALS_KINDS as readonly string[]).includes(kind)) return null;
+	return { kind } as PositionalsRule;
 }
 
 function validatePositionalCount(v: unknown): PositionalCountRule | null {

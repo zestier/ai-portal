@@ -11,8 +11,10 @@ import type {
 	PositionalCountRule,
 	ShellOptionSpec,
 	ShellCommandStep,
-	ShellOptionRules
+	ShellOptionRules,
+	FsPermission
 } from '../../../permissions/scope-types';
+import { FS_DEFERRED_POSITIONALS_KINDS } from '../../../permissions/scope-types';
 import { looksLikeShellOptionToken, matchShellOptionToken } from '../../../permissions/shell-argv';
 import type { ParsedSegment } from '../shell-parser';
 import { isPathInAnyWorkspace, isPathInWorkspace } from '../workspace';
@@ -25,6 +27,18 @@ export interface ShellMatchContext {
 	workspaceRoots: readonly string[] | null;
 	/** SDK session workspace root. `session-workspace-paths` fails closed when null. */
 	sessionWorkspaceRoot?: string | null;
+	/**
+	 * Asks whether `path` (as written on the command line) is permitted for
+	 * `perm` by the user's *filesystem* grants. Used by the `readable-paths` /
+	 * `writable-paths` positional kinds so a shell reader covers exactly what
+	 * `view` may read instead of a hardcoded workspace root.
+	 *
+	 * Supplied by the caller (the matcher closes over the same grant rows), so
+	 * this module keeps knowing nothing about grants or the DB. ABSENT MEANS
+	 * FAIL CLOSED: those kinds match nothing, mirroring `workspace-paths` with
+	 * an empty root set.
+	 */
+	pathPermitted?: ((perm: FsPermission, path: string) => boolean) | undefined;
 	/** Whether the segment being evaluated is part of a shell pipeline
 	 * (connected to a neighboring command by `|`). Used by the rule's
 	 * `pipeline: 'must' | 'forbid'` lever. Defaults to false when
@@ -36,6 +50,16 @@ export interface ShellMatchContext {
 	 * stdout (some preceding segment is connected to it by `|`). Used by
 	 * `pipeline: 'pipe-target'`. Defaults to false, so it fails closed. */
 	isPipeTarget?: boolean;
+}
+
+/**
+ * Optional out-parameter capturing WHY a rule that otherwise covered the
+ * command refused it on its positionals. Only populated for the grant-deferring
+ * positional kinds, whose refusal is not a workspace-boundary problem and would
+ * otherwise be reported as one.
+ */
+export interface ShellMatchExplain {
+	positionalRefusal?: string;
 }
 
 /**
@@ -77,7 +101,8 @@ export function shellRuleMatches(
 export function shellRuleMatchesSegment(
 	rule: ShellRule,
 	seg: ParsedSegment,
-	ctx: ShellMatchContext
+	ctx: ShellMatchContext,
+	explain?: ShellMatchExplain
 ): boolean {
 	const argv = seg.argv;
 	if (argv.length === 0) return false;
@@ -91,14 +116,15 @@ export function shellRuleMatchesSegment(
 		if (rule.pipeline === 'pipe-target' && ctx.isPipeTarget !== true) return false;
 	}
 
-	return commandPathMatches(path, argv, rule, ctx);
+	return commandPathMatches(path, argv, rule, ctx, explain);
 }
 
 function commandPathMatches(
 	path: ShellCommandStep[],
 	argv: string[],
 	rule: ShellRule,
-	ctx: ShellMatchContext
+	ctx: ShellMatchContext,
+	explain?: ShellMatchExplain
 ): boolean {
 	if (path.length === 0 || argv[0] !== path[0].token) return false;
 
@@ -160,7 +186,7 @@ function commandPathMatches(
 
 	return (
 		positionalCountMatches(rule.positionalCount, positionals.length) &&
-		positionalsMatch(rule.positionals, positionals, ctx)
+		positionalsMatch(rule.positionals, positionals, ctx, explain)
 	);
 }
 
@@ -236,7 +262,8 @@ function matchesDeniedOption(tok: string, denied: readonly string[] | undefined)
 function positionalsMatch(
 	rule: PositionalsRule | undefined,
 	positionals: string[],
-	ctx: ShellMatchContext
+	ctx: ShellMatchContext,
+	explain?: ShellMatchExplain
 ): boolean {
 	if (!rule) return true;
 	switch (rule.kind) {
@@ -261,5 +288,37 @@ function positionalsMatch(
 			}
 			return true;
 		}
+		case 'readable-paths':
+		case 'writable-paths':
+			return fsDeferredPositionalsMatch(rule.kind, positionals, ctx, explain);
 	}
+}
+
+/**
+ * `readable-paths` / `writable-paths`: hand every positional to the caller's
+ * fs-grant predicate. See `PositionalsRule` in `scope-types.ts` for the
+ * precedence and fail-closed rules this implements.
+ */
+function fsDeferredPositionalsMatch(
+	kind: keyof typeof FS_DEFERRED_POSITIONALS_KINDS,
+	positionals: string[],
+	ctx: ShellMatchContext,
+	explain?: ShellMatchExplain
+): boolean {
+	const perm: FsPermission = FS_DEFERRED_POSITIONALS_KINDS[kind];
+	const permitted = ctx.pathPermitted;
+	if (!permitted) {
+		if (explain) {
+			explain.positionalRefusal = `this grant defers to your \`${perm}\` grants, which could not be consulted`;
+		}
+		return false;
+	}
+	for (const p of positionals) {
+		if (permitted(perm, p)) continue;
+		if (explain) {
+			explain.positionalRefusal = `\`${p}\` is not covered by your \`${perm}\` grants`;
+		}
+		return false;
+	}
+	return true;
 }

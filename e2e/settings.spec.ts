@@ -71,6 +71,26 @@ test('creating a shell+workspace-paths grant adds a row to the list', async ({ p
 	await expect(row).toHaveCount(0);
 });
 
+test('a shell grant can defer its positionals to the fs read grants', async ({ page }) => {
+	await page.goto('/settings?tab=permissions');
+	await page.locator('details.add-grant > summary').click();
+
+	const argv0 = `e2e${randomUUID().slice(0, 8)}`;
+	await page.getByLabel(/argv0/).fill(argv0);
+	await page.getByLabel(/Positional arguments/).selectOption('readable-paths');
+	await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+
+	const row = page
+		.locator('.grant-list .grant-row')
+		.filter({ has: page.locator(`code.pattern:has-text("command=${argv0}")`) });
+	await expect(row).toBeVisible();
+	await expect(row.locator('code.pattern')).toContainText('positionals=readable-paths');
+
+	page.once('dialog', (dialog) => dialog.accept());
+	await row.getByRole('button', { name: 'Revoke' }).click();
+	await expect(row).toHaveCount(0);
+});
+
 test('a custom-tool grant can be authored by tool name and warns about always-prompt tools', async ({
 	page
 }) => {

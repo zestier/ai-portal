@@ -316,6 +316,82 @@ describe('shell predicate — positionals', () => {
 	});
 });
 
+describe('shell predicate — positionals deferred to the fs grants', () => {
+	function matchWithFs(
+		rule: ShellRule,
+		command: string,
+		pathPermitted: ((perm: 'read' | 'write' | 'edit', path: string) => boolean) | undefined,
+		explain?: { positionalRefusal?: string }
+	): boolean {
+		const parsed = parseShellCommand(command);
+		if (parsed.kind !== 'parsed') return false;
+		const ctx = { workspaceRoots: [ws], sessionWorkspaceRoot: ws, pathPermitted };
+		return parsed.segments.every((seg) => shellRuleMatchesSegment(rule, seg, ctx, explain));
+	}
+
+	it('accepts a positional the fs predicate permits, even outside the workspace', () => {
+		const rule = shell(['cat'], { positionals: { kind: 'readable-paths' } });
+		const permitted = (perm: string, p: string) => perm === 'read' && p === '/opt/corpus/a.txt';
+		expect(matchWithFs(rule, 'cat /opt/corpus/a.txt', permitted)).toBe(true);
+		expect(matchWithFs(rule, 'cat /etc/passwd', permitted)).toBe(false);
+	});
+
+	it('asks about `write` for writable-paths', () => {
+		const seen: string[] = [];
+		const rule = shell(['touch'], { positionals: { kind: 'writable-paths' } });
+		matchWithFs(rule, 'touch out.txt', (perm, p) => {
+			seen.push(`${perm}:${p}`);
+			return true;
+		});
+		expect(seen).toEqual(['write:out.txt']);
+	});
+
+	it('requires EVERY positional to be permitted', () => {
+		const rule = shell(['cat'], { positionals: { kind: 'readable-paths' } });
+		const permitted = (_perm: string, p: string) => p === 'ok.txt';
+		expect(matchWithFs(rule, 'cat ok.txt', permitted)).toBe(true);
+		expect(matchWithFs(rule, 'cat ok.txt nope.txt', permitted)).toBe(false);
+	});
+
+	it('accepts a command with no positionals at all', () => {
+		const rule = shell(['ls'], { positionals: { kind: 'readable-paths' } });
+		expect(matchWithFs(rule, 'ls', () => false)).toBe(true);
+	});
+
+	it('fails closed when no fs predicate is supplied', () => {
+		const rule = shell(['cat'], { positionals: { kind: 'readable-paths' } });
+		expect(matchWithFs(rule, 'cat README.md', undefined)).toBe(false);
+		// ...and specifically not because of a workspace boundary: the path is
+		// inside the workspace, which `workspace-paths` would have accepted.
+		expect(
+			match(shell(['cat'], { positionals: { kind: 'workspace-paths' } }), 'cat README.md')
+		).toBe(true);
+	});
+
+	it('explains the refusal by naming the missing fs permission', () => {
+		const rule = shell(['cat'], { positionals: { kind: 'readable-paths' } });
+		const explain: { positionalRefusal?: string } = {};
+		matchWithFs(rule, 'cat /etc/passwd', () => false, explain);
+		expect(explain.positionalRefusal).toContain('/etc/passwd');
+		expect(explain.positionalRefusal).toContain('read');
+		expect(explain.positionalRefusal).not.toContain('workspace');
+	});
+
+	it('explains a missing predicate as an unconsultable grant set', () => {
+		const rule = shell(['cat'], { positionals: { kind: 'writable-paths' } });
+		const explain: { positionalRefusal?: string } = {};
+		matchWithFs(rule, 'cat x', undefined, explain);
+		expect(explain.positionalRefusal).toContain('write');
+	});
+
+	it('leaves the explanation untouched when the rule matches', () => {
+		const rule = shell(['cat'], { positionals: { kind: 'readable-paths' } });
+		const explain: { positionalRefusal?: string } = {};
+		expect(matchWithFs(rule, 'cat x', () => true, explain)).toBe(true);
+		expect(explain.positionalRefusal).toBeUndefined();
+	});
+});
+
 describe('shell predicate — pipelines and chains', () => {
 	it('all segments must match the rule', () => {
 		const rule = shell(['grep']);
