@@ -223,6 +223,8 @@ export interface MatchGrantContext {
 	workspaceRoots?: readonly string[] | null;
 	/** SDK session workspace directory. */
 	sessionWorkspaceRoot?: string | null;
+	/** Directory relative shell operands resolve against; see `MatchQuery.shellCwd`. */
+	shellCwd?: string | null;
 	/** Canonical SHA-256 of the requested tool args. */
 	argsHash?: string | null;
 }
@@ -278,6 +280,7 @@ export function matchGrantDetailed(
 		url: ctx.url ?? null,
 		workspaceRoots: ctx.workspaceRoots ?? null,
 		sessionWorkspaceRoot: ctx.sessionWorkspaceRoot ?? null,
+		shellCwd: ctx.shellCwd ?? null,
 		argsHash: ctx.argsHash ?? null,
 		now
 	});

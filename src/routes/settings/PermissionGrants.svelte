@@ -532,7 +532,20 @@
 		</details>
 
 		<div class="grant-bulk-actions" aria-label="Grant maintenance actions">
-			<form method="POST" action="?/restoreSeedGrants" class="restore-seeds">
+			<form
+				method="POST"
+				action="?/restoreSeedGrants"
+				class="restore-seeds"
+				onsubmit={(e) => {
+					if (
+						!confirm(
+							'Restore the built-in default grants?\n\nThe default shell readers (cat, head, tail, ls, find, …) now also defer to your `read` grants, so restoring them lets those commands reach every path your `read` grants already cover — including any you added yourself, outside the workspace. Nothing you could run before stops working, and your own grants are not modified.'
+						)
+					) {
+						e.preventDefault();
+					}
+				}}
+			>
 				<button
 					class="btn small"
 					type="submit"

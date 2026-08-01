@@ -46,6 +46,11 @@ interface SeedSpec {
  * Shell tools with no path arguments (pure stdout-only utilities). Safe
  * to allow with any positionals because they don't touch the filesystem
  * beyond reading their own argv.
+ *
+ * Deliberately NOT moved to `readable-paths` with the fs-read tools: these
+ * never open a file. `basename` / `dirname` take path-SHAPED operands but only
+ * do string surgery on them, so requiring a `read` grant would refuse a
+ * perfectly safe call and teach users to over-grant.
  */
 const PURE_UTILS = [
 	'echo',
@@ -63,33 +68,60 @@ const PURE_UTILS = [
 ];
 
 /**
- * Read-only file tools. Locked to positionals inside the workspace so
- * `cat /etc/passwd` still prompts. Note: a user who wants to read
- * outside the workspace can add their own grant; we don't ship one.
+ * Read-only file tools. Seeded twice: once on `workspace-paths` (the floor —
+ * exactly the behavior that shipped before, covering the conversation's
+ * workspace and its worktree leases) and once on `readable-paths`, which defers
+ * to the user's `read` grants so a path they made readable for `view` is
+ * readable for `cat` too.
+ *
+ * The pair exists because the two answer different questions and neither alone
+ * is right. Dropping the floor would narrow reads for anyone whose `read`
+ * grants don't happen to cover their workspace — including an orchestrator
+ * reading a sub-agent's lease. Dropping the deferring seed is the status quo
+ * this ticket exists to fix: the user mirrors every readable path into a shell
+ * grant by hand, and a refusal blames a workspace boundary that isn't the real
+ * reason.
+ *
+ * Being additive is deliberate. "Restore default seed grants" must not take a
+ * capability away from an existing install, and with the floor retained it
+ * cannot.
+ *
+ * IMPORTANT — these rules constrain POSITIONALS, not option VALUES. A tool with
+ * a file-valued option can therefore touch a path no positional rule ever saw,
+ * so any such option must be denied explicitly here. `sort` is the sharp case:
+ * `sort --output=FILE` is a full arbitrary WRITE (content supplied over a pipe)
+ * that the `write`/`edit` grants would never see, and `--files0-from=FILE`
+ * reads a list of files to print. Both take zero positionals, so every
+ * positional rule passes vacuously. Deny them at the source.
  */
-const FS_READ_TOOLS = [
-	'cat',
-	'head',
-	'tail',
-	'file',
-	'stat',
-	'ls',
-	'sort',
-	'uniq',
-	'cut',
-	'tr',
-	'realpath',
-	'readlink',
-	'md5sum',
-	'sha1sum',
-	'sha256sum'
+const FS_READ_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
+	{ token: 'cat' },
+	{ token: 'head' },
+	{ token: 'tail' },
+	{ token: 'file' },
+	{ token: 'stat' },
+	{ token: 'ls' },
+	{
+		token: 'sort',
+		// `-o`/`--output` writes; `--files0-from` reads a file list. See above.
+		options: { deny: ['-o', '--output', '--files0-from'] }
+	},
+	{ token: 'uniq' },
+	{ token: 'cut' },
+	{ token: 'tr' },
+	{ token: 'realpath' },
+	{ token: 'readlink' },
+	{ token: 'md5sum' },
+	{ token: 'sha1sum' },
+	{ token: 'sha256sum' }
 ];
 
 /**
- * Path-search tools: their positionals really ARE paths, so locking them
- * to the workspace is semantically honest. An explicit opt-in prompt seed
- * covers searching outside it, and command-running options are denied
- * outright.
+ * Path-search tools. Like the fs-read tools above they get a `workspace-paths`
+ * floor plus a `readable-paths` seed, so searching somewhere the user granted
+ * `read` no longer needs a hand-mirrored shell grant. An explicit opt-in prompt
+ * seed still covers searching beyond both, and command-running options are
+ * denied outright.
  *
  * `find` stays here rather than being steered to a structured tool because
  * `glob` doesn't cover its predicates (`-mtime`, `-size`, `-type`, ...) and
@@ -98,7 +130,26 @@ const FS_READ_TOOLS = [
 const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
 	{
 		token: 'find',
-		options: { deny: ['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprintf'] }
+		// The exec family runs commands; the -fprint/-fls family CREATES AND
+		// TRUNCATES its FILE operand. The latter matters especially now that this
+		// seed defers to the `read` grants: without the denies, `find <dir> -fls
+		// <path>` would let a path the user only made READABLE be written to,
+		// turning a read grant into a write. `-fprint0` and `-fls` are easy to
+		// miss — deny matching is exact (or `opt=`), so `-fprint` does not cover
+		// `-fprint0`.
+		options: {
+			deny: [
+				'-exec',
+				'-execdir',
+				'-ok',
+				'-okdir',
+				'-delete',
+				'-fprint',
+				'-fprint0',
+				'-fprintf',
+				'-fls'
+			]
+		}
 	}
 ];
 
@@ -131,6 +182,13 @@ const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] 
  * must not be containment-checked. Options that make the command read files
  * anyway are denied. Everything else falls through to the prompt seed
  * below, which points at the `grep` tool.
+ *
+ * Note these deliberately did NOT move to `readable-paths` alongside the
+ * fs-read tools. It would be the same category error the old `workspace-paths`
+ * seed made, just with a different boundary: the lone positional is a PATTERN,
+ * so resolving it as a path and asking the read grants about it is meaningless
+ * — `grep root` would be judged as the file `./root`. The count bound, not a
+ * path rule, is what stops file operands here.
  */
 const STDIN_FILTER_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
 	{
@@ -269,6 +327,15 @@ function shellCommand(
 	};
 }
 
+/**
+ * A grant-deferring reader seed only fires when there is at least one operand
+ * to actually check. Without this it would match vacuously on a zero-positional
+ * invocation and auto-approve on the strength of a rule that examined nothing.
+ */
+function deferredReader(rule: ShellRule): ShellRule {
+	return { ...rule, positionalCount: { min: 1 } };
+}
+
 function shellPrompt(rule: ShellRule, reason: string): SeedSpec {
 	return {
 		tool: 'shell',
@@ -320,27 +387,33 @@ const WC_SHELL_DENY_FEEDBACK =
 /**
  * Terminal-usage prompt rules. Since regular allow grants outrank prompt
  * grants, these only affect invocations that are not also covered by an allow
- * seed, such as bare file reads outside the workspace.
+ * seed — i.e. a read of a path the user's `read` grants don't reach.
+ *
+ * The reasons deliberately do NOT claim a workspace boundary: the allow seeds
+ * are grant-shaped now, so the boundary is whatever the `read` grants say. The
+ * matcher appends the specific near-miss (``/etc/passwd` is not covered by your
+ * `read` grants`), so these only need to name the structured alternative.
  */
 const PROMPT_SEEDS: { argv0: string; reason: string }[] = [
 	{
 		argv0: 'cat',
-		reason: 'Bare `cat` outside an allowed workspace requires a prompt. Use `view` for file reads.'
+		reason:
+			'`cat` on a path your `read` grants do not cover requires a prompt. Use `view` for file reads.'
 	},
 	{
 		argv0: 'head',
 		reason:
-			'Bare `head` outside an allowed workspace requires a prompt. Use `view` with `view_range`.'
+			'`head` on a path your `read` grants do not cover requires a prompt. Use `view` with `view_range`.'
 	},
 	{
 		argv0: 'tail',
 		reason:
-			'Bare `tail` outside an allowed workspace requires a prompt. Use `view` with `view_range`.'
+			'`tail` on a path your `read` grants do not cover requires a prompt. Use `view` with `view_range`.'
 	},
 	{
 		argv0: 'ls',
 		reason:
-			'Bare `ls` outside an allowed workspace requires a prompt. Use `glob` to enumerate files.'
+			'`ls` on a path your `read` grants do not cover requires a prompt. Use `glob` to enumerate files.'
 	}
 ];
 
@@ -350,9 +423,32 @@ export function defaultSeedGrants(): SeedSpec[] {
 	for (const argv0 of PURE_UTILS) {
 		seeds.push(shellGrant(shellCommand(argv0, { kind: 'any' })));
 	}
-	for (const argv0 of FS_READ_TOOLS) {
-		seeds.push(shellGrant(shellCommand(argv0, { kind: 'workspace-paths' })));
-		seeds.push(shellGrant(shellCommand(argv0, { kind: 'session-workspace-paths' })));
+	// Read-only shell tools get TWO allow seeds, and the pair is the whole
+	// design:
+	//
+	//   * `workspace-paths` — the FLOOR. Exactly today's behavior, covering the
+	//     conversation's workspace plus every worktree lease it holds. Keeping
+	//     it is what makes this migration purely additive: nothing a user could
+	//     do before stops working, including reading a sub-agent's lease files.
+	//   * `readable-paths`  — the GROWTH. Whatever the user's `read` grants say,
+	//     so a path they made readable for `view` is readable for `cat` too,
+	//     without mirroring it into a shell grant.
+	//
+	// `session-workspace-paths` is deliberately NOT seeded any more: the
+	// session-workspace fs read seed above already expresses that same set, and
+	// `readable-paths` now honors it. A user who revokes that fs seed should
+	// lose the shell reads with it — that was the divergence to begin with.
+	//
+	// The deferring seed carries `positionalCount: {min: 1}` so it can never
+	// grant vacuously. Zero-positional invocations (`cat` reading stdin in a
+	// pipe, bare `ls`) name no path to check, so they belong to the floor seed
+	// and keep their existing behavior rather than being auto-approved by a rule
+	// that checked nothing.
+	for (const { token, options } of FS_READ_TOOLS) {
+		seeds.push(shellGrant(shellCommand(token, { kind: 'workspace-paths' }, options)));
+		seeds.push(
+			shellGrant(deferredReader(shellCommand(token, { kind: 'readable-paths' }, options)))
+		);
 	}
 	for (const tool of GIT_STRUCTURED_TOOLS) {
 		seeds.push({ tool, permissionKind: 'custom-tool', scope: { kind: 'any' } });
@@ -410,27 +506,29 @@ export function defaultSeedGrants(): SeedSpec[] {
 		shellDeny({ command: [{ token: 'wc' }], positionals: { kind: 'any' } }, WC_SHELL_DENY_FEEDBACK)
 	);
 
-	// find: a read-only path-search tool. Its command-running options are
-	// denied, and — like the fs-read tools — its positionals are locked to
-	// the workspace so `find / -name '*.pem'` doesn't auto-approve and leak
-	// paths outside the workspace boundary. Searching anywhere is still
-	// possible via the explicit opt-in prompt seeds below.
+	// find: a read-only path-search tool, seeded on the same floor + growth pair
+	// as the fs-read tools above. `workspace-paths` keeps today's behavior
+	// (including bare `find`, whose implicit operand is the cwd); the
+	// `readable-paths` seed adds whatever the user's `read` grants cover and,
+	// via `min: 1`, never fires without a path it actually checked. Its
+	// command-running options are denied in both.
 	for (const { token, options } of PATH_SEARCH_TOOLS) {
 		seeds.push(shellGrant(shellCommand(token, { kind: 'workspace-paths' }, options)));
-		seeds.push(shellGrant(shellCommand(token, { kind: 'session-workspace-paths' }, options)));
+		seeds.push(
+			shellGrant(deferredReader(shellCommand(token, { kind: 'readable-paths' }, options)))
+		);
 	}
 
 	// "Search anywhere" opt-in: a clearly-labeled prompt seed per path-search
-	// tool. Because allow seeds outrank prompt seeds, in-workspace searches
-	// still auto-approve via the grants above; only searches that escape the
-	// workspace land here and require an explicit human approval (or the
-	// user can add their own allow grant). This keeps the capability without
-	// silently auto-approving out-of-workspace reads.
+	// tool. Because allow seeds outrank prompt seeds, searches within the
+	// readable paths still auto-approve via the grants above; only searches that
+	// reach past them land here and require an explicit human approval (or the
+	// user can add their own read grant, which the allow seed then honors).
 	for (const { token, options } of PATH_SEARCH_TOOLS) {
 		seeds.push(
 			shellPrompt(
 				shellCommand(token, { kind: 'any' }, options),
-				`\`${token}\` searching outside the workspace requires approval (opt-in "search anywhere"). In-workspace searches are auto-approved; approve to allow searching other paths this once, or add your own grant to always allow it.`
+				`\`${token}\` searching outside the paths your \`read\` grants permit requires approval (opt-in "search anywhere"). Readable paths are auto-approved; approve to search elsewhere this once, or add a \`read\` grant covering it to always allow it.`
 			)
 		);
 	}

@@ -74,6 +74,18 @@ export interface MatchQuery {
 	workspaceRoots?: readonly string[] | null;
 	/** SDK session workspace directory, used by session-workspace predicates. */
 	sessionWorkspaceRoot?: string | null;
+	/**
+	 * Directory that relative shell operands resolve against — the shell's cwd.
+	 * Used only by the `readable-paths` / `writable-paths` positional kinds.
+	 *
+	 * NOT interchangeable with `sessionWorkspaceRoot`. That one is the SDK's
+	 * infinite-session state directory (`~/.copilot/session-state/<id>`), which
+	 * is a different place from the checkout shell commands actually run in.
+	 * Resolving a relative operand against it would ask about a file the shell
+	 * will never open — and could approve it, since that directory is readable
+	 * under its own seed. Fails closed when absent.
+	 */
+	shellCwd?: string | null;
 	/** Unix ms. Grants with `expiresAt < now` are ignored. */
 	now: number;
 	/** Canonical SHA-256 of the requested tool args. */
@@ -320,10 +332,7 @@ function buildFsPathPermitted(
 		if (checks >= MAX_FS_DEFERRED_CHECKS) return false;
 		checks += 1;
 		fsRows ??= rows.filter((r) => r.scope?.kind !== 'shell');
-		const target = absolutePositional(
-			rawPath,
-			allowRelative ? (q.sessionWorkspaceRoot ?? null) : null
-		);
+		const target = absolutePositional(rawPath, allowRelative ? (q.shellCwd ?? null) : null);
 		const ok =
 			target !== null &&
 			matchGrantsDetailed(fsRows, {

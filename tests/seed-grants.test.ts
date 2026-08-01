@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as settings from '../src/lib/server/db/repos/settings';
@@ -84,7 +84,8 @@ describe('seed grants — installation', () => {
 		expect(
 			reSettings.matchGrant(userId, 'conv-x', 'shell', 'shell', 'cat README.md', {
 				shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
-				workspaceRoots: ['/tmp']
+				workspaceRoots: ['/tmp'],
+				shellCwd: '/tmp'
 			})
 		).toBe('allow');
 	});
@@ -113,29 +114,49 @@ describe('seed grants — installation', () => {
 });
 
 describe('seed grants — runtime behaviour', () => {
-	function shellMatch(
+	// `shellCwd` defaults to the session workspace when given, else the
+	// workspace root — mirroring the adapter, which falls back to the
+	// conversation's working directory when the SDK reports no workspace path.
+	function shellCtx(
 		command: string,
 		workspaceRoot: string | null = '/tmp',
 		sessionWorkspaceRoot: string | null = null
 	) {
 		const parsed = parseShellCommand(command);
-		return settings.matchGrant(userId, 'conv-x', 'shell', 'shell', command, {
+		return {
 			shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
 			workspaceRoots: workspaceRoot ? [workspaceRoot] : null,
-			sessionWorkspaceRoot
-		});
+			sessionWorkspaceRoot,
+			shellCwd: sessionWorkspaceRoot ?? workspaceRoot
+		};
+	}
+	function shellMatch(
+		command: string,
+		workspaceRoot: string | null = '/tmp',
+		sessionWorkspaceRoot: string | null = null
+	) {
+		return settings.matchGrant(
+			userId,
+			'conv-x',
+			'shell',
+			'shell',
+			command,
+			shellCtx(command, workspaceRoot, sessionWorkspaceRoot)
+		);
 	}
 	function shellMatchDetailed(
 		command: string,
 		workspaceRoot: string | null = '/tmp',
 		sessionWorkspaceRoot: string | null = null
 	) {
-		const parsed = parseShellCommand(command);
-		return settings.matchGrantDetailed(userId, 'conv-x', 'shell', 'shell', command, {
-			shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
-			workspaceRoots: workspaceRoot ? [workspaceRoot] : null,
-			sessionWorkspaceRoot
-		});
+		return settings.matchGrantDetailed(
+			userId,
+			'conv-x',
+			'shell',
+			'shell',
+			command,
+			shellCtx(command, workspaceRoot, sessionWorkspaceRoot)
+		);
 	}
 	function customToolMatch(tool: string) {
 		return settings.matchGrant(userId, 'conv-x', tool, 'custom-tool', null);
@@ -273,6 +294,187 @@ describe('seed grants — runtime behaviour', () => {
 		// Escapes still fail to match the allow seed but remain promptable.
 		expect(shellMatch('cat /etc/passwd', '/tmp')).toBe('prompt');
 		expect(shellMatch('cat ../etc/passwd', '/tmp')).toBe('prompt');
+	});
+
+	it('explains a refused shell read by the missing read grant, not a workspace boundary', () => {
+		const feedback = shellMatchDetailed('cat /etc/passwd', '/tmp').feedback ?? '';
+		// The seed steers to the structured tool...
+		expect(feedback).toContain('`view`');
+		// ...and the matcher appends the specific reason the allow seed declined.
+		expect(feedback).toContain('/etc/passwd');
+		expect(feedback).toContain('`read` grants');
+		// The old text claimed an "allowed workspace" boundary, which is no
+		// longer what decides this.
+		expect(feedback).not.toContain('outside an allowed workspace');
+	});
+
+	it('lets a user-added read grant widen the seeded shell readers to match `view`', () => {
+		// The whole point of the deferring seeds: the user describes readability
+		// ONCE, as an fs grant, and every reader agrees.
+		//
+		// `ws` and `corpus` are siblings under a private base dir — using /tmp as
+		// the workspace root would make any mkdtemp path a child of it and the
+		// test would pass vacuously.
+		const base = realpathSync(mkdtempSync(join(tmpdir(), 'portal-seed-corpus-')));
+		const ws = join(base, 'ws');
+		const corpus = join(base, 'corpus');
+		mkdirSync(ws);
+		mkdirSync(corpus);
+		const target = join(corpus, 'notes.txt');
+		writeFileSync(target, 'x');
+
+		expect(shellMatch(`cat ${target}`, ws)).toBe('prompt');
+		expect(fsMatch('read', target, ws)).toBe('none');
+
+		settings.addGrant({
+			userId,
+			conversationId: null,
+			tool: 'read',
+			permissionKind: 'read',
+			scope: {
+				kind: 'fs',
+				perms: ['read'],
+				rule: { kind: 'path', root: 'absolute', behavior: 'prefix', value: corpus }
+			},
+			decision: 'allow'
+		});
+
+		expect(shellMatch(`cat ${target}`, ws)).toBe('allow');
+		expect(shellMatch(`head ${target}`, ws)).toBe('allow');
+		// Plain `find <dir>`: the sole operand is the granted directory. Note
+		// `find <dir> -name '*.txt'` would NOT pass — the seed's option list is
+		// deny-only, so `-name`'s value is counted as another positional and gets
+		// path-checked. That is pre-existing and fails safe (it prompts), but it
+		// means find's operands can't be mixed across a grant boundary.
+		expect(shellMatch(`find ${corpus}`, ws)).toBe('allow');
+		expect(fsMatch('read', target, ws)).toBe('allow');
+
+		rmSync(base, { recursive: true, force: true });
+	});
+	it('does not let a write grant satisfy a seeded shell reader', () => {
+		const base = realpathSync(mkdtempSync(join(tmpdir(), 'portal-seed-writeonly-')));
+		const ws = join(base, 'ws');
+		const dir = join(base, 'out');
+		mkdirSync(ws);
+		mkdirSync(dir);
+		const target = join(dir, 'out.txt');
+		settings.addGrant({
+			userId,
+			conversationId: null,
+			tool: 'write',
+			permissionKind: 'write',
+			scope: {
+				kind: 'fs',
+				perms: ['write'],
+				rule: { kind: 'path', root: 'absolute', behavior: 'prefix', value: dir }
+			},
+			decision: 'allow'
+		});
+		expect(shellMatch(`cat ${target}`, ws)).toBe('prompt');
+		rmSync(base, { recursive: true, force: true });
+	});
+
+	it('keeps worktree-lease files readable by `cat` via the workspace floor seed', () => {
+		// Regression guard for the migration: the `workspace-paths` floor seed is
+		// what covers lease roots, so an orchestrator reading a sub-agent's file
+		// must keep working without any fs grant being involved.
+		//
+		// The lease is a SIBLING of the conversation workspace, never a child, so
+		// coverage has to come from the lease being in `workspaceRoots`.
+		const base = realpathSync(mkdtempSync(join(tmpdir(), 'portal-seed-lease-')));
+		const ws = join(base, 'ws');
+		const lease = join(base, 'lease');
+		mkdirSync(ws);
+		mkdirSync(lease);
+		const target = join(lease, 'result.ts');
+		writeFileSync(target, 'x');
+
+		const parsed = parseShellCommand(`cat ${target}`);
+		const matchWithRoots = (roots: string[]) =>
+			settings.matchGrant(userId, 'conv-x', 'shell', 'shell', `cat ${target}`, {
+				shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
+				workspaceRoots: roots,
+				sessionWorkspaceRoot: null,
+				shellCwd: ws
+			});
+
+		// Conversation workspace + the lease it holds, as workspaceRootsFor builds it.
+		expect(matchWithRoots([ws, lease])).toBe('allow');
+		// Without the lease in the root set it is correctly out of reach.
+		expect(matchWithRoots([ws])).toBe('prompt');
+
+		rmSync(base, { recursive: true, force: true });
+	});
+
+	it('keeps the seeded shell readers working when the read grants are revoked', () => {
+		// The migration is additive: the `workspace-paths` floor still covers the
+		// workspace, so revoking fs read grants narrows only the paths that were
+		// reachable BECAUSE of those grants.
+		for (const g of settings.listGrantsForUser(userId)) {
+			if (g.permissionKind === 'read') settings.revokeGrant(userId, g.id);
+		}
+		expect(shellMatch('cat README.md', '/tmp')).toBe('allow');
+		expect(shellMatch('find . -name foo', '/tmp')).toBe('allow');
+		expect(shellMatch('echo hello', '/tmp')).toBe('allow');
+	});
+
+	it('never lets the deferring seed grant on a command with no path to check', () => {
+		// A zero-positional invocation gives `readable-paths` nothing to examine,
+		// so it must not match; those calls belong to the workspace floor seed.
+		// Without the `min: 1` bound the deferring seed would approve them on the
+		// strength of a rule that checked nothing.
+		const deferring = defaultSeedGrants().filter(
+			(g) => g.scope?.kind === 'shell' && g.scope.rule.positionals?.kind === 'readable-paths'
+		);
+		expect(deferring.length).toBeGreaterThan(0);
+		for (const g of deferring) {
+			const count = g.scope?.kind === 'shell' ? g.scope.rule.positionalCount : undefined;
+			expect(count?.min).toBe(1);
+		}
+	});
+
+	it('does not let a file-valued option smuggle a write past the positional rules', () => {
+		// `sort --output=FILE` is a full arbitrary WRITE whose content comes over
+		// a pipe, and it takes ZERO positionals — so every positional rule passes
+		// vacuously and the `write`/`edit` grants never see it. Only an explicit
+		// option deny closes it.
+		expect(shellMatch('sort --output=/root/.bashrc', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort -o /root/.bashrc', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort -o/root/.bashrc', '/tmp')).not.toBe('allow');
+		// Even inside the workspace: this is a write, and no shell seed grants writes.
+		expect(shellMatch('sort --output=/tmp/x', '/tmp')).not.toBe('allow');
+		// `--files0-from` reads a list of files to print, none of them positionals.
+		expect(shellMatch('sort --files0-from=- ', '/tmp')).not.toBe('allow');
+		// Ordinary sorting of a readable path still works.
+		expect(shellMatch('sort README.md', '/tmp')).toBe('allow');
+	});
+
+	it('denies the find primaries that write to their FILE operand', () => {
+		// These create/truncate FILE. Left un-denied they would turn a `read`
+		// grant into a write, since the operand is checked against read grants.
+		// Deny matching is exact, so `-fprint` does NOT cover `-fprint0`.
+		expect(shellMatch('find . -fls /tmp/out', '/tmp')).not.toBe('allow');
+		expect(shellMatch('find . -fprint0 /tmp/out', '/tmp')).not.toBe('allow');
+		expect(shellMatch('find . -fprint /tmp/out', '/tmp')).not.toBe('allow');
+		expect(shellMatch('find . -name foo', '/tmp')).toBe('allow');
+	});
+
+	it('leaves grep/rg on a count bound rather than a path rule', () => {
+		// Their lone positional is a PATTERN. Asking the read grants about it
+		// would judge `grep root` as the file `./root` — the same category error
+		// the old workspace-paths seed made.
+		const grepSeeds = defaultSeedGrants().filter(
+			(g) =>
+				g.scope?.kind === 'shell' &&
+				(g.scope.rule.command?.[0]?.token === 'grep' || g.scope.rule.command?.[0]?.token === 'rg')
+		);
+		expect(grepSeeds.length).toBeGreaterThan(0);
+		for (const g of grepSeeds) {
+			const kind = g.scope?.kind === 'shell' ? g.scope.rule.positionals?.kind : undefined;
+			expect(kind).not.toBe('readable-paths');
+			expect(kind).not.toBe('writable-paths');
+		}
+		expect(shellMatch('cat README.md | grep ../etc/passwd', '/tmp')).toBe('allow');
 	});
 
 	it('rejects unsafe shell features even for safe-named tools', () => {

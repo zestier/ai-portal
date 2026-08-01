@@ -317,6 +317,14 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					url,
 					workspaceRoots: opts.getWorkspaceRoots(),
 					sessionWorkspaceRoot: opts.getSessionWorkspacePath(),
+					// The shell's cwd — deliberately the conversation's working
+					// directory, NOT `getSessionWorkspacePath()`. Those are different
+					// places: the SDK "session workspace" is its infinite-session
+					// state dir (~/.copilot/session-state/<id>), while shell commands
+					// run in the checkout. Resolving `cat README.md` against the
+					// former would check a different file than the one the shell
+					// opens — and could approve it, since that dir is itself readable.
+					shellCwd: opts.workingDirectory,
 					argsHash: hash
 				}
 			);

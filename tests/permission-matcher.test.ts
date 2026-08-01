@@ -719,13 +719,17 @@ describe('shell positionals deferring to the fs grants', () => {
 		return r.segments;
 	};
 
-	const fsQuery = (cmd: string, sessionWorkspaceRoot: string | null = ws): MatchQuery => ({
+	// `shellCwd` is what relative operands resolve against — deliberately NOT
+	// `sessionWorkspaceRoot`, which is the SDK's session-state directory rather
+	// than the directory shell commands run in.
+	const fsQuery = (cmd: string, shellCwd: string | null = ws): MatchQuery => ({
 		tool: 'shell',
 		permissionKind: 'shell',
 		scopeKey: cmd,
 		shellSegments: parseSegments(cmd),
 		workspaceRoots: [ws],
-		sessionWorkspaceRoot,
+		sessionWorkspaceRoot: ws,
+		shellCwd,
 		now: NOW
 	});
 
@@ -794,12 +798,22 @@ describe('shell positionals deferring to the fs grants', () => {
 		).toBe('allow');
 	});
 
-	it('resolves a relative positional against the session workspace', () => {
+	it("resolves a relative positional against the shell's cwd", () => {
 		const rows = [catDeferred(), fsGrant('read', ws)];
 		expect(matchGrants(rows, fsQuery('cat in.txt'))).toBe('allow');
 		// Without a known cwd a relative operand has no meaning to compare
 		// against an absolute rule, so it fails closed.
 		expect(matchGrants(rows, fsQuery('cat in.txt', null))).toBe('none');
+		// And it must NOT silently fall back to the session workspace: that is a
+		// different directory (the SDK's session-state dir), so resolving there
+		// would ask about a file the shell never opens — and could approve it,
+		// since that directory has a blanket read seed of its own.
+		expect(
+			matchGrants(rows, {
+				...fsQuery('cat in.txt', null),
+				sessionWorkspaceRoot: ws
+			})
+		).toBe('none');
 	});
 
 	it('fails closed for every positional when the fs grant set is empty', () => {
