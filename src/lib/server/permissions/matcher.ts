@@ -187,7 +187,8 @@ function matchShellSegments(
 		const ctx = {
 			workspaceRoots: q.workspaceRoots ?? null,
 			sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
-			inPipeline: segmentInPipeline(segments, i)
+			inPipeline: segmentInPipeline(segments, i),
+			isPipeTarget: segmentIsPipeTarget(segments, i)
 		};
 		let segDecision: GrantDecision | null = null;
 		let segFeedback: string | null = null;
@@ -241,6 +242,17 @@ function segmentInPipeline(segments: ParsedSegment[], i: number): boolean {
 	if (segments[i].followingOp === '|') return true;
 	if (i > 0 && segments[i - 1].followingOp === '|') return true;
 	return false;
+}
+
+/**
+ * A segment is a "pipe target" iff it consumes a predecessor's stdout —
+ * the previous segment was followed by `|`. Narrower than
+ * `segmentInPipeline`, which is also true for the producer side. Used by
+ * `pipeline: 'pipe-target'` to allow a command only as a filter over
+ * piped input.
+ */
+function segmentIsPipeTarget(segments: ParsedSegment[], i: number): boolean {
+	return i > 0 && segments[i - 1].followingOp === '|';
 }
 
 function grantApplies(r: GrantRow, q: MatchQuery): boolean {

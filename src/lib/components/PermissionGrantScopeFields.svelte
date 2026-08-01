@@ -87,6 +87,10 @@
 				<option value="unset">(unconstrained — any positionals)</option>
 				<option value="none">none (the command takes no positional args)</option>
 				<option value="any">any (positionals are anything)</option>
+				<option value="pattern-only"
+					>pattern-only (at most one positional, treated as a search pattern — file operands are
+					rejected)</option
+				>
 				<option value="workspace-paths"
 					>workspace-paths (every positional must resolve inside the conversation's workspace)</option
 				>
@@ -103,10 +107,14 @@
 					>must — only matches when the command is part of a pipeline (`a | b`)</option
 				>
 				<option value="forbid">forbid — only matches when the command is NOT pipelined</option>
+				<option value="pipe-target"
+					>pipe-target — only matches when the command consumes a pipe (`a | this`)</option
+				>
 			</select>
 			<span class="muted small"
-				>Useful for deny grants that nudge toward structured alternatives: `pipeline=forbid` lets
-				`cmd | grep ...` keep working while rejecting bare `grep`.</span
+				>Useful for steering toward structured alternatives: `pipeline=forbid` lets `cmd | grep ...`
+				keep working while rejecting bare `grep`, and `pipeline=pipe-target` narrows that to the
+				filter position only (so `grep x file | head` is not covered).</span
 			>
 		</label>
 		<div class="step-options">

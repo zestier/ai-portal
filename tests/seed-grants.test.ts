@@ -296,23 +296,46 @@ describe('seed grants — runtime behaviour', () => {
 		expect(shellMatch('find . -exec rm {} ;')).toBe('none');
 	});
 
-	it('auto-approves rg/grep/find searches confined to the workspace', () => {
-		expect(shellMatch('rg secret .', '/tmp')).toBe('allow');
-		expect(shellMatch('rg secret src', '/tmp')).toBe('allow');
-		expect(shellMatch('grep -r password .', '/tmp')).toBe('allow');
+	it('auto-approves find searches confined to the workspace', () => {
 		expect(shellMatch('find . -name foo', '/tmp')).toBe('allow');
+		expect(shellMatch('find src -name foo', '/tmp')).toBe('allow');
 	});
 
-	it('does not auto-approve rg/grep/find escaping the workspace (opt-in prompt instead)', () => {
-		expect(shellMatch('rg secret /etc/shadow', '/tmp')).toBe('prompt');
-		expect(shellMatch('grep -r password /', '/tmp')).toBe('prompt');
+	it('does not auto-approve find escaping the workspace (opt-in prompt instead)', () => {
 		expect(shellMatch('find / -name foo', '/tmp')).toBe('prompt');
-		expect(shellMatch('rg secret ../etc/passwd', '/tmp')).toBe('prompt');
+		expect(shellMatch('find ../etc -name foo', '/tmp')).toBe('prompt');
 	});
 
-	it('auto-approves rg/grep/find searches confined to the session workspace', () => {
+	it('auto-approves find searches confined to the session workspace', () => {
 		const session = mkdtempSync(join(tmpdir(), 'portal-seed-search-'));
-		expect(shellMatch(`rg secret ${session}`, null, session)).toBe('allow');
-		expect(shellMatch(`grep -r token ${session}`, null, session)).toBe('allow');
+		expect(shellMatch(`find ${session} -name foo`, null, session)).toBe('allow');
+	});
+
+	it('auto-approves grep/rg only as a pipe filter with no file operands', () => {
+		expect(shellMatch('cat README.md | grep foo', '/tmp')).toBe('allow');
+		expect(shellMatch('find . -name foo | rg bar', '/tmp')).toBe('allow');
+		// Pattern is opaque: a path-looking regex is still just a pattern,
+		// and no longer produces the bogus "outside the workspace" nudge.
+		expect(shellMatch('cat README.md | grep ../etc/passwd', '/tmp')).toBe('allow');
+	});
+
+	it('steers grep/rg file searches to the structured grep tool', () => {
+		// In-workspace file search used to auto-approve; now it prompts,
+		// because the grep tool covers it with the same read scopes as view.
+		expect(shellMatch('grep -r password .', '/tmp')).toBe('prompt');
+		expect(shellMatch('rg secret src', '/tmp')).toBe('prompt');
+		expect(shellMatch('rg secret /etc/shadow', '/tmp')).toBe('prompt');
+		expect(shellMatchDetailed('rg secret src', '/tmp').feedback).toContain('`grep` tool');
+	});
+
+	it('does not let a pipe smuggle a file read into grep/rg', () => {
+		// The pipe makes grep a pipe target, but the file operand fails
+		// pattern-only, so the allow seed does not fire.
+		expect(shellMatch('echo x | grep root /etc/shadow', '/tmp')).toBe('prompt');
+		// Producer side of a pipeline is not a pipe target.
+		expect(shellMatch('grep root /etc/shadow | head', '/tmp')).toBe('prompt');
+		// File-reading options are denied outright even in filter position.
+		expect(shellMatch('echo x | grep -r password .', '/tmp')).toBe('prompt');
+		expect(shellMatch('echo x | rg -f patterns.txt', '/tmp')).toBe('prompt');
 	});
 });

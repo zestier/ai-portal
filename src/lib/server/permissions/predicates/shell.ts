@@ -31,6 +31,10 @@ export interface ShellMatchContext {
 	 * as standalone, which is the safe assumption for `'must'` (it'll
 	 * fail closed) and the correct one for `'forbid'`. */
 	inPipeline?: boolean;
+	/** Whether the segment being evaluated consumes another command's
+	 * stdout (some preceding segment is connected to it by `|`). Used by
+	 * `pipeline: 'pipe-target'`. Defaults to false, so it fails closed. */
+	isPipeTarget?: boolean;
 }
 
 /**
@@ -53,7 +57,9 @@ export function shellRuleMatches(
 	for (let i = 0; i < segments.length; i++) {
 		const inPipeline =
 			segments[i].followingOp === '|' || (i > 0 && segments[i - 1].followingOp === '|');
-		if (!shellRuleMatchesSegment(rule, segments[i], { ...ctx, inPipeline })) return false;
+		const isPipeTarget = i > 0 && segments[i - 1].followingOp === '|';
+		if (!shellRuleMatchesSegment(rule, segments[i], { ...ctx, inPipeline, isPipeTarget }))
+			return false;
 	}
 	return true;
 }
@@ -81,6 +87,7 @@ export function shellRuleMatchesSegment(
 		const inPipeline = ctx.inPipeline === true;
 		if (rule.pipeline === 'must' && !inPipeline) return false;
 		if (rule.pipeline === 'forbid' && inPipeline) return false;
+		if (rule.pipeline === 'pipe-target' && ctx.isPipeTarget !== true) return false;
 	}
 
 	return commandPathMatches(path, argv, rule.positionals, ctx);
@@ -221,6 +228,11 @@ function positionalsMatch(
 			return true;
 		case 'none':
 			return positionals.length === 0;
+		// At most one positional, and it is NOT containment-checked: for a
+		// stdin filter the lone positional is a regex, not a path. Anything
+		// beyond it is a file operand, which this rule exists to refuse.
+		case 'pattern-only':
+			return positionals.length <= 1;
 		case 'workspace-paths': {
 			if (!ctx.workspaceRoots || ctx.workspaceRoots.length === 0) return false;
 			// Every positional must land in SOME root. Mixing roots within one

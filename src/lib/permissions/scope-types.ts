@@ -81,6 +81,16 @@ export interface ShellRule {
 	 * allowed.
 	 *   none             — every positional must be absent
 	 *   any              — anything goes
+	 *   pattern-only     — at most ONE positional, treated as an opaque
+	 *                      non-path operand (a search pattern). Any further
+	 *                      positional is rejected. This is the rule for
+	 *                      stdin filters like `grep`/`rg`, whose first
+	 *                      positional is a regex — never a path — and whose
+	 *                      later positionals are the file operands we do not
+	 *                      want to auto-approve. Path-shaped rules are wrong
+	 *                      for them in both directions: a regex is not a path
+	 *                      to be containment-checked, and a file operand must
+	 *                      not slip through as one.
 	 *   workspace-paths          — every positional must resolve to a path
 	 *                              inside the conversation's workspace root
 	 *   session-workspace-paths  — every positional must resolve to a path
@@ -93,15 +103,22 @@ export interface ShellRule {
 	 * constraint. Used by the seed prompt grants for commands like `cat`
 	 * / `grep` whose stdout is the human-visible output when run bare,
 	 * but which are legitimate inside `cmd | grep ...`.
-	 *   must    — this segment must be in a pipeline
-	 *   forbid  — this segment must NOT be in a pipeline
+	 *   must         — this segment must be in a pipeline (either side of a `|`)
+	 *   forbid       — this segment must NOT be in a pipeline
+	 *   pipe-target  — this segment must be DOWNSTREAM of a `|`, i.e. it
+	 *                  consumes another command's stdout. Strictly narrower
+	 *                  than `must`, which also matches the producer: in
+	 *                  `grep x file | head`, grep satisfies `must` while
+	 *                  still reading files off disk. `pipe-target` is how a
+	 *                  grant says "only as a filter over piped input".
 	 */
-	pipeline?: 'must' | 'forbid' | undefined;
+	pipeline?: 'must' | 'forbid' | 'pipe-target' | undefined;
 }
 
 export type PositionalsRule =
 	| { kind: 'none' }
 	| { kind: 'any' }
+	| { kind: 'pattern-only' }
 	| { kind: 'workspace-paths' }
 	| { kind: 'session-workspace-paths' };
 

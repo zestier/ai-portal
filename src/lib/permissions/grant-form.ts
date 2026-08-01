@@ -13,9 +13,10 @@ export type ShellPositionalsKind =
 	| 'unset'
 	| 'none'
 	| 'any'
+	| 'pattern-only'
 	| 'workspace-paths'
 	| 'session-workspace-paths';
-export type ShellPipelineKind = 'unset' | 'must' | 'forbid';
+export type ShellPipelineKind = 'unset' | 'must' | 'forbid' | 'pipe-target';
 export type FsBehaviorKind = 'any' | FsRuleBehaviorWithValue;
 export type UrlRuleKind = 'exact' | 'host' | 'host-suffix';
 export type BuildResult = { json: string; error: null } | { json: null; error: string };

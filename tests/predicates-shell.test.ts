@@ -2,7 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { shellRuleMatches } from '../src/lib/server/permissions/predicates/shell';
+import {
+	shellRuleMatches,
+	shellRuleMatchesSegment
+} from '../src/lib/server/permissions/predicates/shell';
 import { parseShellCommand } from '../src/lib/server/permissions/shell-parser';
 import type { ShellRule } from '../src/lib/permissions/scope-types';
 
@@ -267,6 +270,26 @@ describe('shell predicate — positionals', () => {
 		expect(match(rule, 'cat /etc/passwd', ws)).toBe(false);
 		expect(match(rule, `cat ${join(ws, 'README.md')}`, null)).toBe(false);
 	});
+
+	it('positionals=pattern-only accepts at most one non-path positional', () => {
+		const rule = shell(['grep'], { positionals: { kind: 'pattern-only' } });
+		expect(match(rule, 'grep')).toBe(true);
+		expect(match(rule, 'grep foo')).toBe(true);
+		// The lone positional is a pattern, NOT containment-checked: patterns
+		// that look like escaping paths are still just patterns.
+		expect(match(rule, 'grep ../etc/passwd')).toBe(true);
+		expect(match(rule, 'grep "^root:"')).toBe(true);
+		// A second positional is a file operand — exactly what this rejects.
+		expect(match(rule, 'grep foo README.md')).toBe(false);
+		expect(match(rule, 'grep foo /etc/passwd')).toBe(false);
+	});
+
+	it('positionals=pattern-only needs no workspace root', () => {
+		const rule = shell(['grep'], { positionals: { kind: 'pattern-only' } });
+		const parsed = parseShellCommand('grep foo');
+		if (parsed.kind !== 'parsed') throw new Error('parse');
+		expect(shellRuleMatches(rule, parsed.segments, { workspaceRoots: null })).toBe(true);
+	});
 });
 
 describe('shell predicate — pipelines and chains', () => {
@@ -306,5 +329,49 @@ describe('shell predicate — pipeline lever', () => {
 	it('pipeline unset matches regardless of pipeline neighbours', () => {
 		expect(match(unset, 'grep foo bar')).toBe(true);
 		expect(match(unset, 'grep a | grep b')).toBe(true);
+	});
+
+	it('pipeline=pipe-target only matches segments downstream of a `|`', () => {
+		const target = shell(['grep'], { pipeline: 'pipe-target' });
+		// Bare grep consumes no pipe.
+		expect(match(target, 'grep foo')).toBe(false);
+		// Producer side: grep reads files here and merely feeds `head`, so
+		// this is exactly the case `must` would wrongly accept.
+		expect(match(target, 'grep foo file | head')).toBe(false);
+		// Every segment must match, and the first grep is a producer.
+		expect(match(target, 'grep a | grep b')).toBe(false);
+		// `&&` is not a pipe.
+		expect(match(target, 'cat a && grep b')).toBe(false);
+	});
+
+	it('pipeline=pipe-target matches the filter position of a real pipeline', () => {
+		// Rules are evaluated per-segment by the matcher, so check the
+		// downstream segment on its own the way matchShellSegments does.
+		const target = shell(['grep'], { pipeline: 'pipe-target' });
+		const parsed = parseShellCommand('cat a | grep b');
+		if (parsed.kind !== 'parsed') throw new Error('parse');
+		expect(
+			shellRuleMatchesSegment(target, parsed.segments[1], {
+				workspaceRoots: [ws],
+				inPipeline: true,
+				isPipeTarget: true
+			})
+		).toBe(true);
+		expect(
+			shellRuleMatchesSegment(target, parsed.segments[1], {
+				workspaceRoots: [ws],
+				inPipeline: true,
+				isPipeTarget: false
+			})
+		).toBe(false);
+	});
+
+	it('pipeline=pipe-target fails closed when the caller omits isPipeTarget', () => {
+		const target = shell(['grep'], { pipeline: 'pipe-target' });
+		const parsed = parseShellCommand('grep b');
+		if (parsed.kind !== 'parsed') throw new Error('parse');
+		expect(shellRuleMatchesSegment(target, parsed.segments[0], { workspaceRoots: [ws] })).toBe(
+			false
+		);
 	});
 });

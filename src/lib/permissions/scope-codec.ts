@@ -71,7 +71,8 @@ function validateShell(v: Record<string, unknown>): ShellScope | null {
 	}
 
 	if (rule.pipeline !== undefined) {
-		if (rule.pipeline !== 'must' && rule.pipeline !== 'forbid') return null;
+		if (rule.pipeline !== 'must' && rule.pipeline !== 'forbid' && rule.pipeline !== 'pipe-target')
+			return null;
 		out.pipeline = rule.pipeline;
 	}
 
@@ -147,6 +148,7 @@ function validatePositionals(v: unknown): PositionalsRule | null {
 	if (
 		kind === 'none' ||
 		kind === 'any' ||
+		kind === 'pattern-only' ||
 		kind === 'workspace-paths' ||
 		kind === 'session-workspace-paths'
 	) {

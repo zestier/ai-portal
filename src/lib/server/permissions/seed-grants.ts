@@ -86,19 +86,64 @@ const FS_READ_TOOLS = [
 ];
 
 /**
- * Read-only search tools. Like the fs-read tools, their positionals are
- * locked to the workspace by default; an explicit opt-in prompt seed
- * covers searching outside it. Command-running / file-mutating options are
- * denied outright.
+ * Path-search tools: their positionals really ARE paths, so locking them
+ * to the workspace is semantically honest. An explicit opt-in prompt seed
+ * covers searching outside it, and command-running options are denied
+ * outright.
+ *
+ * `find` stays here rather than being steered to a structured tool because
+ * `glob` doesn't cover its predicates (`-mtime`, `-size`, `-type`, ...) and
+ * it prints paths, not file contents.
  */
-const SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
-	{ token: 'rg', options: { deny: ['--pre', '--pre-glob', '--hostname-bin', '--no-config'] } },
-	{ token: 'grep' },
+const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
 	{
 		token: 'find',
 		options: { deny: ['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprintf'] }
 	}
 ];
+
+/**
+ * Content-search tools, seeded ONLY as pipe filters.
+ *
+ * These used to sit alongside `find` on `positionals: workspace-paths`,
+ * which was wrong in both directions. Their first positional is a regex,
+ * not a path: `isPathInWorkspace` resolves a non-path pattern against the
+ * workspace root, so most patterns passed by accident while a pattern
+ * containing `..` or a leading `/` failed and produced the nonsense
+ * feedback "searching outside the workspace" for a search that never named
+ * a path at all.
+ *
+ * The deeper problem is the capability boundary. Used against files, shell
+ * `grep`/`rg` are a file-reading path whose scope is decided by shell rules
+ * rather than the fs read grants, so they disagree with `view`/`grep` about
+ * what is readable — in both directions — for no benefit: the structured
+ * `grep` tool is ripgrep, with globs, output modes, context and multiline.
+ * The one thing no structured tool can do is filter ANOTHER command's
+ * stdout (`pnpm test | grep -c FAIL`).
+ *
+ * So the seed grants exactly that: `pipeline: 'pipe-target'` (must consume
+ * a pipe — note `grep x file | head` does NOT qualify, since grep is the
+ * producer there) plus `positionals: 'pattern-only'` (the lone positional
+ * is the pattern; a file operand is refused, which is what stops
+ * `echo | grep root /etc/shadow` from riding in on the pipe). Options that
+ * make the command read files anyway are denied. Everything else falls
+ * through to the prompt seed below, which points at the `grep` tool.
+ */
+const STDIN_FILTER_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
+	{
+		token: 'rg',
+		options: {
+			deny: ['--pre', '--pre-glob', '--hostname-bin', '--no-config', '-f', '--file']
+		}
+	},
+	{
+		token: 'grep',
+		options: { deny: ['-f', '--file', '-r', '-R', '--recursive', '-d', '--directories'] }
+	}
+];
+
+const STDIN_FILTER_PROMPT_REASON =
+	'is seeded only as a pipe filter (`some-command | %TOKEN% pattern`), where it reads stdin. Searching files with it requires approval — use the structured `grep` tool instead: it is ripgrep, it honors the same read scopes as `view`, and it supports globs, context lines, multiline and output_mode count/files_with_matches.';
 
 const GIT_STRUCTURED_TOOLS = [
 	'git_status',
@@ -362,28 +407,46 @@ export function defaultSeedGrants(): SeedSpec[] {
 		shellDeny({ command: [{ token: 'wc' }], positionals: { kind: 'any' } }, WC_SHELL_DENY_FEEDBACK)
 	);
 
-	// rg / grep / find: read-only search tools. Their command-running
-	// options are denied, and — like the fs-read tools — their positionals
-	// are locked to the workspace so `rg secret /etc/shadow`,
-	// `grep -r password /`, and `find / -name '*.pem'` don't auto-approve
-	// and leak data outside the workspace boundary. Searching anywhere is
-	// still possible via the explicit opt-in prompt seeds below.
-	for (const { token, options } of SEARCH_TOOLS) {
+	// find: a read-only path-search tool. Its command-running options are
+	// denied, and — like the fs-read tools — its positionals are locked to
+	// the workspace so `find / -name '*.pem'` doesn't auto-approve and leak
+	// paths outside the workspace boundary. Searching anywhere is still
+	// possible via the explicit opt-in prompt seeds below.
+	for (const { token, options } of PATH_SEARCH_TOOLS) {
 		seeds.push(shellGrant(shellCommand(token, { kind: 'workspace-paths' }, options)));
 		seeds.push(shellGrant(shellCommand(token, { kind: 'session-workspace-paths' }, options)));
 	}
 
-	// "Search anywhere" opt-in: a clearly-labeled prompt seed per search
+	// "Search anywhere" opt-in: a clearly-labeled prompt seed per path-search
 	// tool. Because allow seeds outrank prompt seeds, in-workspace searches
 	// still auto-approve via the grants above; only searches that escape the
 	// workspace land here and require an explicit human approval (or the
 	// user can add their own allow grant). This keeps the capability without
 	// silently auto-approving out-of-workspace reads.
-	for (const { token, options } of SEARCH_TOOLS) {
+	for (const { token, options } of PATH_SEARCH_TOOLS) {
 		seeds.push(
 			shellPrompt(
 				shellCommand(token, { kind: 'any' }, options),
 				`\`${token}\` searching outside the workspace requires approval (opt-in "search anywhere"). In-workspace searches are auto-approved; approve to allow searching other paths this once, or add your own grant to always allow it.`
+			)
+		);
+	}
+
+	// grep / rg: allowed only as a pipe filter over another command's
+	// stdout, with no file operands. Anything else — including
+	// `grep pattern file` and `grep pattern file | head`, where grep is the
+	// pipeline's producer rather than its target — falls through to the
+	// prompt seed and is steered to the structured `grep` tool.
+	for (const { token, options } of STDIN_FILTER_TOOLS) {
+		const rule = shellCommand(token, { kind: 'pattern-only' }, options);
+		rule.pipeline = 'pipe-target';
+		seeds.push(shellGrant(rule));
+	}
+	for (const { token } of STDIN_FILTER_TOOLS) {
+		seeds.push(
+			shellPrompt(
+				shellCommand(token, { kind: 'any' }),
+				`Shell \`${token}\` ${STDIN_FILTER_PROMPT_REASON.replace('%TOKEN%', token)}`
 			)
 		);
 	}

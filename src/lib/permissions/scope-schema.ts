@@ -75,6 +75,7 @@ const Argv0Schema = ArgvToken.refine(
 const PositionalsSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('none') }),
 	z.object({ kind: z.literal('any') }),
+	z.object({ kind: z.literal('pattern-only') }),
 	z.object({ kind: z.literal('workspace-paths') }),
 	z.object({ kind: z.literal('session-workspace-paths') })
 ]);
@@ -123,7 +124,7 @@ const ShellRuleSchema = z.object({
 			message: 'first command token must be a bare command name'
 		}),
 	positionals: PositionalsSchema.optional(),
-	pipeline: z.enum(['must', 'forbid']).optional()
+	pipeline: z.enum(['must', 'forbid', 'pipe-target']).optional()
 });
 
 const ShellScopeSchema = z.object({
