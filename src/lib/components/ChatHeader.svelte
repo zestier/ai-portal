@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type {
+		ApprovalMode,
 		Conversation,
 		ConversationUsage,
 		ProviderRuntimeFeatureStatus,
@@ -32,7 +33,7 @@
 		memoryExtractorModel,
 		memoryExtractorBackend,
 		globalMemoryEnabled,
-		approveAllTools,
+		approvalMode,
 		disabledToolGroups,
 		modelChangeDisabled = false,
 		onSettingsChange
@@ -58,7 +59,7 @@
 		memoryExtractorModel: string | null;
 		memoryExtractorBackend: MemoryExtractorBackend | null;
 		globalMemoryEnabled: boolean;
-		approveAllTools: boolean;
+		approvalMode: ApprovalMode;
 		disabledToolGroups: PortalToolGroupId[];
 		modelChangeDisabled?: boolean;
 		// Fires with the optimistic patch right before the PATCH request,
@@ -70,7 +71,7 @@
 			memoryExtractorModel?: string | null;
 			memoryExtractorBackend?: MemoryExtractorBackend | null;
 			globalMemoryEnabled?: boolean;
-			approveAllTools?: boolean;
+			approvalMode?: ApprovalMode;
 			disabledToolGroups?: PortalToolGroupId[];
 		}) => void;
 	} = $props();
@@ -117,11 +118,23 @@
 			value: 'autopilot',
 			label: 'Autopilot',
 			hint: 'Agent decides when to switch into less-supervised execution.'
+		}
+	];
+	const APPROVAL_MODE_OPTIONS: { value: ApprovalMode; label: string; note: string }[] = [
+		{
+			value: 'ask',
+			label: 'Ask every time',
+			note: 'Tool calls not covered by a grant or your policy raise a permission dialog and wait for you.'
 		},
 		{
-			value: 'best-effort',
-			label: 'Best effort',
-			hint: 'Autopilot-style execution, but permission prompts auto-reject with feedback.'
+			value: 'auto-approve',
+			label: 'Auto-approve prompts',
+			note: 'Prompt-worthy tool calls are approved without asking. Deny grants and always-prompt actions still apply, and each auto-approval is audited as auto-allow.'
+		},
+		{
+			value: 'auto-deny',
+			label: 'Auto-deny prompts (best effort)',
+			note: 'Permission prompts are auto-rejected with feedback. The agent can keep trying alternatives, but it must stop once extra permission is truly required.'
 		}
 	];
 	const MEMORY_MODES: { value: MemoryMode; label: string; hint: string }[] = [
@@ -149,7 +162,13 @@
 	];
 
 	const modeFeature = $derived(providerCapabilities.features.modes);
-	const approveAllFeature = $derived(providerCapabilities.features.approveAll);
+	const approvalModeFeature = $derived(providerCapabilities.features.approvalMode);
+	// Only `auto-approve` needs the provider to mirror the setting into its
+	// runtime; `ask` and `auto-deny` are settled entirely by the portal.
+	const autoApproveSupported = $derived(approvalModeFeature.supported);
+	const currentApprovalNote = $derived(
+		APPROVAL_MODE_OPTIONS.find((opt) => opt.value === approvalMode)?.note ?? ''
+	);
 	const supportsRuntimeModes = $derived(
 		modeFeature.supported && modeFeature.behavior === 'supported'
 	);
@@ -212,7 +231,7 @@
 		memoryExtractorModel?: string | null;
 		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
-		approveAllTools?: boolean;
+		approvalMode?: ApprovalMode;
 		disabledToolGroups?: PortalToolGroupId[];
 	}) {
 		const res = await fetch(`/api/conversations/${conversation.id}/session`, {
@@ -335,22 +354,22 @@
 		}
 	}
 
-	function toggleApproveAll(e: Event) {
-		const target = e.currentTarget as HTMLInputElement;
-		const next = target.checked;
-		if (savingApprove) {
-			target.checked = approveAllTools;
+	// Switching *into* auto-approve stops permission prompts for this
+	// conversation until it is changed back, so it is the one option gated
+	// behind a deliberate confirmation. The select snaps back until confirmed.
+	function chooseApprovalMode(e: Event) {
+		const target = e.currentTarget as HTMLSelectElement;
+		const next = target.value as ApprovalMode;
+		if (savingApprove || next === approvalMode) {
+			target.value = approvalMode;
 			return;
 		}
-		if (next) {
-			// Enabling auto-approve stops permission prompts for this conversation
-			// until it is turned back off, so gate it behind one deliberate
-			// confirmation. Snap the checkbox back until the user confirms.
-			target.checked = approveAllTools;
+		if (next === 'auto-approve') {
+			target.value = approvalMode;
 			approveConfirmOpen = true;
 			return;
 		}
-		void applyApproveAll(false);
+		void applyApprovalMode(next);
 	}
 
 	function cancelApproveAll() {
@@ -358,19 +377,19 @@
 	}
 
 	async function confirmApproveAll() {
-		await applyApproveAll(true);
+		await applyApprovalMode('auto-approve');
 		approveConfirmOpen = false;
 	}
 
-	async function applyApproveAll(next: boolean) {
+	async function applyApprovalMode(next: ApprovalMode) {
 		if (savingApprove) return;
 		savingApprove = true;
-		const prev = approveAllTools;
-		onSettingsChange?.({ approveAllTools: next });
+		const prev = approvalMode;
+		onSettingsChange?.({ approvalMode: next });
 		try {
-			await patchSession({ approveAllTools: next });
+			await patchSession({ approvalMode: next });
 		} catch {
-			onSettingsChange?.({ approveAllTools: prev });
+			onSettingsChange?.({ approvalMode: prev });
 		} finally {
 			savingApprove = false;
 		}
@@ -889,15 +908,23 @@
 						</div>
 					{/if}
 					<div class="setting-row">
-						<label class="approve-toggle">
-							<input
-								type="checkbox"
-								checked={approveAllTools}
-								disabled={savingApprove || !approveAllFeature.supported}
-								onchange={toggleApproveAll}
-							/>
-							<span>Approve all tool calls</span>
-						</label>
+						<span class="setting-label">Approvals</span>
+						<select
+							class="model-select"
+							aria-label="Approval mode"
+							value={approvalMode}
+							disabled={savingApprove}
+							onchange={chooseApprovalMode}
+						>
+							{#each APPROVAL_MODE_OPTIONS as opt (opt.value)}
+								<option
+									value={opt.value}
+									disabled={opt.value === 'auto-approve' && !autoApproveSupported}
+								>
+									{opt.label}
+								</option>
+							{/each}
+						</select>
 						{#if providerCapabilities.controls.resetSessionApprovals}
 							<button
 								type="button"
@@ -922,17 +949,9 @@
 							<span class="reset-flash err" aria-live="polite">Failed</span>
 						{/if}
 					</div>
-					{#if approveAllTools}
-						<p class="approve-warning" role="note">
-							{approveAllFeature.description} Audit entries still record each auto-approved portal tool
-							as <code>auto-allow</code>.
-						</p>
-					{:else if mode === 'best-effort'}
-						<p class="approve-warning" role="note">
-							Permission prompts are auto-rejected in this conversation. The agent can keep trying
-							alternatives, but it must stop once extra permission is truly required.
-						</p>
-					{/if}
+					<p class="approve-warning" class:neutral={approvalMode === 'ask'} role="note">
+						{currentApprovalNote}
+					</p>
 					<div class="tool-groups">
 						<div class="tool-groups-head">
 							<span class="tool-groups-title">Portal tool groups</span>
@@ -967,7 +986,7 @@
 
 <ConfirmDialog
 	open={approveConfirmOpen}
-	title="Approve all tool calls?"
+	title="Auto-approve permission prompts?"
 	confirmLabel="Enable for this conversation"
 	cancelLabel="Cancel"
 	danger
@@ -1333,9 +1352,11 @@
 		border-radius: 3px;
 		font-size: var(--fs-xs);
 	}
-	.approve-warning code {
-		font-family: var(--mono);
-		font-size: var(--fs-lg);
+	/* `ask` is the safe default, so its note is informational rather than a warning. */
+	.approve-warning.neutral {
+		background: var(--surface-2);
+		border-left-color: var(--border);
+		opacity: 0.85;
 	}
 	.tool-groups {
 		display: flex;

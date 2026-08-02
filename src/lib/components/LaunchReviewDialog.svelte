@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { LaunchWorkspaceKind, TemplateLaunchOptions } from '$lib/prompt-templates';
-	import type { SessionMode } from '$lib/types';
+	import type { ApprovalMode, SessionMode } from '$lib/types';
 	import { untrack } from 'svelte';
 	import Modal from './ui/Modal.svelte';
 
@@ -34,6 +34,7 @@
 	let prompt = $state(untrack(() => defaults.prompt));
 	let workspace = $state<LaunchWorkspaceKind>(untrack(() => defaults.workspace));
 	let conversationMode = $state<string>(untrack(() => defaults.conversationMode ?? ''));
+	let approvalMode = $state<string>(untrack(() => defaults.approvalMode ?? ''));
 	let model = $state<string>(untrack(() => defaults.model ?? ''));
 
 	// Re-seed whenever a different launch opens the dialog so a second launch
@@ -42,6 +43,7 @@
 		prompt = defaults.prompt;
 		workspace = defaults.workspace;
 		conversationMode = defaults.conversationMode ?? '';
+		approvalMode = defaults.approvalMode ?? '';
 		model = defaults.model ?? '';
 	});
 
@@ -82,8 +84,14 @@
 		{ value: '', label: 'Use my default mode' },
 		{ value: 'interactive', label: 'Interactive' },
 		{ value: 'plan', label: 'Plan' },
-		{ value: 'autopilot', label: 'Autopilot' },
-		{ value: 'best-effort', label: 'Best effort' }
+		{ value: 'autopilot', label: 'Autopilot' }
+	];
+
+	const approvalModeOptions: { value: string; label: string }[] = [
+		{ value: '', label: 'Use my default approvals' },
+		{ value: 'ask', label: 'Ask every time' },
+		{ value: 'auto-approve', label: 'Auto-approve prompts' },
+		{ value: 'auto-deny', label: 'Auto-deny prompts (best effort)' }
 	];
 
 	function launch() {
@@ -93,6 +101,7 @@
 			prompt: trimmed,
 			workspace,
 			conversationMode: (conversationMode || null) as SessionMode | null,
+			approvalMode: (approvalMode || null) as ApprovalMode | null,
 			model: model || null
 		});
 	}
@@ -131,6 +140,14 @@
 				Conversation mode
 				<select bind:value={conversationMode} disabled={busy}>
 					{#each conversationModeOptions as opt (opt.value)}
+						<option value={opt.value}>{opt.label}</option>
+					{/each}
+				</select>
+			</label>
+			<label>
+				Approvals
+				<select bind:value={approvalMode} disabled={busy}>
+					{#each approvalModeOptions as opt (opt.value)}
 						<option value={opt.value}>{opt.label}</option>
 					{/each}
 				</select>

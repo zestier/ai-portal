@@ -89,7 +89,7 @@ describe('db migrations + repos', () => {
 		});
 	});
 
-	it('round-trips the best-effort session mode', () => {
+	it('round-trips the approval mode independently of the session mode', () => {
 		const u = users.ensureLocalUser();
 		const c = convs.create(u.id, {
 			title: 't',
@@ -98,8 +98,41 @@ describe('db migrations + repos', () => {
 			mode: 'autopilot'
 		});
 		expect(convs.get(c.id, u.id)?.mode).toBe('autopilot');
-		expect(convs.updateSessionSettings(c.id, u.id, { mode: 'best-effort' })).toBe(true);
-		expect(convs.get(c.id, u.id)?.mode).toBe('best-effort');
+		expect(convs.get(c.id, u.id)?.approvalMode).toBe('ask');
+		expect(convs.updateSessionSettings(c.id, u.id, { approvalMode: 'auto-deny' })).toBe(true);
+		expect(convs.get(c.id, u.id)).toMatchObject({ mode: 'autopilot', approvalMode: 'auto-deny' });
+		// Newly reachable combination: plan + auto-deny (unattended exploration
+		// that never blocks on a dialog), impossible while auto-deny rode on
+		// `best-effort`, which force-forwarded autopilot.
+		expect(convs.updateSessionSettings(c.id, u.id, { mode: 'plan' })).toBe(true);
+		expect(convs.get(c.id, u.id)).toMatchObject({ mode: 'plan', approvalMode: 'auto-deny' });
+	});
+
+	it('seeds the approval mode at creation and normalizes a bogus value', () => {
+		const u = users.ensureLocalUser();
+		const c = convs.create(u.id, {
+			title: 't',
+			workdir: '/tmp',
+			model: null,
+			approvalMode: 'auto-approve'
+		});
+		expect(convs.get(c.id, u.id)?.approvalMode).toBe('auto-approve');
+		expect(
+			convs.updateSessionSettings(c.id, u.id, {
+				approvalMode: 'nonsense' as unknown as 'ask'
+			})
+		).toBe(true);
+		expect(convs.get(c.id, u.id)?.approvalMode).toBe('ask');
+	});
+
+	it('coerces a legacy best-effort mode value to autopilot on read', () => {
+		const u = users.ensureLocalUser();
+		const c = convs.create(u.id, { title: 't', workdir: '/tmp', model: null });
+		// Simulate a row written before migration 066 split the axes. The
+		// migration rewrites these, but the normalizer is the backstop for a
+		// connection that raced it (dev HMR) or a hand-edited row.
+		getDb().prepare('UPDATE conversations SET mode = ? WHERE id = ?').run('best-effort', c.id);
+		expect(convs.get(c.id, u.id)?.mode).toBe('autopilot');
 	});
 
 	it('permission grants scope by conversation and global', () => {
@@ -194,6 +227,133 @@ describe('db migrations + repos', () => {
 			expect(nonEmpty).toContain('loop.x_2');
 			// Two empty-key rows coexist under the partial unique index.
 			expect(rows.filter((r) => r.loop_key === '').length).toBe(2);
+		} finally {
+			db.close();
+		}
+	});
+
+	it('migration 066 splits approve-all / best-effort onto the approval-mode axis', () => {
+		// Replays the real migration SQL against a constructed pre-066 schema
+		// holding each combination the backfill has to resolve, including the
+		// overlap (approve-all + best-effort) whose precedence used to be an
+		// accident of evaluation order.
+		const db = new Database(':memory:');
+		try {
+			db.exec(`CREATE TABLE conversations (
+				id TEXT PRIMARY KEY,
+				mode TEXT NOT NULL DEFAULT 'interactive',
+				approve_all_tools INTEGER NOT NULL DEFAULT 0
+			)`);
+			db.exec(`CREATE TABLE user_settings (
+				user_id TEXT PRIMARY KEY,
+				default_mode TEXT NOT NULL DEFAULT 'interactive'
+			)`);
+			db.exec(`CREATE TABLE prompt_templates (
+				id TEXT PRIMARY KEY,
+				conversation_mode TEXT
+			)`);
+			const conv = db.prepare(
+				'INSERT INTO conversations(id, mode, approve_all_tools) VALUES (?, ?, ?)'
+			);
+			conv.run('plain', 'interactive', 0);
+			conv.run('approve-all', 'plan', 1);
+			conv.run('best-effort', 'best-effort', 0);
+			// Overlap: approve-all won by evaluation order before 066, so it
+			// must keep winning — and the stranded best-effort mode still has
+			// to land on autopilot rather than persisting a retired value.
+			conv.run('both', 'best-effort', 1);
+			db.prepare('INSERT INTO user_settings(user_id, default_mode) VALUES (?, ?)').run(
+				'u1',
+				'best-effort'
+			);
+			db.prepare('INSERT INTO user_settings(user_id, default_mode) VALUES (?, ?)').run(
+				'u2',
+				'plan'
+			);
+			db.prepare('INSERT INTO prompt_templates(id, conversation_mode) VALUES (?, ?)').run(
+				't-be',
+				'best-effort'
+			);
+			db.prepare('INSERT INTO prompt_templates(id, conversation_mode) VALUES (?, ?)').run(
+				't-none',
+				null
+			);
+
+			const sql = readFileSync(
+				resolve('src/lib/server/db/migrations/066_approval_mode.sql'),
+				'utf8'
+			);
+			expect(() => db.exec(sql)).not.toThrow();
+
+			const rows = Object.fromEntries(
+				(
+					db.prepare('SELECT id, mode, approval_mode FROM conversations').all() as {
+						id: string;
+						mode: string;
+						approval_mode: string;
+					}[]
+				).map((r) => [r.id, r])
+			);
+			expect(rows['plain']).toMatchObject({ mode: 'interactive', approval_mode: 'ask' });
+			expect(rows['approve-all']).toMatchObject({ mode: 'plan', approval_mode: 'auto-approve' });
+			expect(rows['best-effort']).toMatchObject({ mode: 'autopilot', approval_mode: 'auto-deny' });
+			expect(rows['both']).toMatchObject({ mode: 'autopilot', approval_mode: 'auto-approve' });
+
+			// The retired boolean is gone, so the setting has exactly one home.
+			const convColumns = (
+				db.prepare('PRAGMA table_info(conversations)').all() as { name: string }[]
+			).map((r) => r.name);
+			expect(convColumns).not.toContain('approve_all_tools');
+			expect(convColumns).toContain('approval_mode');
+			// No row anywhere still carries the retired mode value.
+			expect(
+				(
+					db
+						.prepare("SELECT COUNT(*) AS n FROM conversations WHERE mode = 'best-effort'")
+						.get() as {
+						n: number;
+					}
+				).n
+			).toBe(0);
+
+			const settingsRows = Object.fromEntries(
+				(
+					db
+						.prepare('SELECT user_id, default_mode, default_approval_mode FROM user_settings')
+						.all() as {
+						user_id: string;
+						default_mode: string;
+						default_approval_mode: string;
+					}[]
+				).map((r) => [r.user_id, r])
+			);
+			expect(settingsRows['u1']).toMatchObject({
+				default_mode: 'autopilot',
+				default_approval_mode: 'auto-deny'
+			});
+			expect(settingsRows['u2']).toMatchObject({
+				default_mode: 'plan',
+				default_approval_mode: 'ask'
+			});
+
+			const templateRows = Object.fromEntries(
+				(
+					db.prepare('SELECT id, conversation_mode, approval_mode FROM prompt_templates').all() as {
+						id: string;
+						conversation_mode: string | null;
+						approval_mode: string | null;
+					}[]
+				).map((r) => [r.id, r])
+			);
+			expect(templateRows['t-be']).toMatchObject({
+				conversation_mode: 'autopilot',
+				approval_mode: 'auto-deny'
+			});
+			// "No preference" stays NULL on both axes.
+			expect(templateRows['t-none']).toMatchObject({
+				conversation_mode: null,
+				approval_mode: null
+			});
 		} finally {
 			db.close();
 		}
@@ -432,7 +592,8 @@ describe('db migrations + repos', () => {
 			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
 			defaultWorkdir: null,
-			defaultConversationMode: 'best-effort',
+			defaultConversationMode: 'autopilot',
+			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
 			accent: 'violet',
@@ -444,7 +605,8 @@ describe('db migrations + repos', () => {
 			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
 			defaultWorkdir: null,
-			defaultConversationMode: 'best-effort',
+			defaultConversationMode: 'autopilot',
+			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
 			accent: 'violet',
@@ -457,7 +619,8 @@ describe('db migrations + repos', () => {
 			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
 			defaultWorkdir: null,
-			defaultConversationMode: 'best-effort',
+			defaultConversationMode: 'autopilot',
+			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
 			accent: 'default',
@@ -477,6 +640,7 @@ describe('db migrations + repos', () => {
 			defaultModel: null,
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
+			defaultApprovalMode: 'ask',
 			defaultPolicy: 'prompt',
 			theme: 'dark',
 			accent: 'default',

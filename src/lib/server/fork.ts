@@ -205,6 +205,13 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 			provider: source.provider,
 			model: source.model,
 			mode: source.mode,
+			// A fork inherits `auto-deny` but never `auto-approve`. This is the
+			// pre-split behavior stated on the new axis: auto-deny used to ride
+			// on `mode: 'best-effort'`, which forks copied, while the separate
+			// `approve_all_tools` boolean was deliberately NOT copied, so a fork
+			// of an auto-approving conversation started prompting again. Only
+			// the restrictive half carries over, which is also the safe default.
+			approvalMode: source.approvalMode === 'auto-deny' ? 'auto-deny' : 'ask',
 			memoryMode: source.memoryMode,
 			memoryExtractorModel: source.memoryExtractorModel,
 			memoryExtractorBackend: source.memoryExtractorBackend,

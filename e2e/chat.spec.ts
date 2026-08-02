@@ -203,46 +203,51 @@ test('an armed follow-up auto-sends after the active turn finishes', async ({ pa
 	).toHaveCount(0);
 });
 
-test('"Approve all tool calls" is gated behind a conversation-scoped confirmation', async ({
+test('the approval-mode dropdown gates auto-approve behind a conversation-scoped confirmation', async ({
 	page,
 	request
 }) => {
-	const id = await createConversation(request, uniqueTitle('E2E approve-all'));
+	const id = await createConversation(request, uniqueTitle('E2E approval-mode'));
 	await page.goto(`/conversations/${id}`);
 
-	// Expand the conversation-settings panel that hosts the toggle.
+	// Expand the conversation-settings panel that hosts the dropdown.
 	await page.locator('[aria-controls="chat-header-details"]').click();
 
-	const toggle = page.getByRole('checkbox', { name: 'Approve all tool calls' });
-	await expect(toggle).not.toBeChecked();
+	const select = page.getByRole('combobox', { name: 'Approval mode' });
+	await expect(select).toHaveValue('ask');
 
-	// Clicking only opens a confirmation that spells out the blast radius —
-	// this conversation only; the toggle must snap back off until the user
-	// confirms.
-	await toggle.click();
+	// Selecting auto-approve only opens a confirmation that spells out the
+	// blast radius — this conversation only; the select must snap back until
+	// the user confirms.
+	await select.selectOption('auto-approve');
 	const dialog = page.getByRole('alertdialog');
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText('this conversation only');
 	// The bypass is conversation-scoped, so the copy must not claim otherwise.
 	await expect(dialog).not.toContainText('all of your conversations');
 	await expect(dialog).not.toContainText('your user account');
-	await expect(toggle).not.toBeChecked();
+	await expect(select).toHaveValue('ask');
 
 	// Cancel: nothing changes.
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(dialog).toBeHidden();
-	await expect(toggle).not.toBeChecked();
+	await expect(select).toHaveValue('ask');
 
-	// Confirm: the bypass is applied to this conversation and the toggle reflects it.
-	await toggle.click();
+	// Confirm: the bypass is applied to this conversation and the select reflects it.
+	await select.selectOption('auto-approve');
 	await expect(dialog).toBeVisible();
 	await dialog.getByRole('button', { name: 'Enable for this conversation' }).click();
 	await expect(dialog).toBeHidden();
-	await expect(toggle).toBeChecked();
+	await expect(select).toHaveValue('auto-approve');
 
-	// Turning it back off needs no confirmation (disabling is not destructive),
-	// and restores a clean state for the rest of the shared suite.
-	await toggle.click();
+	// auto-deny is the portable option and needs no confirmation: it only ever
+	// withholds permission, so switching to it (and back) is not destructive.
+	await select.selectOption('auto-deny');
 	await expect(page.getByRole('alertdialog')).toHaveCount(0);
-	await expect(toggle).not.toBeChecked();
+	await expect(select).toHaveValue('auto-deny');
+
+	// Restore a clean state for the rest of the shared suite.
+	await select.selectOption('ask');
+	await expect(page.getByRole('alertdialog')).toHaveCount(0);
+	await expect(select).toHaveValue('ask');
 });

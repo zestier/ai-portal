@@ -3,10 +3,12 @@ import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import { purgeSessionSearchIndex } from './memory';
 import {
+	normalizeApprovalMode,
 	normalizeBackendProvider,
 	normalizeMemoryExtractorBackend,
 	normalizeMemoryMode,
 	normalizeSessionMode,
+	type ApprovalMode,
 	type BackendProviderId,
 	type Conversation,
 	type MemoryExtractorBackend,
@@ -50,7 +52,7 @@ interface ConvRow {
 	memory_extractor_model: string | null;
 	memory_extractor_backend: string | null;
 	global_memory_enabled: number | null;
-	approve_all_tools: number | null;
+	approval_mode: string | null;
 	disabled_tool_groups: string | null;
 	draft_prompt: string | null;
 	workspace_kind: WorkspaceKind;
@@ -94,7 +96,7 @@ function rowToConv(r: ConvRow): Conversation {
 		memoryExtractorModel: r.memory_extractor_model ?? null,
 		memoryExtractorBackend: normalizeMemoryExtractorBackend(r.memory_extractor_backend),
 		globalMemoryEnabled: r.global_memory_enabled === 1,
-		approveAllTools: r.approve_all_tools === 1,
+		approvalMode: normalizeApprovalMode(r.approval_mode),
 		disabledToolGroups: parseDisabledToolGroups(r.disabled_tool_groups),
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
@@ -153,6 +155,7 @@ export interface CreateInput {
 	provider?: BackendProviderId;
 	model: string | null;
 	mode?: SessionMode;
+	approvalMode?: ApprovalMode;
 	memoryMode?: MemoryMode;
 	memoryExtractorModel?: string | null;
 	memoryExtractorBackend?: MemoryExtractorBackend | null;
@@ -184,6 +187,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const forkMsg = input.forkedFromMessageId ?? null;
 	const providerSessionId = input.providerSessionId ?? id;
 	const mode = input.mode ?? 'interactive';
+	const approvalMode = normalizeApprovalMode(input.approvalMode);
 	const memoryMode = input.memoryMode ?? 'off';
 	const memoryExtractorModel = normalizeOptionalModel(input.memoryExtractorModel);
 	const memoryExtractorBackend = normalizeMemoryExtractorBackend(input.memoryExtractorBackend);
@@ -198,11 +202,11 @@ export function create(userId: string, input: CreateInput): Conversation {
 	db.transaction(() => {
 		db.prepare(
 			`INSERT INTO conversations(
-			   id, user_id, title, workdir, provider, model, mode, memory_mode, memory_extractor_model,
+			   id, user_id, title, workdir, provider, model, mode, approval_mode, memory_mode, memory_extractor_model,
 			   memory_extractor_backend, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
 			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt,
 			   workspace_kind, workspace_key
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		).run(
 			id,
 			userId,
@@ -211,6 +215,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 			provider,
 			input.model,
 			mode,
+			approvalMode,
 			memoryMode,
 			memoryExtractorModel,
 			memoryExtractorBackend,
@@ -257,7 +262,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 		memoryExtractorModel,
 		memoryExtractorBackend,
 		globalMemoryEnabled,
-		approveAllTools: false,
+		approvalMode,
 		disabledToolGroups,
 		createdAt: now,
 		updatedAt: now,
@@ -347,11 +352,11 @@ export function renameIfDefault(id: string, userId: string, title: string): bool
 }
 
 /**
- * Update per-conversation session settings (model, mode, and/or approve-all bypass).
+ * Update per-conversation session settings (model, mode, and/or approval mode).
  * Returns true iff a row was modified. The bridge reads these on each
  * `pool.acquire` so a recreated session inherits the latest values; the
  * /session PATCH endpoint additionally pushes them to the live SDK session
- * via `session.setMode` / `session.setApproveAll` when supported.
+ * via `session.setMode` / `session.setApprovalMode` when supported.
  */
 export function updateSessionSettings(
 	id: string,
@@ -363,7 +368,7 @@ export function updateSessionSettings(
 		memoryExtractorModel?: string | null;
 		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
-		approveAllTools?: boolean;
+		approvalMode?: ApprovalMode;
 		disabledToolGroups?: string[];
 	}
 ): boolean {
@@ -393,9 +398,9 @@ export function updateSessionSettings(
 		sets.push('global_memory_enabled = ?');
 		args.push(patch.globalMemoryEnabled ? 1 : 0);
 	}
-	if (patch.approveAllTools !== undefined) {
-		sets.push('approve_all_tools = ?');
-		args.push(patch.approveAllTools ? 1 : 0);
+	if (patch.approvalMode !== undefined) {
+		sets.push('approval_mode = ?');
+		args.push(normalizeApprovalMode(patch.approvalMode));
 	}
 	if (patch.disabledToolGroups !== undefined) {
 		sets.push('disabled_tool_groups = ?');

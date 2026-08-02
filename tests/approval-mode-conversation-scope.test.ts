@@ -6,9 +6,9 @@ import type {
 	PortalEvent
 } from '../src/lib/types';
 
-// The "Approve all tool calls" toggle is conversation-scoped: it is stored on
-// `conversations.approve_all_tools`, read back as `Conversation.approveAllTools`
-// and seeded into the live session that backs the adapter's `getApproveAll()`.
+// The "Auto-approve prompts" approval mode is conversation-scoped: it is stored
+// on `conversations.approval_mode`, read back as `Conversation.approvalMode`
+// and seeded into the live session that backs the adapter's `getApprovalMode()`.
 // The settings dialog tells users the bypass applies to "this conversation
 // only", so pin that claim down: enabling it through the same repo call the
 // `/session` PATCH endpoint uses must not auto-approve anything in a sibling
@@ -19,9 +19,9 @@ import type {
 let convCounter = 0;
 
 /**
- * Build an adapter over a real conversation row. `getApproveAll` reads the
- * stored flag back out of the DB on every call, mirroring what the live session
- * is seeded with (`turn-start.ts` passes `conv.approveAllTools` into
+ * Build an adapter over a real conversation row. `getApprovalMode` reads the
+ * stored value back out of the DB on every call, mirroring what the live session
+ * is seeded with (`turn-start.ts` passes `conv.approvalMode` into
  * `copilot-provider.ts`). This pins the storage and enforcement halves of the
  * scoping claim — the row is per conversation and the adapter honours a
  * per-conversation source; it does not exercise the seeding hop itself.
@@ -47,7 +47,7 @@ async function makeHarness(
 	});
 	const events: PortalEvent[] = [];
 
-	const readApproveAll = () => convs.get(conversationId, userId)?.approveAllTools === true;
+	const readApprovalMode = () => convs.get(conversationId, userId)?.approvalMode ?? 'ask';
 
 	const { onPermissionRequest } = createInteractiveCallbacks({
 		conversationId,
@@ -56,8 +56,7 @@ async function makeHarness(
 		getWorkspaceRoots: () => ['/tmp'],
 		policy: opts.policy ?? 'prompt',
 		emit: (ev) => events.push(ev),
-		getApproveAll: readApproveAll,
-		getMode: () => 'interactive',
+		getApprovalMode: readApprovalMode,
 		getSessionWorkspacePath: () => null,
 		getPermissionBehavior: () => opts.behavior ?? 'normal'
 	});
@@ -69,7 +68,7 @@ async function makeHarness(
 		conversationId,
 		events,
 		onPermissionRequest,
-		readApproveAll
+		readApprovalMode
 	};
 }
 
@@ -113,7 +112,7 @@ const URL_REQUEST = () => ({
 	args: { url: 'https://example.com/docs' }
 });
 
-describe('approve-all is scoped to a single conversation', () => {
+describe('auto-approve is scoped to a single conversation', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-approve-all-scope-test-');
 	});
@@ -126,18 +125,18 @@ describe('approve-all is scoped to a single conversation', () => {
 		const b = await makeHarness(user.id);
 		const grantsBefore = a.settings.listGrantsForUser(user.id).length;
 
-		// Baseline: with the flag off, conversation A prompts like any other.
-		expect(a.readApproveAll()).toBe(false);
+		// Baseline: with the default approval mode, conversation A prompts like any other.
+		expect(a.readApprovalMode()).toBe('ask');
 		const baseline = await driveAndResolve(a, user.id, URL_REQUEST(), 'allow-once');
 		expect(baseline.result).toEqual({ kind: 'approve-once' });
 
-		// Enable approve-all on A through the same repo call the `/session`
-		// PATCH endpoint uses. B is untouched: the flag lives on A's row only.
+		// Enable auto-approve on A through the same repo call the `/session`
+		// PATCH endpoint uses. B is untouched: the setting lives on A's row only.
 		expect(
-			a.convs.updateSessionSettings(a.conversationId, user.id, { approveAllTools: true })
+			a.convs.updateSessionSettings(a.conversationId, user.id, { approvalMode: 'auto-approve' })
 		).toBe(true);
-		expect(a.readApproveAll()).toBe(true);
-		expect(b.readApproveAll()).toBe(false);
+		expect(a.readApprovalMode()).toBe('auto-approve');
+		expect(b.readApprovalMode()).toBe('ask');
 
 		// Conversation A: the same request now short-circuits with no human prompt.
 		const resultA = await a.onPermissionRequest(URL_REQUEST());
@@ -159,7 +158,7 @@ describe('approve-all is scoped to a single conversation', () => {
 		expect(view).toMatchObject({ kind: 'permission' });
 		expect(resultB).toEqual({ kind: 'approve-once' });
 
-		// Enabling approve-all persisted nothing beyond A's own row: no
+		// Enabling auto-approve persisted nothing beyond A's own row: no
 		// permission grant was written, so nothing leaked into the user's
 		// account-wide grant list (which every conversation consults).
 		const grantsAfter = a.settings.listGrantsForUser(user.id);
@@ -186,14 +185,14 @@ describe('approve-all is scoped to a single conversation', () => {
 			denyReason: 'Blocked by an explicit rule.'
 		});
 		expect(
-			a.convs.updateSessionSettings(a.conversationId, user.id, { approveAllTools: true })
+			a.convs.updateSessionSettings(a.conversationId, user.id, { approvalMode: 'auto-approve' })
 		).toBe(true);
 
 		const result = await a.onPermissionRequest(URL_REQUEST());
 		expect(result).toEqual({ kind: 'reject', feedback: 'Blocked by an explicit rule.' });
 		// The deny came from the grant, not from a missing prompt path.
 		expect(a.interactive.listForConversation(a.conversationId)).toHaveLength(0);
-		expect(a.readApproveAll()).toBe(true);
+		expect(a.readApprovalMode()).toBe('auto-approve');
 	});
 
 	it('does not silence always-prompt tools, so the dialog must not promise the agent never asks again', async () => {
@@ -202,10 +201,10 @@ describe('approve-all is scoped to a single conversation', () => {
 
 		// Portal tools such as `git_commit` and the worktree merges declare
 		// `permissionBehavior: 'always-prompt'`, which the adapter evaluates
-		// before the approve-all check.
+		// before the approval-mode check.
 		const a = await makeHarness(user.id, { behavior: 'always-prompt' });
 		expect(
-			a.convs.updateSessionSettings(a.conversationId, user.id, { approveAllTools: true })
+			a.convs.updateSessionSettings(a.conversationId, user.id, { approvalMode: 'auto-approve' })
 		).toBe(true);
 
 		const { result, view } = await driveAndResolve(a, user.id, URL_REQUEST(), 'allow-once');
@@ -218,11 +217,11 @@ describe('approve-all is scoped to a single conversation', () => {
 		const user = ensureLocalUser();
 
 		// The dialog says the default permission policy is bypassed for this
-		// conversation: approve-all is checked before `decideByPolicy`.
+		// conversation: auto-approve is checked before `decideByPolicy`.
 		const a = await makeHarness(user.id, { policy: 'deny-all' });
 		const b = await makeHarness(user.id, { policy: 'deny-all' });
 		expect(
-			a.convs.updateSessionSettings(a.conversationId, user.id, { approveAllTools: true })
+			a.convs.updateSessionSettings(a.conversationId, user.id, { approvalMode: 'auto-approve' })
 		).toBe(true);
 
 		expect(await a.onPermissionRequest(URL_REQUEST())).toEqual({ kind: 'approve-once' });

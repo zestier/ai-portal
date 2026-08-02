@@ -29,7 +29,7 @@ async function createConversation(
 	fetcher: TemplateFetch,
 	signal?: AbortSignal,
 	promptTemplateId?: string,
-	options?: Pick<TemplateLaunchOptions, 'workspace' | 'conversationMode' | 'model'>
+	options?: Pick<TemplateLaunchOptions, 'workspace' | 'conversationMode' | 'approvalMode' | 'model'>
 ): Promise<{ ok: true; id: string } | { ok: false; status?: number }> {
 	const convRes = await fetcher('/api/conversations', {
 		method: 'POST',
@@ -39,6 +39,7 @@ async function createConversation(
 			...(promptTemplateId !== undefined ? { promptTemplateId } : {}),
 			...workspacePayload(options?.workspace),
 			...(options?.conversationMode ? { mode: options.conversationMode } : {}),
+			...(options?.approvalMode ? { approvalMode: options.approvalMode } : {}),
 			...(options?.model ? { model: options.model } : {})
 		}),
 		...(signal !== undefined ? { signal } : {})

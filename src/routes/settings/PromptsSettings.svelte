@@ -36,8 +36,14 @@
 		{ value: '', label: 'Use my default mode' },
 		{ value: 'interactive', label: 'Interactive' },
 		{ value: 'plan', label: 'Plan' },
-		{ value: 'autopilot', label: 'Autopilot' },
-		{ value: 'best-effort', label: 'Best effort' }
+		{ value: 'autopilot', label: 'Autopilot' }
+	];
+
+	const approvalModeOptions: { value: string; label: string }[] = [
+		{ value: '', label: 'Use my default approvals' },
+		{ value: 'ask', label: 'Ask every time' },
+		{ value: 'auto-approve', label: 'Auto-approve prompts' },
+		{ value: 'auto-deny', label: 'Auto-deny prompts (best effort)' }
 	];
 
 	// Model-override options for ticket actions. Always include the currently
@@ -105,6 +111,7 @@
 	current: {
 		launchBehavior?: string | null;
 		conversationMode?: string | null;
+		approvalMode?: string | null;
 		model?: string | null;
 		workspaceMode?: string | null;
 	},
@@ -139,6 +146,16 @@
 			<select name="conversationMode">
 				{#each conversationModeOptions as opt (opt.value)}
 					<option value={opt.value} selected={(current.conversationMode ?? '') === opt.value}>
+						{opt.label}
+					</option>
+				{/each}
+			</select>
+		</label>
+		<label>
+			Approvals
+			<select name="approvalMode">
+				{#each approvalModeOptions as opt (opt.value)}
+					<option value={opt.value} selected={(current.approvalMode ?? '') === opt.value}>
 						{opt.label}
 					</option>
 				{/each}

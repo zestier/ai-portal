@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/fixtures';
+import { uniqueTitle } from './helpers/conversations';
 import { randomUUID } from 'node:crypto';
 
 // Smoke tests for /settings. Specifically motivated by a regression
@@ -153,6 +154,48 @@ test('settings tab selection survives reload and deep links', async ({ page }) =
 		'true'
 	);
 	await expect(page.getByRole('heading', { name: 'Saved permission grants' })).toBeVisible();
+});
+
+test('the default approval mode is saved and seeds newly created conversations', async ({
+	page,
+	request
+}) => {
+	// The whole point of the approval-mode split is that "launch my favorite
+	// setup" keeps working, so pin the full chain the settings form feeds:
+	// form field -> user_settings row -> POST /api/conversations fallback.
+	await page.goto('/settings');
+	const select = page.locator('select[name="defaultApprovalMode"]');
+	await expect(select).toHaveValue('ask');
+
+	await select.selectOption('auto-deny');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByText('Saved.')).toBeVisible();
+
+	// Survives a reload, i.e. it really round-tripped through the DB.
+	await page.reload();
+	await expect(page.locator('select[name="defaultApprovalMode"]')).toHaveValue('auto-deny');
+
+	// A conversation created without an explicit approvalMode inherits it.
+	const inherited = await request
+		.post('/api/conversations', { data: { title: uniqueTitle('Inherits approvals') } })
+		.then((r) => r.json());
+	expect(inherited.conversation.approvalMode).toBe('auto-deny');
+	// The default is orthogonal to the conversation mode, which keeps its own default.
+	expect(inherited.conversation.mode).toBe('interactive');
+
+	// An explicit value in the create body still wins over the user default.
+	const explicit = await request
+		.post('/api/conversations', {
+			data: { title: uniqueTitle('Explicit approvals'), approvalMode: 'auto-approve' }
+		})
+		.then((r) => r.json());
+	expect(explicit.conversation.approvalMode).toBe('auto-approve');
+
+	// Restore the default so the rest of the shared suite sees a clean slate.
+	await page.goto('/settings');
+	await page.locator('select[name="defaultApprovalMode"]').selectOption('ask');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByText('Saved.')).toBeVisible();
 });
 
 test('theme and accent settings preview immediately and revert when abandoned', async ({

@@ -87,7 +87,7 @@ export const lmStudioProvider: ModelBackendProvider = {
 		},
 		controls: {
 			mode: false,
-			approveAll: true,
+			approvalMode: true,
 			resetSessionApprovals: false
 		},
 		features: {
@@ -98,12 +98,12 @@ export const lmStudioProvider: ModelBackendProvider = {
 				description:
 					'LM Studio OpenAI-compatible chats do not expose Copilot runtime modes. The saved mode is retained for portal permission semantics; it is not sent to LM Studio.'
 			},
-			approveAll: {
+			approvalMode: {
 				supported: true,
 				behavior: 'portal-enforced',
-				label: 'Approve all',
+				label: 'Approval mode',
 				description:
-					'Approve-all is enforced by the portal for portal-hosted tools. LM Studio does not receive a separate runtime approve-all signal.'
+					'The approval mode is enforced by the portal for portal-hosted tools. LM Studio does not receive a separate runtime approve-all signal.'
 			},
 			contextUsage: {
 				supported: true,

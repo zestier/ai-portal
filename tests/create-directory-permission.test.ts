@@ -11,7 +11,7 @@ import type { PortalEvent } from '../src/lib/types';
 // the standard session-workspace fs-write SEED (no new seed) and auto-approves
 // with no dialog, while an out-of-workspace path does NOT auto-approve.
 
-async function makeHarness(mode: 'interactive' | 'best-effort' = 'interactive') {
+async function makeHarness(approvalMode: 'ask' | 'auto-deny' = 'ask') {
 	const interactive = await import('../src/lib/server/runtime/interactive-requests');
 	const { createInteractiveCallbacks } =
 		await import('../src/lib/server/copilot/interactive-adapter');
@@ -42,8 +42,7 @@ async function makeHarness(mode: 'interactive' | 'best-effort' = 'interactive') 
 		getWorkspaceRoots: () => [workspaceRoot],
 		policy: 'prompt',
 		emit: (ev) => events.push(ev),
-		getApproveAll: () => false,
-		getMode: () => mode,
+		getApprovalMode: () => approvalMode,
 		getSessionWorkspacePath: () => workspaceRoot,
 		getPermissionBehavior: () => 'normal',
 		derivePermissionRequest: buildPermissionRequestResolver(tools)
@@ -62,7 +61,7 @@ describe('create_directory permission wiring', () => {
 	});
 
 	it('auto-approves an in-workspace create with no dialog (covered by the fs-write seed)', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const result = await harness.onPermissionRequest(
 			request('create_directory', { path: 'src/new' })
 		);
@@ -73,7 +72,7 @@ describe('create_directory permission wiring', () => {
 	});
 
 	it('does NOT auto-approve an out-of-workspace path: it raises a prompt', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const outside = makeTmpDir('create-dir-adapter-outside-');
 		const resultPromise = harness.onPermissionRequest(
 			request('create_directory', { path: join(outside, 'evil') })
@@ -98,8 +97,8 @@ describe('create_directory permission wiring', () => {
 		expect(result).toMatchObject({ kind: 'reject' });
 	});
 
-	it('auto-rejects an out-of-workspace path in best-effort mode (no dialog)', async () => {
-		const harness = await makeHarness('best-effort');
+	it('auto-rejects an out-of-workspace path under the auto-deny approval mode (no dialog)', async () => {
+		const harness = await makeHarness('auto-deny');
 		const result = await harness.onPermissionRequest(
 			request('create_directory', { path: '../escape' })
 		);
@@ -108,7 +107,7 @@ describe('create_directory permission wiring', () => {
 	});
 
 	it('the approved in-workspace request, once run, actually creates the directory', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const result = await harness.onPermissionRequest(request('create_directory', { path: 'a/b' }));
 		expect(result).toEqual({ kind: 'approve-once' });
 		const tool = harness.tools.find((t) => t.name === 'create_directory')!;

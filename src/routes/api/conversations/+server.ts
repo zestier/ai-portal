@@ -7,8 +7,10 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { loadConfig } from '$lib/server/config';
 import { getDefaultProviderId } from '$lib/server/providers';
 import {
+	APPROVAL_MODES,
 	BACKEND_PROVIDER_IDS,
 	MEMORY_EXTRACTOR_BACKEND_IDS,
+	SESSION_MODES,
 	normalizeBackendProvider
 } from '$lib/types';
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
@@ -42,7 +44,8 @@ const CreateBody = z
 		provider: z.enum(BACKEND_PROVIDER_IDS).optional(),
 		model: z.string().min(1).optional(),
 		workdir: z.string().min(1).optional(),
-		mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		mode: z.enum(SESSION_MODES).optional(),
+		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		memoryExtractorModel: z.string().min(1).optional(),
 		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
 		/**
@@ -154,6 +157,7 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 			provider: normalizeBackendProvider(provider),
 			model,
 			mode: body.mode ?? userSettings.defaultConversationMode,
+			approvalMode: body.approvalMode ?? userSettings.defaultApprovalMode,
 			// Seed-only, mirroring model/mode precedence: explicit create-body field
 			// wins, else the user's default, else NULL (resolved from env at runtime).
 			memoryExtractorModel:

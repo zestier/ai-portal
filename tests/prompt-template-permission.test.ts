@@ -11,6 +11,39 @@ describe('templatePermissionPreview', () => {
 		expect(templatePermissionPreview('ticket_add', { title: 'x' })).toBeNull();
 	});
 
+	it('surfaces an approval-mode change so it cannot ride along invisibly', () => {
+		// `approvalMode` is the one template field that can switch off (or
+		// blanket-reject) the permission dialogs of every conversation the
+		// template launches, so an otherwise-innocuous edit must not hide it.
+		const preview = templatePermissionPreview(
+			'template_update',
+			{ id: 'tmpl-1', description: 'Tweaked copy', approvalMode: 'auto-approve' },
+			templateBeforeSnapshot({
+				title: 'Weekly review',
+				type: 'chat',
+				description: 'Old copy',
+				approvalMode: 'ask',
+				prompt: 'body'
+			})
+		);
+		expect(preview?.approvalMode).toBe('auto-approve');
+		expect(preview?.fields).toContainEqual({ label: 'Approvals', value: 'auto-approve' });
+		// The merged before→after view reports it as a real change, and does so
+		// for a `chat` template too — the field is persisted for both types.
+		expect(preview?.merged?.fields).toContainEqual({
+			label: 'Approvals',
+			before: 'ask',
+			after: 'auto-approve',
+			changed: true
+		});
+		expect(
+			summarizeTemplatePermission('template_update', {
+				id: 'tmpl-1',
+				approvalMode: 'auto-approve'
+			})
+		).toContain('Approvals: auto-approve');
+	});
+
 	it('returns null for non-record args', () => {
 		expect(templatePermissionPreview('template_create', null)).toBeNull();
 		expect(templatePermissionPreview('template_create', 'nope')).toBeNull();
@@ -128,6 +161,7 @@ const BEFORE = {
 	description: 'Old description',
 	launchBehavior: 'send',
 	conversationMode: 'interactive',
+	approvalMode: 'ask',
 	model: 'old-model',
 	pinned: false,
 	status: 'open',
@@ -354,6 +388,7 @@ describe('templateBeforeSnapshot', () => {
 			description: null,
 			launchBehavior: 'draft',
 			conversationMode: null,
+			approvalMode: null,
 			model: null,
 			pinned: true,
 			status: 'open',

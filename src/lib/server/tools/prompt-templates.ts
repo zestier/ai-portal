@@ -5,7 +5,12 @@ import {
 	TICKET_ACTION_DEFAULTS,
 	placeholdersForType
 } from '$lib/prompt-templates';
-import { PROMPT_TEMPLATE_TYPES, type ChatPromptTemplate } from '$lib/types';
+import {
+	APPROVAL_MODES,
+	PROMPT_TEMPLATE_TYPES,
+	SESSION_MODES,
+	type ChatPromptTemplate
+} from '$lib/types';
 import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
 import { err, ok, type PortalTool } from './types';
 import {
@@ -28,6 +33,7 @@ const TEMPLATE_KEEP = [
 	'prompt',
 	'launchBehavior',
 	'conversationMode',
+	'approvalMode',
 	'model',
 	'disabledToolGroups',
 	'workspaceMode',
@@ -38,13 +44,19 @@ const TEMPLATE_KEEP = [
 const Type = z.enum(['chat', 'ticket-action']);
 const Status = z.enum(['open', 'archived']);
 const LaunchBehavior = z.enum(['send', 'draft', 'review']);
-const ConversationMode = z.enum(['interactive', 'plan', 'autopilot', 'best-effort']);
+const ConversationMode = z.enum(SESSION_MODES);
+const ApprovalModeArg = z.enum(APPROVAL_MODES);
 const ToolGroupId = z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]);
 const WorkspaceMode = z.enum(['shared', 'worktree']);
 
 const WORKSPACE_MODE_DESCRIPTION =
 	'Git workspace style for chats launched from this template: "shared" (the shared checkout) or ' +
 	'"worktree" (a fresh isolated Git worktree). Omit/null for no preference (shared).';
+
+const APPROVAL_MODE_DESCRIPTION =
+	'How permission requests are settled in launched chats: "ask" (prompt the user), ' +
+	'"auto-approve" (settle prompt-worthy requests as approvals), or "auto-deny" (reject them ' +
+	'with feedback instead of blocking on a dialog). Omit/null to use the user default.';
 
 const ListArgs = z
 	.object({
@@ -68,6 +80,7 @@ const CreateArgs = z.object({
 	prompt: z.string().trim().min(1).max(100000),
 	launchBehavior: LaunchBehavior.optional(),
 	conversationMode: ConversationMode.nullable().optional(),
+	approvalMode: ApprovalModeArg.nullable().optional(),
 	model: z.string().trim().max(200).nullable().optional(),
 	disabledToolGroups: z.array(ToolGroupId).optional(),
 	workspaceMode: WorkspaceMode.nullable().optional(),
@@ -82,6 +95,7 @@ const UpdateArgs = z
 		prompt: z.string().trim().min(1).max(100000).optional(),
 		launchBehavior: LaunchBehavior.optional(),
 		conversationMode: ConversationMode.nullable().optional(),
+		approvalMode: ApprovalModeArg.nullable().optional(),
 		model: z.string().trim().max(200).nullable().optional(),
 		disabledToolGroups: z.array(ToolGroupId).optional(),
 		workspaceMode: WorkspaceMode.nullable().optional(),
@@ -95,6 +109,7 @@ const UpdateArgs = z
 			a.prompt !== undefined ||
 			a.launchBehavior !== undefined ||
 			a.conversationMode !== undefined ||
+			a.approvalMode !== undefined ||
 			a.model !== undefined ||
 			a.disabledToolGroups !== undefined ||
 			a.workspaceMode !== undefined ||
@@ -260,8 +275,13 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 					},
 					conversationMode: {
 						type: 'string',
-						enum: ['interactive', 'plan', 'autopilot', 'best-effort'],
+						enum: [...SESSION_MODES],
 						description: 'Conversation mode override for launched chats.'
+					},
+					approvalMode: {
+						type: 'string',
+						enum: [...APPROVAL_MODES],
+						description: APPROVAL_MODE_DESCRIPTION
 					},
 					model: { type: 'string', description: 'Model override for launched chats.' },
 					disabledToolGroups: {
@@ -290,6 +310,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						prompt: p.prompt,
 						...(p.launchBehavior !== undefined ? { launchBehavior: p.launchBehavior } : {}),
 						...(p.conversationMode !== undefined ? { conversationMode: p.conversationMode } : {}),
+						...(p.approvalMode !== undefined ? { approvalMode: p.approvalMode } : {}),
 						...(p.model !== undefined ? { model: p.model } : {}),
 						...(p.disabledToolGroups !== undefined
 							? { disabledToolGroups: p.disabledToolGroups }
@@ -330,8 +351,13 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 					},
 					conversationMode: {
 						type: 'string',
-						enum: ['interactive', 'plan', 'autopilot', 'best-effort'],
+						enum: [...SESSION_MODES],
 						description: 'New conversation mode override for launched chats.'
+					},
+					approvalMode: {
+						type: 'string',
+						enum: [...APPROVAL_MODES],
+						description: `New approval mode override. ${APPROVAL_MODE_DESCRIPTION}`
 					},
 					model: { type: 'string', description: 'New model override for launched chats.' },
 					disabledToolGroups: {

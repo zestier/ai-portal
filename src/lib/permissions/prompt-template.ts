@@ -15,6 +15,7 @@ export interface TemplateBeforeSnapshot {
 	description: string | null;
 	launchBehavior: string | null;
 	conversationMode: string | null;
+	approvalMode: string | null;
 	model: string | null;
 	pinned: boolean | null;
 	status: string | null;
@@ -59,6 +60,7 @@ export interface TemplatePermissionPreview {
 	description: string | null;
 	launchBehavior: string | null;
 	conversationMode: string | null;
+	approvalMode: string | null;
 	model: string | null;
 	pinned: boolean | null;
 	status: string | null;
@@ -91,6 +93,7 @@ export function templatePermissionPreview(
 	const description = optionalString(args.description);
 	const launchBehavior = optionalString(args.launchBehavior);
 	const conversationMode = optionalString(args.conversationMode);
+	const approvalMode = optionalString(args.approvalMode);
 	const model = optionalString(args.model);
 	const status = optionalString(args.status);
 	const pinned = typeof args.pinned === 'boolean' ? args.pinned : null;
@@ -106,6 +109,11 @@ export function templatePermissionPreview(
 	push('Description', description);
 	push('Launch behavior', launchBehavior);
 	push('Conversation mode', conversationMode);
+	// Always surfaced: this is the one template field that can turn a launched
+	// conversation's permission dialogs off (`auto-approve`) or into blanket
+	// rejections (`auto-deny`), so it must never be an invisible part of an
+	// otherwise innocuous-looking edit the human is asked to approve.
+	push('Approvals', approvalMode);
 	push('Model', model);
 	if (pinned !== null) push('Pinned', pinned ? 'yes' : 'no');
 	push('Status', status);
@@ -120,6 +128,7 @@ export function templatePermissionPreview(
 		description,
 		launchBehavior,
 		conversationMode,
+		approvalMode,
 		model,
 		pinned,
 		status,
@@ -140,6 +149,7 @@ export function templateBeforeSnapshot(tpl: {
 	description?: string | null;
 	launchBehavior?: string | null;
 	conversationMode?: string | null;
+	approvalMode?: string | null;
 	model?: string | null;
 	pinned?: boolean | null;
 	status?: string | null;
@@ -151,6 +161,7 @@ export function templateBeforeSnapshot(tpl: {
 		description: optionalString(tpl.description),
 		launchBehavior: optionalString(tpl.launchBehavior),
 		conversationMode: optionalString(tpl.conversationMode),
+		approvalMode: optionalString(tpl.approvalMode),
 		model: optionalString(tpl.model),
 		pinned: typeof tpl.pinned === 'boolean' ? tpl.pinned : null,
 		status: optionalString(tpl.status),
@@ -182,11 +193,13 @@ function buildMergedView(
 		before.description,
 		afterStringKeepCurrent(args, 'description', before.description)
 	);
-	// launchBehavior / conversationMode / model are ticket-action-only: the repo
-	// forces them to null for chat templates regardless of the patch, so the
-	// preview's "after" must mirror that — only honor the args for ticket-action
-	// templates, otherwise keep the (null) current value so we don't promise an
-	// edit that won't be persisted.
+	// launchBehavior / conversationMode / model go through the type gate below.
+	// NOTE: its premise ("the repo forces them to null for chat templates") no
+	// longer holds — `update()` persists all three for both types — so this
+	// under-reports those fields on a chat template. Tracked in ticket
+	// 01KZ0R9P66GWCQCT713221BF8E; left as-is here because an existing test
+	// deliberately pins the current behavior. `approvalMode` below deliberately
+	// does NOT use this helper.
 	const isTicketAction = before.type === 'ticket-action';
 	const afterTicketActionField = (key: string, beforeVal: string | null) =>
 		isTicketAction ? afterString(args, key, beforeVal) : beforeVal;
@@ -201,6 +214,15 @@ function buildMergedView(
 		afterTicketActionField('conversationMode', before.conversationMode)
 	);
 	pushChange('Model', before.model, afterTicketActionField('model', before.model));
+	// Deliberately NOT gated on the template type: `approval_mode` is persisted
+	// for chat templates too, and it is the one field that can silence (or
+	// blanket-reject) the permission dialogs of every conversation this template
+	// launches. Under-reporting it would let an agent slip it past the human.
+	pushChange(
+		'Approvals',
+		before.approvalMode,
+		afterString(args, 'approvalMode', before.approvalMode)
+	);
 	pushChange(
 		'Pinned',
 		boolDisplay(before.pinned),
@@ -296,6 +318,7 @@ export function summarizeTemplatePermission(tool: string, args: unknown): string
 	if (preview.description) lines.push(`Description: ${preview.description}`);
 	if (preview.launchBehavior) lines.push(`Launch behavior: ${preview.launchBehavior}`);
 	if (preview.conversationMode) lines.push(`Conversation mode: ${preview.conversationMode}`);
+	if (preview.approvalMode) lines.push(`Approvals: ${preview.approvalMode}`);
 	if (preview.model) lines.push(`Model: ${preview.model}`);
 	if (preview.pinned !== null) lines.push(`Pinned: ${preview.pinned ? 'yes' : 'no'}`);
 	if (preview.status) lines.push(`Status: ${preview.status}`);

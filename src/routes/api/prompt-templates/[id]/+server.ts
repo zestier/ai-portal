@@ -6,6 +6,7 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
 import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
+import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
@@ -20,10 +21,8 @@ const PatchBody = z
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000).optional(),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
-		conversationMode: z
-			.enum(['interactive', 'plan', 'autopilot', 'best-effort'])
-			.nullable()
-			.optional(),
+		conversationMode: z.enum(SESSION_MODES).nullable().optional(),
+		approvalMode: z.enum(APPROVAL_MODES).nullable().optional(),
 		model: z.string().trim().max(200).nullable().optional(),
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
@@ -40,6 +39,7 @@ const PatchBody = z
 			body.prompt !== undefined ||
 			body.launchBehavior !== undefined ||
 			body.conversationMode !== undefined ||
+			body.approvalMode !== undefined ||
 			body.model !== undefined ||
 			body.disabledToolGroups !== undefined ||
 			body.workspaceMode !== undefined ||
@@ -66,6 +66,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
+		...(body.approvalMode !== undefined ? { approvalMode: body.approvalMode } : {}),
 		...(body.model !== undefined ? { model: body.model } : {}),
 		...(body.disabledToolGroups !== undefined
 			? { disabledToolGroups: body.disabledToolGroups }

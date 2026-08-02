@@ -15,7 +15,10 @@ import {
 	newRequestId,
 	register as registerInteractive
 } from '../runtime/interactive-requests';
-export type RuntimeSessionMode = 'interactive' | 'plan' | 'autopilot';
+// The runtime's mode set. Now identical to the portal's `SessionMode` — the
+// portal-only `best-effort` extension moved to the orthogonal `ApprovalMode`
+// axis, so no translation layer is needed anymore.
+export type RuntimeSessionMode = SessionMode;
 
 export interface SdkEventSource {
 	on(event: string, listener: (e: unknown) => void): void;
@@ -727,7 +730,7 @@ export class SdkEventAdapter {
 		if (!ev) return;
 		const raw = ev.data?.newMode;
 		const next = isRuntimeSessionMode(raw) ? raw : null;
-		if (!next || next === toRuntimeMode(this.ctx.getMode())) return;
+		if (!next || next === this.ctx.getMode()) return;
 		this.ctx.setMode(next);
 		this.emit({
 			type: 'session.settings',
@@ -792,10 +795,6 @@ function parseSdkEvent<T extends z.ZodTypeAny>(
 		}))
 	});
 	return null;
-}
-
-export function toRuntimeMode(mode: SessionMode): RuntimeSessionMode {
-	return mode === 'best-effort' ? 'autopilot' : mode;
 }
 
 function isRuntimeSessionMode(value: string | undefined): value is RuntimeSessionMode {

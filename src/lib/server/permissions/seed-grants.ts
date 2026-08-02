@@ -223,8 +223,8 @@ const GIT_STRUCTURED_TOOLS = [
  * alongside the rest because they are strictly less capable than the already
  * seeded `ticket_update`, whose `blockedBy` / `blocks` fields replace whole
  * edge sets declaratively — leaving them out withheld nothing and only made
- * ordering follow-up work prompt, which is an auto-deny under
- * `best-effort`/autopilot even though the portal guidance tells agents to link
+ * ordering follow-up work prompt, which is an auto-deny under the `auto-deny`
+ * approval mode even though the portal guidance tells agents to link
  * tickets with `ticket_block`.
  *
  * The attachment tools stay out on purpose: `ticket_attach` reads an arbitrary
@@ -245,8 +245,8 @@ const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];
  * Read-only worktree-lease inspection, seeded for the same reason as
  * `git_worktree_status`: an orchestrator polls these to find out which of its
  * parallel sub-agents have finished. Unseeded they require a prompt, which
- * under `best-effort`/autopilot is an auto-deny — so an unattended orchestrator
- * could not even enumerate its own worktrees.
+ * under the `auto-deny` approval mode is an auto-deny — so an unattended
+ * orchestrator could not even enumerate its own worktrees.
  *
  * The mutating tools (`worktree_create`, `_merge`, `_remove`) are deliberately
  * absent, matching `git_commit` / `git_worktree_merge`: they create or destroy

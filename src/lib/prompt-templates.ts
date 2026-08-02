@@ -1,4 +1,5 @@
 import type {
+	ApprovalMode,
 	ChatPromptTemplate,
 	PromptLaunchBehavior,
 	PromptTemplateType,
@@ -23,6 +24,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'Review the current code changes for correctness, security, and maintainability. Focus on issues that matter and suggest concrete fixes.',
 		launchBehavior: 'draft',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		disabledToolGroups: [],
 		workspaceMode: null,
@@ -43,6 +45,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'I need help debugging an error. Start by asking for or inspecting the failing command/output, identify likely root causes, and propose the smallest safe fix.',
 		launchBehavior: 'draft',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		disabledToolGroups: [],
 		workspaceMode: null,
@@ -63,6 +66,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'Help plan this implementation. Inspect the relevant code paths, call out risks or open questions, and propose a concise step-by-step approach before editing.',
 		launchBehavior: 'draft',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		disabledToolGroups: [],
 		workspaceMode: null,
@@ -83,6 +87,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 			'Explain how this part of the codebase works. Trace the important files and data flow, and summarize the behavior, extension points, and gotchas.',
 		launchBehavior: 'draft',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		disabledToolGroups: [],
 		workspaceMode: null,
@@ -120,6 +125,7 @@ export interface TemplateLaunchOptions {
 	prompt: string;
 	workspace: LaunchWorkspaceKind;
 	conversationMode: SessionMode | null;
+	approvalMode: ApprovalMode | null;
 	model: string | null;
 }
 
@@ -141,13 +147,17 @@ export function templateNeedsReview(template: Pick<ChatPromptTemplate, 'launchBe
  * the initial state of the review dialog.
  */
 export function templateLaunchDefaults(
-	template: Pick<ChatPromptTemplate, 'workspaceMode' | 'conversationMode' | 'model'>,
+	template: Pick<
+		ChatPromptTemplate,
+		'workspaceMode' | 'conversationMode' | 'approvalMode' | 'model'
+	>,
 	prompt: string
 ): TemplateLaunchOptions {
 	return {
 		prompt,
 		workspace: templateWorkspace(template),
 		conversationMode: template.conversationMode ?? null,
+		approvalMode: template.approvalMode ?? null,
 		model: template.model ?? null
 	};
 }
@@ -281,6 +291,7 @@ export interface TicketActionDefault {
 	prompt: string;
 	launchBehavior: PromptLaunchBehavior;
 	conversationMode: SessionMode | null;
+	approvalMode: ApprovalMode | null;
 	/** Optional model override; `null` keeps the user's default model. */
 	model: string | null;
 	pinned: boolean;
@@ -307,6 +318,7 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 		prompt: DO_PROMPT,
 		launchBehavior: 'send',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		pinned: true,
 		orderIndex: 10
@@ -318,6 +330,7 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 		prompt: DO_PROMPT,
 		launchBehavior: 'draft',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		pinned: true,
 		orderIndex: 20
@@ -329,6 +342,7 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 		prompt: REFINE_PROMPT,
 		launchBehavior: 'send',
 		conversationMode: 'interactive',
+		approvalMode: null,
 		model: null,
 		pinned: true,
 		orderIndex: 30

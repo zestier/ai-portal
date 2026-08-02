@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
-import type { InteractivePermissionDecision, PortalEvent, SessionMode } from '../src/lib/types';
+import type { ApprovalMode, InteractivePermissionDecision, PortalEvent } from '../src/lib/types';
 import type { GrantScope } from '../src/lib/permissions/scope-types';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
@@ -16,7 +16,7 @@ const NUDGE_MARKER = 'forcePermissionPrompt';
 
 let convCounter = 0;
 
-async function makeHarness(mode: SessionMode = 'interactive') {
+async function makeHarness(approvalMode: ApprovalMode = 'ask') {
 	const interactive = await import('../src/lib/server/runtime/interactive-requests');
 	const { buildPermissionTools } = await import('../src/lib/server/tools/permissions');
 	const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
@@ -35,7 +35,8 @@ async function makeHarness(mode: SessionMode = 'interactive') {
 		userId: user.id,
 		conversationId,
 		policy: 'prompt',
-		getMode: () => mode,
+		getMode: () => 'interactive',
+		getApprovalMode: () => approvalMode,
 		emit: (ev) => events.push(ev)
 	});
 	const tool = tools.find((t) => t.name === 'request_permission_grant') as PortalTool;
@@ -196,8 +197,8 @@ describe('request_permission_grant', () => {
 		expect(grants.length).toBe(0);
 	});
 
-	it('raises a prompt even in best-effort mode (always-prompt, like forcePermissionPrompt)', async () => {
-		const harness = await makeHarness('best-effort');
+	it('raises a prompt even under the auto-deny approval mode (always-prompt, like forcePermissionPrompt)', async () => {
+		const harness = await makeHarness('auto-deny');
 		const { result } = await driveAndResolve(
 			harness,
 			{ tool: 'shell', reason: 'Request to run pnpm for scaffolding.', scope: SHELL_SCOPE },

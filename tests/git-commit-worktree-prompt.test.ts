@@ -79,8 +79,7 @@ describe('git_commit permission prompt names its worktree', () => {
 				getWorkspaceRoots: () => [source],
 				policy: 'prompt',
 				emit: (ev) => events.push(ev),
-				getApproveAll: () => false,
-				getMode: () => 'interactive',
+				getApprovalMode: () => 'ask',
 				getSessionWorkspacePath: () => null,
 				// git_commit is always-prompt in the real tool registry.
 				getPermissionBehavior: () => 'always-prompt'

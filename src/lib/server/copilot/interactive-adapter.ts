@@ -1,4 +1,5 @@
 import type {
+	ApprovalMode,
 	ElicitationSchema,
 	ImagePreview,
 	InteractiveKind,
@@ -6,8 +7,7 @@ import type {
 	InteractiveRequestViewBody,
 	InteractiveResponse,
 	PermissionPolicy,
-	PortalEvent,
-	SessionMode
+	PortalEvent
 } from '$lib/types';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { captureImageAttachment, MAX_IMAGE_PREVIEW_BYTES } from './image-attachment';
@@ -30,8 +30,8 @@ import { log } from '../log';
 import * as messagesRepo from '../db/repos/messages';
 import { argsHash } from '../tool-invocation';
 import {
-	bestEffortAlternativeHint,
-	bestEffortPermissionKindLabel,
+	autoDenyAlternativeHint,
+	permissionKindLabel,
 	isFilesystemPermissionKind
 } from '$lib/permissions/metadata';
 import {
@@ -81,8 +81,16 @@ interface InteractiveAdapterOptions {
 	getWorkspaceRoots(): string[];
 	policy: PermissionPolicy;
 	emit(ev: PortalEvent): void;
-	getApproveAll(): boolean;
-	getMode(): SessionMode;
+	/**
+	 * The conversation's approval mode, read live so a mid-turn PATCH takes
+	 * effect on the next request rather than at the next session open.
+	 *
+	 * Because this is one 3-way enum rather than two overlapping booleans,
+	 * `auto-approve` and `auto-deny` are mutually exclusive by construction —
+	 * they can no longer race on evaluation order the way `approveAllTools`
+	 * and the old `best-effort` mode did.
+	 */
+	getApprovalMode(): ApprovalMode;
 	getSessionWorkspacePath(): string | null;
 	getPermissionBehavior(tool: string): 'normal' | 'always-prompt' | 'never-prompt';
 	validateCustomToolArgs?:
@@ -291,8 +299,9 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		const isMultiTarget = evalTargets.length > 1;
 
 		// Per-target decision, distinguishing an explicit grant outcome (which
-		// the session approve-all toggle must NOT override) from a policy-level
-		// outcome (which it may). `prompt-grant` is also non-persistable.
+		// the conversation's `auto-approve` approval mode must NOT override)
+		// from a policy-level outcome (which it may). `prompt-grant` is also
+		// non-persistable.
 		type TargetEval =
 			| { kind: 'allow' }
 			| { kind: 'deny'; feedback?: string | undefined }
@@ -301,7 +310,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		const evalRank = { allow: 0, 'prompt-policy': 1, 'prompt-grant': 2, deny: 3 } as const;
 
 		// Mirrors the original single-path ordering exactly: explicit grant
-		// first (allow/deny/prompt), then the approve-all toggle, then policy.
+		// first (allow/deny/prompt), then `auto-approve`, then policy.
 		const evaluateTarget = (key: string | null): TargetEval => {
 			const target = fsKind ? key : null;
 			const url = permissionKind === 'url' ? key : null;
@@ -333,7 +342,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			if (g.outcome === 'prompt') {
 				return { kind: 'prompt-grant', feedback: g.feedback ?? undefined };
 			}
-			if (opts.getApproveAll()) return { kind: 'allow' };
+			if (opts.getApprovalMode() === 'auto-approve') return { kind: 'allow' };
 			// `none` carries no grant decision, but the matcher may still have
 			// explained why an allow grant declined — e.g. a shell rule that
 			// defers to the fs grants naming the permission the path lacked.
@@ -366,8 +375,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		// A present, valid `forcePermissionPrompt` is the strongest signal:
 		// it overrides every auto-allow and auto-deny path that follows —
 		// the arg-schema and shell-misuse guards, `never-prompt`,
-		// `always-prompt`, grants (including hard denies), the session
-		// approve-all toggle, and policy — and always reaches a human
+		// `always-prompt`, grants (including hard denies), the conversation's
+		// approval mode, and policy — and always reaches a human
 		// prompt. Only the malformed-force reject above runs ahead of it.
 		// The forced prompt is approve-once: the human cannot persist a
 		// grant from it (`canPersistDecision: false`).
@@ -456,39 +465,46 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 		let promptRequest: {
 			canPersistDecision: boolean;
-			bestEffortFeedback: string;
+			autoDenyFeedback: string;
 			defaultDenyFeedback?: string | undefined;
 		};
 		if (evaluation.kind === 'prompt-grant') {
 			promptRequest = {
 				canPersistDecision: false,
-				bestEffortFeedback:
-					evaluation.feedback ?? bestEffortPromptGrantFeedback({ permissionKind }),
+				autoDenyFeedback: evaluation.feedback ?? autoDenyPromptGrantFeedback({ permissionKind }),
 				defaultDenyFeedback: evaluation.feedback
 			};
 		} else {
-			// prompt-policy: the approve-all toggle (applied per-target in
+			// prompt-policy: `auto-approve` (applied per-target in
 			// evaluateTarget) didn't short-circuit, so a human prompt is needed.
 			// A single-target policy prompt is persistable as a grant; a
 			// multi-target request can't be captured by one stored scope, so
 			// persistence is disabled.
 			promptRequest = {
 				canPersistDecision: !isMultiTarget,
-				bestEffortFeedback: evaluation.feedback
-					? `${bestEffortPermissionFeedback({ permissionKind })} ${evaluation.feedback}`
-					: bestEffortPermissionFeedback({ permissionKind }),
+				autoDenyFeedback: evaluation.feedback
+					? `${autoDenyPermissionFeedback({ permissionKind })} ${evaluation.feedback}`
+					: autoDenyPermissionFeedback({ permissionKind }),
 				defaultDenyFeedback: evaluation.feedback
 			};
 		}
 
-		if (opts.getMode() === 'best-effort') {
-			// A valid force would have returned from the forced-escalation
-			// block above, so an interactive escalation is never reachable
-			// here; best-effort simply auto-rejects with actionable feedback.
+		// The approval mode is a single enum, so `auto-approve` and `auto-deny`
+		// cannot both apply: an `auto-approve` conversation already returned
+		// above as `evaluation.kind === 'allow'`, and only `auto-deny` reaches
+		// here. That exclusivity used to be an accident of evaluation order
+		// between the approve-all toggle and `best-effort` mode.
+		//
+		// A valid force would have returned from the forced-escalation block
+		// above, and `always-prompt` tools (notably `request_permission_grant`)
+		// were dispatched to a dialog before this point — so auto-deny never
+		// suppresses a prompt that is meant to always reach a human. It simply
+		// rejects the remaining prompt-worthy requests with actionable feedback.
+		if (opts.getApprovalMode() === 'auto-deny') {
 			audit('auto-prompt-required');
 			return {
 				kind: 'reject',
-				feedback: promptRequest.bestEffortFeedback
+				feedback: promptRequest.autoDenyFeedback
 			} as const;
 		}
 
@@ -733,21 +749,21 @@ function hasOwn(obj: object, key: string): boolean {
 	return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-function bestEffortPermissionFeedback(view: { permissionKind: string }): string {
-	const alternative = bestEffortAlternativeHint(view.permissionKind);
-	const permissionKind = bestEffortPermissionKindLabel(view.permissionKind);
+function autoDenyPermissionFeedback(view: { permissionKind: string }): string {
+	const alternative = autoDenyAlternativeHint(view.permissionKind);
+	const kind = permissionKindLabel(view.permissionKind);
 	return (
-		`A ${permissionKind} permission request was auto-rejected because this conversation is in \`best-effort\` mode. ` +
+		`A ${kind} permission request was auto-rejected because this conversation's approval mode is \`auto-deny\`. ` +
 		`${alternative} Use \`permission_capabilities\` to inspect alternatives. If still blocked after verifying no allowed alternative works, retry sparingly with \`forcePermissionPrompt\` for this one-off unblock; only reach for \`request_permission_grant\` when you want a durable, saved rule.`
 	);
 }
 
-function bestEffortPromptGrantFeedback(view: { permissionKind: string }): string {
-	const permissionKind = bestEffortPermissionKindLabel(view.permissionKind);
+function autoDenyPromptGrantFeedback(view: { permissionKind: string }): string {
+	const kind = permissionKindLabel(view.permissionKind);
 	return (
-		`A ${permissionKind} permission request matched a saved prompt grant and ` +
+		`A ${kind} permission request matched a saved prompt grant and ` +
 		'requires interactive approval, ' +
-		'but this conversation is in `best-effort` mode and cannot display permission dialogs.'
+		"but this conversation's approval mode is `auto-deny` and cannot display permission dialogs."
 	);
 }
 

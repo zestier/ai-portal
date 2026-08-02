@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type {
+	ApprovalMode,
 	InteractiveRequestView,
 	InteractiveResponse,
 	PermissionPolicy,
@@ -62,6 +63,7 @@ export function buildPermissionTools(opts: {
 	conversationId: string;
 	policy: PermissionPolicy;
 	getMode: () => SessionMode;
+	getApprovalMode: () => ApprovalMode;
 	/** Pushes an event into the active turn's stream. Required so the
 	 * grant-request tool can raise a human permission dialog. */
 	emit: (ev: PortalEvent) => void;
@@ -98,6 +100,7 @@ export function buildPermissionTools(opts: {
 						userId: opts.userId,
 						conversationId: opts.conversationId,
 						mode: opts.getMode(),
+						approvalMode: opts.getApprovalMode(),
 						policy: opts.policy,
 						...(parsed.permissionKind !== undefined
 							? { permissionKind: parsed.permissionKind }
@@ -181,12 +184,13 @@ function buildGrantRequestTool(opts: {
 		async handler(args) {
 			const parsed = GrantRequestArgs.parse(args);
 			// This tool is the structured analogue of `forcePermissionPrompt`:
-			// it ALWAYS raises a human dialog regardless of session mode. Like a
-			// forced escalation (see interactive-adapter.ts), it must still reach
-			// a human in `best-effort` mode — best-effort only changes the
-			// *automatic* policy default, it does not disable the dialog UI. The
-			// prompt waits until the human answers or the turn aborts (handled
-			// below as a non-denying cancellation).
+			// it ALWAYS raises a human dialog regardless of the conversation's
+			// approval mode. Like a forced escalation (see
+			// interactive-adapter.ts), it must still reach a human under
+			// `auto-deny` — that mode only changes the *automatic* policy
+			// default, it does not disable the dialog UI. The prompt waits
+			// until the human answers or the turn aborts (handled below as a
+			// non-denying cancellation).
 
 			const permissionKind = permissionKindForTool(parsed.tool);
 			const scopeSummary = capabilityScopeSummary(parsed.scope);
@@ -284,6 +288,7 @@ function permissionCapabilities(opts: {
 	userId: string;
 	conversationId: string;
 	mode: SessionMode;
+	approvalMode: ApprovalMode;
 	policy: PermissionPolicy;
 	permissionKind?: string;
 	toolName?: string;
@@ -308,7 +313,7 @@ function permissionCapabilities(opts: {
 	return {
 		mode: opts.mode,
 		policy: opts.policy,
-		bestEffort: opts.mode === 'best-effort',
+		approvalMode: opts.approvalMode,
 		filters: {
 			permissionKind: opts.permissionKind ?? null,
 			toolName: opts.toolName ?? null,
@@ -324,7 +329,7 @@ function permissionCapabilities(opts: {
 			requestPermissionGrant: {
 				supported: true,
 				guidance:
-					'Use ONLY when there is explicit persistence intent — the user or task wants a durable, saved rule that pre-approves future matching calls. For a one-off unblock use forcePermissionPrompt instead. Call request_permission_grant with the narrowest structured scope; it always raises a human dialog (in every mode, including best-effort) and is never auto-approved.'
+					'Use ONLY when there is explicit persistence intent — the user or task wants a durable, saved rule that pre-approves future matching calls. For a one-off unblock use forcePermissionPrompt instead. Call request_permission_grant with the narrowest structured scope; it always raises a human dialog (in every approval mode, including auto-approve and auto-deny) and is never auto-approved.'
 			}
 		}
 	};
@@ -435,7 +440,7 @@ function guidanceFor(permissionKind: string, status: CapabilityStatus): string {
 		return `${permissionKind} is hard-denied by policy or grants; a valid forcePermissionPrompt still reaches a human permission prompt that can override it.`;
 	return (
 		`${permissionKind} requests not covered by listed grants will prompt. ` +
-		'In best-effort mode, prompt-worthy requests auto-reject unless retried with forcePermissionPrompt.'
+		'Under the `auto-deny` approval mode, prompt-worthy requests auto-reject unless retried with forcePermissionPrompt.'
 	);
 }
 

@@ -511,6 +511,7 @@ describe('interactive request registry', () => {
 			defaultModel: null,
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
+			defaultApprovalMode: 'ask',
 			defaultPolicy: 'deny-all',
 			theme: 'dark',
 			accent: 'default',
@@ -641,6 +642,7 @@ describe('interactive request registry', () => {
 			defaultModel: null,
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
+			defaultApprovalMode: 'ask',
 			defaultPolicy: 'deny-all',
 			theme: 'dark',
 			accent: 'default',
@@ -798,7 +800,7 @@ describe('interactive permission adapter feedback', () => {
 	function callbacks(
 		events: PortalEvent[] = [],
 		opts: {
-			mode?: 'interactive' | 'best-effort';
+			approvalMode?: 'ask' | 'auto-approve' | 'auto-deny';
 			policy?: 'prompt' | 'allow-all' | 'deny-all';
 		} = {}
 	) {
@@ -809,8 +811,7 @@ describe('interactive permission adapter feedback', () => {
 			getWorkspaceRoots: () => ['/tmp'],
 			policy: opts.policy ?? 'prompt',
 			emit: (ev) => events.push(ev),
-			getApproveAll: () => false,
-			getMode: () => opts.mode ?? 'interactive',
+			getApprovalMode: () => opts.approvalMode ?? 'ask',
 			getSessionWorkspacePath: () => null,
 			getPermissionBehavior: () => 'normal'
 		});
@@ -894,7 +895,7 @@ describe('interactive permission adapter feedback', () => {
 		});
 	});
 
-	it('matching prompt grants reject clearly in best-effort mode', async () => {
+	it('matching prompt grants reject clearly under the auto-deny approval mode', async () => {
 		settings.addGrant({
 			userId,
 			conversationId: null,
@@ -905,7 +906,7 @@ describe('interactive permission adapter feedback', () => {
 		});
 
 		await expect(
-			callbacks([], { mode: 'best-effort', policy: 'allow-all' }).onPermissionRequest({
+			callbacks([], { approvalMode: 'auto-deny', policy: 'allow-all' }).onPermissionRequest({
 				kind: 'url',
 				toolName: 'url_fetcher',
 				url: 'https://example.com/',

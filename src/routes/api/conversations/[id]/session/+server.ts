@@ -7,7 +7,7 @@ import { getTurn } from '$lib/server/runtime/turn-runner';
 import { getProvider } from '$lib/server/providers';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { parseBody } from '$lib/server/validate';
-import { MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
+import { APPROVAL_MODES, MEMORY_EXTRACTOR_BACKEND_IDS, SESSION_MODES } from '$lib/types';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import { log } from '$lib/server/log';
 
@@ -23,7 +23,7 @@ import { log } from '$lib/server/log';
 const PatchBody = z
 	.object({
 		model: z.string().trim().min(1).optional(),
-		mode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		mode: z.enum(SESSION_MODES).optional(),
 		memoryMode: z.enum(['off', 'lightweight', 'project', 'story', 'strict']).optional(),
 		memoryExtractorModel: z
 			.string()
@@ -33,7 +33,7 @@ const PatchBody = z
 			.optional(),
 		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).nullable().optional(),
 		globalMemoryEnabled: z.boolean().optional(),
-		approveAllTools: z.boolean().optional(),
+		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
 			.optional()
@@ -46,7 +46,7 @@ const PatchBody = z
 			b.memoryExtractorModel !== undefined ||
 			b.memoryExtractorBackend !== undefined ||
 			b.globalMemoryEnabled !== undefined ||
-			b.approveAllTools !== undefined ||
+			b.approvalMode !== undefined ||
 			b.disabledToolGroups !== undefined,
 		{
 			message: 'No fields to update'
@@ -99,7 +99,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.globalMemoryEnabled !== undefined
 			? { globalMemoryEnabled: body.globalMemoryEnabled }
 			: {}),
-		...(body.approveAllTools !== undefined ? { approveAllTools: body.approveAllTools } : {}),
+		...(body.approvalMode !== undefined ? { approvalMode: body.approvalMode } : {}),
 		...(body.disabledToolGroups !== undefined
 			? { disabledToolGroups: body.disabledToolGroups }
 			: {})
@@ -138,11 +138,11 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 				log.warn('session.set_mode_failed', { conversationId: conv.id, err: String(e) });
 			}
 		}
-		if (body.approveAllTools !== undefined && live.setApproveAll) {
+		if (body.approvalMode !== undefined && live.setApprovalMode) {
 			try {
-				await live.setApproveAll(body.approveAllTools);
+				await live.setApprovalMode(body.approvalMode);
 			} catch (e) {
-				log.warn('session.set_approve_all_failed', {
+				log.warn('session.set_approval_mode_failed', {
 					conversationId: conv.id,
 					err: String(e)
 				});
@@ -157,6 +157,12 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		unsupported: {
 			...(persistedPatch.mode !== undefined && !provider.capabilities.controls.mode
 				? { mode: provider.capabilities.features.modes.description }
+				: {}),
+			// Only `auto-approve` needs provider support; `ask` / `auto-deny` are
+			// settled entirely by the portal's interactive adapter.
+			...(persistedPatch.approvalMode === 'auto-approve' &&
+			!provider.capabilities.controls.approvalMode
+				? { approvalMode: provider.capabilities.features.approvalMode.description }
 				: {})
 		}
 	});

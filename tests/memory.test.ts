@@ -6431,6 +6431,7 @@ describe('memory extractor backend defaults + override resolution', () => {
 			defaultModel: null,
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
+			defaultApprovalMode: 'ask',
 			defaultPolicy: 'prompt',
 			theme: 'dark',
 			accent: 'default',

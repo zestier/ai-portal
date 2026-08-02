@@ -14,7 +14,7 @@ import type { PortalEvent } from '../src/lib/types';
 // NOT auto-approve. For `move`, the two-path gate means an out-of-workspace
 // source OR destination must prompt.
 
-async function makeHarness(mode: 'interactive' | 'best-effort' = 'interactive') {
+async function makeHarness(approvalMode: 'ask' | 'auto-deny' = 'ask') {
 	const interactive = await import('../src/lib/server/runtime/interactive-requests');
 	const { createInteractiveCallbacks } =
 		await import('../src/lib/server/copilot/interactive-adapter');
@@ -45,8 +45,7 @@ async function makeHarness(mode: 'interactive' | 'best-effort' = 'interactive') 
 		getWorkspaceRoots: () => [workspaceRoot],
 		policy: 'prompt',
 		emit: (ev) => events.push(ev),
-		getApproveAll: () => false,
-		getMode: () => mode,
+		getApprovalMode: () => approvalMode,
 		getSessionWorkspacePath: () => workspaceRoot,
 		getPermissionBehavior: () => 'normal',
 		derivePermissionRequest: buildPermissionRequestResolver(tools)
@@ -76,7 +75,7 @@ describe('move permission wiring', () => {
 	});
 
 	it('auto-approves an in-workspace move with no dialog (covered by the fs-write seed)', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const result = await harness.onPermissionRequest(
 			request('move', { source: 'a.txt', destination: 'sub/b.txt' })
 		);
@@ -86,7 +85,7 @@ describe('move permission wiring', () => {
 	});
 
 	it('does NOT auto-approve when the DESTINATION escapes the workspace', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const outside = makeTmpDir('move-adapter-dst-');
 		const resultPromise = harness.onPermissionRequest(
 			request('move', { source: 'a.txt', destination: join(outside, 'evil') })
@@ -100,7 +99,7 @@ describe('move permission wiring', () => {
 	});
 
 	it('does NOT auto-approve when the SOURCE escapes the workspace', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const outside = makeTmpDir('move-adapter-src-');
 		const resultPromise = harness.onPermissionRequest(
 			request('move', { source: join(outside, 'secret'), destination: 'b.txt' })
@@ -113,8 +112,8 @@ describe('move permission wiring', () => {
 		expect(await resultPromise).toMatchObject({ kind: 'reject' });
 	});
 
-	it('auto-rejects an out-of-workspace move in best-effort mode (no dialog)', async () => {
-		const harness = await makeHarness('best-effort');
+	it('auto-rejects an out-of-workspace move under the auto-deny approval mode (no dialog)', async () => {
+		const harness = await makeHarness('auto-deny');
 		const result = await harness.onPermissionRequest(
 			request('move', { source: 'a.txt', destination: '../escape.txt' })
 		);
@@ -128,7 +127,7 @@ describe('move permission wiring', () => {
 		// deny on the SOURCE must still reject the whole move — the gap the
 		// two-path gate closes (a single-path gate on the destination would have
 		// silently bypassed this deny).
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const settings = await import('../src/lib/server/db/repos/settings');
 		writeFileSync(join(harness.workspaceRoot, 'secret.txt'), 'x');
 		const srcAbs = realpathSync(join(harness.workspaceRoot, 'secret.txt'));
@@ -164,14 +163,14 @@ describe('trash permission wiring', () => {
 	});
 
 	it('auto-approves an in-workspace trash with no dialog (delete inherits the write seed)', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const result = await harness.onPermissionRequest(request('trash', { path: 'a.txt' }));
 		expect(result).toEqual({ kind: 'approve-once' });
 		expect(harness.events.some((e) => e.type === 'interactive.request')).toBe(false);
 	});
 
 	it('does NOT auto-approve trashing an out-of-workspace path', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		const outside = makeTmpDir('trash-adapter-outside-');
 		const resultPromise = harness.onPermissionRequest(
 			request('trash', { path: join(outside, 'secret') })
@@ -185,7 +184,7 @@ describe('trash permission wiring', () => {
 	});
 
 	it('the approved in-workspace trash, once run, moves the file into the trash dir', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		writeFileSync(join(harness.workspaceRoot, 'a.txt'), 'bye');
 		const result = await harness.onPermissionRequest(request('trash', { path: 'a.txt' }));
 		expect(result).toEqual({ kind: 'approve-once' });
@@ -197,7 +196,7 @@ describe('trash permission wiring', () => {
 	});
 
 	it('the approved in-workspace move, once run, relocates the file', async () => {
-		const harness = await makeHarness('interactive');
+		const harness = await makeHarness('ask');
 		mkdirSync(join(harness.workspaceRoot, 'sub'), { recursive: true });
 		writeFileSync(join(harness.workspaceRoot, 'a.txt'), 'x');
 		const result = await harness.onPermissionRequest(

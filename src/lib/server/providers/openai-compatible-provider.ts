@@ -20,7 +20,13 @@ import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { filterPortalToolGroups } from '../tools/filter-groups';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
-import type { BackendProviderId, PortalEvent, SessionMode, ToolCallRecord } from '$lib/types';
+import type {
+	ApprovalMode,
+	BackendProviderId,
+	PortalEvent,
+	SessionMode,
+	ToolCallRecord
+} from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { buildPortalSystemGuidance } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from '../copilot/interactive-adapter';
@@ -167,7 +173,7 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 		},
 		controls: {
 			mode: false,
-			approveAll: true,
+			approvalMode: true,
 			resetSessionApprovals: false
 		},
 		features: {
@@ -178,12 +184,12 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 				description:
 					'OpenAI-compatible backends do not expose Copilot runtime modes. The saved mode is retained for portal permission semantics; it is not sent to the model provider.'
 			},
-			approveAll: {
+			approvalMode: {
 				supported: true,
 				behavior: 'portal-enforced',
-				label: 'Approve all',
+				label: 'Approval mode',
 				description:
-					'Approve-all is enforced by the portal for portal-hosted tools. OpenAI-compatible backends do not receive a separate runtime approve-all signal.'
+					'The approval mode is enforced by the portal for portal-hosted tools. OpenAI-compatible backends do not receive a separate runtime approve-all signal.'
 			},
 			contextUsage: {
 				supported: true,
@@ -531,7 +537,7 @@ export function openOpenAICompatibleSession(
 	let disposed = false;
 	let activeAbortController: AbortController | null = null;
 	let activeQueue: AsyncQueue<PortalEvent> | null = null;
-	let approveAllTools = opts.approveAllTools === true;
+	let approvalMode: ApprovalMode = opts.approvalMode ?? 'ask';
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
 
 	function emit(ev: PortalEvent) {
@@ -542,13 +548,14 @@ export function openOpenAICompatibleSession(
 		currentMode = mode;
 	}
 
-	async function applyApproveAll(enabled: boolean): Promise<void> {
-		approveAllTools = enabled;
+	async function applyApprovalMode(mode: ApprovalMode): Promise<void> {
+		approvalMode = mode;
 	}
 
 	const tools = buildOpenAITools({
 		opts,
 		getMode: () => currentMode,
+		getApprovalMode: () => approvalMode,
 		emit
 	});
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -573,8 +580,7 @@ export function openOpenAICompatibleSession(
 			workspaceRootsFor(opts.conversationId, opts.userId, opts.workingDirectory),
 		policy: opts.policy,
 		emit,
-		getApproveAll: () => approveAllTools,
-		getMode: () => currentMode,
+		getApprovalMode: () => approvalMode,
 		// An openai-compatible provider has no separate SDK session workspace;
 		// its working directory IS the session workspace, so align it with the
 		// root the fs-write seed matches (`session-workspace`).
@@ -812,8 +818,8 @@ export function openOpenAICompatibleSession(
 		async setMode(mode: SessionMode) {
 			await applyMode(mode);
 		},
-		async setApproveAll(enabled: boolean) {
-			await applyApproveAll(enabled);
+		async setApprovalMode(mode: ApprovalMode) {
+			await applyApprovalMode(mode);
 		},
 		async dispose() {
 			disposed = true;
@@ -980,6 +986,7 @@ function toolMessageContent(result: ToolExecutionResult): string {
 function buildOpenAITools(opts: {
 	opts: ProviderOpenOptions;
 	getMode: () => SessionMode;
+	getApprovalMode: () => ApprovalMode;
 	emit: (ev: PortalEvent) => void;
 }): PortalTool[] {
 	return filterPortalToolGroups(
@@ -1007,6 +1014,7 @@ function buildOpenAITools(opts: {
 				conversationId: opts.opts.conversationId,
 				policy: opts.opts.policy,
 				getMode: opts.getMode,
+				getApprovalMode: opts.getApprovalMode,
 				emit: opts.emit
 			}),
 			memory: buildMemoryTools({

@@ -223,10 +223,44 @@ they launch are created with:
   `worktree` template makes `POST /api/conversations` provision a managed
   worktree; an explicit `workspace` in the request always wins, which is how a
   review launch expresses a changed choice.
-- `conversation_mode` / `model` — optional per-launch overrides. These were
-  originally ticket-action-only and now apply to both types, since chat
-  templates create conversations too. Existing chat rows hold `NULL` and keep
-  using the user's defaults.
+- `conversation_mode` / `approval_mode` / `model` — optional per-launch
+  overrides. These were originally ticket-action-only and now apply to both
+  types, since chat templates create conversations too. Existing chat rows hold
+  `NULL` and keep using the user's defaults. `approval_mode` arrived with
+  migration `066_approval_mode.sql`, which also rewrote any template pinned to
+  the retired `best-effort` conversation mode into the equivalent
+  `autopilot` + `auto-deny` pair.
+
+## Conversation mode vs. approval mode
+
+Two orthogonal per-conversation axes, split apart by migration
+`066_approval_mode.sql`:
+
+- `conversations.mode` — the runtime's agent mode, exactly the SDK's set:
+  `interactive` | `plan` | `autopilot`. Forwarded to the runtime on every
+  session open.
+- `conversations.approval_mode` — how the portal settles a permission request
+  that neither a grant nor the user's policy already decided: `ask` (raise the
+  dialog), `auto-approve` (settle as an approval, still audited `auto-allow`),
+  or `auto-deny` (reject with actionable feedback, audited
+  `auto-prompt-required`). Only `auto-approve` is mirrored into a provider
+  runtime; the other two are pure portal logic and therefore work for every
+  provider.
+
+Before `066` these were tangled: the boolean `approve_all_tools` column carried
+auto-approve, while auto-deny rode on a portal-only `best-effort` value of
+`mode` that the bridge remapped to `autopilot` before the SDK ever saw it. The
+two silently overlapped (approve-all won by evaluation order). The migration
+backfills `approve_all_tools = 1 -> 'auto-approve'` and
+`mode = 'best-effort' -> 'auto-deny'` (rewriting those rows' mode to
+`autopilot`), then drops `approve_all_tools`. The same split is applied to
+`user_settings.default_mode` / the new `default_approval_mode`. Because it is
+one enum, the two settings are now mutually exclusive by construction, and
+combinations that were unreachable before — `plan` + `auto-deny`,
+`interactive` + `auto-deny` — are expressible.
+
+`request_permission_grant` and a valid `forcePermissionPrompt` always reach a
+human dialog regardless of the approval mode.
 
 
 ## Turn input capture (observability)

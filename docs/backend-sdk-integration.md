@@ -27,8 +27,8 @@ requirements from Copilot-only enhancements:
 | Session dispose | Yes | Idle reaping and conversation deletion must release provider resources. |
 | Send stream | Yes | `session.send(prompt, signal)` must yield normalized `PortalEvent` objects. |
 | Abort | Yes | Turn cancellation calls `session.abort()` and also aborts the send signal. |
-| Mode support | Optional | Copilot supports live `interactive` / `plan` / `autopilot` / `best-effort` mode hints; other providers may ignore `mode` and omit `setMode`. |
-| Approve-all support | Optional | Copilot can mirror approve-all into the SDK runtime; other providers may omit `setApproveAll` while the portal still persists the setting. |
+| Mode support | Optional | Copilot supports live `interactive` / `plan` / `autopilot` mode hints; other providers may ignore `mode` and omit `setMode`. |
+| Approval mode support | Optional | Copilot can mirror the `auto-approve` approval mode into the SDK runtime; other providers may omit `setApprovalMode`. `ask` and `auto-deny` are enforced portal-side by the interactive adapter and need no provider support. |
 | Reset session approvals | Optional | Copilot can clear SDK session-scoped grants; providers without an approval cache omit it. |
 
 `PortalEvent` remains the stream contract consumed by `turn-runner.ts` and the

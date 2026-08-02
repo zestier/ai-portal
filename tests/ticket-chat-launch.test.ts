@@ -29,6 +29,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
 		launchBehavior: 'draft',
 		conversationMode: null,
+		approvalMode: null,
 		model: null,
 		disabledToolGroups: [],
 		workspaceMode: null,
@@ -140,6 +141,7 @@ describe('createTicketDraftChat', () => {
 				prompt: 'Edited prompt',
 				workspace: 'shared',
 				conversationMode: 'interactive',
+				approvalMode: null,
 				model: 'claude-sonnet-4.6'
 			},
 			fetcher

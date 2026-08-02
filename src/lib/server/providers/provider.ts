@@ -1,4 +1,5 @@
 import type {
+	ApprovalMode,
 	BackendProviderId,
 	PortalEvent,
 	PermissionPolicy,
@@ -53,8 +54,12 @@ export interface ProviderOpenOptions {
 	policy: PermissionPolicy;
 	/** Initial session mode. Providers without mode support may ignore it. */
 	mode?: SessionMode;
-	/** Initial approve-all setting. Providers without approve-all support may ignore it. */
-	approveAllTools?: boolean;
+	/**
+	 * Initial approval mode. `ask` and `auto-deny` are enforced portal-side by
+	 * the interactive adapter; providers only need to mirror `auto-approve`
+	 * into their runtime when they can (see `controls.approvalMode`).
+	 */
+	approvalMode?: ApprovalMode;
 	/**
 	 * Portal tool groups disabled for this conversation. Providers drop the
 	 * matching tool group from the assembled portal tools. Empty/undefined =
@@ -103,8 +108,8 @@ export interface ProviderSession {
 	dispose(): Promise<void>;
 	/** Optional live mode control. Persisting settings is caller-owned. */
 	setMode?(mode: SessionMode): Promise<void>;
-	/** Optional live approve-all control. Persisting settings is caller-owned. */
-	setApproveAll?(enabled: boolean): Promise<void>;
+	/** Optional live approval-mode control. Persisting settings is caller-owned. */
+	setApprovalMode?(mode: ApprovalMode): Promise<void>;
 	/** Optional provider/session-scoped approval cache reset. */
 	resetSessionApprovals?(): Promise<void>;
 }

@@ -2,6 +2,7 @@
 	import { tick, untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import type {
+		ApprovalMode,
 		Conversation,
 		ConversationUsage,
 		MemoryExtractorBackend,
@@ -117,7 +118,7 @@
 		untrack(() => conversation.memoryExtractorBackend)
 	);
 	let globalMemoryEnabled = $state<boolean>(untrack(() => conversation.globalMemoryEnabled));
-	let approveAllTools = $state<boolean>(untrack(() => conversation.approveAllTools));
+	let approvalMode = $state<ApprovalMode>(untrack(() => conversation.approvalMode));
 	let disabledToolGroups = $state<PortalToolGroupId[]>(
 		untrack(() => conversation.disabledToolGroups)
 	);
@@ -207,7 +208,7 @@
 			memoryExtractorModel = conversation.memoryExtractorModel;
 			memoryExtractorBackend = conversation.memoryExtractorBackend;
 			globalMemoryEnabled = conversation.globalMemoryEnabled;
-			approveAllTools = conversation.approveAllTools;
+			approvalMode = conversation.approvalMode;
 			disabledToolGroups = conversation.disabledToolGroups;
 			usage = initialUsage;
 			composer = initialComposer;
@@ -959,7 +960,7 @@
 				// page refresh.
 				if (ev.mode !== undefined) sessionMode = ev.mode;
 				if (ev.memoryMode !== undefined) memoryMode = ev.memoryMode;
-				if (ev.approveAllTools !== undefined) approveAllTools = ev.approveAllTools;
+				if (ev.approvalMode !== undefined) approvalMode = ev.approvalMode;
 				if (ev.disabledToolGroups !== undefined)
 					disabledToolGroups = ev.disabledToolGroups.filter((g): g is PortalToolGroupId =>
 						(PORTAL_TOOL_GROUP_IDS as readonly string[]).includes(g)
@@ -1419,7 +1420,7 @@
 		{memoryExtractorModel}
 		{memoryExtractorBackend}
 		{globalMemoryEnabled}
-		{approveAllTools}
+		{approvalMode}
 		{disabledToolGroups}
 		modelChangeDisabled={streaming}
 		onSettingsChange={(patch) => {
@@ -1431,7 +1432,7 @@
 			if (patch.memoryExtractorBackend !== undefined)
 				memoryExtractorBackend = patch.memoryExtractorBackend;
 			if (patch.globalMemoryEnabled !== undefined) globalMemoryEnabled = patch.globalMemoryEnabled;
-			if (patch.approveAllTools !== undefined) approveAllTools = patch.approveAllTools;
+			if (patch.approvalMode !== undefined) approvalMode = patch.approvalMode;
 			if (patch.disabledToolGroups !== undefined) disabledToolGroups = patch.disabledToolGroups;
 		}}
 	/>

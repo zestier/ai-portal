@@ -34,7 +34,7 @@ interface PermissionKindDescriptor {
 	scopeKind: GrantScopeKind;
 	label: string;
 	grantFormLabel: string;
-	bestEffortAlternativeHint: string;
+	autoDenyAlternativeHint: string;
 	scopeKey(req: PermissionScopeKeyRequest): string | null;
 }
 
@@ -43,14 +43,14 @@ const permissionKindDescriptors = {
 		scopeKind: 'shell',
 		label: 'shell',
 		grantFormLabel: 'shell (run a command)',
-		bestEffortAlternativeHint: 'Try a structured tool or another already-allowed approach first.',
+		autoDenyAlternativeHint: 'Try a structured tool or another already-allowed approach first.',
 		scopeKey: (req) => req.fullCommandText ?? readArgString(req.args, 'command') ?? null
 	},
 	read: {
 		scopeKind: 'fs',
 		label: 'read',
 		grantFormLabel: 'read (file read)',
-		bestEffortAlternativeHint:
+		autoDenyAlternativeHint:
 			'Try the structured read/search tools or existing workspace context first.',
 		scopeKey: (req) => req.path ?? req.fileName ?? readArgString(req.args, 'path') ?? null
 	},
@@ -58,7 +58,7 @@ const permissionKindDescriptors = {
 		scopeKind: 'fs',
 		label: 'write',
 		grantFormLabel: 'write (file write)',
-		bestEffortAlternativeHint:
+		autoDenyAlternativeHint:
 			'Try a structured workspace edit/create workflow or another already-allowed path first.',
 		scopeKey: fsWriteScopeKey
 	},
@@ -66,7 +66,7 @@ const permissionKindDescriptors = {
 		scopeKind: 'fs',
 		label: 'edit',
 		grantFormLabel: 'edit (file edit)',
-		bestEffortAlternativeHint:
+		autoDenyAlternativeHint:
 			'Try a structured workspace edit/create workflow or another already-allowed path first.',
 		scopeKey: fsWriteScopeKey
 	},
@@ -74,7 +74,7 @@ const permissionKindDescriptors = {
 		scopeKind: 'url',
 		label: 'url',
 		grantFormLabel: 'url (fetch URL)',
-		bestEffortAlternativeHint:
+		autoDenyAlternativeHint:
 			'Try a local source or another non-network approach first. If the answer depends on external documentation, current API behavior, or other version-specific online information, retry with `forcePermissionPrompt` instead of guessing.',
 		scopeKey: (req) =>
 			req.url ??
@@ -152,13 +152,18 @@ export function derivePermissionScopeKey(
 		: null;
 }
 
-export function bestEffortPermissionKindLabel(permissionKind: string): string {
+export function permissionKindLabel(permissionKind: string): string {
 	return isGrantTool(permissionKind) ? permissionKindDescriptors[permissionKind].label : 'unknown';
 }
 
-export function bestEffortAlternativeHint(permissionKind: string): string {
+/**
+ * Short "try this instead" hint attached to an auto-denied permission request
+ * (the `auto-deny` approval mode), so the agent has a concrete next move rather
+ * than just a refusal.
+ */
+export function autoDenyAlternativeHint(permissionKind: string): string {
 	return isGrantTool(permissionKind)
-		? permissionKindDescriptors[permissionKind].bestEffortAlternativeHint
+		? permissionKindDescriptors[permissionKind].autoDenyAlternativeHint
 		: 'Try another approach that stays within the current permission set first.';
 }
 

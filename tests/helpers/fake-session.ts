@@ -22,7 +22,7 @@ export function makeFakeSession(
 		async abort() {},
 		async dispose() {},
 		async setMode() {},
-		async setApproveAll() {},
+		async setApprovalMode() {},
 		async resetSessionApprovals() {},
 		lastUsed: Date.now()
 	};

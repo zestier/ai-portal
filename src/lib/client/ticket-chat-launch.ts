@@ -10,7 +10,13 @@ type TicketDraftFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 type TicketActionTemplate = Pick<
 	ChatPromptTemplate,
-	'id' | 'prompt' | 'launchBehavior' | 'conversationMode' | 'model' | 'workspaceMode'
+	| 'id'
+	| 'prompt'
+	| 'launchBehavior'
+	| 'conversationMode'
+	| 'approvalMode'
+	| 'model'
+	| 'workspaceMode'
 >;
 
 /**
@@ -30,6 +36,7 @@ function createBody(
 			? { workspace: { kind: 'worktree', ...(workdir ? { sourcePath: workdir } : {}) } }
 			: { workdir: workdir ?? undefined }),
 		mode: options.conversationMode ?? undefined,
+		approvalMode: options.approvalMode ?? undefined,
 		model: options.model ?? undefined
 	};
 }

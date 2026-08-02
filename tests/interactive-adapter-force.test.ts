@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
 import type {
+	ApprovalMode,
 	InteractivePermissionDecision,
 	PermissionPolicy,
-	PortalEvent,
-	SessionMode
+	PortalEvent
 } from '../src/lib/types';
 
 // A present, valid `forcePermissionPrompt` is the strongest signal: it must
 // always reach a human permission dialog, overriding every auto-allow and
 // auto-deny path (behaviors, the arg-schema and shell-misuse guards, grants,
-// and policy) in both interactive and best-effort modes. These tests drive the
+// and policy) under every approval mode. These tests drive the
 // adapter's `onPermissionRequest` directly so each short-circuit can be
 // configured precisely.
 
@@ -19,8 +19,7 @@ const FORCE_REASON =
 
 interface HarnessOverrides {
 	policy?: PermissionPolicy;
-	mode?: SessionMode;
-	approveAll?: boolean;
+	approvalMode?: ApprovalMode;
 	behavior?: 'normal' | 'always-prompt' | 'never-prompt';
 	validateCustomToolArgs?: (toolName: string, args: unknown) => { feedback: string } | null;
 }
@@ -51,8 +50,7 @@ async function makeHarness(overrides: HarnessOverrides = {}) {
 		getWorkspaceRoots: () => ['/tmp'],
 		policy: overrides.policy ?? 'prompt',
 		emit: (ev) => events.push(ev),
-		getApproveAll: () => overrides.approveAll ?? false,
-		getMode: () => overrides.mode ?? 'interactive',
+		getApprovalMode: () => overrides.approvalMode ?? 'ask',
 		getSessionWorkspacePath: () => null,
 		getPermissionBehavior: () => overrides.behavior ?? 'normal',
 		validateCustomToolArgs: overrides.validateCustomToolArgs
@@ -108,10 +106,10 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 		await setupLocalEnv('portal-force-test-');
 	});
 
-	for (const mode of ['interactive', 'best-effort'] as const) {
-		describe(`${mode} mode`, () => {
+	for (const approvalMode of ['ask', 'auto-deny'] as const) {
+		describe(`${approvalMode} approval mode`, () => {
 			it('escalates a never-prompt behavior to a human prompt', async () => {
-				const harness = await makeHarness({ mode, behavior: 'never-prompt' });
+				const harness = await makeHarness({ approvalMode, behavior: 'never-prompt' });
 				const { result, view } = await driveAndResolve(
 					harness,
 					{
@@ -134,8 +132,8 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 				expect(decisions.some((d) => d.decision === 'auto-allow')).toBe(true);
 			});
 
-			it('escalates session approve-all to a human prompt', async () => {
-				const harness = await makeHarness({ mode, approveAll: true });
+			it('escalates auto-approve to a human prompt', async () => {
+				const harness = await makeHarness({ approvalMode: 'auto-approve' });
 				const { result, view } = await driveAndResolve(
 					harness,
 					{
@@ -151,7 +149,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 			});
 
 			it('escalates an allow-all policy to a human prompt', async () => {
-				const harness = await makeHarness({ mode, policy: 'allow-all' });
+				const harness = await makeHarness({ approvalMode, policy: 'allow-all' });
 				const { result } = await driveAndResolve(
 					harness,
 					{
@@ -166,7 +164,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 			});
 
 			it('escalates a deny-all policy to a human prompt', async () => {
-				const harness = await makeHarness({ mode, policy: 'deny-all' });
+				const harness = await makeHarness({ approvalMode, policy: 'deny-all' });
 				const { result, view } = await driveAndResolve(
 					harness,
 					{
@@ -190,7 +188,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 			});
 
 			it('escalates a matching allow grant to a human prompt', async () => {
-				const harness = await makeHarness({ mode });
+				const harness = await makeHarness({ approvalMode });
 				harness.settings.addGrant({
 					userId: harness.user.id,
 					conversationId: null,
@@ -208,7 +206,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 			});
 
 			it('escalates a matching hard-deny grant to a human prompt', async () => {
-				const harness = await makeHarness({ mode });
+				const harness = await makeHarness({ approvalMode });
 				harness.settings.addGrant({
 					userId: harness.user.id,
 					conversationId: null,
@@ -232,7 +230,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 
 			it('escalates schema-invalid custom tool args to a human prompt', async () => {
 				const harness = await makeHarness({
-					mode,
+					approvalMode,
 					validateCustomToolArgs: () => ({ feedback: 'args do not match schema' })
 				});
 				const { result, view } = await driveAndResolve(
@@ -252,7 +250,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 			});
 
 			it('escalates a shell-misuse command to a human prompt and surfaces shellAnalysis', async () => {
-				const harness = await makeHarness({ mode });
+				const harness = await makeHarness({ approvalMode });
 				const { result, view } = await driveAndResolve(
 					harness,
 					SHELL_FORCE_ARGS('cat > out.txt'),
@@ -270,7 +268,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 	}
 
 	it('still hard-rejects a malformed forcePermissionPrompt without prompting', async () => {
-		const harness = await makeHarness({ mode: 'interactive' });
+		const harness = await makeHarness({ approvalMode: 'ask' });
 		const result = await harness.onPermissionRequest({
 			kind: 'url',
 			toolName: 'web_fetch',
@@ -282,7 +280,7 @@ describe('forcePermissionPrompt is the strongest signal', () => {
 	});
 
 	it('does not prompt when no force is present (never-prompt still auto-allows)', async () => {
-		const harness = await makeHarness({ mode: 'interactive', behavior: 'never-prompt' });
+		const harness = await makeHarness({ approvalMode: 'ask', behavior: 'never-prompt' });
 		const result = await harness.onPermissionRequest({
 			kind: 'url',
 			toolName: 'web_fetch',

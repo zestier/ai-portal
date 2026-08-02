@@ -104,6 +104,48 @@ describe('fork.forkAtMessage', () => {
 		expect(messages.listByConversation(sourceConv.id)).toHaveLength(4);
 	});
 
+	it('carries auto-deny into a fork but never auto-approve', async () => {
+		const { users, convs, messages, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+
+		// auto-deny used to ride on `mode: 'best-effort'`, which forks copied —
+		// so an unattended fork kept auto-rejecting instead of silently blocking
+		// on a dialog nobody is watching. The separate approve-all boolean was
+		// deliberately NOT copied. Both halves must survive the axis split.
+		const denySource = convs.create(u.id, {
+			title: 'deny src',
+			workdir: workdirFor('fork-deny'),
+			model: 'gpt-4',
+			mode: 'autopilot',
+			approvalMode: 'auto-deny'
+		});
+		const denyUser = messages.append(denySource.id, { role: 'user', content: 'go' });
+		messages.append(denySource.id, { role: 'assistant', content: 'ok' });
+		const denyFork = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: denySource.id,
+			messageId: denyUser.id,
+			newContent: 'go (edited)'
+		});
+		expect(denyFork.conversation).toMatchObject({ mode: 'autopilot', approvalMode: 'auto-deny' });
+
+		const approveSource = convs.create(u.id, {
+			title: 'approve src',
+			workdir: workdirFor('fork-approve'),
+			model: 'gpt-4',
+			approvalMode: 'auto-approve'
+		});
+		const approveUser = messages.append(approveSource.id, { role: 'user', content: 'go' });
+		messages.append(approveSource.id, { role: 'assistant', content: 'ok' });
+		const approveFork = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: approveSource.id,
+			messageId: approveUser.id,
+			newContent: 'go (edited)'
+		});
+		expect(approveFork.conversation.approvalMode).toBe('ask');
+	});
+
 	it('creates an isolated worktree at the historical snapshot state', async () => {
 		const { users, convs, messages, snapshots, fork } = await freshImports();
 		const u = users.ensureLocalUser();

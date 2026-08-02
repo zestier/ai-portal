@@ -8,10 +8,12 @@ import {
 	type TicketActionDefault
 } from '$lib/prompt-templates';
 import {
+	normalizeApprovalMode,
 	normalizeLaunchBehavior,
 	normalizePromptTemplateType,
 	normalizePromptTemplateWorkspaceMode,
 	normalizeSessionMode,
+	type ApprovalMode,
 	type ChatPromptTemplate,
 	type PromptLaunchBehavior,
 	type PromptTemplateStatus,
@@ -30,6 +32,7 @@ interface PromptTemplateRow {
 	prompt: string;
 	launch_behavior: string | null;
 	conversation_mode: string | null;
+	approval_mode: string | null;
 	model: string | null;
 	disabled_tool_groups: string | null;
 	workspace_mode: string | null;
@@ -72,6 +75,7 @@ function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 		prompt: row.prompt,
 		launchBehavior: normalizeLaunchBehavior(row.launch_behavior, type),
 		conversationMode: row.conversation_mode ? normalizeSessionMode(row.conversation_mode) : null,
+		approvalMode: row.approval_mode ? normalizeApprovalMode(row.approval_mode) : null,
 		model: row.model ?? null,
 		disabledToolGroups: type === 'chat' ? parseDisabledToolGroups(row.disabled_tool_groups) : [],
 		workspaceMode: normalizePromptTemplateWorkspaceMode(row.workspace_mode),
@@ -142,6 +146,7 @@ export interface CreateInput {
 	prompt: string;
 	launchBehavior?: PromptLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
+	approvalMode?: ApprovalMode | null;
 	model?: string | null;
 	disabledToolGroups?: string[];
 	workspaceMode?: PromptTemplateWorkspaceMode | null;
@@ -159,6 +164,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 	assertPlaceholders(prompt, type);
 	const launchBehavior = normalizeLaunchBehavior(input.launchBehavior, type);
 	const conversationMode = input.conversationMode ?? null;
+	const approvalMode = input.approvalMode ?? null;
 	const model = normalizeModelOverride(input.model);
 	const disabledToolGroups =
 		type === 'chat' ? sanitizeDisabledToolGroups(input.disabledToolGroups) : [];
@@ -170,9 +176,9 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		.prepare(
 			`INSERT INTO prompt_templates(
 			   id, user_id, type, title, description, prompt, launch_behavior, conversation_mode,
-			   model, disabled_tool_groups, workspace_mode, status, pinned, order_index,
+			   approval_mode, model, disabled_tool_groups, workspace_mode, status, pinned, order_index,
 			   created_at, updated_at, archived_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 		)
 		.run(
 			id,
@@ -183,6 +189,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 			prompt,
 			launchBehavior,
 			conversationMode,
+			approvalMode,
 			model,
 			JSON.stringify(disabledToolGroups),
 			workspaceMode,
@@ -200,6 +207,7 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 		prompt,
 		launchBehavior,
 		conversationMode,
+		approvalMode,
 		model,
 		disabledToolGroups,
 		workspaceMode,
@@ -218,6 +226,7 @@ export interface UpdateInput {
 	prompt?: string;
 	launchBehavior?: PromptLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
+	approvalMode?: ApprovalMode | null;
 	model?: string | null;
 	disabledToolGroups?: string[];
 	workspaceMode?: PromptTemplateWorkspaceMode | null;
@@ -248,6 +257,7 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 			: current.launchBehavior;
 	const conversationMode =
 		patch.conversationMode !== undefined ? patch.conversationMode : current.conversationMode;
+	const approvalMode = patch.approvalMode !== undefined ? patch.approvalMode : current.approvalMode;
 	const model = patch.model !== undefined ? normalizeModelOverride(patch.model) : current.model;
 	const disabledToolGroups =
 		current.type === 'chat'
@@ -264,8 +274,8 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 		.prepare(
 			`UPDATE prompt_templates
 			 SET title = ?, description = ?, prompt = ?, launch_behavior = ?, conversation_mode = ?,
-			     model = ?, disabled_tool_groups = ?, workspace_mode = ?, status = ?, pinned = ?,
-			     order_index = ?,
+			     approval_mode = ?, model = ?, disabled_tool_groups = ?, workspace_mode = ?, status = ?,
+			     pinned = ?, order_index = ?,
 			     updated_at = ?, archived_at = ?
 			 WHERE id = ? AND user_id = ?`
 		)
@@ -275,6 +285,7 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 			prompt ?? current.prompt,
 			launchBehavior,
 			conversationMode,
+			approvalMode,
 			model,
 			JSON.stringify(disabledToolGroups),
 			workspaceMode,
@@ -306,6 +317,7 @@ function insertDefault(userId: string, def: TicketActionDefault): void {
 		prompt: def.prompt,
 		launchBehavior: def.launchBehavior,
 		conversationMode: def.conversationMode,
+		approvalMode: def.approvalMode,
 		model: def.model,
 		pinned: def.pinned,
 		orderIndex: def.orderIndex
@@ -336,7 +348,8 @@ export function ensureTicketActionDefaults(userId: string): void {
 
 /**
  * Re-add any missing default actions, un-archive removed ones, and reset the
- * canonical fields (prompt, title, description, launchBehavior, conversationMode)
+ * canonical fields (prompt, title, description, launchBehavior,
+ * conversationMode, approvalMode)
  * of existing defaults to the current built-in values. Powers the "Restore
  * defaults" button. Returns the number of defaults (re)added or updated.
  */
@@ -356,7 +369,8 @@ export function restoreTicketActionDefaults(userId: string): number {
 					description: def.description,
 					prompt: def.prompt,
 					launchBehavior: def.launchBehavior,
-					conversationMode: def.conversationMode
+					conversationMode: def.conversationMode,
+					approvalMode: def.approvalMode
 				});
 				restored += 1;
 			}

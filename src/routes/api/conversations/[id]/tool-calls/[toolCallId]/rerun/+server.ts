@@ -105,7 +105,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			model: conv.model ?? cfg.DEFAULT_MODEL,
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
-			approveAllTools: conv.approveAllTools,
+			approvalMode: conv.approvalMode,
 			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,

@@ -126,12 +126,12 @@ describe('openAICompatibleProvider', () => {
 	it('documents Copilot runtime degradation for OpenAI-compatible sessions', () => {
 		expect(openAICompatibleProvider.capabilities.controls).toEqual({
 			mode: false,
-			approveAll: true,
+			approvalMode: true,
 			resetSessionApprovals: false
 		});
 		expect(openAICompatibleProvider.capabilities.features).toMatchObject({
 			modes: { supported: false, behavior: 'no-op' },
-			approveAll: { supported: true, behavior: 'portal-enforced' },
+			approvalMode: { supported: true, behavior: 'portal-enforced' },
 			contextUsage: { supported: true, behavior: 'supported' },
 			subagents: { supported: false, behavior: 'unsupported' },
 			mcpInfoEvents: { supported: false, behavior: 'unsupported' },
@@ -1012,7 +1012,7 @@ describe('openAICompatibleProvider', () => {
 		);
 
 		await session.setMode?.('plan');
-		await session.setApproveAll?.(true);
+		await session.setApprovalMode?.('auto-approve');
 		expect(session.resetSessionApprovals).toBeUndefined();
 
 		const events = await collect(session.send('status please', new AbortController().signal));
@@ -1033,7 +1033,7 @@ describe('openAICompatibleProvider', () => {
 		expect(firstBody).toMatchObject({ model: 'local-model', stream: true, tool_choice: 'auto' });
 		expect(firstBody).not.toHaveProperty('mode');
 		expect(firstBody).not.toHaveProperty('approve_all');
-		expect(firstBody).not.toHaveProperty('approveAllTools');
+		expect(firstBody).not.toHaveProperty('approvalMode');
 	});
 
 	it('stops tool-calling with an explicit error at the configured max iterations', async () => {

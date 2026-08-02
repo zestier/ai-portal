@@ -24,19 +24,18 @@ export interface Conversation {
 	provider: BackendProviderId;
 	model: string | null;
 	/**
-	 * Agent mode for this conversation. Mostly mirrors the SDK's
-	 * `SessionMode`, with one portal-only extension:
+	 * Agent mode for this conversation. Mirrors the SDK's `SessionMode`
+	 * exactly:
 	 *   - `interactive` (default): regular chat; the agent prompts for
 	 *     permission and can call tools freely.
 	 *   - `plan`: the agent plans without executing destructive tools and
 	 *     surfaces an `exit_plan_mode` request before switching to execute.
 	 *   - `autopilot`: less-supervised mode hint — the agent is expected to
 	 *     work for long stretches with minimal user interaction.
-	 *   - `best-effort`: forwarded to the runtime as `autopilot`, but the
-	 *     portal auto-rejects prompt-worthy permission requests with
-	 *     feedback instead of asking the user.
 	 *
 	 * The mode is forwarded to the runtime each time the session is opened.
+	 * How permission requests are settled is the orthogonal `approvalMode`
+	 * axis, not a mode value.
 	 */
 	mode: SessionMode;
 	/**
@@ -62,12 +61,10 @@ export interface Conversation {
 	 */
 	globalMemoryEnabled: boolean;
 	/**
-	 * Per-conversation bypass: when true, every tool-permission request is
-	 * auto-approved (an `auto-allow` audit row is still written). The flag
-	 * is also mirrored to the SDK via `permissions.setApproveAll` so the
-	 * model knows it's running in a less-supervised context.
+	 * How prompt-worthy tool-permission requests are settled in this
+	 * conversation. Orthogonal to `mode`; see `ApprovalMode`.
 	 */
-	approveAllTools: boolean;
+	approvalMode: ApprovalMode;
 	/**
 	 * Portal tool groups the user has disabled for this conversation. Empty =
 	 * all groups enabled (today's behaviour). Ids come from PORTAL_TOOL_GROUPS
@@ -289,6 +286,11 @@ export interface ChatPromptTemplate {
 	 */
 	conversationMode: SessionMode | null;
 	/**
+	 * Optional approval-mode override applied when this template creates its
+	 * conversation. `null` means use the user's default approval mode.
+	 */
+	approvalMode: ApprovalMode | null;
+	/**
 	 * Optional model override applied when this template creates its
 	 * conversation. `null` means use the user's default model. A stale id (no
 	 * longer offered by the provider) is passed through unchanged.
@@ -316,13 +318,43 @@ export interface ChatPromptTemplate {
 	archivedAt: number | null;
 }
 
-// Portal session modes. `best-effort` is the only portal-only extension; it
-// maps to the runtime's `autopilot` mode while keeping stricter permission
-// semantics in the bridge.
-export type SessionMode = 'interactive' | 'plan' | 'autopilot' | 'best-effort';
+// Portal session modes — exactly the runtime's set. There is no portal-only
+// extension: the auto-deny behaviour that used to ride on `best-effort` lives
+// on the orthogonal `ApprovalMode` axis.
+export const SESSION_MODES = ['interactive', 'plan', 'autopilot'] as const;
+export type SessionMode = (typeof SESSION_MODES)[number];
 
 export function normalizeSessionMode(raw: string | null | undefined): SessionMode {
-	return raw === 'plan' || raw === 'autopilot' || raw === 'best-effort' ? raw : 'interactive';
+	// Legacy rows/payloads may still carry the retired `best-effort` mode. On
+	// the runtime axis it always *was* autopilot (the bridge remapped it before
+	// the SDK saw it), so that is the honest landing spot; the auto-deny half is
+	// carried by `approval_mode` (see migration 066).
+	if (raw === 'best-effort') return 'autopilot';
+	return raw === 'plan' || raw === 'autopilot' ? raw : 'interactive';
+}
+
+/**
+ * How the portal settles a tool-permission request that neither a grant nor
+ * the user's policy has already decided. Orthogonal to `SessionMode`, and
+ * deliberately coarse — finer-grained rules belong in the policy + grants
+ * system, not here.
+ *
+ *   - `ask` (default): raise the permission dialog and wait for the human.
+ *   - `auto-approve`: settle every prompt-worthy request as an approval (an
+ *     `auto-allow` audit row is still written). Mirrored to providers that
+ *     support it so the model knows it runs less supervised.
+ *   - `auto-deny`: reject prompt-worthy requests with actionable feedback
+ *     instead of blocking on a dialog the user may never see. Pure portal-side
+ *     logic, so it works for every provider.
+ *
+ * `request_permission_grant` and a valid `forcePermissionPrompt` always reach a
+ * human regardless of this setting.
+ */
+export const APPROVAL_MODES = ['ask', 'auto-approve', 'auto-deny'] as const;
+export type ApprovalMode = (typeof APPROVAL_MODES)[number];
+
+export function normalizeApprovalMode(raw: string | null | undefined): ApprovalMode {
+	return raw === 'auto-approve' || raw === 'auto-deny' ? raw : 'ask';
 }
 
 export type MemoryMode = 'off' | 'lightweight' | 'project' | 'story' | 'strict';
@@ -435,7 +467,7 @@ export function normalizeBackendProvider(raw: string | null | undefined): Backen
 
 export type ProviderRuntimeFeature =
 	| 'modes'
-	| 'approveAll'
+	| 'approvalMode'
 	| 'contextUsage'
 	| 'subagents'
 	| 'mcpInfoEvents'
@@ -480,10 +512,14 @@ export interface ProviderCapabilities {
 		contract: 'PortalEvent';
 	};
 	controls: {
-		/** Supports live runtime modes such as plan/autopilot/best-effort. */
+		/** Supports live runtime modes such as plan/autopilot. */
 		mode: boolean;
-		/** Supports live approve-all toggling for tool permission requests. */
-		approveAll: boolean;
+		/**
+		 * Supports mirroring the `auto-approve` approval mode into the runtime.
+		 * `ask` and `auto-deny` are enforced portal-side and need no provider
+		 * support, so only `auto-approve` is gated on this.
+		 */
+		approvalMode: boolean;
 		/** Supports clearing provider/session-scoped approval grants. */
 		resetSessionApprovals: boolean;
 	};
@@ -669,6 +705,7 @@ export interface UserSettings {
 	defaultModel: string | null;
 	defaultWorkdir: string | null;
 	defaultConversationMode: SessionMode;
+	defaultApprovalMode: ApprovalMode;
 	defaultPolicy: PermissionPolicy;
 	theme: 'dark' | 'light' | 'system';
 	/** Accent palette, applied on top of the dark/light mode (see ThemeAccent). */
@@ -731,8 +768,7 @@ export interface InteractivePermissionView {
 	 */
 	userPolicy?: PermissionPolicy;
 	/**
-	 * False for sensitive one-shot permissions (for example switching a
-	 * best-effort conversation back to interactive mode). The dialog must not
+	 * False for sensitive one-shot permissions. The dialog must not
 	 * offer persistent allow/deny actions, and the server rejects them.
 	 */
 	canPersistDecision?: boolean;
@@ -1100,7 +1136,7 @@ export type PortalEvent =
 			conversationId: string;
 			mode?: SessionMode;
 			memoryMode?: MemoryMode;
-			approveAllTools?: boolean;
+			approvalMode?: ApprovalMode;
 			disabledToolGroups?: PortalToolGroupId[];
 			// Free-form source label so the UI can show "Agent switched to
 			// plan mode" vs "You enabled autopilot" in a future iteration.
@@ -1202,7 +1238,7 @@ export type InteractivePermissionDecision = 'allow-once' | 'allow-always' | 'den
 // `InteractiveResponse` — the dialog only ever surfaces the four interactive
 // decisions — but they show up in the settings page audit so the user can see
 // what got approved silently, hard-denied, or rejected because a prompt was
-// required in best-effort mode.
+// required under the `auto-deny` approval mode.
 export type PermissionDecision =
 	| 'allow-once'
 	| 'allow-always'

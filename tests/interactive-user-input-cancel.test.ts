@@ -31,8 +31,7 @@ async function makeHarness() {
 		getWorkspaceRoots: () => ['/tmp'],
 		policy: 'prompt',
 		emit: () => {},
-		getApproveAll: () => false,
-		getMode: () => 'interactive',
+		getApprovalMode: () => 'ask',
 		getSessionWorkspacePath: () => null,
 		getPermissionBehavior: () => 'normal'
 	});

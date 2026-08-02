@@ -9,12 +9,12 @@
 
 import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
 import type { ContextTier } from '@github/copilot-sdk';
-import type { PortalEvent, SessionMode } from '$lib/types';
+import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { withTimeout } from '../runtime/with-timeout';
 import { buildPortalSystemGuidance } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from './interactive-adapter';
-import { SdkEventAdapter, toRuntimeMode, type RuntimeSessionMode } from './sdk-events';
+import { SdkEventAdapter, type RuntimeSessionMode } from './sdk-events';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
@@ -179,7 +179,7 @@ function resolveContextTier(userId: string): ContextTier | undefined {
 
 export type BridgeOpenOptions = ProviderOpenOptions;
 export type ConversationSession = ProviderSession &
-	Required<Pick<ProviderSession, 'setMode' | 'setApproveAll' | 'resetSessionApprovals'>>;
+	Required<Pick<ProviderSession, 'setMode' | 'setApprovalMode' | 'resetSessionApprovals'>>;
 
 interface SdkSession {
 	on(event: string, listener: (e: unknown) => void): void;
@@ -214,10 +214,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	}
 
 	// Mutable session-level state. Mirrors the conversation row in the
-	// DB; the /session PATCH endpoint flips these via setMode/setApproveAll
+	// DB; the /session PATCH endpoint flips these via setMode/setApprovalMode
 	// on the live ConversationSession so a turn already in flight picks up
 	// the change without a recreate.
-	let approveAllTools = opts.approveAllTools === true;
+	let approvalMode: ApprovalMode = opts.approvalMode ?? 'ask';
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
 	let sessionWorkspacePath: string | null = null;
 	// Abort signal for the in-flight turn, set at the start of each `send` and
@@ -264,6 +264,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 				conversationId: opts.conversationId,
 				policy: opts.policy,
 				getMode: () => currentMode,
+				getApprovalMode: () => approvalMode,
 				emit
 			}),
 			memory: buildMemoryTools({
@@ -292,8 +293,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 			workspaceRootsFor(opts.conversationId, opts.userId, opts.workingDirectory),
 		policy: opts.policy,
 		emit,
-		getApproveAll: () => approveAllTools,
-		getMode: () => currentMode,
+		getApprovalMode: () => approvalMode,
 		getSessionWorkspacePath: () => sessionWorkspacePath,
 		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
 		validateCustomToolArgs,
@@ -451,27 +451,30 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 
 	eventAdapter.attach(sdkSession);
 
-	// Push initial mode + approve-all to the runtime. Best-effort: the
+	// Push initial mode + approval mode to the runtime. Best-effort: the
 	// `rpc` surface is preview API and may be missing on stub clients;
-	// skipping the call is fine because the bridge enforces approve-all
+	// skipping the call is fine because the portal enforces the approval mode
 	// itself in `onPermissionRequest`, and a missing mode RPC just means
 	// the agent runs in its default mode (still safe).
 	async function applyMode(mode: SessionMode): Promise<void> {
-		const runtimeMode = toRuntimeMode(mode);
 		try {
-			await sdkSession.rpc?.mode?.set?.({ mode: runtimeMode });
+			await sdkSession.rpc?.mode?.set?.({ mode });
 			currentMode = mode;
 		} catch (e) {
 			log.warn('copilot.session.mode_set_failed', {
 				conversationId: opts.conversationId,
 				mode,
-				runtimeMode,
 				err: (e as Error).message
 			});
 		}
 	}
-	async function applyApproveAll(enabled: boolean): Promise<void> {
-		approveAllTools = enabled;
+	// Only `auto-approve` has a runtime counterpart: it is mirrored to the SDK so
+	// the model knows it runs less supervised. `ask` and `auto-deny` are settled
+	// entirely by the portal's interactive adapter, so the SDK toggle is simply
+	// cleared for both.
+	async function applyApprovalMode(mode: ApprovalMode): Promise<void> {
+		approvalMode = mode;
+		const enabled = mode === 'auto-approve';
 		try {
 			await sdkSession.rpc?.permissions?.setApproveAll?.({ enabled });
 		} catch (e) {
@@ -487,7 +490,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	// run in the wrong mode. Both helpers swallow their own errors (best-effort
 	// via log.warn), so awaiting here does not change open()'s error semantics.
 	if (currentMode !== 'interactive') await applyMode(currentMode);
-	if (approveAllTools) await applyApproveAll(true);
+	if (approvalMode === 'auto-approve') await applyApprovalMode(approvalMode);
 
 	const session: ConversationSession = {
 		provider: 'copilot',
@@ -537,8 +540,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		async setMode(mode: SessionMode) {
 			await applyMode(mode);
 		},
-		async setApproveAll(enabled: boolean) {
-			await applyApproveAll(enabled);
+		async setApprovalMode(mode: ApprovalMode) {
+			await applyApprovalMode(mode);
 		},
 		async resetSessionApprovals() {
 			try {
@@ -595,7 +598,7 @@ export const copilotProvider: ModelBackendProvider = {
 		},
 		controls: {
 			mode: true,
-			approveAll: true,
+			approvalMode: true,
 			resetSessionApprovals: true
 		},
 		features: {
@@ -603,13 +606,14 @@ export const copilotProvider: ModelBackendProvider = {
 				supported: true,
 				behavior: 'supported',
 				label: 'Runtime modes',
-				description: 'Interactive, plan, autopilot, and best-effort are forwarded to Copilot.'
+				description: 'Interactive, plan, and autopilot are forwarded to Copilot.'
 			},
-			approveAll: {
+			approvalMode: {
 				supported: true,
 				behavior: 'supported',
-				label: 'Approve all',
-				description: 'Approve-all is mirrored to the Copilot runtime and enforced by the portal.'
+				label: 'Approval mode',
+				description:
+					'Auto-approve is mirrored to the Copilot runtime; every approval mode is enforced by the portal.'
 			},
 			contextUsage: {
 				supported: true,

@@ -48,6 +48,7 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 			conversationId: STUB.conversationId,
 			policy: 'prompt',
 			getMode: () => 'interactive',
+			getApprovalMode: () => 'ask',
 			emit: () => {}
 		}),
 		// The widest memory configuration, so the catalog lists every memory tool

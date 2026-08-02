@@ -374,7 +374,7 @@ describe('bridge.open() context-usage event translation', () => {
 describe('bridge.open() session mode and permissions', () => {
 	it('injects portal tools', async () => {
 		const { open } = await importBridge();
-		await open({ ...baseOpts, mode: 'best-effort' });
+		await open({ ...baseOpts, approvalMode: 'auto-deny' });
 
 		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{
 			name: string;
@@ -446,7 +446,7 @@ describe('bridge.open() session mode and permissions', () => {
 			decision: 'deny',
 			denyReason: 'Do not expose this exact path in capability output.'
 		});
-		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 
 		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{
 			name: string;
@@ -463,7 +463,7 @@ describe('bridge.open() session mode and permissions', () => {
 			ok: boolean;
 			result: {
 				mode: string;
-				bestEffort: boolean;
+				approvalMode: string;
 				capabilities: Array<{
 					permissionKind: string;
 					status: string;
@@ -478,8 +478,8 @@ describe('bridge.open() session mode and permissions', () => {
 		const response = envelope.result;
 
 		expect(response).toMatchObject({
-			mode: 'best-effort',
-			bestEffort: true,
+			mode: 'interactive',
+			approvalMode: 'auto-deny',
 			escalation: {
 				forcePermissionPrompt: {
 					supported: true,
@@ -506,14 +506,66 @@ describe('bridge.open() session mode and permissions', () => {
 		expect(readResponseText).toContain('specific absolute exact rule');
 	});
 
-	it('maps best-effort mode to autopilot on the runtime RPC', async () => {
+	it('forwards the session mode to the runtime RPC verbatim', async () => {
 		const { open } = await importBridge();
-		const session = await open({ ...baseOpts, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, mode: 'autopilot' });
 
-		await session.setMode('best-effort');
+		await session.setMode('autopilot');
 
 		expect(sdkSessionStub.rpc.mode.set).toHaveBeenCalledWith({ mode: 'autopilot' });
 	});
+
+	it('mirrors only the auto-approve approval mode into the runtime approve-all RPC', async () => {
+		const { open } = await importBridge();
+		const session = await open({ ...baseOpts, approvalMode: 'auto-deny' });
+
+		// auto-deny is portal-side only: nothing is pushed at open.
+		expect(sdkSessionStub.rpc.permissions.setApproveAll).not.toHaveBeenCalled();
+
+		await session.setApprovalMode('auto-approve');
+		expect(sdkSessionStub.rpc.permissions.setApproveAll).toHaveBeenCalledWith({ enabled: true });
+
+		await session.setApprovalMode('ask');
+		expect(sdkSessionStub.rpc.permissions.setApproveAll).toHaveBeenLastCalledWith({
+			enabled: false
+		});
+	});
+
+	// The two combinations `best-effort` made unreachable: it force-forwarded
+	// autopilot to the runtime, so auto-deny could never coexist with plan or
+	// interactive. On the split axes the runtime mode is untouched by the
+	// approval mode, and vice versa.
+	for (const mode of ['plan', 'interactive'] as const) {
+		it(`combines ${mode} mode with the auto-deny approval mode`, async () => {
+			const { open } = await importBridge();
+			await open({ ...baseOpts, mode, approvalMode: 'auto-deny' });
+
+			if (mode === 'interactive') {
+				// interactive is the runtime default, so nothing is pushed.
+				expect(sdkSessionStub.rpc.mode.set).not.toHaveBeenCalled();
+			} else {
+				expect(sdkSessionStub.rpc.mode.set).toHaveBeenCalledWith({ mode });
+			}
+			// auto-deny is never mirrored as an approve-all signal.
+			expect(sdkSessionStub.rpc.permissions.setApproveAll).not.toHaveBeenCalled();
+
+			const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
+				req: unknown
+			) => Promise<unknown>;
+			const result = await onPermissionRequest({
+				kind: 'url',
+				toolName: 'web_fetch',
+				url: 'https://example.com/docs',
+				args: { url: 'https://example.com/docs' }
+			});
+			expect(result).toEqual(
+				expect.objectContaining({
+					kind: 'reject',
+					feedback: expect.stringContaining('auto-deny')
+				})
+			);
+		});
+	}
 
 	it('auto-approves filesystem requests inside the SDK session workspace', async () => {
 		const { open } = await importBridge();
@@ -566,9 +618,9 @@ describe('bridge.open() session mode and permissions', () => {
 		expect(result).toEqual({ kind: 'reject' });
 	});
 
-	it('auto-rejects prompt-worthy permission requests in best-effort mode with concise feedback', async () => {
+	it('auto-rejects prompt-worthy permission requests under auto-deny with concise feedback', async () => {
 		const { open } = await importBridge();
-		await open({ ...baseOpts, mode: 'best-effort' });
+		await open({ ...baseOpts, approvalMode: 'auto-deny' });
 
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
@@ -576,13 +628,13 @@ describe('bridge.open() session mode and permissions', () => {
 		const result = await onPermissionRequest({
 			kind: 'shell',
 			toolName: 'shell',
-			fullCommandText: "printf 'best-effort demo\\n' > /tmp/copilot-best-effort-demo.txt"
+			fullCommandText: "printf 'auto-deny demo\\n' > /tmp/copilot-auto-deny-demo.txt"
 		});
 
 		expect(result).toEqual(
 			expect.objectContaining({
 				kind: 'reject',
-				feedback: expect.stringContaining('best-effort')
+				feedback: expect.stringContaining('auto-deny')
 			})
 		);
 		expect(result).toEqual(
@@ -613,9 +665,7 @@ describe('bridge.open() session mode and permissions', () => {
 		const feedback = (result as { feedback: string }).feedback;
 		expect(feedback).not.toContain('The user would have been asked to approve:');
 		expect(feedback).not.toContain('shell (shell)');
-		expect(feedback).not.toContain(
-			"printf 'best-effort demo\\n' > /tmp/copilot-best-effort-demo.txt"
-		);
+		expect(feedback).not.toContain("printf 'auto-deny demo\\n' > /tmp/copilot-auto-deny-demo.txt");
 		expect(feedback).not.toContain('Reason: redirection');
 
 		const cases = [
@@ -674,7 +724,7 @@ describe('bridge.open() session mode and permissions', () => {
 		}
 	});
 
-	it('uses prompt grant feedback when prompt-required matches auto-deny in best-effort mode', async () => {
+	it('uses prompt grant feedback when prompt-required matches under the auto-deny approval mode', async () => {
 		const { open } = await importBridge();
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const settings = await import('../src/lib/server/db/repos/settings');
@@ -689,7 +739,7 @@ describe('bridge.open() session mode and permissions', () => {
 			decision: 'prompt',
 			denyReason: feedback
 		});
-		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
@@ -708,7 +758,7 @@ describe('bridge.open() session mode and permissions', () => {
 		const { open } = await importBridge();
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
@@ -787,12 +837,12 @@ describe('bridge.open() session mode and permissions', () => {
 		expect(result).toEqual({ kind: 'approve-once' });
 	});
 
-	it('raises a one-time prompt for shell git escalation even in best-effort mode', async () => {
+	it('raises a one-time prompt for shell git escalation even under auto-deny', async () => {
 		const { open } = await importBridge();
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -831,12 +881,12 @@ describe('bridge.open() session mode and permissions', () => {
 		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
 	});
 
-	it('raises a one-time prompt for URL escalation in best-effort mode', async () => {
+	it('raises a one-time prompt for URL escalation under auto-deny', async () => {
 		const { open } = await importBridge();
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -889,7 +939,7 @@ describe('bridge.open() session mode and permissions', () => {
 			decision: 'deny',
 			denyReason: 'Hard deny: rm is forbidden in shell.'
 		});
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -943,7 +993,7 @@ describe('bridge.open() session mode and permissions', () => {
 			decision: 'prompt',
 			denyReason: 'Node shell commands require human approval.'
 		});
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -994,7 +1044,7 @@ describe('bridge.open() session mode and permissions', () => {
 			scope: { kind: 'shell', rule: { command: [{ token: 'node' }] } },
 			decision: 'allow'
 		});
-		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -1014,7 +1064,7 @@ describe('bridge.open() session mode and permissions', () => {
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -1055,7 +1105,7 @@ describe('bridge.open() session mode and permissions', () => {
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -1102,7 +1152,7 @@ describe('bridge.open() session mode and permissions', () => {
 		const { open } = await importBridge();
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -1191,7 +1241,7 @@ describe('bridge.open() session mode and permissions', () => {
 			textOffset: 0,
 			parentToolCallId: null
 		});
-		const session = await open({ ...baseOpts, userId: user.id, mode: 'best-effort' });
+		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;

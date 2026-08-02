@@ -144,6 +144,7 @@ describe('prompt template send/review launcher', () => {
 		prompt: 'Reviewed prompt',
 		workspace: 'worktree' as const,
 		conversationMode: 'plan' as const,
+		approvalMode: 'auto-deny' as const,
 		model: 'claude-sonnet-4.6'
 	};
 
@@ -165,6 +166,7 @@ describe('prompt template send/review launcher', () => {
 			promptTemplateId: 'tmpl-1',
 			workspace: { kind: 'worktree' },
 			mode: 'plan',
+			approvalMode: 'auto-deny',
 			model: 'claude-sonnet-4.6'
 		});
 		expect(calls[1].url).toBe('/api/conversations/conv-1/turns');
@@ -200,20 +202,35 @@ describe('prompt template send/review launcher', () => {
 describe('templateLaunchDefaults', () => {
 	it('collapses a missing workspace preference to the shared checkout', () => {
 		expect(
-			templateLaunchDefaults({ workspaceMode: null, conversationMode: null, model: null }, 'Prompt')
-		).toEqual({ prompt: 'Prompt', workspace: 'shared', conversationMode: null, model: null });
+			templateLaunchDefaults(
+				{ workspaceMode: null, conversationMode: null, approvalMode: null, model: null },
+				'Prompt'
+			)
+		).toEqual({
+			prompt: 'Prompt',
+			workspace: 'shared',
+			conversationMode: null,
+			approvalMode: null,
+			model: null
+		});
 	});
 
 	it('carries the template’s pinned workspace and overrides', () => {
 		expect(
 			templateLaunchDefaults(
-				{ workspaceMode: 'worktree', conversationMode: 'plan', model: 'gpt-5.5' },
+				{
+					workspaceMode: 'worktree',
+					conversationMode: 'plan',
+					approvalMode: 'auto-deny',
+					model: 'gpt-5.5'
+				},
 				'Prompt'
 			)
 		).toEqual({
 			prompt: 'Prompt',
 			workspace: 'worktree',
 			conversationMode: 'plan',
+			approvalMode: 'auto-deny',
 			model: 'gpt-5.5'
 		});
 	});

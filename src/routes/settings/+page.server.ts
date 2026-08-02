@@ -30,9 +30,12 @@ import {
 	normalizeContextTier,
 	normalizeThemeAccent,
 	BACKEND_PROVIDER_IDS,
+	APPROVAL_MODES,
 	CONTEXT_TIER_IDS,
 	MEMORY_EXTRACTOR_BACKEND_IDS,
+	SESSION_MODES,
 	THEME_ACCENT_IDS,
+	type ApprovalMode,
 	type PermissionPolicy,
 	type SessionMode,
 	type UserSettings
@@ -111,7 +114,8 @@ const SaveSchema = z.object({
 	defaultProvider: z.enum(BACKEND_PROVIDER_IDS),
 	defaultModel: z.string().optional(),
 	defaultWorkdir: z.string().optional(),
-	defaultConversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']),
+	defaultConversationMode: z.enum(SESSION_MODES),
+	defaultApprovalMode: z.enum(APPROVAL_MODES),
 	defaultPolicy: z.enum(['prompt', 'allow-all', 'deny-all']),
 	theme: z.enum(['dark', 'light', 'system']),
 	accent: z.enum(THEME_ACCENT_IDS as unknown as [string, ...string[]]),
@@ -127,7 +131,8 @@ const PromptTemplateSchema = z
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
-		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		conversationMode: z.enum(SESSION_MODES).optional(),
+		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		model: z.string().trim().max(200).optional(),
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
@@ -155,7 +160,8 @@ const UpdatePromptTemplateSchema = z
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
-		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		conversationMode: z.enum(SESSION_MODES).optional(),
+		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		model: z.string().trim().max(200).optional(),
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
@@ -195,6 +201,7 @@ export const actions: Actions = {
 			defaultProvider: data.get('defaultProvider'),
 			defaultWorkdir: (data.get('defaultWorkdir') as string) || undefined,
 			defaultConversationMode: data.get('defaultConversationMode'),
+			defaultApprovalMode: data.get('defaultApprovalMode'),
 			defaultPolicy: data.get('defaultPolicy'),
 			theme: data.get('theme'),
 			accent: data.get('accent'),
@@ -241,6 +248,7 @@ export const actions: Actions = {
 			defaultModel: parsed.data.defaultModel ?? null,
 			defaultWorkdir: parsed.data.defaultWorkdir ?? null,
 			defaultConversationMode: parsed.data.defaultConversationMode as SessionMode,
+			defaultApprovalMode: parsed.data.defaultApprovalMode as ApprovalMode,
 			defaultPolicy: parsed.data.defaultPolicy as PermissionPolicy,
 			theme: parsed.data.theme,
 			accent: normalizeThemeAccent(parsed.data.accent),
@@ -263,6 +271,7 @@ export const actions: Actions = {
 			prompt: data.get('prompt'),
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
+			approvalMode: (data.get('approvalMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
 			disabledToolGroups:
 				type === 'chat' ? data.getAll('disabledToolGroups').map(String) : undefined,
@@ -282,6 +291,7 @@ export const actions: Actions = {
 			title: parsed.data.title,
 			prompt: parsed.data.prompt,
 			conversationMode: parsed.data.conversationMode ?? null,
+			approvalMode: parsed.data.approvalMode ?? null,
 			model: parsed.data.model ?? null,
 			...(parsed.data.type === 'chat'
 				? { disabledToolGroups: sanitizeDisabledToolGroups(parsed.data.disabledToolGroups) }
@@ -309,6 +319,7 @@ export const actions: Actions = {
 			prompt: data.get('prompt'),
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
+			approvalMode: (data.get('approvalMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
 			disabledToolGroups:
 				type === 'chat' ? data.getAll('disabledToolGroups').map(String) : undefined,
@@ -331,6 +342,7 @@ export const actions: Actions = {
 			workspaceMode: patch.workspaceMode ?? null,
 			...(patch.launchBehavior !== undefined ? { launchBehavior: patch.launchBehavior } : {}),
 			conversationMode: patch.conversationMode ?? null,
+			approvalMode: patch.approvalMode ?? null,
 			model: patch.model ?? null,
 			...(parsedType === 'chat'
 				? { disabledToolGroups: sanitizeDisabledToolGroups(patch.disabledToolGroups) }

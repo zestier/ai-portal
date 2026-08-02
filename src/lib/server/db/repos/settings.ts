@@ -2,6 +2,7 @@ import { ulid } from '../ids';
 import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import {
+	normalizeApprovalMode,
 	normalizeBackendProvider,
 	normalizeContextTier,
 	normalizeMemoryExtractorBackend,
@@ -17,6 +18,7 @@ interface SettingsRow {
 	default_model: string | null;
 	default_workdir: string | null;
 	default_mode: string | null;
+	default_approval_mode: string | null;
 	default_policy: string;
 	theme: string;
 	accent: string;
@@ -37,6 +39,7 @@ function rowToSettings(r: SettingsRow): UserSettings {
 		defaultModel: r.default_model,
 		defaultWorkdir: r.default_workdir,
 		defaultConversationMode: normalizeSessionMode(r.default_mode),
+		defaultApprovalMode: normalizeApprovalMode(r.default_approval_mode),
 		defaultPolicy: policy,
 		theme: r.theme === 'light' ? 'light' : r.theme === 'system' ? 'system' : 'dark',
 		accent: normalizeThemeAccent(r.accent),
@@ -66,6 +69,7 @@ export function defaults(): UserSettings {
 		defaultModel: null,
 		defaultWorkdir: null,
 		defaultConversationMode: 'interactive',
+		defaultApprovalMode: 'ask',
 		defaultPolicy: 'prompt',
 		theme: 'system',
 		accent: 'default',
@@ -79,15 +83,16 @@ export function save(userId: string, s: UserSettings) {
 	getDb()
 		.prepare(
 			`INSERT INTO user_settings(
-			   user_id, default_provider, default_model, default_workdir, default_mode, default_policy, theme, accent,
+			   user_id, default_provider, default_model, default_workdir, default_mode, default_approval_mode, default_policy, theme, accent,
 			   default_memory_extractor_model, default_memory_extractor_backend, default_context_tier, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
 			   default_provider = excluded.default_provider,
 			   default_model = excluded.default_model,
 			   default_workdir = excluded.default_workdir,
 			   default_mode = excluded.default_mode,
+			   default_approval_mode = excluded.default_approval_mode,
 			   default_policy = excluded.default_policy,
 			   theme = excluded.theme,
 			   accent = excluded.accent,
@@ -102,6 +107,7 @@ export function save(userId: string, s: UserSettings) {
 			s.defaultModel,
 			s.defaultWorkdir,
 			s.defaultConversationMode,
+			s.defaultApprovalMode,
 			s.defaultPolicy,
 			s.theme,
 			s.accent,
@@ -251,8 +257,8 @@ export function matchGrant(
 /**
  * Same as `matchGrant`, but additionally returns matched grant feedback.
  * Hard-deny feedback is forwarded to the SDK as `{kind:'reject', feedback}`;
- * prompt feedback is used when best-effort mode rejects a prompt-required
- * request without human escalation.
+ * prompt feedback is used when the `auto-deny` approval mode rejects a
+ * prompt-required request without human escalation.
  */
 export function matchGrantDetailed(
 	userId: string,

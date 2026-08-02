@@ -83,7 +83,7 @@ describe('lmStudioProvider', () => {
 	it('reuses OpenAI-compatible live controls except unsupported runtime modes', async () => {
 		expect(lmStudioProvider.capabilities.controls).toEqual({
 			mode: false,
-			approveAll: true,
+			approvalMode: true,
 			resetSessionApprovals: false
 		});
 		expect(lmStudioProvider.capabilities.features.mcpInfoEvents).toMatchObject({
@@ -94,7 +94,7 @@ describe('lmStudioProvider', () => {
 		const session = await lmStudioProvider.openSession(baseOpts);
 
 		expect(session.setMode).toBeDefined();
-		expect(session.setApproveAll).toBeDefined();
+		expect(session.setApprovalMode).toBeDefined();
 		expect(session.resetSessionApprovals).toBeUndefined();
 	});
 

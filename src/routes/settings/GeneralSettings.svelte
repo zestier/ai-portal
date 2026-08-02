@@ -9,6 +9,7 @@
 	import {
 		BACKEND_PROVIDER_IDS,
 		THEME_ACCENTS,
+		type ApprovalMode,
 		type BackendProviderId,
 		type MemoryExtractorBackend,
 		type ProviderRuntimeFeatureStatus,
@@ -43,11 +44,24 @@
 			value: 'autopilot',
 			label: 'Autopilot',
 			hint: 'The agent can work for longer stretches with less supervision.'
+		}
+	];
+
+	const APPROVAL_MODE_OPTIONS: { value: ApprovalMode; label: string; hint: string }[] = [
+		{
+			value: 'ask',
+			label: 'Ask every time',
+			hint: 'Tool calls not covered by a grant or your policy raise a permission dialog.'
 		},
 		{
-			value: 'best-effort',
-			label: 'Best effort',
-			hint: 'Autopilot-style execution, but permission prompts auto-reject with feedback.'
+			value: 'auto-approve',
+			label: 'Auto-approve prompts',
+			hint: 'Prompt-worthy tool calls are approved without asking; each one is audited as auto-allow.'
+		},
+		{
+			value: 'auto-deny',
+			label: 'Auto-deny prompts (best effort)',
+			hint: 'Permission prompts are auto-rejected with feedback instead of waiting for you.'
 		}
 	];
 
@@ -306,6 +320,19 @@
 				{:else}
 					{modeFeature.description}
 				{/if}
+			</span>
+		</label>
+		<label>
+			Default approval mode
+			<select name="defaultApprovalMode" value={settings.defaultApprovalMode}>
+				{#each APPROVAL_MODE_OPTIONS as opt (opt.value)}
+					<option value={opt.value}>{opt.label}</option>
+				{/each}
+			</select>
+			<span class="muted small">
+				Applies to newly created conversations; each conversation can change it in its header.
+				<br />
+				{APPROVAL_MODE_OPTIONS.find((opt) => opt.value === settings.defaultApprovalMode)?.hint}
 			</span>
 		</label>
 		<label>

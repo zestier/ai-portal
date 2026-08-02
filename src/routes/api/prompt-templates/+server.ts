@@ -11,6 +11,7 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
 import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
+import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 
 export const GET: RequestHandler = ({ locals }) => {
 	const userId = requireUserId(locals);
@@ -37,7 +38,8 @@ const CreateBody = z
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
-		conversationMode: z.enum(['interactive', 'plan', 'autopilot', 'best-effort']).optional(),
+		conversationMode: z.enum(SESSION_MODES).optional(),
+		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		model: z.string().trim().max(200).nullable().optional(),
 		disabledToolGroups: z
 			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
@@ -67,6 +69,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		...(body.description !== undefined ? { description: body.description } : {}),
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
+		...(body.approvalMode !== undefined ? { approvalMode: body.approvalMode } : {}),
 		...(body.model !== undefined ? { model: body.model } : {}),
 		...(body.disabledToolGroups !== undefined
 			? { disabledToolGroups: body.disabledToolGroups }
