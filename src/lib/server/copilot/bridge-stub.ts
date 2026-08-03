@@ -31,6 +31,10 @@
 //                                  exceed INLINE_REASONING_MAX_BYTES, so tests
 //                                  can drive the conversation-open trim and the
 //                                  lazy fetch that rehydrates it on expand
+//   @trigger-nested-subagent    -> a sub-agent that itself spawns a sub-agent,
+//                                  so the grandchild's rows hang off the inner
+//                                  `task` call and exercise SubagentCall's
+//                                  recursive rendering
 
 import { ulid } from 'ulid';
 import { writeFileSync } from 'node:fs';
@@ -90,12 +94,15 @@ class StubSession {
 		this.listeners.get(event)?.delete(listener);
 	}
 
-	private emit(event: string, data: unknown) {
+	private emit(event: string, data: unknown, agentId?: string) {
 		const set = this.listeners.get(event);
 		if (!set) return;
+		// The real SDK puts `agentId` alongside `data` on events emitted by a
+		// sub-agent; sdk-events.ts reads it to thread rows to the spawning card.
+		const payload = agentId === undefined ? { data } : { agentId, data };
 		for (const l of set) {
 			try {
-				l({ data });
+				l(payload);
 			} catch {
 				// listeners should never throw in the real SDK either
 			}
@@ -269,6 +276,77 @@ class StubSession {
 		});
 	}
 
+	private async runNestedSubagents() {
+		// A sub-agent that itself spawns a sub-agent. `general-purpose` agents
+		// get the `task` tool, so this nesting is real, not hypothetical — and
+		// the grandchild's rows hang off the INNER task call, which is what
+		// exercises SubagentCall's recursive rendering.
+		const outerId = ulid();
+		const innerId = ulid();
+		const child = 'stub-agent-child';
+		const grandchild = 'stub-agent-grandchild';
+		const step = () => new Promise((r) => setTimeout(r, 5));
+
+		this.emit('tool.execution_start', {
+			toolCallId: outerId,
+			toolName: 'task',
+			arguments: {
+				agent_type: 'general-purpose',
+				description: 'Outer agent',
+				prompt: 'Spawn a nested agent.'
+			}
+		});
+		this.emit('subagent.started', { toolCallId: outerId }, child);
+		await step();
+
+		this.emit(
+			'tool.execution_start',
+			{ toolCallId: ulid(), toolName: 'bash', arguments: { command: 'echo child' } },
+			child
+		);
+		await step();
+
+		this.emit(
+			'tool.execution_start',
+			{
+				toolCallId: innerId,
+				toolName: 'task',
+				arguments: {
+					agent_type: 'explore',
+					description: 'Nested agent',
+					prompt: 'Reply with PONG.'
+				}
+			},
+			child
+		);
+		this.emit('subagent.started', { toolCallId: innerId }, grandchild);
+		await step();
+
+		this.emit(
+			'tool.execution_start',
+			{ toolCallId: ulid(), toolName: 'bash', arguments: { command: 'echo grandchild' } },
+			grandchild
+		);
+		this.emit('assistant.message_delta', { deltaContent: 'PONG' }, grandchild);
+		await step();
+
+		this.emit('subagent.completed', {}, grandchild);
+		this.emit(
+			'tool.execution_complete',
+			{ toolCallId: innerId, success: true, result: { content: 'PONG' } },
+			child
+		);
+		await step();
+
+		this.emit('assistant.message_delta', { deltaContent: 'Nested agent said PONG.' }, child);
+		this.emit('subagent.completed', {}, child);
+		this.emit('tool.execution_complete', {
+			toolCallId: outerId,
+			success: true,
+			result: { content: 'Nested agent said PONG.' }
+		});
+	}
+
 	private async run(prompt: string, reply: string) {
 		try {
 			await this.fireTriggers(prompt);
@@ -303,6 +381,10 @@ class StubSession {
 			// the model calls a tool partway through its response).
 			if (i === 0 && this.pendingViewImage) {
 				await this.runPendingViewImage();
+				if (this.aborted) return;
+			}
+			if (i === 0 && prompt.includes('@trigger-nested-subagent')) {
+				await this.runNestedSubagents();
 				if (this.aborted) return;
 			}
 		}

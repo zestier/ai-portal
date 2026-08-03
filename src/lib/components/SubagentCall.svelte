@@ -5,8 +5,12 @@
 	import {
 		getSubagentDisplayState,
 		getSubagentPresentation,
-		parseSubagentArgs
+		isSubagentToolCall,
+		MAX_SUBAGENT_NESTING_DEPTH,
+		parseSubagentArgs,
+		selectSubagentChildren
 	} from '$lib/client/subagent-display';
+	import SubagentCall from './SubagentCall.svelte';
 	import ToolCall from './ToolCall.svelte';
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import DiffView from './DiffView.svelte';
@@ -20,6 +24,10 @@
 		childTools = [],
 		childReasoning = [],
 		childEdits = [],
+		allTools = [],
+		allReasoning = [],
+		allEdits = [],
+		depth = 0,
 		conversationId,
 		canRetry = false,
 		onRetryStarted
@@ -28,6 +36,15 @@
 		childTools?: ToolCallRecord[];
 		childReasoning?: ReasoningBlockRecord[];
 		childEdits?: FileEditRecord[];
+		// The message's full pools. A sub-agent can spawn its own sub-agent, and
+		// the grandchild's rows hang off that *inner* `task` call — so each level
+		// needs the whole set to select its own children from, not just the
+		// slice its parent computed.
+		allTools?: ToolCallRecord[];
+		allReasoning?: ReasoningBlockRecord[];
+		allEdits?: FileEditRecord[];
+		/** 0 for a card anchored to the message; +1 per nesting level. */
+		depth?: number;
 		conversationId?: string | undefined;
 		// True only for the latest assistant turn's extractor card while the
 		// conversation is idle; older turns' cards and a busy conversation
@@ -35,6 +52,9 @@
 		canRetry?: boolean;
 		onRetryStarted?: ((turnId: string) => void) | undefined;
 	} = $props();
+
+	// Nested cards stop recursing at the cap and render as plain tool cards.
+	const canNest = $derived(depth + 1 < MAX_SUBAGENT_NESTING_DEPTH);
 
 	// Auto-expand while the subagent is running so the user sees activity,
 	// then auto-collapse once it completes (the parent assistant typically
@@ -266,6 +286,7 @@
 <details
 	class="subagent"
 	class:open
+	class:is-nested={depth > 0}
 	class:is-pending={pending}
 	data-status={toolCall.status}
 	data-display-status={displayState.statusClass}
@@ -367,7 +388,25 @@
 								{@html item.html}
 							</div>
 						{:else if item.kind === 'tool'}
-							<ToolCall toolCall={item.tool} {conversationId} />
+							{#if isSubagentToolCall(item.tool) && canNest}
+								{@const nested = selectSubagentChildren(
+									{ tools: allTools, reasoning: allReasoning, edits: allEdits },
+									item.tool.id
+								)}
+								<SubagentCall
+									toolCall={item.tool}
+									{conversationId}
+									childTools={nested.tools}
+									childReasoning={nested.reasoning}
+									childEdits={nested.edits}
+									{allTools}
+									{allReasoning}
+									{allEdits}
+									depth={depth + 1}
+								/>
+							{:else}
+								<ToolCall toolCall={item.tool} {conversationId} />
+							{/if}
 						{:else}
 							<DiffView
 								path={item.edit.path}
@@ -476,6 +515,19 @@
 	}
 	.subagent[data-status='error'] {
 		border-left-color: var(--danger);
+	}
+	/* Nested cards sit inside a parent card's timeline, which already indents
+	   and tints. Drop the extra background and horizontal padding so each extra
+	   level costs almost no width — deep chains stay readable instead of
+	   marching off the right edge — and keep the accent rail as the only depth
+	   cue. `min-width: 0` lets the card shrink inside its flex parent rather
+	   than forcing the timeline to overflow. */
+	.subagent.is-nested {
+		background: none;
+		border-color: transparent;
+		border-radius: 0;
+		padding: 0 0 0 var(--space-2);
+		min-width: 0;
 	}
 	.subagent[data-status='denied'] {
 		border-left-color: var(--warning);

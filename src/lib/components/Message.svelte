@@ -5,6 +5,7 @@
 	import { zoomableImages } from '$lib/client/zoomable-images';
 	import ToolCall from './ToolCall.svelte';
 	import SubagentCall from './SubagentCall.svelte';
+	import { isSubagentToolCall, selectSubagentChildren } from '$lib/client/subagent-display';
 	import DiffView from './DiffView.svelte';
 	import ReasoningBlock from './ReasoningBlock.svelte';
 	import ThinkingIndicator from './ThinkingIndicator.svelte';
@@ -540,24 +541,26 @@
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 					<div class="text-part" use:copyableCodeBlocks use:zoomableImages>{@html p.html}</div>
 				{:else if p.kind === 'tool'}
-					{@const childTools = (message.toolCalls ?? []).filter(
-						(t) => t.parentToolCallId === p.tool.id
+					{@const children = selectSubagentChildren(
+						{
+							tools: message.toolCalls ?? [],
+							reasoning: message.reasoningBlocks ?? [],
+							edits: message.fileEdits ?? []
+						},
+						p.tool.id
 					)}
-					{@const childReasoning = (message.reasoningBlocks ?? []).filter(
-						(r) => r.parentToolCallId === p.tool.id
-					)}
-					{@const childEdits = (message.fileEdits ?? []).filter(
-						(e) => e.parentToolCallId === p.tool.id
-					)}
-					{#if p.tool.tool === 'task'}
+					{#if isSubagentToolCall(p.tool)}
 						<SubagentCall
 							toolCall={p.tool}
 							{conversationId}
 							canRetry={canRetryMemory}
 							onRetryStarted={onMemoryRetryStarted}
-							{childTools}
-							{childReasoning}
-							{childEdits}
+							childTools={children.tools}
+							childReasoning={children.reasoning}
+							childEdits={children.edits}
+							allTools={message.toolCalls ?? []}
+							allReasoning={message.reasoningBlocks ?? []}
+							allEdits={message.fileEdits ?? []}
 						/>
 					{:else}
 						<ToolCall toolCall={p.tool} {conversationId} onRerunStarted={onToolRerunStarted} />

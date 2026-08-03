@@ -667,8 +667,10 @@ export interface ToolCallRecord {
 	endedAt: number | null;
 	textOffset: number | null;
 	// See ReasoningBlockRecord.parentToolCallId. Sub-agents can in turn
-	// invoke their own tools; those nested calls are children of the
-	// outermost `task` tool call.
+	// invoke their own tools — including `task`, spawning a nested sub-agent —
+	// so this points at the `task` call that *immediately* spawned the emitting
+	// agent, not the outermost one. The chain can therefore be several levels
+	// deep and is rendered recursively by SubagentCall.
 	parentToolCallId: string | null;
 	// For background `task` calls, these fields track the spawned agent's
 	// lifecycle separately from the launch tool-call status.

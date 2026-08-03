@@ -1,4 +1,59 @@
-import type { ToolCallRecord } from '$lib/types';
+import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '$lib/types';
+
+/**
+ * The tool name whose calls spawn a sub-agent and therefore render as a
+ * SubagentCall card rather than a generic tool card.
+ */
+export const SUBAGENT_TOOL = 'task';
+
+/**
+ * How deep sub-agent cards nest before falling back to a plain tool card.
+ *
+ * Sub-agents can spawn their own sub-agents to arbitrary depth, so the render
+ * is genuinely recursive. The cap is a safety valve, not a product limit: a
+ * malformed or cyclic `parentToolCallId` chain (a row whose ancestor chain
+ * loops back to itself) would otherwise recurse forever and hang the tab.
+ * Real nesting deeper than this is vanishingly rare and unreadable anyway.
+ */
+export const MAX_SUBAGENT_NESTING_DEPTH = 4;
+
+export function isSubagentToolCall(toolCall: ToolCallRecord): boolean {
+	return toolCall.tool === SUBAGENT_TOOL;
+}
+
+/** The full per-message pools a sub-agent card filters its own children from. */
+export type SubagentChildPools = {
+	tools?: ToolCallRecord[];
+	reasoning?: ReasoningBlockRecord[];
+	edits?: FileEditRecord[];
+};
+
+export type SubagentChildren = {
+	tools: ToolCallRecord[];
+	reasoning: ReasoningBlockRecord[];
+	edits: FileEditRecord[];
+};
+
+/**
+ * Direct children of one `task` tool call — the rows a sub-agent emitted
+ * itself, excluding anything its own sub-agents emitted (those hang off the
+ * nested `task` call and are selected again one level down).
+ *
+ * A row is never its own parent, so a self-referential id is dropped rather
+ * than yielding a card that contains itself.
+ */
+export function selectSubagentChildren(
+	pools: SubagentChildPools,
+	parentToolCallId: string
+): SubagentChildren {
+	return {
+		tools: (pools.tools ?? []).filter(
+			(t) => t.parentToolCallId === parentToolCallId && t.id !== parentToolCallId
+		),
+		reasoning: (pools.reasoning ?? []).filter((r) => r.parentToolCallId === parentToolCallId),
+		edits: (pools.edits ?? []).filter((e) => e.parentToolCallId === parentToolCallId)
+	};
+}
 
 export type SubagentArgs = {
 	name?: string;
