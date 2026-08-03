@@ -406,6 +406,26 @@
 			{/if}
 		</label>
 		<label>
+			Adversary review model (experimental)
+			<input
+				name="defaultAdversaryModel"
+				value={settings.defaultAdversaryModel ?? ''}
+				placeholder="(off — leave blank)"
+			/>
+			<span class="muted small">
+				Shadow-mode only: a second model reviews each permission request and records what it
+				<em>would</em> have decided, next to what you actually clicked. It has no authority — it
+				cannot allow, deny, or delay anything. Setting a model is what turns it on.
+				<br />
+				Runs against <code>OPENAI_COMPATIBLE_BASE_URL</code> (not your chat provider), so enter an
+				exact model id for that backend. It is skipped for any conversation whose own model matches
+				— a reviewer sharing the agent's weights shares its blind spots.
+				<br />
+				Seeds newly created conversations only; existing ones keep their current setting. Sends tool arguments,
+				which can include file contents, to that endpoint.
+			</span>
+		</label>
+		<label>
 			Permission policy
 			<select name="defaultPolicy" value={settings.defaultPolicy}>
 				<option value="prompt"

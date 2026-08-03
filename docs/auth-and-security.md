@@ -213,6 +213,98 @@ first after process boot.
   [persistence.md](persistence.md)) and viewable in the conversation
   detail page.
 
+### Adversary shadow mode (experimental, off by default)
+
+An exploration of whether a second LLM could review permission requests instead
+of the human. **Phase 0 deliberately grants it no authority.**
+
+Configure it like any other model-backed background feature: set an **Adversary
+review model** in Settings (or `ADVERSARY_SHADOW_MODEL` as the server default,
+or per conversation). A configured model is what turns it on — there is no
+separate switch, so nothing can disagree about whether it is running. Unset
+everywhere, which is the default, means it never runs. It also needs
+`OPENAI_COMPATIBLE_BASE_URL`; that, not the model choice, is the data-egress
+gate and is already operator-level.
+
+Model precedence is conversation → server default (`ADVERSARY_SHADOW_MODEL`),
+matching the memory extractor. The user setting is **seed-only**: it is copied
+onto each newly created conversation and never re-read, so changing it does not
+retroactively alter existing conversations, and clearing a conversation's model
+genuinely stops reviewing that conversation rather than silently re-inheriting
+the default. That last property matters — the reviewer sends tool arguments to a
+third-party endpoint, so opting one sensitive conversation out has to work even
+for a user who set a default.
+
+It is per-conversation rather than global because the reviewer is skipped when
+its model equals the conversation's agent model (shared weights mean shared
+blind spots) — with one global value that guard would silently disable the
+shadow for anyone whose conversation happened to use the same model, with no way
+to resolve it.
+
+When it is on, each request that reaches a human dialog in an `ask`
+conversation is also shown to the reviewer, whose verdict is recorded next to
+the human's actual click. Requests that `auto-approve` waved through are
+recorded too — they are the population a veto product would gate — but carry no
+human label and are excluded from scoring. Nothing reads any of these rows
+back; the call is fire-and-forget and the dialog never waits on it.
+
+The reason for measuring before building: an LLM approving an LLM's dangerous
+action gives the *feeling* of oversight with none of the accountability, and
+prompt injection that fools the agent plausibly fools the reviewer too — it
+reads the same attacker-influenced tool arguments. If the reviewer can't
+reproduce the human's denials in shadow, the mode is theater.
+
+Constraints that hold even in shadow:
+
+- **Structured facts only.** The reviewer is given the tool, permission kind,
+  scope key, parsed shell segments, commit target, workspace roots — never
+  agent narration. `intention`, `toolDescription`, and the dialog's `summary`
+  are excluded (the summary matters: it falls back to `toolDescription`).
+  Every scalar is JSON-quoted, because `scopeKey` and friends are themselves
+  model-controlled (`fullCommandText`, `path`) and a multi-line value would
+  otherwise inject lines into the section labelled trustworthy. Agent-authored
+  argument values go in an explicitly-labelled untrusted block whose delimiters
+  are stripped from both blocks, so they cannot be forged from inside.
+- **No tools for the reviewer**, or the permission problem recurses.
+- **A different model from the agent.** Shared weights mean shared blind spots;
+  the shadow refuses to run when the two match.
+- **Errors are errors.** Unparseable output is never coerced into a verdict.
+
+Read the results with `pnpm run report:adversary-shadow`. Two limitations are
+baked into what that report can tell you, and both are printed with it:
+
+- **The human's click is a label, not ground truth.** The human defines the
+  labels, so human recall is 1 by construction and this cannot show the reviewer
+  "beating" a human — a low number is decisive against the mode, a high number
+  is necessary but not sufficient for it. A rubber-stamped approval also turns a
+  correct denial into a "false positive"; median human answer latency is
+  reported as a weak proxy, and deciding who was right needs independent review
+  of the disagreements (which `prompt_sent` preserves the evidence for).
+- **The labelled and unlabelled populations are different.** Only `ask` requests
+  carry a human label; the `auto-approve` rows that a veto product would gate
+  carry none. Neither is a random sample of the other.
+
+`pnpm run probe:adversary` runs a fixed set of hostile requests, several of
+which argue for their own approval, against the configured reviewer;
+`--dry-run` prints the prompts without calling anything.
+
+Note that enabling this ships tool arguments — which can include file contents —
+to whatever `OPENAI_COMPATIBLE_BASE_URL` points at, and stores the same
+(already-truncated) prompt locally in `prompt_sent` for later adjudication, so
+the copy at rest is never larger than what was sent. A user turning it on only
+exposes their own conversations, to an endpoint the operator already
+configured; an operator who wants it unavailable entirely simply does not set
+that base URL.
+
+Cost is one provider roundtrip per shadowed request, deduplicated per identical
+request and bounded by `ADVERSARY_SHADOW_MAX_IN_FLIGHT` (default 4). In `ask`
+conversations that is roughly one call per permission dialog. In `auto-approve`
+conversations there are no dialogs to pace it, so every request the approval
+mode itself permitted is shadowed — a much higher rate, for rows that can never
+be scored, only adjudicated later. Requests over the concurrency cap are
+recorded as explicit skips rather than dropped, so the resulting gap in the
+sample is visible in the readout instead of being mistaken for representative.
+
 ## Content sanitization
 
 - All markdown from the assistant is rendered client-side with `marked` →

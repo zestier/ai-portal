@@ -22,6 +22,8 @@
 		"test:e2e:run": "playwright test",
 		"test:e2e:ui": "pnpm run build && playwright test --ui",
 		"bench:conversation-load": "node scripts/bench-conversation-load.mjs",
+		"report:adversary-shadow": "node scripts/adversary-shadow-report.mjs",
+		"probe:adversary": "node scripts/adversary-probe.mjs",
 		"verify": "node scripts/verify.mjs",
 		"verify:sequential": "node scripts/verify.mjs --sequential",
 		"verify:failure-probe": "node scripts/verify.mjs --failure-probe",

@@ -296,6 +296,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		getApprovalMode: () => approvalMode,
 		getSessionWorkspacePath: () => sessionWorkspacePath,
 		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
+		getAgentModel: () => opts.model,
+		getAdversaryModel: () => opts.adversaryModel ?? null,
 		validateCustomToolArgs,
 		derivePermissionRequest
 	});

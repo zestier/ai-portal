@@ -517,6 +517,7 @@ describe('interactive request registry', () => {
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
+			defaultAdversaryModel: null,
 			defaultContextTier: null
 		});
 		const requestId = newRequestId();
@@ -648,6 +649,7 @@ describe('interactive request registry', () => {
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
+			defaultAdversaryModel: null,
 			defaultContextTier: null
 		});
 		const requestId = newRequestId();

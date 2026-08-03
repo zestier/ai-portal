@@ -24,6 +24,7 @@ interface SettingsRow {
 	accent: string;
 	default_memory_extractor_model: string | null;
 	default_memory_extractor_backend: string | null;
+	default_adversary_model: string | null;
 	default_context_tier: string | null;
 	updated_at: number;
 }
@@ -47,6 +48,7 @@ function rowToSettings(r: SettingsRow): UserSettings {
 		defaultMemoryExtractorBackend: normalizeMemoryExtractorBackend(
 			r.default_memory_extractor_backend
 		),
+		defaultAdversaryModel: r.default_adversary_model ?? null,
 		defaultContextTier: normalizeContextTier(r.default_context_tier)
 	};
 }
@@ -75,6 +77,7 @@ export function defaults(): UserSettings {
 		accent: 'default',
 		defaultMemoryExtractorModel: null,
 		defaultMemoryExtractorBackend: null,
+		defaultAdversaryModel: null,
 		defaultContextTier: null
 	};
 }
@@ -84,9 +87,9 @@ export function save(userId: string, s: UserSettings) {
 		.prepare(
 			`INSERT INTO user_settings(
 			   user_id, default_provider, default_model, default_workdir, default_mode, default_approval_mode, default_policy, theme, accent,
-			   default_memory_extractor_model, default_memory_extractor_backend, default_context_tier, updated_at
+			   default_memory_extractor_model, default_memory_extractor_backend, default_adversary_model, default_context_tier, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
 			   default_provider = excluded.default_provider,
 			   default_model = excluded.default_model,
@@ -98,6 +101,7 @@ export function save(userId: string, s: UserSettings) {
 			   accent = excluded.accent,
 			   default_memory_extractor_model = excluded.default_memory_extractor_model,
 			   default_memory_extractor_backend = excluded.default_memory_extractor_backend,
+			   default_adversary_model = excluded.default_adversary_model,
 			   default_context_tier = excluded.default_context_tier,
 			   updated_at = excluded.updated_at`
 		)
@@ -113,6 +117,7 @@ export function save(userId: string, s: UserSettings) {
 			s.accent,
 			s.defaultMemoryExtractorModel,
 			s.defaultMemoryExtractorBackend,
+			s.defaultAdversaryModel,
 			s.defaultContextTier,
 			Date.now()
 		);

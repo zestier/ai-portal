@@ -61,6 +61,13 @@ export interface ProviderOpenOptions {
 	 */
 	approvalMode?: ApprovalMode;
 	/**
+	 * The conversation's adversary (shadow reviewer) model, if it has one.
+	 * Captured at session open like `approvalMode`; unlike approval mode it has
+	 * no live setter, because it only configures a measurement and a change can
+	 * wait for the next session — matching `memoryExtractorModel` semantics.
+	 */
+	adversaryModel?: string | null;
+	/**
 	 * Portal tool groups disabled for this conversation. Providers drop the
 	 * matching tool group from the assembled portal tools. Empty/undefined =
 	 * all groups enabled.

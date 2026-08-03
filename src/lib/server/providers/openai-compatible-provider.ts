@@ -586,6 +586,8 @@ export function openOpenAICompatibleSession(
 		// root the fs-write seed matches (`session-workspace`).
 		getSessionWorkspacePath: () => opts.workingDirectory,
 		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
+		getAgentModel: () => opts.model,
+		getAdversaryModel: () => opts.adversaryModel ?? null,
 		derivePermissionRequest: buildPermissionRequestResolver(tools)
 	});
 

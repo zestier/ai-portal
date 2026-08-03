@@ -81,6 +81,7 @@ const conversation: Conversation = {
 	memoryMode: 'off',
 	memoryExtractorModel: null,
 	memoryExtractorBackend: null,
+	adversaryModel: null,
 	globalMemoryEnabled: false,
 	approvalMode: 'auto-deny',
 	disabledToolGroups: [],

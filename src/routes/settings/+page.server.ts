@@ -121,6 +121,7 @@ const SaveSchema = z.object({
 	accent: z.enum(THEME_ACCENT_IDS as unknown as [string, ...string[]]),
 	defaultMemoryExtractorModel: z.string().optional(),
 	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
+	defaultAdversaryModel: z.string().optional(),
 	defaultContextTier: z.enum(CONTEXT_TIER_IDS).optional()
 });
 
@@ -208,6 +209,7 @@ export const actions: Actions = {
 			defaultMemoryExtractorModel: (data.get('defaultMemoryExtractorModel') as string) || undefined,
 			defaultMemoryExtractorBackend:
 				(data.get('defaultMemoryExtractorBackend') as string) || undefined,
+			defaultAdversaryModel: (data.get('defaultAdversaryModel') as string) || undefined,
 			defaultContextTier: (data.get('defaultContextTier') as string) || undefined
 		});
 		if (!parsed.success) {
@@ -254,6 +256,7 @@ export const actions: Actions = {
 			accent: normalizeThemeAccent(parsed.data.accent),
 			defaultMemoryExtractorModel: parsed.data.defaultMemoryExtractorModel ?? null,
 			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null,
+			defaultAdversaryModel: parsed.data.defaultAdversaryModel ?? null,
 			defaultContextTier: normalizeContextTier(parsed.data.defaultContextTier ?? null)
 		};
 		settings.save(locals.userId, next);

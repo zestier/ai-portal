@@ -192,6 +192,37 @@ const Schema = z
 			.optional()
 			.transform((v) => v !== '0' && v !== 'false'),
 
+		// --- Adversarial approval mode, Phase 0 (shadow measurement) ---
+		//
+		// A second model reads prompt-worthy permission requests and records
+		// what it *would* have decided, with NO authority: it cannot allow,
+		// deny, delay, or alter anything. The recorded verdicts are compared
+		// against the human's actual clicks to get a real precision/recall
+		// number for adversary denials before the idea is allowed to gate
+		// anything.
+		//
+		// This is the SERVER DEFAULT only. The effective model is resolved
+		// per conversation: conversation override -> user default -> this.
+		// Unset everywhere (the default) means the shadow never runs.
+		//
+		// There is deliberately no separate on/off switch: a configured model
+		// IS the enablement, mirroring the model-backed memory extractor. Two
+		// switches that can disagree is a bug surface, not a feature.
+		//
+		// Also requires OPENAI_COMPATIBLE_BASE_URL — that, not this, is the
+		// data-egress gate, and it is already operator-level.
+		ADVERSARY_SHADOW_MODEL: z.string().trim().optional(),
+		ADVERSARY_SHADOW_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+		ADVERSARY_SHADOW_MAX_ARG_CHARS: z.coerce.number().int().positive().default(4_000),
+		// Ceiling on simultaneous in-flight adversary calls per conversation.
+		// Matters most in `auto-approve` conversations, where there are no
+		// dialogs to pace the requests: an agent issuing dozens of distinct
+		// shell commands in a turn would otherwise open dozens of concurrent
+		// completions against the operator's provider quota. Requests over the
+		// cap are recorded as skipped rows rather than silently dropped, so the
+		// resulting hole in the sample is visible in the readout instead of
+		// being mistaken for a representative collection.
+		ADVERSARY_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(4),
 		IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(15),
 		MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(4),
 		// After a user Stop, the turn must reach a terminal state and free the

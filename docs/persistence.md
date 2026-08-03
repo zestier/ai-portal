@@ -115,6 +115,73 @@ CREATE TABLE schema_migrations (
 );
 ```
 
+## Adversary shadow decisions (Phase 0 measurement)
+
+Added in migration `067_permission_shadow_decisions.sql`. Records what a second
+model *would* have decided about a permission request that reached a human
+dialog, next to what the human actually clicked, so adversary-deny
+precision/recall can be measured before the idea is given any authority. The
+adversary has no authority in this phase: nothing in the request path reads
+these rows.
+
+Kept out of `permission_decisions` on purpose — a shadow row is not a decision
+(nothing acted on it), and the settings audit panel reads that table as "what
+happened".
+
+```sql
+CREATE TABLE permission_shadow_decisions (
+  id               TEXT PRIMARY KEY,
+  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  tool             TEXT NOT NULL,
+  permission_kind  TEXT NOT NULL,
+  scope_key        TEXT,
+  args_hash        TEXT,
+  adversary_model  TEXT NOT NULL,
+  experiment_key   TEXT NOT NULL,   -- hash of prompt + renderer + truncation + model
+  prompt_version   INTEGER NOT NULL DEFAULT 1,
+  facts_key        TEXT,            -- hash of the exact facts; also the memo key
+  prompt_sent      TEXT,            -- the exact prompt sent, for later adjudication
+  resolution_source TEXT,           -- 'prompt-grant'|'prompt-policy'|'auto-approve'
+  status           TEXT NOT NULL,   -- 'pending'|'verdict'|'error'
+  verdict          TEXT,            -- 'allow'|'deny'; NULL unless status='verdict'
+  deny_probability REAL,            -- self-reported, uncalibrated; unused in Phase 0
+  rationale        TEXT,
+  error            TEXT,
+  latency_ms       INTEGER,
+  memoized         INTEGER NOT NULL DEFAULT 0,
+  human_decision   TEXT,            -- NULL = no human label; excluded from scoring
+  human_decided_at INTEGER,
+  created_at       INTEGER NOT NULL
+);
+```
+
+A row is written by two independent writers that race: the fire-and-forget
+adversary call, and the human's answer. Each updates only its own columns.
+`human_decision` stays NULL when the prompt was cancelled or expired — a
+cancelled prompt is explicitly not a denial, so those rows are excluded from
+scoring rather than counted against the adversary.
+
+Several columns exist purely so the data can still answer questions later, and
+each would require throwing the collection away if added afterwards:
+
+- `experiment_key` — measurements taken under different prompts, truncation
+  budgets or models are different experiments and must not be pooled. Computed,
+  not hand-maintained, because a version constant someone must remember to bump
+  is a trap; `prompt_version` is kept as its human-readable label.
+- `prompt_sent` / `facts_key` — the exact prompt the model was sent, so a
+  disagreement can be adjudicated and a prompt change re-run against old cases,
+  plus a hash of the facts so repeat askings of one question can be clustered
+  (they are not independent samples). Storing the prompt rather than the raw
+  facts keeps the copy at rest bounded by the same truncation budget as the
+  network payload.
+- `deny_probability` — lets a threshold be swept into a precision/recall *curve*
+  instead of the one arbitrary operating point a binary verdict gives.
+- `resolution_source` — `auto-approve` rows are the population a veto product
+  would gate. They carry no human label by construction and are excluded from
+  scoring; they are collected because the requests cannot be recovered later.
+
+Read it with `pnpm run report:adversary-shadow`.
+
 ## Turn snapshots (edit-and-rerun)
 
 Added in migration `005_turn_snapshots.sql`. Backs edit/retry forks by storing

@@ -45,6 +45,8 @@ import {
 } from '$lib/permissions/prompt-template';
 import * as promptTemplatesRepo from '../db/repos/prompt-templates';
 import { getLease } from '../leases';
+import { createShadowRecorder, type ShadowRecorder } from '../permissions/adversary/shadow';
+import type { ShadowResolutionSource } from '../db/repos/shadow-decisions';
 import type { ToolPermissionRequest } from '../tools/types';
 
 interface PermissionRequestLike {
@@ -93,6 +95,24 @@ interface InteractiveAdapterOptions {
 	getApprovalMode(): ApprovalMode;
 	getSessionWorkspacePath(): string | null;
 	getPermissionBehavior(tool: string): 'normal' | 'always-prompt' | 'never-prompt';
+	/**
+	 * The conversation's agent model, if the provider knows it. Read only by
+	 * the Phase 0 adversary shadow, which refuses to run when the reviewer
+	 * model equals the agent model.
+	 */
+	getAgentModel?: (() => string | null) | undefined;
+	/**
+	 * The conversation's effective adversary (shadow reviewer) model, or null
+	 * to fall back to the server default. Captured at session open; see
+	 * `ProviderOpenOptions.adversaryModel` for why it needs no live setter.
+	 */
+	getAdversaryModel?: (() => string | null) | undefined;
+	/**
+	 * Records what a second model *would* have decided about each prompt-worthy
+	 * request, with no authority over the outcome. Injected so tests can supply
+	 * a deterministic recorder; production wires the real one below.
+	 */
+	shadowRecorder?: ShadowRecorder | undefined;
 	validateCustomToolArgs?:
 		| ((toolName: string, args: unknown) => { feedback: string } | null)
 		| undefined;
@@ -106,6 +126,13 @@ interface InteractiveAdapterOptions {
 }
 
 export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
+	// One recorder per session so its per-request memo cache is scoped to this
+	// conversation. Inert (returns null from every `observe`) unless an
+	// adversary model is configured for this conversation, the user, or the
+	// server — a configured model is what turns the shadow on.
+	const shadowRecorder =
+		opts.shadowRecorder ??
+		createShadowRecorder({ getModel: () => opts.getAdversaryModel?.() ?? null });
 	async function askInteractive<R extends InteractiveResponse>(
 		kind: InteractiveKind,
 		view: InteractiveRequestViewBody
@@ -298,6 +325,32 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			override && fsKind ? [override.path, ...(override.additionalPaths ?? [])] : [scopeKey];
 		const isMultiTarget = evalTargets.length > 1;
 
+		// Phase 0 adversary shadow. Strictly observational: it records what a
+		// second model would have decided, so adversary-deny precision/recall
+		// can be measured before the idea is ever given authority. It cannot
+		// allow, deny, or delay anything, and the call is fire-and-forget.
+		//
+		// Note what is NOT handed over: `summary` is excluded because
+		// `summarizePermissionRequest` falls back to `req.toolDescription` —
+		// model-authored narration wearing a portal-derived field's clothes.
+		const observeShadow = (resolutionSource: ShadowResolutionSource) =>
+			shadowRecorder.observe({
+				conversationId: opts.conversationId,
+				tool,
+				permissionKind,
+				scopeKey,
+				argsHash: hash,
+				fsTargets: evalTargets,
+				shellSegments,
+				shellUnsafeReason: shellAnalysis?.kind === 'unsafe' ? shellAnalysis.reason : null,
+				commitTarget: commitTarget ?? null,
+				workspaceRoots: opts.getWorkspaceRoots(),
+				workingDirectory: opts.workingDirectory,
+				args: req.args,
+				resolutionSource,
+				agentModel: opts.getAgentModel?.() ?? null
+			});
+
 		// Per-target decision, distinguishing an explicit grant outcome (which
 		// the conversation's `auto-approve` approval mode must NOT override)
 		// from a policy-level outcome (which it may). `prompt-grant` is also
@@ -311,6 +364,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 
 		// Mirrors the original single-path ordering exactly: explicit grant
 		// first (allow/deny/prompt), then `auto-approve`, then policy.
+		let approvalModeAllowed = false;
 		const evaluateTarget = (key: string | null): TargetEval => {
 			const target = fsKind ? key : null;
 			const url = permissionKind === 'url' ? key : null;
@@ -342,7 +396,24 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			if (g.outcome === 'prompt') {
 				return { kind: 'prompt-grant', feedback: g.feedback ?? undefined };
 			}
-			if (opts.getApprovalMode() === 'auto-approve') return { kind: 'allow' };
+			if (opts.getApprovalMode() === 'auto-approve') {
+				// Remembered so the shadow can label this row's population
+				// correctly: an allow that ONLY happened because the
+				// conversation is in `auto-approve` is exactly the population a
+				// future veto product would gate. A request the policy would
+				// have allowed anyway is not — it would have been auto-allowed
+				// in `ask` too — so the policy is consulted here purely to keep
+				// those out of the sample. It cannot change the outcome.
+				if (
+					decideByPolicy(opts.policy, 'permission', permissionKind, {
+						scopeKey: key,
+						workspaceRoots: opts.getWorkspaceRoots()
+					}) !== 'approved'
+				) {
+					approvalModeAllowed = true;
+				}
+				return { kind: 'allow' };
+			}
 			// `none` carries no grant decision, but the matcher may still have
 			// explained why an allow grant declined — e.g. a shell rule that
 			// defers to the fs grants naming the permission the path lacked.
@@ -455,6 +526,13 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 		const evaluation = getEval();
 		if (evaluation.kind === 'allow') {
+			// Requests that `auto-approve` waved through are the population an
+			// eventual veto product would actually gate, so they are shadowed
+			// too. They get NO human label (nobody was asked), which means the
+			// scorer excludes them — deliberately. They are collected because
+			// the request is unrecoverable after the fact and can be
+			// adjudicated later; scoring them was never the point.
+			if (approvalModeAllowed) observeShadow('auto-approve');
 			audit('auto-allow');
 			return { kind: 'approve-once' } as const;
 		}
@@ -508,6 +586,13 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			} as const;
 		}
 
+		// Phase 0 adversary shadow; see `observeShadow` above. Strictly
+		// observational — the prompt below is raised and awaited identically
+		// whether or not the adversary ever responds.
+		const shadow = observeShadow(
+			evaluation.kind === 'prompt-grant' ? 'prompt-grant' : 'prompt-policy'
+		);
+
 		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
 			'permission',
 			{
@@ -525,6 +610,10 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				...(imagePreview !== undefined ? { imagePreview } : {})
 			}
 		);
+		// Only a real answer produces a label. A cancelled or expired prompt
+		// throws out of `askInteractive` above, leaving `human_decision` NULL,
+		// which the scorer excludes rather than counting as a denial.
+		shadow?.recordHuman(response.decision);
 		if (response.decision === 'deny' || response.decision === 'deny-always') {
 			return rejectWithFeedback(response);
 		}

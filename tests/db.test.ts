@@ -125,6 +125,49 @@ describe('db migrations + repos', () => {
 		expect(convs.get(c.id, u.id)?.approvalMode).toBe('ask');
 	});
 
+	it('round-trips the per-conversation adversary model, including clearing it', () => {
+		const u = users.ensureLocalUser();
+		// Unset is the OFF state and must stay distinguishable from a chosen
+		// model: the runtime reads NULL as "fall back", so a blank that
+		// round-tripped as '' would be a model id nobody configured.
+		const bare = convs.create(u.id, { title: 't', workdir: '/tmp', model: null });
+		expect(convs.get(bare.id, u.id)?.adversaryModel).toBeNull();
+
+		const c = convs.create(u.id, {
+			title: 't',
+			workdir: '/tmp',
+			model: null,
+			adversaryModel: 'reviewer-x'
+		});
+		expect(convs.get(c.id, u.id)?.adversaryModel).toBe('reviewer-x');
+		expect(convs.updateSessionSettings(c.id, u.id, { adversaryModel: 'reviewer-y' })).toBe(true);
+		expect(convs.get(c.id, u.id)?.adversaryModel).toBe('reviewer-y');
+		// Explicitly clearing must land as NULL so the conversation falls back
+		// to the server default rather than keeping a stale reviewer.
+		expect(convs.updateSessionSettings(c.id, u.id, { adversaryModel: null })).toBe(true);
+		expect(convs.get(c.id, u.id)?.adversaryModel).toBeNull();
+	});
+
+	it('seeds the adversary model from the user default without re-inheriting it later', () => {
+		// Seed-only, exactly like the harvester defaults. The load-bearing half
+		// is the second assertion: a user WITH a default must still be able to
+		// switch the reviewer off for one conversation, because it ships tool
+		// arguments to a third-party endpoint. A live user-default fallback
+		// would silently re-enable it and make per-conversation opt-out
+		// impossible.
+		const u = users.ensureLocalUser();
+		const seeded = convs.create(u.id, {
+			title: 't',
+			workdir: '/tmp',
+			model: null,
+			adversaryModel: 'user-default-reviewer'
+		});
+		expect(convs.get(seeded.id, u.id)?.adversaryModel).toBe('user-default-reviewer');
+
+		convs.updateSessionSettings(seeded.id, u.id, { adversaryModel: null });
+		expect(convs.get(seeded.id, u.id)?.adversaryModel).toBeNull();
+	});
+
 	it('coerces a legacy best-effort mode value to autopilot on read', () => {
 		const u = users.ensureLocalUser();
 		const c = convs.create(u.id, { title: 't', workdir: '/tmp', model: null });
@@ -599,6 +642,7 @@ describe('db migrations + repos', () => {
 			accent: 'violet',
 			defaultMemoryExtractorModel: 'harvester-x',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools',
+			defaultAdversaryModel: 'reviewer-x',
 			defaultContextTier: 'long_context'
 		});
 		expect(settings.get(u.id)).toEqual({
@@ -612,9 +656,10 @@ describe('db migrations + repos', () => {
 			accent: 'violet',
 			defaultMemoryExtractorModel: 'harvester-x',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools',
+			defaultAdversaryModel: 'reviewer-x',
 			defaultContextTier: 'long_context'
 		});
-		// '(use server default)' round-trips as NULL for both extractor defaults.
+		// '(use server default)' round-trips as NULL for every optional default.
 		settings.save(u.id, {
 			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
@@ -626,10 +671,12 @@ describe('db migrations + repos', () => {
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
+			defaultAdversaryModel: null,
 			defaultContextTier: null
 		});
 		expect(settings.get(u.id)?.defaultMemoryExtractorModel).toBeNull();
 		expect(settings.get(u.id)?.defaultMemoryExtractorBackend).toBeNull();
+		expect(settings.get(u.id)?.defaultAdversaryModel).toBeNull();
 		expect(settings.get(u.id)?.defaultContextTier).toBeNull();
 	});
 
@@ -646,6 +693,7 @@ describe('db migrations + repos', () => {
 			accent: 'default',
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
+			defaultAdversaryModel: null,
 			defaultContextTier: null
 		});
 		// Simulate a row that escaped migration 008.

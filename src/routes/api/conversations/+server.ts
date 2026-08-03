@@ -48,6 +48,7 @@ const CreateBody = z
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		memoryExtractorModel: z.string().min(1).optional(),
 		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
+		adversaryModel: z.string().min(1).optional(),
 		/**
 		 * Optional chat prompt-template to seed conversation settings from. When it
 		 * resolves to one of the caller's own chat templates, its
@@ -164,6 +165,7 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 				body.memoryExtractorModel ?? userSettings.defaultMemoryExtractorModel ?? null,
 			memoryExtractorBackend:
 				body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null,
+			adversaryModel: body.adversaryModel ?? userSettings.defaultAdversaryModel ?? null,
 			disabledToolGroups
 		});
 	} catch (cause) {

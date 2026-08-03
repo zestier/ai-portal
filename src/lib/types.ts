@@ -56,6 +56,23 @@ export interface Conversation {
 	 */
 	memoryExtractorBackend: MemoryExtractorBackend | null;
 	/**
+	 * Optional per-conversation override for the Phase 0 adversary shadow's
+	 * reviewer model. NULL means "use the server default"
+	 * (env `ADVERSARY_SHADOW_MODEL`); unset there too means the shadow is off.
+	 *
+	 * Seeded from the user's default at creation and NOT re-read afterwards,
+	 * exactly like `memoryExtractorModel`: changing a user default never
+	 * retroactively alters existing conversations, and clearing this column is
+	 * a real "stop reviewing this conversation" rather than a silent
+	 * re-inherit. That matters here — the reviewer sends tool arguments to a
+	 * third-party endpoint, so per-conversation opt-out has to be reachable.
+	 *
+	 * Per-conversation rather than global because the shadow refuses to run when
+	 * this equals the conversation's agent model — a single global value is
+	 * therefore guaranteed to silently disable itself for some conversations.
+	 */
+	adversaryModel: string | null;
+	/**
 	 * Explicit opt-in for user-scoped global memory tools in this conversation.
 	 * Session memory remains per-conversation even when this is false.
 	 */
@@ -717,6 +734,15 @@ export interface UserSettings {
 	 */
 	defaultMemoryExtractorModel: string | null;
 	defaultMemoryExtractorBackend: MemoryExtractorBackend | null;
+	/**
+	 * Seed-only default for the Phase 0 adversary shadow's reviewer model,
+	 * copied onto each newly created conversation (like the memory extractor
+	 * defaults). NULL = "use the server default" (env `ADVERSARY_SHADOW_MODEL`);
+	 * unset everywhere means the shadow never runs. Setting a model is what
+	 * enables it — there is deliberately no separate on/off flag to disagree
+	 * with. Changing this never retroactively alters existing conversations.
+	 */
+	defaultAdversaryModel: string | null;
 	/**
 	 * Per-user context window tier, consumed live when a Copilot session opens.
 	 * NULL = "use the server default" (env `COPILOT_CONTEXT_TIER`). Unlike the

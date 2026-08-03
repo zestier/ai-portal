@@ -32,6 +32,12 @@ const PatchBody = z
 			.nullable()
 			.optional(),
 		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).nullable().optional(),
+		adversaryModel: z
+			.string()
+			.trim()
+			.transform((value) => (value ? value : null))
+			.nullable()
+			.optional(),
 		globalMemoryEnabled: z.boolean().optional(),
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		disabledToolGroups: z
@@ -45,6 +51,7 @@ const PatchBody = z
 			b.memoryMode !== undefined ||
 			b.memoryExtractorModel !== undefined ||
 			b.memoryExtractorBackend !== undefined ||
+			b.adversaryModel !== undefined ||
 			b.globalMemoryEnabled !== undefined ||
 			b.approvalMode !== undefined ||
 			b.disabledToolGroups !== undefined,
@@ -65,6 +72,12 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const extractorBackendChanged =
 		body.memoryExtractorBackend !== undefined &&
 		body.memoryExtractorBackend !== conv.memoryExtractorBackend;
+	// Captured at session open (see `ProviderOpenOptions.adversaryModel`), so a
+	// change only takes effect once the pooled session is released — hence it
+	// joins the same guard/release set as the harvester settings rather than
+	// silently appearing to apply.
+	const adversaryModelChanged =
+		body.adversaryModel !== undefined && body.adversaryModel !== conv.adversaryModel;
 	const globalMemoryChanged =
 		body.globalMemoryEnabled !== undefined && body.globalMemoryEnabled !== conv.globalMemoryEnabled;
 	const toolGroupsChanged =
@@ -76,13 +89,14 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 			memoryChanged ||
 			extractorModelChanged ||
 			extractorBackendChanged ||
+			adversaryModelChanged ||
 			globalMemoryChanged ||
 			toolGroupsChanged) &&
 		turn?.status === 'running'
 	) {
 		throw error(
 			409,
-			'Cannot change model, memory mode, harvester model, harvester backend, global memory, or tool groups while a turn is running.'
+			'Cannot change model, memory mode, harvester model, harvester backend, adversary model, global memory, or tool groups while a turn is running.'
 		);
 	}
 
@@ -96,6 +110,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.memoryExtractorBackend !== undefined
 			? { memoryExtractorBackend: body.memoryExtractorBackend }
 			: {}),
+		...(body.adversaryModel !== undefined ? { adversaryModel: body.adversaryModel } : {}),
 		...(body.globalMemoryEnabled !== undefined
 			? { globalMemoryEnabled: body.globalMemoryEnabled }
 			: {}),
@@ -110,6 +125,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		memoryChanged ||
 		extractorModelChanged ||
 		extractorBackendChanged ||
+		adversaryModelChanged ||
 		globalMemoryChanged ||
 		toolGroupsChanged
 	) {

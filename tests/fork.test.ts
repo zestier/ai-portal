@@ -146,6 +146,30 @@ describe('fork.forkAtMessage', () => {
 		expect(approveFork.conversation.approvalMode).toBe('ask');
 	});
 
+	it('carries the adversary review model into a fork', async () => {
+		// The shadow reviewer configures a measurement and has no authority, so
+		// unlike `approvalMode` there is no safety asymmetry — a fork should
+		// continue the same measurement rather than silently falling back to the
+		// user/server default.
+		const { users, convs, messages, fork } = await freshImports();
+		const u = users.ensureLocalUser();
+		const source = convs.create(u.id, {
+			title: 'adversary src',
+			workdir: workdirFor('fork-adversary'),
+			model: 'gpt-4',
+			adversaryModel: 'reviewer-x'
+		});
+		const userMsg = messages.append(source.id, { role: 'user', content: 'go' });
+		messages.append(source.id, { role: 'assistant', content: 'ok' });
+		const forked = await fork.forkAtMessage({
+			userId: u.id,
+			sourceConversationId: source.id,
+			messageId: userMsg.id,
+			newContent: 'go (edited)'
+		});
+		expect(forked.conversation.adversaryModel).toBe('reviewer-x');
+	});
+
 	it('creates an isolated worktree at the historical snapshot state', async () => {
 		const { users, convs, messages, snapshots, fork } = await freshImports();
 		const u = users.ensureLocalUser();
