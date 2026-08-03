@@ -68,6 +68,13 @@ export interface ProviderOpenOptions {
 	 */
 	adversaryModel?: string | null;
 	/**
+	 * The backend that should serve the adversary reviewer. Null/undefined means
+	 * "fall back to `ADVERSARY_SHADOW_BACKEND`, then to this conversation's own
+	 * backend" — the fallback that lets a single-backend deployment run the
+	 * shadow at all.
+	 */
+	adversaryBackend?: string | null;
+	/**
 	 * Portal tool groups disabled for this conversation. Providers drop the
 	 * matching tool group from the assembled portal tools. Empty/undefined =
 	 * all groups enabled.
@@ -121,6 +128,35 @@ export interface ProviderSession {
 	resetSessionApprovals?(): Promise<void>;
 }
 
+/**
+ * A one-shot completion request served outside any conversation session.
+ *
+ * Intentionally minimal — no tools, no history, no streaming. It carries only
+ * what a stateless reviewer-style call needs, so every backend can satisfy it
+ * without exposing session machinery.
+ */
+export interface ProviderCompletionRequest {
+	/** Model id in the TARGET provider's namespace, not the chat model's. */
+	model: string;
+	system: string;
+	user: string;
+	/**
+	 * Optional JSON-schema hint. Backends that can enforce structured output
+	 * (OpenAI-compatible `response_format`) should; those that cannot must
+	 * ignore it rather than fail, since callers parse defensively anyway.
+	 */
+	responseSchema?: { name: string; schema: unknown } | undefined;
+	timeoutMs: number;
+	/**
+	 * Identity for backends whose auth and model entitlements are per-user
+	 * (Copilot). Backends configured with a single operator-level credential
+	 * ignore both.
+	 */
+	userId?: string | undefined;
+	providerAuthToken?: string | undefined;
+	signal?: AbortSignal | undefined;
+}
+
 export interface ModelBackendProvider {
 	id: BackendProviderId;
 	displayName: string;
@@ -148,6 +184,24 @@ export interface ModelBackendProvider {
 	 * cloud backends with no local load/unload.
 	 */
 	primeModel?(model: string, opts: { signal: AbortSignal }): Promise<void>;
+	/**
+	 * One-shot, tool-less completion outside any conversation session. Returns
+	 * the model's raw text; callers own parsing.
+	 *
+	 * Same shape as `primeModel` — optional, out-of-band, per-provider — and
+	 * present exactly when `capabilities.sideCompletion` is true. It exists so
+	 * background reviewers can run on the conversation's own backend instead of
+	 * requiring a separate endpoint.
+	 *
+	 * Deliberately tool-less: a reviewer with tools would recurse the very
+	 * permission problem it is reviewing (who approves the reviewer's tool
+	 * calls?). Implementations must not expose portal tools, and must not write
+	 * conversation state.
+	 *
+	 * Rejects on transport failure, timeout, or a non-OK response. Callers are
+	 * expected to treat a rejection as "no answer" rather than a verdict.
+	 */
+	complete?(req: ProviderCompletionRequest): Promise<string>;
 	/**
 	 * Providers with durable resume but no request-time assistant-history import
 	 * can ask the portal to wrap prior messages into the next prompt until a

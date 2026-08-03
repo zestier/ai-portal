@@ -6438,6 +6438,7 @@ describe('memory extractor backend defaults + override resolution', () => {
 			defaultMemoryExtractorModel: 'seeded-harvester',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools',
 			defaultAdversaryModel: null,
+			defaultAdversaryBackend: null,
 			defaultContextTier: null
 		});
 

@@ -137,7 +137,8 @@ CREATE TABLE permission_shadow_decisions (
   scope_key        TEXT,
   args_hash        TEXT,
   adversary_model  TEXT NOT NULL,
-  experiment_key   TEXT NOT NULL,   -- hash of prompt + renderer + truncation + model
+  adversary_backend TEXT,           -- NULL on rows predating migration 069
+  experiment_key   TEXT NOT NULL,   -- hash of prompt + renderer + truncation + backend + model
   prompt_version   INTEGER NOT NULL DEFAULT 1,
   facts_key        TEXT,            -- hash of the exact facts; also the memo key
   prompt_sent      TEXT,            -- the exact prompt sent, for later adjudication
@@ -165,9 +166,16 @@ Several columns exist purely so the data can still answer questions later, and
 each would require throwing the collection away if added afterwards:
 
 - `experiment_key` — measurements taken under different prompts, truncation
-  budgets or models are different experiments and must not be pooled. Computed,
-  not hand-maintained, because a version constant someone must remember to bump
-  is a trap; `prompt_version` is kept as its human-readable label.
+  budgets, backends or models are different experiments and must not be pooled.
+  Computed, not hand-maintained, because a version constant someone must
+  remember to bump is a trap; `prompt_version` is kept as its human-readable
+  label.
+- `adversary_backend` — the same model *name* served by two backends is not the
+  same reviewer (weights, system-prompt handling and structured-output support
+  all differ), so it is recorded and folded into `experiment_key`. Added in
+  migration `069_adversary_backend.sql`, when the reviewer stopped being pinned
+  to `OPENAI_COMPATIBLE_BASE_URL`; NULL on older rows, which reads correctly as
+  "collected when that was the only possibility".
 - `prompt_sent` / `facts_key` — the exact prompt the model was sent, so a
   disagreement can be adjudicated and a prompt change re-run against old cases,
   plus a hash of the facts so repeat askings of one question can be clustered

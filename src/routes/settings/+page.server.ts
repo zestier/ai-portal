@@ -122,6 +122,7 @@ const SaveSchema = z.object({
 	defaultMemoryExtractorModel: z.string().optional(),
 	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
 	defaultAdversaryModel: z.string().optional(),
+	defaultAdversaryBackend: z.string().optional(),
 	defaultContextTier: z.enum(CONTEXT_TIER_IDS).optional()
 });
 
@@ -210,6 +211,7 @@ export const actions: Actions = {
 			defaultMemoryExtractorBackend:
 				(data.get('defaultMemoryExtractorBackend') as string) || undefined,
 			defaultAdversaryModel: (data.get('defaultAdversaryModel') as string) || undefined,
+			defaultAdversaryBackend: (data.get('defaultAdversaryBackend') as string) || undefined,
 			defaultContextTier: (data.get('defaultContextTier') as string) || undefined
 		});
 		if (!parsed.success) {
@@ -257,6 +259,7 @@ export const actions: Actions = {
 			defaultMemoryExtractorModel: parsed.data.defaultMemoryExtractorModel ?? null,
 			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null,
 			defaultAdversaryModel: parsed.data.defaultAdversaryModel ?? null,
+			defaultAdversaryBackend: parsed.data.defaultAdversaryBackend ?? null,
 			defaultContextTier: normalizeContextTier(parsed.data.defaultContextTier ?? null)
 		};
 		settings.save(locals.userId, next);

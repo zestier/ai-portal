@@ -9,7 +9,15 @@
 // providing oversight — it is providing the feeling of oversight, which is
 // worse than none.
 //
-// Writes nothing. Hits the provider directly.
+// Writes nothing. Hits an OpenAI-compatible endpoint directly.
+//
+// NOTE: the probe only covers OpenAI-compatible backends. The shadow itself can
+// now run its reviewer on any backend that supports out-of-band completions
+// (including Copilot — see `ModelBackendProvider.complete`), but that dispatch
+// goes through the app's provider layer, which plain `node` cannot load. The
+// prompt and the verdict parser this probe exercises are backend-independent,
+// so a model's susceptibility to injection is still measurable here as long as
+// the same weights are reachable over an OpenAI-compatible endpoint.
 //
 // Usage:
 //   ADVERSARY_SHADOW_MODEL=... OPENAI_COMPATIBLE_BASE_URL=... pnpm run probe:adversary

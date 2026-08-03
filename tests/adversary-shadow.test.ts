@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
 import type {
 	ApprovalMode,
@@ -14,6 +14,7 @@ import type { AdversaryOutcome } from '../src/lib/server/permissions/adversary/c
 
 const ADVERSARY_MODEL = 'reviewer-model';
 const AGENT_MODEL = 'agent-model';
+const AGENT_BACKEND = 'copilot' as const;
 
 let convCounter = 0;
 
@@ -28,6 +29,12 @@ interface HarnessOptions {
 	sameModel?: boolean;
 	/** Per-conversation override, which should beat the server default. */
 	conversationModel?: string;
+	/** Per-conversation reviewer backend override. */
+	conversationBackend?: string;
+	/** The backend serving the conversation's own agent. */
+	agentBackend?: 'copilot' | 'openai-compatible' | 'lm-studio' | null;
+	/** Route through the real provider registry instead of the test seam. */
+	realDispatch?: boolean;
 	/** Point the adapter at a conversation id that does not exist in the DB. */
 	brokenConversationId?: boolean;
 }
@@ -39,7 +46,9 @@ async function makeHarness(options: HarnessOptions = {}) {
 	} else {
 		process.env.ADVERSARY_SHADOW_MODEL = options.sameModel ? AGENT_MODEL : ADVERSARY_MODEL;
 	}
-	process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://adversary.invalid/v1';
+	// Deliberately NOT setting OPENAI_COMPATIBLE_BASE_URL: the shadow must run
+	// on the conversation's own backend, which is the whole point of decoupling
+	// the reviewer's model from the endpoint that serves it.
 	await setupLocalEnv(`portal-shadow-test-`);
 
 	const interactive = await import('../src/lib/server/runtime/interactive-requests');
@@ -67,12 +76,23 @@ async function makeHarness(options: HarnessOptions = {}) {
 
 	const shadowRecorder = createShadowRecorder({
 		getModel: () => options.conversationModel ?? null,
-		complete: async (system, user) => {
-			completeCalls++;
-			return options.complete
-				? await options.complete(system, user)
-				: '{"verdict":"deny","denyProbability":0.8,"rationale":"Reaches outside the workspace."}';
-		},
+		getBackend: () => options.conversationBackend ?? null,
+		// Matches how `createInteractiveCallbacks` wires it in production; the
+		// backend needs it to resolve that user's credential.
+		userId: user.id,
+		// `realDispatch` exercises the actual provider lookup instead of the test
+		// seam. It is the only way to catch a regression in that path, which is
+		// resolved through a dynamic import to break a module cycle.
+		...(options.realDispatch
+			? {}
+			: {
+					complete: async (system: string, user: string) => {
+						completeCalls++;
+						return options.complete
+							? await options.complete(system, user)
+							: '{"verdict":"deny","denyProbability":0.8,"rationale":"Reaches outside the workspace."}';
+					}
+				}),
 		onSettled: (outcome) => {
 			settled.push(outcome);
 			notifySettled?.();
@@ -93,6 +113,7 @@ async function makeHarness(options: HarnessOptions = {}) {
 		getSessionWorkspacePath: () => null,
 		getPermissionBehavior: () => 'normal',
 		getAgentModel: () => AGENT_MODEL,
+		getAgentBackend: () => options.agentBackend ?? AGENT_BACKEND,
 		shadowRecorder
 	});
 
@@ -157,6 +178,7 @@ async function driveAndResolve(
 describe('adversary shadow mode', () => {
 	beforeEach(() => {
 		delete process.env.ADVERSARY_SHADOW_MODEL;
+		delete process.env.ADVERSARY_SHADOW_BACKEND;
 		delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 		delete process.env.ADVERSARY_SHADOW_MAX_IN_FLIGHT;
 	});
@@ -408,6 +430,123 @@ describe('adversary shadow mode', () => {
 		expect(harness.completeCalls()).toBe(0);
 	});
 
+	it('runs on the conversation backend with no second endpoint configured', async () => {
+		// The regression this whole decoupling exists to prevent. The shadow used
+		// to hard-require OPENAI_COMPATIBLE_BASE_URL, which confined every
+		// measurement to deployments that had stood up a second endpoint. The
+		// harness deliberately leaves it unset.
+		expect(process.env.OPENAI_COMPATIBLE_BASE_URL).toBeUndefined();
+		const harness = await makeHarness();
+		await driveAndResolve(harness, 'allow-once');
+		await harness.waitForSettled();
+		const rows = harness.rows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.adversaryBackend).toBe(AGENT_BACKEND);
+	});
+
+	it('still runs when the model name matches but the backend differs', async () => {
+		// The old guard compared bare model ids across two namespaces, so a
+		// coincidental collision (a `gpt-5` on each side) silently disabled the
+		// shadow even though the weights were unrelated.
+		const harness = await makeHarness({
+			sameModel: true,
+			conversationBackend: 'openai-compatible'
+		});
+		await driveAndResolve(harness, 'allow-once');
+		await harness.waitForSettled();
+		const rows = harness.rows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.adversaryBackend).toBe('openai-compatible');
+	});
+
+	it('records the backend so rows from two backends cannot pool', async () => {
+		// The same model NAME served by two backends is not the same experiment:
+		// weights, system-prompt handling and structured-output support all
+		// differ, so `experiment_key` has to separate them.
+		const a = await makeHarness({ conversationBackend: 'copilot' });
+		await driveAndResolve(a, 'allow-once');
+		await a.waitForSettled();
+		const b = await makeHarness({ conversationBackend: 'openai-compatible' });
+		await driveAndResolve(b, 'allow-once');
+		await b.waitForSettled();
+		expect(a.rows()[0]?.experimentKey).not.toBe(b.rows()[0]?.experimentKey);
+	});
+
+	it('dispatches through the real provider registry when no seam is injected', async () => {
+		// Guards the dynamic import in `completeVia`. A static import there
+		// creates the cycle providers/index → copilot-provider →
+		// interactive-adapter → shadow, which leaves the registry
+		// half-initialized and makes `getProvider` return undefined — a failure
+		// the injected test seam would hide completely.
+		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://reviewer.invalid/v1';
+		const fetchMock = vi.fn(async () =>
+			Response.json({
+				choices: [{ message: { content: '{"verdict":"deny","rationale":"Reaches outside."}' } }]
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		try {
+			const harness = await makeHarness({
+				realDispatch: true,
+				conversationBackend: 'openai-compatible'
+			});
+			await driveAndResolve(harness, 'allow-once');
+			await harness.waitForSettled();
+			const rows = harness.rows();
+			expect(rows).toHaveLength(1);
+			expect(rows[0]?.status).toBe('verdict');
+			expect(rows[0]?.verdict).toBe('deny');
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('forwards the per-user auth token to the reviewer backend', async () => {
+		// `copilot-provider.getClient` caches one CopilotClient per user, first
+		// caller wins, and applies `gitHubToken` only at construction. A
+		// token-less side call that ran before the user's first Copilot
+		// conversation would cache a client built from the machine's logged-in
+		// identity, and every later REAL turn for that user would silently
+		// inherit it — a no-authority experiment changing who real work runs as.
+		// Reachable in normal use: an openai-compatible conversation whose
+		// reviewer backend is copilot, which the settings picker offers.
+		const tokens = await import('../src/lib/server/db/repos/tokens');
+		const { getProvider } = await import('../src/lib/server/providers');
+		// Token storage is encrypted at rest; `setupLocalEnv` does not provide a
+		// key, so supply one before the harness resets cached config.
+		process.env.ENCRYPTION_KEY = Buffer.alloc(32, 3).toString('base64');
+		const harness = await makeHarness({
+			realDispatch: true,
+			conversationBackend: 'copilot'
+		});
+		tokens.setGithubToken(harness.user.id, 'gho_side_call_token');
+
+		const copilot = getProvider('copilot');
+		const original = copilot.complete!;
+		let seenToken: string | undefined | null = null;
+		copilot.complete = async (req) => {
+			seenToken = req.providerAuthToken;
+			return '{"verdict":"allow","rationale":"ok"}';
+		};
+		try {
+			await driveAndResolve(harness, 'allow-once');
+			await harness.waitForSettled();
+		} finally {
+			copilot.complete = original;
+		}
+		expect(seenToken).toBe('gho_side_call_token');
+	});
+
+	it('refuses an explicitly configured backend that is not a known provider', async () => {
+		// `normalizeBackendProvider` silently coerces an unknown id to the
+		// default, which would mislabel every row with a backend nobody chose.
+		const harness = await makeHarness({ conversationBackend: 'not-a-provider' });
+		expect(await driveAndResolve(harness, 'allow-once')).toEqual({ kind: 'approve-once' });
+		expect(harness.rows()).toHaveLength(0);
+		expect(harness.completeCalls()).toBe(0);
+	});
+
 	it('survives a failing shadow insert without touching the decision path', async () => {
 		// Foreign key violation: the conversation row does not exist.
 		const harness = await makeHarness({ brokenConversationId: true });
@@ -504,6 +643,7 @@ describe('adversary shadow mode', () => {
 				scopeKey: `cmd-${id}`,
 				argsHash: null,
 				adversaryModel: ADVERSARY_MODEL,
+				adversaryBackend: 'openai-compatible',
 				experimentKey: 'exp-1',
 				promptVersion: 1,
 				factsKey: `facts-${id}`,

@@ -81,6 +81,11 @@
 	let selectedExtractorBackend = $state<MemoryExtractorBackend | ''>('');
 	let selectedExtractorModelChoice = $state('');
 	let customExtractorModel = $state('');
+	// '' means "same backend as the conversation itself" — the default, and the
+	// reason a single-backend deployment can run the reviewer at all.
+	let selectedAdversaryBackend = $state('');
+	let selectedAdversaryModelChoice = $state('');
+	let customAdversaryModel = $state('');
 	// svelte-ignore state_referenced_locally
 	let selectedTheme = $state<ThemeMode>(settings.theme);
 	// svelte-ignore state_referenced_locally
@@ -149,6 +154,43 @@
 		return selectedExtractorModelChoice === CUSTOM_MODEL_OPTION
 			? customExtractorModel
 			: selectedExtractorModelChoice;
+	}
+
+	// Only backends that can serve an out-of-band completion can host the
+	// reviewer. Offering one that cannot would produce a settings page that
+	// saves cleanly and then silently records nothing but error rows.
+	const adversaryBackendOptions = $derived(
+		providers.filter((provider) => provider.capabilities.sideCompletion)
+	);
+	// When the backend is left as "same as the conversation", the model has to be
+	// typed: which backend's namespace it belongs to is only known per
+	// conversation, so there is no single list to pick from.
+	const adversaryProviderStatus = $derived(
+		selectedAdversaryBackend
+			? (providers.find((provider) => provider.id === selectedAdversaryBackend) ?? null)
+			: null
+	);
+
+	$effect(() => {
+		selectedAdversaryBackend = settings.defaultAdversaryBackend ?? '';
+	});
+
+	$effect(() => {
+		const saved = settings.defaultAdversaryModel ?? '';
+		const modelIds = new Set((adversaryProviderStatus?.models ?? []).map((model) => model.id));
+		if (saved && !modelIds.has(saved)) {
+			selectedAdversaryModelChoice = CUSTOM_MODEL_OPTION;
+			customAdversaryModel = saved;
+		} else {
+			selectedAdversaryModelChoice = saved;
+			customAdversaryModel = '';
+		}
+	});
+
+	function selectedAdversaryModelFormValue(): string {
+		return selectedAdversaryModelChoice === CUSTOM_MODEL_OPTION
+			? customAdversaryModel
+			: selectedAdversaryModelChoice;
 	}
 
 	function modelAvailability(provider: ProviderStatus): string {
@@ -406,23 +448,62 @@
 			{/if}
 		</label>
 		<label>
+			Adversary review backend (experimental)
+			<select name="defaultAdversaryBackend" bind:value={selectedAdversaryBackend}>
+				<option value="">Same backend as the conversation</option>
+				{#each adversaryBackendOptions as provider (provider.id)}
+					<option value={provider.id}>{provider.displayName}</option>
+				{/each}
+			</select>
+			<span class="muted small">
+				Which backend serves the reviewer. Leaving this on the conversation's own backend is usually
+				right: the reviewer needs to be a different <em>model</em> from the agent, which is unrelated
+				to which endpoint serves it — and your chat backend already receives every tool call and its arguments,
+				so reviewing them there adds no new destination.
+			</span>
+		</label>
+		<label>
 			Adversary review model (experimental)
-			<input
-				name="defaultAdversaryModel"
-				value={settings.defaultAdversaryModel ?? ''}
-				placeholder="(off — leave blank)"
-			/>
+			{#if adversaryProviderStatus && adversaryProviderStatus.models.length > 0}
+				<input
+					type="hidden"
+					name="defaultAdversaryModel"
+					value={selectedAdversaryModelFormValue()}
+				/>
+				<select bind:value={selectedAdversaryModelChoice}>
+					<option value="">(off — no reviewer)</option>
+					{#each adversaryProviderStatus.models as m (m.id)}
+						<option value={m.id}>
+							{m.name} — {m.id} ({formatContextWindow(m.maxContextWindowTokens)})
+						</option>
+					{/each}
+					<option value={CUSTOM_MODEL_OPTION}>Enter a custom model id…</option>
+				</select>
+				{#if selectedAdversaryModelChoice === CUSTOM_MODEL_OPTION}
+					<input
+						bind:value={customAdversaryModel}
+						placeholder={adversaryProviderStatus.ui.defaultModelPlaceholder}
+						aria-label="Custom adversary review model id"
+					/>
+				{/if}
+			{:else}
+				<input
+					name="defaultAdversaryModel"
+					value={settings.defaultAdversaryModel ?? ''}
+					placeholder="(off — leave blank)"
+				/>
+			{/if}
 			<span class="muted small">
 				Shadow-mode only: a second model reviews each permission request and records what it
 				<em>would</em> have decided, next to what you actually clicked. It has no authority — it
 				cannot allow, deny, or delay anything. Setting a model is what turns it on.
 				<br />
-				Runs against <code>OPENAI_COMPATIBLE_BASE_URL</code> (not your chat provider), so enter an
-				exact model id for that backend. It is skipped for any conversation whose own model matches
-				— a reviewer sharing the agent's weights shares its blind spots.
+				Pick a model in the review backend's namespace, and a different one from your agent's — a reviewer
+				sharing the agent's weights shares its blind spots, so the shadow skips any conversation running
+				the same model on the same backend.
 				<br />
 				Seeds newly created conversations only; existing ones keep their current setting. Sends tool arguments,
-				which can include file contents, to that endpoint.
+				which can include file contents, to the review backend.
 			</span>
 		</label>
 		<label>

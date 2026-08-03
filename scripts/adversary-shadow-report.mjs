@@ -83,7 +83,7 @@ if (!tableExists) {
 
 const rows = db
 	.prepare(
-		`SELECT tool, permission_kind, adversary_model, experiment_key, prompt_version,
+		`SELECT tool, permission_kind, adversary_model, adversary_backend, experiment_key, prompt_version,
 		        resolution_source, status, verdict, deny_probability, rationale, error,
 		        human_decision, human_decided_at, latency_ms, memoized, created_at
 		   FROM permission_shadow_decisions
@@ -109,7 +109,16 @@ function groupBy(items, keyOf) {
 	return out;
 }
 
-const strata = groupBy(rows, (r) => `${r.adversary_model} [exp ${r.experiment_key ?? '?'}]`);
+// Stratified by backend as well as model: the same model NAME served by two
+// backends is not the same reviewer, so pooling them would average two
+// different experiments. Rows written before the backend became explicit have
+// NULL, which reads correctly as "openai-compatible, when that was the only
+// possibility".
+const strata = groupBy(
+	rows,
+	(r) =>
+		`${r.adversary_backend ?? 'openai-compatible (pre-069)'}/${r.adversary_model} [exp ${r.experiment_key ?? '?'}]`
+);
 
 /**
  * How often the model actually supplied a deny probability. A collection of

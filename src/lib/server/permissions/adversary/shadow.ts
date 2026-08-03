@@ -29,6 +29,8 @@ import * as shadowRepo from '../../db/repos/shadow-decisions';
 import type { ShadowResolutionSource } from '../../db/repos/shadow-decisions';
 import { BoundedTtlCache } from '../../copilot/bounded-ttl-cache';
 import { withTimeout } from '../../runtime/with-timeout';
+import type { ProviderCompletionRequest } from '../../providers/provider';
+import { normalizeBackendProvider, type BackendProviderId } from '$lib/types';
 import { reviewPermissionRequest, adversaryExperimentKey, type AdversaryOutcome } from './client';
 import {
 	buildAdversaryFacts,
@@ -56,11 +58,13 @@ export interface ShadowObserveInput extends BuildAdversaryFactsInput {
 	/** Why this request needed a human. Recorded to characterize the sample. */
 	resolutionSource?: ShadowResolutionSource | undefined;
 	/**
-	 * The conversation's agent model. Used only to refuse running the adversary
-	 * on the same model as the agent; `null` means "unknown", which we treat as
-	 * safe to proceed since the shadow has no authority either way.
+	 * The conversation's agent model, and the backend serving it. Used to refuse
+	 * running the adversary on the same model on the same backend, and as the
+	 * default backend for the reviewer itself. `null` means "unknown", which we
+	 * treat as safe to proceed since the shadow has no authority either way.
 	 */
 	agentModel?: string | null | undefined;
+	agentBackend?: BackendProviderId | null | undefined;
 }
 
 /** Returned per observed request so the caller can attach the human's answer. */
@@ -78,12 +82,12 @@ export interface ShadowRecorder {
 }
 
 interface ResolvedShadowConfig {
-	baseUrl: string;
-	apiKey: string | undefined;
+	backend: BackendProviderId;
 	model: string;
 	timeoutMs: number;
 	maxArgChars: number;
 	maxInFlight: number;
+	complete: (req: ProviderCompletionRequest) => Promise<string>;
 }
 
 export interface CreateShadowRecorderOptions {
@@ -97,7 +101,16 @@ export interface CreateShadowRecorderOptions {
 	 * next request, matching how the adapter reads approval mode.
 	 */
 	getModel?: (() => string | null | undefined) | undefined;
-	/** Test seam: replaces the HTTP call with a canned completion. */
+	/**
+	 * The backend that should serve the reviewer. Null/undefined falls back to
+	 * `ADVERSARY_SHADOW_BACKEND` and then to the conversation's OWN backend —
+	 * the fallback that lets the default single-backend deployment collect data
+	 * at all.
+	 */
+	getBackend?: (() => string | null | undefined) | undefined;
+	/** User whose credentials/entitlements the reviewer call runs under. */
+	userId?: string | undefined;
+	/** Test seam: replaces the provider call with a canned completion. */
 	complete?: ((system: string, user: string) => Promise<string>) | undefined;
 	/** Test seam: notified once a shadow row has been fully written. */
 	onSettled?: ((outcome: AdversaryOutcome) => void) | undefined;
@@ -131,15 +144,26 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 	let inFlight = 0;
 
 	const observe = (input: ShadowObserveInput): ShadowHandle | null => {
-		const cfg = resolveConfig(opts.getModel?.());
+		const cfg = resolveConfig(opts.getModel?.(), opts.getBackend?.(), input.agentBackend);
 		if (!cfg) return null;
-		if (input.agentModel && input.agentModel === cfg.model) {
+		// Backend-qualified, because a bare model id is only meaningful within
+		// one backend's namespace. Comparing raw strings across namespaces was
+		// both too weak (a Copilot chat and an openai-compatible reviewer rarely
+		// collide, so genuinely shared weights went undetected) and too strong
+		// (a coincidental `gpt-5` on both sides silently disabled the shadow).
+		if (
+			input.agentModel &&
+			input.agentBackend &&
+			input.agentBackend === cfg.backend &&
+			input.agentModel === cfg.model
+		) {
 			if (!warnedDisabled) {
 				warnedDisabled = true;
 				log.warn('adversary.shadow_skipped_same_model', {
+					backend: cfg.backend,
 					model: cfg.model,
 					reason:
-						'adversary model equals the agent model; a shared-weights reviewer measures self-agreement, not oversight'
+						'adversary model equals the agent model on the same backend; a shared-weights reviewer measures self-agreement, not oversight'
 				});
 			}
 			return null;
@@ -151,7 +175,13 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 		// facts themselves are NOT persisted here — the prompt actually sent is,
 		// once the call settles, so the copy at rest is bounded by the same
 		// truncation budget as the network payload.
-		const key = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
+		//
+		// Scoped by backend and model: the cache lives on a recorder that
+		// outlives a mid-session config change, so an unscoped key would replay
+		// one reviewer's verdict as if a different one had produced it.
+		const key = createHash('sha256')
+			.update(JSON.stringify({ backend: cfg.backend, model: cfg.model, facts }))
+			.digest('hex');
 		const id = ulid();
 		try {
 			shadowRepo.insertPending({
@@ -162,7 +192,9 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 				scopeKey: input.scopeKey,
 				argsHash: input.argsHash,
 				adversaryModel: cfg.model,
+				adversaryBackend: cfg.backend,
 				experimentKey: adversaryExperimentKey({
+					backend: cfg.backend,
 					model: cfg.model,
 					maxArgChars: cfg.maxArgChars
 				}),
@@ -202,12 +234,24 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 			inFlight++;
 			pending = withTimeout(
 				reviewPermissionRequest(facts, {
-					baseUrl: cfg.baseUrl,
-					apiKey: cfg.apiKey,
+					backend: cfg.backend,
 					model: cfg.model,
 					timeoutMs: cfg.timeoutMs,
 					maxArgChars: cfg.maxArgChars,
+					userId: opts.userId,
+					// The test seam takes precedence over the resolved backend so
+					// unit tests never depend on a provider being reachable.
 					complete: opts.complete
+						? (req) => opts.complete!(req.system, req.user)
+						: (req) =>
+								cfg.complete({
+									model: req.model,
+									system: req.system,
+									user: req.user,
+									responseSchema: req.responseSchema,
+									timeoutMs: req.timeoutMs,
+									userId: req.userId
+								})
 				}),
 				// Belt and braces over the client's own budget. The client bounds
 				// its HTTP call, but this guarantees the in-flight slot is
@@ -308,39 +352,102 @@ function persistOutcome(id: string, outcome: AdversaryOutcome, memoized: boolean
  * model (per-conversation override, else the user's default) wins, then the
  * server default. A configured model IS the enablement — no model anywhere
  * means the shadow simply never runs, which is the default.
+ *
+ * The BACKEND is resolved independently, and falls back to the conversation's
+ * own. That fallback is the point of this design: the reviewer needs to be a
+ * different *model* from the agent, which says nothing about needing a
+ * different *backend*. Requiring a second endpoint confined the whole
+ * experiment to deployments that had stood one up, while adding a data-egress
+ * destination that the chat backend — which already sees every tool call and
+ * its arguments — did not need.
  */
-function resolveConfig(conversationModel?: string | null): ResolvedShadowConfig | null {
+function resolveConfig(
+	conversationModel: string | null | undefined,
+	conversationBackend: string | null | undefined,
+	agentBackend: BackendProviderId | null | undefined
+): ResolvedShadowConfig | null {
 	const cfg = loadConfig();
 	const model = conversationModel?.trim() || cfg.ADVERSARY_SHADOW_MODEL?.trim();
 	// No model configured anywhere is the OFF state, not a misconfiguration:
 	// it is the default for every deployment that never opts in, so warning
 	// about it would be noise.
 	if (!model) return null;
-	if (!cfg.OPENAI_COMPATIBLE_BASE_URL) {
-		// A model WAS chosen but the endpoint it needs is missing — that is a
-		// real misconfiguration, and silently doing nothing would look like the
-		// feature is broken rather than unconfigured.
-		warnMisconfigured();
+
+	const requestedRaw = conversationBackend?.trim() || cfg.ADVERSARY_SHADOW_BACKEND?.trim();
+	// `normalizeBackendProvider` coerces an unknown id to the default rather
+	// than throwing, so an explicit but unrecognised value must be rejected
+	// here — silently reviewing on some other backend would mislabel the rows.
+	const requested = requestedRaw ? asBackendProviderId(requestedRaw) : null;
+	if (requestedRaw && !requested) {
+		warnOnce('adversary.shadow_unknown_backend', {
+			backend: requestedRaw,
+			reason: 'configured adversary backend is not a known provider id; the shadow cannot run'
+		});
 		return null;
 	}
+	// `agentBackend` is null only when a provider did not report one. Falling
+	// back to the deployment default keeps the row labelled with a real backend
+	// rather than guessing.
+	const backend: BackendProviderId =
+		requested ?? agentBackend ?? normalizeBackendProvider(cfg.DEFAULT_BACKEND_PROVIDER);
+
 	return {
-		baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL,
-		apiKey: cfg.OPENAI_COMPATIBLE_API_KEY,
+		backend,
 		model,
 		timeoutMs: cfg.ADVERSARY_SHADOW_TIMEOUT_MS,
 		maxArgChars: cfg.ADVERSARY_SHADOW_MAX_ARG_CHARS,
-		maxInFlight: cfg.ADVERSARY_SHADOW_MAX_IN_FLIGHT
+		maxInFlight: cfg.ADVERSARY_SHADOW_MAX_IN_FLIGHT,
+		complete: (req) => completeVia(backend, req)
 	};
 }
 
-// Process-wide so a configured-but-unreachable deployment says so once rather
-// than once per permission dialog.
-let warnedMisconfigured = false;
-function warnMisconfigured(): void {
-	if (warnedMisconfigured) return;
-	warnedMisconfigured = true;
-	log.warn('adversary.shadow_misconfigured', {
-		reason:
-			'an adversary model is configured but OPENAI_COMPATIBLE_BASE_URL is not set; the shadow cannot run'
-	});
+/**
+ * Dispatch one completion to a backend, resolving the provider registry at call
+ * time.
+ *
+ * The `import()` is not laziness for its own sake — it breaks a genuine import
+ * cycle. `providers/index` reaches this module through
+ * copilot-provider → interactive-adapter → shadow, so a static import here
+ * leaves the registry half-initialized for whichever module the graph happens
+ * to enter first, and `getProvider` returns undefined. Resolving inside an
+ * already-async, already fire-and-forget call costs nothing and cannot observe
+ * a partially-evaluated module.
+ *
+ * A backend that cannot side-complete rejects rather than returning null, so it
+ * lands as a visible `status='error'` row instead of a log line nobody reads.
+ */
+async function completeVia(
+	backend: BackendProviderId,
+	req: ProviderCompletionRequest
+): Promise<string> {
+	const { getProvider } = await import('../../providers');
+	const provider = getProvider(backend);
+	if (!provider.capabilities.sideCompletion || typeof provider.complete !== 'function') {
+		throw new Error(`backend ${backend} does not support out-of-band completions`);
+	}
+	// Resolve the backend's per-user credential the same way the route layer
+	// does. Omitting it is NOT harmless on Copilot: `getClient` caches one client
+	// per user, first caller wins, and applies `gitHubToken` only at
+	// construction. A token-less shadow call that happens to run before the
+	// user's first Copilot conversation would cache a client built from the
+	// machine's logged-in identity, and every later real turn for that user
+	// would silently inherit it — a no-authority experiment changing who real
+	// work runs as.
+	const providerAuthToken = req.userId ? provider.resolveAuthToken?.(req.userId) : undefined;
+	return provider.complete({ ...req, providerAuthToken });
+}
+
+function asBackendProviderId(value: string): BackendProviderId | null {
+	const normalized = normalizeBackendProvider(value);
+	return normalized === value ? normalized : null;
+}
+
+// Process-wide so a misconfigured deployment says so once rather than once per
+// permission dialog.
+const warned = new Set<string>();
+function warnOnce(event: string, fields: Record<string, unknown>): void {
+	const key = `${event}:${JSON.stringify(fields)}`;
+	if (warned.has(key)) return;
+	warned.add(key);
+	log.warn(event, fields);
 }

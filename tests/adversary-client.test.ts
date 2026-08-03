@@ -12,7 +12,7 @@ const FACTS = buildAdversaryFacts({
 	args: { command: 'rm -rf /' }
 });
 
-const OPTS = { baseUrl: 'http://unused.test/v1', model: 'reviewer-1', timeoutMs: 1000 };
+const OPTS = { backend: 'openai-compatible', model: 'reviewer-1', timeoutMs: 1000 };
 
 describe('parseVerdict', () => {
 	it('accepts a bare JSON object', () => {
@@ -124,16 +124,31 @@ describe('reviewPermissionRequest', () => {
 	});
 
 	it('passes the system prompt and the built user prompt to the provider', async () => {
-		let seen: { system: string; user: string } | null = null;
+		let seen: { system: string; user: string; model: string } | null = null;
 		await reviewPermissionRequest(FACTS, {
 			...OPTS,
-			complete: async (system, user) => {
-				seen = { system, user };
+			complete: async (req) => {
+				seen = { system: req.system, user: req.user, model: req.model };
 				return '{"verdict":"allow","rationale":"ok"}';
 			}
 		});
 		expect(seen).not.toBeNull();
 		expect(seen!.system).toContain('security reviewer');
 		expect(seen!.user).toContain('rm -rf /');
+		// The reviewer model, not the agent's: the call is dispatched by the
+		// provider, so nothing downstream re-derives which model to ask.
+		expect(seen!.model).toBe('reviewer-1');
+	});
+
+	it('asks for structured output so the schema travels with the request', async () => {
+		let schemaName: string | null = null;
+		await reviewPermissionRequest(FACTS, {
+			...OPTS,
+			complete: async (req) => {
+				schemaName = req.responseSchema.name;
+				return '{"verdict":"allow","rationale":"ok"}';
+			}
+		});
+		expect(schemaName).toBe('permission_review');
 	});
 });

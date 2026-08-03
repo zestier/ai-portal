@@ -106,7 +106,19 @@ class StubSession {
 		this.aborted = false;
 		const reply = `Stubbed reply to: ${args.prompt}`;
 		queueMicrotask(() => void this.run(args.prompt, reply));
-		return reply;
+		// The real SDK resolves with the MESSAGE ID, not the reply text — the text
+		// arrives over the event stream. Mirrored faithfully because returning the
+		// text here would let a caller that wrongly used `send` as a
+		// request/response call pass its tests and then fail against the real SDK.
+		return `stub-message-${ulid()}`;
+	}
+
+	// The request/response counterpart: resolves once the session goes idle, with
+	// the assistant message itself. This is what the tool-less side-call path
+	// (`copilotProvider.complete`) reads.
+	async sendAndWait(args: { prompt: string }): Promise<{ data: { content: string } }> {
+		const content = `Stubbed reply to: ${args.prompt}`;
+		return { data: { content } };
 	}
 
 	// Stub equivalents of the SDK's typed RPC surface used by copilot-provider.ts.

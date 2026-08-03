@@ -75,6 +75,7 @@ export async function startTurnFromUserMessage(
 			mode: conv.mode,
 			approvalMode: conv.approvalMode,
 			adversaryModel: conv.adversaryModel,
+			adversaryBackend: conv.adversaryBackend,
 			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,

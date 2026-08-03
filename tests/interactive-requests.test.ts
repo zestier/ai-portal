@@ -518,6 +518,7 @@ describe('interactive request registry', () => {
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
 			defaultAdversaryModel: null,
+			defaultAdversaryBackend: null,
 			defaultContextTier: null
 		});
 		const requestId = newRequestId();
@@ -650,6 +651,7 @@ describe('interactive request registry', () => {
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
 			defaultAdversaryModel: null,
+			defaultAdversaryBackend: null,
 			defaultContextTier: null
 		});
 		const requestId = newRequestId();

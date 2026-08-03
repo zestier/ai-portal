@@ -198,6 +198,53 @@ test('the default approval mode is saved and seeds newly created conversations',
 	await expect(page.getByText('Saved.')).toBeVisible();
 });
 
+test('the adversary review backend is saved, seeds conversations, and drives the model picker', async ({
+	page,
+	request
+}) => {
+	// The reviewer used to be pinned to OPENAI_COMPATIBLE_BASE_URL. Pin the
+	// replacement end to end: form field -> user_settings row -> conversation
+	// seed, plus the client-side coupling that makes the model control a
+	// discovered-model picker once a backend is chosen.
+	await page.goto('/settings');
+	const backend = page.locator('select[name="defaultAdversaryBackend"]');
+	// Empty = "the conversation's own backend", the default that lets a
+	// single-backend deployment run the shadow at all.
+	await expect(backend).toHaveValue('');
+	// With no backend chosen there is no single namespace to list models from,
+	// so the model control is a free-text field.
+	await expect(page.locator('input[name="defaultAdversaryModel"]')).toBeVisible();
+
+	await backend.selectOption('copilot');
+	// Choosing a backend switches the model control to that backend's models.
+	const modelPicker = page.getByRole('combobox', { name: /Adversary review model/ });
+	await expect(modelPicker).toBeVisible();
+	await modelPicker.selectOption({ index: 1 });
+	const chosenModel = await modelPicker.inputValue();
+	expect(chosenModel).not.toBe('');
+
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByText('Saved.')).toBeVisible();
+
+	await page.reload();
+	await expect(page.locator('select[name="defaultAdversaryBackend"]')).toHaveValue('copilot');
+
+	const inherited = await request
+		.post('/api/conversations', { data: { title: uniqueTitle('Inherits reviewer') } })
+		.then((r) => r.json());
+	expect(inherited.conversation.adversaryBackend).toBe('copilot');
+	expect(inherited.conversation.adversaryModel).toBe(chosenModel);
+
+	// Restore the default so the rest of the shared suite sees a clean slate —
+	// and prove clearing the backend really turns the picker back into free text.
+	await page.goto('/settings');
+	await page.locator('select[name="defaultAdversaryBackend"]').selectOption('');
+	await expect(page.locator('input[name="defaultAdversaryModel"]')).toBeVisible();
+	await page.locator('input[name="defaultAdversaryModel"]').fill('');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByText('Saved.')).toBeVisible();
+});
+
 test('theme and accent settings preview immediately and revert when abandoned', async ({
 	page
 }) => {

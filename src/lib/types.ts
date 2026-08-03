@@ -64,14 +64,25 @@ export interface Conversation {
 	 * exactly like `memoryExtractorModel`: changing a user default never
 	 * retroactively alters existing conversations, and clearing this column is
 	 * a real "stop reviewing this conversation" rather than a silent
-	 * re-inherit. That matters here — the reviewer sends tool arguments to a
-	 * third-party endpoint, so per-conversation opt-out has to be reachable.
+	 * re-inherit. That matters here — the reviewer is sent tool arguments, so
+	 * per-conversation opt-out has to be reachable.
 	 *
 	 * Per-conversation rather than global because the shadow refuses to run when
-	 * this equals the conversation's agent model — a single global value is
-	 * therefore guaranteed to silently disable itself for some conversations.
+	 * this equals the conversation's agent model on the same backend — a single
+	 * global value is therefore guaranteed to silently disable itself for some
+	 * conversations.
 	 */
 	adversaryModel: string | null;
+	/**
+	 * Optional per-conversation override for the backend serving the reviewer.
+	 * NULL means "use `ADVERSARY_SHADOW_BACKEND`, else this conversation's own
+	 * backend" — the fallback that lets a single-backend deployment run the
+	 * shadow at all.
+	 *
+	 * Chosen independently of `adversaryModel` on purpose: reviewer independence
+	 * is a property of the model's weights, not of which endpoint serves them.
+	 */
+	adversaryBackend: string | null;
 	/**
 	 * Explicit opt-in for user-scoped global memory tools in this conversation.
 	 * Session memory remains per-conversation even when this is false.
@@ -575,6 +586,17 @@ export interface ProviderCapabilities {
 	localModelLoad: {
 		primeAfterModelSwap: boolean;
 	};
+	/**
+	 * Whether the provider can serve a one-shot, tool-less, out-of-band
+	 * completion via `ModelBackendProvider.complete` — a model call that is not
+	 * a conversation turn and produces no portal events.
+	 *
+	 * Used by background reviewers (currently the adversary shadow) so they can
+	 * run on the conversation's OWN backend rather than requiring the operator
+	 * to stand up a second endpoint. Independence from the agent is a property
+	 * of choosing a different *model*, not a different *backend*.
+	 */
+	sideCompletion: boolean;
 }
 
 export interface Message {
@@ -743,6 +765,13 @@ export interface UserSettings {
 	 * with. Changing this never retroactively alters existing conversations.
 	 */
 	defaultAdversaryModel: string | null;
+	/**
+	 * Seed-only default for the backend that serves the reviewer. NULL = "use
+	 * `ADVERSARY_SHADOW_BACKEND`, else the conversation's own backend". Chosen
+	 * independently of the model because reviewer independence is a property of
+	 * the weights, not of which endpoint serves them.
+	 */
+	defaultAdversaryBackend: string | null;
 	/**
 	 * Per-user context window tier, consumed live when a Copilot session opens.
 	 * NULL = "use the server default" (env `COPILOT_CONTEXT_TIER`). Unlike the

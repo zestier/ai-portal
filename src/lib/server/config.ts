@@ -208,10 +208,19 @@ const Schema = z
 		// There is deliberately no separate on/off switch: a configured model
 		// IS the enablement, mirroring the model-backed memory extractor. Two
 		// switches that can disagree is a bug surface, not a feature.
-		//
-		// Also requires OPENAI_COMPATIBLE_BASE_URL — that, not this, is the
-		// data-egress gate, and it is already operator-level.
 		ADVERSARY_SHADOW_MODEL: z.string().trim().optional(),
+		// Which backend serves the reviewer, resolved independently of the
+		// model: conversation override -> user default -> this -> the
+		// conversation's OWN backend.
+		//
+		// That last fallback is deliberate. Requiring a separate endpoint
+		// conflated two unrelated things — the reviewer needs to be a different
+		// MODEL from the agent, which says nothing about needing a different
+		// BACKEND — and confined the experiment to deployments that had stood a
+		// second one up. It also added a data-egress destination the chat
+		// backend, which already receives every tool call and its arguments,
+		// did not need.
+		ADVERSARY_SHADOW_BACKEND: z.string().trim().optional(),
 		ADVERSARY_SHADOW_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 		ADVERSARY_SHADOW_MAX_ARG_CHARS: z.coerce.number().int().positive().default(4_000),
 		// Ceiling on simultaneous in-flight adversary calls per conversation.

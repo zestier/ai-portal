@@ -33,6 +33,7 @@ export interface InsertPendingShadowOptions {
 	scopeKey: string | null;
 	argsHash: string | null;
 	adversaryModel: string;
+	adversaryBackend: string | null;
 	experimentKey: string;
 	promptVersion: number;
 	factsKey: string | null;
@@ -44,9 +45,9 @@ export function insertPending(opts: InsertPendingShadowOptions): void {
 		.prepare(
 			`INSERT INTO permission_shadow_decisions(
 			   id, conversation_id, tool, permission_kind, scope_key, args_hash,
-			   adversary_model, experiment_key, prompt_version, facts_key,
+			   adversary_model, adversary_backend, experiment_key, prompt_version, facts_key,
 			   resolution_source, status, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
 		)
 		.run(
 			opts.id,
@@ -56,6 +57,7 @@ export function insertPending(opts: InsertPendingShadowOptions): void {
 			opts.scopeKey,
 			opts.argsHash,
 			opts.adversaryModel,
+			opts.adversaryBackend,
 			opts.experimentKey,
 			opts.promptVersion,
 			opts.factsKey,
@@ -134,6 +136,7 @@ export interface ShadowDecisionRecord extends ShadowScoringRow {
 	scopeKey: string | null;
 	argsHash: string | null;
 	adversaryModel: string;
+	adversaryBackend: string | null;
 	experimentKey: string;
 	promptVersion: number;
 	factsKey: string | null;
@@ -156,6 +159,7 @@ interface ShadowDbRow {
 	scope_key: string | null;
 	args_hash: string | null;
 	adversary_model: string;
+	adversary_backend: string | null;
 	experiment_key: string;
 	prompt_version: number;
 	facts_key: string | null;
@@ -205,6 +209,7 @@ function rowToRecord(r: ShadowDbRow): ShadowDecisionRecord {
 		scopeKey: r.scope_key,
 		argsHash: r.args_hash,
 		adversaryModel: r.adversary_model,
+		adversaryBackend: r.adversary_backend,
 		experimentKey: r.experiment_key,
 		promptVersion: r.prompt_version,
 		factsKey: r.facts_key,

@@ -1,5 +1,6 @@
 import type {
 	ApprovalMode,
+	BackendProviderId,
 	ElicitationSchema,
 	ImagePreview,
 	InteractiveKind,
@@ -96,17 +97,21 @@ interface InteractiveAdapterOptions {
 	getSessionWorkspacePath(): string | null;
 	getPermissionBehavior(tool: string): 'normal' | 'always-prompt' | 'never-prompt';
 	/**
-	 * The conversation's agent model, if the provider knows it. Read only by
-	 * the Phase 0 adversary shadow, which refuses to run when the reviewer
-	 * model equals the agent model.
+	 * The conversation's agent model and backend, if the provider knows them.
+	 * Read only by the Phase 0 adversary shadow, which refuses to run when the
+	 * reviewer is the same model on the same backend, and which defaults the
+	 * reviewer's backend to the agent's.
 	 */
 	getAgentModel?: (() => string | null) | undefined;
+	getAgentBackend?: (() => BackendProviderId | null) | undefined;
 	/**
-	 * The conversation's effective adversary (shadow reviewer) model, or null
-	 * to fall back to the server default. Captured at session open; see
-	 * `ProviderOpenOptions.adversaryModel` for why it needs no live setter.
+	 * The conversation's effective adversary (shadow reviewer) model and the
+	 * backend that should serve it, or null to fall back to the server default.
+	 * Captured at session open; see `ProviderOpenOptions.adversaryModel` for why
+	 * they need no live setter.
 	 */
 	getAdversaryModel?: (() => string | null) | undefined;
+	getAdversaryBackend?: (() => string | null) | undefined;
 	/**
 	 * Records what a second model *would* have decided about each prompt-worthy
 	 * request, with no authority over the outcome. Injected so tests can supply
@@ -132,7 +137,11 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 	// server — a configured model is what turns the shadow on.
 	const shadowRecorder =
 		opts.shadowRecorder ??
-		createShadowRecorder({ getModel: () => opts.getAdversaryModel?.() ?? null });
+		createShadowRecorder({
+			getModel: () => opts.getAdversaryModel?.() ?? null,
+			getBackend: () => opts.getAdversaryBackend?.() ?? null,
+			userId: opts.userId
+		});
 	async function askInteractive<R extends InteractiveResponse>(
 		kind: InteractiveKind,
 		view: InteractiveRequestViewBody
@@ -348,7 +357,8 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				workingDirectory: opts.workingDirectory,
 				args: req.args,
 				resolutionSource,
-				agentModel: opts.getAgentModel?.() ?? null
+				agentModel: opts.getAgentModel?.() ?? null,
+				agentBackend: opts.getAgentBackend?.() ?? null
 			});
 
 		// Per-target decision, distinguishing an explicit grant outcome (which

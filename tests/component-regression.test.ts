@@ -67,7 +67,8 @@ const providerCapabilities: ProviderCapabilities = {
 	},
 	localModelLoad: {
 		primeAfterModelSwap: false
-	}
+	},
+	sideCompletion: true
 };
 
 const conversation: Conversation = {
@@ -82,6 +83,7 @@ const conversation: Conversation = {
 	memoryExtractorModel: null,
 	memoryExtractorBackend: null,
 	adversaryModel: null,
+	adversaryBackend: null,
 	globalMemoryEnabled: false,
 	approvalMode: 'auto-deny',
 	disabledToolGroups: [],

@@ -52,6 +52,7 @@ interface ConvRow {
 	memory_extractor_model: string | null;
 	memory_extractor_backend: string | null;
 	adversary_model: string | null;
+	adversary_backend: string | null;
 	global_memory_enabled: number | null;
 	approval_mode: string | null;
 	disabled_tool_groups: string | null;
@@ -97,6 +98,7 @@ function rowToConv(r: ConvRow): Conversation {
 		memoryExtractorModel: r.memory_extractor_model ?? null,
 		memoryExtractorBackend: normalizeMemoryExtractorBackend(r.memory_extractor_backend),
 		adversaryModel: r.adversary_model ?? null,
+		adversaryBackend: r.adversary_backend ?? null,
 		globalMemoryEnabled: r.global_memory_enabled === 1,
 		approvalMode: normalizeApprovalMode(r.approval_mode),
 		disabledToolGroups: parseDisabledToolGroups(r.disabled_tool_groups),
@@ -162,6 +164,7 @@ export interface CreateInput {
 	memoryExtractorModel?: string | null;
 	memoryExtractorBackend?: MemoryExtractorBackend | null;
 	adversaryModel?: string | null;
+	adversaryBackend?: string | null;
 	globalMemoryEnabled?: boolean;
 	disabledToolGroups?: string[];
 	id?: string;
@@ -195,6 +198,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const memoryExtractorModel = normalizeOptionalModel(input.memoryExtractorModel);
 	const memoryExtractorBackend = normalizeMemoryExtractorBackend(input.memoryExtractorBackend);
 	const adversaryModel = normalizeOptionalModel(input.adversaryModel);
+	const adversaryBackend = normalizeOptionalModel(input.adversaryBackend);
 	const globalMemoryEnabled = input.globalMemoryEnabled === true;
 	const disabledToolGroups = sanitizeDisabledToolGroups(input.disabledToolGroups);
 	const provider =
@@ -207,10 +211,10 @@ export function create(userId: string, input: CreateInput): Conversation {
 		db.prepare(
 			`INSERT INTO conversations(
 			   id, user_id, title, workdir, provider, model, mode, approval_mode, memory_mode, memory_extractor_model,
-			   memory_extractor_backend, adversary_model, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
+			   memory_extractor_backend, adversary_model, adversary_backend, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
 			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt,
 			   workspace_kind, workspace_key
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		).run(
 			id,
 			userId,
@@ -224,6 +228,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 			memoryExtractorModel,
 			memoryExtractorBackend,
 			adversaryModel,
+			adversaryBackend,
 			globalMemoryEnabled ? 1 : 0,
 			JSON.stringify(disabledToolGroups),
 			now,
@@ -267,6 +272,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 		memoryExtractorModel,
 		memoryExtractorBackend,
 		adversaryModel,
+		adversaryBackend,
 		globalMemoryEnabled,
 		approvalMode,
 		disabledToolGroups,
@@ -374,6 +380,7 @@ export function updateSessionSettings(
 		memoryExtractorModel?: string | null;
 		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		adversaryModel?: string | null;
+		adversaryBackend?: string | null;
 		globalMemoryEnabled?: boolean;
 		approvalMode?: ApprovalMode;
 		disabledToolGroups?: string[];
@@ -404,6 +411,10 @@ export function updateSessionSettings(
 	if (patch.adversaryModel !== undefined) {
 		sets.push('adversary_model = ?');
 		args.push(normalizeOptionalModel(patch.adversaryModel));
+	}
+	if (patch.adversaryBackend !== undefined) {
+		sets.push('adversary_backend = ?');
+		args.push(normalizeOptionalModel(patch.adversaryBackend));
 	}
 	if (patch.globalMemoryEnabled !== undefined) {
 		sets.push('global_memory_enabled = ?');

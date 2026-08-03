@@ -2,6 +2,7 @@ import { loadConfig } from '../config';
 import { log } from '../log';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson } from './provider-utils';
 import {
+	completeOpenAICompatible,
 	openAICompatibleSamplingOptions,
 	openOpenAICompatibleSession,
 	primeOpenAICompatibleModel,
@@ -12,6 +13,7 @@ import type { BackendProviderId } from '$lib/types';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
+	ProviderCompletionRequest,
 	ProviderModelInfo,
 	ProviderOpenOptions,
 	ProviderSession
@@ -155,7 +157,8 @@ export const lmStudioProvider: ModelBackendProvider = {
 		},
 		localModelLoad: {
 			primeAfterModelSwap: true
-		}
+		},
+		sideCompletion: true
 	},
 	async fetchAuthStatus(): Promise<ProviderAuthStatus> {
 		const cfg = providerConfig();
@@ -246,6 +249,13 @@ export const lmStudioProvider: ModelBackendProvider = {
 			{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
 			model,
 			opts
+		);
+	},
+	async complete(req: ProviderCompletionRequest): Promise<string> {
+		const cfg = providerConfig();
+		return completeOpenAICompatible(
+			{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
+			req
 		);
 	}
 };

@@ -60,9 +60,11 @@ services:
       MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: ${MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS:-6}
       MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: ${MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS:-60000}
       # Experimental adversarial approval mode, Phase 0 (shadow measurement).
-      # Off unless a reviewer model is set; needs OPENAI_COMPATIBLE_BASE_URL.
-      # A user/per-conversation setting overrides this server-wide default.
+      # Off unless a reviewer model is set. The reviewer runs on the
+      # conversation's own backend unless ADVERSARY_SHADOW_BACKEND routes it
+      # elsewhere. A user/per-conversation setting overrides these defaults.
       ADVERSARY_SHADOW_MODEL: ${ADVERSARY_SHADOW_MODEL:-}
+      ADVERSARY_SHADOW_BACKEND: ${ADVERSARY_SHADOW_BACKEND:-}
       ADVERSARY_SHADOW_TIMEOUT_MS: ${ADVERSARY_SHADOW_TIMEOUT_MS:-20000}
       ADVERSARY_SHADOW_MAX_ARG_CHARS: ${ADVERSARY_SHADOW_MAX_ARG_CHARS:-4000}
       ADVERSARY_SHADOW_MAX_IN_FLIGHT: ${ADVERSARY_SHADOW_MAX_IN_FLIGHT:-4}

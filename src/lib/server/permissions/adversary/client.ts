@@ -1,9 +1,13 @@
 /**
- * The Phase 0 adversary call: one OpenAI-compatible JSON completion, strictly
- * parsed into a verdict (see `./verdict` for the parser).
+ * The Phase 0 adversary call: one tool-less completion, strictly parsed into a
+ * verdict (see `./verdict` for the parser).
  *
- * Deliberately minimal and tool-less. Giving the adversary tools would recurse
- * the permission problem — who approves the reviewer's tool calls? — so it gets
+ * Transport is the provider's `complete()` capability, so the reviewer runs on
+ * whichever backend was chosen for it — including the conversation's own. This
+ * module owns only the prompt, the parsing, and the failure contract.
+ *
+ * Deliberately tool-less. Giving the adversary tools would recurse the
+ * permission problem — who approves the reviewer's tool calls? — so it gets
  * exactly one shot at exactly the facts it was handed, with no way to gather
  * more.
  *
@@ -12,7 +16,6 @@
  * into a verdict.
  */
 
-import { fetchWithTimeout, jsonRequestHeaders, parseJson } from '../../providers/provider-utils';
 import {
 	ADVERSARY_SYSTEM_PROMPT,
 	ADVERSARY_PROMPT_VERSION,
@@ -44,18 +47,26 @@ export type AdversaryOutcome =
 	  };
 
 export interface AdversaryClientOptions {
-	baseUrl: string;
-	apiKey?: string | null | undefined;
+	/** Backend that serves the reviewer; recorded so rows cannot pool across backends. */
+	backend: string;
 	model: string;
 	timeoutMs: number;
 	maxArgChars?: number | undefined;
-	/** Test seam: bypasses HTTP and returns the raw model text. */
-	complete?: ((system: string, user: string) => Promise<string>) | undefined;
+	/** Per-user identity for backends whose auth/entitlements are per-user. */
+	userId?: string | undefined;
+	/** Performs the actual completion. Injected so this module owns no transport. */
+	complete: (req: {
+		system: string;
+		user: string;
+		model: string;
+		timeoutMs: number;
+		responseSchema: { name: string; schema: unknown };
+		userId?: string | undefined;
+	}) => Promise<string>;
 }
 
 export const ADVERSARY_JSON_SCHEMA = {
 	name: 'permission_review',
-	strict: false,
 	schema: {
 		type: 'object',
 		properties: {
@@ -65,8 +76,9 @@ export const ADVERSARY_JSON_SCHEMA = {
 		},
 		// `denyProbability` is required of the MODEL so it is actually supplied
 		// (a column of nulls is a curve that does not exist), but the parser
-		// stays tolerant of its absence — backends that ignore `response_format`
-		// should still yield a usable verdict rather than an error row.
+		// stays tolerant of its absence — backends that ignore the schema, or
+		// cannot enforce one at all (the Copilot session path), should still
+		// yield a usable verdict rather than an error row.
 		required: ['verdict', 'denyProbability', 'rationale']
 	}
 } as const;
@@ -74,20 +86,29 @@ export const ADVERSARY_JSON_SCHEMA = {
 /**
  * Identity of the experiment a row belongs to. Computed from everything that
  * changes what the model was asked — system prompt text, renderer version,
- * truncation budget, model name — so rows from different setups can never be
- * pooled by accident. Deliberately not the hand-maintained
+ * truncation budget, backend, model name — so rows from different setups can
+ * never be pooled by accident. Deliberately not the hand-maintained
  * `ADVERSARY_PROMPT_VERSION`, which only works if someone remembers to bump it.
+ *
+ * The backend is part of the identity, not decoration: the same model *name*
+ * served by two backends differs in weights, system-prompt handling and
+ * structured-output support, so those are different experiments.
  *
  * Still imperfect: a model *name* can point at mutable weights, so a
  * provider-side upgrade is invisible here.
  */
-export function adversaryExperimentKey(opts: { model: string; maxArgChars: number }): string {
+export function adversaryExperimentKey(opts: {
+	backend: string;
+	model: string;
+	maxArgChars: number;
+}): string {
 	return createHash('sha256')
 		.update(
 			JSON.stringify({
 				systemPrompt: ADVERSARY_SYSTEM_PROMPT,
 				promptVersion: ADVERSARY_PROMPT_VERSION,
 				maxArgChars: opts.maxArgChars,
+				backend: opts.backend,
 				model: opts.model
 			})
 		)
@@ -105,9 +126,14 @@ export async function reviewPermissionRequest(
 	const user = buildAdversaryPrompt(facts, opts.maxArgChars);
 	let raw: string;
 	try {
-		raw = opts.complete
-			? await opts.complete(ADVERSARY_SYSTEM_PROMPT, user)
-			: await requestCompletion(opts, user);
+		raw = await opts.complete({
+			system: ADVERSARY_SYSTEM_PROMPT,
+			user,
+			model: opts.model,
+			timeoutMs: opts.timeoutMs,
+			responseSchema: ADVERSARY_JSON_SCHEMA,
+			userId: opts.userId
+		});
 	} catch (e) {
 		return {
 			kind: 'error',
@@ -126,44 +152,6 @@ export async function reviewPermissionRequest(
 		};
 	}
 	return { ...parsed, latencyMs: elapsed(startedAt), promptSent: user };
-}
-
-async function requestCompletion(opts: AdversaryClientOptions, user: string): Promise<string> {
-	const endpoint = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-	const res = await fetchWithTimeout(
-		endpoint,
-		{
-			method: 'POST',
-			headers: jsonRequestHeaders(opts.apiKey),
-			body: JSON.stringify({
-				model: opts.model,
-				messages: [
-					{ role: 'system', content: ADVERSARY_SYSTEM_PROMPT },
-					{ role: 'user', content: user }
-				],
-				response_format: { type: 'json_schema', json_schema: ADVERSARY_JSON_SCHEMA },
-				temperature: 0,
-				stream: false
-			}),
-			// `fetchWithTimeout`'s own timer only guards the request up to the
-			// response headers — it clears the timer as soon as `fetch` resolves.
-			// Passing our own signal means the same budget also covers the body
-			// read, so a provider or proxy that returns headers and then stalls
-			// the body cannot leave this call pending forever (which would hold
-			// an in-flight slot and eventually wedge the concurrency cap).
-			signal: AbortSignal.timeout(opts.timeoutMs)
-		},
-		opts.timeoutMs
-	);
-	const body = await parseJson(res);
-	if (!res.ok) {
-		const message = (body as { error?: { message?: string } })?.error?.message;
-		throw new Error(`adversary provider ${res.status}: ${message ?? res.statusText}`);
-	}
-	const content = (body as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]
-		?.message?.content;
-	if (typeof content !== 'string') throw new Error('adversary provider returned no text content');
-	return content;
 }
 
 function elapsed(startedAt: number): number {

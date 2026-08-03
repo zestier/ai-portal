@@ -180,6 +180,78 @@ describe('openAICompatibleProvider', () => {
 		).rejects.toThrow('model missing');
 	});
 
+	it('serves a one-shot side completion, tool-less and non-streaming', async () => {
+		resetConfigForTests();
+		const fetchMock = vi.fn(async () =>
+			Response.json({ choices: [{ message: { content: '{"verdict":"deny"}' } }] })
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			openAICompatibleProvider.complete!({
+				model: 'reviewer-model',
+				system: 'you are a reviewer',
+				user: 'review this',
+				responseSchema: { name: 'permission_review', schema: { type: 'object' } },
+				timeoutMs: 5000
+			})
+		).resolves.toBe('{"verdict":"deny"}');
+
+		expect(openAICompatibleProvider.capabilities.sideCompletion).toBe(true);
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('http://127.0.0.1:1234/v1/chat/completions');
+		const body = JSON.parse(init.body as string);
+		expect(body).toMatchObject({
+			model: 'reviewer-model',
+			stream: false,
+			// Deterministic: the callers are reviewers/classifiers, where sampling
+			// variance is measurement noise rather than useful diversity.
+			temperature: 0,
+			response_format: { type: 'json_schema' }
+		});
+		// No tools, ever: a reviewer with tools would recurse the permission
+		// problem it exists to review.
+		expect(body.tools).toBeUndefined();
+		expect(body.messages).toEqual([
+			{ role: 'system', content: 'you are a reviewer' },
+			{ role: 'user', content: 'review this' }
+		]);
+	});
+
+	it('rejects a side completion that returns a non-OK status', async () => {
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ error: { message: 'no such model' } }), { status: 404 })
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			openAICompatibleProvider.complete!({
+				model: 'reviewer-model',
+				system: 's',
+				user: 'u',
+				timeoutMs: 5000
+			})
+		).rejects.toThrow('no such model');
+	});
+
+	it('rejects a side completion with an empty body rather than returning empty text', async () => {
+		// An empty string would parse as "unparseable output" downstream, which
+		// reads as a model that answered badly rather than a backend that did not
+		// answer at all.
+		const fetchMock = vi.fn(async () => Response.json({ choices: [{ message: {} }] }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			openAICompatibleProvider.complete!({
+				model: 'reviewer-model',
+				system: 's',
+				user: 'u',
+				timeoutMs: 5000
+			})
+		).rejects.toThrow('no text content');
+	});
+
 	it('discovers models from an OpenAI-compatible /models endpoint with optional API key', async () => {
 		process.env.OPENAI_COMPATIBLE_API_KEY = 'test-key';
 		resetConfigForTests();

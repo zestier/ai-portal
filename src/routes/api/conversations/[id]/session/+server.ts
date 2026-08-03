@@ -38,6 +38,12 @@ const PatchBody = z
 			.transform((value) => (value ? value : null))
 			.nullable()
 			.optional(),
+		adversaryBackend: z
+			.string()
+			.trim()
+			.transform((value) => (value ? value : null))
+			.nullable()
+			.optional(),
 		globalMemoryEnabled: z.boolean().optional(),
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		disabledToolGroups: z
@@ -52,6 +58,7 @@ const PatchBody = z
 			b.memoryExtractorModel !== undefined ||
 			b.memoryExtractorBackend !== undefined ||
 			b.adversaryModel !== undefined ||
+			b.adversaryBackend !== undefined ||
 			b.globalMemoryEnabled !== undefined ||
 			b.approvalMode !== undefined ||
 			b.disabledToolGroups !== undefined,
@@ -77,7 +84,8 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	// joins the same guard/release set as the harvester settings rather than
 	// silently appearing to apply.
 	const adversaryModelChanged =
-		body.adversaryModel !== undefined && body.adversaryModel !== conv.adversaryModel;
+		(body.adversaryModel !== undefined && body.adversaryModel !== conv.adversaryModel) ||
+		(body.adversaryBackend !== undefined && body.adversaryBackend !== conv.adversaryBackend);
 	const globalMemoryChanged =
 		body.globalMemoryEnabled !== undefined && body.globalMemoryEnabled !== conv.globalMemoryEnabled;
 	const toolGroupsChanged =
@@ -111,6 +119,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 			? { memoryExtractorBackend: body.memoryExtractorBackend }
 			: {}),
 		...(body.adversaryModel !== undefined ? { adversaryModel: body.adversaryModel } : {}),
+		...(body.adversaryBackend !== undefined ? { adversaryBackend: body.adversaryBackend } : {}),
 		...(body.globalMemoryEnabled !== undefined
 			? { globalMemoryEnabled: body.globalMemoryEnabled }
 			: {}),

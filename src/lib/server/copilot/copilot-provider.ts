@@ -9,6 +9,9 @@
 
 import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
 import type { ContextTier } from '@github/copilot-sdk';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
 import { AsyncQueue } from '../runtime/async-queue';
 import { withTimeout } from '../runtime/with-timeout';
@@ -18,6 +21,7 @@ import { SdkEventAdapter, type RuntimeSessionMode } from './sdk-events';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
+	ProviderCompletionRequest,
 	ProviderModelInfo,
 	ProviderOpenOptions,
 	ProviderSession
@@ -43,6 +47,7 @@ import { buildToolArgsValidator } from '../tools/schema-error';
 import { wrapToolsForStreaming } from './tool-streaming';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
+import { ulid } from '../db/ids';
 
 // One CopilotClient per portal user. Sharing a single process-wide
 // client would cause the SDK subprocess spawned for whichever user
@@ -69,6 +74,20 @@ function sdkCallTimeoutMs(): number {
 	return loadConfig().COPILOT_SDK_CALL_TIMEOUT_MS;
 }
 
+/**
+ * One `CopilotClient` per portal user.
+ *
+ * IMPORTANT: callers must pass `providerAuthToken` (resolve it with
+ * `providers/auth.ts` `providerAuthToken()`, which is just
+ * `provider.resolveAuthToken?.(userId)`). The cache is keyed on `userId` alone
+ * and **first caller wins**, while `gitHubToken` is only applied at
+ * construction — so a single token-less caller that happens to run first pins
+ * that user's client to the machine's logged-in identity, and every later
+ * session for them silently inherits it. Every current caller resolves a token;
+ * this note exists because the requirement is otherwise invisible here, and an
+ * out-of-band background caller (the adversary shadow) already reintroduced it
+ * once.
+ */
 export async function getClient(
 	userId: string,
 	providerAuthToken?: string
@@ -184,7 +203,18 @@ export type ConversationSession = ProviderSession &
 interface SdkSession {
 	on(event: string, listener: (e: unknown) => void): void;
 	off?(event: string, listener: (e: unknown) => void): void;
+	/** Resolves with the message ID, NOT the reply text; content arrives via `on`. */
 	send(args: { prompt: string }): Promise<string>;
+	/**
+	 * Sends and waits for the session to go idle, resolving with the final
+	 * assistant message. This is the request/response shape `send` is not, and
+	 * is what the tool-less side-call path uses. `timeout` defaults to 60s in
+	 * the SDK, so callers with their own budget must pass it explicitly.
+	 */
+	sendAndWait(
+		args: { prompt: string },
+		timeout?: number
+	): Promise<{ data?: { content?: string } } | undefined>;
 	abort?(): Promise<void>;
 	disconnect(): Promise<void>;
 	/** SDK-provided infinite-session workspace (e.g. ~/.copilot/session-state/<id>). */
@@ -297,7 +327,9 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		getSessionWorkspacePath: () => sessionWorkspacePath,
 		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
 		getAgentModel: () => opts.model,
+		getAgentBackend: () => 'copilot',
 		getAdversaryModel: () => opts.adversaryModel ?? null,
+		getAdversaryBackend: () => opts.adversaryBackend ?? null,
 		validateCustomToolArgs,
 		derivePermissionRequest
 	});
@@ -663,7 +695,8 @@ export const copilotProvider: ModelBackendProvider = {
 		},
 		localModelLoad: {
 			primeAfterModelSwap: false
-		}
+		},
+		sideCompletion: true
 	},
 	resolveAuthToken(userId: string): string | undefined {
 		const cfg = loadConfig();
@@ -672,8 +705,123 @@ export const copilotProvider: ModelBackendProvider = {
 	fetchAuthStatus,
 	listModels: fetchModels,
 	openSession: open,
+	complete: completeSideCall,
 	shutdown: shutdownClient
 };
+
+/**
+ * One-shot completion on an ephemeral Copilot session.
+ *
+ * The SDK genuinely has no completions endpoint: `CopilotClient` exposes only
+ * `createSession` / `resumeSession`, so a session is the only way in. It does
+ * provide `sendAndWait`, which turns that into a real request/response call —
+ * `send` alone resolves with the **message id** and delivers the text through
+ * the event stream, so using it here would return an id that no verdict parser
+ * could read.
+ *
+ * Still more expensive than an OpenAI-compatible POST (a session is created and
+ * torn down per call), which is why callers must treat it as fire-and-forget
+ * and bound it with their own timeout.
+ *
+ * Three properties make the ephemeral session safe to run outside a
+ * conversation:
+ *
+ *   * **No portal tools.** `tools: []` is the SDK-consumer tool set, so nothing
+ *     in `src/lib/server/tools/` is reachable.
+ *   * **Every permission refused.** That field does *not* remove the runtime's
+ *     own built-in tools, and the SDK offers no switch that does, so the
+ *     permission callback is the actual guard. A reviewer that could ask a
+ *     human for approval would recurse the permission problem it exists to
+ *     review.
+ *   * **A scratch working directory.** Custom instruction files (`AGENTS.md`,
+ *     `.github/copilot-instructions.md`) are loaded from the working directory
+ *     *regardless of* `enableConfigDiscovery`, so pointing this at a user's
+ *     repository would inject that repo's instructions into the reviewer's
+ *     context. An empty temp dir has nothing to find and nothing to reach.
+ *
+ * `systemMessage.mode` is `append` (never `replace`) for the same reason as the
+ * conversation path: `replace` drops the SDK's own guardrail sections.
+ */
+async function completeSideCall(req: ProviderCompletionRequest): Promise<string> {
+	// `userId` is required here, unlike the OpenAI-compatible providers: Copilot
+	// auth and model entitlements are per-user, so there is no operator-level
+	// credential to fall back on.
+	if (!req.userId) throw new Error('Copilot completion requires a userId');
+	const client = await getClient(req.userId, req.providerAuthToken);
+	const sessionId = `side-call-${ulid()}`;
+	const workingDirectory = await mkdtemp(join(tmpdir(), 'portal-sidecall-'));
+	// ONE deadline across both phases. Giving `createSession` and `sendAndWait`
+	// the full budget each would let a call run to ~2x it, past the caller's own
+	// guard (the shadow releases its in-flight slot at timeout + 5s), so a
+	// verdict the model really produced would be thrown away as an error — and
+	// only ever on this backend, which pays a session setup the OpenAI-compatible
+	// path does not. That would bias one arm of the experiment.
+	const deadline = Date.now() + req.timeoutMs;
+	const remaining = () => Math.max(1, deadline - Date.now());
+
+	// Held separately from the awaited value: `withTimeout` does not cancel what
+	// it wraps, so if session creation loses the race the session still arrives
+	// moments later. Cleanup below chains off THIS promise rather than the
+	// awaited result, because otherwise that late session is never disconnected
+	// and holds runtime resources for the life of the process — once per
+	// permission request on a slow runtime.
+	const creating = client.createSession({
+		sessionId,
+		model: req.model,
+		workingDirectory,
+		streaming: false,
+		systemMessage: { mode: 'append' as const, content: req.system },
+		tools: [],
+		// `user-not-available` is the literal truth — a side completion has no
+		// conversation and no human attached — and unlike a denial it does not
+		// make the SDK log a tool rejection against a user who was never asked.
+		onPermissionRequest: async () => ({ kind: 'user-not-available' }) as const
+	}) as unknown as Promise<SdkSession>;
+
+	try {
+		const session = await withTimeout(creating, remaining(), 'copilot side-call createSession');
+		// `sendAndWait`'s own timeout defaults to 60s, which would outlive the
+		// caller's budget; pass ours so both agree on when to give up.
+		const reply = await withTimeout(
+			session.sendAndWait({ prompt: req.user }, remaining()),
+			remaining(),
+			'copilot side-call sendAndWait'
+		);
+		const content = reply?.data?.content;
+		// Resolving with no assistant message is a real outcome (the session went
+		// idle without answering). Reject rather than return '' so it lands as a
+		// transport error instead of masquerading as an unparseable verdict.
+		if (typeof content !== 'string' || !content) {
+			throw new Error('copilot side-call returned no assistant message');
+		}
+		return content;
+	} finally {
+		// Cleanup is chained off `creating`, not off the awaited local, so a
+		// session that arrives after the timeout is still disconnected. The temp
+		// directory is removed only once that has settled — it is the session's
+		// cwd, and pulling it out from under a live session is worse than
+		// leaving it a moment longer.
+		//
+		// Fully best-effort: a leaked session or directory must not turn an
+		// answer we already have into an error, so nothing here propagates.
+		//
+		// If `creating` never settles at all — the hung-runtime case `withTimeout`
+		// exists for — this chain never advances and the empty scratch dir is
+		// left behind. Accepted: the orphaned session is unavoidable there
+		// regardless, and one empty `mkdtemp` directory is a smaller cost than
+		// deleting a live session's cwd out from under it.
+		void creating
+			.then(
+				(s) => s.disconnect(),
+				() => {
+					/* creation failed; there is nothing to disconnect */
+				}
+			)
+			.catch((e) => log.warn('copilot.side_call.disconnect_failed', { sessionId, err: String(e) }))
+			.then(() => rm(workingDirectory, { recursive: true, force: true }))
+			.catch((e) => log.warn('copilot.side_call.cleanup_failed', { sessionId, err: String(e) }));
+	}
+}
 
 function normalizeSessionWorkspacePath(path: string | undefined): string | null {
 	const trimmed = path?.trim();

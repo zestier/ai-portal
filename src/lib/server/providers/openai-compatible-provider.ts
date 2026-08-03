@@ -33,6 +33,7 @@ import { createInteractiveCallbacks } from '../copilot/interactive-adapter';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
+	ProviderCompletionRequest,
 	ProviderConversationMessage,
 	ProviderModelInfo,
 	ProviderOpenOptions,
@@ -242,7 +243,8 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 		},
 		localModelLoad: {
 			primeAfterModelSwap: true
-		}
+		},
+		sideCompletion: true
 	},
 	async fetchAuthStatus(): Promise<ProviderAuthStatus> {
 		const cfg = providerConfig();
@@ -297,8 +299,72 @@ export const openAICompatibleProvider: ModelBackendProvider = {
 	async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
 		const cfg = providerConfig();
 		await primeOpenAICompatibleModel(cfg, model, opts);
+	},
+	async complete(req: ProviderCompletionRequest): Promise<string> {
+		const cfg = providerConfig();
+		return completeOpenAICompatible(cfg, req);
 	}
 };
+
+/**
+ * One-shot, tool-less, non-streaming chat completion against an
+ * OpenAI-compatible backend. Shared by the openai-compatible and LM Studio
+ * providers; see `ModelBackendProvider.complete` for the contract.
+ *
+ * `temperature: 0` because the callers are reviewers/classifiers, where sampling
+ * variance is measurement noise rather than useful diversity.
+ */
+export async function completeOpenAICompatible(
+	cfg: Pick<OpenAICompatibleConfig, 'baseUrl' | 'apiKey' | 'displayName'>,
+	req: ProviderCompletionRequest
+): Promise<string> {
+	if (!cfg.baseUrl) throw new Error(`${cfg.displayName} requires a base URL.`);
+	const res = await fetchWithTimeout(
+		endpoint(cfg.baseUrl, '/chat/completions'),
+		{
+			method: 'POST',
+			headers: jsonRequestHeaders(cfg.apiKey),
+			body: JSON.stringify({
+				model: req.model,
+				messages: [
+					{ role: 'system', content: req.system },
+					{ role: 'user', content: req.user }
+				],
+				...(req.responseSchema
+					? {
+							response_format: {
+								type: 'json_schema',
+								json_schema: {
+									name: req.responseSchema.name,
+									strict: false,
+									schema: req.responseSchema.schema
+								}
+							}
+						}
+					: {}),
+				temperature: 0,
+				stream: false
+			}),
+			// `fetchWithTimeout`'s own timer only guards the request up to the
+			// response headers — it clears as soon as `fetch` resolves. Passing a
+			// signal means the same budget also covers the body read, so a
+			// backend that returns headers and then stalls the body cannot leave
+			// this call pending forever.
+			signal: req.signal ?? AbortSignal.timeout(req.timeoutMs)
+		},
+		req.timeoutMs
+	);
+	const body = await parseJson(res);
+	if (!res.ok) {
+		const message = (body as { error?: { message?: string } })?.error?.message;
+		throw new Error(`${cfg.displayName} completion ${res.status}: ${message ?? res.statusText}`);
+	}
+	const content = (body as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]
+		?.message?.content;
+	const text = stringContent(content);
+	if (!text) throw new Error(`${cfg.displayName} completion returned no text content`);
+	return text;
+}
 
 /**
  * Re-warm a model on an OpenAI-compatible local backend by issuing a minimal
@@ -587,7 +653,9 @@ export function openOpenAICompatibleSession(
 		getSessionWorkspacePath: () => opts.workingDirectory,
 		getPermissionBehavior: (tool) => toolPermissionBehavior.get(tool) ?? 'normal',
 		getAgentModel: () => opts.model,
+		getAgentBackend: () => cfg.id,
 		getAdversaryModel: () => opts.adversaryModel ?? null,
+		getAdversaryBackend: () => opts.adversaryBackend ?? null,
 		derivePermissionRequest: buildPermissionRequestResolver(tools)
 	});
 

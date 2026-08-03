@@ -222,24 +222,34 @@ Configure it like any other model-backed background feature: set an **Adversary
 review model** in Settings (or `ADVERSARY_SHADOW_MODEL` as the server default,
 or per conversation). A configured model is what turns it on — there is no
 separate switch, so nothing can disagree about whether it is running. Unset
-everywhere, which is the default, means it never runs. It also needs
-`OPENAI_COMPATIBLE_BASE_URL`; that, not the model choice, is the data-egress
-gate and is already operator-level.
+everywhere, which is the default, means it never runs.
+
+The **backend** that serves the reviewer is chosen independently of the model
+(`ADVERSARY_SHADOW_BACKEND`, or the matching Settings control), and defaults to
+the conversation's own. That default is deliberate. An earlier version required
+`OPENAI_COMPATIBLE_BASE_URL`, which conflated two unrelated things: the reviewer
+needs to be a different *model* from the agent, which says nothing about needing
+a different *backend*. The coupling confined every measurement to deployments
+that had stood a second endpoint up, and it added a data-egress destination that
+the chat backend — which already receives the whole conversation, tool calls and
+arguments included — did not need. Any backend advertising
+`capabilities.sideCompletion` can host the reviewer; routing it elsewhere
+remains a one-line setting for anyone who wants that.
 
 Model precedence is conversation → server default (`ADVERSARY_SHADOW_MODEL`),
 matching the memory extractor. The user setting is **seed-only**: it is copied
 onto each newly created conversation and never re-read, so changing it does not
 retroactively alter existing conversations, and clearing a conversation's model
 genuinely stops reviewing that conversation rather than silently re-inheriting
-the default. That last property matters — the reviewer sends tool arguments to a
-third-party endpoint, so opting one sensitive conversation out has to work even
-for a user who set a default.
+the default. That last property matters — the reviewer is sent tool arguments,
+so opting one sensitive conversation out has to work even for a user who set a
+default.
 
 It is per-conversation rather than global because the reviewer is skipped when
-its model equals the conversation's agent model (shared weights mean shared
-blind spots) — with one global value that guard would silently disable the
-shadow for anyone whose conversation happened to use the same model, with no way
-to resolve it.
+it is the same model on the same backend as the conversation's agent (shared
+weights mean shared blind spots) — with one global value that guard would
+silently disable the shadow for anyone whose conversation happened to use the
+same model, with no way to resolve it.
 
 When it is on, each request that reaches a human dialog in an `ask`
 conversation is also shown to the reviewer, whose verdict is recorded next to
@@ -265,9 +275,14 @@ Constraints that hold even in shadow:
   otherwise inject lines into the section labelled trustworthy. Agent-authored
   argument values go in an explicitly-labelled untrusted block whose delimiters
   are stripped from both blocks, so they cannot be forged from inside.
-- **No tools for the reviewer**, or the permission problem recurses.
+- **No tools for the reviewer**, or the permission problem recurses. This holds
+  on every backend: the Copilot path opens an ephemeral session with no portal
+  tools, a scratch working directory, and a permission callback that refuses
+  everything, so the runtime's own built-in tools stay out of reach too.
 - **A different model from the agent.** Shared weights mean shared blind spots;
-  the shadow refuses to run when the two match.
+  the shadow refuses to run when the reviewer is the same model on the same
+  backend. The comparison is backend-qualified because a bare model id is only
+  meaningful inside one backend's namespace.
 - **Errors are errors.** Unparseable output is never coerced into a verdict.
 
 Read the results with `pnpm run report:adversary-shadow`. Two limitations are
@@ -289,12 +304,13 @@ which argue for their own approval, against the configured reviewer;
 `--dry-run` prints the prompts without calling anything.
 
 Note that enabling this ships tool arguments — which can include file contents —
-to whatever `OPENAI_COMPATIBLE_BASE_URL` points at, and stores the same
-(already-truncated) prompt locally in `prompt_sent` for later adjudication, so
-the copy at rest is never larger than what was sent. A user turning it on only
-exposes their own conversations, to an endpoint the operator already
-configured; an operator who wants it unavailable entirely simply does not set
-that base URL.
+to whichever backend serves the reviewer, and stores the same (already-truncated)
+prompt locally in `prompt_sent` for later adjudication, so the copy at rest is
+never larger than what was sent. On the default (the conversation's own backend)
+that is a party which already sees every tool call, so it adds no new
+destination; routing the reviewer elsewhere does, which is the trade-off that
+setting makes explicit. A user turning it on only exposes their own
+conversations.
 
 Cost is one provider roundtrip per shadowed request, deduplicated per identical
 request and bounded by `ADVERSARY_SHADOW_MAX_IN_FLIGHT` (default 4). In `ask`

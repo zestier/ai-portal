@@ -643,6 +643,7 @@ describe('db migrations + repos', () => {
 			defaultMemoryExtractorModel: 'harvester-x',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools',
 			defaultAdversaryModel: 'reviewer-x',
+			defaultAdversaryBackend: 'copilot',
 			defaultContextTier: 'long_context'
 		});
 		expect(settings.get(u.id)).toEqual({
@@ -657,6 +658,7 @@ describe('db migrations + repos', () => {
 			defaultMemoryExtractorModel: 'harvester-x',
 			defaultMemoryExtractorBackend: 'openai-compatible-tools',
 			defaultAdversaryModel: 'reviewer-x',
+			defaultAdversaryBackend: 'copilot',
 			defaultContextTier: 'long_context'
 		});
 		// '(use server default)' round-trips as NULL for every optional default.
@@ -672,11 +674,13 @@ describe('db migrations + repos', () => {
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
 			defaultAdversaryModel: null,
+			defaultAdversaryBackend: null,
 			defaultContextTier: null
 		});
 		expect(settings.get(u.id)?.defaultMemoryExtractorModel).toBeNull();
 		expect(settings.get(u.id)?.defaultMemoryExtractorBackend).toBeNull();
 		expect(settings.get(u.id)?.defaultAdversaryModel).toBeNull();
+		expect(settings.get(u.id)?.defaultAdversaryBackend).toBeNull();
 		expect(settings.get(u.id)?.defaultContextTier).toBeNull();
 	});
 
@@ -694,6 +698,7 @@ describe('db migrations + repos', () => {
 			defaultMemoryExtractorModel: null,
 			defaultMemoryExtractorBackend: null,
 			defaultAdversaryModel: null,
+			defaultAdversaryBackend: null,
 			defaultContextTier: null
 		});
 		// Simulate a row that escaped migration 008.

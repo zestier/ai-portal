@@ -219,6 +219,7 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 			// measurement. Unlike `approvalMode` there is no safety asymmetry to
 			// worry about — the shadow reviewer has no authority either way.
 			adversaryModel: source.adversaryModel,
+			adversaryBackend: source.adversaryBackend,
 			globalMemoryEnabled: source.globalMemoryEnabled,
 			disabledToolGroups: source.disabledToolGroups,
 			forkedFromConversationId: source.id,
