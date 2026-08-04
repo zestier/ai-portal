@@ -250,11 +250,55 @@ function consumeStepOptionsUntilToken(
 	return null;
 }
 
+/**
+ * Does `tok` name one of the denied options?
+ *
+ * The goal is to recognise every spelling the REAL command would accept, since
+ * anything the matcher fails to recognise falls through as a permitted option
+ * whose value is never even seen by the positional rules. Four shapes:
+ *
+ *   1. the exact token (`--output`, `-fprint0`)
+ *   2. an attached value (`--output=FILE`)
+ *   3. an unambiguous ABBREVIATION of a long option (`--out=FILE`), which
+ *      `getopt_long` accepts — so a deny that only matched the canonical
+ *      spelling was bypassable by shortening it
+ *   4. a SHORT option ANYWHERE in a getopt cluster, when the denied name is a
+ *      single-dash single-character option (`-o`)
+ *
+ * (3) and (4) are what make this a boundary rather than a speed bump.
+ * `sort -bo/root/.bashrc` is exactly `sort -b -o /root/.bashrc` and
+ * `sort --out=/root/.bashrc` is exactly `sort --output=/root/.bashrc`: both are
+ * arbitrary WRITES. Neither leaves the target behind as a positional (the
+ * matcher does not know `-o` takes a value), so if the deny misses, nothing
+ * else catches it.
+ *
+ * Both are deliberately OVER-broad, in the direction denies should err:
+ *   * any `--prefix` of a denied name is denied, including prefixes the real
+ *     tool would reject as ambiguous;
+ *   * the denied letter is also matched inside another short option's attached
+ *     VALUE (`sort -to`, a field separator of `o`).
+ * A false deny costs a prompt; a false allow costs the boundary. Note the
+ * over-breadth only reaches tokens that are prefixes OF a denied name — a
+ * longer option that merely starts with one (`grep --files-with-matches`
+ * against a denied `--file`) is unaffected.
+ *
+ * Still NOT derived: the other spelling of the same option. `-o` does not cover
+ * `--output`, and `-fprint` does not cover `-fprint0`. Enumerate every form.
+ */
 function matchesDeniedOption(tok: string, denied: readonly string[] | undefined): boolean {
 	if (!denied) return false;
+	const eq = tok.indexOf('=');
+	const namePart = eq === -1 ? tok : tok.slice(0, eq);
 	for (const name of denied) {
 		if (tok === name || tok.startsWith(name + '=')) return true;
-		if (/^-[^-]$/.test(name) && tok.startsWith(name)) return true;
+		if (name.startsWith('--')) {
+			if (namePart.length > 2 && namePart.startsWith('--') && name.startsWith(namePart))
+				return true;
+			continue;
+		}
+		if (!/^-[^-]$/.test(name)) continue;
+		if (!tok.startsWith('-') || tok.startsWith('--')) continue;
+		if (tok.slice(1).includes(name[1])) return true;
 	}
 	return false;
 }

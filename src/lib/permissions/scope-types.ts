@@ -41,6 +41,18 @@ export interface ShellScope {
  *                        deny-only only when you knowingly want "everything
  *                        except these".
  *
+ * Deny entries are matched by `matchesDeniedOption` (see the predicate) as the
+ * exact token, `name=value`, any unambiguous `--` ABBREVIATION of a long name
+ * (`--out` denies for `--output`, because `getopt_long` accepts it), or — for a
+ * single-dash single-character name — that letter ANYWHERE in a getopt cluster,
+ * so `-o` also denies `-bo/tmp/x`. What is NOT derived is the other spelling of
+ * the same option: `-fprint` does not cover `-fprint0`, and `-o` does not cover
+ * `--output`. Enumerate every spelling you mean to deny.
+ *
+ * Note also that deny lists constrain option TOKENS, never option VALUES: a
+ * path passed as an option value is invisible to `positionals`, so an option
+ * that names a file it reads or writes has to be denied outright.
+ *
  * Asymmetry to watch for: the "allow all except" fall-through only applies
  * to the final step's options (which interleave with positionals). On a
  * non-final (intermediate) step, options are matched while scanning toward
@@ -48,8 +60,13 @@ export interface ShellScope {
  * to be accepted — a deny-only rule on an intermediate step rejects every
  * option rather than permitting the un-denied ones.
  *
- * Omitting both (an absent `options`) permits no options at all on that
- * step — the matcher treats any option token as unrecognised and rejects.
+ * Omitting both (an absent `options`) follows the same asymmetry: on an
+ * INTERMEDIATE step it permits no options at all (any option token before the
+ * next command-path token is unrecognised and rejects), while on the FINAL step
+ * it is the widest deny-only case — an empty deny list — so every option token
+ * falls through as permitted. That is what lets `{ token: 'ls' }` cover
+ * `ls -la`, and it is why a final-step rule's safety rests entirely on its
+ * positionals plus whatever it denies.
  */
 export interface ShellOptionRules {
 	allow?: ShellOptionSpec[] | undefined;

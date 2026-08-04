@@ -9,6 +9,18 @@
 // deliberate: re-running the seeder on each login would resurrect seeds a user
 // intentionally revoked, silently handing back an auto-approval they removed.
 //
+// THE SAME PROPERTY CUTS THE OTHER WAY, AND IT IS EASY TO MISS. Widening is
+// merely delayed; TIGHTENING AN EXISTING SEED IS INERT. Narrowing a seed here
+// (adding a deny to its option list, bounding its positional count) does not
+// edit the row an existing user already has — it produces a row with a NEW
+// scope key, and `ensureSeedGrantsForUser` is insert-only, so the older, more
+// permissive row survives and keeps matching first. Adding a `deny` seed does
+// not help either: that is also just another row they never receive. Only two
+// things reach an existing install — a change to the PREDICATE (code), or the
+// user pressing "Restore default seed grants", which deletes `source='seed'`
+// rows before reinserting. Security-relevant narrowing should therefore either
+// live in the predicate or be announced as needing a restore.
+//
 // These replace the old hand-curated shell safe-list (which lived in
 // code, was invisible to users, and ran *before* the matcher). By
 // expressing the safe behavior as real grants we get one code path
@@ -64,8 +76,37 @@ const PURE_UTILS = [
 	'false',
 	'basename',
 	'dirname',
-	'yes'
+	'yes',
+	// `tr` sits here rather than with the fs-read tools because it has no file
+	// operands at all: its positionals are SET1 / SET2 (character sets), and it
+	// only ever transforms stdin. Judging those as paths was the same category
+	// error the old `grep` seed made — `tr -d /` names the character `/`, not
+	// the root directory, and a path rule refuses it for a reason that does not
+	// exist. It cannot open, read, or write a file, so `any` is the honest rule.
+	'tr'
 ];
+
+/**
+ * One audited shell tool that is seeded with a PATH-SHAPED positional rule.
+ *
+ * `audit` is REQUIRED and is the point of the shape: a `PositionalsRule`
+ * constrains POSITIONALS only, so adding a tool here without having looked for
+ * file-valued options and output positionals silently widens the boundary.
+ * The registries below are the single source of every such seed, and
+ * `AUDITED_PATH_SHAPED_TOOLS` is exported so a test can assert the converse —
+ * that no path-shaped allow seed exists for a token that was never audited.
+ */
+interface ReaderSeed {
+	token: string;
+	options?: ShellCommandStep['options'];
+	/**
+	 * Upper bound on positionals, for tools whose LATER operands are outputs
+	 * rather than inputs. See `uniq`.
+	 */
+	maxPositionals?: number;
+	/** What the audit found: the dangerous options/operands, or that there are none. */
+	audit: string;
+}
 
 /**
  * Read-only file tools. Seeded twice: once on `workspace-paths` (the floor —
@@ -86,34 +127,122 @@ const PURE_UTILS = [
  * capability away from an existing install, and with the floor retained it
  * cannot.
  *
- * IMPORTANT — these rules constrain POSITIONALS, not option VALUES. A tool with
- * a file-valued option can therefore touch a path no positional rule ever saw,
- * so any such option must be denied explicitly here. `sort` is the sharp case:
- * `sort --output=FILE` is a full arbitrary WRITE (content supplied over a pipe)
- * that the `write`/`edit` grants would never see, and `--files0-from=FILE`
- * reads a list of files to print. Both take zero positionals, so every
- * positional rule passes vacuously. Deny them at the source.
+ * IMPORTANT — these rules constrain POSITIONALS. There are exactly two ways a
+ * seeded "reader" can still touch a path no positional rule ever saw, and every
+ * entry below has been audited for both:
+ *
+ *   1. A FILE-VALUED OPTION. With a deny-only list, any option token that
+ *      survives the deny check falls through as permitted and its value is
+ *      never added to `positionals`, so it escapes `workspace-paths` and
+ *      `readable-paths` alike. `sort --output=FILE` was a full arbitrary WRITE
+ *      with pipe-supplied content; `sort --compress-program=PROG` is arbitrary
+ *      EXECUTION; `--files0-from` / `file -f` / `sha256sum -c` all read paths
+ *      named in a file's CONTENT. These can only be closed by denying the
+ *      option at the source.
+ *   2. An OUTPUT POSITIONAL. `uniq INPUT OUTPUT` truncates its second operand.
+ *      That operand IS checked — but against the READ grants, because the rule
+ *      kind is `readable-paths` — so a path made merely readable becomes
+ *      writable. `PositionalsRule` has no per-operand form ("operand 1
+ *      readable, operand 2 writable"), and adding one is not the fix HERE: a
+ *      seeded reader does not want the operand at all, so the answer is to
+ *      bound the COUNT (`maxPositionals`) and let two-operand calls prompt. A
+ *      user-authored grant that genuinely needs mixed operand roles is a
+ *      separate, still-open capability.
+ *
+ * Denying a file-valued option outright is likewise the right move for a
+ * READER, but not the only shape available: `ShellOptionSpec` can carry a
+ * `ShellOptionValueRule` on the value, which is the extension point if some
+ * future seed wants to permit a file-valued option BOUNDED to a path set
+ * rather than refuse it. Note that would not rescue the `--files0-from` family:
+ * validating the list file says nothing about the paths named inside it.
+ *
+ * Why deny-lists here rather than the safer allow-lists: `matchShellOptionToken`
+ * matches an allow spec as a whole token (or `--name=value`) and knows nothing
+ * about getopt clusters or attached short values, so an allow-list on these
+ * tools would refuse `ls -la`, `head -n5`, `sort -bf` and every other ordinary
+ * bundled invocation. The deny side is where the cluster-awareness lives (see
+ * `matchesDeniedOption`), so that is where the boundary is enforced.
  */
-const FS_READ_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
-	{ token: 'cat' },
-	{ token: 'head' },
-	{ token: 'tail' },
-	{ token: 'file' },
-	{ token: 'stat' },
-	{ token: 'ls' },
+const FS_READ_TOOLS: ReaderSeed[] = [
+	{ token: 'cat', audit: 'no file-valued options; every positional is an input file.' },
+	{ token: 'head', audit: 'no file-valued options; every positional is an input file.' },
+	{
+		token: 'tail',
+		audit: 'no file-valued options (`-f` follows, it does not name a file); inputs only.'
+	},
+	{
+		token: 'file',
+		// `-C`/`--compile` WRITES a compiled magic file (`<magic>.mgc`);
+		// `-m`/`--magic-file` reads arbitrary magic files; `-f`/`--files-from`
+		// examines paths named inside a file's content. None are positionals.
+		options: { deny: ['-C', '--compile', '-m', '--magic-file', '-f', '--files-from'] },
+		audit: '`-C/--compile` writes a .mgc file; `-m` and `-f` name files that are never positionals.'
+	},
+	{
+		token: 'stat',
+		audit: 'no file-valued options — `--printf`/`-c` are formats to stdout, `-f` is --file-system.'
+	},
+	{ token: 'ls', audit: 'no file-valued options — `--hide`/`-I` take patterns, not paths.' },
 	{
 		token: 'sort',
-		// `-o`/`--output` writes; `--files0-from` reads a file list. See above.
-		options: { deny: ['-o', '--output', '--files0-from'] }
+		// `-o`/`--output` WRITES (arbitrary content over a pipe);
+		// `--compress-program` EXECUTES an arbitrary program on the temp files;
+		// `--files0-from` and `--random-source` read a file that is not a
+		// positional; `-T` creates temp files in an arbitrary directory.
+		options: {
+			deny: [
+				'-o',
+				'--output',
+				'--files0-from',
+				'--compress-program',
+				'--random-source',
+				'-T',
+				'--temporary-directory'
+			]
+		},
+		audit:
+			'`-o` writes, `--compress-program` executes, `--files0-from`/`--random-source`/`-T` name unchecked paths.'
 	},
-	{ token: 'uniq' },
-	{ token: 'cut' },
-	{ token: 'tr' },
-	{ token: 'realpath' },
-	{ token: 'readlink' },
-	{ token: 'md5sum' },
-	{ token: 'sha1sum' },
-	{ token: 'sha256sum' }
+	{
+		token: 'uniq',
+		// `uniq INPUT OUTPUT` creates/truncates OUTPUT. Bounding the count to
+		// one operand keeps the reader a reader; two-operand calls prompt.
+		//
+		// KNOWN COST: the matcher does not know which options take values, so a
+		// SEPARATED value counts as a positional — `uniq -f 2 file` (three
+		// tokens, two positionals) now prompts, while the attached `uniq -f2
+		// file` still auto-approves. That asymmetry is the price of bounding
+		// the count without an option grammar, and it fails in the safe
+		// direction: the refusal is a prompt, not a denial.
+		maxPositionals: 1,
+		audit:
+			'no file-valued options, but the SECOND positional is an OUTPUT file — bounded to one. ' +
+			'Side effect: separated option values (`-f 2`) count as positionals and prompt.'
+	},
+	{
+		token: 'cut',
+		audit: 'no file-valued options — `--output-delimiter` is a string, not a path.'
+	},
+	{
+		token: 'realpath',
+		audit:
+			'`--relative-to`/`--relative-base` are path-shaped but resolution-only: no open, no write.'
+	},
+	{ token: 'readlink', audit: 'no file-valued options; resolution only.' },
+	...['md5sum', 'sha1sum', 'sha256sum'].map(
+		(token): ReaderSeed => ({
+			token,
+			// `-c`/`--check` hashes every path named INSIDE the checklist file.
+			// Only the checklist itself is a positional, so the paths it names
+			// are checked by nothing — structurally identical to
+			// `sort --files0-from`, and it turns the tool into an oracle for
+			// files outside the read grants. Verifying a checksum file still
+			// works, it just prompts.
+			options: { deny: ['-c', '--check'] },
+			audit:
+				'`-c/--check` reads every path named inside the checklist file; those are not positionals.'
+		})
+	)
 ];
 
 /**
@@ -127,7 +256,7 @@ const FS_READ_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] 
  * `glob` doesn't cover its predicates (`-mtime`, `-size`, `-type`, ...) and
  * it prints paths, not file contents.
  */
-const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
+const PATH_SEARCH_TOOLS: ReaderSeed[] = [
 	{
 		token: 'find',
 		// The exec family runs commands; the -fprint/-fls family CREATES AND
@@ -135,8 +264,12 @@ const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] 
 		// seed defers to the `read` grants: without the denies, `find <dir> -fls
 		// <path>` would let a path the user only made READABLE be written to,
 		// turning a read grant into a write. `-fprint0` and `-fls` are easy to
-		// miss — deny matching is exact (or `opt=`), so `-fprint` does not cover
-		// `-fprint0`.
+		// miss — deny matching does not derive variants, so `-fprint` does not
+		// cover `-fprint0`.
+		//
+		// `-files0-from FILE` (findutils >= 4.9) takes the start points from a
+		// file's CONTENT, so the directories actually walked are named by no
+		// positional and escape both the workspace floor and the read grants.
 		options: {
 			deny: [
 				'-exec',
@@ -147,11 +280,34 @@ const PATH_SEARCH_TOOLS: { token: string; options?: ShellCommandStep['options'] 
 				'-fprint',
 				'-fprint0',
 				'-fprintf',
-				'-fls'
+				'-fls',
+				'-files0-from'
 			]
-		}
+		},
+		audit:
+			'the -exec/-ok family executes; -fprint/-fprintf/-fprint0/-fls truncate their FILE operand; ' +
+			'-files0-from takes start points from a file. All denied; -newer/-samefile only stat their operand.'
 	}
 ];
+
+/**
+ * Every tool token permitted to carry a PATH-SHAPED positional rule in the
+ * default seeds, mapped to its audit finding. Exported so the seed tests can
+ * assert the CONVERSE of the registry: that no allow seed hands a path-shaped
+ * rule (`workspace-paths` / `session-workspace-paths` / `readable-paths`) to a
+ * token nobody audited. Without that check the required `audit` field would
+ * only constrain entries someone already chose to put in a registry, and a
+ * hand-rolled `shellGrant(shellCommand('perl', { kind: 'workspace-paths' }))`
+ * would slip past it entirely.
+ */
+export const AUDITED_PATH_SHAPED_TOOLS: Readonly<
+	Record<string, { audit: string; maxPositionals?: number | undefined }>
+> = Object.fromEntries(
+	[...FS_READ_TOOLS, ...PATH_SEARCH_TOOLS].map(({ token, audit, maxPositionals }) => [
+		token,
+		{ audit, maxPositionals }
+	])
+);
 
 /**
  * Content-search tools, seeded ONLY as pipe filters.
@@ -333,7 +489,13 @@ function shellCommand(
  * invocation and auto-approve on the strength of a rule that examined nothing.
  */
 function deferredReader(rule: ShellRule): ShellRule {
-	return { ...rule, positionalCount: { min: 1 } };
+	return { ...rule, positionalCount: { ...rule.positionalCount, min: 1 } };
+}
+
+/** Applies a reader's audited upper bound on operands, if it has one. */
+function boundPositionals(rule: ShellRule, max: number | undefined): ShellRule {
+	if (max === undefined) return rule;
+	return { ...rule, positionalCount: { ...rule.positionalCount, max } };
 }
 
 function shellPrompt(rule: ShellRule, reason: string): SeedSpec {
@@ -444,10 +606,18 @@ export function defaultSeedGrants(): SeedSpec[] {
 	// pipe, bare `ls`) name no path to check, so they belong to the floor seed
 	// and keep their existing behavior rather than being auto-approved by a rule
 	// that checked nothing.
-	for (const { token, options } of FS_READ_TOOLS) {
-		seeds.push(shellGrant(shellCommand(token, { kind: 'workspace-paths' }, options)));
+	for (const { token, options, maxPositionals } of FS_READ_TOOLS) {
 		seeds.push(
-			shellGrant(deferredReader(shellCommand(token, { kind: 'readable-paths' }, options)))
+			shellGrant(
+				boundPositionals(shellCommand(token, { kind: 'workspace-paths' }, options), maxPositionals)
+			)
+		);
+		seeds.push(
+			shellGrant(
+				deferredReader(
+					boundPositionals(shellCommand(token, { kind: 'readable-paths' }, options), maxPositionals)
+				)
+			)
 		);
 	}
 	for (const tool of GIT_STRUCTURED_TOOLS) {
@@ -512,10 +682,18 @@ export function defaultSeedGrants(): SeedSpec[] {
 	// `readable-paths` seed adds whatever the user's `read` grants cover and,
 	// via `min: 1`, never fires without a path it actually checked. Its
 	// command-running options are denied in both.
-	for (const { token, options } of PATH_SEARCH_TOOLS) {
-		seeds.push(shellGrant(shellCommand(token, { kind: 'workspace-paths' }, options)));
+	for (const { token, options, maxPositionals } of PATH_SEARCH_TOOLS) {
 		seeds.push(
-			shellGrant(deferredReader(shellCommand(token, { kind: 'readable-paths' }, options)))
+			shellGrant(
+				boundPositionals(shellCommand(token, { kind: 'workspace-paths' }, options), maxPositionals)
+			)
+		);
+		seeds.push(
+			shellGrant(
+				deferredReader(
+					boundPositionals(shellCommand(token, { kind: 'readable-paths' }, options), maxPositionals)
+				)
+			)
 		);
 	}
 
@@ -524,10 +702,10 @@ export function defaultSeedGrants(): SeedSpec[] {
 	// readable paths still auto-approve via the grants above; only searches that
 	// reach past them land here and require an explicit human approval (or the
 	// user can add their own read grant, which the allow seed then honors).
-	for (const { token, options } of PATH_SEARCH_TOOLS) {
+	for (const { token, options, maxPositionals } of PATH_SEARCH_TOOLS) {
 		seeds.push(
 			shellPrompt(
-				shellCommand(token, { kind: 'any' }, options),
+				boundPositionals(shellCommand(token, { kind: 'any' }, options), maxPositionals),
 				`\`${token}\` searching outside the paths your \`read\` grants permit requires approval (opt-in "search anywhere"). Readable paths are auto-approved; approve to search elsewhere this once, or add a \`read\` grant covering it to always allow it.`
 			)
 		);

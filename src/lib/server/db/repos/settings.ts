@@ -495,8 +495,10 @@ export function revokeGrant(userId: string, id: number): boolean {
 
 /**
  * Delete every grant owned by `userId`. Returns the number of rows removed.
- * Used by the settings page "Revoke all" action. Seed grants may be
- * re-installed on next login via `ensureSeedGrantsForUser`.
+ * Used by the settings page "Revoke all" action. This does NOT come back on
+ * its own: `ensureSeedGrantsForUser` runs on user creation, not on login, so
+ * the defaults return only via the "Restore default seed grants" action
+ * (`restoreSeedGrantsForUser`). See the rollout note in `permissions/seed-grants.ts`.
  */
 export function revokeAllGrantsForUser(userId: string): number {
 	const r = getDb().prepare(`DELETE FROM permission_grants WHERE user_id = ?`).run(userId);

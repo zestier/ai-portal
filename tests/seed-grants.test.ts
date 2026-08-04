@@ -6,7 +6,8 @@ import * as settings from '../src/lib/server/db/repos/settings';
 import {
 	ensureSeedGrantsForUser,
 	defaultSeedGrants,
-	restoreSeedGrantsForUser
+	restoreSeedGrantsForUser,
+	AUDITED_PATH_SHAPED_TOOLS
 } from '../src/lib/server/permissions/seed-grants';
 import { parseShellCommand } from '../src/lib/server/permissions/shell-parser';
 import { setupLocalEnv } from './helpers/env';
@@ -456,7 +457,144 @@ describe('seed grants — runtime behaviour', () => {
 		expect(shellMatch('find . -fls /tmp/out', '/tmp')).not.toBe('allow');
 		expect(shellMatch('find . -fprint0 /tmp/out', '/tmp')).not.toBe('allow');
 		expect(shellMatch('find . -fprint /tmp/out', '/tmp')).not.toBe('allow');
+		// `-files0-from` takes the start points from a file's CONTENT, so the
+		// directories actually walked are named by no positional at all.
+		expect(shellMatch('find . -files0-from /tmp/list', '/tmp')).not.toBe('allow');
+		expect(shellMatch('find . -files0-from=/tmp/list', '/tmp')).not.toBe('allow');
 		expect(shellMatch('find . -name foo', '/tmp')).toBe('allow');
+	});
+
+	it('does not let a bundled short option smuggle a denied write past the deny list', () => {
+		// `-bo/root/.bashrc` is `-b -o /root/.bashrc`. Deny matching used to be
+		// prefix-only, so the cluster slipped through — and since the matcher
+		// does not know `-o` takes a value, the target was not left behind as a
+		// positional either. Nothing checked it.
+		expect(shellMatch('sort -bo/root/.bashrc', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort -bo /root/.bashrc', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort -rbo out.txt', '/tmp')).not.toBe('allow');
+		// Undenied clusters keep working.
+		expect(shellMatch('sort -rn README.md', '/tmp')).toBe('allow');
+	});
+
+	it('denies the sort options that execute a program or name an unchecked path', () => {
+		// `--compress-program` runs an arbitrary program on the temp files —
+		// arbitrary EXECUTION from a seeded "reader".
+		expect(shellMatch('sort --compress-program=/bin/sh README.md', '/tmp')).not.toBe('allow');
+		// Reads a file that is not a positional.
+		expect(shellMatch('sort --random-source=/etc/shadow README.md', '/tmp')).not.toBe('allow');
+		// Writes temp files into an arbitrary directory. Use the ATTACHED form:
+		// with a separated value the directory is left behind as a positional
+		// and the path rules would refuse it anyway, proving nothing about the
+		// deny. `-T./sub` is inside the workspace, so only the deny can refuse it.
+		expect(shellMatch('sort -T./sub README.md', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort -T /root README.md', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort --temporary-directory=./sub README.md', '/tmp')).not.toBe('allow');
+	});
+
+	it('denies the `file` options that compile a magic file or read a file list', () => {
+		// `-C` COMPILES and writes `<magic>.mgc`; `-m` and `-f` name paths that
+		// never become positionals.
+		expect(shellMatch('file -C -m /tmp/magic', '/tmp')).not.toBe('allow');
+		expect(shellMatch('file --compile --magic-file /tmp/magic', '/tmp')).not.toBe('allow');
+		expect(shellMatch('file -f /tmp/list', '/tmp')).not.toBe('allow');
+		expect(shellMatch('file --files-from /tmp/list', '/tmp')).not.toBe('allow');
+		// Ordinary type detection still works.
+		expect(shellMatch('file README.md', '/tmp')).toBe('allow');
+	});
+
+	it('bounds `uniq` to one operand because its second operand is an OUTPUT file', () => {
+		// `uniq INPUT OUTPUT` creates/truncates OUTPUT. The operand IS checked,
+		// but against the READ grants (the rule kind is `readable-paths`), so a
+		// path made merely readable would become writable. There is no
+		// per-operand rule kind, so the fix is to refuse the second operand.
+		expect(shellMatch('uniq README.md /root/.bashrc', '/tmp')).not.toBe('allow');
+		// Also inside the workspace: a reader seed must not be a write path.
+		expect(shellMatch('uniq README.md out.txt', '/tmp')).not.toBe('allow');
+		expect(shellMatch('uniq -c README.md', '/tmp')).toBe('allow');
+		expect(shellMatch('cat README.md | uniq', '/tmp')).toBe('allow');
+	});
+
+	it('denies `*sum -c`, whose checklist file names the paths actually read', () => {
+		// Only the checklist is a positional; every path INSIDE it is hashed
+		// unchecked — the same shape as `sort --files0-from`.
+		for (const tool of ['md5sum', 'sha1sum', 'sha256sum']) {
+			expect(shellMatch(`${tool} -c sums.txt`, '/tmp')).not.toBe('allow');
+			expect(shellMatch(`${tool} --check sums.txt`, '/tmp')).not.toBe('allow');
+			// Bundled with another short option, too.
+			expect(shellMatch(`${tool} -bc sums.txt`, '/tmp')).not.toBe('allow');
+			// Hashing a readable file is unaffected.
+			expect(shellMatch(`${tool} README.md`, '/tmp')).toBe('allow');
+		}
+	});
+
+	it('treats `tr` operands as character sets, not paths', () => {
+		// `tr` has no file operands at all: SET1/SET2 are character sets and it
+		// only ever transforms stdin. Judging them as paths refused `tr -d /`
+		// for a boundary that was never involved.
+		expect(shellMatch('tr -d /', '/tmp')).toBe('allow');
+		expect(shellMatch('tr a-z A-Z', '/tmp')).toBe('allow');
+		expect(shellMatch('cat README.md | tr -s ../..', '/tmp')).toBe('allow');
+	});
+
+	it('denies an abbreviated form of a dangerous long option', () => {
+		// `getopt_long` accepts any unambiguous abbreviation, so a deny that
+		// only matched the canonical spelling was bypassable by shortening it.
+		expect(shellMatch('sort --out=/root/.bashrc', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort --outp /root/.bashrc', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sort --compress-p=/bin/sh README.md', '/tmp')).not.toBe('allow');
+		expect(shellMatch('sha256sum --che sums.txt', '/tmp')).not.toBe('allow');
+		expect(shellMatch('file --comp -m /tmp/magic', '/tmp')).not.toBe('allow');
+	});
+
+	it('every path-shaped allow seed names an audited tool', () => {
+		// The converse of the audit registry: a hand-rolled shell grant that
+		// hands a path-shaped positional rule to an un-audited token would mean
+		// nobody checked it for file-valued options or output operands.
+		const pathShaped = new Set(['workspace-paths', 'session-workspace-paths', 'readable-paths']);
+		const offenders: string[] = [];
+		for (const seed of defaultSeedGrants()) {
+			if ((seed.decision ?? 'allow') !== 'allow') continue;
+			if (seed.scope?.kind !== 'shell') continue;
+			const kind = seed.scope.rule.positionals?.kind;
+			if (!kind || !pathShaped.has(kind)) continue;
+			const token = seed.scope.rule.command?.[0]?.token ?? '';
+			if (!AUDITED_PATH_SHAPED_TOOLS[token]) offenders.push(token);
+		}
+		expect(offenders).toEqual([]);
+		// And the audit notes are real notes, not empty strings satisfying a type.
+		for (const [token, entry] of Object.entries(AUDITED_PATH_SHAPED_TOOLS)) {
+			expect(entry.audit.length, `audit note for ${token}`).toBeGreaterThan(20);
+		}
+	});
+
+	it('carries every audited operand bound onto EVERY seed of that tool', () => {
+		// The seeds are ORed by the matcher, so a bound applied to only one of a
+		// tool's rules buys nothing. Asserted generically over the registry so a
+		// newly bounded tool cannot be added to it and then dropped by a loop
+		// that forgot to destructure `maxPositionals`.
+		const bounded = Object.entries(AUDITED_PATH_SHAPED_TOOLS).filter(
+			([, entry]) => entry.maxPositionals !== undefined
+		);
+		expect(bounded.length).toBeGreaterThan(0);
+		expect(bounded.map(([token]) => token)).toContain('uniq');
+		for (const [token, entry] of bounded) {
+			const rules = defaultSeedGrants()
+				.filter((g) => g.scope?.kind === 'shell' && g.scope.rule.command?.[0]?.token === token)
+				.map((g) => (g.scope?.kind === 'shell' ? g.scope.rule : null));
+			expect(rules.length, `seeds for ${token}`).toBeGreaterThan(1);
+			for (const rule of rules) {
+				expect(rule?.positionalCount?.max, `bound on a ${token} seed`).toBe(entry.maxPositionals);
+			}
+		}
+		// The deferring seed still refuses to fire with nothing to check.
+		const deferringUniq = defaultSeedGrants().find(
+			(g) =>
+				g.scope?.kind === 'shell' &&
+				g.scope.rule.command?.[0]?.token === 'uniq' &&
+				g.scope.rule.positionals?.kind === 'readable-paths'
+		);
+		const deferringRule = deferringUniq?.scope?.kind === 'shell' ? deferringUniq.scope.rule : null;
+		expect(deferringRule?.positionalCount?.min).toBe(1);
 	});
 
 	it('leaves grep/rg on a count bound rather than a path rule', () => {

@@ -169,6 +169,66 @@ describe('shell predicate — flag deny', () => {
 	});
 });
 
+describe('shell predicate — deny matching sees short options inside a cluster', () => {
+	// A deny-only reader rule shaped like the seeded `sort` one.
+	const rule: ShellRule = {
+		command: [{ token: 'sort', options: { deny: ['-o', '--output'] } }],
+		positionals: { kind: 'workspace-paths' }
+	};
+
+	it('rejects a denied short option bundled behind another short option', () => {
+		// `-bo/etc/x` is `-b -o /etc/x`: an arbitrary WRITE. A prefix-only deny
+		// misses it, and because the matcher does not know `-o` takes a value,
+		// the target never becomes a positional either — so nothing else would
+		// catch it.
+		expect(match(rule, 'sort -bo/etc/passwd')).toBe(false);
+		expect(match(rule, 'sort -bo /etc/passwd')).toBe(false);
+		// Even bundled at the end, with the value as the next token.
+		expect(match(rule, 'sort -rbo out.txt')).toBe(false);
+	});
+
+	it('still rejects the plain and attached forms', () => {
+		expect(match(rule, 'sort -o /etc/passwd')).toBe(false);
+		expect(match(rule, 'sort -o/etc/passwd')).toBe(false);
+		expect(match(rule, 'sort --output=/etc/passwd')).toBe(false);
+	});
+
+	it('does not treat a long option as a cluster of short options', () => {
+		// `--only-…` contains an `o`, but long options are never clusters.
+		const longRule: ShellRule = {
+			command: [{ token: 'demo', options: { deny: ['-o'] } }],
+			positionals: { kind: 'any' }
+		};
+		expect(match(longRule, 'demo --debug')).toBe(true);
+		expect(match(longRule, 'demo --no-color')).toBe(true);
+	});
+
+	it('rejects an abbreviated long option, which getopt_long accepts', () => {
+		// `sort --out=FILE` is `sort --output=FILE`. Matching only the canonical
+		// spelling made the deny a speed bump.
+		expect(match(rule, 'sort --out=/etc/passwd')).toBe(false);
+		expect(match(rule, 'sort --outp /etc/passwd')).toBe(false);
+		expect(match(rule, 'sort --o=/etc/passwd')).toBe(false);
+	});
+
+	it('does not deny a longer option that merely starts with a denied name', () => {
+		// Over-breadth runs one way only: a token that is a PREFIX OF a denied
+		// name is denied, not a token the denied name is a prefix of.
+		const grepish: ShellRule = {
+			command: [{ token: 'grep', options: { deny: ['-f', '--file'] } }],
+			positionals: { kind: 'any' }
+		};
+		expect(match(grepish, 'grep --files-with-matches x')).toBe(true);
+		expect(match(grepish, 'grep --file=pats')).toBe(false);
+		expect(match(grepish, 'grep --fil pats')).toBe(false);
+	});
+
+	it('leaves undenied clusters alone', () => {
+		expect(match(rule, 'sort -rn README.md')).toBe(true);
+		expect(match(rule, 'sort README.md')).toBe(true);
+	});
+});
+
 describe('shell predicate — option allow-list', () => {
 	const rule: ShellRule = {
 		command: [
