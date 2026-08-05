@@ -38,6 +38,7 @@ import { buildTicketTools } from '../tools/tickets';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
+import { buildShellTools } from '../tools/shell';
 import { buildFilesystemTools } from '../tools/filesystem';
 import { buildWorktreeTools } from '../tools/worktree';
 import { workspaceRootsFor } from '../leases';
@@ -272,6 +273,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	});
 	const portalTools = filterPortalToolGroups(
 		{
+			shell: buildShellTools(opts.workingDirectory),
 			git: buildGitTools(opts.workingDirectory, {
 				userId: opts.userId,
 				conversationId: opts.conversationId

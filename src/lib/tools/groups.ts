@@ -15,6 +15,7 @@ export interface PortalToolGroup {
 }
 
 export type PortalToolGroupId =
+	| 'shell'
 	| 'git'
 	| 'filesystem'
 	| 'worktree'
@@ -24,6 +25,7 @@ export type PortalToolGroupId =
 	| 'prompt-templates';
 
 export const PORTAL_TOOL_GROUPS: readonly PortalToolGroup[] = [
+	{ id: 'shell', label: 'Shell', hint: 'Run supervised, workspace-scoped Bash commands.' },
 	{ id: 'git', label: 'Git', hint: 'Structured git status/diff/log/show/commit tools.' },
 	{
 		id: 'filesystem',

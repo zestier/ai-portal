@@ -5,6 +5,7 @@ import {
 } from '../src/lib/server/runtime/system-guidance';
 
 const ALL_TOOLS = [
+	'shell_exec',
 	'git_status',
 	'ticket_add',
 	'permission_capabilities',
@@ -76,5 +77,6 @@ describe('buildPortalSystemGuidance', () => {
 		expect(PORTAL_SYSTEM_GUIDANCE).toContain('ticket_add');
 		expect(PORTAL_SYSTEM_GUIDANCE).toContain('git_status');
 		expect(PORTAL_SYSTEM_GUIDANCE).toContain('permission_capabilities');
+		expect(PORTAL_SYSTEM_GUIDANCE).toContain('shell_exec');
 	});
 });

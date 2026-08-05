@@ -18,6 +18,7 @@ import { validatePortalToolArgs } from '../tools/schema-error';
 import { buildTicketTools } from '../tools/tickets';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
+import { buildShellTools } from '../tools/shell';
 import { filterPortalToolGroups } from '../tools/filter-groups';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type {
@@ -1061,6 +1062,7 @@ function buildOpenAITools(opts: {
 }): PortalTool[] {
 	return filterPortalToolGroups(
 		{
+			shell: buildShellTools(opts.opts.workingDirectory),
 			git: buildGitTools(opts.opts.workingDirectory, {
 				userId: opts.opts.userId,
 				conversationId: opts.opts.conversationId

@@ -33,6 +33,7 @@ const GIT_TOOL_MARKER = 'git_status';
 const TICKET_TOOL_MARKER = 'ticket_add';
 const WORKTREE_TOOL_MARKER = 'worktree_create';
 const PERMISSION_TOOL_MARKERS = ['permission_capabilities', 'request_permission_grant'] as const;
+const SHELL_TOOL_MARKER = 'shell_exec';
 
 /**
  * Build the standing, portal-wide system guidance for a session, tailored to the
@@ -57,6 +58,12 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 	if (names.has(GIT_TOOL_MARKER)) {
 		blocks.push(
 			'Use git_status/git_diff/git_log/git_show_commit/git_show_file/git_commit instead of shell git.'
+		);
+	}
+
+	if (names.has(SHELL_TOOL_MARKER)) {
+		blocks.push(
+			'Use shell_exec for commands that do not have an equivalent structured portal tool. Keep commands non-interactive and prefer the current workspace as the working directory.'
 		);
 	}
 
@@ -124,6 +131,7 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 // tests that want the complete text; live sessions use `buildPortalSystemGuidance`
 // with their real tool set so absent tool groups drop their paragraphs.
 export const PORTAL_SYSTEM_GUIDANCE = buildPortalSystemGuidance([
+	SHELL_TOOL_MARKER,
 	GIT_TOOL_MARKER,
 	TICKET_TOOL_MARKER,
 	WORKTREE_TOOL_MARKER,

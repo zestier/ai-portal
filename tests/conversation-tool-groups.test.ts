@@ -21,6 +21,7 @@ function tool(name: string): PortalTool {
 
 function grouped(): Record<PortalToolGroupId, PortalTool[]> {
 	return {
+		shell: [tool('shell_exec')],
 		git: [tool('git_status'), tool('git_commit')],
 		filesystem: [tool('create_directory')],
 		worktree: [tool('worktree_create')],
@@ -37,6 +38,7 @@ describe('filterPortalToolGroups', () => {
 	it('returns every tool when nothing is disabled', () => {
 		const out = names(filterPortalToolGroups(grouped(), []));
 		expect(out).toEqual([
+			'shell_exec',
 			'git_status',
 			'git_commit',
 			'create_directory',
@@ -65,6 +67,7 @@ describe('filterPortalToolGroups', () => {
 	it('drops multiple disabled groups', () => {
 		const out = names(filterPortalToolGroups(grouped(), ['git', 'tickets', 'memory']));
 		expect(out).toEqual([
+			'shell_exec',
 			'create_directory',
 			'worktree_create',
 			'request_permission_grant',
@@ -85,6 +88,7 @@ describe('filterPortalToolGroups', () => {
 
 	it('emits groups in canonical order regardless of record insertion order', () => {
 		const shuffled = {
+			shell: [tool('shell_exec')],
 			'prompt-templates': [tool('template_list')],
 			memory: [tool('memory_upsert')],
 			permissions: [tool('request_permission_grant')],
@@ -94,6 +98,7 @@ describe('filterPortalToolGroups', () => {
 			git: [tool('git_status')]
 		} as Record<PortalToolGroupId, PortalTool[]>;
 		expect(names(filterPortalToolGroups(shuffled, []))).toEqual([
+			'shell_exec',
 			'git_status',
 			'create_directory',
 			'worktree_create',

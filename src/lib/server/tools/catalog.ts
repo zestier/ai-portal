@@ -20,6 +20,7 @@ import { buildTicketTools } from './tickets';
 import { buildPermissionTools } from './permissions';
 import { buildMemoryTools } from './memory';
 import { buildPromptTemplateTools } from './prompt-templates';
+import { buildShellTools } from './shell';
 
 export type { PortalToolCatalogEntry };
 
@@ -32,6 +33,7 @@ const STUB = {
 
 function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 	return {
+		shell: buildShellTools(STUB.cwd),
 		git: buildGitTools(STUB.cwd, { userId: STUB.userId, conversationId: STUB.conversationId }),
 		filesystem: buildFilesystemTools(STUB.cwd, {
 			userId: STUB.userId,
