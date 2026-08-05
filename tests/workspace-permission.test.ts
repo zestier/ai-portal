@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { isPathInWorkspace } from '../src/lib/server/permissions/workspace';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
+import {
+	mkdtempSync,
+	mkdirSync,
+	writeFileSync,
+	symlinkSync,
+	rmSync,
+	unlinkSync,
+	realpathSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -97,7 +105,7 @@ describe('isPathInWorkspace', () => {
 			expect(isPathInWorkspace(join(linkedRoot, 'src', 'new.ts'), linkedRoot)).toBe(true);
 			expect(isPathInWorkspace('/etc/passwd', linkedRoot)).toBe(false);
 		} finally {
-			rmSync(linkedRoot, { force: true });
+			unlinkSync(linkedRoot);
 		}
 	});
 

@@ -7,9 +7,11 @@ so no real GitHub Copilot credentials or network are required.
 ## Run locally
 
 ```bash
-pnpm exec playwright install --with-deps firefox   # one-time
 pnpm test:e2e
 ```
+
+The E2E command installs the configured Firefox browser and its Linux system
+dependencies, so `pnpm run verify` works from a fresh dependency install.
 
 The `webServer` in `playwright.config.ts` builds the app and launches
 `node build` on port 4173 against `e2e/.tmp-data/` (wiped on each run).

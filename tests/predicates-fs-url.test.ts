@@ -152,7 +152,7 @@ describe('fs predicate', () => {
 				})
 			).toBe(false);
 		} finally {
-			rmSync(join(ws, 'src', 'escape'), { force: true });
+			rmSync(join(ws, 'src', 'escape'), { recursive: true, force: true });
 			rmSync(outside, { recursive: true, force: true });
 		}
 	});

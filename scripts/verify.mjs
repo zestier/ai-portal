@@ -12,7 +12,13 @@ const taskDefinitions = [
 	{ label: 'unit', command: pnpm, args: ['test'], dependsOn: [] },
 	{ label: 'build', command: pnpm, args: ['build'], dependsOn: [] },
 	{ label: 'check', command: pnpm, args: ['check'], dependsOn: ['build'] },
-	{ label: 'e2e', command: pnpm, args: ['test:e2e:run'], dependsOn: ['build'] }
+	{
+		label: 'e2e',
+		command: pnpm,
+		args: ['test:e2e:run'],
+		dependsOn: ['build'],
+		env: { E2E_ISOLATED: '1' }
+	}
 ];
 
 const tasks = failureProbe
@@ -56,7 +62,7 @@ function runTask(task) {
 		console.log(`[verify] start ${task.label}: ${formatCommand(task)}`);
 		const child = spawn(task.command, task.args, {
 			cwd: process.cwd(),
-			env: process.env,
+			env: { ...process.env, ...task.env },
 			stdio: ['ignore', 'pipe', 'pipe']
 		});
 
