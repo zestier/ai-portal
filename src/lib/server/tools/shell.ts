@@ -4,12 +4,21 @@ import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { err, ok, type PortalTool, type ToolStreamContext } from './types';
 
+const MAX_SHELL_OUTPUT_BYTES = 64 * 1024;
+const DEFAULT_SHELL_OUTPUT_BYTES = 32 * 1024;
+
 const ShellArgs = z
 	.object({
 		command: z.string().trim().min(1).max(20_000),
 		cwd: z.string().trim().min(1).max(4_096).optional(),
 		timeoutMs: z.number().int().min(100).max(120_000).optional().default(30_000),
-		maxOutputBytes: z.number().int().min(1_024).max(1_000_000).optional().default(200_000)
+		maxOutputBytes: z
+			.number()
+			.int()
+			.min(1_024)
+			.max(MAX_SHELL_OUTPUT_BYTES)
+			.optional()
+			.default(DEFAULT_SHELL_OUTPUT_BYTES)
 	})
 	.strict();
 
@@ -52,6 +61,7 @@ function runShell(
 		let truncated = false;
 		let timedOut = false;
 		let aborted = false;
+		let outputLimitReached = false;
 		let settled = false;
 		const timeoutHandle = setTimeout(() => {
 			timedOut = true;
@@ -68,7 +78,14 @@ function runShell(
 			const remaining = maxOutputBytes - outputBytes;
 			const text = chunk.subarray(0, remaining).toString('utf8');
 			outputBytes += Buffer.byteLength(text);
-			if (text.length < chunk.length) truncated = true;
+			if (Buffer.byteLength(text) < chunk.length) {
+				truncated = true;
+				if (!outputLimitReached) {
+					outputLimitReached = true;
+					ctx?.progress(`Command output exceeded ${maxOutputBytes} bytes.`);
+					killProcessTree(child.pid!, 'SIGTERM');
+				}
+			}
 			if (target === 'stdout') stdout += text;
 			else stderr += text;
 			ctx?.partial(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`);
@@ -140,7 +157,7 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 					},
 					maxOutputBytes: {
 						type: 'number',
-						description: 'Maximum combined stdout/stderr bytes, from 1024 to 1000000.'
+						description: 'Maximum combined stdout/stderr bytes, from 1024 to 65536.'
 					}
 				},
 				required: ['command'],

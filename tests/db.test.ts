@@ -47,7 +47,12 @@ describe('db migrations + repos', () => {
 
 	it('round-trips a conversation with messages', () => {
 		const u = users.ensureLocalUser();
-		const c = convs.create(u.id, { title: 't', workdir: '/tmp', model: 'm' });
+		const c = convs.create(u.id, {
+			title: 't',
+			workdir: '/tmp',
+			provider: 'copilot',
+			model: 'm'
+		});
 		expect(c.provider).toBe('copilot');
 		messages.append(c.id, { role: 'user', content: 'hello' });
 		messages.append(c.id, { role: 'assistant', content: 'world' });

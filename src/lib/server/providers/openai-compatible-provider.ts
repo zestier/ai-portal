@@ -11,7 +11,10 @@ import {
 	type ToolResult
 } from '../tools/types';
 import { buildPermissionTools } from '../tools/permissions';
-import { buildFilesystemTools } from '../tools/filesystem';
+import { buildCreateDirectoryTools } from '../tools/create-directory';
+import { buildMoveTools } from '../tools/move';
+import { buildTrashTools } from '../tools/trash';
+import { buildReadFileTools } from '../tools/read-file';
 import { buildWorktreeTools } from '../tools/worktree';
 import { workspaceRootsFor } from '../leases';
 import { validatePortalToolArgs } from '../tools/schema-error';
@@ -19,6 +22,8 @@ import { buildTicketTools } from '../tools/tickets';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildShellTools } from '../tools/shell';
+import { buildApplyPatchTools } from '../tools/apply-patch';
+import { buildGrepTools } from '../tools/grep';
 import { filterPortalToolGroups } from '../tools/filter-groups';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type {
@@ -1067,10 +1072,32 @@ function buildOpenAITools(opts: {
 				userId: opts.opts.userId,
 				conversationId: opts.opts.conversationId
 			}),
-			filesystem: buildFilesystemTools(opts.opts.workingDirectory, {
-				userId: opts.opts.userId,
-				conversationId: opts.opts.conversationId
-			}),
+			filesystem: [
+				...buildCreateDirectoryTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				}),
+				...buildMoveTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				}),
+				...buildTrashTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				}),
+				...buildReadFileTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				}),
+				...buildApplyPatchTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				}),
+				...buildGrepTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				})
+			],
 			worktree: buildWorktreeTools({
 				userId: opts.opts.userId,
 				conversationId: opts.opts.conversationId

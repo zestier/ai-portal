@@ -14,13 +14,18 @@ import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 import type { PortalToolCatalogEntry } from '$lib/tools/catalog-types';
 import type { PortalTool } from './types';
 import { buildGitTools } from './git';
-import { buildFilesystemTools } from './filesystem';
+import { buildCreateDirectoryTools } from './create-directory';
+import { buildMoveTools } from './move';
+import { buildTrashTools } from './trash';
+import { buildReadFileTools } from './read-file';
 import { buildWorktreeTools } from './worktree';
 import { buildTicketTools } from './tickets';
 import { buildPermissionTools } from './permissions';
 import { buildMemoryTools } from './memory';
 import { buildPromptTemplateTools } from './prompt-templates';
 import { buildShellTools } from './shell';
+import { buildApplyPatchTools } from './apply-patch';
+import { buildGrepTools } from './grep';
 
 export type { PortalToolCatalogEntry };
 
@@ -35,10 +40,32 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 	return {
 		shell: buildShellTools(STUB.cwd),
 		git: buildGitTools(STUB.cwd, { userId: STUB.userId, conversationId: STUB.conversationId }),
-		filesystem: buildFilesystemTools(STUB.cwd, {
-			userId: STUB.userId,
-			conversationId: STUB.conversationId
-		}),
+		filesystem: [
+			...buildCreateDirectoryTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildMoveTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildTrashTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildReadFileTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildApplyPatchTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildGrepTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			})
+		],
 		worktree: buildWorktreeTools({ userId: STUB.userId, conversationId: STUB.conversationId }),
 		tickets: buildTicketTools({
 			userId: STUB.userId,

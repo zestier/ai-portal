@@ -14,10 +14,10 @@ export function uniqueTitle(prefix: string) {
 export async function createConversation(
 	request: APIRequestContext,
 	title: string,
-	options: { workdir?: string } = {}
+	options: { workdir?: string; approvalMode?: 'ask' | 'auto-approve' | 'auto-deny' } = {}
 ) {
 	const res = await request.post('/api/conversations', {
-		data: { title, ...options }
+		data: { title, approvalMode: 'ask', ...options }
 	});
 	expect(res.ok()).toBeTruthy();
 	const body = await res.json();

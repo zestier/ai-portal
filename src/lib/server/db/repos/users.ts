@@ -88,9 +88,12 @@ export function upsertGithub(input: UpsertGithubInput): User {
 }
 
 /**
- * Idempotently get-or-create the single local user used in AUTH_MODE=none.
+ * Idempotently get-or-create a local user used in AUTH_MODE=none.
+ *
+ * The optional key is reserved for isolated e2e users; normal local mode
+ * continues to use the single `local` user.
  */
-export function ensureLocalUser(): User {
+export function ensureLocalUser(key = 'local'): User {
 	const db = getDb();
 	// Keep the SELECT and the cold-start INSERT in the SAME transaction so the
 	// get-or-create is atomic. With the synchronous single-process
@@ -98,7 +101,8 @@ export function ensureLocalUser(): User {
 	// next, so two callers can't both observe existing=undefined and race to
 	// INSERT the 'local' user (violating UNIQUE(github_login)).
 	return db.transaction((): User => {
-		const existing = db.prepare('SELECT * FROM users WHERE github_login = ?').get('local') as
+		const githubLogin = key === 'local' ? 'local' : `local:${key}`;
+		const existing = db.prepare('SELECT * FROM users WHERE github_login = ?').get(githubLogin) as
 			| UserRow
 			| undefined;
 		if (existing) return rowToUser(existing);
@@ -106,9 +110,14 @@ export function ensureLocalUser(): User {
 		const now = Date.now();
 		db.prepare(
 			`INSERT INTO users(id, github_login, display_name, created_at, last_login_at)
-		 VALUES (?, ?, ?, ?, ?)`
-		).run(id, 'local', 'Local user', now, now);
+			 VALUES (?, ?, ?, ?, ?)`
+		).run(id, githubLogin, key === 'local' ? 'Local user' : `Local user (${key})`, now, now);
 		ensureSeedGrantsForUser(id);
-		return { id, githubLogin: 'local', displayName: 'Local user', avatarUrl: null };
+		return {
+			id,
+			githubLogin,
+			displayName: key === 'local' ? 'Local user' : `Local user (${key})`,
+			avatarUrl: null
+		};
 	})();
 }

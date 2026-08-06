@@ -165,37 +165,44 @@ test('the default approval mode is saved and seeds newly created conversations',
 	// form field -> user_settings row -> POST /api/conversations fallback.
 	await page.goto('/settings');
 	const select = page.locator('select[name="defaultApprovalMode"]');
+	// AUTH_MODE=none gives parallel workers one local user. Normalize the
+	// shared setting before the assertion and clean it up even on failure.
+	await select.selectOption('ask');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByText('Saved.')).toBeVisible();
 	await expect(select).toHaveValue('ask');
 
-	await select.selectOption('auto-deny');
-	await page.getByRole('button', { name: 'Save', exact: true }).click();
-	await expect(page.getByText('Saved.')).toBeVisible();
+	try {
+		await select.selectOption('auto-deny');
+		await page.getByRole('button', { name: 'Save', exact: true }).click();
+		await expect(page.getByText('Saved.')).toBeVisible();
 
-	// Survives a reload, i.e. it really round-tripped through the DB.
-	await page.reload();
-	await expect(page.locator('select[name="defaultApprovalMode"]')).toHaveValue('auto-deny');
+		// Survives a reload, i.e. it really round-tripped through the DB.
+		await page.reload();
+		await expect(page.locator('select[name="defaultApprovalMode"]')).toHaveValue('auto-deny');
 
-	// A conversation created without an explicit approvalMode inherits it.
-	const inherited = await request
-		.post('/api/conversations', { data: { title: uniqueTitle('Inherits approvals') } })
-		.then((r) => r.json());
-	expect(inherited.conversation.approvalMode).toBe('auto-deny');
-	// The default is orthogonal to the conversation mode, which keeps its own default.
-	expect(inherited.conversation.mode).toBe('interactive');
+		// A conversation created without an explicit approvalMode inherits it.
+		const inherited = await request
+			.post('/api/conversations', { data: { title: uniqueTitle('Inherits approvals') } })
+			.then((r) => r.json());
+		expect(inherited.conversation.approvalMode).toBe('auto-deny');
+		// The default is orthogonal to the conversation mode, which keeps its own default.
+		expect(inherited.conversation.mode).toBe('interactive');
 
-	// An explicit value in the create body still wins over the user default.
-	const explicit = await request
-		.post('/api/conversations', {
-			data: { title: uniqueTitle('Explicit approvals'), approvalMode: 'auto-approve' }
-		})
-		.then((r) => r.json());
-	expect(explicit.conversation.approvalMode).toBe('auto-approve');
-
-	// Restore the default so the rest of the shared suite sees a clean slate.
-	await page.goto('/settings');
-	await page.locator('select[name="defaultApprovalMode"]').selectOption('ask');
-	await page.getByRole('button', { name: 'Save', exact: true }).click();
-	await expect(page.getByText('Saved.')).toBeVisible();
+		// An explicit value in the create body still wins over the user default.
+		const explicit = await request
+			.post('/api/conversations', {
+				data: { title: uniqueTitle('Explicit approvals'), approvalMode: 'auto-approve' }
+			})
+			.then((r) => r.json());
+		expect(explicit.conversation.approvalMode).toBe('auto-approve');
+	} finally {
+		// Keep the shared local user isolated from later workers and repetitions.
+		await page.goto('/settings');
+		await page.locator('select[name="defaultApprovalMode"]').selectOption('ask');
+		await page.getByRole('button', { name: 'Save', exact: true }).click();
+		await expect(page.getByText('Saved.')).toBeVisible();
+	}
 });
 
 test('the adversary review backend is saved, seeds conversations, and drives the model picker', async ({

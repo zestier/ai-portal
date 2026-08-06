@@ -39,7 +39,12 @@ import { buildPermissionTools } from '../tools/permissions';
 import { buildMemoryTools } from '../tools/memory';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildShellTools } from '../tools/shell';
-import { buildFilesystemTools } from '../tools/filesystem';
+import { buildCreateDirectoryTools } from '../tools/create-directory';
+import { buildMoveTools } from '../tools/move';
+import { buildTrashTools } from '../tools/trash';
+import { buildReadFileTools } from '../tools/read-file';
+import { buildApplyPatchTools } from '../tools/apply-patch';
+import { buildGrepTools } from '../tools/grep';
 import { buildWorktreeTools } from '../tools/worktree';
 import { workspaceRootsFor } from '../leases';
 import { filterPortalToolGroups } from '../tools/filter-groups';
@@ -278,10 +283,32 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 				userId: opts.userId,
 				conversationId: opts.conversationId
 			}),
-			filesystem: buildFilesystemTools(opts.workingDirectory, {
-				userId: opts.userId,
-				conversationId: opts.conversationId
-			}),
+			filesystem: [
+				...buildCreateDirectoryTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildMoveTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildTrashTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildReadFileTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildApplyPatchTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildGrepTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				})
+			],
 			worktree: buildWorktreeTools({
 				userId: opts.userId,
 				conversationId: opts.conversationId

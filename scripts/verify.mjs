@@ -2,10 +2,25 @@
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 
-const args = new Set(process.argv.slice(2));
-const sequential = args.has('--sequential');
+const argv = process.argv.slice(2);
+const args = new Set(argv);
 const failureProbe = args.has('--failure-probe');
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+
+function parseConcurrency() {
+	const equalsArg = argv.find((arg) => arg.startsWith('--concurrency='));
+	const optionIndex = argv.indexOf('--concurrency');
+	const raw =
+		equalsArg?.slice('--concurrency='.length) ?? (optionIndex >= 0 ? argv[optionIndex + 1] : '4');
+	const concurrency = Number(raw);
+	if (!Number.isInteger(concurrency) || concurrency < 1) {
+		console.error('[verify] --concurrency must be a positive integer');
+		process.exit(2);
+	}
+	return concurrency;
+}
+
+const concurrency = args.has('--sequential') ? 1 : parseConcurrency();
 
 const taskDefinitions = [
 	{ label: 'lint', command: pnpm, args: ['lint'], dependsOn: [] },
@@ -137,14 +152,9 @@ async function runDag(tasksToRun, maxConcurrency) {
 
 const startedAt = performance.now();
 
-console.log(
-	`[verify] mode: ${failureProbe ? 'failure probe' : sequential ? 'sequential benchmark' : 'parallel'}`
-);
+console.log(`[verify] mode: ${failureProbe ? 'failure probe' : `concurrency ${concurrency}`}`);
 
-const { allResults, failures, skipped } = await runDag(
-	tasks,
-	sequential ? 1 : Number.POSITIVE_INFINITY
-);
+const { allResults, failures, skipped } = await runDag(tasks, concurrency);
 
 const totalMs = performance.now() - startedAt;
 console.log('[verify] summary:');

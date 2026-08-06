@@ -52,7 +52,6 @@ describe('filesystem tools inside a worktree lease', () => {
 	let leasePath: string;
 	let leaseId: string;
 	let tools: Map<string, PortalTool>;
-	let buildFilesystemTools: typeof import('../src/lib/server/tools/filesystem').buildFilesystemTools;
 	let newConversation: () => string;
 
 	beforeEach(async () => {
@@ -86,9 +85,15 @@ describe('filesystem tools inside a worktree lease', () => {
 		leaseId = lease.leaseId;
 		leasePath = lease.path;
 
-		({ buildFilesystemTools } = await import('../src/lib/server/tools/filesystem'));
+		const { buildCreateDirectoryTools } = await import('../src/lib/server/tools/create-directory');
+		const { buildMoveTools } = await import('../src/lib/server/tools/move');
+		const { buildTrashTools } = await import('../src/lib/server/tools/trash');
 		tools = new Map(
-			buildFilesystemTools(source, { userId, conversationId }).map((t) => [t.name, t])
+			[
+				...buildCreateDirectoryTools(source, { userId, conversationId }),
+				...buildMoveTools(source, { userId, conversationId }),
+				...buildTrashTools(source, { userId, conversationId })
+			].map((t) => [t.name, t])
 		);
 	});
 
@@ -154,12 +159,9 @@ describe('filesystem tools inside a worktree lease', () => {
 	// The held-by-this-conversation check is what keeps the selector from being a
 	// way to write into an arbitrary path.
 	it('refuses a lease held by another conversation', async () => {
-		const otherTools = new Map(
-			buildFilesystemTools(source, { userId, conversationId: newConversation() }).map((t) => [
-				t.name,
-				t
-			])
-		);
+		const { buildTrashTools } = await import('../src/lib/server/tools/trash');
+		const otherContext = { userId, conversationId: newConversation() };
+		const otherTools = new Map([...buildTrashTools(source, otherContext)].map((t) => [t.name, t]));
 
 		const res = await otherTools.get('trash')!.handler({ path: 'README.md', worktree: leaseId });
 
@@ -171,7 +173,8 @@ describe('filesystem tools inside a worktree lease', () => {
 	// ignored — acting on the conversation's own workspace instead would delete
 	// the wrong file.
 	it('rejects the selector when the session has no context', async () => {
-		const bare = new Map(buildFilesystemTools(source).map((t) => [t.name, t]));
+		const { buildTrashTools } = await import('../src/lib/server/tools/trash');
+		const bare = new Map(buildTrashTools(source).map((t) => [t.name, t]));
 
 		const res = await bare.get('trash')!.handler({ path: 'README.md', worktree: leaseId });
 
@@ -206,9 +209,10 @@ describe('filesystem tools inside a worktree lease', () => {
 		// path in the conversation's own workspace, which the fs-write seed would
 		// auto-approve while describing a target the handler never touches.
 		// Returning null makes the gateway raise its default custom-tool prompt.
-		it('returns null for a lease this conversation does not hold', () => {
+		it('returns null for a lease this conversation does not hold', async () => {
+			const { buildTrashTools } = await import('../src/lib/server/tools/trash');
 			const otherTools = new Map(
-				buildFilesystemTools(source, { userId, conversationId: newConversation() }).map((t) => [
+				buildTrashTools(source, { userId, conversationId: newConversation() }).map((t) => [
 					t.name,
 					t
 				])

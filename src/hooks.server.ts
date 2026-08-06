@@ -79,7 +79,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	// AUTH_MODE=none: auto-login the local user.
 	if (cfg.AUTH_MODE === 'none') {
-		const u = users.ensureLocalUser();
+		const e2eUser =
+			process.env.E2E_ISOLATED === '1' ? event.request.headers.get('x-e2e-user') : null;
+		const u = users.ensureLocalUser(e2eUser ?? 'local');
 		event.locals.userId = u.id;
 		event.locals.user = u;
 	} else {

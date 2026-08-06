@@ -40,22 +40,23 @@ See [docs/deployment.md](docs/deployment.md) for the OAuth + tunnel setup.
 
 ## Scripts
 
-| Script                          | Purpose                                                                            |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `pnpm run dev`                  | Vite dev server with HMR.                                                          |
-| `pnpm run dev:isolated`         | Like `dev`, but points `DATA_DIR` at a fresh temp dir. See [AGENTS.md](AGENTS.md). |
-| `pnpm run build`                | Production build into `build/`.                                                    |
-| `pnpm start`                    | Run the production build (`node build`).                                           |
-| `pnpm run serve`                | Supervisor that runs the build from `build.live/` and supports in-app redeploy.    |
-| `pnpm run check`                | `svelte-check` + TS.                                                               |
-| `pnpm run lint`                 | ESLint + Prettier check.                                                           |
-| `pnpm run format`               | Prettier write.                                                                    |
-| `pnpm test`                     | Vitest unit tests.                                                                 |
-| `pnpm run test:e2e`             | Build + Playwright e2e (uses stubbed Copilot).                                     |
-| `pnpm run test:e2e:run`         | Playwright e2e only; expects `build/` to already exist.                            |
-| `pnpm run verify`               | Parallel lint/unit/build, then check/e2e. Same gate redeploy/pre-commit run.       |
-| `pnpm run verify:sequential`    | Sequential benchmark of the same verify phases.                                    |
-| `pnpm run release:bump-actions` | Pin GitHub Actions in `.github/workflows/` to current SHAs.                        |
+| Script                               | Purpose                                                                            |
+| ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `pnpm run dev`                       | Vite dev server with HMR.                                                          |
+| `pnpm run dev:isolated`              | Like `dev`, but points `DATA_DIR` at a fresh temp dir. See [AGENTS.md](AGENTS.md). |
+| `pnpm run build`                     | Production build into `build/`.                                                    |
+| `pnpm start`                         | Run the production build (`node build`).                                           |
+| `pnpm run serve`                     | Supervisor that runs the build from `build.live/` and supports in-app redeploy.    |
+| `pnpm run check`                     | `svelte-check` + TS.                                                               |
+| `pnpm run lint`                      | ESLint + Prettier check.                                                           |
+| `pnpm run format`                    | Prettier write.                                                                    |
+| `pnpm test`                          | Vitest unit tests.                                                                 |
+| `pnpm run test:e2e`                  | Build + Playwright e2e (uses stubbed Copilot).                                     |
+| `pnpm run test:e2e:run`              | Playwright e2e only; expects `build/` to already exist.                            |
+| `pnpm run verify`                    | Serial lint/unit/build/check/e2e gate used by redeploy and pre-commit.             |
+| `pnpm run verify -- --concurrency 3` | Run the same gate with up to three independent phases in parallel.                 |
+| `pnpm run verify:sequential`         | Explicit serial alias for the same verify phases.                                  |
+| `pnpm run release:bump-actions`      | Pin GitHub Actions in `.github/workflows/` to current SHAs.                        |
 
 This project uses **pnpm** (declared via `packageManager` in `package.json`).
 Use `corepack enable` once to make pnpm available without a global install.

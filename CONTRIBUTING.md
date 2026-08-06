@@ -12,8 +12,8 @@ a change that passes `verify` locally is a change that will commit and deploy
 cleanly. Run it before opening a PR:
 
 ```bash
-pnpm run verify          # parallel
-pnpm run verify:sequential   # same phases, one at a time (easier to read failures)
+pnpm run verify                       # one phase at a time (default)
+pnpm run verify -- --concurrency 3    # run up to three independent phases at once
 ```
 
 To bypass the pre-commit hook for an emergency commit: `SKIP_VERIFY=1 git commit ...`.

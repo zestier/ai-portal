@@ -1,4 +1,5 @@
 import { test as base, expect, type APIRequestContext } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 export { expect };
 
@@ -18,12 +19,21 @@ const CSRF_COOKIE_NAMES = ['portal_csrf', '__Host-portal_csrf'];
  * `Origin` header (also required by the guard) is re-added here because a
  * freshly created context does not inherit `use.extraHTTPHeaders`.
  */
-export const test = base.extend<{ request: APIRequestContext }>({
-	request: async ({ playwright, baseURL }, use) => {
+export const test = base.extend<{ request: APIRequestContext; testIdentity: string }>({
+	testIdentity: async ({ browserName }, use, testInfo) => {
+		const seed = `${browserName}:${testInfo.testId}:${testInfo.repeatEachIndex}`;
+		const identity = createHash('sha256').update(seed).digest('hex').slice(0, 24);
+		await use(`test-${identity}`);
+	},
+	context: async ({ context, testIdentity }, use) => {
+		await context.setExtraHTTPHeaders({ 'x-e2e-user': testIdentity });
+		await use(context);
+	},
+	request: async ({ playwright, baseURL, testIdentity }, use) => {
 		const origin = baseURL ?? '';
 		const probe = await playwright.request.newContext({
 			baseURL,
-			extraHTTPHeaders: { Origin: origin }
+			extraHTTPHeaders: { Origin: origin, 'x-e2e-user': testIdentity }
 		});
 		await probe.get('/api/health');
 		const { cookies } = await probe.storageState();
@@ -34,6 +44,7 @@ export const test = base.extend<{ request: APIRequestContext }>({
 			baseURL,
 			extraHTTPHeaders: {
 				Origin: origin,
+				'x-e2e-user': testIdentity,
 				...(csrf ? { 'X-CSRF-Token': csrf.value } : {})
 			},
 			storageState: csrf ? { cookies: [csrf], origins: [] } : undefined

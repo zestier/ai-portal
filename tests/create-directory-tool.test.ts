@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdirSync, writeFileSync, existsSync, statSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTmpDir } from './helpers/tmp';
-import { buildFilesystemTools } from '../src/lib/server/tools/filesystem';
+import { buildCreateDirectoryTools } from '../src/lib/server/tools/create-directory';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
 function createDirectoryTool(root: string): PortalTool {
-	const tool = buildFilesystemTools(root).find((t) => t.name === 'create_directory');
+	const tool = buildCreateDirectoryTools(root)[0];
 	if (!tool) throw new Error('create_directory tool not registered');
 	return tool;
 }

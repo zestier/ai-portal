@@ -1,4 +1,4 @@
-import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rename, stat, writeFile, readFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
@@ -34,6 +34,18 @@ const TrashArgs = z
 		worktree: WorktreeSelector
 	})
 	.strict();
+
+const ReadFileArgs = z
+	.object({
+		path: z.string().min(1).max(4096),
+		worktree: WorktreeSelector,
+		startLine: z.number().int().min(1).optional(),
+		endLine: z.number().int().min(1).optional()
+	})
+	.strict();
+
+const MAX_READ_FILE_BYTES = 5_000_000;
+const MAX_READ_RESULT_BYTES = 200_000;
 
 // Workspace-relative directory the `trash` tool moves deleted entries into.
 // Keeping it inside the workspace is deliberate: the move that performs the
@@ -315,6 +327,97 @@ export function buildFilesystemTools(
 				const tree = treeFor(worktree);
 				if (tree.error) return tree.error;
 				return trashInto(tree.cwd, rawPath);
+			}
+		},
+		{
+			name: 'read_file',
+			description:
+				'Read the content of a file in the workspace. Supports optional line range selection. The path must be workspace-relative. Pass `worktree` to act inside a worktree this conversation holds instead. Returns the content and basic metadata. Errors on binary files or if the path is a directory.',
+			argsSchema: ReadFileArgs,
+			parameters: {
+				type: 'object',
+				properties: {
+					path: {
+						type: 'string',
+						description: 'Workspace-relative path of the file to read.'
+					},
+					worktree: WORKTREE_WRITE_PARAM,
+					startLine: {
+						type: 'number',
+						description: 'The starting line number (1-indexed).'
+					},
+					endLine: {
+						type: 'number',
+						description: 'The ending line number (1-indexed).'
+					}
+				},
+				required: ['path'],
+				additionalProperties: false
+			},
+			derivePermissionRequest(args): ToolPermissionRequest | null {
+				const parsed = ReadFileArgs.safeParse(args);
+				if (!parsed.success) return null;
+				const root = permissionRoot(parsed.data.worktree);
+				if (root === null) return null;
+				const abs = resolveAbsoluteTarget(root, parsed.data.path);
+				if (abs === null) return null;
+				return { permissionKind: 'read', path: abs };
+			},
+			async handler(args) {
+				const { path: rawPath, worktree, startLine, endLine } = ReadFileArgs.parse(args);
+				if (startLine !== undefined && endLine !== undefined && startLine > endLine) {
+					return err('startLine must be less than or equal to endLine');
+				}
+				const tree = treeFor(worktree);
+				if (tree.error) return tree.error;
+				const resolved = resolveWorkspaceTarget(tree.cwd, rawPath);
+				if (!resolved.ok) return err(resolved.message);
+
+				try {
+					const fileStat = await stat(resolved.abs);
+					if (fileStat.isDirectory()) {
+						return err(`Path is a directory, not a file: ${resolved.rel}`);
+					}
+					if (fileStat.size > MAX_READ_FILE_BYTES) {
+						return err(
+							`File is too large to read safely (${fileStat.size} bytes; limit is ${MAX_READ_FILE_BYTES}). Use a line range or a narrower search.`
+						);
+					}
+
+					const content = await readFile(resolved.abs, { encoding: 'utf8' });
+
+					// Binary detection: check for null bytes
+					if (content.includes('\0')) {
+						return err(`File contains null bytes and is likely binary: ${resolved.rel}`);
+					}
+
+					let resultContent = content;
+					if (startLine !== undefined || endLine !== undefined) {
+						const lines = content.split(/\r?\n/);
+						const start = Math.max(0, (startLine || 1) - 1);
+						const end = endLine !== undefined ? Math.min(lines.length, endLine) : lines.length;
+						resultContent = lines.slice(start, end).join('\n');
+					}
+					if (Buffer.byteLength(resultContent) > MAX_READ_RESULT_BYTES) {
+						return err(
+							`Read result is too large (${Buffer.byteLength(resultContent)} bytes; limit is ${MAX_READ_RESULT_BYTES}). Request a narrower line range.`
+						);
+					}
+
+					return ok(
+						{
+							content: resultContent,
+							size: fileStat.size,
+							type: fileStat.isDirectory() ? 'directory' : 'file'
+						},
+						`Read file: ${resolved.rel}`
+					);
+				} catch (e) {
+					if (e instanceof Error && 'code' in e && e.code === 'ENOENT') {
+						return err(`File does not exist: ${resolved.rel}`);
+					}
+					return err(e instanceof Error ? e.message : String(e));
+				}
 			}
 		}
 	];

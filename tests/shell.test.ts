@@ -48,6 +48,27 @@ describe('shell_exec', () => {
 		});
 	});
 
+	it('uses a conservative default output cap', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await buildShellTools(workspace)[0].handler({
+				command: 'printf "x%.0s" {1..40000}'
+			});
+			expect(result).toMatchObject({ ok: true, result: { truncated: true } });
+			if (result.ok) {
+				const payload = result.result as { stdout: string };
+				expect(Buffer.byteLength(payload.stdout)).toBeLessThanOrEqual(32 * 1024);
+			}
+		});
+	});
+
+	it('rejects a caller-selected output cap above the server limit', async () => {
+		await withWorkspace(async (workspace) => {
+			await expect(
+				buildShellTools(workspace)[0].handler({ command: 'true', maxOutputBytes: 1_000_000 })
+			).rejects.toThrow();
+		});
+	});
+
 	it('terminates a command when the turn is aborted', async () => {
 		await withWorkspace(async (workspace) => {
 			const controller = new AbortController();
