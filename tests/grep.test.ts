@@ -40,4 +40,27 @@ describe('grep', () => {
 			expect(result).toMatchObject({ ok: false, error: { code: 'invalid_path' } });
 		});
 	});
+
+	it('caps output returned from the WASM runtime', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'large.txt'), `${'needle '.padEnd(300, 'x')}\n`.repeat(500));
+			const result = await buildGrepTools(workspace)[0].handler({
+				pattern: 'needle',
+				maxMatches: 500
+			});
+			expect(result).toMatchObject({ ok: true, result: { matches: true, truncated: true } });
+			if (result.ok) {
+				expect(Buffer.byteLength((result.result as { output: string }).output)).toBeLessThanOrEqual(
+					100_000
+				);
+			}
+		});
+	});
+
+	it('returns ripgrep errors as tool errors', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await buildGrepTools(workspace)[0].handler({ pattern: '[' });
+			expect(result).toMatchObject({ ok: false, error: { code: 'grep_failed' } });
+		});
+	});
 });

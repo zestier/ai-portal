@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { ripgrep } from 'ripgrep';
 import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { err, ok, type PortalTool, type ToolPermissionRequest } from './types';
@@ -80,52 +80,23 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 				if (parsed.contextLines) rgArgs.push('--context', String(parsed.contextLines));
 				if (parsed.glob) rgArgs.push('--glob', parsed.glob);
 				rgArgs.push(parsed.pattern, target);
-				const runSearch = (command: string, commandArgs: string[]) =>
-					new Promise<ReturnType<typeof ok> | ReturnType<typeof err>>((resolveResult) => {
-						const child = spawn(command, commandArgs, {
-							cwd: tree.cwd,
-							stdio: ['ignore', 'pipe', 'pipe']
-						});
-						let output = '';
-						let bytes = 0;
-						let truncated = false;
-						let fallbackStarted = false;
-						const append = (chunk: Buffer) => {
-							const remaining = MAX_GREP_OUTPUT_BYTES - bytes;
-							if (remaining <= 0) {
-								truncated = true;
-								return;
-							}
-							const text = chunk.subarray(0, remaining).toString('utf8');
-							output += text;
-							bytes += Buffer.byteLength(text);
-							if (bytes < chunk.length) truncated = true;
-						};
-						child.stdout.on('data', append);
-						child.stderr.on('data', append);
-						child.on('error', (error) => {
-							if (command === 'rg' && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-								fallbackStarted = true;
-								const grepArgs = ['-R', '-n', '-H', '-E', '-m', String(parsed.maxMatches)];
-								if (!parsed.caseSensitive) grepArgs.push('-i');
-								if (parsed.contextLines) grepArgs.push('-C', String(parsed.contextLines));
-								if (parsed.glob) {
-									const include = parsed.glob.replace(/^\*\*\//, '');
-									grepArgs.push('--include', include);
-								}
-								void runSearch('grep', [...grepArgs, parsed.pattern, target]).then(resolveResult);
-								return;
-							}
-							resolveResult(err(error.message, { code: 'grep_failed' }));
-						});
-						child.on('close', (code) => {
-							if (fallbackStarted) return;
-							if (code !== 0 && code !== 1)
-								return resolveResult(err(output || 'grep failed', { code: 'grep_failed' }));
-							resolveResult(ok({ output, matches: code === 0, truncated }, 'Search completed.'));
-						});
+				try {
+					const { code, stdout, stderr } = await ripgrep(rgArgs, {
+						buffer: true,
+						nodeWasi: false,
+						preopens: { '.': tree.cwd }
 					});
-				return runSearch('rg', rgArgs);
+					const buffered = Buffer.from(stdout + stderr);
+					const truncated = buffered.length > MAX_GREP_OUTPUT_BYTES;
+					const output = buffered.subarray(0, MAX_GREP_OUTPUT_BYTES).toString('utf8');
+					if (code !== 0 && code !== 1)
+						return err(output || 'grep failed', { code: 'grep_failed' });
+					return ok({ output, matches: code === 0, truncated }, 'Search completed.');
+				} catch (error) {
+					return err(error instanceof Error ? error.message : String(error), {
+						code: 'grep_failed'
+					});
+				}
 			}
 		}
 	];
