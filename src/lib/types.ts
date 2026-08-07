@@ -484,7 +484,12 @@ export function faviconDataUri(accent: ThemeAccent): string {
 	return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-export const BACKEND_PROVIDER_IDS = ['copilot', 'openai-compatible', 'lm-studio'] as const;
+export const BACKEND_PROVIDER_IDS = [
+	'copilot',
+	'claude-agent',
+	'openai-compatible',
+	'lm-studio'
+] as const;
 export type BackendProviderId = (typeof BACKEND_PROVIDER_IDS)[number];
 
 export function normalizeBackendProvider(raw: string | null | undefined): BackendProviderId {

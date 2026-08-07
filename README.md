@@ -150,7 +150,9 @@ host-sandbox guarantee. See [docs/auth-and-security.md](docs/auth-and-security.m
 7. [docs/deployment.md](docs/deployment.md) — Dockerfile, compose, Cloudflare Tunnel.
 8. [docs/openai-compatible-backends.md](docs/openai-compatible-backends.md) —
    OpenAI-compatible backend setup, settings, and feature differences.
-9. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
+9. [docs/claude-agent-backends.md](docs/claude-agent-backends.md) — Claude Agent
+   SDK setup for Anthropic-compatible providers such as DeepSeek.
+10. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md) for testing, style, and the quality
 gate, and [AGENTS.md](AGENTS.md) for agent-specific guidance.

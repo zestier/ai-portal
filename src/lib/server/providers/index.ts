@@ -1,4 +1,5 @@
 import { copilotProvider } from '../copilot/copilot-provider';
+import { claudeAgentProvider } from './claude-agent-provider';
 import { lmStudioProvider } from './lm-studio-provider';
 import { openAICompatibleProvider } from './openai-compatible-provider';
 import { loadConfig } from '../config';
@@ -24,6 +25,7 @@ export type {
 
 const providers: Record<BackendProviderId, ModelBackendProvider> = {
 	copilot: copilotProvider,
+	'claude-agent': claudeAgentProvider,
 	'openai-compatible': openAICompatibleProvider,
 	'lm-studio': lmStudioProvider
 };

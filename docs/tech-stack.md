@@ -164,8 +164,11 @@ invalid config.
 | `COPILOT_CLI_URL`         | —                        | If set, connect to an external `copilot --headless --port N` instead of spawning the bundled CLI. See `docs/deployment.md` Topology C. |
 | `COPILOT_CONNECTION_TOKEN`| —                        | Token for a token-protected remote CLI (`COPILOT_CLI_URL`). Must match the CLI's `COPILOT_CONNECTION_TOKEN`; forwarded to the SDK as the `RuntimeConnection.forUri` connection token. |
 | `COPILOT_CONTEXT_TIER`    | `default`                | Instance-wide default context window tier: `default` (standard ~200k) or `long_context` (the 1M window). Each user can override this in **Settings → Context window tier**; the per-user choice wins, falling back to this env value when unset. The 1M tier is premium/separately-billed and must also be enabled for the account; newer Copilot CLIs only grant the large window when explicitly requested. Forwarded as the SDK's `contextTier` session field. |
-| `DEFAULT_BACKEND_PROVIDER`| `copilot`                | Default backend for new conversations: `copilot` \| `openai-compatible` \| `lm-studio`. |
+| `DEFAULT_BACKEND_PROVIDER`| `copilot`                | Default backend for new conversations: `copilot` \| `claude-agent` \| `openai-compatible` \| `lm-studio`. |
 | `DEFAULT_MODEL`           | `claude-sonnet-4.5`      | Default model id for new conversations, stored separately from the provider id. |
+| `CLAUDE_AGENT_BASE_URL`   | —                        | Optional Anthropic-compatible API base URL used by Claude Agent SDK sessions. Leave unset for Anthropic; use `https://api.deepseek.com/anthropic` for DeepSeek. |
+| `CLAUDE_AGENT_API_KEY`    | —                        | API credential passed only to the Claude Agent SDK child process as `ANTHROPIC_AUTH_TOKEN`. |
+| `CLAUDE_AGENT_MAX_TURNS`  | `50`                     | Maximum Agent SDK turns for one portal user turn. |
 | `OPENAI_COMPATIBLE_BASE_URL` | —                     | Trusted operator-configured base `/v1` URL for an OpenAI-compatible backend; may intentionally be hosted, local, or private. |
 | `OPENAI_COMPATIBLE_API_KEY` | —                      | Optional bearer token for the generic OpenAI-compatible backend. |
 | `OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS` | `8`       | Maximum OpenAI-compatible tool-calling loops before the portal stops the turn. |

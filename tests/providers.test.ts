@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resetConfigForTests } from '../src/lib/server/config';
+import { claudeAgentProvider } from '../src/lib/server/providers/claude-agent-provider';
 import { lmStudioProvider } from '../src/lib/server/providers/lm-studio-provider';
 import * as settings from '../src/lib/server/db/repos/settings';
 import * as tokens from '../src/lib/server/db/repos/tokens';
@@ -35,9 +36,11 @@ describe('provider registry', () => {
 	it('lists and normalizes configured backend providers', () => {
 		expect(listProviders().map((provider) => provider.id)).toEqual([
 			'copilot',
+			'claude-agent',
 			'openai-compatible',
 			'lm-studio'
 		]);
+		expect(getProvider('claude-agent')).toBe(claudeAgentProvider);
 		expect(getProvider('openai-compatible')).toBe(openAICompatibleProvider);
 		expect(getProvider('lm-studio')).toBe(lmStudioProvider);
 		expect(getProvider('unknown').id).toBe('copilot');
