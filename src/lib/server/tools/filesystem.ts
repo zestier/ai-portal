@@ -67,7 +67,7 @@ type ResolvedTarget = { ok: true; abs: string; rel: string } | { ok: false; mess
 // resolved path that is provably inside the workspace. Rejects absolute inputs
 // and any `..` escape that resolves outside the root (resolving the real path of
 // existing ancestors first, so a symlinked parent can't be used to escape).
-function resolveWorkspaceTarget(workspaceRoot: string, rawPath: string): ResolvedTarget {
+export function resolveWorkspaceTarget(workspaceRoot: string, rawPath: string): ResolvedTarget {
 	if (rawPath.includes('\0')) {
 		return { ok: false, message: 'path must not contain NUL characters' };
 	}
@@ -97,7 +97,7 @@ function resolveWorkspaceTarget(workspaceRoot: string, rawPath: string): Resolve
 // path is resolved and returned so the permission layer sees the real target
 // and prompts (it won't match the in-workspace fs-write seed) instead of
 // silently auto-approving.
-function resolveAbsoluteTarget(workspaceRoot: string, rawPath: string): string | null {
+export function resolveAbsoluteTarget(workspaceRoot: string, rawPath: string): string | null {
 	if (!rawPath || rawPath.includes('\0')) return null;
 	const root = resolveWithParentFallback(resolve(workspaceRoot));
 	if (root === null) return null;

@@ -7,6 +7,23 @@ import {
 import { parseUnifiedDiff, diffStats } from '../src/lib/client/diff-parser';
 
 describe('synthesizeDiff', () => {
+	it('synthesizes replace_text arguments and does not misclassify replace_lines as creation', () => {
+		const replacement = synthesizeDiff({
+			tool: 'replace_text',
+			argsJson: JSON.stringify({ path: 'src/a.ts', oldText: 'old', newText: 'new' })
+		});
+		expect(replacement?.path).toBe('src/a.ts');
+		expect(replacement?.diff).toContain('-old');
+		expect(replacement?.diff).toContain('+new');
+
+		expect(
+			synthesizeDiff({
+				tool: 'replace_lines',
+				argsJson: JSON.stringify({ path: 'src/a.ts', startLine: 2, endLine: 3, content: 'new' })
+			})
+		).toBeNull();
+	});
+
 	it('synthesizes a diff for edit-style {old_str, new_str} args', () => {
 		const r = synthesizeDiff({
 			tool: 'edit',

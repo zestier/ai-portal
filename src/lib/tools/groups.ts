@@ -30,7 +30,7 @@ export const PORTAL_TOOL_GROUPS: readonly PortalToolGroup[] = [
 	{
 		id: 'filesystem',
 		label: 'Filesystem',
-		hint: 'Workspace-scoped create/move/trash helpers.'
+		hint: 'Workspace-scoped file discovery, reading, editing, moving, and trash helpers.'
 	},
 	{
 		id: 'worktree',

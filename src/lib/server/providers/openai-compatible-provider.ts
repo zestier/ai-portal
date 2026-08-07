@@ -24,6 +24,7 @@ import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildShellTools } from '../tools/shell';
 import { buildApplyPatchTools } from '../tools/apply-patch';
 import { buildGrepTools } from '../tools/grep';
+import { buildEditFileTools } from '../tools/edit-file';
 import { filterPortalToolGroups } from '../tools/filter-groups';
 import { fetchWithTimeout, jsonRequestHeaders, parseJson, streamSseData } from './provider-utils';
 import type {
@@ -1090,6 +1091,10 @@ function buildOpenAITools(opts: {
 					conversationId: opts.opts.conversationId
 				}),
 				...buildApplyPatchTools(opts.opts.workingDirectory, {
+					userId: opts.opts.userId,
+					conversationId: opts.opts.conversationId
+				}),
+				...buildEditFileTools(opts.opts.workingDirectory, {
 					userId: opts.opts.userId,
 					conversationId: opts.opts.conversationId
 				}),

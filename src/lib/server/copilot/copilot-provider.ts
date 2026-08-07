@@ -45,6 +45,7 @@ import { buildTrashTools } from '../tools/trash';
 import { buildReadFileTools } from '../tools/read-file';
 import { buildApplyPatchTools } from '../tools/apply-patch';
 import { buildGrepTools } from '../tools/grep';
+import { buildEditFileTools } from '../tools/edit-file';
 import { buildWorktreeTools } from '../tools/worktree';
 import { workspaceRootsFor } from '../leases';
 import { filterPortalToolGroups } from '../tools/filter-groups';
@@ -301,6 +302,10 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 					conversationId: opts.conversationId
 				}),
 				...buildApplyPatchTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildEditFileTools(opts.workingDirectory, {
 					userId: opts.userId,
 					conversationId: opts.conversationId
 				}),

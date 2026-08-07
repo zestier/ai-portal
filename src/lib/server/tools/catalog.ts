@@ -26,6 +26,7 @@ import { buildPromptTemplateTools } from './prompt-templates';
 import { buildShellTools } from './shell';
 import { buildApplyPatchTools } from './apply-patch';
 import { buildGrepTools } from './grep';
+import { buildEditFileTools } from './edit-file';
 
 export type { PortalToolCatalogEntry };
 
@@ -58,6 +59,10 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 				conversationId: STUB.conversationId
 			}),
 			...buildApplyPatchTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildEditFileTools(STUB.cwd, {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			}),

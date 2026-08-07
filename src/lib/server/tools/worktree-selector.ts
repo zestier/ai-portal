@@ -25,24 +25,30 @@ import { err, type ToolResult } from './types';
  * away at merge time. Shell `git`/`mkdir`/`rm` are not a fallback: this portal
  * deliberately does not seed those shell grants.
  */
-export const WorktreeSelector = z.string().trim().min(1).max(64).optional();
+export const WorktreeSelector = z
+	.string()
+	.trim()
+	.min(1)
+	.max(64)
+	.transform((value) => (value === '.' ? undefined : value))
+	.optional();
 
 export const WORKTREE_PARAM = {
 	type: 'string',
 	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to read instead of this conversation's own workspace."
+		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to read instead of this conversation's own workspace. Use `.` or omit this parameter for the conversation's own workspace."
 } as const;
 
 export const WORKTREE_COMMIT_PARAM = {
 	type: 'string',
 	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to commit in instead of this conversation's own workspace. Paths are resolved relative to that worktree."
+		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to commit in instead of this conversation's own workspace. Use `.` or omit this parameter for the conversation's own workspace. Paths are resolved relative to the selected workspace."
 } as const;
 
 export const WORKTREE_WRITE_PARAM = {
 	type: 'string',
 	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to act in instead of this conversation's own workspace. Paths are resolved relative to that worktree."
+		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to act in instead of this conversation's own workspace. Use `.` or omit this parameter for the conversation's own workspace. Paths are resolved relative to the selected workspace."
 } as const;
 
 /**

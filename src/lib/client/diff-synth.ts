@@ -57,8 +57,9 @@ function cleanPatch(patch: string): string {
 }
 
 function fromEditArgs(path: string, args: ParsedArgs): SynthDiff | null {
-	const oldStr = str(args.old_str) ?? str(args.old_string) ?? str(args.search);
-	const newStr = str(args.new_str) ?? str(args.new_string) ?? str(args.replace);
+	const oldStr = str(args.old_str) ?? str(args.old_string) ?? str(args.oldText) ?? str(args.search);
+	const newStr =
+		str(args.new_str) ?? str(args.new_string) ?? str(args.newText) ?? str(args.replace);
 	if (oldStr == null || newStr == null) return null;
 	const patch = createTwoFilesPatch(`a/${path}`, `b/${path}`, oldStr, newStr, '', '', {
 		context: 3
@@ -73,7 +74,14 @@ function fromCreateArgs(path: string, args: ParsedArgs): SynthDiff | null {
 	return { path, diff: cleanPatch(patch) };
 }
 
-const EDIT_TOOLS = new Set(['edit', 'str_replace_editor', 'replace', 'apply_patch']);
+const EDIT_TOOLS = new Set([
+	'edit',
+	'str_replace_editor',
+	'replace',
+	'replace_text',
+	'replace_lines',
+	'apply_patch'
+]);
 const CREATE_TOOLS = new Set(['create', 'create_file', 'write', 'write_file', 'new_file']);
 
 export function synthesizeDiffs(input: SynthDiffInput): SynthDiff[] {
