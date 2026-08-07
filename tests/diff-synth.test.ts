@@ -90,14 +90,18 @@ describe('synthesizeDiff', () => {
 		const r = synthesizeDiffs({
 			tool: 'apply_patch',
 			argsJson: [
-				'*** Begin Patch',
-				'*** Update File: src/foo.ts',
-				'@@',
+				'diff --git a/src/foo.ts b/src/foo.ts',
+				'--- a/src/foo.ts',
+				'+++ b/src/foo.ts',
+				'@@ -1 +1 @@',
 				'-const value = 1;',
 				'+const value = 2;',
-				'*** Add File: src/bar.ts',
-				'+export const bar = true;',
-				'*** End Patch'
+				'diff --git a/src/bar.ts b/src/bar.ts',
+				'new file mode 100644',
+				'--- /dev/null',
+				'+++ b/src/bar.ts',
+				'@@ -0,0 +1 @@',
+				'+export const bar = true;'
 			].join('\n')
 		});
 		expect(r).toHaveLength(2);
@@ -111,12 +115,10 @@ describe('synthesizeDiff', () => {
 		const r = synthesizeDiff({
 			tool: 'apply_patch',
 			argsJson: [
-				'*** Begin Patch',
-				'*** Update File: src/old.ts',
-				'*** Move to: src/new.ts',
-				'@@',
-				' export const moved = true;',
-				'*** End Patch'
+				'diff --git a/src/old.ts b/src/new.ts',
+				'similarity index 100%',
+				'rename from src/old.ts',
+				'rename to src/new.ts'
 			].join('\n')
 		});
 		expect(r).not.toBeNull();

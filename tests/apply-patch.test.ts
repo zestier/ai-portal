@@ -2,46 +2,80 @@ import { describe, it, expect } from 'vitest';
 import { parseApplyPatch } from '../src/lib/client/apply-patch';
 
 describe('parseApplyPatch', () => {
-	it('returns null for input that is not apply_patch format', () => {
+	it('returns null for input that is not unified diff format', () => {
 		expect(parseApplyPatch('just some text')).toBeNull();
-		expect(parseApplyPatch('diff --git a/x b/x')).toBeNull();
+		expect(
+			parseApplyPatch('*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch')
+		).toBeNull();
 	});
 
-	it('returns null when the envelope markers are missing', () => {
-		expect(parseApplyPatch('*** Begin Patch\n*** Add File: a.txt')).toBeNull();
-	});
-
-	it('returns null when the first line is not the Begin Patch marker', () => {
-		const input = ['preamble', '*** Begin Patch', '*** End Patch'].join('\n');
-		expect(parseApplyPatch(input)).toBeNull();
-	});
-
-	it('parses a well-formed add patch', () => {
-		const input = ['*** Begin Patch', '*** Add File: hello.txt', '+hello', '*** End Patch'].join(
-			'\n'
-		);
+	it('parses updates, additions, and deletions from a multi-file Git diff', () => {
+		const input = [
+			'diff --git a/src/foo.ts b/src/foo.ts',
+			'--- a/src/foo.ts',
+			'+++ b/src/foo.ts',
+			'@@ -1 +1 @@',
+			'-const value = 1;',
+			'+const value = 2;',
+			'diff --git a/src/bar.ts b/src/bar.ts',
+			'new file mode 100644',
+			'--- /dev/null',
+			'+++ b/src/bar.ts',
+			'@@ -0,0 +1 @@',
+			'+export const bar = true;',
+			'diff --git a/old.txt b/old.txt',
+			'deleted file mode 100644',
+			'--- a/old.txt',
+			'+++ /dev/null',
+			'@@ -1 +0,0 @@',
+			'-old'
+		].join('\n');
 		const changes = parseApplyPatch(input);
-		expect(changes).not.toBeNull();
-		expect(changes).toHaveLength(1);
-		expect(changes![0]).toMatchObject({ kind: 'add', path: 'hello.txt' });
+
+		expect(changes).toHaveLength(3);
+		expect(changes?.map(({ kind, path }) => ({ kind, path }))).toEqual([
+			{ kind: 'update', path: 'src/foo.ts' },
+			{ kind: 'add', path: 'src/bar.ts' },
+			{ kind: 'delete', path: 'old.txt' }
+		]);
 	});
 
-	it('returns [] (not null) for a recognized but malformed patch with an unrecognized line', () => {
-		const input = ['*** Begin Patch', 'something unexpected', '*** End Patch'].join('\n');
-		const result = parseApplyPatch(input);
-		expect(result).not.toBeNull();
-		expect(result).toEqual([]);
-	});
-
-	it('returns [] (not null) for a recognized patch that never terminates with End Patch', () => {
-		// The literal '*** End Patch' only appears as a substring inside an add
-		// body line, so the parser consumes every line and runs off the end
-		// without hitting a standalone terminator. Recognized but malformed.
-		const input = ['*** Begin Patch', '*** Add File: a.txt', '+contains *** End Patch inline'].join(
+	it('parses a bare unified diff without Git metadata', () => {
+		const input = ['--- a/hello.txt', '+++ b/hello.txt', '@@ -1 +1 @@', '-hello', '+goodbye'].join(
 			'\n'
 		);
-		const result = parseApplyPatch(input);
-		expect(result).not.toBeNull();
-		expect(result).toEqual([]);
+
+		expect(parseApplyPatch(input)?.[0]).toMatchObject({
+			kind: 'update',
+			path: 'hello.txt',
+			oldPath: 'hello.txt',
+			newPath: 'hello.txt'
+		});
+	});
+
+	it('parses a rename-only Git diff', () => {
+		const input = [
+			'diff --git a/old.txt b/new.txt',
+			'similarity index 100%',
+			'rename from old.txt',
+			'rename to new.txt'
+		].join('\n');
+
+		expect(parseApplyPatch(input)?.[0]).toMatchObject({
+			kind: 'update',
+			path: 'old.txt -> new.txt',
+			oldPath: 'old.txt',
+			newPath: 'new.txt'
+		});
+	});
+
+	it('returns [] for a recognized diff with a malformed hunk header', () => {
+		const input = ['--- a/a.txt', '+++ b/a.txt', '@@ broken', '-old', '+new'].join('\n');
+		expect(parseApplyPatch(input)).toEqual([]);
+	});
+
+	it('returns [] for incomplete rename metadata', () => {
+		const input = ['diff --git a/old.txt b/new.txt', 'rename from old.txt'].join('\n');
+		expect(parseApplyPatch(input)).toEqual([]);
 	});
 });

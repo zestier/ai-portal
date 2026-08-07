@@ -50,14 +50,14 @@ export function buildApplyPatchTools(
 		{
 			name: 'apply_patch',
 			description:
-				'Apply a unified patch in the workspace. Accepts the `*** Begin Patch` format with Add File, Update File, Move to, and Delete File operations. Use dryRun to validate without changing files. Paths must stay inside the workspace; pass worktree to edit a held worktree.',
+				'Apply a standard unified diff in the workspace. Use /dev/null file headers for additions and deletions, and Git rename metadata for moves. Use dryRun to validate without changing files. Paths must stay inside the workspace; pass worktree to edit a held worktree.',
 			argsSchema: ApplyPatchArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					patch: {
 						type: 'string',
-						description: 'Patch text enclosed by *** Begin Patch and *** End Patch.'
+						description: 'Standard unified diff text, optionally including Git diff metadata.'
 					},
 					worktree: WORKTREE_WRITE_PARAM,
 					dryRun: { type: 'boolean', description: 'Validate and report changes without writing.' }
@@ -121,16 +121,23 @@ export function buildApplyPatchTools(
 				for (const { change, oldTarget, newTarget } of targets) {
 					try {
 						if (change.kind === 'delete') {
+							const source = await readFile(oldTarget!.abs, 'utf8');
+							const content = applyPatch(source, change.diff);
+							if (content === false || content !== '') {
+								return err(`patch did not apply cleanly: ${change.path}`, {
+									code: 'patch_failed'
+								});
+							}
 							const trash = buildTrashTools(tree.cwd, ctx)[0];
-							const result = await trash!.handler({ path: oldTarget!.rel });
-							if (!result.ok) return result;
+							const removed = await trash!.handler({ path: oldTarget!.rel });
+							if (!removed.ok) return removed;
 						} else if (change.kind === 'add') {
-							const content = change.diff
-								.split('\n')
-								.slice(3)
-								.filter((line) => line.startsWith('+'))
-								.map((line) => line.slice(1))
-								.join('\n');
+							const content = applyPatch('', change.diff);
+							if (content === false) {
+								return err(`patch did not apply cleanly: ${change.path}`, {
+									code: 'patch_failed'
+								});
+							}
 							await mkdir(dirname(newTarget!.abs), { recursive: true });
 							await writeFile(newTarget!.abs, content);
 						} else {

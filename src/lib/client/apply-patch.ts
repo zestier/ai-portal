@@ -1,3 +1,5 @@
+import { parsePatch, type ParsedDiff } from 'diff';
+
 export interface ApplyPatchChange {
 	kind: 'add' | 'delete' | 'update';
 	path: string;
@@ -11,120 +13,94 @@ function displayPath(oldPath: string | null, newPath: string | null): string {
 	return newPath ?? oldPath ?? '';
 }
 
-function normalizeHunkHeader(line: string): string {
-	if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line)) return line;
-	return '@@ -1,1 +1,1 @@';
+function decodePath(path: string, stripGitPrefix: boolean): string | null {
+	let decoded = path;
+	if (decoded.startsWith('"')) {
+		try {
+			decoded = JSON.parse(decoded) as string;
+		} catch {
+			return null;
+		}
+	}
+	if (decoded === '/dev/null') return null;
+	if (stripGitPrefix && /^(?:a|b)\//.test(decoded)) return decoded.slice(2);
+	return decoded;
 }
 
-function buildDiff(
-	oldPath: string | null,
-	newPath: string | null,
-	body: string[],
-	meta: string[] = []
-): string {
-	const lines = [
-		`--- ${oldPath ? `a/${oldPath}` : '/dev/null'}`,
-		`+++ ${newPath ? `b/${newPath}` : '/dev/null'}`,
-		...meta,
-		...body
-	];
-	return lines.join('\n');
+function metadataPath(lines: string[], prefix: string): string | null {
+	const line = lines.find((candidate) => candidate.startsWith(prefix));
+	return line ? decodePath(line.slice(prefix.length), false) : null;
 }
 
-// Returns the parsed changes, an empty array if the input is recognized as
-// apply_patch format but is malformed/unparseable, or null if the input is not
-// apply_patch format at all. Distinguishing [] from null lets callers debug
-// malformed patches instead of silently treating them as "no diffs".
-export function parseApplyPatch(input: string | null): ApplyPatchChange[] | null {
-	if (input === null) return null;
-	// Not apply_patch format: missing the envelope markers entirely.
-	if (!input.includes('*** Begin Patch') || !input.includes('*** End Patch')) return null;
+function splitUnifiedDiff(input: string): string[] | null {
 	const lines = input.split(/\r?\n/);
-	if (lines[0] !== '*** Begin Patch') return null;
-
-	const changes: ApplyPatchChange[] = [];
-	let i = 1;
-
-	while (i < lines.length) {
-		const line = lines[i];
-		if (line === '*** End Patch') return changes;
-
-		if (line.startsWith('*** Add File: ')) {
-			const path = line.slice('*** Add File: '.length);
-			i += 1;
-			const body: string[] = [];
-			while (i < lines.length && !lines[i].startsWith('*** ')) {
-				body.push(lines[i]);
-				i += 1;
-			}
-			changes.push({
-				kind: 'add',
-				path,
-				oldPath: null,
-				newPath: path,
-				diff: buildDiff(null, path, body.length ? ['@@ -0,0 +1,1 @@', ...body] : [])
-			});
-			continue;
-		}
-
-		if (line.startsWith('*** Delete File: ')) {
-			const path = line.slice('*** Delete File: '.length);
-			changes.push({
-				kind: 'delete',
-				path,
-				oldPath: path,
-				newPath: null,
-				diff: buildDiff(path, null, [])
-			});
-			i += 1;
-			continue;
-		}
-
-		if (line.startsWith('*** Update File: ')) {
-			const oldPath = line.slice('*** Update File: '.length);
-			i += 1;
-			let newPath = oldPath;
-			if (i < lines.length && lines[i].startsWith('*** Move to: ')) {
-				newPath = lines[i].slice('*** Move to: '.length);
-				i += 1;
-			}
-
-			const body: string[] = [];
-			while (i < lines.length && (!lines[i].startsWith('*** ') || lines[i] === '*** End of File')) {
-				const raw = lines[i];
-				if (raw === '*** End of File') {
-					i += 1;
-					continue;
-				}
-				if (raw.startsWith('@@')) body.push(normalizeHunkHeader(raw));
-				else if (
-					raw.startsWith('+') ||
-					raw.startsWith('-') ||
-					raw.startsWith(' ') ||
-					raw.startsWith('\\')
-				) {
-					body.push(raw);
-				}
-				i += 1;
-			}
-
-			const meta = newPath !== oldPath ? [`rename from ${oldPath}`, `rename to ${newPath}`] : [];
-			changes.push({
-				kind: 'update',
-				path: displayPath(oldPath, newPath),
-				oldPath,
-				newPath,
-				diff: buildDiff(oldPath, newPath, body, meta)
-			});
-			continue;
-		}
-
-		// Recognized as apply_patch (had Begin/End markers) but hit an
-		// unrecognized line: malformed. Return [] so callers can tell this
-		// apart from "not apply_patch format" (null).
-		return [];
+	const gitStarts = lines.flatMap((line, index) => (line.startsWith('diff --git ') ? [index] : []));
+	if (gitStarts.length > 0) {
+		if (lines.slice(0, gitStarts[0]).some((line) => line.trim() !== '')) return null;
+		return gitStarts.map((start, index) =>
+			lines.slice(start, gitStarts[index + 1] ?? lines.length).join('\n')
+		);
 	}
 
-	// Ran off the end of input without seeing '*** End Patch': malformed.
-	return [];
+	const fileStarts = lines.flatMap((line, index) =>
+		line.startsWith('--- ') && lines[index + 1]?.startsWith('+++ ') ? [index] : []
+	);
+	if (fileStarts.length === 0) return null;
+	if (lines.slice(0, fileStarts[0]).some((line) => line.trim() !== '')) return null;
+	return fileStarts.map((start, index) =>
+		lines.slice(start, fileStarts[index + 1] ?? lines.length).join('\n')
+	);
+}
+
+function hasValidHunks(lines: string[], parsedHunks: number): boolean {
+	const headers = lines.filter((line) => line.startsWith('@@'));
+	return (
+		headers.length === parsedHunks &&
+		headers.every((line) => /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$/.test(line))
+	);
+}
+
+function parseSection(section: string): ParsedDiff | null {
+	try {
+		const parsed = parsePatch(section);
+		return parsed.length === 1 ? parsed[0] : null;
+	} catch {
+		return null;
+	}
+}
+
+// Returns parsed changes, [] for recognized but malformed unified diff input,
+// or null when the input is not a unified diff at all.
+export function parseApplyPatch(input: string | null): ApplyPatchChange[] | null {
+	if (input === null) return null;
+	const sections = splitUnifiedDiff(input);
+	if (!sections) return null;
+
+	const changes: ApplyPatchChange[] = [];
+	for (const section of sections) {
+		const lines = section.split('\n');
+		const parsed = parseSection(section);
+		if (!parsed) return [];
+
+		const renamedFrom = metadataPath(lines, 'rename from ');
+		const renamedTo = metadataPath(lines, 'rename to ');
+		if ((renamedFrom === null) !== (renamedTo === null)) return [];
+		if (!hasValidHunks(lines, parsed.hunks.length)) return [];
+		if (parsed.hunks.length === 0 && (!renamedFrom || !renamedTo)) return [];
+
+		const oldPath =
+			renamedFrom ?? (parsed.oldFileName ? decodePath(parsed.oldFileName, true) : null);
+		const newPath = renamedTo ?? (parsed.newFileName ? decodePath(parsed.newFileName, true) : null);
+		if (!oldPath && !newPath) return [];
+
+		changes.push({
+			kind: oldPath === null ? 'add' : newPath === null ? 'delete' : 'update',
+			path: displayPath(oldPath, newPath),
+			oldPath,
+			newPath,
+			diff: section
+		});
+	}
+
+	return changes;
 }

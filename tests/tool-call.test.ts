@@ -57,14 +57,18 @@ describe('summarizeToolCall', () => {
 			summarizeToolCall(
 				'apply_patch',
 				[
-					'*** Begin Patch',
-					'*** Update File: src/foo.ts',
-					'@@',
+					'diff --git a/src/foo.ts b/src/foo.ts',
+					'--- a/src/foo.ts',
+					'+++ b/src/foo.ts',
+					'@@ -1 +1 @@',
 					'-a',
 					'+b',
-					'*** Add File: src/bar.ts',
-					'+hello',
-					'*** End Patch'
+					'diff --git a/src/bar.ts b/src/bar.ts',
+					'new file mode 100644',
+					'--- /dev/null',
+					'+++ b/src/bar.ts',
+					'@@ -0,0 +1 @@',
+					'+hello'
 				].join('\n')
 			)
 		).toBe('src/foo.ts +1 more');
