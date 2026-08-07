@@ -46,6 +46,7 @@ const ReadFileArgs = z
 
 const MAX_READ_FILE_BYTES = 5_000_000;
 const MAX_READ_RESULT_BYTES = 200_000;
+const DEFAULT_READ_LINE_LIMIT = 100;
 
 // Workspace-relative directory the `trash` tool moves deleted entries into.
 // Keeping it inside the workspace is deliberate: the move that performs the
@@ -332,7 +333,7 @@ export function buildFilesystemTools(
 		{
 			name: 'read_file',
 			description:
-				'Read the content of a file in the workspace. Supports optional line range selection. The path must be workspace-relative. Pass `worktree` to act inside a worktree this conversation holds instead. Returns the content and basic metadata. Errors on binary files or if the path is a directory.',
+				'Read the content of a file in the workspace. Returns at most 100 lines unless both startLine and endLine are supplied. The path must be workspace-relative. Pass `worktree` to act inside a worktree this conversation holds instead. Returns the content and metadata describing the returned range and whether it covers the whole file. Errors on binary files or if the path is a directory.',
 			argsSchema: ReadFileArgs,
 			parameters: {
 				type: 'object',
@@ -344,11 +345,12 @@ export function buildFilesystemTools(
 					worktree: WORKTREE_WRITE_PARAM,
 					startLine: {
 						type: 'number',
-						description: 'The starting line number (1-indexed).'
+						description: 'The starting line number (1-indexed). Defaults to the first line.'
 					},
 					endLine: {
 						type: 'number',
-						description: 'The ending line number (1-indexed).'
+						description:
+							'The ending line number (1-indexed). Supply both bounds to read more than 100 lines.'
 					}
 				},
 				required: ['path'],
@@ -391,13 +393,14 @@ export function buildFilesystemTools(
 						return err(`File contains null bytes and is likely binary: ${resolved.rel}`);
 					}
 
-					let resultContent = content;
-					if (startLine !== undefined || endLine !== undefined) {
-						const lines = content.split(/\r?\n/);
-						const start = Math.max(0, (startLine || 1) - 1);
-						const end = endLine !== undefined ? Math.min(lines.length, endLine) : lines.length;
-						resultContent = lines.slice(start, end).join('\n');
+					const lines = content.split(/\r?\n/);
+					const hasExplicitRange = startLine !== undefined && endLine !== undefined;
+					let start = Math.max(0, (startLine ?? 1) - 1);
+					const end = Math.min(lines.length, endLine ?? start + DEFAULT_READ_LINE_LIMIT);
+					if (!hasExplicitRange && endLine !== undefined) {
+						start = Math.max(0, end - DEFAULT_READ_LINE_LIMIT);
 					}
+					const resultContent = lines.slice(start, end).join('\n');
 					if (Buffer.byteLength(resultContent) > MAX_READ_RESULT_BYTES) {
 						return err(
 							`Read result is too large (${Buffer.byteLength(resultContent)} bytes; limit is ${MAX_READ_RESULT_BYTES}). Request a narrower line range.`
@@ -408,7 +411,11 @@ export function buildFilesystemTools(
 						{
 							content: resultContent,
 							size: fileStat.size,
-							type: fileStat.isDirectory() ? 'directory' : 'file'
+							type: 'file',
+							startLine: start + 1,
+							endLine: end,
+							totalLines: lines.length,
+							isComplete: start === 0 && end === lines.length
 						},
 						`Read file: ${resolved.rel}`
 					);
