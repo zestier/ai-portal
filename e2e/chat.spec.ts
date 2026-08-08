@@ -50,27 +50,27 @@ test('a worktree fork failure is visible on the assistant message', async ({ pag
 	await expect(assistantBubble.getByRole('alert')).toContainText('snapshot unavailable');
 });
 
-test('thinking indicator renders inside the assistant turn bubble', async ({ page, request }) => {
-	const id = await createConversation(request, uniqueTitle('E2E thinking'));
+test('setup indicator renders inside the assistant turn bubble', async ({ page, request }) => {
+	const id = await createConversation(request, uniqueTitle('E2E setup'));
 	await page.goto(`/conversations/${id}`);
 
 	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
 	await composer.click();
 	// @trigger-slow-start makes the stub hold before its first delta, so the
-	// assistant turn sits in the "thinking" state long enough to assert on.
+	// assistant turn sits in the "setting up" state long enough to assert on.
 	await composer.fill('@trigger-slow-start please');
 	await composer.press('Enter');
 
 	// The dots must live inside an assistant turn bubble, not as a detached
 	// element below the message list (the bug this guards against).
-	const thinkingInBubble = page.locator(
-		'article.msg[data-role="assistant"] [role="status"]:has-text("Thinking")'
+	const setupInBubble = page.locator(
+		'article.msg[data-role="assistant"] [role="status"]:has-text("Setting up")'
 	);
-	await expect(thinkingInBubble).toBeVisible();
+	await expect(setupInBubble).toBeVisible();
 
 	// And it disappears once the reply streams in.
 	await waitForAssistantMessage(request, id, /Stubbed reply to: @trigger-slow-start/);
-	await expect(thinkingInBubble).toBeHidden();
+	await expect(setupInBubble).toBeHidden();
 });
 
 test('rejects empty messages on the server', async ({ request }) => {

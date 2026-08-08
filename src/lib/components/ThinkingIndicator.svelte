@@ -1,6 +1,6 @@
 <div class="thinking" role="status" aria-live="polite">
 	<span class="dot"></span><span class="dot"></span><span class="dot"></span>
-	<span class="label muted">Thinking…</span>
+	<span class="label muted">Setting up…</span>
 </div>
 
 <style>
