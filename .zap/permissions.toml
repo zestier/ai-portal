@@ -1,0 +1,424 @@
+# .zap/permissions.toml — checked-in workspace permissions for this repo.
+#
+# Authored around the toolchain (pnpm): safe and restricted pnpm *commands*
+# and *files*, both positive (allow) and negative (deny / prompt).
+#
+# This file only becomes ACTIVE grants through a human approval. The
+# workspace-file gate (src/lib/server/permissions/workspace-file-gate.ts)
+# hashes the file, shows a review dialog with a unified diff, and keeps the
+# previously-approved state active until then — so the agent can never widen
+# its own permissions by editing this file. Drift from the approved snapshot
+# re-raises the review; fail-closed.
+#
+# Format (src/lib/server/permissions/workspace-file-format.ts):
+#   [[shell]]  structured shell command grants
+#   [[path]]   filesystem read / write / edit grants
+#   [[url]]    network host grants
+#   [[tool]]   portal custom-tool grants
+# `decision` defaults to "allow"; omit it on allows.
+#
+# Policy tiers:
+#   allow   — safe toolchain steps run without prompting.
+#   prompt  — restricted but legitimate (dependency mutation, `pnpm exec`);
+#             requires a human decision every time.
+#   deny    — never appropriate for an agent to run unattended.
+# Deny beats allow; a file deny overrides a user allow (matcher precedence).
+
+# ---------------------------------------------------------------------------
+# POSITIVE — pnpm commands the agent may run without prompting
+# ---------------------------------------------------------------------------
+
+# `pnpm run <script>` runs a script declared in package.json. Positionals are
+# the script name plus its args; both are bounded by the manifest, which is
+# the trust boundary — package.json only changes through a human-approved
+# `pnpm add` / `edit`.
+[[shell]]
+command = ["pnpm", "run"]
+positionals = "any"
+
+# The package.json scripts, invoked via pnpm's shorthand (`pnpm test`).
+# Enumerated explicitly so a shorthand that is NOT one of these — e.g.
+# `pnpm vitest`, which would fall through to the vitest binary — does not
+# auto-approve; it prompts instead.
+[[shell]]
+command = ["pnpm", "dev"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "dev:isolated"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "build"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "preview"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "start"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "serve"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "check"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "check:watch"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "lint"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "format"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test:watch"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test:coverage"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test:e2e"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test:e2e:install"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test:e2e:run"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "test:e2e:ui"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "bench:conversation-load"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "report:adversary-shadow"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "probe:adversary"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "verify"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "verify:sequential"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "verify:failure-probe"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "release:bump-actions"]
+positionals = "any"
+
+# `pnpm install` / `pnpm i` with NO positional package args — `pnpm install
+# <pkg>` is an alias for `pnpm add <pkg>` (which is prompted, below) and is
+# refused by the 0-positional bound. Safe flags (`--frozen-lockfile`,
+# `--offline`, `--lockfile-only`, ...) ride through the deny-list; only
+# global installs and cwd-repointing are blocked. Leading options before the
+# subcommand (e.g. `--filter`) are NOT in the pnpm token's option list, so
+# they make this rule fail and the command prompts.
+[[shell]]
+command = ["pnpm", "install"]
+positionals = "none"
+positional_min = 0
+positional_max = 0
+
+  [[shell.options]]
+  deny = ["-C", "--dir"]
+
+  [[shell.options]]
+  deny = ["-g", "--global"]
+
+[[shell]]
+command = ["pnpm", "i"]
+positionals = "none"
+positional_min = 0
+positional_max = 0
+
+  [[shell.options]]
+  deny = ["-C", "--dir"]
+
+  [[shell.options]]
+  deny = ["-g", "--global"]
+
+# Read-only pnpm inspection commands.
+[[shell]]
+command = ["pnpm", "list"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "why"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "outdated"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "audit"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "licenses"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm", "help"]
+positionals = "any"
+
+[[shell]]
+command = ["pnpm"]
+positionals = "none"
+
+  [[shell.options]]
+  allow = ["-v", "--version"]
+
+# ---------------------------------------------------------------------------
+# NEGATIVE — restricted / denied pnpm commands
+# ---------------------------------------------------------------------------
+
+# PROMPT: `pnpm exec <bin>` runs an installed binary. Usually the structured
+# way is a package.json script (see AGENTS.md); when a script genuinely
+# doesn't pass the needed flag, this requires a human decision. `pnpm dlx`
+# (download-and-run an arbitrary package) stays a hard deny below.
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "exec"]
+positionals = "any"
+deny_reason = "`pnpm exec` runs an installed binary. Prefer a package.json script (`pnpm run <script>`); if a script does not pass the needed flag, this needs human approval."
+
+# PROMPT: dependency-graph mutation. Legitimate but changes the manifest,
+# the lockfile, and node_modules, so each use needs a human decision.
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "add"]
+positionals = "any"
+deny_reason = "`pnpm add` changes package.json, pnpm-lock.yaml, and node_modules. Adding a dependency needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "remove"]
+positionals = "any"
+deny_reason = "`pnpm remove` changes package.json and pnpm-lock.yaml. Removing a dependency needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "rm"]
+positionals = "any"
+deny_reason = "`pnpm rm` changes package.json and pnpm-lock.yaml. Removing a dependency needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "uninstall"]
+positionals = "any"
+deny_reason = "`pnpm uninstall` changes package.json and pnpm-lock.yaml. Removing a dependency needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "un"]
+positionals = "any"
+deny_reason = "`pnpm un` changes package.json and pnpm-lock.yaml. Removing a dependency needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "update"]
+positionals = "any"
+deny_reason = "`pnpm update` mutates pnpm-lock.yaml and node_modules. Updating dependencies needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "up"]
+positionals = "any"
+deny_reason = "`pnpm up` mutates pnpm-lock.yaml and node_modules. Updating dependencies needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "upgrade"]
+positionals = "any"
+deny_reason = "`pnpm upgrade` mutates pnpm-lock.yaml and node_modules. Updating dependencies needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "rebuild"]
+positionals = "any"
+deny_reason = "`pnpm rebuild` re-runs dependencies' arbitrary postinstall build scripts. Needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "patch"]
+positionals = "any"
+deny_reason = "`pnpm patch` mutates an installed dependency inside node_modules. Needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "patch-commit"]
+positionals = "any"
+deny_reason = "`pnpm patch-commit` applies a patch to an installed dependency. Needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "prune"]
+positionals = "any"
+deny_reason = "`pnpm prune` deletes packages from node_modules. Needs a human decision."
+
+[[shell]]
+decision = "prompt"
+command = ["pnpm", "pack"]
+positionals = "any"
+deny_reason = "`pnpm pack` stages a release artifact. Needs a human decision."
+
+# DENY: never appropriate for an agent to run unattended.
+[[shell]]
+decision = "deny"
+command = ["pnpm", "dlx"]
+positionals = "any"
+deny_reason = "`pnpm dlx` downloads and executes an arbitrary package. It is not part of this repo's toolchain workflow."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "publish"]
+positionals = "any"
+deny_reason = "`pnpm publish` releases the package to a registry. Releasing is a human action."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "setup"]
+positionals = "any"
+deny_reason = "`pnpm setup` modifies the user's shell rc files outside the workspace."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "env"]
+positionals = "any"
+deny_reason = "`pnpm env` installs Node.js versions outside the workspace."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "store"]
+positionals = "any"
+deny_reason = "`pnpm store` manages the global content-addressable store; `pnpm store prune` deletes content."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "config"]
+positionals = "any"
+deny_reason = "`pnpm config` reads or writes global/workspace pnpm configuration; writes need a human decision."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "link"]
+positionals = "any"
+deny_reason = "`pnpm link` mutates global node_modules symlinks."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "unlink"]
+positionals = "any"
+deny_reason = "`pnpm unlink` mutates global node_modules symlinks."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "init"]
+positionals = "any"
+deny_reason = "`pnpm init` scaffolds a new package.json; scaffolding a project is a human decision."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "import"]
+positionals = "any"
+deny_reason = "`pnpm import` rewrites pnpm-lock.yaml from another package manager's lockfile."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "fetch"]
+positionals = "any"
+deny_reason = "`pnpm fetch` downloads packages into the global store."
+
+[[shell]]
+decision = "deny"
+command = ["pnpm", "approve-builds"]
+positionals = "any"
+deny_reason = "`pnpm approve-builds` approves arbitrary postinstall build scripts. Approvals live in pnpm-workspace.yaml, which a human owns."
+
+# ---------------------------------------------------------------------------
+# FILES — pnpm-related filesystem grants
+# ---------------------------------------------------------------------------
+
+# POSITIVE: the whole workspace is the agent's working area (read, write,
+# create, edit). Denies below narrow the two machine-managed paths.
+[[path]]
+permission = "read"
+root = "workspace"
+behavior = "any"
+
+[[path]]
+permission = "write"
+root = "workspace"
+behavior = "any"
+
+[[path]]
+permission = "edit"
+root = "workspace"
+behavior = "any"
+
+# NEGATIVE: the lockfile and node_modules change only through pnpm itself
+# (`pnpm install` and friends), never by hand-editing with the structured
+# file tools. These denies gate only the fs write/edit permission kinds; the
+# shell `pnpm install` command is unaffected.
+[[path]]
+decision = "deny"
+permission = "write"
+root = "workspace"
+behavior = "exact"
+value = "pnpm-lock.yaml"
+deny_reason = "pnpm-lock.yaml must not be hand-edited. Change it via `pnpm install` (e.g. `pnpm install --lockfile-only`)."
+
+[[path]]
+decision = "deny"
+permission = "edit"
+root = "workspace"
+behavior = "exact"
+value = "pnpm-lock.yaml"
+deny_reason = "pnpm-lock.yaml must not be hand-edited. Change it via `pnpm install` (e.g. `pnpm install --lockfile-only`)."
+
+[[path]]
+decision = "deny"
+permission = "write"
+root = "workspace"
+behavior = "prefix"
+value = "node_modules"
+deny_reason = "node_modules is machine-managed by pnpm. Do not create or write files inside it by hand."
+
+[[path]]
+decision = "deny"
+permission = "edit"
+root = "workspace"
+behavior = "prefix"
+value = "node_modules"
+deny_reason = "node_modules is machine-managed by pnpm. Do not edit files inside it by hand."
