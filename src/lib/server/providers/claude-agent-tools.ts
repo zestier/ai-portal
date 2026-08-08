@@ -127,8 +127,23 @@ export function adaptClaudePortalTool(
 			try {
 				const result = await portalTool.handler(toolArgs, stream);
 				const views = deriveToolResultViews(result);
+				// Success results are passed through as the raw, structured envelope
+				// JSON (with a short human-readable summary) rather than the
+				// human-formatted `modelText`. The formatted projection re-renders
+				// multi-line string fields with prefixes/indentation that don't match
+				// the source file, which broke 1:1 `replace_text` matches; the raw
+				// envelope preserves exact whitespace and metadata (e.g. `isComplete`,
+				// byte counts) so `read_file` output can be reused verbatim. Errors
+				// keep the concise `modelText` message for the model.
 				return {
-					content: [{ type: 'text' as const, text: views.modelText }],
+					content: [
+						{
+							type: 'text' as const,
+							text: views.ok
+								? JSON.stringify({ raw: result, summary: views.summary })
+								: views.modelText
+						}
+					],
 					isError: !views.ok
 				};
 			} catch (error) {

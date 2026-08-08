@@ -45,6 +45,40 @@ describe('adaptClaudePortalTool', () => {
 		});
 	});
 
+	it('passes the raw structured result as JSON instead of the formatted modelText', async () => {
+		const adapted = adaptClaudePortalTool(
+			portalTool(async () =>
+				ok(
+					{
+						content: '  indented line\nline without indent\n\ttabbed',
+						size: 42,
+						isComplete: true
+					},
+					'Read file: example.ts'
+				)
+			),
+			{ getSignal: () => signal }
+		);
+
+		const { content, isError } = await adapted.handler({ value: 'hello' }, {});
+		expect(isError).toBe(false);
+		const text = content.find((c) => c.type === 'text')?.text;
+		expect(text).toBeDefined();
+		const parsed = JSON.parse(text as string);
+		expect(parsed.summary).toBe('Read file: example.ts');
+		// The raw envelope must survive byte-for-byte — including leading
+		// whitespace/indentation that the human-formatted modelText mangles.
+		expect(parsed.raw).toMatchObject({
+			ok: true,
+			summary: 'Read file: example.ts',
+			result: {
+				content: '  indented line\nline without indent\n\ttabbed',
+				size: 42,
+				isComplete: true
+			}
+		});
+	});
+
 	it('converts thrown handler errors to MCP errors', async () => {
 		const adapted = adaptClaudePortalTool(
 			portalTool(async () => {
