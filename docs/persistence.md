@@ -334,8 +334,10 @@ one enum, the two settings are now mutually exclusive by construction, and
 combinations that were unreachable before — `plan` + `auto-deny`,
 `interactive` + `auto-deny` — are expressible.
 
-`request_permission_grant` and a valid `forcePermissionPrompt` always reach a
-human dialog regardless of the approval mode.
+`request_permission_grant` always reaches a human dialog regardless of the
+approval mode, and a denial in any mode mints a one-shot `force_retry_tool`
+token that — when presented with a human-approved reason — auto-allows the
+exact retried call so the SDK executes it natively.
 
 
 ## Turn input capture (observability)

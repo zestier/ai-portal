@@ -31,6 +31,11 @@ import { log } from '../log';
 import * as messagesRepo from '../db/repos/messages';
 import { argsHash } from '../tool-invocation';
 import {
+	consumeForcedRetryMatch,
+	mintForcedRetry,
+	withForceRetryHint
+} from '../runtime/forced-retry';
+import {
 	autoDenyAlternativeHint,
 	permissionKindLabel,
 	isFilesystemPermissionKind
@@ -60,13 +65,8 @@ interface PermissionRequestLike {
 	path?: string;
 	url?: string;
 	intention?: string;
-	forcePermissionPrompt?: unknown;
 	args?: unknown;
 }
-
-const FORCE_PERMISSION_PROMPT_MIN_LENGTH = 20;
-const INVALID_FORCE_PERMISSION_PROMPT_FEEDBACK =
-	'`forcePermissionPrompt` must be a reason string of at least 20 characters explaining why no allowed alternative works.';
 
 interface InteractiveAdapterOptions {
 	conversationId: string;
@@ -254,20 +254,51 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			}
 		};
 
-		const forcePermissionPrompt = parseForcePermissionPrompt(req);
-		if (forcePermissionPrompt.kind === 'invalid') {
-			audit('auto-deny');
-			return { kind: 'reject', feedback: forcePermissionPrompt.feedback } as const;
+		// A token minted when this exact request was previously denied and then
+		// approved through `force_retry_tool` makes the retry the strongest
+		// signal: the human explicitly approved THIS call, so it overrides
+		// every auto-allow and auto-deny path that follows (arg-schema and
+		// shell-misuse guards, `never-prompt`, `always-prompt`, grants
+		// including hard denies, approval mode, and policy). Consumed
+		// one-shot — a third identical request is denied again.
+		const forcedApproval = consumeForcedRetryMatch({
+			conversationId: opts.conversationId,
+			tool,
+			permissionKind,
+			scopeKey,
+			argsHash: hash
+		});
+		if (forcedApproval) {
+			audit('auto-allow');
+			return { kind: 'approve-once' } as const;
 		}
-		const forceEscalationReason =
-			forcePermissionPrompt.kind === 'valid' ? forcePermissionPrompt.reason : null;
+
+		// Every denial below mints a one-shot forced-retry token bound to this
+		// exact request and embeds the hint in the feedback the agent sees, so
+		// any denial can be escalated via `force_retry_tool` — including a
+		// human denying a normal dialog. Approving that tool is what flips the
+		// matching retry to auto-allow above.
+		const deny = (feedback?: string): { kind: 'reject'; feedback?: string } => {
+			const token = mintForcedRetry({
+				conversationId: opts.conversationId,
+				tool,
+				permissionKind,
+				scopeKey,
+				argsHash: hash,
+				summary,
+				args: req.args ?? null,
+				deniedFeedback: feedback ?? null
+			});
+			return {
+				kind: 'reject',
+				feedback: withForceRetryHint(feedback ?? 'Permission denied.', token)
+			};
+		};
 
 		// Compute shell analysis up front so it can be surfaced in any
-		// permission dialog, including a forced prompt that overrides the
-		// misuse guard. detectShellMisuse only auto-rejects when there is
-		// no valid force; under a valid force the misuse reason is passed
-		// to the forced prompt as its defaultDenyFeedback (see below)
-		// instead of being hard-rejected here.
+		// permission dialog. detectShellMisuse auto-rejects the request (a
+		// forced retry can still reach a human via `force_retry_tool`, which
+		// shows the misuse reason as the dialog's defaultDenyFeedback).
 		let shellSegments: ParsedSegment[] | null = null;
 		let shellAnalysis: import('$lib/types').ShellAnalysisView | undefined = undefined;
 		let shellMisuse: { feedback: string } | null = null;
@@ -287,36 +318,6 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				shellAnalysis = { kind: 'unsafe', reason: parsed.reason };
 			}
 		}
-
-		const maybePromptForEscalation = async (
-			fallbackFeedback = 'Escalation denied. Use an allowed alternative or stop and explain what capability is missing.',
-			defaultDenyFeedback?: string
-		) => {
-			if (!forceEscalationReason) return null;
-			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
-				'permission',
-				{
-					kind: 'permission',
-					tool,
-					permissionKind,
-					summary,
-					args: req.args ?? null,
-					userPolicy: opts.policy,
-					canPersistDecision: false,
-					escalationReason: forceEscalationReason,
-					defaultDenyFeedback,
-					shellAnalysis,
-					imagePreview,
-					...(commitTarget !== undefined ? { commitTarget } : {})
-				}
-			);
-			if (response.decision === 'deny' || response.decision === 'deny-always') {
-				audit('auto-deny');
-				return rejectWithFeedback(response, fallbackFeedback);
-			}
-			audit('auto-allow');
-			return { kind: 'approve-once' } as const;
-		};
 
 		// fs targets to evaluate. A tool may declare additional fs paths that
 		// must ALSO be permitted for the same invocation (e.g. `move`, which
@@ -439,9 +440,9 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 			return { kind: 'prompt-policy', feedback: nearMiss };
 		};
 
-		// Combine per-target evaluations most-restrictively. Memoized so the
-		// forced-escalation block can reuse a deny/prompt feedback without
-		// paying for a second lookup on the main path.
+		// Combine per-target evaluations most-restrictively. Memoized so a
+		// deny/prompt path can reuse a target's feedback without paying for a
+		// second lookup on the main path.
 		const computeEval = (): TargetEval => {
 			let worst: TargetEval = { kind: 'allow' };
 			for (const key of evalTargets) {
@@ -453,49 +454,18 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		let evalResult: TargetEval | null = null;
 		const getEval = () => (evalResult ??= computeEval());
 
-		// A present, valid `forcePermissionPrompt` is the strongest signal:
-		// it overrides every auto-allow and auto-deny path that follows —
-		// the arg-schema and shell-misuse guards, `never-prompt`,
-		// `always-prompt`, grants (including hard denies), the conversation's
-		// approval mode, and policy — and always reaches a human
-		// prompt. Only the malformed-force reject above runs ahead of it.
-		// The forced prompt is approve-once: the human cannot persist a
-		// grant from it (`canPersistDecision: false`).
-		//
-		// Whatever specific reason would otherwise have auto-rejected the
-		// request (schema-invalid tool args, a hardcoded shell-misuse
-		// refusal, or a deny/prompt grant) is surfaced to the human as the
-		// dialog's `defaultDenyFeedback` and returned to the agent if the
-		// human declines, so neither side loses that context.
-		if (forceEscalationReason) {
-			let forcedDenyFeedback: string | undefined;
-			if (req.toolName && opts.validateCustomToolArgs) {
-				forcedDenyFeedback = opts.validateCustomToolArgs(req.toolName, req.args)?.feedback;
-			}
-			if (!forcedDenyFeedback && shellMisuse) {
-				forcedDenyFeedback = shellMisuse.feedback;
-			}
-			if (!forcedDenyFeedback) {
-				const e = getEval();
-				if (e.kind === 'deny' || e.kind === 'prompt-grant') {
-					forcedDenyFeedback = e.feedback;
-				}
-			}
-			const forced = await maybePromptForEscalation(forcedDenyFeedback, forcedDenyFeedback);
-			if (forced) return forced;
-		}
-
 		// Schema-validate custom portal tool args before any permission
 		// dialog or grant matching. Args that don't match the tool's
 		// declared schema are an agent bug, not something the user
 		// should approve; rejecting here with the schema in the
-		// feedback lets the agent self-correct on the next turn. A valid
-		// force above overrides this guard.
+		// feedback lets the agent self-correct on the next turn. A forced
+		// retry still reaches a human, which is why the deny below mints a
+		// token rather than silently discarding the request.
 		if (req.toolName && opts.validateCustomToolArgs) {
 			const invalid = opts.validateCustomToolArgs(req.toolName, req.args);
 			if (invalid) {
 				audit('auto-deny');
-				return { kind: 'reject', feedback: invalid.feedback } as const;
+				return deny(invalid.feedback);
 			}
 		}
 		if (neverPrompt) {
@@ -504,7 +474,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 		if (shellMisuse) {
 			audit('auto-deny');
-			return { kind: 'reject', feedback: shellMisuse.feedback } as const;
+			return deny(shellMisuse.feedback);
 		}
 
 		if (alwaysPrompt) {
@@ -529,7 +499,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				}
 			);
 			if (response.decision === 'deny' || response.decision === 'deny-always') {
-				return rejectWithFeedback(response);
+				return deny(denyFeedbackOf(response));
 			}
 			audit('auto-allow');
 			return { kind: 'approve-once' } as const;
@@ -548,8 +518,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		}
 		if (evaluation.kind === 'deny') {
 			audit('auto-deny');
-			if (evaluation.feedback) return { kind: 'reject', feedback: evaluation.feedback } as const;
-			return { kind: 'reject' } as const;
+			return deny(evaluation.feedback);
 		}
 		let promptRequest: {
 			canPersistDecision: boolean;
@@ -583,17 +552,13 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		// here. That exclusivity used to be an accident of evaluation order
 		// between the approve-all toggle and `best-effort` mode.
 		//
-		// A valid force would have returned from the forced-escalation block
-		// above, and `always-prompt` tools (notably `request_permission_grant`)
-		// were dispatched to a dialog before this point — so auto-deny never
+		// `always-prompt` tools (notably `request_permission_grant`) were
+		// dispatched to a dialog before this point — so auto-deny never
 		// suppresses a prompt that is meant to always reach a human. It simply
 		// rejects the remaining prompt-worthy requests with actionable feedback.
 		if (opts.getApprovalMode() === 'auto-deny') {
 			audit('auto-prompt-required');
-			return {
-				kind: 'reject',
-				feedback: promptRequest.autoDenyFeedback
-			} as const;
+			return deny(promptRequest.autoDenyFeedback);
 		}
 
 		// Phase 0 adversary shadow; see `observeShadow` above. Strictly
@@ -625,7 +590,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		// which the scorer excludes rather than counting as a denial.
 		shadow?.recordHuman(response.decision);
 		if (response.decision === 'deny' || response.decision === 'deny-always') {
-			return rejectWithFeedback(response);
+			return deny(denyFeedbackOf(response));
 		}
 		return { kind: 'approve-once' } as const;
 	};
@@ -779,12 +744,11 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 	};
 }
 
-function rejectWithFeedback(
-	response: Extract<InteractiveResponse, { kind: 'permission' }>,
-	fallbackFeedback?: string
-) {
-	const feedback = response.feedback?.trim() || fallbackFeedback;
-	return feedback ? ({ kind: 'reject', feedback } as const) : ({ kind: 'reject' } as const);
+function denyFeedbackOf(
+	response: Extract<InteractiveResponse, { kind: 'permission' }>
+): string | undefined {
+	const feedback = response.feedback?.trim();
+	return feedback || undefined;
 }
 
 function hashPermissionArgs(req: PermissionRequestLike): string | null {
@@ -796,64 +760,12 @@ function hashPermissionArgs(req: PermissionRequestLike): string | null {
 	return null;
 }
 
-function parseForcePermissionPrompt(
-	req: PermissionRequestLike
-): { kind: 'absent' } | { kind: 'invalid'; feedback: string } | { kind: 'valid'; reason: string } {
-	const values = forcePermissionPromptValues(req);
-	if (values.length === 0) return { kind: 'absent' };
-
-	let reason: string | null = null;
-	for (const value of values) {
-		if (typeof value !== 'string') {
-			return { kind: 'invalid', feedback: INVALID_FORCE_PERMISSION_PROMPT_FEEDBACK };
-		}
-		const trimmed = value.trim();
-		if (trimmed.length < FORCE_PERMISSION_PROMPT_MIN_LENGTH) {
-			return { kind: 'invalid', feedback: INVALID_FORCE_PERMISSION_PROMPT_FEEDBACK };
-		}
-		reason ??= trimmed;
-	}
-
-	return { kind: 'valid', reason: reason ?? '' };
-}
-
-function forcePermissionPromptValues(req: PermissionRequestLike): unknown[] {
-	const values: unknown[] = [];
-	if (hasOwn(req, 'forcePermissionPrompt')) values.push(req.forcePermissionPrompt);
-
-	const argValue = readArgValue(req.args, 'forcePermissionPrompt');
-	if (argValue.present) values.push(argValue.value);
-
-	if (typeof req.toolCallId === 'string') {
-		const persistedValue = readArgValue(
-			messagesRepo.getToolCallArgs(req.toolCallId),
-			'forcePermissionPrompt'
-		);
-		if (persistedValue.present) values.push(persistedValue.value);
-	}
-
-	return values;
-}
-
-function readArgValue(
-	args: unknown,
-	key: string
-): { present: false } | { present: true; value: unknown } {
-	if (!args || typeof args !== 'object') return { present: false };
-	if (!hasOwn(args, key)) return { present: false };
-	return { present: true, value: (args as Record<string, unknown>)[key] };
-}
-
-function hasOwn(obj: object, key: string): boolean {
-	return Object.prototype.hasOwnProperty.call(obj, key);
-}
-
 function autoDenyPermissionFeedback(view: { permissionKind: string }): string {
 	const alternative = autoDenyAlternativeHint(view.permissionKind);
 	const kind = permissionKindLabel(view.permissionKind);
 	return (
 		`A ${kind} permission request was auto-rejected because this conversation's approval mode is \`auto-deny\`. ` +
-		`${alternative} Use \`permission_capabilities\` to inspect alternatives. If still blocked after verifying no allowed alternative works, retry sparingly with \`forcePermissionPrompt\` for this one-off unblock; only reach for \`request_permission_grant\` when you want a durable, saved rule.`
+		`${alternative} Use \`permission_capabilities\` to inspect alternatives. If still blocked after verifying no allowed alternative works, retry the exact call with \`force_retry_tool\` (the token is attached to this denial) for this one-off unblock; only reach for \`request_permission_grant\` when you want a durable, saved rule.`
 	);
 }
 

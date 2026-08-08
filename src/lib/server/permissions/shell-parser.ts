@@ -251,7 +251,7 @@ export function detectShellMisuse(command: string): ShellMisuse | null {
 				`\`create\` tool to write a new file or the \`edit\` tool to modify an ` +
 				`existing one — they handle auditing, permissions, and atomic writes ` +
 				`correctly. (This refusal is hardcoded and not configurable via ` +
-				`grants; only a human approving a \`forcePermissionPrompt\` ` +
+				`grants; only a human approving a \`force_retry_tool\` ` +
 				`escalation can override it.)`
 		};
 	}

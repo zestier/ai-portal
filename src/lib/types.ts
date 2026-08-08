@@ -375,8 +375,8 @@ export function normalizeSessionMode(raw: string | null | undefined): SessionMod
  *     instead of blocking on a dialog the user may never see. Pure portal-side
  *     logic, so it works for every provider.
  *
- * `request_permission_grant` and a valid `forcePermissionPrompt` always reach a
- * human regardless of this setting.
+ * `request_permission_grant` and a valid `force_retry_tool` (one-shot token
+ * from a denial) always reach a human regardless of this setting.
  */
 export const APPROVAL_MODES = ['ask', 'auto-approve', 'auto-deny'] as const;
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];

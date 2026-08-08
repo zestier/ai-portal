@@ -470,20 +470,18 @@ describe('bridge.open() session mode and permissions', () => {
 					allowed?: Array<{ summary: string }>;
 				}>;
 				escalation: {
-					forcePermissionPrompt: { supported: boolean; guidance: string };
+					forceRetry: { supported: boolean; guidance: string };
+					requestPermissionGrant: { supported: boolean; guidance: string };
 				};
 			};
 		};
 		expect(envelope.ok).toBe(true);
 		const response = envelope.result;
-
 		expect(response).toMatchObject({
-			mode: 'interactive',
-			approvalMode: 'auto-deny',
 			escalation: {
-				forcePermissionPrompt: {
+				forceRetry: {
 					supported: true,
-					guidance: expect.stringContaining('after verifying no allowed alternative works')
+					guidance: expect.stringContaining('force_retry_tool')
 				}
 			}
 		});
@@ -615,7 +613,10 @@ describe('bridge.open() session mode and permissions', () => {
 			args: { path: planPath }
 		});
 
-		expect(result).toEqual({ kind: 'reject' });
+		expect(result).toMatchObject({
+			kind: 'reject',
+			feedback: expect.stringContaining('force_retry_tool') as unknown as string
+		});
 	});
 
 	it('auto-rejects prompt-worthy permission requests under auto-deny with concise feedback', async () => {
@@ -649,7 +650,7 @@ describe('bridge.open() session mode and permissions', () => {
 		);
 		expect(result).toEqual(
 			expect.objectContaining({
-				feedback: expect.stringContaining('forcePermissionPrompt')
+				feedback: expect.stringContaining('force_retry_tool')
 			})
 		);
 		expect(result).toEqual(
@@ -699,7 +700,7 @@ describe('bridge.open() session mode and permissions', () => {
 				},
 				expectedKind: 'url',
 				expectedHint: 'local source or another non-network approach',
-				expectedExtraHint: 'retry with `forcePermissionPrompt` instead of guessing',
+				expectedExtraHint: 'retry the denied fetch with `force_retry_tool`',
 				forbiddenDetail: 'https://example.com/private-token'
 			}
 		];
@@ -718,7 +719,7 @@ describe('bridge.open() session mode and permissions', () => {
 			expect(kindFeedback).toContain(c.expectedHint);
 			if ('expectedExtraHint' in c) expect(kindFeedback).toContain(c.expectedExtraHint);
 			expect(kindFeedback).toContain('permission_capabilities');
-			expect(kindFeedback).toContain('forcePermissionPrompt');
+			expect(kindFeedback).toContain('force_retry_tool');
 			expect(kindFeedback).toContain('after verifying no allowed alternative works');
 			expect(kindFeedback).not.toContain(c.forbiddenDetail);
 		}
@@ -751,7 +752,10 @@ describe('bridge.open() session mode and permissions', () => {
 			args: { command: 'node scripts/check.js' }
 		});
 
-		expect(result).toEqual({ kind: 'reject', feedback });
+		expect(result).toMatchObject({ kind: 'reject' });
+		const resultFeedback = (result as { feedback: string }).feedback;
+		expect(resultFeedback).toContain(feedback);
+		expect(resultFeedback).toContain('force_retry_tool');
 	});
 
 	it('auto-rejects shell git commands with concise structured-tool feedback', async () => {
@@ -837,94 +841,34 @@ describe('bridge.open() session mode and permissions', () => {
 		expect(result).toEqual({ kind: 'approve-once' });
 	});
 
-	it('raises a one-time prompt for shell git escalation even under auto-deny', async () => {
+	it('denials carry a force_retry_tool token and hint through the bridge', async () => {
 		const { open } = await importBridge();
-		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
+		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
-		const reason =
-			'Structured Git tools do not expose reflog expiration, and this exact command is needed for cleanup.';
 
-		sdkSessionStub.send.mockReset().mockImplementation(async () => {
-			await Promise.resolve();
-			void onPermissionRequest({
-				kind: 'shell',
-				toolName: 'shell',
-				fullCommandText: 'git reflog expire --expire=now --all',
-				args: {
-					command: 'git reflog expire --expire=now --all',
-					forcePermissionPrompt: reason
-				}
-			});
-			return 'msg-id';
+		const result = await onPermissionRequest({
+			kind: 'shell',
+			toolName: 'shell',
+			fullCommandText: 'git reflog expire --expire=now --all',
+			args: { command: 'git reflog expire --expire=now --all' }
 		});
 
-		const ac = new AbortController();
-		const iter = session.send('hi', ac.signal)[Symbol.asyncIterator]();
-		const first = await iter.next();
-		expect(first.value).toMatchObject({
-			type: 'interactive.request',
-			request: {
-				kind: 'permission',
-				tool: 'shell',
-				permissionKind: 'shell',
-				canPersistDecision: false,
-				escalationReason: reason,
-				defaultDenyFeedback: expect.stringContaining('structured Git tool')
-			}
-		});
-		ac.abort();
-		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
+		expect(result).toEqual(
+			expect.objectContaining({
+				kind: 'reject',
+				feedback: expect.stringContaining('force_retry_tool')
+			})
+		);
+		expect((result as { feedback: string }).feedback).toMatch(
+			/force_retry_tool` with `token: "([0-9a-f]{24})"/
+		);
 	});
 
-	it('raises a one-time prompt for URL escalation under auto-deny', async () => {
-		const { open } = await importBridge();
-		const interactive = await import('../src/lib/server/runtime/interactive-requests');
-		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
-		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
-		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
-			req: unknown
-		) => Promise<unknown>;
-		const reason =
-			'External documentation is required to verify current API behavior; no local source can confirm it.';
-
-		sdkSessionStub.send.mockReset().mockImplementation(async () => {
-			await Promise.resolve();
-			void onPermissionRequest({
-				kind: 'url',
-				toolName: 'web_fetch',
-				url: 'https://example.com/docs',
-				args: {
-					url: 'https://example.com/docs',
-					forcePermissionPrompt: reason
-				}
-			});
-			return 'msg-id';
-		});
-
-		const ac = new AbortController();
-		const iter = session.send('hi', ac.signal)[Symbol.asyncIterator]();
-		const first = await iter.next();
-		expect(first.value).toMatchObject({
-			type: 'interactive.request',
-			request: {
-				kind: 'permission',
-				tool: 'web_fetch',
-				permissionKind: 'url',
-				canPersistDecision: false,
-				escalationReason: reason
-			}
-		});
-		ac.abort();
-		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
-	});
-
-	it('lets forcePermissionPrompt escalate hard deny grants to a human prompt', async () => {
+	it('force_retry_tool raises a human dialog for the exact denied call, and approval auto-allows the retry', async () => {
 		const { open } = await importBridge();
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
@@ -943,20 +887,36 @@ describe('bridge.open() session mode and permissions', () => {
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
+		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{
+			name: string;
+			handler(args: unknown): Promise<{ resultType: string; detailedContent: string }>;
+		}>;
+		const forceRetryTool = tools.find((t) => t.name === 'force_retry_tool');
+		expect(forceRetryTool).toBeTruthy();
+
+		// First, the exact call is denied: it mints a one-shot token whose
+		// feedback carries the hard-deny reason.
+		const request = {
+			kind: 'shell',
+			toolName: 'shell',
+			fullCommandText: 'rm -rf build',
+			args: { command: 'rm -rf build' }
+		};
+		const denied = await onPermissionRequest(request);
+		expect(denied).toMatchObject({ kind: 'reject' });
+		const deniedFeedback = (denied as { feedback: string }).feedback;
+		expect(deniedFeedback).toContain('rm is forbidden');
+		const token = /force_retry_tool` with `token: "([0-9a-f]{24})"/.exec(deniedFeedback)?.[1];
+		expect(token).toBeTruthy();
+
+		// Second, `force_retry_tool` raises a fresh dialog for the exact call
+		// carrying the escalation reason and the original deny reason.
 		const reason =
 			'There is no structured deletion tool available, and the user explicitly requested cleanup.';
-
+		let escalation: Promise<{ resultType: string; detailedContent: string }> | null = null;
 		sdkSessionStub.send.mockReset().mockImplementation(async () => {
 			await Promise.resolve();
-			void onPermissionRequest({
-				kind: 'shell',
-				toolName: 'shell',
-				fullCommandText: 'rm -rf build',
-				args: {
-					command: 'rm -rf build',
-					forcePermissionPrompt: reason
-				}
-			});
+			escalation = forceRetryTool!.handler({ token, reason });
 			return 'msg-id';
 		});
 
@@ -974,60 +934,19 @@ describe('bridge.open() session mode and permissions', () => {
 				defaultDenyFeedback: expect.stringContaining('rm is forbidden')
 			}
 		});
+		const view = (first.value as { request: { requestId: string } }).request;
+		const resolved = interactive.resolve(view.requestId, user.id, {
+			kind: 'permission',
+			decision: 'allow-once'
+		});
+		expect(resolved).toBe(true);
+		expect((await escalation!).resultType).toBe('success');
 		ac.abort();
-		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
-	});
 
-	it('lets forcePermissionPrompt escalate prompt-required grants', async () => {
-		const { open } = await importBridge();
-		const interactive = await import('../src/lib/server/runtime/interactive-requests');
-		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
-		const settings = await import('../src/lib/server/db/repos/settings');
-		const user = ensureLocalUser();
-		settings.addGrant({
-			userId: user.id,
-			conversationId: null,
-			tool: 'shell',
-			permissionKind: 'shell',
-			scope: { kind: 'shell', rule: { command: [{ token: 'node' }] } },
-			decision: 'prompt',
-			denyReason: 'Node shell commands require human approval.'
-		});
-		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
-		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
-			req: unknown
-		) => Promise<unknown>;
-		const reason =
-			'The repository has no package script for this exact diagnostic, so a one-off node command is required.';
-
-		sdkSessionStub.send.mockReset().mockImplementation(async () => {
-			await Promise.resolve();
-			void onPermissionRequest({
-				kind: 'shell',
-				toolName: 'shell',
-				fullCommandText: 'node scripts/diagnose.js',
-				args: {
-					command: 'node scripts/diagnose.js',
-					forcePermissionPrompt: reason
-				}
-			});
-			return 'msg-id';
-		});
-
-		const ac = new AbortController();
-		const iter = session.send('hi', ac.signal)[Symbol.asyncIterator]();
-		const first = await iter.next();
-		expect(first.value).toMatchObject({
-			type: 'interactive.request',
-			request: {
-				kind: 'permission',
-				tool: 'shell',
-				permissionKind: 'shell',
-				canPersistDecision: false,
-				escalationReason: reason
-			}
-		});
-		ac.abort();
+		// Third, the identical retry is auto-allowed so the SDK executes it
+		// natively; the token is consumed one-shot.
+		const retried = await onPermissionRequest(request);
+		expect(retried).toEqual({ kind: 'approve-once' });
 		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
 	});
 
@@ -1059,45 +978,33 @@ describe('bridge.open() session mode and permissions', () => {
 		expect(result).toEqual({ kind: 'approve-once' });
 	});
 
-	it('recognizes top-level forcePermissionPrompt for escalation', async () => {
+	it('force_retry_tool validates inputs and rejects unknown tokens through the bridge', async () => {
 		const { open } = await importBridge();
-		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
-		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
-			req: unknown
-		) => Promise<unknown>;
+		await open({ ...baseOpts, userId: user.id });
+		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{
+			name: string;
+			handler(args: unknown): Promise<{ resultType: string; detailedContent: string }>;
+		}>;
+		const forceRetryTool = tools.find((t) => t.name === 'force_retry_tool');
+		expect(forceRetryTool).toBeTruthy();
 		const reason =
-			'Structured Git tools do not expose reflog expiration, and this exact command is needed for cleanup.';
+			'No structured alternative exists for this exact operation, so a human prompt is required.';
 
-		sdkSessionStub.send.mockReset().mockImplementation(async () => {
-			await Promise.resolve();
-			void onPermissionRequest({
-				kind: 'shell',
-				toolName: 'shell',
-				fullCommandText: 'git reflog expire --expire=now --all',
-				forcePermissionPrompt: reason,
-				args: { command: 'git reflog expire --expire=now --all' }
-			});
-			return 'msg-id';
-		});
+		const unknown = await forceRetryTool!.handler({ token: 'a'.repeat(24), reason });
+		expect(unknown.resultType).toBe('failure');
+		expect(JSON.parse(unknown.detailedContent).error.message).toContain('Unknown or expired');
 
-		const ac = new AbortController();
-		const iter = session.send('hi', ac.signal)[Symbol.asyncIterator]();
-		const first = await iter.next();
-		expect(first.value).toMatchObject({
-			type: 'interactive.request',
-			request: {
-				kind: 'permission',
-				tool: 'shell',
-				permissionKind: 'shell',
-				canPersistDecision: false,
-				escalationReason: reason
-			}
-		});
-		ac.abort();
-		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
+		const invalidToken = await forceRetryTool!.handler({ token: 'not-a-token', reason });
+		expect(invalidToken.resultType).toBe('failure');
+		expect(JSON.parse(invalidToken.detailedContent).error.message).toContain(
+			'must be the 24-hex-character token'
+		);
+
+		const short = await forceRetryTool!.handler({ token: 'a'.repeat(24), reason: 'short' });
+		expect(short.resultType).toBe('failure');
+		expect(JSON.parse(short.detailedContent).error.message).toContain('at least 20 characters');
 	});
 
 	it('shows useful git_commit details in the permission prompt', async () => {
@@ -1105,7 +1012,7 @@ describe('bridge.open() session mode and permissions', () => {
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
 		const user = ensureLocalUser();
-		const session = await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
+		const session = await open({ ...baseOpts, userId: user.id });
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
@@ -1148,66 +1055,7 @@ describe('bridge.open() session mode and permissions', () => {
 		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
 	});
 
-	it('rejects invalid forcePermissionPrompt values with syntax feedback', async () => {
-		const { open } = await importBridge();
-		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
-		const user = ensureLocalUser();
-		await open({ ...baseOpts, userId: user.id, approvalMode: 'auto-deny' });
-		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
-			req: unknown
-		) => Promise<unknown>;
-
-		const cases = [
-			{
-				name: 'top-level boolean',
-				request: {
-					kind: 'shell',
-					toolName: 'shell',
-					fullCommandText: 'git status --short',
-					forcePermissionPrompt: true,
-					args: { command: 'git status --short' }
-				}
-			},
-			{
-				name: 'args object',
-				request: {
-					kind: 'shell',
-					toolName: 'shell',
-					fullCommandText: 'git status --short',
-					args: { command: 'git status --short', forcePermissionPrompt: { reason: 'try anyway' } }
-				}
-			},
-			{
-				name: 'blank string',
-				request: {
-					kind: 'shell',
-					toolName: 'shell',
-					fullCommandText: 'git status --short',
-					args: { command: 'git status --short', forcePermissionPrompt: '   ' }
-				}
-			},
-			{
-				name: 'too-short string',
-				request: {
-					kind: 'shell',
-					toolName: 'shell',
-					fullCommandText: 'git status --short',
-					args: { command: 'git status --short', forcePermissionPrompt: 'too short' }
-				}
-			}
-		];
-
-		for (const c of cases) {
-			const result = await onPermissionRequest(c.request);
-			expect(result, c.name).toEqual({
-				kind: 'reject',
-				feedback:
-					'`forcePermissionPrompt` must be a reason string of at least 20 characters explaining why no allowed alternative works.'
-			});
-		}
-	});
-
-	it('recognizes forcePermissionPrompt from persisted tool args via toolCallId', async () => {
+	it('matches a forced-retry approval against the persisted tool args via toolCallId', async () => {
 		const { open } = await importBridge();
 		const interactive = await import('../src/lib/server/runtime/interactive-requests');
 		const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
@@ -1225,15 +1073,10 @@ describe('bridge.open() session mode and permissions', () => {
 			content: '',
 			status: 'streaming'
 		});
-		const reason =
-			'Structured Git tools do not expose reflog expiration, and this exact command is needed for cleanup.';
 		messages.insertToolCall(assistant.id, {
 			id: 'git-commit-tool',
 			tool: 'shell',
-			argsJson: JSON.stringify({
-				command: 'git reflog expire --expire=now --all',
-				forcePermissionPrompt: reason
-			}),
+			argsJson: JSON.stringify({ command: 'git reflog expire --expire=now --all' }),
 			resultJson: null,
 			status: 'pending',
 			startedAt: Date.now(),
@@ -1245,30 +1088,39 @@ describe('bridge.open() session mode and permissions', () => {
 		const onPermissionRequest = clientStub.createSession.mock.calls[0][0].onPermissionRequest as (
 			req: unknown
 		) => Promise<unknown>;
+		const tools = clientStub.createSession.mock.calls[0][0].tools as Array<{
+			name: string;
+			handler(args: unknown): Promise<{ resultType: string }>;
+		}>;
+		const forceRetryTool = tools.find((t) => t.name === 'force_retry_tool');
 
+		const request = {
+			kind: 'shell',
+			toolName: 'shell',
+			toolCallId: 'git-commit-tool',
+			fullCommandText: 'git reflog expire --expire=now --all',
+			args: { command: 'git reflog expire --expire=now --all' }
+		};
+		const denied = await onPermissionRequest(request);
+		expect(denied).toMatchObject({ kind: 'reject' });
+		const token = /force_retry_tool` with `token: "([0-9a-f]{24})"/.exec(
+			(denied as { feedback: string }).feedback
+		)?.[1];
+		expect(token).toBeTruthy();
+
+		const reason =
+			'This exact reflog cleanup is required, and no structured Git tool exposes expiration.';
+		let escalation: Promise<{ resultType: string }> | null = null;
 		sdkSessionStub.send.mockReset().mockImplementation(async () => {
 			await Promise.resolve();
-			void onPermissionRequest({
-				kind: 'shell',
-				toolName: 'shell',
-				toolCallId: 'git-commit-tool',
-				fullCommandText: 'git reflog expire --expire=now --all',
-				args: { command: 'git reflog expire --expire=now --all' }
-			});
+			escalation = forceRetryTool!.handler({ token, reason });
 			return 'msg-id';
 		});
 
 		const ac = new AbortController();
 		const iter = session.send('hi', ac.signal)[Symbol.asyncIterator]();
-		let seen: Awaited<ReturnType<typeof iter.next>> | null = null;
-		for (let i = 0; i < 5; i++) {
-			const next = await iter.next();
-			if (next.value?.type === 'interactive.request') {
-				seen = next;
-				break;
-			}
-		}
-		expect(seen?.value).toMatchObject({
+		const first = await iter.next();
+		expect(first.value).toMatchObject({
 			type: 'interactive.request',
 			request: {
 				kind: 'permission',
@@ -1278,7 +1130,15 @@ describe('bridge.open() session mode and permissions', () => {
 				escalationReason: reason
 			}
 		});
+		const view = (first.value as { request: { requestId: string } }).request;
+		interactive.resolve(view.requestId, user.id, { kind: 'permission', decision: 'allow-once' });
+		expect((await escalation!).resultType).toBe('success');
 		ac.abort();
+
+		// The retried request re-derives the same args hash from the persisted
+		// args and is auto-allowed one-shot.
+		const retried = await onPermissionRequest(request);
+		expect(retried).toEqual({ kind: 'approve-once' });
 		interactive.cancelConversation(baseOpts.conversationId, 'test_cleanup');
 	});
 });

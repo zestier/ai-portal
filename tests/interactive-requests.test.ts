@@ -839,10 +839,12 @@ describe('interactive permission adapter feedback', () => {
 			feedback: '  Use the structured tool instead.  '
 		});
 
-		await expect(permission).resolves.toEqual({
+		await expect(permission).resolves.toMatchObject({
 			kind: 'reject',
-			feedback: 'Use the structured tool instead.'
+			feedback: expect.stringContaining('Use the structured tool instead.') as unknown as string
 		});
+		const deniedFeedback = (await permission) as { feedback: string };
+		expect(deniedFeedback.feedback).toContain('force_retry_tool');
 	});
 
 	it('keeps a plain SDK reject when manual deny feedback is empty', async () => {
@@ -863,7 +865,10 @@ describe('interactive permission adapter feedback', () => {
 			feedback: '   '
 		});
 
-		await expect(permission).resolves.toEqual({ kind: 'reject' });
+		await expect(permission).resolves.toMatchObject({
+			kind: 'reject',
+			feedback: expect.stringContaining('force_retry_tool') as unknown as string
+		});
 	});
 
 	it('matching allow grants override prompt grants before policy auto-approval', async () => {

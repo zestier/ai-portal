@@ -189,7 +189,10 @@ describe('auto-approve is scoped to a single conversation', () => {
 		).toBe(true);
 
 		const result = await a.onPermissionRequest(URL_REQUEST());
-		expect(result).toEqual({ kind: 'reject', feedback: 'Blocked by an explicit rule.' });
+		expect(result).toMatchObject({ kind: 'reject' });
+		const deniedFeedback = (result as { feedback: string }).feedback;
+		expect(deniedFeedback).toContain('Blocked by an explicit rule.');
+		expect(deniedFeedback).toContain('force_retry_tool');
 		// The deny came from the grant, not from a missing prompt path.
 		expect(a.interactive.listForConversation(a.conversationId)).toHaveLength(0);
 		expect(a.readApprovalMode()).toBe('auto-approve');

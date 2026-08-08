@@ -117,9 +117,11 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 		blocks.push(
 			[
 				'Use permission_capabilities to inspect allowed alternatives after permission rejections.',
-				'Use `forcePermissionPrompt` sparingly for a one-off unblock: only after verifying no',
-				'allowed alternative works, and include a concise reason. Reserve `request_permission_grant`',
-				'for explicit persistence intent (a durable, saved rule) — not in-the-moment unblocks.'
+				'Use `force_retry_tool` sparingly for a one-off unblock: when a call is denied, the',
+				'denial feedback carries a one-shot token — pass it to `force_retry_tool` with a concise',
+				'reason (>= 20 chars) to raise a human prompt for the exact call; if approved, the retried',
+				'call is auto-allowed. Reserve `request_permission_grant` for explicit persistence intent',
+				'(a durable, saved rule) — not in-the-moment unblocks.'
 			].join('\n')
 		);
 	}

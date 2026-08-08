@@ -4,10 +4,10 @@ import type { ApprovalMode, InteractivePermissionDecision, PortalEvent } from '.
 import type { GrantScope } from '../src/lib/permissions/scope-types';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
-// A short, stable fragment of the forcePermissionPrompt nudge. Asserting on
+// A short, stable fragment of the force_retry_tool nudge. Asserting on
 // this substring (not the exact prose) keeps the tests robust to wording tweaks
 // while still pinning the nudge BEHAVIOR per outcome.
-const NUDGE_MARKER = 'forcePermissionPrompt';
+const NUDGE_MARKER = 'force_retry_tool';
 
 // The `request_permission_grant` tool always raises a human permission dialog
 // (it is `never-prompt`, so the call site never gates it) and only persists a
@@ -197,7 +197,7 @@ describe('request_permission_grant', () => {
 		expect(grants.length).toBe(0);
 	});
 
-	it('raises a prompt even under the auto-deny approval mode (always-prompt, like forcePermissionPrompt)', async () => {
+	it('raises a prompt even under the auto-deny approval mode (always-prompt, like force_retry_tool)', async () => {
 		const harness = await makeHarness('auto-deny');
 		const { result } = await driveAndResolve(
 			harness,
@@ -232,7 +232,7 @@ describe('request_permission_grant', () => {
 		expect(envelopeText(result)).toContain(NUDGE_MARKER);
 	});
 
-	it('nudges toward forcePermissionPrompt on an allow-once (approved-not-saved) outcome', async () => {
+	it('nudges toward force_retry_tool on an allow-once (approved-not-saved) outcome', async () => {
 		const harness = await makeHarness();
 		const { result } = await driveAndResolve(
 			harness,

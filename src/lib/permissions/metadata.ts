@@ -75,7 +75,7 @@ const permissionKindDescriptors = {
 		label: 'url',
 		grantFormLabel: 'url (fetch URL)',
 		autoDenyAlternativeHint:
-			'Try a local source or another non-network approach first. If the answer depends on external documentation, current API behavior, or other version-specific online information, retry with `forcePermissionPrompt` instead of guessing.',
+			'Try a local source or another non-network approach first. If the answer depends on external documentation, current API behavior, or other version-specific online information, retry the denied fetch with `force_retry_tool` (token from the denial) instead of guessing.',
 		scopeKey: (req) =>
 			req.url ??
 			readArgString(req.args, 'url') ??

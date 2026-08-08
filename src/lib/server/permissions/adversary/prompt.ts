@@ -17,10 +17,12 @@
  *   narration in through a field that looks portal-derived.
  * - **Conversation history.** Not in v0. The adversary judges the request, not
  *   the story around it.
- * - **`forcePermissionPrompt`.** A forced request never reaches the shadow
- *   hook (it returns from the forced-escalation block far earlier), but the key
- *   is stripped anyway so a stray copy in `args` can't be used as a channel for
- *   "the human already agreed to this" style pleading.
+ * - **`force_retry_tool`.** A forced retry never reaches the shadow hook: the
+ *   one-shot approval match at the top of `decideCore` auto-allows the retried
+ *   call before any observation, and the tool itself is `never-prompt` (its
+ *   `reason` arg is agent prose the adversary never sees). Either way, no
+ *   forced-retry input can be used as a channel for "the human already agreed
+ *   to this" style pleading.
  *
  * None of this makes the adversary injection-proof — it reads attacker-
  * influenced tool arguments by construction, which is the correlated-failure
@@ -36,7 +38,7 @@ export const UNTRUSTED_OPEN = '<<<UNTRUSTED_TOOL_ARGUMENTS>>>';
 export const UNTRUSTED_CLOSE = '<<<END_UNTRUSTED_TOOL_ARGUMENTS>>>';
 
 /** Top-level arg keys that carry agent prose rather than a machine target. */
-const NARRATION_ARG_KEYS = ['intention', 'toolDescription', 'forcePermissionPrompt'] as const;
+const NARRATION_ARG_KEYS = ['intention', 'toolDescription'] as const;
 
 const DEFAULT_MAX_ARG_CHARS = 4000;
 

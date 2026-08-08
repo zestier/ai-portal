@@ -542,9 +542,9 @@ function gitStructuredSubcommandFeedback(subcommand: string, tools: string): str
 // `output_mode: 'count'` with the pattern `^` (every line matches once).
 // Word/byte counts are intentionally NOT offered a recipe: count mode counts
 // matching LINES, not occurrences, so it can't produce a word count — those
-// rare needs escalate via `forcePermissionPrompt`.
+// rare needs escalate via `force_retry_tool`.
 const WC_SHELL_DENY_FEEDBACK =
-	'Shell `wc` is denied by default. To count lines use the grep tool with output_mode count and the pattern ^ (it matches every line). For word or byte counts, escalate sparingly with `forcePermissionPrompt` only if no structured tool fits.';
+	'Shell `wc` is denied by default. To count lines use the grep tool with output_mode count and the pattern ^ (it matches every line). For word or byte counts, escalate sparingly with `force_retry_tool` (token from the denial) only if no structured tool fits.';
 
 /**
  * Terminal-usage prompt rules. Since regular allow grants outrank prompt

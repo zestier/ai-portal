@@ -1047,7 +1047,7 @@ describe('turn-runner', () => {
 					type: 'tool.call',
 					toolCallId: 'tool-1',
 					tool: 'bash',
-					args: { command: 'echo hi', forcePermissionPrompt: 'because this is a test' }
+					args: { command: 'echo hi', timeoutMs: 30_000 }
 				};
 				await gate;
 				yield {
@@ -1091,7 +1091,7 @@ describe('turn-runner', () => {
 			tool: 'bash',
 			status: 'pending'
 		});
-		expect(midTurn?.toolCalls?.[0]?.argsJson).toContain('forcePermissionPrompt');
+		expect(midTurn?.toolCalls?.[0]?.argsJson).toContain('timeoutMs');
 
 		release();
 		for await (const { event } of turn.subscribe()) {

@@ -282,14 +282,14 @@
 				id: 'deny',
 				title: 'Hard deny rules',
 				description:
-					'Rules that reject matching requests automatically. They never prompt on their own, but a valid forcePermissionPrompt still reaches a human permission dialog that can override them.',
+					'Rules that reject matching requests automatically. They never prompt on their own, but a valid force_retry_tool (token from the denial) still reaches a human permission dialog that can override them.',
 				grants: deny
 			},
 			{
 				id: 'prompt',
 				title: 'Prompt-required rules',
 				description:
-					'Rules that block automated approval but allow a human permission dialog or forcePermissionPrompt escalation.',
+					'Rules that block automated approval but allow a human permission dialog or force_retry_tool escalation.',
 				grants: prompt
 			},
 			{
