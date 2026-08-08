@@ -9,9 +9,9 @@ import { randomBytes } from 'node:crypto';
  * then call the `force_retry_tool` portal tool with that token; the tool
  * raises a fresh, approve-once human dialog showing the originally captured
  * tool + args. If the human approves, the token is marked approved and the
- * NEXT identical request — the agent's real retry of the tool — is
- * auto-allowed by `consumeForcedRetryMatch`, bypassing every guard the first
- * request tripped.
+ * matching retry of the tool — same tool, same scope (command/path/url),
+ * incidental args may differ — is auto-allowed by `consumeForcedRetryMatch`,
+ * bypassing every guard the first request tripped.
  *
  * Tokens are one-shot, conversation-scoped, and expire after `TTL_MS`. The
  * store is deliberately in-memory: a forced retry is a same-session, same-turn
@@ -99,10 +99,14 @@ export function revokeForcedRetry(token: string): void {
 
 /**
  * Find and consume a one-shot approved token matching a permission request.
- * Matching is exact on conversation, tool, permission kind, scope key, and
- * args hash, so a retry with drifted args is NOT silently allowed — it is
- * denied again (and gets a fresh token). Returns the matched entry so callers
- * can audit the approval.
+ * Matching is exact on conversation, tool, permission kind, and scope key. The
+ * args hash is compared ONLY when there is no scope key (custom-tool requests,
+ * where the args are the only identity); for scope-keyed kinds the scope key IS
+ * the operation identity — shell command, fs path, or url — so a retry whose
+ * incidental args drifted (e.g. a re-rendered Bash `description` or Edit
+ * `content`) still matches what the human approved. A retry with a different
+ * scope key is denied again (and gets a fresh token). Returns the matched entry
+ * so callers can audit the approval.
  */
 export function consumeForcedRetryMatch(input: {
 	conversationId: string;
@@ -118,7 +122,7 @@ export function consumeForcedRetryMatch(input: {
 		if (entry.tool !== input.tool) continue;
 		if (entry.permissionKind !== input.permissionKind) continue;
 		if (entry.scopeKey !== input.scopeKey) continue;
-		if (entry.argsHash !== input.argsHash) continue;
+		if (input.scopeKey === null && entry.argsHash !== input.argsHash) continue;
 		store.delete(token);
 		return entry;
 	}
@@ -128,7 +132,7 @@ export function consumeForcedRetryMatch(input: {
 /** Append the escalation hint (with the one-shot token) to a deny message. */
 export function withForceRetryHint(feedback: string, token: string): string {
 	return (
-		`${feedback}\n\nTo force this exact call, call \`force_retry_tool\` with \`token: "${token}"\` ` +
+		`${feedback}\n\nTo force this call, call \`force_retry_tool\` with \`token: "${token}"\` ` +
 		'and a concise reason (>= 20 characters).'
 	);
 }

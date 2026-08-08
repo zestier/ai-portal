@@ -124,7 +124,7 @@ async function waitForDialog(
 
 function resolveDialog(
 	harness: Awaited<ReturnType<typeof makeHarness>>,
-	view: DialogView,
+	view: { requestId: string },
 	decision: InteractivePermissionDecision,
 	feedback?: string
 ): void {
@@ -349,6 +349,102 @@ describe('force_retry_tool is the universal escalation', () => {
 			const third = await harness.onPermissionRequest(SHELL_REQ('cat > out.txt'));
 			expect(third).toMatchObject({ kind: 'reject' });
 			expect((third as { feedback: string }).feedback).toContain('force_retry_tool');
+		});
+	});
+
+	describe('a forced-retry approval covers incidental args drift (scope-keyed)', () => {
+		it('approves a shell retry that adds an incidental args field', async () => {
+			const harness = await makeHarness();
+			await denyThenForceRetry(harness, SHELL_REQ('cat > out.txt'), 'allow-once');
+			const retried = await harness.onPermissionRequest({
+				kind: 'shell',
+				toolName: 'shell',
+				fullCommandText: 'cat > out.txt',
+				args: { command: 'cat > out.txt', description: 'write output' }
+			});
+			expect(retried).toEqual({ kind: 'approve-once' });
+		});
+
+		it('approves a write retry to the same path with re-rendered content', async () => {
+			const harness = await makeHarness();
+			// Outside the workspace root (`/tmp`) so the `prompt` policy does not
+			// auto-approve it before the dialog; the request then prompts (unlike
+			// the shell cases, which auto-deny), so it is denied by resolving the
+			// dialog with `deny` — mirroring the "human-denied normal dialog" test.
+			const writeReq = (content: string): Record<string, unknown> => ({
+				kind: 'write',
+				toolName: 'create',
+				path: '/var/tmp/out.txt',
+				args: { file_path: '/var/tmp/out.txt', content }
+			});
+			const first = await driveAndResolve(harness, writeReq('first draft'), 'deny');
+			expect(first.result).toMatchObject({ kind: 'reject' });
+			const token = tokenFromFeedback((first.result as { feedback: string }).feedback);
+
+			const retryPromise = harness.forceRetryTool.handler({ token, reason: REASON }, stream());
+			const view = await waitForDialog(harness);
+			resolveDialog(harness, view, 'allow-once');
+			await retryPromise;
+
+			const retried = await harness.onPermissionRequest(writeReq('re-rendered: first draft'));
+			expect(retried).toEqual({ kind: 'approve-once' });
+		});
+
+		it('still denies a retry with a different scope key', async () => {
+			const harness = await makeHarness();
+			const { first } = await denyThenForceRetry(harness, SHELL_REQ('cat > out.txt'), 'allow-once');
+			const retried = await harness.onPermissionRequest(SHELL_REQ('cat > other.txt'));
+			expect(retried).toMatchObject({ kind: 'reject' });
+			// Scope stays bound: the rejected retry mints a FRESH token, not the
+			// consumed one.
+			expect(tokenFromFeedback((retried as { feedback: string }).feedback)).not.toBe(
+				tokenFromFeedback((first as { feedback: string }).feedback)
+			);
+		});
+
+		it('still denies a drifted retry for a custom-tool (no scope key)', async () => {
+			const harness = await makeHarness({
+				validateCustomToolArgs: () => ({ feedback: 'args do not match schema' })
+			});
+			const toolReq = (subject: string): Record<string, unknown> => ({
+				kind: 'custom-tool',
+				toolName: 'git_commit',
+				args: { subject }
+			});
+			await denyThenForceRetry(harness, toolReq('initial subject'), 'allow-once');
+			// Custom-tool has no scope key — args are the only identity, so a
+			// drifted retry is still denied (strictness preserved).
+			const retried = await harness.onPermissionRequest(toolReq('drifted subject'));
+			expect(retried).toMatchObject({ kind: 'reject' });
+		});
+
+		it('does not report success when a concurrent escalation resolves the token first', async () => {
+			const harness = await makeHarness();
+			const first = await harness.onPermissionRequest(SHELL_REQ('cat > out.txt'));
+			expect(first).toMatchObject({ kind: 'reject' });
+			const token = tokenFromFeedback((first as { feedback: string }).feedback);
+
+			// Two concurrent escalations of the same token both pass the pending
+			// check and raise a dialog; only the first approved can record, and
+			// the second must report a resolved-token error rather than a false
+			// `{approved: true}`.
+			const p1 = harness.forceRetryTool.handler({ token, reason: REASON }, stream());
+			const v1 = await waitForDialog(harness);
+			const p2 = harness.forceRetryTool.handler({ token, reason: REASON }, stream());
+			let views: ReturnType<typeof harness.interactive.listForConversation> = [];
+			for (let i = 0; i < 300 && views.length < 2; i++) {
+				views = harness.interactive.listForConversation(harness.conversationId);
+				if (views.length >= 2) break;
+				await new Promise((r) => setTimeout(r, 1));
+			}
+			expect(views.length).toBe(2);
+
+			resolveDialog(harness, v1, 'allow-once');
+			resolveDialog(harness, views[1], 'allow-once');
+			const [r1, r2] = await Promise.all([p1, p2]);
+			expect(r1).toMatchObject({ ok: true, result: { approved: true } });
+			expect(r2).toMatchObject({ ok: false });
+			expect((r2 as { error: { code: string } }).error.code).toBe('force_retry_resolved');
 		});
 	});
 

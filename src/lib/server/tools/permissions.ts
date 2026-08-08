@@ -318,10 +318,10 @@ const ForceRetryArgs = z
 // the call site. Its handler looks up the one-shot token that the interactive
 // adapter minted when the exact call was denied (see runtime/forced-retry.ts)
 // and raises a fresh approve-once human dialog showing the originally captured
-// tool + args. Approving marks the token approved; the NEXT identical request —
-// the agent's real retry of the tool — is auto-allowed by
-// `consumeForcedRetryMatch` and the SDK executes it natively. The token is
-// one-shot, so a third identical request is denied again.
+// tool + args. Approving marks the token approved; the matching retry of the
+// tool (same tool, same command/path/url; incidental args may differ) is
+// auto-allowed by `consumeForcedRetryMatch` and the SDK executes it natively.
+// The token is one-shot, so a further request is denied again.
 function buildForceRetryTool(opts: {
 	conversationId: string;
 	policy: PermissionPolicy;
@@ -330,7 +330,7 @@ function buildForceRetryTool(opts: {
 	return {
 		name: FORCE_RETRY_TOOL_NAME,
 		description:
-			'Escalate ONE previously denied tool call to a fresh human approval prompt. Every denial carries a one-shot token in its feedback; pass that token here with a concise reason. If the human approves, the retried identical call (same tool and args) is auto-allowed and executes exactly once. This is the default way to override a denial for a one-off unblock — it saves nothing. Use `request_permission_grant` instead only when you want a durable, saved rule.',
+			'Escalate ONE previously denied tool call to a fresh human approval prompt. Every denial carries a one-shot token in its feedback; pass that token here with a concise reason. If the human approves, the retried call (same tool, same command/path/url; incidental args may differ) is auto-allowed and executes exactly once. This is the default way to override a denial for a one-off unblock — it saves nothing. Use `request_permission_grant` instead only when you want a durable, saved rule.',
 		argsSchema: ForceRetryArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -413,10 +413,19 @@ function buildForceRetryTool(opts: {
 			}
 
 			if (response.decision === 'allow-once' || response.decision === 'allow-always') {
-				approveForcedRetry(parsed.token, parsed.reason);
+				// `approveForcedRetry` only records while the token is still
+				// `pending`; a concurrent escalation of the same token (or a
+				// pruned entry) can make it false, and reporting success then
+				// would be a lie — the retry would still be denied.
+				const approved = approveForcedRetry(parsed.token, parsed.reason);
+				if (!approved) {
+					return err('This forced-retry token has already been resolved.', {
+						code: 'force_retry_resolved'
+					});
+				}
 				return ok(
 					{ approved: true },
-					'The human approved this one-off escalation. Retry the exact tool call you were denied on (same tool and args) — it will now be auto-allowed and execute.'
+					'The human approved this one-off escalation. Retry the same tool call you were denied on (same command/path/url; incidental args may differ) — it will now be auto-allowed and execute.'
 				);
 			}
 
@@ -475,7 +484,7 @@ function permissionCapabilities(opts: {
 			forceRetry: {
 				supported: true,
 				guidance:
-					'The default for any in-the-moment / one-off unblock. When a call is denied, the denial feedback carries a one-shot `force_retry_tool` token. Call `force_retry_tool` with that token and a concise reason (>= 20 chars) to raise a human prompt for the EXACT denied call; if the human approves, the retried call is auto-allowed and executes. It saves nothing.'
+					'The default for any in-the-moment / one-off unblock. When a call is denied, the denial feedback carries a one-shot `force_retry_tool` token. Call `force_retry_tool` with that token and a concise reason (>= 20 chars) to raise a human prompt for that call; if the human approves, the retried call (same command/path/url; incidental args may differ) is auto-allowed and executes. It saves nothing.'
 			},
 			requestPermissionGrant: {
 				supported: true,
