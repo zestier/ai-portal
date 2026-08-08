@@ -259,9 +259,26 @@ export function openClaudeAgentSession(
 		queue: AsyncQueue<PortalEvent>,
 		abortController: AbortController
 	) {
-		let reasoningSegmentId: string | null = null;
-		let reasoningStartedAt = 0;
 		let emittedError = false;
+		// One open reasoning burst per emitting agent (top-level + each
+		// subagent), keyed by the spawning tool call id ('' for top-level).
+		// Closed at every burst boundary — a tool_use, a text delta, or the
+		// turn's end — so think/tool interleaving survives per burst instead
+		// of fusing the whole turn into one segment.
+		const reasoningSegments = new Map<string, { segmentId: string; startedAt: number }>();
+		const closeReasoningSegment = (parentToolCallId: string | undefined) => {
+			const ownerKey = parentToolCallId ?? '';
+			const seg = reasoningSegments.get(ownerKey);
+			if (!seg) return;
+			queue.push({
+				type: 'message.reasoning.end',
+				messageId,
+				segmentId: seg.segmentId,
+				durationMs: Date.now() - seg.startedAt,
+				...(parentToolCallId !== undefined ? { parentToolCallId } : {})
+			});
+			reasoningSegments.delete(ownerKey);
+		};
 		const toolNames = new Map<string, string>();
 		const toolParents = new Map<string, string | undefined>();
 		queue.push({ type: 'message.start', messageId, role: 'assistant' });
@@ -408,6 +425,8 @@ export function openClaudeAgentSession(
 						if (block.type === 'tool_use') {
 							const toolName = normalizePortalToolName(block.name);
 							const parentToolCallId = message.parent_tool_use_id ?? undefined;
+							// A tool_use ends this agent's current thinking burst.
+							closeReasoningSegment(parentToolCallId);
 							toolNames.set(block.id, toolName);
 							toolParents.set(block.id, parentToolCallId);
 							queue.push({
@@ -426,6 +445,8 @@ export function openClaudeAgentSession(
 								});
 							}
 						} else if (block.type === 'text' && message.parent_tool_use_id) {
+							// A sub-agent's spoken output ends its current thinking burst.
+							closeReasoningSegment(message.parent_tool_use_id);
 							queue.push({
 								type: 'message.delta',
 								messageId,
@@ -477,27 +498,23 @@ export function openClaudeAgentSession(
 				}
 				if (message.type === 'stream_event') {
 					const delta = streamDelta(message);
+					const parentToolCallId = message.parent_tool_use_id ?? undefined;
 					if (delta?.kind === 'reasoning') {
-						if (!reasoningSegmentId) {
-							reasoningSegmentId = ulid();
-							reasoningStartedAt = Date.now();
+						const ownerKey = parentToolCallId ?? '';
+						let seg = reasoningSegments.get(ownerKey);
+						if (!seg) {
+							seg = { segmentId: ulid(), startedAt: Date.now() };
+							reasoningSegments.set(ownerKey, seg);
 						}
 						queue.push({
 							type: 'message.reasoning',
 							messageId,
-							segmentId: reasoningSegmentId,
-							text: delta.text
+							segmentId: seg.segmentId,
+							text: delta.text,
+							...(parentToolCallId !== undefined ? { parentToolCallId } : {})
 						});
 					} else if (delta?.kind === 'text') {
-						if (reasoningSegmentId) {
-							queue.push({
-								type: 'message.reasoning.end',
-								messageId,
-								segmentId: reasoningSegmentId,
-								durationMs: Date.now() - reasoningStartedAt
-							});
-							reasoningSegmentId = null;
-						}
+						closeReasoningSegment(parentToolCallId);
 						queue.push({ type: 'message.delta', messageId, text: delta.text });
 					}
 					continue;
@@ -531,14 +548,16 @@ export function openClaudeAgentSession(
 				});
 			}
 		} finally {
-			if (reasoningSegmentId) {
+			for (const [parentToolCallId, seg] of reasoningSegments) {
 				queue.push({
 					type: 'message.reasoning.end',
 					messageId,
-					segmentId: reasoningSegmentId,
-					durationMs: Date.now() - reasoningStartedAt
+					segmentId: seg.segmentId,
+					durationMs: Date.now() - seg.startedAt,
+					...(parentToolCallId ? { parentToolCallId } : {})
 				});
 			}
+			reasoningSegments.clear();
 			queue.push({ type: 'message.end', messageId });
 			queue.push({ type: 'done' });
 			queue.end();

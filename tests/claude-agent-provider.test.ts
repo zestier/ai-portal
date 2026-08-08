@@ -613,4 +613,145 @@ describe('claudeAgentProvider', () => {
 			])
 		);
 	});
+
+	it('splits reasoning into per-burst segments interleaved with tool calls', async () => {
+		queryMock.mockReturnValue(
+			messages(
+				{
+					type: 'stream_event',
+					parent_tool_use_id: null,
+					event: {
+						type: 'content_block_delta',
+						index: 0,
+						delta: { type: 'thinking_delta', thinking: 'plan the read' }
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'assistant',
+					uuid: 'assistant-1',
+					session_id: '44444444-4444-4444-8444-444444444444',
+					parent_tool_use_id: null,
+					message: {
+						content: [
+							{
+								type: 'tool_use',
+								id: 'agent-call-1',
+								name: 'Agent',
+								input: { prompt: 'inspect' }
+							}
+						]
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'stream_event',
+					parent_tool_use_id: null,
+					event: {
+						type: 'content_block_delta',
+						index: 0,
+						delta: { type: 'thinking_delta', thinking: 'plan the write' }
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'assistant',
+					uuid: 'assistant-2',
+					session_id: '44444444-4444-4444-8444-444444444444',
+					parent_tool_use_id: null,
+					message: {
+						content: [
+							{
+								type: 'tool_use',
+								id: 'read-call-1',
+								name: 'Read',
+								input: { file_path: '/tmp/a.ts' }
+							}
+						]
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'result',
+					subtype: 'success',
+					session_id: '44444444-4444-4444-8444-444444444444'
+				} as SDKMessage
+			)
+		);
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('inspect then write', new AbortController().signal));
+		const reasoning = events.filter((e) => e.type === 'message.reasoning') as Array<{
+			segmentId: string;
+			text: string;
+			parentToolCallId?: string;
+		}>;
+
+		// Two distinct bursts — not fused into one giant segment.
+		expect(new Set(reasoning.map((e) => e.segmentId)).size).toBe(2);
+		expect(reasoning.map((e) => e.text)).toEqual(['plan the read', 'plan the write']);
+		// Top-level bursts carry no parent tool call.
+		expect(reasoning.map((e) => e.parentToolCallId)).toEqual([undefined, undefined]);
+
+		// Each burst closes (reasoning.end) before its own tool.call fires.
+		const interleaved = events.filter(
+			(e) =>
+				e.type === 'message.reasoning' ||
+				e.type === 'message.reasoning.end' ||
+				e.type === 'tool.call'
+		);
+		expect(interleaved.map((e) => e.type)).toEqual([
+			'message.reasoning',
+			'message.reasoning.end',
+			'tool.call',
+			'message.reasoning',
+			'message.reasoning.end',
+			'tool.call'
+		]);
+		const calls = events.filter((e) => e.type === 'tool.call') as Array<{ toolCallId: string }>;
+		expect(calls.map((e) => e.toolCallId)).toEqual(['agent-call-1', 'read-call-1']);
+	});
+
+	it('attributes sub-agent thinking to the spawning task via parentToolCallId', async () => {
+		queryMock.mockReturnValue(
+			messages(
+				{
+					type: 'stream_event',
+					parent_tool_use_id: 'agent-call-1',
+					event: {
+						type: 'content_block_delta',
+						index: 0,
+						delta: { type: 'thinking_delta', thinking: 'child thinks' }
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'stream_event',
+					parent_tool_use_id: null,
+					event: {
+						type: 'content_block_delta',
+						index: 0,
+						delta: { type: 'thinking_delta', thinking: 'top thinks' }
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'result',
+					subtype: 'success',
+					session_id: '44444444-4444-4444-8444-444444444444'
+				} as SDKMessage
+			)
+		);
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('delegate', new AbortController().signal));
+		const reasoning = events.filter((e) => e.type === 'message.reasoning') as Array<{
+			text: string;
+			parentToolCallId?: string;
+		}>;
+
+		expect(reasoning).toEqual([
+			expect.objectContaining({ text: 'child thinks', parentToolCallId: 'agent-call-1' }),
+			expect.objectContaining({ text: 'top thinks' })
+		]);
+		expect(reasoning[1]).not.toHaveProperty('parentToolCallId');
+	});
 });
