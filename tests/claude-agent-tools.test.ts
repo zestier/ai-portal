@@ -94,27 +94,65 @@ describe('adaptClaudePortalTool', () => {
 	});
 });
 
+function portalOpts(overrides: Partial<ProviderOpenOptions> = {}): ProviderOpenOptions {
+	return {
+		provider: 'claude-agent',
+		conversationId: 'conversation-1',
+		userId: 'user-1',
+		workingDirectory: '/tmp',
+		model: 'deepseek-chat',
+		policy: 'prompt',
+		...overrides
+	};
+}
+
+function buildPortalTools(overrides: Partial<ProviderOpenOptions> = {}): PortalTool[] {
+	return buildClaudePortalTools({
+		opts: portalOpts(overrides),
+		getMode: () => 'interactive',
+		getApprovalMode: () => 'ask',
+		emit: vi.fn(),
+		getSignal: () => signal
+	});
+}
+
 describe('buildClaudePortalTools', () => {
 	it('does not expose disabled tool groups', () => {
-		const opts: ProviderOpenOptions = {
-			provider: 'claude-agent',
-			conversationId: 'conversation-1',
-			userId: 'user-1',
-			workingDirectory: '/tmp',
-			model: 'deepseek-chat',
-			policy: 'prompt',
-			disabledToolGroups: ['git', 'memory']
-		};
-		const tools = buildClaudePortalTools({
-			opts,
-			getMode: () => 'interactive',
-			getApprovalMode: () => 'ask',
-			emit: vi.fn(),
-			getSignal: () => signal
-		});
+		const tools = buildPortalTools({ disabledToolGroups: ['git', 'memory'] });
 
 		expect(tools.some(({ name }) => name.startsWith('git_'))).toBe(false);
 		expect(tools.some(({ name }) => name.startsWith('memory_'))).toBe(false);
-		expect(tools.some(({ name }) => name === 'read_file')).toBe(true);
+		expect(tools.some(({ name }) => name === 'read_file')).toBe(false);
+		expect(tools.some(({ name }) => name === 'move')).toBe(true);
+	});
+
+	it('omits portal tools that duplicate the Agent SDK built-in tools', () => {
+		const names = new Set(buildPortalTools().map(({ name }) => name));
+		const duplicates = [
+			'shell_exec',
+			'read_file',
+			'list_files',
+			'grep',
+			'create_file',
+			'replace_lines',
+			'replace_text'
+		];
+		for (const name of duplicates) {
+			expect(names.has(name)).toBe(false);
+		}
+		const kept = [
+			'apply_patch',
+			'move',
+			'trash',
+			'create_directory',
+			'git_status',
+			'ticket_add',
+			'template_list',
+			'worktree_create',
+			'permission_capabilities'
+		];
+		for (const name of kept) {
+			expect(names.has(name)).toBe(true);
+		}
 	});
 });

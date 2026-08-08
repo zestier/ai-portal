@@ -50,6 +50,9 @@ worktrees, and UI event rendering.
 Portal tools are exposed to the runtime through an in-process MCP server. Tool
 groups disabled on a conversation are omitted from that server, and built-in
 coding tools pass through the same portal permission gateway as other providers.
+Portal tools that duplicate an Agent SDK built-in coding tool (`shell_exec`,
+`read_file`, `list_files`, `grep`, `create_file`, `replace_lines`,
+`replace_text`) are omitted so the model sees one tool per job.
 Agent SDK session ids are persisted separately from portal conversation ids so
 sessions can resume after a process restart.
 
