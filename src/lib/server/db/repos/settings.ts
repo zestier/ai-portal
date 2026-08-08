@@ -145,6 +145,7 @@ import {
 } from '../../permissions/matcher';
 import { decodeScope, encodeScope } from '$lib/permissions/scope-codec';
 import { FS_PERMISSIONS, type GrantScope } from '$lib/permissions/scope-types';
+import { isGrantTool } from '$lib/permissions/metadata';
 import type { ParsedSegment } from '../../permissions/shell-parser';
 
 export type GrantSource = 'seed' | 'prompt' | 'settings' | 'legacy';
@@ -283,9 +284,18 @@ export function matchGrantDetailed(
 		userId,
 		conversationId,
 		tool,
-		// Shell rules may defer their positional containment to the fs grants;
-		// see `buildFsPathPermitted` in the matcher.
-		permissionKind === 'shell' ? FS_PERMISSIONS : []
+		// Grants are keyed by the canonical permission vocabulary
+		// (`shell`/`read`/`write`/`edit`/`url`) or by the tool's own name
+		// (`Bash`/`web_fetch`), depending on how the row was created. Load both
+		// so a saved seed/settings-form grant matches an SDK built-in request
+		// whose tool name differs from its kind; the matcher's `toolMatches`
+		// accepts either vocabulary.
+		[
+			...(isGrantTool(permissionKind) ? [permissionKind] : []),
+			// Shell rules may defer their positional containment to the fs grants;
+			// see `buildFsPathPermitted` in the matcher.
+			...(permissionKind === 'shell' ? FS_PERMISSIONS : [])
+		]
 	);
 	return matchGrantsDetailed(rows, {
 		tool,

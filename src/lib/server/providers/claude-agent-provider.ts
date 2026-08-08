@@ -1,4 +1,9 @@
-import { query, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import {
+	query,
+	type HookJSONOutput,
+	type Options,
+	type SDKMessage
+} from '@anthropic-ai/claude-agent-sdk';
 import { ulid } from 'ulid';
 import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
 import { loadConfig } from '../config';
@@ -172,8 +177,8 @@ export function openClaudeAgentSession(
 		emit,
 		getSignal: () => activeAbortController?.signal ?? new AbortController().signal
 	});
-	const portalToolsBySdkName = new Map<string, (typeof portalTools)[number]>(
-		portalTools.map((portalTool) => [`mcp__portal__${portalTool.name}`, portalTool] as const)
+	const portalToolsByName = new Map<string, (typeof portalTools)[number]>(
+		portalTools.map((portalTool) => [portalTool.name, portalTool] as const)
 	);
 	const portalMcpServer = createClaudePortalMcpServer(portalTools, {
 		emit,
@@ -192,7 +197,7 @@ export function openClaudeAgentSession(
 		getApprovalMode: () => approvalMode,
 		getSessionWorkspacePath: () => opts.workingDirectory,
 		getPermissionBehavior: (toolName) =>
-			portalToolsBySdkName.get(toolName)?.permissionBehavior ?? 'normal',
+			portalToolsByName.get(toolName)?.permissionBehavior ?? 'normal',
 		getAgentModel: () => opts.model,
 		getAgentBackend: () => providerId,
 		getAdversaryModel: () => opts.adversaryModel ?? null,
@@ -270,30 +275,65 @@ export function openClaudeAgentSession(
 					includePartialMessages: true,
 					agentProgressSummaries: true,
 					allowedTools: ['Agent'],
-					canUseTool: async (toolName, input, permissionOptions) => {
-						const decision = await onPermissionRequest(
-							permissionRequest(
-								normalizePortalToolName(toolName),
-								input,
-								permissionOptions.toolUseID
-							)
-						);
-						if (decision.kind === 'approve-once') {
-							return {
-								behavior: 'allow',
-								updatedInput: input,
-								toolUseID: permissionOptions.toolUseID
-							};
-						}
-						return {
-							behavior: 'deny',
-							message:
-								'feedback' in decision && typeof decision.feedback === 'string'
-									? decision.feedback
-									: 'Permission denied.',
-							interrupt: decision.kind === 'user-not-available',
-							toolUseID: permissionOptions.toolUseID
-						};
+					hooks: {
+						// Single permission gate. The PreToolUse hook fires for
+						// EVERY tool call (SDK built-ins, portal MCP tools, and
+						// subagent inner tool calls) before the CLI's own
+						// permission machinery runs, so the portal gateway —
+						// `onPermissionRequest` → `decideCore` → grants/policy —
+						// stays authoritative the way it is for other providers.
+						// A `canUseTool` callback is only consulted for calls the
+						// CLI already decided need permission (reads and
+						// allowlisted Bash never reach it), so it cannot gate
+						// those; the hook can, and its allow/deny decision is
+						// terminal. The handler runs in-process and awaits the
+						// interactive dialog exactly like `canUseTool` did.
+						PreToolUse: [
+							{
+								hooks: [
+									async (hookInput): Promise<HookJSONOutput> => {
+										if (hookInput.hook_event_name !== 'PreToolUse') {
+											return { continue: true };
+										}
+										const toolName = normalizePortalToolName(hookInput.tool_name);
+										// Subagent spawn tools stay governed by
+										// `allowedTools: ['Agent']` — the allowlist is
+										// the portal's decision for delegation. Their
+										// INNER tool calls fire this same hook and are
+										// gated below, which is where the real
+										// capability boundary lives.
+										if (toolName === 'Agent' || toolName === 'Task') {
+											return { continue: true };
+										}
+										const decision = await onPermissionRequest(
+											permissionRequest(
+												toolName,
+												isRecord(hookInput.tool_input) ? hookInput.tool_input : {},
+												hookInput.tool_use_id
+											)
+										);
+										if (decision.kind === 'approve-once') {
+											return {
+												hookSpecificOutput: {
+													hookEventName: 'PreToolUse',
+													permissionDecision: 'allow'
+												}
+											};
+										}
+										return {
+											hookSpecificOutput: {
+												hookEventName: 'PreToolUse',
+												permissionDecision: 'deny',
+												permissionDecisionReason:
+													'feedback' in decision && typeof decision.feedback === 'string'
+														? decision.feedback
+														: 'Permission denied.'
+											}
+										};
+									}
+								]
+							}
+						]
 					},
 					maxTurns: cfg.maxTurns,
 					mcpServers: { portal: portalMcpServer },
@@ -492,6 +532,10 @@ export function openClaudeAgentSession(
 
 function normalizePortalToolName(toolName: string): string {
 	return toolName.startsWith('mcp__portal__') ? toolName.slice('mcp__portal__'.length) : toolName;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function toolResultText(content: unknown): string {

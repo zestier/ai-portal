@@ -48,8 +48,19 @@ conversation persistence, permission policy and audit, tickets, durable memory,
 worktrees, and UI event rendering.
 
 Portal tools are exposed to the runtime through an in-process MCP server. Tool
-groups disabled on a conversation are omitted from that server, and built-in
-coding tools pass through the same portal permission gateway as other providers.
+groups disabled on a conversation are omitted from that server.
+
+Every tool call — SDK built-ins (`Bash`, `Read`, `Edit`, ...), portal MCP
+tools, and subagent inner tool calls — is gated by a single `PreToolUse` hook
+that routes through the same portal permission gateway as other providers
+(grants, policy, approval mode, audit). The hook's allow/deny is terminal, so
+the portal stays authoritative even for read-only tools and allowlisted shell
+commands that the SDK would otherwise auto-approve. `canUseTool` is not used.
+Built-in requests carry the CLI tool name (`Bash`, `Read`) while saved grants
+are keyed by the canonical permission vocabulary (`shell`, `read`, `write`,
+`edit`, `url`); the gateway matches either form, so seed and settings-form
+grants apply to SDK built-in calls.
+
 Portal tools that duplicate an Agent SDK built-in coding tool (`shell_exec`,
 `read_file`, `list_files`, `grep`, `create_file`, `replace_lines`,
 `replace_text`) are omitted so the model sees one tool per job.

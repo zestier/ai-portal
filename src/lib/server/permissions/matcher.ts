@@ -398,7 +398,7 @@ function segmentIsPipeTarget(segments: ParsedSegment[], i: number): boolean {
 
 function grantApplies(r: GrantRow, q: MatchQuery): boolean {
 	if (r.expiresAt !== null && r.expiresAt < q.now) return false;
-	if (!toolMatches(r.tool, q.tool)) return false;
+	if (!toolMatches(r.tool, q.tool, q.permissionKind)) return false;
 	if (!kindMatches(r.permissionKind, q.permissionKind)) return false;
 	if (r.argsHash && r.argsHash !== q.argsHash) return false;
 	return true;
@@ -465,8 +465,15 @@ function structuredScopeMatches(scope: GrantScope, q: MatchQuery): boolean {
 	}
 }
 
-function toolMatches(grant: string, want: string): boolean {
-	return grant === '*' || grant === want;
+function toolMatches(grant: string, wantTool: string, wantKind: string): boolean {
+	// A grant row is keyed either by the tool's own name (rows persisted from a
+	// permission prompt, e.g. `Bash` or `web_fetch`) or by the canonical
+	// permission vocabulary used by the seeds and the settings form
+	// (`shell`/`read`/`write`/`edit`/`url`). Accept either so a saved grant
+	// matches an SDK built-in request whose tool name differs from its kind
+	// (`Bash` → kind `shell`); the `kindMatches` check below still constrains
+	// which rows actually apply.
+	return grant === '*' || grant === wantTool || grant === wantKind;
 }
 
 function kindMatches(grant: string | null, want: string): boolean {

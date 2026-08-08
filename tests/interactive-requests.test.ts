@@ -928,4 +928,58 @@ describe('interactive permission adapter feedback', () => {
 			})
 		);
 	});
+
+	// SDK built-ins carry their CLI tool name (`Bash`, `Read`) while saved
+	// grants are keyed by the canonical permission vocabulary (`shell`, `read`).
+	// A request shaped the way the claude-agent provider sends it must still
+	// match the canonical grant — the fix behind "permission grants not applied
+	// to SDK built-in tools".
+	it('a canonical shell grant matches an SDK Bash request', async () => {
+		settings.addGrant({
+			userId,
+			conversationId: null,
+			tool: 'shell',
+			permissionKind: 'shell',
+			scope: {
+				kind: 'shell',
+				rule: { command: [{ token: 'ls' }], positionals: { kind: 'any' } }
+			},
+			decision: 'allow'
+		});
+		const events: PortalEvent[] = [];
+		const permission = callbacks(events).onPermissionRequest({
+			kind: 'shell',
+			toolName: 'Bash',
+			fullCommandText: 'ls -la',
+			args: { command: 'ls -la' }
+		});
+		await Promise.resolve();
+		expect(events.some((ev) => ev.type === 'interactive.request')).toBe(false);
+		await expect(permission).resolves.toEqual({ kind: 'approve-once' });
+	});
+
+	it('a canonical read grant matches an SDK Read request', async () => {
+		settings.addGrant({
+			userId,
+			conversationId: null,
+			tool: 'read',
+			permissionKind: 'read',
+			scope: {
+				kind: 'fs',
+				perms: ['read'],
+				rule: { kind: 'path', root: 'absolute', behavior: 'prefix', value: '/tmp' }
+			},
+			decision: 'allow'
+		});
+		const events: PortalEvent[] = [];
+		const permission = callbacks(events).onPermissionRequest({
+			kind: 'read',
+			toolName: 'Read',
+			path: '/tmp/example.ts',
+			args: { file_path: '/tmp/example.ts' }
+		});
+		await Promise.resolve();
+		expect(events.some((ev) => ev.type === 'interactive.request')).toBe(false);
+		await expect(permission).resolves.toEqual({ kind: 'approve-once' });
+	});
 });

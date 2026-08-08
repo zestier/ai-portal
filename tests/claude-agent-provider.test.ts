@@ -43,8 +43,21 @@ function messages(...items: SDKMessage[]): AsyncGenerator<SDKMessage> {
 	})();
 }
 
+/** Permission grants and conversations are keyed by user_id, so the fixed
+ * test user must exist before `addGrant`/`convs.create` (both have FKs). */
+async function seedUser(userId: string): Promise<void> {
+	const { getDb } = await import('../src/lib/server/db');
+	getDb()
+		.prepare(
+			`INSERT OR IGNORE INTO users(id, github_login, display_name, created_at, last_login_at)
+			 VALUES (?, ?, ?, ?, ?)`
+		)
+		.run(userId, `test:${userId}`, 'Test user', Date.now(), Date.now());
+}
+
 beforeEach(async () => {
 	await setupLocalEnv('portal-claude-agent-');
+	await seedUser('user-1');
 	process.env.CLAUDE_AGENT_API_KEY = 'deepseek-key';
 	process.env.CLAUDE_AGENT_BASE_URL = 'https://api.deepseek.com/anthropic';
 	resetConfigForTests();
@@ -160,14 +173,23 @@ describe('claudeAgentProvider', () => {
 		});
 	});
 
-	it('routes built-in tool permissions through the portal approval mode', async () => {
-		let canUseTool: NonNullable<
-			NonNullable<
-				Parameters<typeof import('@anthropic-ai/claude-agent-sdk').query>[0]['options']
-			>['canUseTool']
-		> | null = null;
+	function capturePreToolUseHook(options: {
+		[key: string]: unknown;
+	}): ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null {
+		const hooks = options.hooks as
+			| { PreToolUse?: Array<{ hooks: Array<(i: unknown) => unknown> }> }
+			| undefined;
+		const matcher = hooks?.PreToolUse?.[0];
+		return matcher
+			? (matcher.hooks[0] as (i: Record<string, unknown>) => Promise<Record<string, unknown>>)
+			: null;
+	}
+
+	it('gates every built-in tool call through the portal via the PreToolUse hook', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
 		queryMock.mockImplementation(({ options }) => {
-			canUseTool = options.canUseTool;
+			preToolUse = capturePreToolUseHook(options);
 			return messages({
 				type: 'result',
 				subtype: 'success',
@@ -182,27 +204,190 @@ describe('claudeAgentProvider', () => {
 		});
 
 		await collect(session.send('inspect files', new AbortController().signal));
-		expect(canUseTool).not.toBeNull();
-		const decision = await canUseTool!(
-			'Read',
-			{ file_path: '/tmp/example.ts' },
-			{
-				signal: new AbortController().signal,
-				toolUseID: 'tool-read-1',
-				requestId: 'request-read-1'
-			}
-		);
-
-		expect(decision).toMatchObject({
-			behavior: 'allow',
-			updatedInput: { file_path: '/tmp/example.ts' },
-			toolUseID: 'tool-read-1'
+		expect(preToolUse).not.toBeNull();
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'Read',
+			tool_input: { file_path: '/tmp/example.ts' },
+			tool_use_id: 'tool-read-1'
 		});
+
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'allow'
+			}
+		});
+		// The hook is the single gate: canUseTool is gone, the allowlist and
+		// built-in tool surface are unchanged.
 		expect(queryMock.mock.calls[0][0].options).toMatchObject({
 			allowedTools: ['Agent'],
 			tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent']
 		});
+		expect(queryMock.mock.calls[0][0].options.canUseTool).toBeUndefined();
 		expect(queryMock.mock.calls[0][0].options.mcpServers.portal.type).toBe('sdk');
+	});
+
+	it('a saved shell allow grant auto-allows an SDK Bash call without a dialog', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const settings = await import('../src/lib/server/db/repos/settings');
+		settings.addGrant({
+			userId: 'user-1',
+			conversationId: null,
+			tool: 'shell',
+			permissionKind: 'shell',
+			scope: {
+				kind: 'shell',
+				rule: { command: [{ token: 'ls' }], positionals: { kind: 'any' } }
+			},
+			decision: 'allow'
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('list files', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'Bash',
+			tool_input: { command: 'ls -la' },
+			tool_use_id: 'tool-bash-1'
+		});
+
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'allow'
+			}
+		});
+	});
+
+	it('a saved read deny blocks an SDK built-in Read call with feedback', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const settings = await import('../src/lib/server/db/repos/settings');
+		settings.addGrant({
+			userId: 'user-1',
+			conversationId: null,
+			tool: 'read',
+			permissionKind: 'read',
+			scope: {
+				kind: 'fs',
+				perms: ['read'],
+				rule: { kind: 'path', root: 'absolute', behavior: 'prefix', value: '/tmp' }
+			},
+			decision: 'deny',
+			denyReason: 'Read denied by test grant.'
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('read secret', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'Read',
+			tool_input: { file_path: '/tmp/secret.txt' },
+			tool_use_id: 'tool-read-2'
+		});
+
+		const out = decision.hookSpecificOutput as {
+			permissionDecision: string;
+			permissionDecisionReason: string;
+		};
+		expect(out.permissionDecision).toBe('deny');
+		expect(out.permissionDecisionReason).toContain('Read denied by test grant.');
+	});
+
+	it('writes audit rows for calls that previously bypassed the portal', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const convs = await import('../src/lib/server/db/repos/conversations');
+		const settings = await import('../src/lib/server/db/repos/settings');
+		// The conversation's workspace root derives from its own workdir
+		// (effectiveWorkdir resolves /tmp to /workspace here), so the read must
+		// target a path inside that root or it would raise a dialog and block.
+		convs.create('user-1', {
+			id: 'conv-claude-agent',
+			title: 'gate test',
+			workdir: '/workspace',
+			model: null
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('inspect files', new AbortController().signal));
+		await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'Read',
+			tool_input: { file_path: '/workspace/example.ts' },
+			tool_use_id: 'tool-read-3'
+		});
+
+		const audit = settings.listRecentDecisionsForUser('user-1', 10);
+		expect(audit).toEqual(
+			expect.arrayContaining([expect.objectContaining({ tool: 'Read', decision: 'auto-allow' })])
+		);
+	});
+
+	it('never-prompt portal tools still auto-allow under the hook', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('inspect', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'mcp__portal__force_retry_tool',
+			tool_input: {
+				token: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+				reason: 'test reason longer than twenty characters'
+			},
+			tool_use_id: 'tool-portal-1'
+		});
+
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'allow'
+			}
+		});
 	});
 
 	it('normalizes tool calls, results, and subagent lifecycle events', async () => {
