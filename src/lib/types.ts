@@ -814,7 +814,12 @@ export type InteractiveKind =
 	// turn proceeds whenever the SDK resolves the request on its own.
 	| 'sampling'
 	| 'mcp_oauth'
-	| 'external_tool';
+	| 'external_tool'
+	// Checked-in workspace permissions (.zap/permissions.toml): a non-blocking
+	// review raised when the file on disk drifts from the last human-approved
+	// snapshot. Approving imports the new file as grants; rejecting keeps the
+	// old state. The turn does not wait on it (old grants stay active).
+	| 'workspace_file';
 
 export interface InteractivePermissionView {
 	kind: 'permission';
@@ -959,6 +964,42 @@ export interface InteractiveExternalToolView {
 	summary: string;
 }
 
+/**
+ * Review for the checked-in workspace permissions file
+ * (`.zap/permissions.toml`). Raised by the permission gate when the file on
+ * disk no longer matches the last human-approved snapshot: the diff is the
+ * whole point, so the dialog shows the change and the human approves it into
+ * the active grant set or keeps the old state. Non-blocking — the request
+ * that triggered the check proceeds against the current (old) grants either
+ * way.
+ */
+export interface InteractiveWorkspaceFileView {
+	kind: 'workspace_file';
+	/** Absolute path to the workspace root this file governs. */
+	workspaceRoot: string;
+	/** Display path of the permissions file, e.g. `.zap/permissions.toml`. */
+	fileName: string;
+	/** Current file contents as captured by the gate. */
+	currentText: string;
+	/** SHA-256 of `currentText`; null when the file is gone (deletion). */
+	currentHash: string | null;
+	/** Hash of the last human-approved snapshot, or null on first import. */
+	acceptedHash: string | null;
+	/** The last approved snapshot text, or null on first import. */
+	oldSnapshot: string | null;
+	/** Unified diff old-snapshot ↔ current file. */
+	diff: string;
+	/** Number of grants currently active from the last approved snapshot. */
+	activeGrantCount: number;
+	/**
+	 * Set when the current file fails to parse. The dialog must not offer
+	 * approve then; the gate's validation doubles as a second line of defense
+	 * against a malformed file being imported silently.
+	 */
+	parseError?: string;
+	summary: string;
+}
+
 export type InteractiveRequestViewBody =
 	| InteractivePermissionView
 	| InteractiveAutoModeSwitchView
@@ -967,7 +1008,8 @@ export type InteractiveRequestViewBody =
 	| InteractiveExitPlanModeView
 	| InteractiveSamplingView
 	| InteractiveMcpOauthView
-	| InteractiveExternalToolView;
+	| InteractiveExternalToolView
+	| InteractiveWorkspaceFileView;
 
 export type InteractiveRequestView = { requestId: string } & InteractiveRequestViewBody;
 
@@ -1014,7 +1056,11 @@ export type InteractiveResponse =
 	// "info" kinds: client can only acknowledge / dismiss. Always 'ack'.
 	| { kind: 'sampling'; action: 'ack' }
 	| { kind: 'mcp_oauth'; action: 'ack' }
-	| { kind: 'external_tool'; action: 'ack' };
+	| { kind: 'external_tool'; action: 'ack' }
+	| {
+			kind: 'workspace_file';
+			decision: 'approve' | 'reject';
+	  };
 
 /**
  * The agent-proposed grant carried by a `request_permission_grant` dialog.

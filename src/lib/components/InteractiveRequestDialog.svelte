@@ -9,6 +9,7 @@
 	import InteractiveInformationalRequest from './InteractiveInformationalRequest.svelte';
 	import InteractivePermissionRequest from './InteractivePermissionRequest.svelte';
 	import InteractiveUserInputRequest from './InteractiveUserInputRequest.svelte';
+	import InteractiveWorkspaceFileRequest from './InteractiveWorkspaceFileRequest.svelte';
 
 	let {
 		request,
@@ -49,6 +50,8 @@
 			<InteractiveExitPlanModeRequest {request} {busy} onRespond={pick} />
 		{:else if isInformationalInteractiveRequest(request)}
 			<InteractiveInformationalRequest {request} {busy} onRespond={pick} />
+		{:else if request.kind === 'workspace_file'}
+			<InteractiveWorkspaceFileRequest {request} {busy} onRespond={pick} />
 		{/if}
 	</div>
 {/if}

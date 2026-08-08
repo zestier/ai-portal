@@ -54,6 +54,7 @@ import { getLease } from '../leases';
 import { createShadowRecorder, type ShadowRecorder } from '../permissions/adversary/shadow';
 import type { ShadowResolutionSource } from '../db/repos/shadow-decisions';
 import type { ToolPermissionRequest } from '../tools/types';
+import { checkWorkspaceFileGate } from '../permissions/workspace-file-gate';
 
 interface PermissionRequestLike {
 	kind?: string;
@@ -253,6 +254,24 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				});
 			}
 		};
+
+		// Checked-in workspace permissions (.zap/permissions.toml):
+		// fire-and-forget, hash-gated import check. Never influences THIS
+		// decision — the last human-approved state stays active until the
+		// drifted file is approved — so any failure here is logged, not thrown.
+		try {
+			checkWorkspaceFileGate({
+				userId: opts.userId,
+				conversationId: opts.conversationId,
+				workspaceRoot: opts.getWorkspaceRoots()[0] ?? null,
+				emit: opts.emit
+			});
+		} catch (e) {
+			log.warn('copilot.workspace_permissions_gate_failed', {
+				conversationId: opts.conversationId,
+				err: String(e)
+			});
+		}
 
 		// A token minted when this exact request was previously denied and then
 		// approved through `force_retry_tool` makes the retry the strongest

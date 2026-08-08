@@ -8,7 +8,10 @@ const interactiveKindDescriptors = {
 	exit_plan_mode: () => ({ kind: 'exit_plan_mode', approved: false }),
 	sampling: () => ({ kind: 'sampling', action: 'ack' }),
 	mcp_oauth: () => ({ kind: 'mcp_oauth', action: 'ack' }),
-	external_tool: () => ({ kind: 'external_tool', action: 'ack' })
+	external_tool: () => ({ kind: 'external_tool', action: 'ack' }),
+	// Fail-closed default: a cancelled/expired workspace-file review keeps the
+	// old state (the gate will simply re-nag on the next request).
+	workspace_file: () => ({ kind: 'workspace_file', decision: 'reject' })
 } satisfies {
 	[K in InteractiveKind]: () => Extract<InteractiveResponse, { kind: K }>;
 };

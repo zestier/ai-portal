@@ -796,6 +796,10 @@ export function restoreSeedGrantsForUser(userId: string): { removed: number; ins
 	for (const grant of listGrantsForUser(userId)) {
 		if (grant.conversationId !== null) continue;
 		if (grant.argsHash) continue;
+		// Checked-in `.zap/permissions.toml` rows are workspace policy the
+		// human explicitly imported; "restore defaults" must never touch them,
+		// even when a file grant happens to match a default seed's key.
+		if (grant.source === 'workspace-file') continue;
 		if (grant.source !== 'seed') {
 			if (
 				!defaultKeys.has(

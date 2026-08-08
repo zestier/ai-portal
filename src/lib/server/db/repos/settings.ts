@@ -147,8 +147,9 @@ import { decodeScope, encodeScope } from '$lib/permissions/scope-codec';
 import { FS_PERMISSIONS, type GrantScope } from '$lib/permissions/scope-types';
 import { isGrantTool } from '$lib/permissions/metadata';
 import type { ParsedSegment } from '../../permissions/shell-parser';
+import type { WorkspaceFileGrant } from '../../permissions/workspace-file-format';
 
-export type GrantSource = 'seed' | 'prompt' | 'settings' | 'legacy';
+export type GrantSource = 'seed' | 'prompt' | 'settings' | 'legacy' | 'workspace-file';
 
 interface GrantDbRow {
 	user_id: string;
@@ -163,6 +164,7 @@ interface GrantDbRow {
 	deny_reason: string | null;
 	args_hash: string | null;
 	source: string | null;
+	workspace_root: string | null;
 }
 
 function dbRowToGrant(r: GrantDbRow): GrantRow {
@@ -205,26 +207,43 @@ function normalizeGrantDecision(decision: string): GrantDecision {
  * `writable-paths` positional kinds defer containment to them; those rows are
  * inert for the shell match itself (the matcher's tool check drops them) and
  * are only consulted through the nested fs question.
+ *
+ * `workspaceRoots` scopes the checked-in `.zap/permissions.toml` rows to the
+ * conversation's current workspace roots. File grants are stored with a
+ * `workspace_root` and must only match requests made inside that root. When
+ * the caller cannot say which roots the request applies to (empty/null), the
+ * file rows are excluded entirely — fail closed, never matched globally.
  */
 function loadCandidateGrants(
 	userId: string,
 	conversationId: string,
 	tool: string,
-	alsoTools: readonly string[] = []
+	alsoTools: readonly string[] = [],
+	workspaceRoots: readonly string[] | null = null
 ): GrantRow[] {
 	const extra = alsoTools.filter((t) => t !== tool && t !== '*');
 	const placeholders = extra.map(() => '?').join(', ');
+	const rootFilter =
+		workspaceRoots && workspaceRoots.length > 0
+			? ` AND (COALESCE(source, '') <> 'workspace-file' OR workspace_root IN (${workspaceRoots.map(() => '?').join(', ')}))`
+			: ` AND COALESCE(source, '') <> 'workspace-file'`;
 	const rows = getDb()
 		.prepare(
 			`SELECT user_id, conversation_id, tool, permission_kind, scope_pattern, scope_json,
-			        decision, expires_at, granted_at, deny_reason, args_hash
+			        decision, expires_at, granted_at, deny_reason, args_hash, source, workspace_root
 			 FROM permission_grants
 			 WHERE user_id = ?
 			   AND (conversation_id = ? OR conversation_id IS NULL)
-			   AND (tool = ? OR tool = '*'${extra.length > 0 ? ` OR tool IN (${placeholders})` : ''})
+			   AND (tool = ? OR tool = '*'${extra.length > 0 ? ` OR tool IN (${placeholders})` : ''})${rootFilter}
 			 ORDER BY granted_at ASC, rowid ASC`
 		)
-		.all(userId, conversationId, tool, ...extra) as GrantDbRow[];
+		.all(
+			userId,
+			conversationId,
+			tool,
+			...extra,
+			...(workspaceRoots && workspaceRoots.length > 0 ? [...workspaceRoots] : [])
+		) as GrantDbRow[];
 	return rows.map(dbRowToGrant);
 }
 
@@ -295,7 +314,8 @@ export function matchGrantDetailed(
 			// Shell rules may defer their positional containment to the fs grants;
 			// see `buildFsPathPermitted` in the matcher.
 			...(permissionKind === 'shell' ? FS_PERMISSIONS : [])
-		]
+		],
+		ctx.workspaceRoots ?? null
 	);
 	return matchGrantsDetailed(rows, {
 		tool,
@@ -343,6 +363,12 @@ export interface AddGrantOptions {
 	/** Optional exact-invocation constraint. When set, request args must hash to this value. */
 	argsHash?: string | null;
 	source?: GrantSource;
+	/**
+	 * Workspace root a `.zap/permissions.toml` row belongs to. Only set for
+	 * `source: 'workspace-file'` rows; everything else leaves it NULL (and the
+	 * matcher's workspace filter therefore lets them through).
+	 */
+	workspaceRoot?: string | null;
 }
 
 export function addGrant(opts: AddGrantOptions) {
@@ -350,8 +376,8 @@ export function addGrant(opts: AddGrantOptions) {
 		.prepare(
 			`INSERT INTO permission_grants(
 			   user_id, conversation_id, tool, permission_kind,
-			   scope_pattern, scope_json, decision, expires_at, granted_at, deny_reason, args_hash, source
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			   scope_pattern, scope_json, decision, expires_at, granted_at, deny_reason, args_hash, source, workspace_root
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			opts.userId,
@@ -365,7 +391,8 @@ export function addGrant(opts: AddGrantOptions) {
 			Date.now(),
 			normalizeGrantDenyReason(opts.decision ?? 'allow', opts.denyReason),
 			opts.argsHash ?? null,
-			opts.source ?? (opts.conversationId === null ? 'settings' : 'prompt')
+			opts.source ?? (opts.conversationId === null ? 'settings' : 'prompt'),
+			opts.workspaceRoot ?? null
 		);
 }
 
@@ -386,12 +413,17 @@ export interface UpdateGrantOptions {
  * (this is an edit, not a re-grant). Returns true iff a row matched.
  */
 export function updateGrant(userId: string, id: number, opts: UpdateGrantOptions): boolean {
+	// Workspace-file rows are owned by the `.zap/permissions.toml` lifecycle,
+	// not the user: editing one through Settings would flip its source to
+	// 'settings' and silently promote a root-scoped checked-in grant to a
+	// permanent user-global one. The WHERE clause refuses them (no-op → false).
 	const r = getDb()
 		.prepare(
 			`UPDATE permission_grants
 			    SET tool = ?, permission_kind = ?, scope_pattern = ?, scope_json = ?,
 			        decision = ?, expires_at = ?, deny_reason = ?, source = ?
-			  WHERE rowid = ? AND user_id = ?`
+			  WHERE rowid = ? AND user_id = ?
+			    AND COALESCE(source, '') <> 'workspace-file'`
 		)
 		.run(
 			opts.tool,
@@ -422,6 +454,8 @@ export interface GrantSummary {
 	denyReason: string | null;
 	argsHash: string | null;
 	source: GrantSource;
+	/** Workspace root a `workspace-file` row belongs to; null otherwise. */
+	workspaceRoot: string | null;
 }
 
 /**
@@ -438,7 +472,8 @@ export function listGrantsForUser(userId: string): GrantSummary[] {
 		.prepare(
 			`SELECT pg.rowid AS id, pg.conversation_id, c.title AS conversation_title,
 			        pg.tool, pg.permission_kind, pg.scope_pattern, pg.scope_json, pg.decision,
-			        pg.expires_at, pg.granted_at, pg.deny_reason, pg.args_hash, pg.source
+			        pg.expires_at, pg.granted_at, pg.deny_reason, pg.args_hash, pg.source,
+			        pg.workspace_root
 			 FROM permission_grants pg
 			 LEFT JOIN conversations c ON c.id = pg.conversation_id
 			 WHERE pg.user_id = ?
@@ -458,6 +493,7 @@ export function listGrantsForUser(userId: string): GrantSummary[] {
 		deny_reason: string | null;
 		args_hash: string | null;
 		source: string | null;
+		workspace_root: string | null;
 	}>;
 	return rows.map((r) => ({
 		id: r.id,
@@ -472,12 +508,138 @@ export function listGrantsForUser(userId: string): GrantSummary[] {
 		grantedAt: r.granted_at,
 		denyReason: r.deny_reason,
 		argsHash: r.args_hash,
-		source: normalizeGrantSource(r.source)
+		source: normalizeGrantSource(r.source),
+		workspaceRoot: r.workspace_root
 	}));
 }
 
+// --- Workspace permissions file (.zap/permissions.toml) ---
+
+export interface WorkspacePermissionState {
+	snapshotText: string;
+	contentHash: string;
+	updatedAt: number;
+}
+
+export function getWorkspacePermissionState(
+	userId: string,
+	workspaceRoot: string
+): WorkspacePermissionState | null {
+	const row = getDb()
+		.prepare(
+			`SELECT snapshot_text, content_hash, updated_at FROM workspace_permission_state
+			 WHERE user_id = ? AND workspace_root = ?`
+		)
+		.get(userId, workspaceRoot) as
+		| { snapshot_text: string; content_hash: string; updated_at: number }
+		| undefined;
+	if (!row) return null;
+	return {
+		snapshotText: row.snapshot_text,
+		contentHash: row.content_hash,
+		updatedAt: row.updated_at
+	};
+}
+
+export function clearWorkspacePermissionState(userId: string, workspaceRoot: string): void {
+	getDb()
+		.prepare(`DELETE FROM workspace_permission_state WHERE user_id = ? AND workspace_root = ?`)
+		.run(userId, workspaceRoot);
+}
+
+export function clearWorkspacePermissionStateForUser(userId: string): void {
+	getDb().prepare(`DELETE FROM workspace_permission_state WHERE user_id = ?`).run(userId);
+}
+
+/**
+ * Apply the "file deleted" decision atomically: revoke the workspace's file
+ * grants and drop the approval state in one transaction, so a crash can't
+ * leave active rows with no snapshot (or a snapshot with no rows).
+ */
+export function clearWorkspaceFileState(userId: string, workspaceRoot: string): number {
+	let removed = 0;
+	getDb().transaction(() => {
+		removed = revokeWorkspaceFileGrants(userId, workspaceRoot);
+		clearWorkspacePermissionState(userId, workspaceRoot);
+	})();
+	return removed;
+}
+
+export function countWorkspaceFileGrants(userId: string, workspaceRoot: string): number {
+	const row = getDb()
+		.prepare(
+			`SELECT COUNT(*) AS n FROM permission_grants
+			 WHERE user_id = ? AND source = 'workspace-file' AND workspace_root = ?`
+		)
+		.get(userId, workspaceRoot) as { n: number };
+	return row.n;
+}
+
+export function revokeWorkspaceFileGrants(userId: string, workspaceRoot: string): number {
+	const r = getDb()
+		.prepare(
+			`DELETE FROM permission_grants WHERE user_id = ? AND source = 'workspace-file' AND workspace_root = ?`
+		)
+		.run(userId, workspaceRoot);
+	return r.changes;
+}
+
+/**
+ * Atomically replace a workspace's file grants and record the approved
+ * snapshot. `snapshotText` is the exact file text the human approved and
+ * `contentHash` its SHA-256, so the gate can later detect drift. Returns the
+ * number of grants materialized.
+ */
+export function replaceWorkspaceFileGrants(
+	userId: string,
+	workspaceRoot: string,
+	grants: WorkspaceFileGrant[],
+	snapshotText: string,
+	contentHash: string
+): number {
+	const now = Date.now();
+	const insert = getDb().prepare(
+		`INSERT INTO permission_grants(
+		   user_id, conversation_id, tool, permission_kind, scope_pattern, scope_json,
+		   decision, expires_at, granted_at, deny_reason, args_hash, source, workspace_root
+		 ) VALUES (?, NULL, ?, ?, NULL, ?, ?, NULL, ?, ?, NULL, 'workspace-file', ?)`
+	);
+	getDb().transaction(() => {
+		revokeWorkspaceFileGrants(userId, workspaceRoot);
+		for (const g of grants) {
+			insert.run(
+				userId,
+				g.tool,
+				g.permissionKind,
+				g.scope ? encodeScope(g.scope) : null,
+				g.decision,
+				now,
+				g.denyReason,
+				workspaceRoot
+			);
+		}
+		getDb()
+			.prepare(
+				`INSERT INTO workspace_permission_state(user_id, workspace_root, snapshot_text, content_hash, updated_at)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(user_id, workspace_root) DO UPDATE SET
+				   snapshot_text = excluded.snapshot_text,
+				   content_hash = excluded.content_hash,
+				   updated_at = excluded.updated_at`
+			)
+			.run(userId, workspaceRoot, snapshotText, contentHash, now);
+	})();
+	return grants.length;
+}
+
 function normalizeGrantSource(source: string | null): GrantSource {
-	if (source === 'seed' || source === 'prompt' || source === 'settings' || source === 'legacy') {
+	if (
+		source === 'seed' ||
+		source === 'prompt' ||
+		source === 'settings' ||
+		source === 'legacy' ||
+		source === 'workspace-file'
+	) {
 		return source;
 	}
 	return 'legacy';
@@ -497,8 +659,14 @@ function normalizeGrantDenyReason(
  * revoke their own. Returns true iff a row was removed.
  */
 export function revokeGrant(userId: string, id: number): boolean {
+	// Same ownership rule as `updateGrant`: a single workspace-file row is not
+	// individually revocable — the whole `.zap/permissions.toml` snapshot is
+	// (deletion of the file, or a re-approval). Refusing the row keeps the
+	// approval state and the materialized rows consistent.
 	const r = getDb()
-		.prepare(`DELETE FROM permission_grants WHERE rowid = ? AND user_id = ?`)
+		.prepare(
+			`DELETE FROM permission_grants WHERE rowid = ? AND user_id = ? AND COALESCE(source, '') <> 'workspace-file'`
+		)
 		.run(id, userId);
 	return r.changes > 0;
 }
@@ -511,6 +679,11 @@ export function revokeGrant(userId: string, id: number): boolean {
  * (`restoreSeedGrantsForUser`). See the rollout note in `permissions/seed-grants.ts`.
  */
 export function revokeAllGrantsForUser(userId: string): number {
+	// Also drop the workspace-file approval state: without this, revoking all
+	// would silently remove the materialized file grants while the gate still
+	// believed the last approved snapshot was live — the file would never
+	// re-gate on the next request.
+	getDb().prepare(`DELETE FROM workspace_permission_state WHERE user_id = ?`).run(userId);
 	const r = getDb().prepare(`DELETE FROM permission_grants WHERE user_id = ?`).run(userId);
 	return r.changes;
 }

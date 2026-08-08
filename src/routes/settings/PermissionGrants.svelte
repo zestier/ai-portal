@@ -20,14 +20,32 @@
 	import GrantScopeEditor from '$lib/components/GrantScopeEditor.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
+	import Alert from '$lib/components/ui/Alert.svelte';
+	import DiffView from '$lib/components/DiffView.svelte';
+
+	interface WorkspaceFileStatus {
+		fileName: string;
+		workspaceRoot: string;
+		present: boolean;
+		currentHash: string | null;
+		acceptedHash: string | null;
+		activeGrantCount: number;
+		accepted: boolean;
+		drift: boolean;
+		parseError: string | null;
+		diff: string | null;
+		content: string | null;
+	}
 
 	let {
 		grants,
 		portalTools,
+		workspaceFile,
 		form
 	}: {
 		grants: PermissionGrant[];
 		portalTools: PortalToolCatalogEntry[];
+		workspaceFile: WorkspaceFileStatus;
 		form: FormResult | null;
 	} = $props();
 
@@ -194,6 +212,8 @@
 				return 'Prompt-created';
 			case 'settings':
 				return 'Settings-created';
+			case 'workspace-file':
+				return 'Workspace file';
 			case 'legacy':
 				return 'Legacy';
 		}
@@ -342,6 +362,53 @@
 		{#snippet meta()}Review persistent approve, deny, and prompt rules; audit defaults; and find
 			conversation-scoped rules quickly.{/snippet}
 	</PanelHeader>
+
+	{#if workspaceFile && workspaceFile.present}
+		<section class="workspace-file-panel" aria-label="Workspace permissions file">
+			<div class="wf-head">
+				<span class="wf-title">
+					Workspace permissions file
+					<code>{workspaceFile.fileName}</code>
+				</span>
+				{#if workspaceFile.accepted}
+					<span class="wf-badge ok">Active</span>
+				{:else}
+					<span class="wf-badge drift">Changed — review needed</span>
+				{/if}
+			</div>
+			<p class="muted small">
+				Checked-in permission grants for <code>{workspaceFile.workspaceRoot}</code>.
+				{workspaceFile.activeGrantCount > 0
+					? `${workspaceFile.activeGrantCount} grant${workspaceFile.activeGrantCount === 1 ? '' : 's'} active from the last approved version. `
+					: 'No grants active from this file yet. '}
+				The file only becomes active grants after a human approves it; an agent cannot widen its own permissions
+				by editing it.
+			</p>
+
+			{#if workspaceFile.parseError}
+				<Alert kind="error">
+					The current file is invalid and cannot be imported:
+					<code>{workspaceFile.parseError}</code>
+				</Alert>
+			{:else if workspaceFile.diff}
+				{#if form && !form.ok && (form.formId === 'workspaceFileApprove' || form.formId === 'workspaceFileReject')}
+					<Alert kind="error">{form.error}</Alert>
+				{/if}
+				<details class="wf-diff">
+					<summary>Show changes vs. last approved version</summary>
+					<DiffView path={workspaceFile.fileName} diff={workspaceFile.diff} collapsible={false} />
+				</details>
+				<div class="wf-actions">
+					<form method="POST" action="?/workspaceFileApprove">
+						<button class="btn btn-primary" type="submit">Approve &amp; apply current file</button>
+					</form>
+					<form method="POST" action="?/workspaceFileReject">
+						<button class="btn" type="submit">Keep current state</button>
+					</form>
+				</div>
+			{/if}
+		</section>
+	{/if}
 
 	<div class="grant-summary" aria-label="Permission grant summary">
 		<div class="summary-card">
@@ -713,6 +780,9 @@
 									<code class="pattern">{describeGrantScope(g)}</code>
 									<div class="meta">
 										<span>{grantScopeLabel(g)}</span>
+										{#if g.workspaceRoot}
+											<span class="workspace-root">{g.workspaceRoot}</span>
+										{/if}
 										<span>Granted {formatTime(g.grantedAt)}</span>
 										<span>Expires {formatExpiry(g.expiresAt)}</span>
 									</div>
@@ -781,7 +851,7 @@
 										}}
 									>
 										<input type="hidden" name="id" value={g.id} />
-										{#if canEditGrant(g)}
+										{#if g.source !== 'workspace-file' && canEditGrant(g)}
 											<button
 												class="btn small"
 												type="button"
@@ -789,7 +859,9 @@
 												title="Prefill the grant editor with this grant">Edit</button
 											>
 										{/if}
-										<button class="btn small" type="submit">Revoke</button>
+										{#if g.source !== 'workspace-file'}
+											<button class="btn small" type="submit">Revoke</button>
+										{/if}
 									</form>
 								</div>
 							</li>
@@ -1155,6 +1227,56 @@
 	.btn.small {
 		padding: 0.2rem 0.55rem;
 		font-size: var(--fs-sm);
+	}
+	.workspace-file-panel {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.75rem;
+		margin-bottom: 1rem;
+		background: color-mix(in srgb, var(--surface), var(--code-bg) 12%);
+	}
+	.workspace-file-panel .wf-head {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.3rem;
+	}
+	.workspace-file-panel .wf-title {
+		font-weight: 600;
+	}
+	.workspace-file-panel .wf-title code {
+		margin-left: 0.35rem;
+		font-weight: 400;
+	}
+	.wf-badge {
+		margin-left: auto;
+		font-size: var(--fs-sm);
+		padding: 0.15rem 0.5rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--border);
+	}
+	.wf-badge.ok {
+		color: var(--success);
+		border-color: var(--success);
+	}
+	.wf-badge.drift {
+		color: var(--warning);
+		border-color: var(--warning);
+	}
+	.wf-diff {
+		margin-top: 0.5rem;
+	}
+	.wf-diff summary {
+		cursor: pointer;
+		margin-bottom: 0.3rem;
+	}
+	.wf-actions {
+		display: flex;
+		gap: 0.5rem;
+		margin-top: 0.6rem;
+	}
+	.wf-actions > form {
+		margin: 0;
 	}
 	@media (max-width: 720px) {
 		.grant-toolbar,

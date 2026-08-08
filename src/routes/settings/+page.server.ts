@@ -14,7 +14,7 @@ import {
 	type ProviderStatusSnapshot
 } from '$lib/server/providers/status';
 import { providerAuthToken } from '$lib/server/providers/auth';
-import { resolveAndValidate } from '$lib/server/workdir';
+import { effectiveWorkdir, resolveAndValidate } from '$lib/server/workdir';
 import { loadConfig } from '$lib/server/config';
 import { getDeployMetadata } from '$lib/server/deploy';
 import { log } from '$lib/server/log';
@@ -48,6 +48,10 @@ import {
 import { stableScopeKey } from '$lib/permissions/scope-codec';
 import { defaultSeedGrants, restoreSeedGrantsForUser } from '$lib/server/permissions/seed-grants';
 import { portalToolCatalog } from '$lib/server/tools/catalog';
+import {
+	applyWorkspaceFile,
+	getWorkspaceFileStatus
+} from '$lib/server/permissions/workspace-file-gate';
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.userId) throw redirect(302, '/login');
 	const userId = locals.userId;
@@ -101,6 +105,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		defaultProviderStatus,
 		recentDecisions: settings.listRecentDecisionsForUser(userId, 25),
 		grants: markSeedGrants(settings.listGrantsForUser(userId)),
+		workspaceFile: getWorkspaceFileStatus(userId, effectiveWorkdir(currentSettings.defaultWorkdir)),
 		portalTools: portalToolCatalog(),
 		builtInPromptTemplates: listBuiltInPromptTemplates(),
 		promptTemplates: promptTemplates.list(userId, { status: 'all' }),
@@ -517,6 +522,43 @@ export const actions: Actions = {
 	},
 
 	/**
+	 * Manually import the current `.zap/permissions.toml` from the Settings
+	 * page. Unlike the interactive gate, this is an explicit human gesture on
+	 * a page that shows the current diff, so the current file is applied
+	 * unconditionally (after parse validation). Applies to the user's
+	 * effective workdir, never to a client-supplied path.
+	 */
+	workspaceFileApprove: async ({ locals }) => {
+		if (!locals.userId) {
+			return fail(401, { ok: false, error: 'Not authenticated', formId: 'workspaceFileApprove' });
+		}
+		const current = settings.get(locals.userId) ?? settings.defaults();
+		const root = effectiveWorkdir(current.defaultWorkdir);
+		const result = applyWorkspaceFile({ userId: locals.userId, workspaceRoot: root });
+		if (!result.ok) {
+			return fail(400, {
+				ok: false,
+				error: `Could not import workspace permissions: ${result.error}`,
+				formId: 'workspaceFileApprove'
+			});
+		}
+		log.info('settings.workspace_file_applied', {
+			userId: locals.userId,
+			workspaceRoot: root,
+			applied: result.applied
+		});
+		return { ok: true, applied: result.applied, formId: 'workspaceFileApprove' };
+	},
+
+	/** Keep the previously approved state; the gate re-nags on the next request. */
+	workspaceFileReject: async ({ locals }) => {
+		if (!locals.userId) {
+			return fail(401, { ok: false, error: 'Not authenticated', formId: 'workspaceFileReject' });
+		}
+		return { ok: true, formId: 'workspaceFileReject' };
+	},
+
+	/**
 	 * Author a new user-global grant from the Settings form. The dialog
 	 * still owns conversation-scoped + interactive-prompt grant creation;
 	 * this action exists to cover the long tail of structured scopes
@@ -701,17 +743,20 @@ function markSeedGrants(grants: settings.GrantSummary[]) {
 	return grants.map((grant) => ({
 		...grant,
 		isSeedGrant:
-			grant.source === 'seed' ||
-			(grant.conversationId === null &&
-				seedKeys.has(
-					defaultSeedGrantKey(
-						grant.tool,
-						grant.permissionKind,
-						grant.scope,
-						grant.scopePattern,
-						grant.decision
-					)
-				))
+			// Workspace-file rows are checked-in workspace policy, not seeds —
+			// even when their scope happens to match a default seed key.
+			grant.source !== 'workspace-file' &&
+			(grant.source === 'seed' ||
+				(grant.conversationId === null &&
+					seedKeys.has(
+						defaultSeedGrantKey(
+							grant.tool,
+							grant.permissionKind,
+							grant.scope,
+							grant.scopePattern,
+							grant.decision
+						)
+					)))
 	}));
 }
 

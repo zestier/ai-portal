@@ -84,11 +84,17 @@ const InfoAckBody = z.object({
 	action: z.literal('ack')
 });
 
+const WorkspaceFileBody = z.object({
+	kind: z.literal('workspace_file'),
+	decision: z.enum(['approve', 'reject'])
+});
+
 export const Body = z.discriminatedUnion('kind', [
 	PermissionBody,
 	AutoModeSwitchBody,
 	UserInputBody,
 	ElicitationBody,
 	ExitPlanModeBody,
-	InfoAckBody
+	InfoAckBody,
+	WorkspaceFileBody
 ]);
