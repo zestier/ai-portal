@@ -5,12 +5,22 @@ import type { ProviderOpenOptions } from '../src/lib/server/providers/provider';
 import { resetConfigForTests } from '../src/lib/server/config';
 import { setupLocalEnv } from './helpers/env';
 
-const queryMock = vi.hoisted(() => vi.fn());
+const { ensureClaudeAgentSkillsMock, queryMock } = vi.hoisted(() => ({
+	ensureClaudeAgentSkillsMock: vi.fn(async () => [
+		'/tmp/claude-agent-skills/pinned/caveman',
+		'/tmp/claude-agent-skills/pinned/ponytail'
+	]),
+	queryMock: vi.fn()
+}));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@anthropic-ai/claude-agent-sdk')>();
 	return { ...actual, query: queryMock };
 });
+
+vi.mock('../src/lib/server/providers/claude-agent-skills', () => ({
+	ensureClaudeAgentSkills: ensureClaudeAgentSkillsMock
+}));
 
 const baseOpts: ProviderOpenOptions = {
 	provider: 'claude-agent',
@@ -91,6 +101,19 @@ describe('claudeAgentProvider', () => {
 		expect(session.providerSessionId).toBe('11111111-1111-4111-8111-111111111111');
 		const options = queryMock.mock.calls[0][0].options;
 		expect(options.resume).toBeUndefined();
+		expect(options.skills).toBe('all');
+		expect(options.plugins).toEqual([
+			{
+				type: 'local',
+				path: expect.stringMatching(/\/claude-agent-skills\/.*\/caveman$/),
+				skipMcpDiscovery: true
+			},
+			{
+				type: 'local',
+				path: expect.stringMatching(/\/claude-agent-skills\/.*\/ponytail$/),
+				skipMcpDiscovery: true
+			}
+		]);
 		expect(options.env).toMatchObject({
 			ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
 			ANTHROPIC_AUTH_TOKEN: 'deepseek-key',

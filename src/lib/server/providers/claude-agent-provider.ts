@@ -10,6 +10,7 @@ import { createInteractiveCallbacks } from '../copilot/interactive-adapter';
 import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { buildClaudePortalTools, createClaudePortalMcpServer } from './claude-agent-tools';
+import { ensureClaudeAgentSkills } from './claude-agent-skills';
 import type { ModelBackendProvider, ProviderOpenOptions, ProviderSession } from './provider';
 
 const providerId = 'claude-agent' as const;
@@ -118,7 +119,8 @@ export const claudeAgentProvider: ModelBackendProvider = {
 	async openSession(opts) {
 		const cfg = providerConfig();
 		if (!cfg.apiKey) throw new Error(`${displayName} requires CLAUDE_AGENT_API_KEY.`);
-		return openClaudeAgentSession(cfg, opts);
+		const skillPluginPaths = await ensureClaudeAgentSkills(loadConfig().DATA_DIR);
+		return openClaudeAgentSession(cfg, opts, skillPluginPaths);
 	}
 };
 
@@ -151,7 +153,8 @@ function permissionMode(mode: SessionMode): NonNullable<Options['permissionMode'
 
 export function openClaudeAgentSession(
 	cfg: ClaudeAgentConfig,
-	opts: ProviderOpenOptions
+	opts: ProviderOpenOptions,
+	skillPluginPaths: string[] = []
 ): ProviderSession {
 	let providerSessionId = opts.providerSessionId ?? opts.conversationId;
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
@@ -295,6 +298,16 @@ export function openClaudeAgentSession(
 					maxTurns: cfg.maxTurns,
 					mcpServers: { portal: portalMcpServer },
 					model: opts.model,
+					...(skillPluginPaths.length > 0
+						? {
+								plugins: skillPluginPaths.map((path) => ({
+									type: 'local' as const,
+									path,
+									skipMcpDiscovery: true
+								})),
+								skills: 'all' as const
+							}
+						: {}),
 					forwardSubagentText: true,
 					permissionMode: permissionMode(currentMode),
 					settingSources: [],
