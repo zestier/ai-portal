@@ -90,6 +90,13 @@ export default defineConfig({
 			HOST: '127.0.0.1',
 			PORT: String(PORT),
 			DATA_DIR: dataDir,
+			// PROJECT_ROOT defaults to process.cwd(), but Playwright merges the
+			// parent's env (via `...process.env`) into the web server's env — so a
+			// host running the portal with PROJECT_ROOT set would leak it here and
+			// point every e2e conversation's workdir at the real project tree. Pin
+			// it to the isolated dataDir so test writes (e.g. the view-image stub
+			// fixtures) never land in the repo root.
+			PROJECT_ROOT: dataDir,
 			AUTH_MODE: 'none',
 			I_KNOW_THIS_IS_LOCAL: '1',
 			E2E_ISOLATED: '1',
