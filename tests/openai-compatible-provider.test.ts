@@ -13,6 +13,18 @@ import { resolve as resolveInteractive } from '../src/lib/server/runtime/interac
 import { setupLocalEnv } from './helpers/env';
 import { PORTAL_SYSTEM_GUIDANCE } from '../src/lib/server/runtime/system-guidance';
 
+// The workspace-file gate (`.zap/permissions.toml` review) is orthogonal to
+// this provider: when the checked-in file exists in the conversation's
+// workspace root and needs review, it raises an extra `interactive.request`
+// (kind `workspace_file`) on every permission decision. These tests assert
+// exact tool-call event streams, so the gate is stubbed out here; it is
+// exercised directly in tests/workspace-file-permissions.test.ts.
+vi.mock('../src/lib/server/permissions/workspace-file-gate', async (importOriginal) => {
+	const original =
+		await importOriginal<typeof import('../src/lib/server/permissions/workspace-file-gate')>();
+	return { ...original, checkWorkspaceFileGate: vi.fn() };
+});
+
 const systemGuidanceMsg = { role: 'system', content: PORTAL_SYSTEM_GUIDANCE };
 
 const baseOpts: ProviderOpenOptions = {

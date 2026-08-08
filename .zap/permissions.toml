@@ -30,8 +30,9 @@
 
 # `pnpm run <script>` runs a script declared in package.json. Positionals are
 # the script name plus its args; both are bounded by the manifest, which is
-# the trust boundary — package.json only changes through a human-approved
-# `pnpm add` / `edit`.
+# the trust boundary — every script here is auto-approved, so package.json is
+# NOT freely editable: `pnpm add` prompts and direct edits are denied (see the
+# filesystem section), so the manifest only changes with a human in the loop.
 [[shell]]
 command = ["pnpm", "run"]
 positionals = "any"
@@ -371,7 +372,7 @@ deny_reason = "`pnpm approve-builds` approves arbitrary postinstall build script
 # ---------------------------------------------------------------------------
 
 # POSITIVE: the whole workspace is the agent's working area (read, write,
-# create, edit). Denies below narrow the two machine-managed paths.
+# create, edit). Denies below narrow the manifest and machine-managed paths.
 [[path]]
 permission = "read"
 root = "workspace"
@@ -387,10 +388,53 @@ permission = "edit"
 root = "workspace"
 behavior = "any"
 
-# NEGATIVE: the lockfile and node_modules change only through pnpm itself
-# (`pnpm install` and friends), never by hand-editing with the structured
-# file tools. These denies gate only the fs write/edit permission kinds; the
-# shell `pnpm install` command is unaffected.
+# NEGATIVE: the manifest, lockfile, and node_modules change only through a
+# human in the loop — never by hand-editing with the structured file tools.
+# These denies gate only the fs write/edit permission kinds; shell commands
+# (`pnpm install`, prompted `pnpm add`) are unaffected. A `prompt` rule would
+# be inert here: the workspace-wide allow (and the default in-workspace fs
+# policy) outrank prompt in the matcher (deny > allow > prompt), so `deny` is
+# the only lever that actually gates a path the allow covers.
+#
+# package.json is the trust boundary for the auto-approved `pnpm run`
+# shorthands above: a free edit could add a script and then run it. Script and
+# manifest changes go through `pnpm add` (prompted) or a human escalation.
+[[path]]
+decision = "deny"
+permission = "write"
+root = "workspace"
+behavior = "exact"
+value = "package.json"
+deny_reason = "package.json is the trust boundary for the auto-approved `pnpm run` scripts; a free edit would let the agent widen its own permissions. Change dependencies with `pnpm add` (prompted); script changes need a human-approved edit (escalate with force_retry_tool)."
+
+[[path]]
+decision = "deny"
+permission = "edit"
+root = "workspace"
+behavior = "exact"
+value = "package.json"
+deny_reason = "package.json is the trust boundary for the auto-approved `pnpm run` scripts; a free edit would let the agent widen its own permissions. Change dependencies with `pnpm add` (prompted); script changes need a human-approved edit (escalate with force_retry_tool)."
+
+# pnpm-workspace.yaml carries allowBuilds, which approves dependencies'
+# postinstall scripts — the same power as the denied `pnpm approve-builds`.
+[[path]]
+decision = "deny"
+permission = "write"
+root = "workspace"
+behavior = "exact"
+value = "pnpm-workspace.yaml"
+deny_reason = "pnpm-workspace.yaml carries allowBuilds, which approves postinstall scripts — the same power as the denied `pnpm approve-builds`. Build approvals are a human action."
+
+[[path]]
+decision = "deny"
+permission = "edit"
+root = "workspace"
+behavior = "exact"
+value = "pnpm-workspace.yaml"
+deny_reason = "pnpm-workspace.yaml carries allowBuilds, which approves postinstall scripts — the same power as the denied `pnpm approve-builds`. Build approvals are a human action."
+
+# The lockfile changes only through pnpm itself (`pnpm install`), never by
+# hand-editing with the structured file tools.
 [[path]]
 decision = "deny"
 permission = "write"
