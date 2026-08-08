@@ -305,18 +305,36 @@ export function openClaudeAgentSession(
 										if (toolName === 'Agent' || toolName === 'Task') {
 											return { continue: true };
 										}
+										const rawInput = isRecord(hookInput.tool_input) ? hookInput.tool_input : {};
+										// Glob and Grep default their search root to the
+										// provider cwd when `path` is omitted, so a bare
+										// `{pattern}` call carries no path. The permission
+										// gateway then derives a null scope key, no fs grant
+										// (including the workspace read seed) can match, and
+										// under `auto-deny` the call is rejected for a search
+										// that would have been scoped to the workspace anyway.
+										// Synthesize the path the SDK WILL use (the cwd), verify
+										// against it, and hand the same input back via
+										// `updatedInput` so the executed call matches what was
+										// checked. `workingDirectory` is the deterministic
+										// default, so the verified path is always the used one —
+										// no ask-for-path fallback needed.
+										let input = rawInput;
+										if (
+											(toolName === 'Glob' || toolName === 'Grep') &&
+											typeof rawInput.path !== 'string'
+										) {
+											input = { ...rawInput, path: opts.workingDirectory };
+										}
 										const decision = await onPermissionRequest(
-											permissionRequest(
-												toolName,
-												isRecord(hookInput.tool_input) ? hookInput.tool_input : {},
-												hookInput.tool_use_id
-											)
+											permissionRequest(toolName, input, hookInput.tool_use_id)
 										);
 										if (decision.kind === 'approve-once') {
 											return {
 												hookSpecificOutput: {
 													hookEventName: 'PreToolUse',
-													permissionDecision: 'allow'
+													permissionDecision: 'allow',
+													...(input !== rawInput ? { updatedInput: input } : {})
 												}
 											};
 										}

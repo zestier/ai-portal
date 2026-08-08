@@ -228,6 +228,156 @@ describe('claudeAgentProvider', () => {
 		expect(queryMock.mock.calls[0][0].options.mcpServers.portal.type).toBe('sdk');
 	});
 
+	it('injects the provider cwd as Glob path so a bare pattern call is scoped and allowed', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('search files', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'Glob',
+			tool_input: { pattern: '**/*.{ts,tsx,js,jsx,mjs,cjs}' },
+			tool_use_id: 'tool-glob-1'
+		});
+
+		// The cwd default is synthesized into the request so the read seed scopes
+		// it (scope key is not null), and passed back via updatedInput so the
+		// executed search uses exactly the path that was verified.
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'allow',
+				updatedInput: {
+					pattern: '**/*.{ts,tsx,js,jsx,mjs,cjs}',
+					path: '/tmp'
+				}
+			}
+		});
+	});
+
+	it('leaves Glob/Grep calls that already carry a path unrewritten', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('search files', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'Grep',
+			tool_input: { pattern: 'readFileSync', path: '/tmp/src' },
+			tool_use_id: 'tool-grep-1'
+		});
+
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'allow'
+			}
+		});
+	});
+
+	it.each([
+		['Read (absolute)', 'Read', { file_path: '/tmp/src/a.ts' }],
+		['Read (relative)', 'Read', { file_path: 'src/a.ts' }],
+		[
+			'Edit (in-workspace)',
+			'Edit',
+			{ file_path: '/tmp/src/a.ts', old_string: 'x', new_string: 'y' }
+		],
+		['Write (in-workspace)', 'Write', { file_path: '/tmp/src/b.ts', content: 'x' }],
+		[
+			'NotebookEdit (in-workspace)',
+			'NotebookEdit',
+			{ notebook_path: '/tmp/src/n.ipynb', cell_id: 'c1', new_value: 'x' }
+		],
+		['Glob (bare pattern)', 'Glob', { pattern: '**/*.{ts,tsx,js,jsx,mjs,cjs}' }],
+		['Glob (with path)', 'Glob', { pattern: '**/*.ts', path: '/tmp/src' }],
+		['Glob (relative path)', 'Glob', { pattern: '**/*.ts', path: 'src' }],
+		['Grep (bare pattern)', 'Grep', { pattern: 'readFileSync' }],
+		['Grep (with path)', 'Grep', { pattern: 'readFileSync', path: '/tmp/src' }],
+		['Grep (relative path)', 'Grep', { pattern: 'readFileSync', path: 'src' }],
+		['Edit (relative)', 'Edit', { file_path: 'src/a.ts', old_string: 'x', new_string: 'y' }],
+		['Write (relative, nested)', 'Write', { file_path: 'src/deep/new.ts', content: 'x' }],
+		['create_directory (in-workspace)', 'mcp__portal__create_directory', { path: 'newdir' }],
+		['move (in-workspace)', 'mcp__portal__move', { source: 'a.txt', destination: 'b.txt' }],
+		['trash (in-workspace)', 'mcp__portal__trash', { path: 'a.txt' }],
+		[
+			'apply_patch (in-workspace)',
+			'mcp__portal__apply_patch',
+			{ patch: '--- a/foo.ts\n+++ b/foo.ts\n@@ -1 +1 @@\n-old\n+new\n' }
+		],
+		[
+			'apply_patch (add via /dev/null)',
+			'mcp__portal__apply_patch',
+			{ patch: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+x\n' }
+		],
+		[
+			'apply_patch (delete via /dev/null)',
+			'mcp__portal__apply_patch',
+			{ patch: '--- a/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n' }
+		],
+		[
+			'apply_patch (git-style)',
+			'mcp__portal__apply_patch',
+			{
+				patch:
+					'diff --git a/foo.ts b/foo.ts\nindex 0000000..1111111\n--- a/foo.ts\n+++ b/foo.ts\n@@ -1 +1 @@\n-old\n+new\n'
+			}
+		]
+	])('auto-approves path-based tool call: %s', async (_label, tool_name, tool_input) => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('touch files', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name,
+			tool_input,
+			tool_use_id: 'tool-probe-1'
+		});
+
+		expect(decision).toEqual(
+			expect.objectContaining({
+				hookSpecificOutput: expect.objectContaining({
+					hookEventName: 'PreToolUse',
+					permissionDecision: 'allow'
+				})
+			})
+		);
+	});
+
 	it('a saved shell allow grant auto-allows an SDK Bash call without a dialog', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
