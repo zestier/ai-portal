@@ -1,11 +1,24 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { setupLocalEnv, resetServerSingletons } from './helpers/env';
 
 describe('authorizeConversationWorkdir', () => {
+	// Own PROJECT_ROOT so legacy-fold assertions don't couple to the host's
+	// PROJECT_ROOT or the test process cwd (which differ in worktree sessions).
+	let projectRoot: string;
+
 	beforeEach(async () => {
 		await setupLocalEnv('portal-conversation-auth-');
+		projectRoot = mkdtempSync(join(tmpdir(), 'portal-conv-auth-project-'));
+		process.env.PROJECT_ROOT = projectRoot;
+		await resetServerSingletons();
+	});
+
+	afterEach(() => {
+		delete process.env.PROJECT_ROOT;
+		rmSync(projectRoot, { recursive: true, force: true });
 	});
 
 	it('returns the authorized conversation and its resolved workdir', async () => {
@@ -38,6 +51,6 @@ describe('authorizeConversationWorkdir', () => {
 		const conv = convs.create(user.id, { title: 'legacy', workdir: legacy, model: null });
 
 		const out = authorizeConversationWorkdir(conv.id, user.id);
-		expect(out.workdir).toBe(resolve(process.cwd()));
+		expect(out.workdir).toBe(projectRoot);
 	});
 });

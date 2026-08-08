@@ -1,17 +1,31 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { getDb } from '../src/lib/server/db';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
 import * as settings from '../src/lib/server/db/repos/settings';
-import { setupLocalEnv } from './helpers/env';
+import { resetServerSingletons, setupLocalEnv } from './helpers/env';
 
 describe('db migrations + repos', () => {
+	// Own PROJECT_ROOT so the workspace-key normalization assertion doesn't
+	// couple to the host's PROJECT_ROOT or the test process cwd (which differ
+	// in worktree sessions).
+	let projectRoot: string;
+
 	beforeEach(async () => {
 		await setupLocalEnv();
+		projectRoot = mkdtempSync(join(tmpdir(), 'portal-db-project-'));
+		process.env.PROJECT_ROOT = projectRoot;
+		await resetServerSingletons();
+	});
+
+	afterEach(() => {
+		delete process.env.PROJECT_ROOT;
+		rmSync(projectRoot, { recursive: true, force: true });
 	});
 
 	it('runs migrations on open and creates tables', () => {
@@ -77,7 +91,7 @@ describe('db migrations + repos', () => {
 		const c = convs.create(u.id, { title: 'legacy', workdir: legacyWorkdir, model: null });
 		getDb().prepare('UPDATE conversations SET workspace_key = NULL WHERE id = ?').run(c.id);
 
-		expect(convs.get(c.id, u.id)?.workspaceKey).toBe(resolve(process.cwd()));
+		expect(convs.get(c.id, u.id)?.workspaceKey).toBe(projectRoot);
 	});
 
 	it('round-trips conversation provider separately from model', () => {
