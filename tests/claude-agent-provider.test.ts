@@ -848,4 +848,81 @@ describe('claudeAgentProvider', () => {
 		]);
 		expect(reasoning[1]).not.toHaveProperty('parentToolCallId');
 	});
+
+	it('polls getContextUsage after a successful result and emits a context.usage event', async () => {
+		const getContextUsage = vi.fn(async () => ({
+			categories: [
+				{ name: 'System prompt', tokens: 8000, color: '#1f6feb' },
+				{ name: 'Tools', tokens: 4000, color: '#8957e5' },
+				{ name: 'Messages', tokens: 12000, color: '#238636' }
+			],
+			totalTokens: 24000,
+			maxTokens: 200000,
+			rawMaxTokens: 200000,
+			percentage: 12,
+			gridRows: [
+				[
+					{
+						color: '#1f6feb',
+						isFilled: true,
+						categoryName: 'System prompt',
+						tokens: 8000,
+						percentage: 4,
+						squareFullness: 1
+					}
+				]
+			],
+			model: 'deepseek-v4-pro',
+			memoryFiles: []
+		}));
+		queryMock.mockReturnValue(
+			Object.assign(
+				messages({
+					type: 'result',
+					subtype: 'success',
+					session_id: '55555555-5555-4555-8555-555555555555'
+				} as SDKMessage),
+				{ getContextUsage }
+			)
+		);
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('usage', new AbortController().signal));
+		const usage = events.find((e) => e.type === 'context.usage') as Extract<
+			PortalEvent,
+			{ type: 'context.usage' }
+		>;
+
+		expect(getContextUsage).toHaveBeenCalledTimes(1);
+		expect(usage).toMatchObject({
+			type: 'context.usage',
+			currentTokens: 24000,
+			tokenLimit: 200000,
+			percentage: 12,
+			systemTokens: 8000,
+			toolDefinitionsTokens: 4000,
+			conversationTokens: 12000,
+			model: 'deepseek-v4-pro'
+		});
+		expect(usage.categories).toHaveLength(3);
+		expect(usage.gridRows).toHaveLength(1);
+	});
+
+	it('skips the context-usage poll when the SDK query exposes no getContextUsage', async () => {
+		queryMock.mockReturnValue(
+			messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '66666666-6666-4666-8666-666666666666'
+			} as SDKMessage)
+		);
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('usage', new AbortController().signal));
+		expect(events.some((e) => e.type === 'context.usage')).toBe(false);
+	});
 });

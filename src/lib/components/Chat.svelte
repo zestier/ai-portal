@@ -976,7 +976,11 @@
 					systemTokens: ev.systemTokens ?? null,
 					conversationTokens: ev.conversationTokens ?? null,
 					toolDefinitionsTokens: ev.toolDefinitionsTokens ?? null,
-					updatedAt: Date.now()
+					updatedAt: Date.now(),
+					...(ev.percentage !== undefined ? { percentage: ev.percentage } : {}),
+					...(ev.categories !== undefined ? { categories: ev.categories } : {}),
+					...(ev.gridRows !== undefined ? { gridRows: ev.gridRows } : {}),
+					...(ev.model !== undefined ? { model: ev.model } : {})
 				};
 				break;
 			}

@@ -12,6 +12,7 @@
 	let expanded = $state(false);
 
 	const pct = $derived.by(() => {
+		if (usage?.percentage !== undefined) return Math.min(100, usage.percentage);
 		if (!usage || usage.tokenLimit <= 0) return 0;
 		return Math.min(100, (usage.currentTokens / usage.tokenLimit) * 100);
 	});
@@ -59,17 +60,49 @@
 					: ''}
 			</span>
 		{/if}
-		{#if expanded && hasBreakdown}
-			<dl class="breakdown">
-				<dt>system</dt>
-				<dd>{fmt(usage.systemTokens)}</dd>
-				<dt>conversation</dt>
-				<dd>{fmt(usage.conversationTokens)}</dd>
-				<dt>tools</dt>
-				<dd>{fmt(usage.toolDefinitionsTokens)}</dd>
-				<dt>messages</dt>
-				<dd>{usage.messagesLength}</dd>
-			</dl>
+		{#if usage.gridRows?.length}
+			<div class="grid" role="img" aria-label="Context window usage grid">
+				{#each usage.gridRows as row}
+					<div class="grid-row">
+						{#each row as sq}
+							<span
+								class="sq"
+								style="background:{sq.color};opacity:{sq.isFilled ? 0.95 : 0.18}"
+								title={`${sq.categoryName}: ${sq.tokens} tokens`}
+							></span>
+						{/each}
+					</div>
+				{/each}
+			</div>
+		{/if}
+		{#if expanded}
+			{#if usage.categories?.length}
+				<dl class="breakdown">
+					{#each usage.categories as category}
+						<dt>{category.name}</dt>
+						<dd>{fmt(category.tokens)}</dd>
+					{/each}
+				</dl>
+			{:else if hasBreakdown}
+				<dl class="breakdown">
+					{#if usage.systemTokens !== null}
+						<dt>system</dt>
+						<dd>{fmt(usage.systemTokens)}</dd>
+					{/if}
+					{#if usage.conversationTokens !== null}
+						<dt>conversation</dt>
+						<dd>{fmt(usage.conversationTokens)}</dd>
+					{/if}
+					{#if usage.toolDefinitionsTokens !== null}
+						<dt>tools</dt>
+						<dd>{fmt(usage.toolDefinitionsTokens)}</dd>
+					{/if}
+					{#if usage.messagesLength > 0}
+						<dt>messages</dt>
+						<dd>{usage.messagesLength}</dd>
+					{/if}
+				</dl>
+			{/if}
 		{/if}
 	</div>
 {/if}
@@ -124,6 +157,27 @@
 	.compaction {
 		font-size: var(--fs-md);
 		opacity: 0.85;
+	}
+	.grid {
+		display: grid;
+		grid-template-rows: repeat(auto-fit, 4px);
+		gap: 1px;
+		width: 100%;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-2);
+		padding: 2px;
+		box-sizing: border-box;
+	}
+	.grid-row {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(3px, 1fr));
+		gap: 1px;
+	}
+	.sq {
+		display: block;
+		height: 3px;
+		border-radius: 1px;
 	}
 	.breakdown {
 		display: grid;

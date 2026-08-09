@@ -1273,6 +1273,13 @@ export type PortalEvent =
 			conversationTokens?: number;
 			toolDefinitionsTokens?: number;
 			isInitial?: boolean;
+			/** Live percentage 0-100, when the backend reports it directly. */
+			percentage?: number;
+			categories?: ContextUsageCategory[];
+			/** Color-coded context-window grid (rows of squares), when the
+			 * backend reports it (Agent SDK `getContextUsage`). */
+			gridRows?: ContextUsageGridRow[][];
+			model?: string;
 	  }
 	| {
 			type: 'context.compaction';
@@ -1326,6 +1333,24 @@ export type AppEvent =
 // Latest context-window snapshot persisted per conversation. Mirrors the
 // shape of the `context.usage` PortalEvent (sans the `type` and `isInitial`
 // transport fields) so the UI can seed its meter from page load.
+export interface ContextUsageCategory {
+	name: string;
+	tokens: number;
+	color: string;
+	isDeferred?: boolean;
+}
+
+// One square of the color-coded context-window grid (rows of these make up the
+// Agent SDK `getContextUsage` visualization).
+export interface ContextUsageGridRow {
+	color: string;
+	isFilled: boolean;
+	categoryName: string;
+	tokens: number;
+	percentage: number;
+	squareFullness: number;
+}
+
 export interface ConversationUsage {
 	conversationId: string;
 	currentTokens: number;
@@ -1335,6 +1360,11 @@ export interface ConversationUsage {
 	conversationTokens: number | null;
 	toolDefinitionsTokens: number | null;
 	updatedAt: number;
+	/** Live fields carried only on the SSE event; not persisted. */
+	percentage?: number;
+	categories?: ContextUsageCategory[];
+	gridRows?: ContextUsageGridRow[][];
+	model?: string;
 }
 
 // Subset of `PermissionDecision` that the client can produce via the

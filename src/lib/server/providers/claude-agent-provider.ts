@@ -17,6 +17,7 @@ import { buildToolArgsValidator } from '../tools/schema-error';
 import { buildClaudePortalTools, createClaudePortalMcpServer } from './claude-agent-tools';
 import { ensureClaudeAgentSkills } from './claude-agent-skills';
 import { discoverRepoPlugins } from './claude-agent-repo-plugins';
+import { pollContextUsage } from './claude-agent-context-usage';
 import type { ModelBackendProvider, ProviderOpenOptions, ProviderSession } from './provider';
 
 const providerId = 'claude-agent' as const;
@@ -60,10 +61,11 @@ export const claudeAgentProvider: ModelBackendProvider = {
 				description: 'The portal enforces approval modes through the Agent SDK permission callback.'
 			},
 			contextUsage: {
-				supported: false,
-				behavior: 'unsupported',
+				supported: true,
+				behavior: 'supported',
 				label: 'Context usage',
-				description: 'Agent SDK context usage is not emitted by this initial provider slice.'
+				description:
+					'Context-window usage is polled from the Agent SDK after each turn via getContextUsage().'
 			},
 			subagents: {
 				supported: true,
@@ -547,6 +549,14 @@ export function openClaudeAgentSession(
 						code: message.subtype,
 						message: message.errors.join('\n') || 'Claude Agent SDK query failed.'
 					});
+				}
+				// Poll the live context window once the turn succeeds. The control
+				// request only works while the CLI subprocess is still running, so it
+				// must happen inside this loop, right after `result`. Failures are
+				// swallowed by the wrapper; the meter simply stays stale for that turn.
+				if (message.type === 'result' && message.subtype === 'success') {
+					const usageEvent = await pollContextUsage(response);
+					if (usageEvent) queue.push(usageEvent);
 				}
 			}
 		} catch (error) {
