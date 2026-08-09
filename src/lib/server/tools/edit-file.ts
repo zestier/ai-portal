@@ -52,6 +52,20 @@ const ReplaceTextArgs = z
 	})
 	.strict();
 
+// Mirrors the SDK FileEditInput so the aliased SDK `Edit` tool (which sends
+// `file_path`/`old_string`/`new_string`/`replace_all` verbatim) parses cleanly.
+// `file_path` is absolute per the SDK contract; `resolveWriteTarget` below also
+// accepts workspace-relative paths so tests and golden replays work unchanged.
+const EditArgs = z
+	.object({
+		file_path: z.string().min(1).max(4096),
+		old_string: z.string().min(1).max(MAX_EDIT_FILE_BYTES),
+		new_string: z.string().max(MAX_EDIT_FILE_BYTES),
+		replace_all: z.boolean().optional().default(false),
+		worktree: WorktreeSelector
+	})
+	.strict();
+
 function lineEnding(content: string): '\r\n' | '\n' {
 	return content.includes('\r\n') ? '\r\n' : '\n';
 }
@@ -132,6 +146,20 @@ export interface FileWriteOutput {
 	userModified?: boolean;
 }
 
+// The portal's projection of the SDK FileEditOutput contract (sdk-tools.d.ts).
+// `structuredPatch`/`gitDiff` reuse the FileWrite shapes — the SDK's
+// FileEditOutput declares the identical field shapes.
+export interface FileEditOutput {
+	filePath: string;
+	oldString: string;
+	newString: string;
+	originalFile: string | null;
+	structuredPatch: FileWriteStructuredPatch[];
+	userModified: boolean;
+	replaceAll: boolean;
+	gitDiff?: FileWriteGitDiff;
+}
+
 // Resolve a Write `file_path` to an absolute, symlink-resolved target inside
 // the workspace. Accepts both the SDK contract's absolute paths and
 // workspace-relative paths (as the golden capture used), rejecting any `..`
@@ -179,6 +207,23 @@ function writeConfirmation(type: 'create' | 'update', rawFilePath: string): stri
 	return type === 'create'
 		? `File created successfully at: ${rawFilePath} (file state is current in your context — no need to Read it back)`
 		: `The file ${rawFilePath} has been updated successfully. (file state is current in your context — no need to Read it back)`;
+}
+
+// The text a model sees for a FileEditOutput, mirroring the SDK's rendering
+// (the golden capture's `content` is confirmation only — the diff lives in the
+// envelope's structuredPatch/gitDiff for the UI). `replace_all` swaps in the
+// SDK's "all occurrences" wording. The path is echoed verbatim as given.
+function editConfirmation(replaceAll: boolean, rawFilePath: string): string {
+	return replaceAll
+		? `The file ${rawFilePath} has been updated. All occurrences were successfully replaced. (file state is current in your context — no need to Read it back)`
+		: `The file ${rawFilePath} has been updated successfully. (file state is current in your context — no need to Read it back)`;
+}
+
+// The SDK's Edit failure text for an unmatched `old_string`, byte-for-byte
+// (golden Edit/not_found). The `<tool_use_error>` wrapper is part of the
+// message, so the model sees exactly what the SDK built-in would emit.
+function editNotFoundError(oldString: string): string {
+	return `<tool_use_error>String to replace not found in file.\nString: ${oldString}</tool_use_error>`;
 }
 
 // jsdiff pads `---`/`+++` headers with a GNU-diff tab and prepends an
@@ -284,9 +329,138 @@ export async function renderWriteModelText(
 	return outcome.text;
 }
 
+// The edit itself plus the SDK FileEditOutput projection and the model-facing
+// confirmation text. `rawFilePath` is echoed verbatim in the confirmation,
+// matching the SDK's rendering (the golden capture passed relative paths).
+// `cwd` gates the gitDiff (only reported inside a git work tree). Failures
+// return the SDK-style message; the not-found case carries no `code` so the
+// model-facing text stays byte-identical to the golden capture.
+async function performEdit(
+	cwd: string,
+	target: { abs: string; rel: string },
+	rawFilePath: string,
+	oldString: string,
+	newString: string,
+	replaceAll: boolean
+): Promise<{ result: FileEditOutput; text: string } | { message: string; code?: 'edit_failed' }> {
+	try {
+		const existing = await readExisting(target.abs);
+		if (existing === null) {
+			// Edit is edit-only; a missing file has nothing to search, so it
+			// fails like any unmatched string.
+			return { message: editNotFoundError(oldString) };
+		}
+		if (oldString === newString) {
+			return { message: 'new_string must be different from old_string' };
+		}
+		if (!existing.includes(oldString)) {
+			return { message: editNotFoundError(oldString) };
+		}
+		const content = replaceAll
+			? existing.replaceAll(oldString, newString)
+			: existing.replace(oldString, newString);
+		await writeFile(target.abs, content);
+		const hunks = structuredPatch('a', 'b', existing, content, '', '', { context: 3 }).hunks;
+		const result: FileEditOutput = {
+			filePath: target.abs,
+			oldString,
+			newString,
+			originalFile: existing,
+			structuredPatch: hunks,
+			userModified: false,
+			replaceAll
+		};
+		if (await isGitRepo(cwd)) {
+			result.gitDiff = gitDiffFor('update', target.rel, existing, content, hunks);
+		}
+		return { result, text: editConfirmation(replaceAll, rawFilePath) };
+	} catch (error) {
+		return { message: error instanceof Error ? error.message : String(error), code: 'edit_failed' };
+	}
+}
+
+// Run an Edit call against a plain workspace directory and render its model
+// text (used by the golden conformance registry; the tool handler reuses
+// `performEdit` so the two cannot drift). Failures return the SDK-style message
+// rather than throwing so the captured error goldens compare equal.
+export async function renderEditModelText(
+	args: Record<string, unknown>,
+	cwd: string
+): Promise<string> {
+	const parsed = EditArgs.parse(args);
+	const target = resolveWriteTarget(cwd, parsed.file_path);
+	if (!target.ok) throw new Error(target.message);
+	const outcome = await performEdit(
+		cwd,
+		target,
+		parsed.file_path,
+		parsed.old_string,
+		parsed.new_string,
+		parsed.replace_all
+	);
+	if ('message' in outcome) return outcome.message;
+	return outcome.text;
+}
+
 export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(workspaceRoot, ctx);
 	return [
+		{
+			name: 'edit',
+			description:
+				'Replace exact text in an existing text file, mirroring the SDK Edit contract: `file_path` is absolute (workspace-relative paths are also accepted) and must resolve inside the workspace, `old_string` is the literal text to find, `new_string` replaces it (must differ from old_string), and `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
+			argsSchema: EditArgs,
+			parameters: {
+				type: 'object',
+				properties: {
+					file_path: {
+						type: 'string',
+						description:
+							'Absolute path of the existing file to edit; must resolve inside the workspace.'
+					},
+					old_string: { type: 'string', description: 'Exact literal text to find and replace.' },
+					new_string: { type: 'string', description: 'Replacement text.' },
+					replace_all: {
+						type: 'boolean',
+						description:
+							'Replace all occurrences of old_string instead of just the first. Defaults to false.'
+					},
+					worktree: WORKTREE_WRITE_PARAM
+				},
+				required: ['file_path', 'old_string', 'new_string'],
+				additionalProperties: false
+			},
+			derivePermissionRequest(args) {
+				const parsed = EditArgs.safeParse(args);
+				if (!parsed.success) return null;
+				const root = parsed.data.worktree
+					? resolveWorktreeDir(parsed.data.worktree, ctx)
+					: workspaceRoot;
+				const path = root && resolveAbsoluteTarget(root, parsed.data.file_path);
+				return path ? { permissionKind: 'edit', path } : null;
+			},
+			async handler(args) {
+				const parsed = EditArgs.parse(args);
+				const tree = treeFor(parsed.worktree);
+				if (tree.error) return tree.error;
+				const target = resolveWriteTarget(tree.cwd, parsed.file_path);
+				if (!target.ok) return err(target.message, { code: 'invalid_path' });
+				const outcome = await performEdit(
+					tree.cwd,
+					target,
+					parsed.file_path,
+					parsed.old_string,
+					parsed.new_string,
+					parsed.replace_all
+				);
+				if ('message' in outcome) {
+					return err(outcome.message, outcome.code ? { code: outcome.code } : undefined);
+				}
+				return ok(outcome.result, outcome.text, {
+					views: [{ type: 'text', text: outcome.text }]
+				});
+			}
+		},
 		{
 			name: 'write',
 			description:

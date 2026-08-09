@@ -480,7 +480,22 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		// feedback lets the agent self-correct on the next turn. A forced
 		// retry still reaches a human, which is why the deny below mints a
 		// token rather than silently discarding the request.
-		if (req.toolName && opts.validateCustomToolArgs) {
+		//
+		// This applies to CUSTOM tool requests only. A request that already
+		// carries a filesystem kind (read/write/edit) is a runtime builtin
+		// tool (e.g. the Copilot runtime's `edit`) being evaluated as an fs
+		// permission on `path`; its args are the runtime's, not a portal
+		// tool's, so validating them against a same-named portal tool would
+		// falsely reject a legitimate call (and let an out-of-workspace path
+		// sneak past the fs auto-deny below). Portal fs tools themselves send
+		// kind `custom-tool` (the runtime doesn't know they are fs tools), so
+		// they still get schema-validated here and then overridden to an fs
+		// kind by `derivePermissionRequest` above.
+		if (
+			req.toolName &&
+			opts.validateCustomToolArgs &&
+			!isFilesystemPermissionKind(req.kind ?? '')
+		) {
 			const invalid = opts.validateCustomToolArgs(req.toolName, req.args);
 			if (invalid) {
 				audit('auto-deny');

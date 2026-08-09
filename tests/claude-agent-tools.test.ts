@@ -252,7 +252,10 @@ describe('buildClaudePortalTools', () => {
 			'glob',
 			// `write` mirrors the SDK Write via toolAliases ({ Write: 'mcp__portal__write' }),
 			// so it is exposed, not omitted.
-			'write'
+			'write',
+			// `edit` mirrors the SDK Edit via toolAliases ({ Edit: 'mcp__portal__edit' }),
+			// so it is exposed, not omitted.
+			'edit'
 		];
 		for (const name of kept) {
 			expect(names.has(name)).toBe(true);

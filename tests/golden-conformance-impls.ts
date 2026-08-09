@@ -1,4 +1,4 @@
-import { renderWriteModelText } from '../src/lib/server/tools/edit-file';
+import { renderEditModelText, renderWriteModelText } from '../src/lib/server/tools/edit-file';
 import { renderGlobModelText, renderGrepModelText } from '../src/lib/server/tools/grep';
 
 /**
@@ -62,5 +62,11 @@ registerGoldenToolImplementation('Glob', {
 registerGoldenToolImplementation('Write', {
 	render(_name, args, ctx) {
 		return renderWriteModelText(args, ctx.cwd);
+	}
+});
+
+registerGoldenToolImplementation('Edit', {
+	render(_name, args, ctx) {
+		return renderEditModelText(args, ctx.cwd);
 	}
 });

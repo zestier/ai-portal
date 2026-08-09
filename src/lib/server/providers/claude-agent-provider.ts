@@ -402,7 +402,8 @@ export function openClaudeAgentSession(
 					toolAliases: {
 						Glob: 'mcp__portal__glob',
 						Grep: 'mcp__portal__grep',
-						Write: 'mcp__portal__write'
+						Write: 'mcp__portal__write',
+						Edit: 'mcp__portal__edit'
 					},
 					...(providerSessionId !== opts.conversationId ? { resume: providerSessionId } : {})
 				}
