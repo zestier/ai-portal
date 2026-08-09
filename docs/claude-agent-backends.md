@@ -63,10 +63,10 @@ grants apply to SDK built-in calls.
 
 Portal tools that duplicate an Agent SDK built-in coding tool (`shell_exec`,
 `read_file`, `list_files`, `replace_lines`, `replace_text`) are omitted so the
-model sees one tool per job. `grep`, `glob`, `write`, and `edit` are the
-exceptions: their SDK counterparts (`Grep`, `Glob`, `Write`, `Edit`) are
-rerouted to the portal implementations via `toolAliases`, so the portal tools
-are exposed rather than omitted.
+model sees one tool per job. `read`, `grep`, `glob`, `write`, and `edit` are
+the exceptions: their SDK counterparts (`Read`, `Grep`, `Glob`, `Write`, `Edit`)
+are rerouted to the portal implementations via `toolAliases`, so the portal
+tools are exposed rather than omitted.
 Agent SDK session ids are persisted separately from portal conversation ids so
 sessions can resume after a process restart.
 

@@ -17,6 +17,7 @@ import { buildMoveTools } from '../tools/move';
 import { buildPermissionTools } from '../tools/permissions';
 import { buildPromptTemplateTools } from '../tools/prompt-templates';
 import { buildReadFileTools } from '../tools/read-file';
+import { buildReadTools } from '../tools/read';
 import { buildShellTools } from '../tools/shell';
 import { buildTicketTools } from '../tools/tickets';
 import { buildTrashTools } from '../tools/trash';
@@ -32,8 +33,8 @@ import type { ProviderOpenOptions } from './provider';
 // Portal tools that duplicate the Agent SDK's built-in coding tools
 // (Read/Edit/Write/Glob/Grep/Bash). The SDK provides these natively, so the
 // portal omits them rather than exposing two tools with the same job. The
-// rerouted tools (`grep`, `glob`, `write`, `edit`) are intentionally NOT here —
-// they are exposed and reached via toolAliases ({ Grep: 'mcp__portal__grep', ... }).
+// rerouted tools (`read`, `grep`, `glob`, `write`, `edit`) are intentionally NOT
+// here — they are exposed and reached via toolAliases ({ Read: 'mcp__portal__read', ... }).
 const SDK_BUILTIN_TOOL_DUPLICATES = new Set([
 	'shell_exec',
 	'read_file',
@@ -71,6 +72,10 @@ export function buildClaudePortalTools(args: {
 					conversationId: opts.conversationId
 				}),
 				...buildReadFileTools(opts.workingDirectory, {
+					userId: opts.userId,
+					conversationId: opts.conversationId
+				}),
+				...buildReadTools(opts.workingDirectory, {
 					userId: opts.userId,
 					conversationId: opts.conversationId
 				}),

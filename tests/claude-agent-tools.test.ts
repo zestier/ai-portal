@@ -244,6 +244,9 @@ describe('buildClaudePortalTools', () => {
 			'template_list',
 			'worktree_create',
 			'permission_capabilities',
+			// `read` mirrors the SDK Read via toolAliases ({ Read: 'mcp__portal__read' }),
+			// so it is exposed, not omitted.
+			'read',
 			// `grep` is rerouted to the portal implementation via toolAliases
 			// ({ Grep: 'mcp__portal__grep' }), so it is exposed, not omitted.
 			'grep',

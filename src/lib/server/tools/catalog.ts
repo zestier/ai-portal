@@ -18,6 +18,7 @@ import { buildCreateDirectoryTools } from './create-directory';
 import { buildMoveTools } from './move';
 import { buildTrashTools } from './trash';
 import { buildReadFileTools } from './read-file';
+import { buildReadTools } from './read';
 import { buildWorktreeTools } from './worktree';
 import { buildTicketTools } from './tickets';
 import { buildPermissionTools } from './permissions';
@@ -55,6 +56,10 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 				conversationId: STUB.conversationId
 			}),
 			...buildReadFileTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildReadTools(STUB.cwd, {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			}),
