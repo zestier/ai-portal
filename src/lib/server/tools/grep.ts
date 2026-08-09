@@ -403,7 +403,9 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 				if (!target) return err('path must resolve inside the workspace', { code: 'invalid_path' });
 				try {
 					const result = await searchGrep(tree.cwd, target, parsed);
-					return ok(result, 'Search completed.');
+					return ok(result, 'Search completed.', {
+						views: [{ type: 'text', text: renderGrepResult(result) }]
+					});
 				} catch (error) {
 					return err(error instanceof Error ? error.message : String(error), {
 						code: 'grep_failed'

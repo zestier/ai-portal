@@ -34,6 +34,16 @@ export interface ToolBinaryResult {
 	description?: string;
 }
 
+// A model-facing rendered view a tool may attach to a successful result. The
+// tool renders its own output (rg-style Grep, numbered Read, diff-after-Edit,
+// raw Bash) as a typed array so the same views reach the model on every
+// provider edge — the claude-agent MCP adapter forwards them verbatim as MCP
+// content blocks (text and image), the string edges join the text blocks.
+// Mirrors the MCP/SDK content-block shape on purpose.
+export type ToolResultView =
+	| { type: 'text'; text: string }
+	| { type: 'image'; data: string; mimeType: string; description?: string };
+
 // The uniform envelope every PortalTool handler returns. Discriminated on `ok`:
 // framework fields (`ok`/`summary`) live top-level so they never collide with a
 // tool's own data, which nests under `result`. The envelope is the single
@@ -54,6 +64,15 @@ export type ToolResult =
 			result?: unknown;
 			followUpHint?: string;
 			binary?: ToolBinaryResult[];
+			// Tool-provided rendered views, when the tool renders its own output
+			// (rg-style Grep, numbered Read, diff-after-Edit, raw Bash). A typed
+			// array so one tool can carry multiple payloads — e.g. an image read
+			// ships both the text summary and the image block the model must see.
+			// Preferred over the generic projection in `deriveToolResultViews`, and
+			// forwarded verbatim on the MCP edge so the same views reach the model
+			// on every provider. Absent for tools whose output must stay byte-exact
+			// in the raw envelope (read_file, replace_text).
+			views?: ToolResultView[];
 	  }
 	| { ok: false; summary?: string; error: ToolError };
 
@@ -115,16 +134,18 @@ export function buildPermissionRequestResolver(
 // the provider prefers over its derived fallback. `opts.followUpHint` sets the
 // reserved, model-visible next-step nudge. `opts.binary` attaches binary
 // artifacts (images, blobs) to be forwarded to the model via the SDK's
-// `binaryResultsForLlm` channel.
+// `binaryResultsForLlm` channel. `opts.views` attaches tool-rendered
+// model-facing views (text and/or image) that win over the generic projection.
 export function ok(
 	result?: unknown,
 	summary?: string,
-	opts?: { followUpHint?: string; binary?: ToolBinaryResult[] }
+	opts?: { followUpHint?: string; binary?: ToolBinaryResult[]; views?: ToolResultView[] }
 ): ToolResult {
 	const envelope: ToolResult = { ok: true, result };
 	if (summary !== undefined) envelope.summary = summary;
 	if (opts?.followUpHint !== undefined) envelope.followUpHint = opts.followUpHint;
 	if (opts?.binary !== undefined && opts.binary.length > 0) envelope.binary = opts.binary;
+	if (opts?.views !== undefined && opts.views.length > 0) envelope.views = opts.views;
 	return envelope;
 }
 
@@ -196,6 +217,7 @@ export function parseEnvelopeJson(json: string): ToolResult | null {
 		result?: unknown;
 		followUpHint?: string;
 		binary?: ToolBinaryResult[];
+		views?: ToolResultView[];
 	} = {
 		ok: true,
 		result: rec.result
@@ -203,6 +225,7 @@ export function parseEnvelopeJson(json: string): ToolResult | null {
 	if (summary !== undefined) out.summary = summary;
 	if (typeof rec.followUpHint === 'string') out.followUpHint = rec.followUpHint;
 	if (Array.isArray(rec.binary)) out.binary = rec.binary as ToolBinaryResult[];
+	if (Array.isArray(rec.views)) out.views = rec.views as ToolResultView[];
 	return out;
 }
 
@@ -217,11 +240,12 @@ export interface ToolResultViews {
 	ok: boolean;
 	// Collapsed single-line label for sidebar/timeline. Same value both edges show.
 	summary: string;
-	// Concise text handed to the model. RAW and unescaped (real newlines/tabs):
-	// a readable rendering of the payload with any multi-line string fields
-	// surfaced verbatim, falling back to the explicit `summary` only when there
-	// is no meaningful payload. Never the JSON-escaped envelope, and never the
-	// `summary` in place of an available payload.
+	// Concise text handed to the model. RAW and unescaped (real newlines/tabs).
+	// A tool's own rendering of its result (the text blocks of its `views`)
+	// wins; otherwise a readable projection of the payload with any multi-line
+	// string fields surfaced verbatim, falling back to the explicit `summary`
+	// only when there is no meaningful payload. Never the JSON-escaped envelope,
+	// and never the `summary` in place of an available payload.
 	modelText: string;
 	// Full payload for the UI: the canonical serialized envelope. The client
 	// decodes this to render structured cards (git diffs, ticket/memory lists,
@@ -249,16 +273,21 @@ export function deriveToolResultViews(envelope: ToolResult): ToolResultViews {
 }
 
 // Concise, raw text for the model. Errors render their message (plus code and
-// any readable details). Successes render the PAYLOAD so multi-line string
-// fields read as real text rather than JSON-escaped one-liners — the explicit
-// `summary` is only a short headline for the UI/timeline (via
-// `deriveEnvelopeSummary`), NOT a replacement for the payload: many tools pass a
-// count-style summary (e.g. "5 result(s)") alongside the real result, so
-// preferring it here would starve the model of the data it asked for. The
-// summary is used only as a fallback when there is no meaningful payload, so the
-// model never receives empty tool-message content. A reserved `followUpHint`,
-// when present, is appended so the model still sees the next-step nudge it used
-// to receive when the whole envelope was serialized verbatim to the model.
+// any readable details). Successes prefer the tool's own rendered text — the
+// `views` a tool attaches (rg-style Grep, numbered Read, diff-after-Edit, raw
+// Bash), joined across text blocks — and that text must reach the model
+// identically on every provider edge. (Image views carry no model-facing text
+// here; adapters forward them as image content blocks so the model sees them.)
+// Otherwise render the PAYLOAD so multi-line string fields read as real text
+// rather than JSON-escaped one-liners — the explicit `summary` is only a short
+// headline for the UI/timeline (via `deriveEnvelopeSummary`), NOT a replacement
+// for the payload: many tools pass a count-style summary (e.g. "5 result(s)")
+// alongside the real result, so preferring it here would starve the model of
+// the data it asked for. The summary is used only as a fallback when there is
+// no meaningful payload, so the model never receives empty tool-message
+// content. A reserved `followUpHint`, when present, is appended so the model
+// still sees the next-step nudge it used to receive when the whole envelope
+// was serialized verbatim to the model.
 function deriveModelText(envelope: ToolResult): string {
 	if (!envelope.ok) {
 		const { message, code, details } = envelope.error;
@@ -266,7 +295,23 @@ function deriveModelText(envelope: ToolResult): string {
 		if (details !== undefined) text += `\n${renderReadable(details)}`;
 		return text;
 	}
-	return withFollowUpHint(derivePayloadText(envelope), envelope.followUpHint);
+	const rendered = renderViewText(envelope.views);
+	const payload = rendered !== undefined ? rendered : derivePayloadText(envelope);
+	return withFollowUpHint(payload, envelope.followUpHint);
+}
+
+// Concatenate a tool's rendered text views with blank-line separators, mirroring
+// how MCP content blocks read back-to-back. Returns undefined when there are no
+// text views (image-only results derive text from the payload).
+function renderViewText(views: ToolResultView[] | undefined): string | undefined {
+	const texts =
+		views
+			?.filter(
+				(v): v is { type: 'text'; text: string } => v.type === 'text' && v.text.trim().length > 0
+			)
+			.map((v) => v.text) ?? [];
+	if (texts.length === 0) return undefined;
+	return texts.join('\n\n');
 }
 
 function derivePayloadText(envelope: { result?: unknown; summary?: string }): string {

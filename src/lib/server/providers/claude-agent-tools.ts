@@ -20,7 +20,12 @@ import { buildReadFileTools } from '../tools/read-file';
 import { buildShellTools } from '../tools/shell';
 import { buildTicketTools } from '../tools/tickets';
 import { buildTrashTools } from '../tools/trash';
-import { deriveToolResultViews, type PortalTool, type ToolStreamContext } from '../tools/types';
+import {
+	deriveToolResultViews,
+	type PortalTool,
+	type ToolResult,
+	type ToolStreamContext
+} from '../tools/types';
 import { buildWorktreeTools } from '../tools/worktree';
 import type { ProviderOpenOptions } from './provider';
 
@@ -139,23 +144,24 @@ export function adaptClaudePortalTool(
 			try {
 				const result = await portalTool.handler(toolArgs, stream);
 				const views = deriveToolResultViews(result);
-				// Success results are passed through as the raw, structured envelope
-				// JSON (with a short human-readable summary) rather than the
-				// human-formatted `modelText`. The formatted projection re-renders
-				// multi-line string fields with prefixes/indentation that don't match
-				// the source file, which broke 1:1 `replace_text` matches; the raw
-				// envelope preserves exact whitespace and metadata (e.g. `isComplete`,
-				// byte counts) so `read_file` output can be reused verbatim. Errors
-				// keep the concise `modelText` message for the model.
+				// A tool that renders its own output (rg-style Grep, numbered Read,
+				// diff-after-Edit) attaches those views to the envelope; forward
+				// them verbatim as MCP content blocks (text and image) so the model
+				// sees exactly the rendered output on every provider edge. Tools
+				// without views keep the raw, structured envelope JSON (with a
+				// short human-readable summary) rather than the human-formatted
+				// projection: the projection re-renders multi-line string fields
+				// with prefixes/indentation that don't match the source file,
+				// which broke 1:1 `replace_text` matches; the raw envelope
+				// preserves exact whitespace and metadata (e.g. `isComplete`, byte
+				// counts) so `read_file` output can be reused verbatim. Errors
+				// keep the concise modelText message for the model. Either way the
+				// envelope JSON survives as `views.fullContent` for the UI.
+				const content = !result.ok
+					? [{ type: 'text' as const, text: views.modelText }]
+					: toMcpContent(result, views.summary);
 				return {
-					content: [
-						{
-							type: 'text' as const,
-							text: views.ok
-								? JSON.stringify({ raw: result, summary: views.summary })
-								: views.modelText
-						}
-					],
+					content,
 					isError: !views.ok
 				};
 			} catch (error) {
@@ -176,6 +182,38 @@ export function adaptClaudePortalTool(
 			}
 		}
 	);
+}
+
+// The content blocks an MCP tool result may carry. A strict subset of the MCP
+// `ContentBlock` union — text and image only — kept local so the adapter
+// doesn't depend on the transitive MCP SDK's types directly.
+type McpContentBlock =
+	| { type: 'text'; text: string }
+	| { type: 'image'; data: string; mimeType: string };
+
+// Map an ok envelope to MCP content blocks. A tool that renders its own output
+// attaches those `views`; forward them verbatim (text → text block, image →
+// image block) so the model sees exactly what the tool rendered. Legacy
+// `binary` image artifacts map to image blocks too, appended after so nothing a
+// tool asked to forward is silently dropped (mirrors the copilot edge). Without
+// views, the raw envelope JSON (with the short summary) is the model text —
+// byte-exact for tools like read_file / replace_text, whose whitespace and
+// metadata must survive verbatim.
+function toMcpContent(result: ToolResult & { ok: true }, summary: string): McpContentBlock[] {
+	const blocks: McpContentBlock[] =
+		result.views && result.views.length > 0
+			? result.views.map((view) =>
+					view.type === 'text'
+						? { type: 'text', text: view.text }
+						: { type: 'image', data: view.data, mimeType: view.mimeType }
+				)
+			: [{ type: 'text', text: JSON.stringify({ raw: result, summary }) }];
+	for (const binary of result.binary ?? []) {
+		if (binary.type === 'image') {
+			blocks.push({ type: 'image', data: binary.data, mimeType: binary.mimeType });
+		}
+	}
+	return blocks;
 }
 
 function objectShape(portalTool: PortalTool): z.ZodRawShape {

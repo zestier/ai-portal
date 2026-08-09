@@ -18,7 +18,7 @@ import type {
 } from '@github/copilot-sdk';
 import type { PortalEvent } from '$lib/types';
 import type { PortalTool, ToolStreamContext } from '../tools/git';
-import { deriveToolResultViews, err, type ToolResult } from '../tools/types';
+import { deriveToolResultViews, err, type ToolBinaryResult, type ToolResult } from '../tools/types';
 
 // SDK adapter: package a handler's envelope into the SDK's structured
 // `ToolResultObject` so the two derived views travel on SEPARATE channels
@@ -51,8 +51,17 @@ function toSdkResult(envelope: ToolResult): PortalSdkToolResult {
 		detailedContent: views.fullContent
 	};
 	if (!views.ok) result.error = views.summary;
-	if (envelope.ok && envelope.binary && envelope.binary.length > 0) {
-		result.binaryResultsForLlm = envelope.binary;
+	if (envelope.ok) {
+		// Image views (e.g. a Read of an image file) forward to the SDK's binary
+		// channel so the model sees the image; legacy `binary` artifacts join too.
+		const images: ToolBinaryResult[] = [];
+		for (const view of envelope.views ?? []) {
+			if (view.type === 'image') {
+				images.push({ data: view.data, mimeType: view.mimeType, type: 'image' });
+			}
+		}
+		if (envelope.binary && envelope.binary.length > 0) images.push(...envelope.binary);
+		if (images.length > 0) result.binaryResultsForLlm = images;
 	}
 	return result;
 }

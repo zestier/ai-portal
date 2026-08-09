@@ -3,6 +3,7 @@ import {
 	deriveEnvelopeSummary,
 	deriveToolResultViews,
 	envelopePayloadText,
+	parseEnvelopeJson,
 	serializeEnvelope,
 	err,
 	ok
@@ -144,6 +145,71 @@ describe('deriveToolResultViews', () => {
 	it('appends a followUpHint even when the success payload is empty', () => {
 		const views = deriveToolResultViews(ok(undefined, undefined, { followUpHint: 'do the thing' }));
 		expect(views.modelText).toBe('(no result)\n\ndo the thing');
+	});
+
+	it('prefers a tool-provided rendered view over the generic projection', () => {
+		const views = deriveToolResultViews(
+			ok({ mode: 'files_with_matches', numFiles: 2 }, 'Search completed.', {
+				views: [{ type: 'text', text: 'Found 2 files' }]
+			})
+		);
+		expect(views.modelText).toBe('Found 2 files');
+		// The envelope (with its rendered views) stays the fullContent for the UI.
+		expect(JSON.parse(views.fullContent)).toEqual({
+			ok: true,
+			summary: 'Search completed.',
+			result: { mode: 'files_with_matches', numFiles: 2 },
+			views: [{ type: 'text', text: 'Found 2 files' }]
+		});
+	});
+
+	it('joins multiple text views into the model text, mirroring MCP blocks', () => {
+		const views = deriveToolResultViews(
+			ok({ mode: 'files_with_matches', numFiles: 1 }, 'Search completed.', {
+				views: [
+					{ type: 'text', text: 'sample.txt' },
+					{ type: 'text', text: '2 matches' }
+				]
+			})
+		);
+		expect(views.modelText).toBe('sample.txt\n\n2 matches');
+	});
+
+	it('falls back to the payload when a text view is blank', () => {
+		const views = deriveToolResultViews(
+			ok('real payload', 'done', { views: [{ type: 'text', text: '  \n' }] })
+		);
+		expect(views.modelText).toBe('real payload');
+	});
+
+	it('derives text from the payload when a result carries only an image view', () => {
+		const views = deriveToolResultViews(
+			ok({ path: 'diagram.png', width: 640 }, 'Read file: diagram.png', {
+				views: [{ type: 'image', data: 'cGFnZQ==', mimeType: 'image/png' }]
+			})
+		);
+		expect(views.modelText).toContain('path: diagram.png');
+		expect(views.modelText).toContain('width: 640');
+	});
+
+	it('still appends a followUpHint after a tool-provided rendered view', () => {
+		const views = deriveToolResultViews(
+			ok({ a: 1 }, 'one thing', {
+				views: [{ type: 'text', text: 'rendered' }],
+				followUpHint: 'next step'
+			})
+		);
+		expect(views.modelText).toBe('rendered\n\nnext step');
+	});
+
+	it('round-trips a tool-provided rendered view through the persisted envelope', () => {
+		const env = ok({ x: 1 }, 's', {
+			views: [
+				{ type: 'text', text: 'rendered text' },
+				{ type: 'image', data: 'cGFnZQ==', mimeType: 'image/png' }
+			]
+		});
+		expect(parseEnvelopeJson(serializeEnvelope(env))).toEqual(env);
 	});
 
 	it('keeps both views derivable from one envelope (parity)', () => {
