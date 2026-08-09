@@ -72,6 +72,25 @@ so the model can read the full output, instead of killing the command.
 Agent SDK session ids are persisted separately from portal conversation ids so
 sessions can resume after a process restart.
 
+## Project plugins (`agent-plugins/`)
+
+Each session loads every immediate subfolder of `agent-plugins/` in the
+conversation's working directory as a Claude Agent SDK plugin. A subfolder
+counts as a plugin only if it carries the SDK's own plugin manifest
+(`.claude-plugin/plugin.json` with a `name`); subfolders without one are
+skipped silently, and a broken manifest is logged and skipped so one bad
+plugin never fails a session.
+
+The folder shape is deliberate: git submodules appear as plain subfolders, so
+`git submodule add <url> agent-plugins/<name>` loads a third-party plugin with
+no download or pinning, while repo-committed plugins drop in as normal
+folders. This is separate from the pinned `caveman`/`ponytail` skills, which
+are downloaded into `DATA_DIR` — both are merged into the same SDK `plugins`
+list. Pinned skills keep `skipMcpDiscovery: true`; `agent-plugins/` folders
+keep MCP discovery enabled so plugins can bring their own `.mcp.json` or
+manifest `mcpServers` (those servers run outside the portal permission
+gateway, matching the trusted-operator trust model).
+
 ## Current differences
 
 The provider streams text and reasoning, normalizes tool calls and results,

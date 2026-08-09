@@ -16,6 +16,7 @@ import { buildPermissionRequestResolver } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { buildClaudePortalTools, createClaudePortalMcpServer } from './claude-agent-tools';
 import { ensureClaudeAgentSkills } from './claude-agent-skills';
+import { discoverRepoPlugins } from './claude-agent-repo-plugins';
 import type { ModelBackendProvider, ProviderOpenOptions, ProviderSession } from './provider';
 
 const providerId = 'claude-agent' as const;
@@ -124,8 +125,11 @@ export const claudeAgentProvider: ModelBackendProvider = {
 	async openSession(opts) {
 		const cfg = providerConfig();
 		if (!cfg.apiKey) throw new Error(`${displayName} requires CLAUDE_AGENT_API_KEY.`);
-		const skillPluginPaths = await ensureClaudeAgentSkills(loadConfig().DATA_DIR);
-		return openClaudeAgentSession(cfg, opts, skillPluginPaths);
+		const [skillPluginPaths, repoPluginPaths] = await Promise.all([
+			ensureClaudeAgentSkills(loadConfig().DATA_DIR),
+			discoverRepoPlugins(opts.workingDirectory)
+		]);
+		return openClaudeAgentSession(cfg, opts, skillPluginPaths, repoPluginPaths);
 	}
 };
 
@@ -159,7 +163,8 @@ function permissionMode(mode: SessionMode): NonNullable<Options['permissionMode'
 export function openClaudeAgentSession(
 	cfg: ClaudeAgentConfig,
 	opts: ProviderOpenOptions,
-	skillPluginPaths: string[] = []
+	skillPluginPaths: string[] = [],
+	repoPluginPaths: string[] = []
 ): ProviderSession {
 	let providerSessionId = opts.providerSessionId ?? opts.conversationId;
 	let currentMode: SessionMode = opts.mode ?? 'interactive';
@@ -281,6 +286,20 @@ export function openClaudeAgentSession(
 		};
 		const toolNames = new Map<string, string>();
 		const toolParents = new Map<string, string | undefined>();
+		// Pinned skills (downloaded into DATA_DIR) skip MCP discovery — they are
+		// skill-only. Project `agent-plugins/` folders keep it enabled so plugins
+		// can bring their own `.mcp.json` / manifest mcpServers, matching
+		// `claude --plugin-dir` behavior.
+		// No `skills` option is set: it is a filter, and omitting it loads every
+		// discovered skill from the plugins (SDK docs, v0.3.224).
+		const pluginEntries = [
+			...skillPluginPaths.map((path) => ({
+				type: 'local' as const,
+				path,
+				skipMcpDiscovery: true
+			})),
+			...repoPluginPaths.map((path) => ({ type: 'local' as const, path }))
+		];
 		queue.push({ type: 'message.start', messageId, role: 'assistant' });
 		try {
 			const response = query({
@@ -373,16 +392,7 @@ export function openClaudeAgentSession(
 					maxTurns: cfg.maxTurns,
 					mcpServers: { portal: portalMcpServer },
 					model: opts.model,
-					...(skillPluginPaths.length > 0
-						? {
-								plugins: skillPluginPaths.map((path) => ({
-									type: 'local' as const,
-									path,
-									skipMcpDiscovery: true
-								})),
-								skills: 'all' as const
-							}
-						: {}),
+					...(pluginEntries.length > 0 ? { plugins: pluginEntries } : {}),
 					forwardSubagentText: true,
 					permissionMode: permissionMode(currentMode),
 					settingSources: [],

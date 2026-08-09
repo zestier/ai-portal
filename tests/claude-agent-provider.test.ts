@@ -5,11 +5,12 @@ import type { ProviderOpenOptions } from '../src/lib/server/providers/provider';
 import { resetConfigForTests } from '../src/lib/server/config';
 import { setupLocalEnv } from './helpers/env';
 
-const { ensureClaudeAgentSkillsMock, queryMock } = vi.hoisted(() => ({
+const { ensureClaudeAgentSkillsMock, discoverRepoPluginsMock, queryMock } = vi.hoisted(() => ({
 	ensureClaudeAgentSkillsMock: vi.fn(async () => [
 		'/tmp/claude-agent-skills/pinned/caveman',
 		'/tmp/claude-agent-skills/pinned/ponytail'
 	]),
+	discoverRepoPluginsMock: vi.fn(async (): Promise<string[]> => []),
 	queryMock: vi.fn()
 }));
 
@@ -20,6 +21,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async (importOriginal) => {
 
 vi.mock('../src/lib/server/providers/claude-agent-skills', () => ({
 	ensureClaudeAgentSkills: ensureClaudeAgentSkillsMock
+}));
+
+vi.mock('../src/lib/server/providers/claude-agent-repo-plugins', () => ({
+	discoverRepoPlugins: discoverRepoPluginsMock
 }));
 
 const baseOpts: ProviderOpenOptions = {
@@ -114,7 +119,7 @@ describe('claudeAgentProvider', () => {
 		expect(session.providerSessionId).toBe('11111111-1111-4111-8111-111111111111');
 		const options = queryMock.mock.calls[0][0].options;
 		expect(options.resume).toBeUndefined();
-		expect(options.skills).toBe('all');
+		expect(options.skills).toBeUndefined();
 		expect(options.plugins).toEqual([
 			{
 				type: 'local',
@@ -132,6 +137,45 @@ describe('claudeAgentProvider', () => {
 			ANTHROPIC_AUTH_TOKEN: 'deepseek-key',
 			ANTHROPIC_API_KEY: undefined
 		});
+	});
+
+	it('loads agent-plugins folders as local plugins with MCP discovery enabled', async () => {
+		discoverRepoPluginsMock.mockResolvedValue(['/project/agent-plugins/repo-skills']);
+		queryMock.mockReturnValue(messages({ type: 'result', subtype: 'success' } as SDKMessage));
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('hi', new AbortController().signal));
+
+		const options = queryMock.mock.calls[0][0].options;
+		expect(options.skills).toBeUndefined();
+		expect(options.plugins).toEqual(
+			expect.arrayContaining([
+				{
+					type: 'local',
+					path: '/project/agent-plugins/repo-skills',
+					skipMcpDiscovery: undefined
+				}
+			])
+		);
+	});
+
+	it('loads repo plugins even when there are no pinned skills', async () => {
+		ensureClaudeAgentSkillsMock.mockResolvedValue([] as string[]);
+		discoverRepoPluginsMock.mockResolvedValue(['/project/agent-plugins/repo-skills']);
+		queryMock.mockReturnValue(messages({ type: 'result', subtype: 'success' } as SDKMessage));
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('hi', new AbortController().signal));
+
+		const options = queryMock.mock.calls[0][0].options;
+		expect(options.skills).toBeUndefined();
+		expect(options.plugins).toEqual([
+			{ type: 'local', path: '/project/agent-plugins/repo-skills' }
+		]);
 	});
 
 	it('resumes an existing SDK session and aborts the active query', async () => {
