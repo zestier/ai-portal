@@ -50,13 +50,12 @@ const ToolGroupId = z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...strin
 const WorkspaceMode = z.enum(['shared', 'worktree']);
 
 const WORKSPACE_MODE_DESCRIPTION =
-	'Git workspace style for chats launched from this template: "shared" (the shared checkout) or ' +
-	'"worktree" (a fresh isolated Git worktree). Omit/null for no preference (shared).';
+	'"shared" (shared checkout) or "worktree" (fresh isolated worktree) for launched chats. ' +
+	'Omit/null = shared.';
 
 const APPROVAL_MODE_DESCRIPTION =
-	'How permission requests are settled in launched chats: "ask" (prompt the user), ' +
-	'"auto-approve" (settle prompt-worthy requests as approvals), or "auto-deny" (reject them ' +
-	'with feedback instead of blocking on a dialog). Omit/null to use the user default.';
+	'"ask" (prompt), "auto-approve" (settle as approval), or "auto-deny" (reject with ' +
+	'feedback) for launched chats. Omit/null = user default.';
 
 const ListArgs = z
 	.object({
@@ -132,9 +131,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 		{
 			name: 'template_list',
 			description:
-				'List the current user\u2019s stored prompt templates (chat + ticket-action). ' +
-				'Use this when the task is to review or refine the persisted templates. ' +
-				FIELDS_NOTE,
+				'List the user\u2019s stored prompt templates (chat + ticket-action). ' + FIELDS_NOTE,
 			argsSchema: ListArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -214,8 +211,8 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 			name: 'template_builtins',
 			description:
 				'List the read-only built-in default templates (chat presets + Do/Draft/Refine ' +
-				'ticket-action defaults). Use these as a reference when creating or refining stored ' +
-				'templates; they cannot be edited directly. ' +
+				'ticket-action defaults); reference for creating/refining stored templates, not ' +
+				'editable. ' +
 				placeholderHint(),
 			argsSchema: z.object({}).optional().default({}),
 			permissionBehavior: 'never-prompt',
@@ -246,8 +243,8 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 		{
 			name: 'template_create',
 			description:
-				'Create a new stored prompt template for the user. Validates `{{placeholders}}` ' +
-				'by type and rejects unknown ones. ' +
+				'Create a new stored prompt template. Validates `{{placeholders}}` by type, ' +
+				'rejects unknown ones. ' +
 				placeholderHint(),
 			argsSchema: CreateArgs,
 			permissionBehavior: 'always-prompt',
@@ -268,10 +265,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 					launchBehavior: {
 						type: 'string',
 						enum: ['send', 'draft', 'review'],
-						description:
-							'How the template launches: send the prompt immediately, open a draft in the composer, ' +
-							'or review (edit the prompt and launch options) before sending. Defaults to draft for ' +
-							'chat templates and send for ticket actions.'
+						description: 'send | draft | review. Defaults: draft for chat, send for ticket-action.'
 					},
 					conversationMode: {
 						type: 'string',
@@ -288,7 +282,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						type: 'array',
 						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
 						description:
-							'chat only: portal tool groups to disable on conversations launched from this template (seed, not a lock).'
+							'chat only: tool groups to disable on launched conversations (seed, not a lock).'
 					},
 					workspaceMode: {
 						type: 'string',
@@ -327,10 +321,8 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 		{
 			name: 'template_update',
 			description:
-				'Update one of the user\u2019s stored prompt templates. Set `status` to "archived" to ' +
-				'soft-delete it (reversible by setting it back to "open"); there is no hard delete. ' +
-				'Built-in defaults are not editable. Validates placeholders by type and rejects unknown ' +
-				'ones. ' +
+				'Update one of the user\u2019s stored prompt templates. `status: "archived"` soft-deletes (reversible; ' +
+				'no hard delete). Built-ins not editable. Validates placeholders by type. ' +
 				placeholderHint(),
 			argsSchema: UpdateArgs,
 			permissionBehavior: 'always-prompt',
@@ -364,7 +356,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 						type: 'array',
 						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
 						description:
-							'chat only: new set of portal tool groups to disable on launched conversations (replaces the existing set).'
+							'chat only: new tool group set to disable on launched conversations (replaces existing).'
 					},
 					workspaceMode: {
 						type: 'string',
@@ -374,7 +366,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 					status: {
 						type: 'string',
 						enum: ['open', 'archived'],
-						description: 'New status. Set to open to un-archive a previously archived template.'
+						description: 'New status; set "open" to un-archive.'
 					},
 					pinned: { type: 'boolean', description: 'New pinned state.' }
 				},

@@ -168,15 +168,14 @@ export function buildFilesystemTools(
 		{
 			name: 'create_directory',
 			description:
-				"Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`: missing parent directories are created and an already-existing directory is a successful no-op. The path must be workspace-relative (absolute paths and `..` escapes outside the workspace are rejected). Pass `worktree` to act inside a worktree this conversation holds instead. Prefer this over `bash mkdir` so directory creation routes through the structured, auto-approved write path. The `create` file tool, by contrast, requires parent directories to already exist. On success returns `{ path, outcome }` where `outcome` is `'created'` (the directory was newly made) or `'already-present'` (it already existed, so nothing was created).",
+				"Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`. Path must be workspace-relative (absolute paths and `..` escapes rejected). Pass `worktree` to act inside a held worktree instead. Prefer this over `bash mkdir` so creation routes through the auto-approved write path. On success returns `{ path, outcome }` where `outcome` is `'created'` or `'already-present'`.",
 			argsSchema: CreateDirectoryArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					path: {
 						type: 'string',
-						description:
-							'Workspace-relative path of the directory to create. Parent directories are created as needed.'
+						description: 'Workspace-relative path; parent directories created as needed.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -222,24 +221,23 @@ export function buildFilesystemTools(
 		{
 			name: 'move',
 			description:
-				'Move (rename) a file or directory within the workspace. Both `source` and `destination` must be workspace-relative; absolute paths and `..` escapes outside the workspace are rejected on either side. Pass `worktree` to act inside a worktree this conversation holds instead (both paths resolve in that tree). Missing parent directories of the destination are created automatically. Refuses to overwrite an existing destination unless `overwrite` is true, and never overwrites a directory. Prefer this over `bash mv` so the move routes through the structured, auto-approved write path. Permission is gated on BOTH paths: a move that touches anything outside the workspace prompts.',
+				'Move (rename) a file or directory within the workspace. Both `source` and `destination` must be workspace-relative (absolute paths and `..` escapes rejected). Pass `worktree` to act inside a held worktree instead. Missing destination parent directories are created. Refuses to overwrite an existing destination unless `overwrite` is true; never overwrites a directory. Prefer this over `bash mv`. Permission gated on BOTH paths: a move touching anything outside the workspace prompts.',
 			argsSchema: MoveArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					source: {
 						type: 'string',
-						description: 'Workspace-relative path of the existing file or directory to move.'
+						description: 'Workspace-relative path of the file/directory to move.'
 					},
 					destination: {
 						type: 'string',
-						description:
-							'Workspace-relative destination path. Parent directories are created as needed.'
+						description: 'Workspace-relative destination; parent directories created as needed.'
 					},
 					overwrite: {
 						type: 'boolean',
 						description:
-							'When true, replace an existing destination FILE. Directories are never overwritten. Defaults to false.'
+							'Replace an existing destination FILE when true. Directories never overwritten. Default false.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -298,14 +296,14 @@ export function buildFilesystemTools(
 		{
 			name: 'trash',
 			description:
-				"Safely delete a file or directory by moving it into the workspace `.zap/scratch/trash/` directory instead of unlinking it. Reversible: each entry is stored under `.zap/scratch/trash/<entryId>/` alongside a `meta.json` recording its original path, so it can be restored or purged later. The path must be workspace-relative (absolute paths and `..` escapes are rejected), and the trash store itself cannot be trashed. Pass `worktree` to delete inside a worktree this conversation holds instead — the entry then lands in that tree's own trash store, so it travels with the tree. Prefer this over `bash rm` — it never destroys data irrecoverably.",
+				"Safely delete a file or directory by moving it into the workspace `.zap/scratch/trash/` instead of unlinking. Reversible: each entry lands under `.zap/scratch/trash/<entryId>/` with a `meta.json` recording its original path, so it can be restored or purged later. Path must be workspace-relative (absolute paths and `..` escapes rejected); the trash store itself cannot be trashed. Pass `worktree` to delete inside a held worktree instead — the entry travels with that tree's own store. Prefer this over `bash rm`.",
 			argsSchema: TrashArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					path: {
 						type: 'string',
-						description: 'Workspace-relative path of the file or directory to delete (trash).'
+						description: 'Workspace-relative path of the file/directory to delete.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -333,7 +331,7 @@ export function buildFilesystemTools(
 		{
 			name: 'read_file',
 			description:
-				'Read the content of a file in the workspace. Returns at most 100 lines unless both startLine and endLine are supplied. The path must be workspace-relative. Pass `worktree` to act inside a worktree this conversation holds instead. Returns the content and metadata describing the returned range and whether it covers the whole file. Errors on binary files or if the path is a directory.',
+				'Read the content of a file in the workspace. Returns at most 100 lines unless both startLine and endLine are supplied. Path must be workspace-relative. Pass `worktree` to act inside a held worktree instead. Errors on binary files or directories.',
 			argsSchema: ReadFileArgs,
 			parameters: {
 				type: 'object',
@@ -345,12 +343,12 @@ export function buildFilesystemTools(
 					worktree: WORKTREE_WRITE_PARAM,
 					startLine: {
 						type: 'number',
-						description: 'The starting line number (1-indexed). Defaults to the first line.'
+						description: 'Starting line number (1-indexed). Defaults to the first line.'
 					},
 					endLine: {
 						type: 'number',
 						description:
-							'The ending line number (1-indexed). Supply both bounds to read more than 100 lines.'
+							'Ending line number (1-indexed). Supply both bounds to read more than 100 lines.'
 					}
 				},
 				required: ['path'],

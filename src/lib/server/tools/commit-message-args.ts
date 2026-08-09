@@ -60,7 +60,7 @@ export const SquashArg = z
 export const SQUASH_PARAM = {
 	type: 'object',
 	description:
-		'direction="to-source" only. Collapse this worktree\'s commits into ONE commit on its own branch before merging, so the receiving branch gains exactly one commit for the unit of work (and any merge commit an earlier from-source sync left behind disappears). Requires the worktree to be level with the source branch — sync with direction "from-source" first if it is behind. Squashing forces a fast-forward, so allowMergeCommit is not needed and has no effect.',
+		'direction="to-source" only. Collapse this worktree\'s commits into ONE commit before merging, so the target branch gains one commit per unit of work. Worktree must be level with the source — sync "from-source" first if behind. Forces a fast-forward; allowMergeCommit has no effect.',
 	properties: {
 		subject: {
 			type: 'string',

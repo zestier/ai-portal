@@ -198,7 +198,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_add',
 			description:
-				'Add a durable workspace ticket for something the user wants to do later. Use when asked to add a ticket, remember a task, or stash follow-up work between sessions. Set `priority` (P0 highest … P3 lowest, default P2) to express relative urgency.',
+				'Add a durable workspace ticket for later work. Use when asked to add a ticket, remember a task, or stash follow-up work between sessions. Set `priority` (P0 highest … P3 lowest, default P2) to express relative urgency.',
 			argsSchema: AddArgs,
 			parameters: {
 				type: 'object',
@@ -215,8 +215,7 @@ export function buildTicketTools(opts: {
 					priority: {
 						type: 'string',
 						enum: ['P0', 'P1', 'P2', 'P3'],
-						description:
-							'Relative urgency: P0 is highest, P3 is lowest. Defaults to P2 (normal) when omitted.'
+						description: 'P0 highest, P3 lowest. Default P2 (normal).'
 					},
 					blockedBy: {
 						type: 'array',
@@ -228,8 +227,7 @@ export function buildTicketTools(opts: {
 					blocks: {
 						type: 'array',
 						items: { type: 'string' },
-						description:
-							'Ids of existing tickets that this new ticket blocks (the reverse direction).'
+						description: 'Ids of tickets this ticket blocks (reverse direction).'
 					}
 				},
 				required: ['title'],
@@ -357,7 +355,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_update',
 			description:
-				'Update a durable workspace ticket title, body, plan, priority, status, or its blocking edges. Use status=done when a ticket has been completed, or archived when it should be hidden without completion. Use `plan` to persist a worked-out implementation plan or checklist. Set `priority` (P0 highest … P3 lowest) to re-prioritize. `blockedBy`/`blocks` replace the complete set of edges on that side (omit to leave unchanged, [] to clear) — a declarative alternative to ticket_block/ticket_unblock.',
+				'Update a ticket’s title, body, plan, priority, status, or blocking edges. status=done when completed; archived when hidden without completion. `plan` persists a worked-out implementation plan or checklist. `priority` re-prioritizes (P0 highest … P3 lowest). `blockedBy`/`blocks` replace the full edge set on that side (omit to leave unchanged, [] to clear) — declarative alternative to ticket_block/ticket_unblock.',
 			argsSchema: UpdateArgs,
 			parameters: {
 				type: 'object',
@@ -374,8 +372,7 @@ export function buildTicketTools(opts: {
 					priority: {
 						type: 'string',
 						enum: ['P0', 'P1', 'P2', 'P3'],
-						description:
-							'New relative urgency: P0 is highest, P3 is lowest. Omit to leave unchanged.'
+						description: 'P0 highest, P3 lowest. Omit to leave unchanged.'
 					},
 					status: {
 						type: 'string',
@@ -490,7 +487,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_attach',
 			description:
-				'Attach a file (screenshot, log, trace, or any blob) to a workspace ticket by path. The file is stored in the database and persists with the ticket across sessions. Enforces a 10 MB per-file limit and a 20-attachment-per-ticket limit.',
+				'Attach a file (screenshot, log, trace, or any blob) to a workspace ticket by path. Stored in the database, persists across sessions. 10 MB per-file and 20-attachment-per-ticket limits.',
 			argsSchema: AttachArgs,
 			parameters: {
 				type: 'object',
@@ -502,7 +499,7 @@ export function buildTicketTools(opts: {
 					},
 					filename: {
 						type: 'string',
-						description: 'Optional filename override. Defaults to the basename of the path.'
+						description: 'Optional filename override; defaults to basename of the path.'
 					}
 				},
 				required: ['ticketId', 'path'],
@@ -615,7 +612,7 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_view_attachment',
 			description:
-				"Read an attachment's content and return it to the model. Images are returned as inline image data; text files are returned as text; other binaries as a resource blob. Use ticket_get to list available attachment ids first.",
+				"Read an attachment's content and return it to the model. Images as inline image data; text as text; other binaries as a resource blob. Use ticket_get to list attachment ids first.",
 			argsSchema: ViewAttachmentArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {

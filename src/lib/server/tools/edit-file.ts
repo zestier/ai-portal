@@ -408,22 +408,21 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		{
 			name: 'edit',
 			description:
-				'Replace exact text in an existing text file, mirroring the SDK Edit contract: `file_path` is absolute (workspace-relative paths are also accepted) and must resolve inside the workspace, `old_string` is the literal text to find, `new_string` replaces it (must differ from old_string), and `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
+				'Replace exact text in an existing text file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `old_string` is the literal text to find; `new_string` replaces it (must differ); `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
 			argsSchema: EditArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					file_path: {
 						type: 'string',
-						description:
-							'Absolute path of the existing file to edit; must resolve inside the workspace.'
+						description: 'Absolute path; must resolve inside the workspace.'
 					},
 					old_string: { type: 'string', description: 'Exact literal text to find and replace.' },
 					new_string: { type: 'string', description: 'Replacement text.' },
 					replace_all: {
 						type: 'boolean',
 						description:
-							'Replace all occurrences of old_string instead of just the first. Defaults to false.'
+							'Replace every occurrence of old_string instead of the first. Default false.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -464,14 +463,14 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		{
 			name: 'write',
 			description:
-				'Write text content to a file, creating it or replacing an existing file. Mirrors the SDK Write contract: `file_path` is absolute (workspace-relative paths are also accepted) and must resolve inside the workspace, `content` is the complete new text, and the result reports whether the file was created or updated along with a structured diff. Missing parent directories are created automatically. Pass worktree to write in a held worktree; use `.` or omit it for the local workspace.',
+				'Write text content to a file, creating it or replacing an existing file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `content` is the complete new text. Result reports created/updated plus a structured diff. Missing parent directories are created automatically. Pass worktree to write in a held worktree; use `.` or omit it for the local workspace.',
 			argsSchema: WriteArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					file_path: {
 						type: 'string',
-						description: 'Absolute path of the file to write; must resolve inside the workspace.'
+						description: 'Absolute path; must resolve inside the workspace.'
 					},
 					content: { type: 'string', description: 'Complete text content to write.' },
 					worktree: WORKTREE_WRITE_PARAM
@@ -504,15 +503,15 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		{
 			name: 'replace_lines',
 			description:
-				'Replace an inclusive 1-indexed range of existing lines in a text file. Use empty content to delete the range. The file must already exist, the full range must be valid, and line endings are preserved. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
+				'Replace an inclusive 1-indexed range of lines in a text file. Empty content deletes the range. File must exist, range must be valid, line endings preserved. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
 			argsSchema: ReplaceLinesArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					path: { type: 'string', description: 'Workspace-relative path of the existing file.' },
+					path: { type: 'string', description: 'Workspace-relative path of the file.' },
 					startLine: { type: 'number', description: 'First line to replace, 1-indexed.' },
 					endLine: { type: 'number', description: 'Last line to replace, inclusive.' },
-					content: { type: 'string', description: 'Replacement text. Empty deletes the range.' },
+					content: { type: 'string', description: 'Replacement text; empty deletes the range.' },
 					worktree: WORKTREE_WRITE_PARAM
 				},
 				required: ['path', 'startLine', 'endLine', 'content'],
@@ -557,19 +556,19 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		{
 			name: 'replace_text',
 			description:
-				'Replace exact text in an existing text file. Optionally limit matching to an inclusive 1-indexed line range and cap replacements with maxReplacements (default 1). Fails when no exact match exists. This is literal text matching, not a regular expression. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
+				'Replace exact text in an existing text file. Optionally limit matching to an inclusive 1-indexed line range and cap replacements with maxReplacements (default 1). Fails when no exact match exists; literal text matching, not a regular expression. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace.',
 			argsSchema: ReplaceTextArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					path: { type: 'string', description: 'Workspace-relative path of the existing file.' },
+					path: { type: 'string', description: 'Workspace-relative path of the file.' },
 					oldText: { type: 'string', description: 'Exact literal text to find.' },
 					newText: { type: 'string', description: 'Replacement text.' },
 					startLine: { type: 'number', description: 'Optional first line to search, 1-indexed.' },
 					endLine: { type: 'number', description: 'Optional last line to search, inclusive.' },
 					maxReplacements: {
 						type: 'number',
-						description: 'Maximum matches to replace. Defaults to 1.'
+						description: 'Maximum matches to replace; default 1.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},

@@ -254,27 +254,26 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 		{
 			name: 'read',
 			description:
-				'Read the content of a file in the workspace, mirroring the SDK Read contract. `file_path` is the absolute path of the file to read (workspace-relative paths also resolve). `offset`/`limit` return a 1-indexed line range; whole-file reads of files larger than 256KB error, so pass offset/limit for those. Text files render numbered lines; image files (jpeg/png/gif/webp) are returned as an image the model can see. Pass `worktree` to read inside a worktree this conversation holds instead. Errors on binary files or directories.',
+				'Read the content of a file in the workspace. `file_path` is the absolute path (workspace-relative also resolves). `offset`/`limit` return a 1-indexed line range; whole-file reads over 256KB error, so pass offset/limit for those. Text renders numbered lines; images (jpeg/png/gif/webp) return as an image. Pass `worktree` to read inside a held worktree instead. Errors on binary files or directories.',
 			argsSchema: ReadArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					file_path: {
 						type: 'string',
-						description: 'The absolute path to the file to read (workspace-relative also accepted).'
+						description: 'Absolute path (workspace-relative also accepted).'
 					},
 					offset: {
 						type: 'number',
-						description: 'The 1-indexed line number to start reading from.'
+						description: '1-indexed line number to start from.'
 					},
 					limit: {
 						type: 'number',
-						description: 'The number of lines to read.'
+						description: 'Number of lines to read.'
 					},
 					pages: {
 						type: 'string',
-						description:
-							'Page range for PDF files. Unsupported: this read tool does not render PDFs.'
+						description: 'PDF page range. Unsupported: this read tool does not render PDFs.'
 					},
 					worktree: WORKTREE_PARAM
 				},

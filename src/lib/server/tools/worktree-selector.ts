@@ -36,19 +36,19 @@ export const WorktreeSelector = z
 export const WORKTREE_PARAM = {
 	type: 'string',
 	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to read instead of this conversation's own workspace. Use `.` or omit this parameter for the conversation's own workspace."
+		"Worktree id held by this conversation (from worktree_create / worktree_list). Omit or use `.` for this conversation's workspace."
 } as const;
 
 export const WORKTREE_COMMIT_PARAM = {
 	type: 'string',
 	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to commit in instead of this conversation's own workspace. Use `.` or omit this parameter for the conversation's own workspace. Paths are resolved relative to the selected workspace."
+		"Worktree id to commit in (from worktree_create / worktree_list). Omit or use `.` for this conversation's workspace. Paths resolve relative to the selected workspace."
 } as const;
 
 export const WORKTREE_WRITE_PARAM = {
 	type: 'string',
 	description:
-		"Optional id of a worktree held by this conversation (from worktree_create / worktree_list) to act in instead of this conversation's own workspace. Use `.` or omit this parameter for the conversation's own workspace. Paths are resolved relative to the selected workspace."
+		"Worktree id to act in (from worktree_create / worktree_list). Omit or use `.` for this conversation's workspace. Paths resolve relative to it."
 } as const;
 
 /**

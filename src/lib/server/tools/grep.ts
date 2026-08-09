@@ -349,17 +349,16 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 		{
 			name: 'list_files',
 			description:
-				'List files with ripgrep semantics. Respects .gitignore and other ignore files by default, returns workspace-relative paths, and supports include or exclude globs (prefix exclusions with !). Use path to limit traversal, hidden to include hidden files, and maxResults to bound output.',
+				'List files with ripgrep semantics. Respects .gitignore by default, returns workspace-relative paths, supports include/exclude globs (prefix exclusions with !). Use `path` to limit traversal, `hidden` for hidden files, `maxResults` to bound output.',
 			argsSchema: ListFilesArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					path: { type: 'string', description: 'Optional workspace-relative file or directory.' },
+					path: { type: 'string', description: 'Workspace-relative file or directory.' },
 					glob: {
 						type: 'array',
 						items: { type: 'string' },
-						description:
-							'Optional ripgrep globs. Pass multiple patterns to combine them; prefix exclusions with !.'
+						description: 'Ripgrep globs; prefix exclusions with !.'
 					},
 					hidden: { type: 'boolean', description: 'Include hidden files and directories.' },
 					maxResults: { type: 'number', description: 'Maximum file paths to return.' },
@@ -413,53 +412,52 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 		{
 			name: 'grep',
 			description:
-				'Search workspace text with ripgrep. Mirrors the SDK Grep contract: output_mode "content" shows matching lines (with -B/-A/-C context and line numbers), "files_with_matches" shows unique file paths, and "count" shows per-file match counts. head_limit/offset bound results across all modes; use path to limit traversal and glob or type to filter files. Respects .gitignore. Searches stay inside the selected workspace or held worktree.',
+				'Search workspace text with ripgrep. output_mode: "content" (matching lines with -B/-A/-C context and line numbers), "files_with_matches" (unique file paths), or "count" (per-file match counts). head_limit/offset bound results; `path` limits traversal; `glob`/`type` filter files. Respects .gitignore. Stays inside the selected workspace or held worktree.',
 			argsSchema: GrepArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					pattern: { type: 'string', description: 'Regular expression to search for.' },
-					path: { type: 'string', description: 'Optional workspace-relative file or directory.' },
-					glob: { type: 'string', description: 'Optional file glob, such as **/*.ts.' },
+					path: { type: 'string', description: 'Workspace-relative file or directory.' },
+					glob: { type: 'string', description: 'File glob, e.g. **/*.ts.' },
 					output_mode: {
 						type: 'string',
 						enum: GrepOutputMode.options,
-						description:
-							'Output mode: content shows matching lines, files_with_matches shows file paths, count shows per-file match counts.'
+						description: 'content | files_with_matches | count (see tool description).'
 					},
 					'-B': {
 						type: 'number',
-						description: 'Lines of context before each match (content mode).'
+						description: 'Context lines before each match (content mode).'
 					},
 					'-A': {
 						type: 'number',
-						description: 'Lines of context after each match (content mode).'
+						description: 'Context lines after each match (content mode).'
 					},
 					'-C': {
 						type: 'number',
-						description: 'Lines of context before and after each match (content mode).'
+						description: 'Context lines before and after each match (content mode).'
 					},
 					context: {
 						type: 'number',
-						description: 'Lines of context before and after each match (content mode).'
+						description: 'Context lines before and after each match (content mode).'
 					},
 					'-n': { type: 'boolean', description: 'Show line numbers in content mode.' },
 					'-i': { type: 'boolean', description: 'Case-insensitive matching.' },
 					'-o': {
 						type: 'boolean',
-						description: 'Print only matched parts, one per line (content mode).'
+						description: 'Only matched parts, one per line (content mode).'
 					},
 					type: {
 						type: 'string',
-						description: 'File type to search (rg --type), e.g. js, py, ts.'
+						description: 'File type to search (rg --type), e.g. js, py.'
 					},
 					head_limit: {
 						type: 'number',
-						description: 'Limit output to first N lines/entries; 0 is unlimited.'
+						description: 'First N lines/entries; 0 unlimited.'
 					},
 					offset: {
 						type: 'number',
-						description: 'Skip the first N lines/entries before head_limit.'
+						description: 'Skip N lines/entries before head_limit.'
 					},
 					multiline: { type: 'boolean', description: 'Enable multiline matching.' },
 					worktree: WORKTREE_PARAM
@@ -495,15 +493,15 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 		{
 			name: 'glob',
 			description:
-				'List files matching a glob pattern. Mirrors the SDK Glob contract: pattern is a ripgrep glob, path optionally limits the search root (defaults to the workspace root). Does not respect .gitignore (matching the SDK Glob); use list_files for ignore-aware listings. Returns workspace-relative paths, capped at 100 files. Searches stay inside the selected workspace or held worktree.',
+				'List files matching a glob pattern (ripgrep glob). `path` optionally limits the search root (default workspace root). Does NOT respect .gitignore; use list_files for ignore-aware listings. Returns workspace-relative paths, capped at 100 files. Stays inside the selected workspace or held worktree.',
 			argsSchema: GlobArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					pattern: { type: 'string', description: 'The glob pattern to match files against.' },
+					pattern: { type: 'string', description: 'Glob pattern to match.' },
 					path: {
 						type: 'string',
-						description: 'Optional workspace-relative file or directory to search in.'
+						description: 'Workspace-relative file or directory to search in.'
 					},
 					worktree: WORKTREE_PARAM
 				},

@@ -318,7 +318,7 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 		{
 			name: 'shell_exec',
 			description:
-				'Run a non-interactive Bash command in the current workspace, mirroring the SDK Bash contract. The command may use pipelines and shell syntax. `timeout` is in milliseconds (default 120000, max 600000); `cwd` is a workspace-relative working directory (portal extension) that cannot escape the workspace. Output past the in-context cap is spilled to `.zap/scratch/tool_results/` and the full path is returned for the model to read. `run_in_background` and `dangerouslyDisableSandbox` are not supported.',
+				'Run a non-interactive Bash command in the current workspace (pipelines and shell syntax OK). `timeout` is ms (default 120000, max 600000); `cwd` is a workspace-relative working directory (portal extension) that cannot escape the workspace. Output past the in-context cap is spilled to `.zap/scratch/tool_results/` and the path returned for the model to read. `run_in_background` and `dangerouslyDisableSandbox` are not supported.',
 			argsSchema: ShellArgs,
 			parameters: {
 				type: 'object',
@@ -326,7 +326,7 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 					command: { type: 'string', description: 'Bash command to run.' },
 					timeout: {
 						type: 'number',
-						description: 'Timeout in milliseconds, from 100 to 600000 (default 120000).'
+						description: 'Milliseconds, 100-600000 (default 120000).'
 					},
 					description: {
 						type: 'string',
@@ -344,7 +344,7 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 					maxOutputBytes: {
 						type: 'number',
 						description:
-							'Optional in-context output cap in bytes (1024-65536, default 32768); overflow spills to disk.'
+							'In-context output cap in bytes (1024-65536, default 32768); overflow spills to disk.'
 					}
 				},
 				required: ['command'],

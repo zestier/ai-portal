@@ -175,7 +175,7 @@ export function buildMemoryTools(opts: {
 						items: { type: 'string', enum: ['entity', 'event', 'fact', 'open_loop'] },
 						description: 'Optional memory item types to include.'
 					},
-					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' },
+					limit: { type: 'number', description: 'Results 1-50, default 20.' },
 					fields: FIELDS_PARAM
 				},
 				required: ['query'],
@@ -257,7 +257,7 @@ export function buildMemoryTools(opts: {
 				type: 'object',
 				properties: {
 					loopType: { type: 'string', description: 'Optional loop type filter.' },
-					limit: { type: 'number', description: 'Maximum open loops, 1-50. Defaults to 20.' },
+					limit: { type: 'number', description: 'Open loops 1-50, default 20.' },
 					fields: FIELDS_PARAM
 				},
 				additionalProperties: false
@@ -289,7 +289,7 @@ export function buildMemoryTools(opts: {
 				properties: {
 					entityId: { type: 'string', description: 'Optional entity id.' },
 					eventType: { type: 'string', description: 'Optional event type.' },
-					limit: { type: 'number', description: 'Maximum events, 1-50. Defaults to 20.' },
+					limit: { type: 'number', description: 'Events 1-50, default 20.' },
 					fields: FIELDS_PARAM
 				},
 				additionalProperties: false
@@ -320,7 +320,7 @@ export function buildMemoryTools(opts: {
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'Literal text to find in prior messages.' },
-					limit: { type: 'number', description: 'Maximum matching messages, 1-20. Defaults to 8.' },
+					limit: { type: 'number', description: 'Matching messages 1-20, default 8.' },
 					fields: FIELDS_PARAM
 				},
 				required: ['query'],
@@ -355,7 +355,7 @@ export function buildMemoryTools(opts: {
 				properties: {
 					entityId: { type: 'string', description: 'Optional entity id.' },
 					eventType: { type: 'string', description: 'Optional event type.' },
-					limit: { type: 'number', description: 'Maximum events, 1-100. Defaults to 50.' },
+					limit: { type: 'number', description: 'Events 1-100, default 50.' },
 					fields: FIELDS_PARAM
 				},
 				additionalProperties: false
@@ -392,7 +392,7 @@ export function buildMemoryTools(opts: {
 						enum: ['all', 'open', 'revealed', 'resolved'],
 						description: 'Clue status filter. Defaults to all.'
 					},
-					limit: { type: 'number', description: 'Maximum clues, 1-100. Defaults to 50.' },
+					limit: { type: 'number', description: 'Clues 1-100, default 50.' },
 					fields: FIELDS_PARAM
 				},
 				additionalProperties: false
@@ -444,7 +444,7 @@ export function buildMemoryTools(opts: {
 						type: 'string',
 						description: 'Character entity key, e.g. character.elias.'
 					},
-					limit: { type: 'number', description: 'Maximum records, 1-100. Defaults to 50.' },
+					limit: { type: 'number', description: 'Records 1-100, default 50.' },
 					fields: FIELDS_PARAM
 				},
 				required: ['characterEntityKey'],
@@ -487,7 +487,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_check_claims',
 			description:
-				'Check proposed claims against active durable facts. Use before making continuity-sensitive claims.',
+				'Check proposed claims against active durable facts; use before making continuity-sensitive claims.',
 			argsSchema: CheckClaimsArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -526,7 +526,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_merge_entities',
 			description:
-				"Fold a duplicate entity into a canonical one when two keys denote the same real referent (e.g. character.firstname and character.firstname_lastname). Reassigns the duplicate's facts, events, and open-loop links onto the canonical entity and retires the duplicate. Use this to clean up duplicates you discover; confirm with memory_get_entity first that they truly match.",
+				"Fold a duplicate entity into a canonical one when two keys denote the same real referent. Reassigns the duplicate's facts, events, and open-loop links onto the canonical entity and retires it. Confirm with memory_get_entity first that they truly match.",
 			argsSchema: MergeEntitiesArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -567,7 +567,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_global_record',
 			description:
-				'Explicitly store a user-scoped global memory that may be recalled across conversations. Use only when the user asks to remember something beyond this session. ' +
+				'Explicitly store a user-scoped global memory recallable across conversations. Only when the user asks to remember something beyond this session. ' +
 				FIELDS_NOTE,
 			argsSchema: GlobalRememberArgs,
 			permissionBehavior: 'never-prompt',
@@ -617,7 +617,7 @@ export function buildMemoryTools(opts: {
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'Text to search in global memories.' },
-					limit: { type: 'number', description: 'Maximum results, 1-50. Defaults to 20.' },
+					limit: { type: 'number', description: 'Results 1-50, default 20.' },
 					fields: FIELDS_PARAM
 				},
 				required: ['query'],

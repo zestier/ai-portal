@@ -187,14 +187,14 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_status',
 			description:
-				'Structured replacement for `git status`. Reports repository head, changed files, and any in-progress merge (with its still-conflicted paths) without allowing arbitrary git shell flags or mutating subcommands.',
+				'Git status: head, changed files, and any in-progress merge (with conflicted paths).',
 			argsSchema: GitStatusArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					includeIgnored: {
 						type: 'boolean',
-						description: 'Include ignored files in the changed-file list. Defaults to false.'
+						description: 'Include ignored files. Default false.'
 					},
 					worktree: WORKTREE_PARAM
 				},
@@ -231,7 +231,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_diff',
 			description:
-				'Structured replacement for `git diff`. Returns a unified diff or structured read-only summary for worktree/index/commit comparisons, optionally limited to a workspace path.',
+				'Git diff between worktree/index/commit, optionally limited to a workspace path.',
 			argsSchema: GitDiffArgs,
 			parameters: {
 				type: 'object',
@@ -239,21 +239,20 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 					target: {
 						type: 'string',
 						enum: TargetKind.options,
-						description: 'Diff target. Defaults to worktree-vs-head. Commit targets require sha.'
+						description: 'Target. Default worktree-vs-head; commit targets require sha.'
 					},
 					sha: {
 						type: 'string',
-						description: 'Commit SHA for target=commit or target=commit-vs-parent.'
+						description: 'SHA for commit targets.'
 					},
 					path: {
 						type: 'string',
-						description: 'Optional workspace-relative path to limit the diff.'
+						description: 'Limit diff to this workspace-relative path.'
 					},
 					output: {
 						type: 'string',
 						enum: DiffOutput.options,
-						description:
-							'Output format. Defaults to patch. stat, numstat, name-only, and name-status return JSON.'
+						description: 'patch (default) or stat/numstat/name-only/name-status (JSON).'
 					},
 					worktree: WORKTREE_PARAM
 				},
@@ -282,27 +281,26 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		},
 		{
 			name: 'git_log',
-			description:
-				'Structured replacement for `git log`. Returns recent commits with author, timestamp, and subject, optionally filtered by ref or workspace path.',
+			description: 'Recent commits with author, timestamp, subject; filter by ref or path.',
 			argsSchema: GitLogArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					limit: {
 						type: 'number',
-						description: 'Maximum commits to return, 1-50. Defaults to 20.'
+						description: 'Commits to return, 1-50 (default 20).'
 					},
 					skip: {
 						type: 'number',
-						description: 'Number of commits to skip. Defaults to 0.'
+						description: 'Commits to skip.'
 					},
 					ref: {
 						type: 'string',
-						description: 'Optional ref to log, such as HEAD or a branch name.'
+						description: 'Ref to log (HEAD, branch, ...).'
 					},
 					path: {
 						type: 'string',
-						description: 'Optional workspace-relative path to filter commit history.'
+						description: 'Workspace-relative path filter.'
 					},
 					worktree: WORKTREE_PARAM
 				},
@@ -318,8 +316,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		},
 		{
 			name: 'git_show_commit',
-			description:
-				'Structured replacement for `git show <sha>` metadata. Returns commit details and changed files, optionally including the patch, without executing arbitrary git shell arguments.',
+			description: 'Commit details and changed files by sha; optionally include the patch.',
 			argsSchema: GitShowCommitArgs,
 			parameters: {
 				type: 'object',
@@ -330,8 +327,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 					},
 					includePatch: {
 						type: 'boolean',
-						description:
-							'When true, include the commit patch. Defaults to false to keep output smaller.'
+						description: 'Include the patch. Default false (smaller output).'
 					},
 					worktree: WORKTREE_PARAM
 				},
@@ -348,8 +344,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		},
 		{
 			name: 'git_show_file',
-			description:
-				'Structured replacement for `git show <ref>:<path>`. Reads one workspace file at a Git ref.',
+			description: 'Read one workspace file at a Git ref.',
 			argsSchema: GitShowFileArgs,
 			parameters: {
 				type: 'object',
@@ -377,7 +372,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_commit',
 			description:
-				'Structured replacement for `git add` plus `git commit`. Creates a normal commit from a deterministic structured message and either all current changes or explicitly named whole-file workspace paths. Pass `worktree` to commit inside a worktree this conversation holds — the only sanctioned way for a sub-agent working in a lease to land its work so it can be merged back. This is also how an in-progress merge is concluded: once every conflicted file is edited to remove its conflict markers, `paths: "all"` stages exactly those resolutions (unrelated edits stay uncommitted) and creates the merge commit — a merge commit cannot be partial, so naming paths is rejected mid-merge.',
+				'Create a normal commit from a structured message over all changes (`paths: "all"`) or named whole-file workspace paths. `worktree` commits inside a held worktree. Also concludes an in-progress merge: after editing conflicted files, `paths: "all"` stages exactly those resolutions (unrelated edits stay uncommitted); a merge commit cannot be partial, so naming paths is rejected mid-merge.',
 			argsSchema: GitCommitArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -390,12 +385,11 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 								type: 'array',
 								items: { type: 'string' },
 								minItems: 1,
-								description:
-									'Workspace-relative file paths to commit. Untracked files are included only when named explicitly.'
+								description: 'Workspace-relative paths; untracked files included only when named.'
 							}
 						],
 						description:
-							'Use "all" to commit all current workspace changes, or a non-empty array of workspace-relative file paths. While concluding a merge or other conflicted state, "all" narrows to the conflicted files\' resolutions — unrelated unstaged edits are left dirty rather than swept into the merge commit.'
+							'`all` (all current changes; mid-merge, just the conflicted resolutions) or a non-empty array of workspace-relative file paths.'
 					},
 					subject: {
 						type: 'string',
@@ -422,7 +416,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 					allowConflictMarkers: {
 						type: 'boolean',
 						description:
-							'Allow a previously-conflicted file to be committed while it still contains <<<<<<< / ======= / >>>>>>> lines. Defaults to false, because that almost always means the file was never actually resolved. Set true only when such lines are genuinely part of the file.'
+							'Allow committing a file still containing <<<<<<< / ======= / >>>>>>> conflict markers. Default false. Set true only when such lines are genuinely part of the file.'
 					}
 				},
 				required: ['paths', 'subject'],
@@ -458,7 +452,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_merge_abort',
 			description:
-				'Structured replacement for `git merge --abort`. Rolls an in-progress merge back to the pre-merge HEAD, discarding the merge and any resolution work in the tree. Use it to escape a conflict left behind by a merge with onConflict: "keep" when you decide not to resolve it; to FINISH such a merge instead, resolve the conflicted files and call git_commit with paths: "all".',
+				'Abort an in-progress merge, discarding the merge and any resolution work. Escape hatch for a kept "from-source" conflict; to finish one instead, resolve the files and call git_commit with paths: "all".',
 			argsSchema: GitMergeAbortArgs,
 			// Destructive: it throws away whatever resolution the tree holds, so it
 			// is confirmed for the same reason `git_commit` is.
@@ -493,7 +487,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_status',
 			description:
-				'Report how this workspace relates to the branch checked out in the repository’s main checkout: whether it is a linked worktree, its branch, how many commits it is ahead/behind, and whether it holds unmerged work. Read-only.',
+				'Report whether this workspace is a linked worktree, its branch, ahead/behind counts, and unmerged work. Read-only.',
 			argsSchema: GitWorktreeStatusArgs,
 			parameters: {
 				type: 'object',
@@ -514,7 +508,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_list',
 			description:
-				'List every worktree of this repository (the main checkout plus each linked worktree), with the branch and commit checked out in each and whether it is detached, locked, or prunable. Read-only. Unlike `worktree_list`, which shows only portal-managed worktrees held by this conversation, this sees all of them — including ones created outside the portal.',
+				'List every worktree (main + linked) with branch, commit, and detached/locked/prunable state. Read-only. Sees all worktrees, including ones created outside the portal (unlike `worktree_list`).',
 			argsSchema: GitWorktreeListArgs,
 			parameters: {
 				type: 'object',
@@ -522,7 +516,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 					includeDirty: {
 						type: 'boolean',
 						description:
-							'Also count uncommitted changes in each worktree. Defaults to false because it costs one status read per worktree.'
+							'Also count uncommitted changes. Default false (costs a status read per worktree).'
 					},
 					worktree: WORKTREE_PARAM
 				},
@@ -542,7 +536,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_merge',
 			description:
-				'Merge between this linked worktree’s branch and the branch checked out in the repository’s main checkout. Use direction "to-source" to integrate finished work back (the normal end-of-session step), or "from-source" to first pull in upstream commits and resolve conflicts inside the isolated worktree. Prefer passing `squash` on the way back so the main checkout gains one commit per unit of work instead of the worktree’s intermediate history. Refuses to merge with uncommitted changes on either side, and never leaves the main checkout mid-merge.',
+				'Merge this linked worktree’s branch with the main checkout’s branch. "to-source" integrates work back; "from-source" pulls in upstream commits to resolve conflicts in the worktree. Prefer `squash` for one commit per unit of work. Refuses with uncommitted changes on either side; never leaves the main checkout mid-merge.',
 			argsSchema: GitWorktreeMergeArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -552,19 +546,19 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 						type: 'string',
 						enum: ['from-source', 'to-source'],
 						description:
-							'"to-source" merges this worktree branch into the main checkout’s branch; "from-source" merges the main checkout’s branch into this worktree.'
+							'"to-source": worktree into main checkout; "from-source": main checkout into worktree.'
 					},
 					allowMergeCommit: {
 						type: 'boolean',
 						description:
-							'direction="to-source" only. Defaults to false, which requires a fast-forward so the main checkout stays linear and can never be left mid-merge. Set true to allow a --no-ff merge commit when the source branch has moved on. Prefer `squash` (after a from-source sync) when you want linear history instead.'
+							'direction="to-source" only. Default false (fast-forward). Set true for a --no-ff merge commit when the source branch has moved on; prefer `squash` for linear history.'
 					},
 					squash: SQUASH_PARAM,
 					onConflict: {
 						type: 'string',
 						enum: ['abort', 'keep'],
 						description:
-							'direction="from-source" only. "abort" (default) rolls a conflicted merge back; "keep" leaves the conflict in this worktree, which you then finish by editing each conflicted file and calling git_commit with paths: "all" (or give up with git_merge_abort). "to-source" always rolls back.'
+							'direction="from-source" only. "abort" (default) rolls back; "keep" leaves the conflict to finish with git_commit { paths: "all" } or give up with git_merge_abort. "to-source" always rolls back.'
 					}
 				},
 				required: ['direction'],

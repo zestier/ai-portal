@@ -73,7 +73,7 @@ export function buildPermissionTools(opts: {
 		{
 			name: 'permission_capabilities',
 			description:
-				'Read-only summary of currently allowed permission capabilities and recovery options. Use after a permission rejection to find allowed alternatives before escalating.',
+				'Read-only summary of allowed permission capabilities and recovery options. Use after a rejection to find allowed alternatives before escalating.',
 			argsSchema: CapabilitiesArgs,
 			parameters: {
 				type: 'object',
@@ -85,11 +85,11 @@ export function buildPermissionTools(opts: {
 					},
 					toolName: {
 						type: 'string',
-						description: 'Optional tool name to inspect, such as shell, git_status, or view.'
+						description: 'Tool name to inspect, e.g. shell, git_status, or view.'
 					},
 					intent: {
 						type: 'string',
-						description: 'Optional short description of what you were trying to do.'
+						description: 'Short description of what you were trying to do.'
 					}
 				},
 				additionalProperties: false
@@ -156,7 +156,7 @@ function buildGrantRequestTool(opts: {
 	return {
 		name: GRANT_REQUEST_TOOL_NAME,
 		description:
-			'Ask the human to save a narrow, PERMANENT permission grant that pre-approves ALL future matching tool calls. Use this ONLY when there is explicit persistence intent — the user or task wants a durable, saved rule that outlives the current moment. For a one-off or occasional in-the-moment unblock, do NOT use this tool: call `force_retry_tool` with the token from the denial instead (a per-call escalation that saves nothing). When you do request a grant, request the NARROWEST scope that covers the need. This ALWAYS opens a human approval dialog and is never auto-approved, even with approvals bypassed; the human can narrow or deny it. Provide `tool` (the permission kind to grant), a structured `scope`, and a `reason`. Examples of `scope`: shell → {"kind":"shell","rule":{"command":[{"token":"pnpm"}],"positionals":{"kind":"workspace-paths"}}}; write → {"kind":"fs","perms":["write"],"rule":{"kind":"path","root":"workspace","behavior":"any"}}; url → {"kind":"url","rule":{"kind":"host","host":"registry.npmjs.org"}}.',
+			'Ask the human to save a PERMANENT permission grant pre-approving all future matching calls. ONLY when there is explicit persistence intent — a durable, saved rule. For a one-off unblock call `force_retry_tool` with the denial’s token instead. Request the NARROWEST scope that covers the need. ALWAYS opens a human dialog and is never auto-approved, even with approvals bypassed. Provide `tool` (permission kind), a structured `scope`, and a `reason`.',
 		argsSchema: GrantRequestArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -165,18 +165,16 @@ function buildGrantRequestTool(opts: {
 				tool: {
 					type: 'string',
 					enum: [...GRANT_TOOLS],
-					description:
-						'Permission kind the grant covers: `shell` (run a command), `read`/`write`/`edit` (filesystem), or `url` (fetch).'
+					description: 'Permission kind: `shell`, `read`/`write`/`edit` (filesystem), or `url`.'
 				},
 				reason: {
 					type: 'string',
-					description:
-						'Short justification (>=20 chars) shown to the human for why this grant is needed.'
+					description: 'Short justification (>=20 chars) for the human.'
 				},
 				scope: {
 					type: 'object',
 					description:
-						'Structured grant scope. Its `kind` must match the tool: shell→{kind:"shell",rule:{command:[{token:"<argv0>"},...],positionals?,pipeline?}}, read/write/edit→{kind:"fs",perms?:["write"],rule:{kind:"path",root:"workspace"|"session-workspace"|"absolute",behavior:"any"|"exact"|"prefix"|"glob",value?}}, url→{kind:"url",rule:{kind:"host"|"host-suffix"|"exact",...}}. Prefer the narrowest shape that covers the need.',
+						'Structured grant scope; its `kind` must match the tool (shell, fs, or url). Prefer the narrowest shape that covers the need.',
 					additionalProperties: true
 				}
 			},
@@ -330,7 +328,7 @@ function buildForceRetryTool(opts: {
 	return {
 		name: FORCE_RETRY_TOOL_NAME,
 		description:
-			'Escalate ONE previously denied tool call to a fresh human approval prompt. Every denial carries a one-shot token in its feedback; pass that token here with a concise reason. If the human approves, the retried call (same tool, same command/path/url; incidental args may differ) is auto-allowed and executes exactly once. This is the default way to override a denial for a one-off unblock — it saves nothing. Use `request_permission_grant` instead only when you want a durable, saved rule.',
+			'Escalate ONE previously denied tool call to a fresh human approval prompt. Pass the one-shot token from the denial feedback plus a concise reason. If the human approves, the retried call (same command/path/url; incidental args may differ) is auto-allowed and executes exactly once — it saves nothing. Default way to override a denial; use `request_permission_grant` only for a durable, saved rule.',
 		argsSchema: ForceRetryArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -338,12 +336,11 @@ function buildForceRetryTool(opts: {
 			properties: {
 				token: {
 					type: 'string',
-					description: 'One-shot token from the denial feedback you want to override.'
+					description: 'One-shot token from the denial feedback.'
 				},
 				reason: {
 					type: 'string',
-					description:
-						'Short justification (>= 20 chars) shown to the human for why this one-off escalation is needed.'
+					description: 'Short justification (>=20 chars) for the human.'
 				}
 			},
 			required: ['token', 'reason'],

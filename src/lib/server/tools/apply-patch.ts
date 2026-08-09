@@ -50,14 +50,14 @@ export function buildApplyPatchTools(
 		{
 			name: 'apply_patch',
 			description:
-				'Apply a standard unified diff in the workspace. Use /dev/null file headers for additions and deletions, and Git rename metadata for moves. Use dryRun to validate without changing files. Paths must stay inside the workspace; pass worktree to edit a held worktree.',
+				'Apply a standard unified diff in the workspace. Use /dev/null file headers for additions/deletions and Git rename metadata for moves. dryRun validates without changing files. Paths must stay inside the workspace; pass worktree to edit a held worktree.',
 			argsSchema: ApplyPatchArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					patch: {
 						type: 'string',
-						description: 'Standard unified diff text, optionally including Git diff metadata.'
+						description: 'Standard unified diff text (Git diff metadata optional).'
 					},
 					worktree: WORKTREE_WRITE_PARAM,
 					dryRun: { type: 'boolean', description: 'Validate and report changes without writing.' }
