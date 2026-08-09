@@ -1,0 +1,12 @@
+{
+  "args": {
+    "command": "echo \"hello world\""
+  },
+  "actualArgs": {
+    "command": "echo \"hello world\"",
+    "description": "Echo hello world"
+  },
+  "toolUseId": "call_00_ET_PZpCfE6IddawqyeticiM2552",
+  "isError": false,
+  "content": "hello world"
+}

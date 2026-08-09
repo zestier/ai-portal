@@ -1,0 +1,13 @@
+{
+  "args": {
+    "pattern": "line|one",
+    "path": "sample.txt"
+  },
+  "actualArgs": {
+    "pattern": "line|one",
+    "path": "sample.txt"
+  },
+  "toolUseId": "call_00_3IK2yO3t1qvTobNasuKx1491",
+  "isError": false,
+  "content": "Found 1 file\nsample.txt"
+}

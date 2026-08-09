@@ -1,0 +1,15 @@
+{
+  "args": {
+    "pattern": "line",
+    "output_mode": "count",
+    "path": "sample.txt"
+  },
+  "actualArgs": {
+    "pattern": "line",
+    "output_mode": "count",
+    "path": "sample.txt"
+  },
+  "toolUseId": "call_00_ET_7x1f64kP2YQUjCkZeNu17551",
+  "isError": false,
+  "content": "No matches found\n\nFound 0 total occurrences across 0 files."
+}

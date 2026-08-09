@@ -1,0 +1,16 @@
+{
+  "args": {
+    "file_path": "sample.txt",
+    "old_string": "does not exist anywhere",
+    "new_string": "nope"
+  },
+  "actualArgs": {
+    "replace_all": false,
+    "file_path": "sample.txt",
+    "old_string": "does not exist anywhere",
+    "new_string": "nope"
+  },
+  "toolUseId": "call_00_SKByZK0JjEQyp2T75cBi9065",
+  "isError": true,
+  "content": "<tool_use_error>String to replace not found in file.\nString: does not exist anywhere</tool_use_error>"
+}

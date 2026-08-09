@@ -1,0 +1,12 @@
+{
+  "args": {
+    "command": "printf \"to stdout\\n\"; printf \"to stderr\\n\" >&2"
+  },
+  "actualArgs": {
+    "command": "printf \"to stdout\\n\"; printf \"to stderr\\n\" >&2",
+    "description": "Print to stdout and stderr"
+  },
+  "toolUseId": "call_00_MKFsJvg9Mze9MinonOUr8349",
+  "isError": false,
+  "content": "to stdout\nto stderr"
+}

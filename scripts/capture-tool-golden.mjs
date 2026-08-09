@@ -17,6 +17,11 @@
 // byte-fidelity contract for that rerouting. Structured shapes (sdk-tools.d.ts)
 // guide the implementation; the golden text is the acceptance bar.
 //
+// The corpus is the checked-in source of truth under tests/fixtures/golden/;
+// `.zap/scratch/golden` is the disposable capture staging area. Re-capture
+// after an SDK bump, review the diff, then copy the new corpus over the
+// checked-in fixtures (move .zap/scratch/golden -> tests/fixtures/golden).
+//
 // Usage:
 //   CLAUDE_AGENT_API_KEY=... pnpm run capture:tool-golden
 //   GOLDEN_MODEL=... GOLDEN_DIR=... pnpm run capture:tool-golden -- --only Bash
@@ -25,9 +30,9 @@
 //   (the fixture workspace under .zap/scratch/golden-work is deleted after a successful run)
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { execFileSync } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { buildFixture } from './golden-fixture.mjs';
 
 const ONLY = argValue('--only');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -51,75 +56,12 @@ function argValue(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Fixtures: a disposable git repo exercising read/edit/write/grep/glob/bash in
-// one realistic tree. Lives under .zap/scratch (already gitignored).
-// ---------------------------------------------------------------------------
-
-function git(...args) {
-	execFileSync('git', args, { cwd: WORK_DIR, stdio: 'pipe' });
-}
-
-async function buildWorkspace() {
-	await mkdir(WORK_DIR, { recursive: true });
-	await rm(WORK_DIR, { recursive: true, force: true });
-	await mkdir(join(WORK_DIR, 'src'), { recursive: true });
-	await mkdir(join(WORK_DIR, 'node_modules', 'dep'), { recursive: true });
-
-	const sample = [
-		'alpha one',
-		'beta two',
-		'gamma three',
-		'delta four',
-		'epsilon five',
-		'zeta six',
-		'eta seven',
-		'theta eight',
-		'iota nine',
-		'kappa ten',
-		'lambda eleven',
-		'mu twelve',
-		'nu thirteen',
-		'xi fourteen',
-		'omicron fifteen',
-		'pi sixteen',
-		'rho seventeen',
-		'sigma eighteen',
-		'tau nineteen',
-		'upsilon twenty',
-		'phi twenty one',
-		'chi twenty two',
-		'psi twenty three',
-		'omega twenty four'
-	].join('\n');
-
-	await writeFile(join(WORK_DIR, 'sample.txt'), sample + '\n');
-	await writeFile(
-		join(WORK_DIR, 'src', 'app.ts'),
-		'import { helper } from "./util";\n\nexport function main() {\n\tconst value = helper("golden");\n\treturn value;\n}\n'
-	);
-	await writeFile(
-		join(WORK_DIR, 'src', 'util.ts'),
-		'export function helper(name: string): string {\n\treturn `hello ${name}`;\n}\n'
-	);
-	// Ignored tree, so Glob ignore semantics are observable.
-	await writeFile(join(WORK_DIR, 'node_modules', 'dep', 'index.js'), 'module.exports = 1;\n');
-	await writeFile(join(WORK_DIR, '.gitignore'), 'node_modules/\n');
-
-	// Large enough to exercise Read auto-pagination and Bash truncation.
-	const big = Array.from({ length: 40_000 }, (_, i) => `line ${i + 1} of big file`).join('\n');
-	await writeFile(join(WORK_DIR, 'big.txt'), big + '\n');
-
-	git('init', '-q');
-	git('config', 'user.email', 'golden@test.invalid');
-	git('config', 'user.name', 'Golden Capture');
-	git('add', '-A');
-	git('commit', '-q', '-m', 'fixtures');
-}
-
-// ---------------------------------------------------------------------------
-// Cases. Each is one forced tool call. args are supplied verbatim so the model
-// has nothing to decide; the CLI's real pipeline (rendering, structured output,
-// truncation, permission bypass) is what we are capturing.
+// Cases. Each is one forced tool call. Args are relative to WORK_DIR (the SDK
+// runs with cwd=WORK_DIR) so captured text is portable across machines; the
+// only remaining machine-specific bit is the Bash persisted-output path, which
+// the conformance suite normalizes. `warmUp` prepends setup calls the CLI
+// requires (Edit/Write demand a prior Read in the same session); those results
+// are discarded — only the named tool's tool_result is captured.
 // ---------------------------------------------------------------------------
 
 const CASES = [
@@ -135,72 +77,54 @@ const CASES = [
 	{ tool: 'Bash', name: 'git_status', args: { command: 'git status --porcelain' } },
 
 	// Read
-	{ tool: 'Read', name: 'small', args: { file_path: join(WORK_DIR, 'sample.txt') } },
-	{
-		tool: 'Read',
-		name: 'range',
-		args: { file_path: join(WORK_DIR, 'sample.txt'), offset: 10, limit: 5 }
-	},
-	{ tool: 'Read', name: 'large', args: { file_path: join(WORK_DIR, 'big.txt') } },
-	{ tool: 'Read', name: 'missing', args: { file_path: join(WORK_DIR, 'nope.txt') } },
+	{ tool: 'Read', name: 'small', args: { file_path: 'sample.txt' } },
+	{ tool: 'Read', name: 'range', args: { file_path: 'sample.txt', offset: 10, limit: 5 } },
+	{ tool: 'Read', name: 'large', args: { file_path: 'big.txt' } },
+	{ tool: 'Read', name: 'missing', args: { file_path: 'nope.txt' } },
 
-	// Edit
+	// Edit (SDK requires the file be Read first in the same session)
 	{
 		tool: 'Edit',
 		name: 'replace',
-		args: {
-			file_path: join(WORK_DIR, 'sample.txt'),
-			old_string: 'gamma three',
-			new_string: 'gamma THREE'
-		}
+		warmUp: [{ tool: 'Read', args: { file_path: 'sample.txt' } }],
+		args: { file_path: 'sample.txt', old_string: 'gamma three', new_string: 'gamma THREE' }
 	},
 	{
 		tool: 'Edit',
 		name: 'replace_all',
-		args: {
-			file_path: join(WORK_DIR, 'sample.txt'),
-			old_string: 'line',
-			new_string: 'LINE',
-			replace_all: true
-		}
+		warmUp: [{ tool: 'Read', args: { file_path: 'sample.txt' } }],
+		args: { file_path: 'sample.txt', old_string: 'twenty', new_string: 'TWENTY', replace_all: true }
 	},
 	{
 		tool: 'Edit',
 		name: 'not_found',
-		args: {
-			file_path: join(WORK_DIR, 'sample.txt'),
-			old_string: 'does not exist anywhere',
-			new_string: 'nope'
-		}
+		warmUp: [{ tool: 'Read', args: { file_path: 'sample.txt' } }],
+		args: { file_path: 'sample.txt', old_string: 'does not exist anywhere', new_string: 'nope' }
 	},
 	{
 		tool: 'Edit',
 		name: 'git_diff',
+		warmUp: [{ tool: 'Read', args: { file_path: 'src/app.ts' } }],
 		args: {
-			file_path: join(WORK_DIR, 'src', 'app.ts'),
+			file_path: 'src/app.ts',
 			old_string: 'return value;',
 			new_string: 'return value.toUpperCase();'
 		}
 	},
 
 	// Write
-	{
-		tool: 'Write',
-		name: 'create',
-		args: { file_path: join(WORK_DIR, 'new.txt'), content: 'brand new\n' }
-	},
+	{ tool: 'Write', name: 'create', args: { file_path: 'new.txt', content: 'brand new\n' } },
 	{
 		tool: 'Write',
 		name: 'overwrite',
-		args: { file_path: join(WORK_DIR, 'sample.txt'), content: 'completely replaced\n' }
+		warmUp: [{ tool: 'Read', args: { file_path: 'sample.txt' } }],
+		args: { file_path: 'sample.txt', content: 'completely replaced\n' }
 	},
 	{
 		tool: 'Write',
 		name: 'git_diff',
-		args: {
-			file_path: join(WORK_DIR, 'src', 'util.ts'),
-			content: 'export const util = "v2";\n'
-		}
+		warmUp: [{ tool: 'Read', args: { file_path: 'src/util.ts' } }],
+		args: { file_path: 'src/util.ts', content: 'export const util = "v2";\n' }
 	},
 
 	// Glob
@@ -209,11 +133,7 @@ const CASES = [
 	{ tool: 'Glob', name: 'ignored', args: { pattern: '**/*.js' } },
 
 	// Grep
-	{
-		tool: 'Grep',
-		name: 'content',
-		args: { pattern: 'line|one', path: join(WORK_DIR, 'sample.txt') }
-	},
+	{ tool: 'Grep', name: 'content', args: { pattern: 'line|one', path: 'sample.txt' } },
 	{
 		tool: 'Grep',
 		name: 'files',
@@ -222,23 +142,17 @@ const CASES = [
 	{
 		tool: 'Grep',
 		name: 'count',
-		args: { pattern: 'line', output_mode: 'count', path: join(WORK_DIR, 'sample.txt') }
+		args: { pattern: 'line', output_mode: 'count', path: 'sample.txt' }
 	},
-	{
-		tool: 'Grep',
-		name: 'context',
-		args: { pattern: 'zeta', path: join(WORK_DIR, 'sample.txt'), context: 2 }
-	},
-	{
-		tool: 'Grep',
-		name: 'head_limit',
-		args: { pattern: '.', head_limit: 5, path: join(WORK_DIR, 'sample.txt') }
-	}
+	{ tool: 'Grep', name: 'context', args: { pattern: 'zeta', path: 'sample.txt', context: 2 } },
+	{ tool: 'Grep', name: 'head_limit', args: { pattern: '.', head_limit: 5, path: 'sample.txt' } }
 ];
 
 // ---------------------------------------------------------------------------
 // Capture. Mirrors the portal's Claude-agent provider extraction so the golden
-// text is exactly what the portal would feed the model.
+// text is exactly what the portal would feed the model. Only the named tool's
+// tool_result is kept — warm-up calls (Read-before-Edit) and any stray calls
+// the model makes to a tool the CLI has not enabled are discarded.
 // ---------------------------------------------------------------------------
 
 function toolResultText(content) {
@@ -269,11 +183,24 @@ function env() {
 	};
 }
 
-async function captureCase(workDir, { tool, args }) {
-	const prompt = `Use the ${tool} tool with exactly the following JSON arguments:\n${JSON.stringify(args)}\n\nMake the tool call, then answer only "done".`;
+async function captureCase(workDir, { tool, args, warmUp = [] }) {
+	const prompt = [
+		...warmUp.map((w) => `First use the ${w.tool} tool to read: ${JSON.stringify(w.args)}`),
+		`Then use the ${tool} tool with EXACTLY these arguments — do not modify, resolve, or add anything:\n${JSON.stringify(args)}`,
+		`Call it exactly once, do not call any other tool after it, then answer only "done".`
+	].join('\n\n');
 	const abortController = new AbortController();
 	const timer = setTimeout(() => abortController.abort(), 120_000);
-	const result = { blocks: [], text: null, isError: null, toolUseId: null, error: null };
+	const result = {
+		blocks: null,
+		text: null,
+		isError: null,
+		toolUseId: null,
+		actualArgs: null,
+		error: null
+	};
+	const toolNameById = new Map();
+	const toolInputById = new Map();
 	try {
 		const response = query({
 			prompt,
@@ -281,7 +208,7 @@ async function captureCase(workDir, { tool, args }) {
 				cwd: workDir,
 				env: env(),
 				model: MODEL,
-				tools: [tool],
+				tools: [...new Set([tool, ...warmUp.map((w) => w.tool)])],
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
 				maxTurns: 3,
@@ -289,10 +216,24 @@ async function captureCase(workDir, { tool, args }) {
 			}
 		});
 		for await (const message of response) {
+			if (message.type === 'assistant' && Array.isArray(message.message.content)) {
+				for (const block of message.message.content) {
+					if (block.type === 'tool_use') {
+						toolNameById.set(block.id, block.name);
+						toolInputById.set(block.id, block.input);
+					}
+				}
+			}
 			if (message.type === 'user' && Array.isArray(message.message.content)) {
 				for (const block of message.message.content) {
 					if (block.type !== 'tool_result') continue;
+					if (toolNameById.get(block.tool_use_id) !== tool) continue;
+					// Keep the FIRST result from the named tool — the call that
+					// directly answers the forced-args prompt. Later calls (model
+					// deliberation) would pollute the golden.
+					if (result.toolUseId !== null) continue;
 					result.toolUseId = block.tool_use_id;
+					result.actualArgs = toolInputById.get(block.tool_use_id) ?? null;
 					result.isError = block.is_error === true;
 					result.text = toolResultText(block.content);
 					result.blocks = block.content;
@@ -310,6 +251,17 @@ async function captureCase(workDir, { tool, args }) {
 	return result;
 }
 
+// True only when every key in `expected` is present in `actual` with an equal
+// value. The model may add optional fields the schema allows (Bash
+// `description`, Edit `replace_all: false`) without changing the call's
+// meaning; those extras must not count as drift.
+function argsSubset(actual, expected) {
+	if (actual === null || typeof actual !== 'object') return false;
+	return Object.entries(expected).every(
+		([key, value]) => JSON.stringify(actual[key]) === JSON.stringify(value)
+	);
+}
+
 async function main() {
 	if (DRY_RUN) {
 		for (const c of CASES) {
@@ -319,11 +271,11 @@ async function main() {
 		console.log(`\n${ONLY ? CASES.filter((c) => c.tool === ONLY).length : CASES.length} case(s).`);
 		return;
 	}
-	await buildWorkspace();
 	const manifest = {
 		sdkVersion: SDK_VERSION,
 		claudeCodeVersion: '2.1.224',
 		model: MODEL,
+		fixtureRoot: WORK_DIR,
 		capturedAt: new Date().toISOString(),
 		cases: []
 	};
@@ -334,6 +286,9 @@ async function main() {
 		const outDir = join(OUT_DIR, c.tool);
 		await mkdir(outDir, { recursive: true });
 		process.stdout.write(`${c.tool}/${c.name} ... `);
+		// Each case runs against a pristine fixture: earlier cases mutate files
+		// (Edit/Write) and would otherwise change what later cases observe.
+		await buildFixture(WORK_DIR);
 		const r = await captureCase(WORK_DIR, c);
 		if (r.text === null) {
 			failed++;
@@ -343,10 +298,17 @@ async function main() {
 		}
 		ran++;
 		await writeFile(join(outDir, `${c.name}.text`), r.text);
+		const drifted = !argsSubset(r.actualArgs, c.args);
 		await writeFile(
 			join(outDir, `${c.name}.json`),
 			JSON.stringify(
-				{ args: c.args, toolUseId: r.toolUseId, isError: r.isError, content: r.blocks },
+				{
+					args: c.args,
+					actualArgs: r.actualArgs,
+					toolUseId: r.toolUseId,
+					isError: r.isError,
+					content: r.blocks
+				},
 				null,
 				2
 			)
@@ -357,7 +319,9 @@ async function main() {
 			toolUseId: r.toolUseId,
 			isError: r.isError
 		});
-		console.log(r.isError ? `error (${r.text.length} bytes)` : `${r.text.length} bytes`);
+		console.log(
+			`${r.isError ? `error (${r.text.length} bytes)` : `${r.text.length} bytes`}${drifted ? ' [drifted args]' : ''}`
+		);
 	}
 	await writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
 	console.log(`\n${ran} captured, ${failed} failed → ${OUT_DIR}`);

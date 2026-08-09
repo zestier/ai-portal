@@ -1,0 +1,153 @@
+{
+  "sdkVersion": "0.3.224",
+  "claudeCodeVersion": "2.1.224",
+  "model": "claude-sonnet-4-6",
+  "fixtureRoot": "/data/worktrees/01KZ87DDT0GH25J7HZ3DMRPAHQ/01KZJ1WEJ8WKZSC69KKT4E0N4K/.zap/scratch/golden-work",
+  "capturedAt": "2026-08-09T01:44:57.389Z",
+  "cases": [
+    {
+      "tool": "Bash",
+      "name": "hello",
+      "toolUseId": "call_00_ET_PZpCfE6IddawqyeticiM2552",
+      "isError": false
+    },
+    {
+      "tool": "Bash",
+      "name": "stderr",
+      "toolUseId": "call_00_MKFsJvg9Mze9MinonOUr8349",
+      "isError": false
+    },
+    {
+      "tool": "Bash",
+      "name": "nonzero",
+      "toolUseId": "call_00_r9NmHgmsqHRt5Fu6NT3u8706",
+      "isError": true
+    },
+    {
+      "tool": "Bash",
+      "name": "large",
+      "toolUseId": "call_00_cs5olpw3KNiLp8G78SuH0180",
+      "isError": false
+    },
+    {
+      "tool": "Bash",
+      "name": "git_status",
+      "toolUseId": "call_00_WU2p8kU4FD6Ex4awVjh58868",
+      "isError": false
+    },
+    {
+      "tool": "Read",
+      "name": "small",
+      "toolUseId": "call_00_9loOgwzOfd6bXsar9QbZ1812",
+      "isError": false
+    },
+    {
+      "tool": "Read",
+      "name": "range",
+      "toolUseId": "call_00_ET_pfwJlP0YF35N3PQUwxKw2885",
+      "isError": false
+    },
+    {
+      "tool": "Read",
+      "name": "large",
+      "toolUseId": "call_00_ET_2Ir55oks3khNIjpetmaX6067",
+      "isError": true
+    },
+    {
+      "tool": "Read",
+      "name": "missing",
+      "toolUseId": "call_00_ET_hgbOgc2Q8yyfCpG7muFn4174",
+      "isError": true
+    },
+    {
+      "tool": "Edit",
+      "name": "replace",
+      "toolUseId": "call_00_ET_oS71oZgTajoZwUbn3Rgy7881",
+      "isError": false
+    },
+    {
+      "tool": "Edit",
+      "name": "replace_all",
+      "toolUseId": "call_00_ET_sDqmPhWfqmQW8AotBGWI9369",
+      "isError": false
+    },
+    {
+      "tool": "Edit",
+      "name": "not_found",
+      "toolUseId": "call_00_SKByZK0JjEQyp2T75cBi9065",
+      "isError": true
+    },
+    {
+      "tool": "Edit",
+      "name": "git_diff",
+      "toolUseId": "call_00_ET_lynfPghxUsRy1RMJAPMv8534",
+      "isError": false
+    },
+    {
+      "tool": "Write",
+      "name": "create",
+      "toolUseId": "call_00_XMgnZUDDSGJJbhOL96Om4739",
+      "isError": false
+    },
+    {
+      "tool": "Write",
+      "name": "overwrite",
+      "toolUseId": "call_00_ET_itbZIb6IbY6kkj2Bramc1897",
+      "isError": false
+    },
+    {
+      "tool": "Write",
+      "name": "git_diff",
+      "toolUseId": "call_00_ET_5RY9EafiF1UxgNmeNOzA0991",
+      "isError": false
+    },
+    {
+      "tool": "Glob",
+      "name": "basic",
+      "toolUseId": "call_00_Feabkn93Xx6SpN0W1ZIH4252",
+      "isError": false
+    },
+    {
+      "tool": "Glob",
+      "name": "none",
+      "toolUseId": "call_00_ET_tgDSEO87P93OBh184y1Z1301",
+      "isError": false
+    },
+    {
+      "tool": "Glob",
+      "name": "ignored",
+      "toolUseId": "call_00_ET_r0VLkd7cgbblQtRzoZWf4339",
+      "isError": false
+    },
+    {
+      "tool": "Grep",
+      "name": "content",
+      "toolUseId": "call_00_3IK2yO3t1qvTobNasuKx1491",
+      "isError": false
+    },
+    {
+      "tool": "Grep",
+      "name": "files",
+      "toolUseId": "call_00_a3fxNc9SrUXqbjh8xOOX6755",
+      "isError": false
+    },
+    {
+      "tool": "Grep",
+      "name": "count",
+      "toolUseId": "call_00_ET_7x1f64kP2YQUjCkZeNu17551",
+      "isError": false
+    },
+    {
+      "tool": "Grep",
+      "name": "context",
+      "toolUseId": "call_00_doXrqnbJ2VhAUVvKcEk83992",
+      "isError": false
+    },
+    {
+      "tool": "Grep",
+      "name": "head_limit",
+      "toolUseId": "call_00_6ny3pAwCeeg8c9lg0lJX9600",
+      "isError": false
+    }
+  ]
+}

@@ -13,3 +13,6 @@ package-lock.json
 .devcontainer/devcontainer-lock.json
 docs/
 .zap/scratch/
+
+# Golden corpus: captured SDK output, kept byte-verbatim (reformat on re-capture).
+tests/fixtures/golden/

@@ -1,0 +1,15 @@
+{
+  "args": {
+    "pattern": "zeta",
+    "path": "sample.txt",
+    "context": 2
+  },
+  "actualArgs": {
+    "pattern": "zeta",
+    "path": "sample.txt",
+    "context": 2
+  },
+  "toolUseId": "call_00_doXrqnbJ2VhAUVvKcEk83992",
+  "isError": false,
+  "content": "Found 1 file\nsample.txt"
+}

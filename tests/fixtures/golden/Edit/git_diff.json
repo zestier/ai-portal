@@ -1,0 +1,16 @@
+{
+  "args": {
+    "file_path": "src/app.ts",
+    "old_string": "return value;",
+    "new_string": "return value.toUpperCase();"
+  },
+  "actualArgs": {
+    "replace_all": false,
+    "file_path": "src/app.ts",
+    "old_string": "return value;",
+    "new_string": "return value.toUpperCase();"
+  },
+  "toolUseId": "call_00_ET_lynfPghxUsRy1RMJAPMv8534",
+  "isError": false,
+  "content": "The file src/app.ts has been updated successfully. (file state is current in your context — no need to Read it back)"
+}
