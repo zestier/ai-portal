@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { discoverRepoPlugins } from '../src/lib/server/providers/claude-agent-repo-plugins';
@@ -55,5 +56,18 @@ describe('discoverRepoPlugins', () => {
 		writeFileSync(join(unnamed, '.claude-plugin', 'plugin.json'), JSON.stringify({}));
 
 		await expect(discoverRepoPlugins(root)).resolves.toEqual([]);
+	});
+
+	it('discovers the repo-committed zap-skills plugin and its skills in this checkout', async () => {
+		// Real-repo assertion: if the shipped plugin folder is renamed or a skill
+		// is dropped, this fails instead of silently unloading the skills.
+		const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+		const paths = await discoverRepoPlugins(repoRoot);
+		expect(paths).toContain(join(repoRoot, 'agent-plugins', 'zap-skills'));
+
+		const skillsRoot = join(repoRoot, 'agent-plugins', 'zap-skills', '.claude', 'skills');
+		for (const skill of ['pnpm-workflows', 'isolated-dev', 'browser-testing']) {
+			expect(existsSync(join(skillsRoot, skill, 'SKILL.md'))).toBe(true);
+		}
 	});
 });

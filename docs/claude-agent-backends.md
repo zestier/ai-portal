@@ -91,6 +91,26 @@ keep MCP discovery enabled so plugins can bring their own `.mcp.json` or
 manifest `mcpServers` (those servers run outside the portal permission
 gateway, matching the trusted-operator trust model).
 
+### Repo skills (`agent-plugins/zap-skills/`)
+
+The repo ships its own skill plugin at `agent-plugins/zap-skills/`, which loads
+into every claude-agent session like any other `agent-plugins/` folder. It
+documents the procedural knowledge that used to live only in AGENTS.md prose so
+the running agent can pull it in on demand:
+
+- `pnpm-workflows` — the package-script-first command set (`pnpm format`,
+  `pnpm lint`, `pnpm check`, `pnpm test`, `pnpm run verify`) and why raw
+  `pnpm exec`/`npx` is the fallback.
+- `isolated-dev` — running exploratory work against `pnpm dev:isolated` so
+  scratch conversations never pollute the live `./data` DB, plus read-only live
+  DB inspection.
+- `browser-testing` — driving a real browser with the Playwright CLI in Firefox,
+  including the screenshot-iterate loop for UI changes.
+
+Skills live at `.claude/skills/<name>/SKILL.md` inside the plugin folder; no
+`skills` filter is set on the SDK options, so every discovered skill is loaded.
+AGENTS.md links to these from the prose sections they mirror.
+
 ## Current differences
 
 The provider streams text and reasoning, normalizes tool calls and results,
