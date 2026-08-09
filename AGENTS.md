@@ -7,7 +7,7 @@ Notes for AI coding agents (Copilot CLI, Claude, etc.) working in this repo.
 Repo-local skills ship in `agent-plugins/zap-skills/` (a Claude Agent SDK
 plugin). The claude-agent provider loads every `agent-plugins/` subfolder that
 carries the SDK plugin manifest, so these skills are invocable in a running
-agent, not just prose here: `pnpm-workflows`, `isolated-dev`, and
+agent, not just prose here: `repo-toolchain` and
 `browser-testing` mirror the sections below. See
 `docs/claude-agent-backends.md` for the load path.
 

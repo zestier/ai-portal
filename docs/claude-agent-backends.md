@@ -98,16 +98,17 @@ into every claude-agent session like any other `agent-plugins/` folder. It
 documents the procedural knowledge that used to live only in AGENTS.md prose so
 the running agent can pull it in on demand:
 
-- `pnpm-workflows` — the package-script-first command set (`pnpm format`,
-  `pnpm lint`, `pnpm check`, `pnpm test`, `pnpm run verify`) and why raw
-  `pnpm exec`/`npx` is the fallback.
-- `isolated-dev` — running exploratory work against `pnpm dev:isolated` so
-  scratch conversations never pollute the live `./data` DB, plus read-only live
-  DB inspection.
+- `repo-toolchain` — how to run, build, test, and serve the repo correctly:
+  the package-script-first command set (`pnpm format`, `pnpm lint`,
+  `pnpm check`, `pnpm test`, `pnpm run verify`), `pnpm dev:isolated` for
+  exploratory work so scratch conversations never pollute the live `./data`
+  DB, and exact-pinning for ABI-bound deps.
 - `browser-testing` — driving a real browser with the Playwright CLI in Firefox,
   including the screenshot-iterate loop for UI changes.
 
-Skills live at `.claude/skills/<name>/SKILL.md` inside the plugin folder; no
+Skills live at `skills/<name>/SKILL.md` inside the plugin folder (flat `skills/`
+dir, not `.claude/skills/` — that would duplicate them into any harness that
+scans `.claude/`), matching the pinned `caveman`/`ponytail` plugin layout; no
 `skills` filter is set on the SDK options, so every discovered skill is loaded.
 AGENTS.md links to these from the prose sections they mirror.
 

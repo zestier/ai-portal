@@ -65,8 +65,8 @@ describe('discoverRepoPlugins', () => {
 		const paths = await discoverRepoPlugins(repoRoot);
 		expect(paths).toContain(join(repoRoot, 'agent-plugins', 'zap-skills'));
 
-		const skillsRoot = join(repoRoot, 'agent-plugins', 'zap-skills', '.claude', 'skills');
-		for (const skill of ['pnpm-workflows', 'isolated-dev', 'browser-testing']) {
+		const skillsRoot = join(repoRoot, 'agent-plugins', 'zap-skills', 'skills');
+		for (const skill of ['repo-toolchain', 'browser-testing']) {
 			expect(existsSync(join(skillsRoot, skill, 'SKILL.md'))).toBe(true);
 		}
 	});
