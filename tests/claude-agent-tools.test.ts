@@ -253,7 +253,10 @@ describe('buildClaudePortalTools', () => {
 			'permission_capabilities',
 			// `grep` is rerouted to the portal implementation via toolAliases
 			// ({ Grep: 'mcp__portal__grep' }), so it is exposed, not omitted.
-			'grep'
+			'grep',
+			// `glob` mirrors the SDK Glob via toolAliases ({ Glob: 'mcp__portal__glob' }),
+			// so it is exposed, not omitted.
+			'glob'
 		];
 		for (const name of kept) {
 			expect(names.has(name)).toBe(true);

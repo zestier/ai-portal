@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { relative, resolve } from 'node:path';
 import { ripgrep } from 'ripgrep';
 import { z } from 'zod';
@@ -261,6 +262,84 @@ export async function renderGrepModelText(
 	return renderGrepResult(await searchGrep(cwd, target, parsed));
 }
 
+const MAX_GLOB_FILES = 100;
+
+// Mirrors the Agent SDK's GlobInput so the aliased SDK `Glob` tool (which sends
+// these field names verbatim) parses cleanly.
+const GlobArgs = z
+	.object({
+		pattern: z.string().min(1).max(4096),
+		path: z.string().min(1).max(4096).optional(),
+		worktree: WorktreeSelector
+	})
+	.strict();
+
+type GlobArgsParsed = z.infer<typeof GlobArgs>;
+
+// The portal's projection of the SDK GlobOutput contract. `totalMatches` is the
+// exact pre-cap count and `countIsComplete` is always true because rg lists
+// every match up front (the 100-file bound is applied here, not inside rg).
+export interface GlobResult {
+	durationMs: number;
+	numFiles: number;
+	filenames: string[];
+	truncated: boolean;
+	totalMatches: number;
+	countIsComplete: boolean;
+}
+
+// The text a model sees for a GlobOutput, mirroring the SDK's rendering so the
+// golden conformance suite can compare byte-for-byte.
+export function renderGlobResult(result: GlobResult): string {
+	if (result.filenames.length === 0) return 'No files found';
+	return result.filenames.join('\n');
+}
+
+async function searchGlob(cwd: string, target: string, args: GlobArgsParsed): Promise<GlobResult> {
+	const started = performance.now();
+	// The SDK's Glob walks the filesystem without consulting ignore files — the
+	// `Glob/ignored` golden lists a gitignored node_modules file — so `--no-ignore`
+	// (and `--hidden`) mirror that. Sorted output is a deliberate divergence from
+	// the SDK's filesystem-dependent traversal order, kept for determinism the
+	// way list_files sorts.
+	const rgArgs = ['--files', '--hidden', '--no-ignore', '--glob', args.pattern, target];
+	const { code, stdout, stderr } = await ripgrep(rgArgs, {
+		buffer: true,
+		nodeWasi: false,
+		preopens: { '.': cwd }
+	});
+	if (code !== 0 && code !== 1) {
+		throw new Error(stderr || stdout || 'glob failed');
+	}
+	const filenames = stdout
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((p) => relativePath(cwd, p))
+		.sort();
+	const totalMatches = filenames.length;
+	return {
+		durationMs: Math.round(performance.now() - started),
+		numFiles: Math.min(totalMatches, MAX_GLOB_FILES),
+		filenames: filenames.slice(0, MAX_GLOB_FILES),
+		truncated: totalMatches > MAX_GLOB_FILES,
+		totalMatches,
+		countIsComplete: true
+	};
+}
+
+// Run a Glob call against a plain workspace directory and render its model text
+// (used by the golden conformance registry; the tool handler reuses
+// `searchGlob` + `renderGlobResult`).
+export async function renderGlobModelText(
+	args: Record<string, unknown>,
+	cwd: string
+): Promise<string> {
+	const parsed = GlobArgs.parse(args);
+	const target = resolveTarget(cwd, parsed.path);
+	if (!target) throw new Error('path must resolve inside the workspace');
+	return renderGlobResult(await searchGlob(cwd, target, parsed));
+}
+
 export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(workspaceRoot, ctx);
 	const permissionRoot = (worktree: string | undefined) =>
@@ -409,6 +488,49 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 				} catch (error) {
 					return err(error instanceof Error ? error.message : String(error), {
 						code: 'grep_failed'
+					});
+				}
+			}
+		},
+		{
+			name: 'glob',
+			description:
+				'List files matching a glob pattern. Mirrors the SDK Glob contract: pattern is a ripgrep glob, path optionally limits the search root (defaults to the workspace root). Does not respect .gitignore (matching the SDK Glob); use list_files for ignore-aware listings. Returns workspace-relative paths, capped at 100 files. Searches stay inside the selected workspace or held worktree.',
+			argsSchema: GlobArgs,
+			parameters: {
+				type: 'object',
+				properties: {
+					pattern: { type: 'string', description: 'The glob pattern to match files against.' },
+					path: {
+						type: 'string',
+						description: 'Optional workspace-relative file or directory to search in.'
+					},
+					worktree: WORKTREE_PARAM
+				},
+				required: ['pattern'],
+				additionalProperties: false
+			},
+			derivePermissionRequest(args): ToolPermissionRequest | null {
+				const parsed = GlobArgs.safeParse(args);
+				if (!parsed.success) return null;
+				const root = permissionRoot(parsed.data.worktree);
+				const path = root && resolveTarget(root, parsed.data.path);
+				return path ? { permissionKind: 'read', path } : null;
+			},
+			async handler(args) {
+				const parsed = GlobArgs.parse(args);
+				const tree = treeFor(parsed.worktree);
+				if (tree.error) return tree.error;
+				const target = resolveTarget(tree.cwd, parsed.path);
+				if (!target) return err('path must resolve inside the workspace', { code: 'invalid_path' });
+				try {
+					const result = await searchGlob(tree.cwd, target, parsed);
+					return ok(result, 'Search completed.', {
+						views: [{ type: 'text', text: renderGlobResult(result) }]
+					});
+				} catch (error) {
+					return err(error instanceof Error ? error.message : String(error), {
+						code: 'glob_failed'
 					});
 				}
 			}
