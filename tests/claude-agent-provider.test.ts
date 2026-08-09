@@ -223,7 +223,11 @@ describe('claudeAgentProvider', () => {
 		expect(queryMock.mock.calls[0][0].options).toMatchObject({
 			allowedTools: ['Agent'],
 			tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent'],
-			toolAliases: { Glob: 'mcp__portal__glob', Grep: 'mcp__portal__grep' }
+			toolAliases: {
+				Glob: 'mcp__portal__glob',
+				Grep: 'mcp__portal__grep',
+				Write: 'mcp__portal__write'
+			}
 		});
 		expect(queryMock.mock.calls[0][0].options.canUseTool).toBeUndefined();
 		expect(queryMock.mock.calls[0][0].options.mcpServers.portal.type).toBe('sdk');

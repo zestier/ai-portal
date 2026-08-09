@@ -230,14 +230,7 @@ describe('buildClaudePortalTools', () => {
 
 	it('omits portal tools that duplicate the Agent SDK built-in tools', () => {
 		const names = new Set(buildPortalTools().map(({ name }) => name));
-		const duplicates = [
-			'shell_exec',
-			'read_file',
-			'list_files',
-			'create_file',
-			'replace_lines',
-			'replace_text'
-		];
+		const duplicates = ['shell_exec', 'read_file', 'list_files', 'replace_lines', 'replace_text'];
 		for (const name of duplicates) {
 			expect(names.has(name)).toBe(false);
 		}
@@ -256,7 +249,10 @@ describe('buildClaudePortalTools', () => {
 			'grep',
 			// `glob` mirrors the SDK Glob via toolAliases ({ Glob: 'mcp__portal__glob' }),
 			// so it is exposed, not omitted.
-			'glob'
+			'glob',
+			// `write` mirrors the SDK Write via toolAliases ({ Write: 'mcp__portal__write' }),
+			// so it is exposed, not omitted.
+			'write'
 		];
 		for (const name of kept) {
 			expect(names.has(name)).toBe(true);

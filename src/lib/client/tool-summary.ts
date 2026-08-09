@@ -128,7 +128,7 @@ function commandSummary(args: Record<string, unknown>): string | null {
 }
 
 function pathSummary(args: Record<string, unknown>): string | null {
-	return str(args.path) ?? str(args.file) ?? str(args.filename);
+	return str(args.path) ?? str(args.file) ?? str(args.filename) ?? str(args.file_path);
 }
 
 function readPathSummary(args: Record<string, unknown>): string | null {

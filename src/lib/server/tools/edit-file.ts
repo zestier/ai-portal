@@ -1,6 +1,10 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { createTwoFilesPatch, structuredPatch } from 'diff';
+import type { Hunk } from 'diff';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { z } from 'zod';
+import { isGitRepo } from '../git';
+import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { err, ok, type PortalTool, type ToolPermissionRequest } from './types';
 import { resolveAbsoluteTarget, resolveWorkspaceTarget } from './filesystem';
 import {
@@ -14,9 +18,13 @@ import {
 const MAX_EDIT_FILE_BYTES = 5_000_000;
 const MAX_REPLACEMENTS = 1_000;
 
-const CreateFileArgs = z
+// Mirrors the SDK WriteInput so the aliased SDK `Write` tool (which sends
+// `file_path`/`content` verbatim) parses cleanly. `file_path` is absolute per
+// the SDK contract; the resolver below also accepts workspace-relative paths so
+// tests and golden replays (which pass relative paths) work unchanged.
+const WriteArgs = z
 	.object({
-		path: z.string().min(1).max(4096),
+		file_path: z.string().min(1).max(4096),
 		content: z.string().max(MAX_EDIT_FILE_BYTES),
 		worktree: WorktreeSelector
 	})
@@ -85,7 +93,7 @@ function permissionRequest(
 	workspaceRoot: string,
 	ctx: WorktreeToolContext | undefined,
 	args: unknown,
-	schema: typeof CreateFileArgs | typeof ReplaceLinesArgs | typeof ReplaceTextArgs
+	schema: typeof ReplaceLinesArgs | typeof ReplaceTextArgs
 ): ToolPermissionRequest | null {
 	const parsed = schema.safeParse(args);
 	if (!parsed.success) return null;
@@ -94,48 +102,229 @@ function permissionRequest(
 	return path ? { permissionKind: 'write', path } : null;
 }
 
+// The portal's projection of the SDK FileWriteOutput contract (sdk-tools.d.ts),
+// computed from pre/post content so the structured envelope matches what the
+// SDK would emit for the same call.
+export interface FileWriteStructuredPatch {
+	oldStart: number;
+	oldLines: number;
+	newStart: number;
+	newLines: number;
+	lines: string[];
+}
+
+export interface FileWriteGitDiff {
+	filename: string;
+	status: 'modified' | 'added';
+	additions: number;
+	deletions: number;
+	changes: number;
+	patch: string;
+}
+
+export interface FileWriteOutput {
+	type: 'create' | 'update';
+	filePath: string;
+	content: string;
+	structuredPatch: FileWriteStructuredPatch[];
+	originalFile: string | null;
+	gitDiff?: FileWriteGitDiff;
+	userModified?: boolean;
+}
+
+// Resolve a Write `file_path` to an absolute, symlink-resolved target inside
+// the workspace. Accepts both the SDK contract's absolute paths and
+// workspace-relative paths (as the golden capture used), rejecting any `..`
+// escape that resolves outside the root.
+function resolveWriteTarget(
+	workspaceRoot: string,
+	rawPath: string
+): { ok: true; abs: string; rel: string } | { ok: false; message: string } {
+	if (rawPath.includes('\0')) {
+		return { ok: false, message: 'path must not contain NUL characters' };
+	}
+	const root = resolveWithParentFallback(resolve(workspaceRoot));
+	if (root === null) {
+		return { ok: false, message: 'could not resolve the workspace root' };
+	}
+	const abs = resolveWithParentFallback(
+		isAbsolute(rawPath) ? resolve(rawPath) : resolve(root, rawPath)
+	);
+	if (abs === null) {
+		return { ok: false, message: `could not resolve path: ${rawPath}` };
+	}
+	if (!isPathInWorkspace(abs, root)) {
+		return { ok: false, message: `path escapes the workspace: ${rawPath}` };
+	}
+	return { ok: true, abs, rel: abs === root ? '.' : relative(root, abs) };
+}
+
+async function readExisting(abs: string): Promise<string | null> {
+	const fileStat = await stat(abs).catch(() => null);
+	if (fileStat === null) return null;
+	if (!fileStat.isFile()) throw new Error('path is not a file');
+	if (fileStat.size > MAX_EDIT_FILE_BYTES) {
+		throw new Error(`file exceeds the ${MAX_EDIT_FILE_BYTES} byte edit limit`);
+	}
+	const content = await readFile(abs, 'utf8');
+	if (content.includes('\0')) throw new Error('file contains null bytes and is likely binary');
+	return content;
+}
+
+// The text a model sees for a FileWriteOutput, mirroring the SDK's rendering so
+// the golden conformance suite can compare byte-for-byte. The path is echoed
+// verbatim from the call, matching the SDK (which renders the input path as
+// given).
+function writeConfirmation(type: 'create' | 'update', rawFilePath: string): string {
+	return type === 'create'
+		? `File created successfully at: ${rawFilePath} (file state is current in your context — no need to Read it back)`
+		: `The file ${rawFilePath} has been updated successfully. (file state is current in your context — no need to Read it back)`;
+}
+
+// jsdiff pads `---`/`+++` headers with a GNU-diff tab and prepends an
+// `Index:`/`===` preamble; strip both so the patch is a clean unified diff the
+// client DiffView parser accepts (mirrors diff-synth's cleanPatch).
+function cleanTwoFilesPatch(patch: string): string {
+	const lines = patch.split('\n');
+	let i = 0;
+	if (lines[i]?.startsWith('Index:')) i += 1;
+	if (lines[i]?.startsWith('===')) i += 1;
+	const rest = lines.slice(i);
+	if (rest[0]?.startsWith('--- ')) rest[0] = rest[0].replace(/\s+$/, '');
+	if (rest[1]?.startsWith('+++ ')) rest[1] = rest[1].replace(/\s+$/, '');
+	return rest.join('\n');
+}
+
+// The SDK's `gitDiff` is the file's unified diff inside a git repo. The patch
+// is synthesized from pre/post content via jsdiff (not `git diff`, so a
+// freshly-created untracked file still yields a patch) with the SDK's
+// status/additions/deletions/changes fields.
+function gitDiffFor(
+	type: 'create' | 'update',
+	filename: string,
+	oldContent: string,
+	newContent: string,
+	hunks: Hunk[]
+): FileWriteGitDiff {
+	let additions = 0;
+	let deletions = 0;
+	for (const hunk of hunks) {
+		for (const line of hunk.lines) {
+			if (line.startsWith('+')) additions += 1;
+			else if (line.startsWith('-')) deletions += 1;
+		}
+	}
+	const oldName = type === 'create' ? '/dev/null' : `a/${filename}`;
+	const patch = cleanTwoFilesPatch(
+		createTwoFilesPatch(oldName, `b/${filename}`, oldContent, newContent, '', '', { context: 3 })
+	);
+	return {
+		filename,
+		status: type === 'create' ? 'added' : 'modified',
+		additions,
+		deletions,
+		changes: additions + deletions,
+		patch
+	};
+}
+
+// The write itself plus the SDK FileWriteOutput projection and the model-facing
+// confirmation text. `rawFilePath` is what the caller passed (absolute or
+// relative) and is echoed verbatim in the confirmation, matching the SDK's
+// rendering. `cwd` gates the gitDiff (only reported inside a git work tree).
+async function performWrite(
+	cwd: string,
+	target: { abs: string; rel: string },
+	rawFilePath: string,
+	content: string
+): Promise<{ result: FileWriteOutput; text: string } | { message: string }> {
+	try {
+		const existing = await readExisting(target.abs);
+		const type: 'create' | 'update' = existing === null ? 'create' : 'update';
+		await mkdir(dirname(target.abs), { recursive: true });
+		// `wx` on create keeps the fail-if-someone-else-won-the-race guard from
+		// the old create_file tool; updates overwrite deliberately (SDK Write).
+		await writeFile(target.abs, content, {
+			encoding: 'utf8',
+			flag: existing === null ? 'wx' : 'w'
+		});
+		const oldContent = existing ?? '';
+		const hunks = structuredPatch('a', 'b', oldContent, content, '', '', { context: 3 }).hunks;
+		const result: FileWriteOutput = {
+			type,
+			filePath: target.abs,
+			content,
+			structuredPatch: hunks,
+			originalFile: existing
+		};
+		if (await isGitRepo(cwd)) {
+			result.gitDiff = gitDiffFor(type, target.rel, oldContent, content, hunks);
+		}
+		return { result, text: writeConfirmation(type, rawFilePath) };
+	} catch (error) {
+		if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+			return { message: `file already exists: ${rawFilePath}` };
+		}
+		return { message: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+// Run a Write call against a plain workspace directory and render its model
+// text (used by the golden conformance registry; the tool handler reuses
+// `performWrite` so the two cannot drift).
+export async function renderWriteModelText(
+	args: Record<string, unknown>,
+	cwd: string
+): Promise<string> {
+	const parsed = WriteArgs.parse(args);
+	const target = resolveWriteTarget(cwd, parsed.file_path);
+	if (!target.ok) throw new Error(target.message);
+	const outcome = await performWrite(cwd, target, parsed.file_path, parsed.content);
+	if ('message' in outcome) throw new Error(outcome.message);
+	return outcome.text;
+}
+
 export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(workspaceRoot, ctx);
 	return [
 		{
-			name: 'create_file',
+			name: 'write',
 			description:
-				'Create a new text file with the provided content. Missing parent directories are created automatically. Fails rather than overwriting if the path already exists. The path must be workspace-relative. Pass worktree to create in a held worktree; use `.` or omit it for the local workspace.',
-			argsSchema: CreateFileArgs,
+				'Write text content to a file, creating it or replacing an existing file. Mirrors the SDK Write contract: `file_path` is absolute (workspace-relative paths are also accepted) and must resolve inside the workspace, `content` is the complete new text, and the result reports whether the file was created or updated along with a structured diff. Missing parent directories are created automatically. Pass worktree to write in a held worktree; use `.` or omit it for the local workspace.',
+			argsSchema: WriteArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					path: { type: 'string', description: 'Workspace-relative path of the new file.' },
-					content: { type: 'string', description: 'Complete initial text content.' },
+					file_path: {
+						type: 'string',
+						description: 'Absolute path of the file to write; must resolve inside the workspace.'
+					},
+					content: { type: 'string', description: 'Complete text content to write.' },
 					worktree: WORKTREE_WRITE_PARAM
 				},
-				required: ['path', 'content'],
+				required: ['file_path', 'content'],
 				additionalProperties: false
 			},
 			derivePermissionRequest(args) {
-				return permissionRequest(workspaceRoot, ctx, args, CreateFileArgs);
+				const parsed = WriteArgs.safeParse(args);
+				if (!parsed.success) return null;
+				const root = parsed.data.worktree
+					? resolveWorktreeDir(parsed.data.worktree, ctx)
+					: workspaceRoot;
+				const path = root && resolveAbsoluteTarget(root, parsed.data.file_path);
+				return path ? { permissionKind: 'write', path } : null;
 			},
 			async handler(args) {
-				const parsed = CreateFileArgs.parse(args);
+				const parsed = WriteArgs.parse(args);
 				const tree = treeFor(parsed.worktree);
 				if (tree.error) return tree.error;
-				const target = resolveWorkspaceTarget(tree.cwd, parsed.path);
+				const target = resolveWriteTarget(tree.cwd, parsed.file_path);
 				if (!target.ok) return err(target.message, { code: 'invalid_path' });
-				try {
-					await mkdir(dirname(target.abs), { recursive: true });
-					await writeFile(target.abs, parsed.content, { encoding: 'utf8', flag: 'wx' });
-					return ok(
-						{ path: target.rel, size: Buffer.byteLength(parsed.content) },
-						`Created file: ${target.rel}`
-					);
-				} catch (error) {
-					if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-						return err(`file already exists: ${target.rel}`, { code: 'file_exists' });
-					}
-					return err(error instanceof Error ? error.message : String(error), {
-						code: 'create_failed'
-					});
-				}
+				const outcome = await performWrite(tree.cwd, target, parsed.file_path, parsed.content);
+				if ('message' in outcome) return err(outcome.message, { code: 'write_failed' });
+				return ok(outcome.result, outcome.text, {
+					views: [{ type: 'text', text: outcome.text }]
+				});
 			}
 		},
 		{

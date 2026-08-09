@@ -13,39 +13,94 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 	}
 }
 
-function tool(workspace: string, name: 'create_file' | 'replace_lines' | 'replace_text') {
+function tool(workspace: string, name: 'write' | 'replace_lines' | 'replace_text') {
 	return buildEditFileTools(workspace).find((candidate) => candidate.name === name)!;
 }
 
-describe('create_file', () => {
-	it('creates a file and missing parent directories in the local workspace', async () => {
+describe('write', () => {
+	it('creates a file and missing parent directories, reporting type create', async () => {
 		await withWorkspace(async (workspace) => {
-			const result = await tool(workspace, 'create_file').handler({
-				path: 'nested/file.txt',
+			const result = await tool(workspace, 'write').handler({
+				file_path: 'nested/file.txt',
 				content: 'hello\n',
 				worktree: '.'
 			});
 
 			expect(result).toMatchObject({
 				ok: true,
-				result: { path: 'nested/file.txt', size: 6 }
+				result: { type: 'create', originalFile: null, filePath: join(workspace, 'nested/file.txt') }
 			});
 			expect(await readFile(join(workspace, 'nested', 'file.txt'), 'utf8')).toBe('hello\n');
+			if (result.ok) {
+				const output = result.result as { structuredPatch: unknown[] };
+				expect(Array.isArray(output.structuredPatch)).toBe(true);
+			}
 		});
 	});
 
-	it('refuses to overwrite an existing file', async () => {
+	it('overwrites an existing file, reporting type update with the original content', async () => {
 		await withWorkspace(async (workspace) => {
 			const path = join(workspace, 'file.txt');
-			await writeFile(path, 'original');
+			await writeFile(path, 'original\n');
 
-			const result = await tool(workspace, 'create_file').handler({
-				path: 'file.txt',
-				content: 'replacement'
+			const result = await tool(workspace, 'write').handler({
+				file_path: 'file.txt',
+				content: 'replacement\n'
 			});
 
-			expect(result).toMatchObject({ ok: false, error: { code: 'file_exists' } });
-			expect(await readFile(path, 'utf8')).toBe('original');
+			expect(result).toMatchObject({
+				ok: true,
+				result: { type: 'update', originalFile: 'original\n' }
+			});
+			expect(await readFile(path, 'utf8')).toBe('replacement\n');
+		});
+	});
+
+	it('accepts an absolute file_path inside the workspace', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await tool(workspace, 'write').handler({
+				file_path: join(workspace, 'abs.txt'),
+				content: 'abs\n'
+			});
+			expect(result).toMatchObject({ ok: true, result: { type: 'create' } });
+			expect(await readFile(join(workspace, 'abs.txt'), 'utf8')).toBe('abs\n');
+		});
+	});
+
+	it('rejects a path outside the workspace', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await tool(workspace, 'write').handler({
+				file_path: join(tmpdir(), 'portal-write-escape', 'escape.txt'),
+				content: 'nope'
+			});
+			expect(result).toMatchObject({ ok: false, error: { code: 'invalid_path' } });
+		});
+	});
+
+	it('renders the SDK-style confirmation for create and update', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'sample.txt'), 'original\n');
+			const created = await tool(workspace, 'write').handler({
+				file_path: 'new.txt',
+				content: 'brand new\n'
+			});
+			expect(created).toMatchObject({ ok: true });
+			if (created.ok) {
+				const view = created.views?.find((v) => v.type === 'text');
+				expect(view?.text).toBe(
+					'File created successfully at: new.txt (file state is current in your context — no need to Read it back)'
+				);
+			}
+			const updated = await tool(workspace, 'write').handler({
+				file_path: 'sample.txt',
+				content: 'completely replaced\n'
+			});
+			if (updated.ok) {
+				const view = updated.views?.find((v) => v.type === 'text');
+				expect(view?.text).toBe(
+					'The file sample.txt has been updated successfully. (file state is current in your context — no need to Read it back)'
+				);
+			}
 		});
 	});
 });

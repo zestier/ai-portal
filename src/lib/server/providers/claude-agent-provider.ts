@@ -399,7 +399,11 @@ export function openClaudeAgentSession(
 					// Aliased built-ins route their calls to the portal tool. The
 					// portal tool renders its own model-facing views (attached as
 					// the envelope's `views`), so the alias is routing-only.
-					toolAliases: { Glob: 'mcp__portal__glob', Grep: 'mcp__portal__grep' },
+					toolAliases: {
+						Glob: 'mcp__portal__glob',
+						Grep: 'mcp__portal__grep',
+						Write: 'mcp__portal__write'
+					},
 					...(providerSessionId !== opts.conversationId ? { resume: providerSessionId } : {})
 				}
 			});
