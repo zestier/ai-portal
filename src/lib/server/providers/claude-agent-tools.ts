@@ -33,10 +33,10 @@ import type { ProviderOpenOptions } from './provider';
 // Portal tools that duplicate the Agent SDK's built-in coding tools
 // (Read/Edit/Write/Glob/Grep/Bash). The SDK provides these natively, so the
 // portal omits them rather than exposing two tools with the same job. The
-// rerouted tools (`read`, `grep`, `glob`, `write`, `edit`) are intentionally NOT
-// here — they are exposed and reached via toolAliases ({ Read: 'mcp__portal__read', ... }).
+// rerouted tools (`read`, `grep`, `glob`, `write`, `edit`, `shell_exec`) are
+// intentionally NOT here — they are exposed and reached via toolAliases
+// ({ Read: 'mcp__portal__read', Bash: 'mcp__portal__shell_exec', ... }).
 const SDK_BUILTIN_TOOL_DUPLICATES = new Set([
-	'shell_exec',
 	'read_file',
 	'list_files',
 	'replace_lines',

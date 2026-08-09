@@ -404,7 +404,8 @@ export function openClaudeAgentSession(
 						Glob: 'mcp__portal__glob',
 						Grep: 'mcp__portal__grep',
 						Write: 'mcp__portal__write',
-						Edit: 'mcp__portal__edit'
+						Edit: 'mcp__portal__edit',
+						Bash: 'mcp__portal__shell_exec'
 					},
 					...(providerSessionId !== opts.conversationId ? { resume: providerSessionId } : {})
 				}
@@ -615,7 +616,10 @@ function permissionRequest(toolName: string, input: Record<string, unknown>, too
 				: typeof input.path === 'string'
 					? input.path
 					: undefined;
-	if (toolName === 'Bash') {
+	// Bash is aliased to the portal shell tool; the PreToolUse hook sees either
+	// the SDK alias name (`Bash`) or the normalized portal name (`shell_exec`).
+	// Both map to the shell permission kind so saved shell grants apply.
+	if (toolName === 'Bash' || toolName === 'shell_exec') {
 		const command = typeof input.command === 'string' ? input.command : undefined;
 		return {
 			kind: 'shell',

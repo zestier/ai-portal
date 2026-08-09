@@ -227,7 +227,8 @@ describe('claudeAgentProvider', () => {
 				Glob: 'mcp__portal__glob',
 				Grep: 'mcp__portal__grep',
 				Write: 'mcp__portal__write',
-				Edit: 'mcp__portal__edit'
+				Edit: 'mcp__portal__edit',
+				Bash: 'mcp__portal__shell_exec'
 			}
 		});
 		expect(queryMock.mock.calls[0][0].options.canUseTool).toBeUndefined();
@@ -417,6 +418,49 @@ describe('claudeAgentProvider', () => {
 			tool_name: 'Bash',
 			tool_input: { command: 'ls -la' },
 			tool_use_id: 'tool-bash-1'
+		});
+
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'allow'
+			}
+		});
+	});
+
+	it('maps the aliased Bash (normalized mcp__portal__shell_exec) to shell kind', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const settings = await import('../src/lib/server/db/repos/settings');
+		settings.addGrant({
+			userId: 'user-1',
+			conversationId: null,
+			tool: 'shell',
+			permissionKind: 'shell',
+			scope: {
+				kind: 'shell',
+				rule: { command: [{ token: 'ls' }], positionals: { kind: 'any' } }
+			},
+			decision: 'allow'
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('list files', new AbortController().signal));
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'mcp__portal__shell_exec',
+			tool_input: { command: 'ls -la' },
+			tool_use_id: 'tool-bash-2'
 		});
 
 		expect(decision).toEqual({

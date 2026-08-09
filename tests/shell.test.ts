@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildShellTools } from '../src/lib/server/tools/shell';
+import { buildShellTools, renderShellModelText } from '../src/lib/server/tools/shell';
+import { deriveToolResultViews } from '../src/lib/server/tools/types';
+
+function git(workspace: string, ...args: string[]) {
+	execFileSync('git', args, { cwd: workspace, stdio: 'pipe' });
+}
 
 async function withWorkspace(run: (workspace: string) => Promise<void>) {
 	const workspace = await mkdtemp(join(tmpdir(), 'portal-shell-test-'));
@@ -14,15 +20,61 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 }
 
 describe('shell_exec', () => {
-	it('runs Bash in the workspace and returns structured output', async () => {
+	it('runs Bash in the workspace and returns structured output with SDK field names', async () => {
 		await withWorkspace(async (workspace) => {
 			const result = await buildShellTools(workspace)[0].handler({
 				command: 'printf "hello"',
-				timeoutMs: 5_000
+				timeout: 5_000
 			});
 			expect(result).toMatchObject({
 				ok: true,
-				result: { stdout: 'hello', stderr: '', exitCode: 0, timedOut: false, aborted: false }
+				result: {
+					stdout: 'hello',
+					stderr: '',
+					exitCode: 0,
+					interrupted: false,
+					timedOutAfterMs: undefined,
+					truncated: false
+				}
+			});
+			expect(result).not.toMatchObject({ ok: true, result: { timedOut: true, aborted: true } });
+		});
+	});
+
+	it('accepts SDK BashInput fields (description, run_in_background:false, dangerouslyDisableSandbox:false)', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await buildShellTools(workspace)[0].handler({
+				command: 'printf "ok"',
+				description: 'Print ok',
+				run_in_background: false,
+				dangerouslyDisableSandbox: false
+			});
+			expect(result).toMatchObject({ ok: true, result: { exitCode: 0, stdout: 'ok' } });
+		});
+	});
+
+	it('rejects run_in_background with a clear error', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await buildShellTools(workspace)[0].handler({
+				command: 'true',
+				run_in_background: true
+			});
+			expect(result).toMatchObject({
+				ok: false,
+				error: { message: expect.stringContaining('run_in_background') }
+			});
+		});
+	});
+
+	it('denies dangerouslyDisableSandbox', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await buildShellTools(workspace)[0].handler({
+				command: 'true',
+				dangerouslyDisableSandbox: true
+			});
+			expect(result).toMatchObject({
+				ok: false,
+				error: { message: expect.stringContaining('dangerouslyDisableSandbox') }
 			});
 		});
 	});
@@ -34,21 +86,42 @@ describe('shell_exec', () => {
 		});
 	});
 
-	it('caps combined output', async () => {
+	it('renders a non-zero exit as an error result with the exit-code text', async () => {
 		await withWorkspace(async (workspace) => {
-			const result = await buildShellTools(workspace)[0].handler({
-				command: 'printf "%02000d" 0',
-				maxOutputBytes: 1_024
-			});
-			expect(result).toMatchObject({ ok: true, result: { truncated: true } });
-			if (result.ok) {
-				const payload = result.result as { stdout: string };
-				expect(Buffer.byteLength(payload.stdout)).toBeLessThanOrEqual(1_024);
-			}
+			const result = await buildShellTools(workspace)[0].handler({ command: 'exit 3' });
+			expect(result).toMatchObject({ ok: false, error: { message: 'Exit code 3' } });
 		});
 	});
 
-	it('uses a conservative default output cap', async () => {
+	it('spills oversized output to .zap/scratch/tool_results instead of killing the process', async () => {
+		await withWorkspace(async (workspace) => {
+			const result = await buildShellTools(workspace)[0].handler({
+				command: 'seq 1 100000',
+				maxOutputBytes: 1_024
+			});
+			expect(result).toMatchObject({
+				ok: true,
+				result: { truncated: true }
+			});
+			if (!result.ok) throw new Error(result.error.message);
+			const payload = result.result as {
+				stdout: string;
+				persistedOutputPath?: string;
+				persistedOutputSize?: number;
+			};
+			expect(Buffer.byteLength(payload.stdout)).toBeLessThanOrEqual(1_024);
+			expect(payload.persistedOutputPath).toBeTruthy();
+			expect(payload.persistedOutputSize).toBeGreaterThan(1_024);
+			// The spill file holds the FULL output (seq 1 100000 ≈ 575KB), not
+			// just the overflow past the in-context cap.
+			const full = await readFile(payload.persistedOutputPath!, 'utf8');
+			expect(full.startsWith('1\n2\n3\n')).toBe(true);
+			expect(full.trimEnd().endsWith('100000')).toBe(true);
+			expect(Buffer.byteLength(full)).toBeGreaterThan(100_000);
+		});
+	});
+
+	it('uses a conservative default in-context cap', async () => {
 		await withWorkspace(async (workspace) => {
 			const result = await buildShellTools(workspace)[0].handler({
 				command: 'printf "x%.0s" {1..40000}'
@@ -69,11 +142,11 @@ describe('shell_exec', () => {
 		});
 	});
 
-	it('terminates a command when the turn is aborted', async () => {
+	it('terminates a command when the turn is aborted and marks it interrupted', async () => {
 		await withWorkspace(async (workspace) => {
 			const controller = new AbortController();
 			const promise = buildShellTools(workspace)[0].handler(
-				{ command: 'sleep 10', timeoutMs: 120_000 },
+				{ command: 'sleep 10', timeout: 120_000 },
 				{
 					partial: () => {},
 					progress: () => {},
@@ -82,7 +155,47 @@ describe('shell_exec', () => {
 			);
 			controller.abort();
 			const result = await promise;
-			expect(result).toMatchObject({ ok: true, result: { aborted: true } });
+			expect(result).toMatchObject({ ok: true, result: { interrupted: true } });
+			if (result.ok) {
+				// Our own SIGTERM is not a genuine exit — the rendered text says
+				// "Interrupted", not a misleading 128+signal "Exit code 143".
+				const modelText = deriveToolResultViews(result).modelText;
+				expect(modelText).toContain('Interrupted');
+				expect(modelText).not.toContain('Exit code');
+			}
+		});
+	});
+
+	it('renderShellModelText matches the SDK Bash rendering', async () => {
+		await withWorkspace(async (workspace) => {
+			await expect(
+				renderShellModelText({ command: 'echo "hello world"' }, workspace)
+			).resolves.toBe('hello world');
+			await expect(
+				renderShellModelText(
+					{ command: 'printf "to stdout\\n"; printf "to stderr\\n" >&2' },
+					workspace
+				)
+			).resolves.toBe('to stdout\nto stderr');
+			await expect(renderShellModelText({ command: 'exit 3' }, workspace)).resolves.toBe(
+				'Exit code 3'
+			);
+			// A clean git repo makes `git status --porcelain` emit nothing.
+			await git(workspace, 'init', '-q');
+			await expect(
+				renderShellModelText({ command: 'git status --porcelain' }, workspace)
+			).resolves.toBe('(Bash completed with no output)');
+		});
+	});
+
+	it('renderShellModelText renders the persisted-output block for oversized output', async () => {
+		await withWorkspace(async (workspace) => {
+			const text = await renderShellModelText({ command: 'seq 1 100000' }, workspace);
+			expect(text).toMatch(
+				/^<persisted-output>\nOutput too large \(575\.1KB\)\. Full output saved to: /
+			);
+			expect(text).toContain('\nPreview (first 2KB):\n1\n2\n3\n');
+			expect(text).toContain('\n...\n</persisted-output>');
 		});
 	});
 });

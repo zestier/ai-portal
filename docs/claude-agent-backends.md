@@ -61,12 +61,14 @@ are keyed by the canonical permission vocabulary (`shell`, `read`, `write`,
 `edit`, `url`); the gateway matches either form, so seed and settings-form
 grants apply to SDK built-in calls.
 
-Portal tools that duplicate an Agent SDK built-in coding tool (`shell_exec`,
-`read_file`, `list_files`, `replace_lines`, `replace_text`) are omitted so the
-model sees one tool per job. `read`, `grep`, `glob`, `write`, and `edit` are
-the exceptions: their SDK counterparts (`Read`, `Grep`, `Glob`, `Write`, `Edit`)
-are rerouted to the portal implementations via `toolAliases`, so the portal
-tools are exposed rather than omitted.
+Portal tools that duplicate an Agent SDK built-in coding tool (`read_file`,
+`list_files`, `replace_lines`, `replace_text`) are omitted so the model sees
+one tool per job. `read`, `grep`, `glob`, `write`, `edit`, and `shell_exec` are
+the exceptions: their SDK counterparts (`Read`, `Grep`, `Glob`, `Write`, `Edit`,
+`Bash`) are rerouted to the portal implementations via `toolAliases`, so the
+portal tools are exposed rather than omitted. The rerouted `Bash` spills
+oversized output to `.zap/scratch/tool_results/` and returns the persisted path
+so the model can read the full output, instead of killing the command.
 Agent SDK session ids are persisted separately from portal conversation ids so
 sessions can resume after a process restart.
 

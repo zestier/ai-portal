@@ -1,17 +1,48 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
+import { createWriteStream, mkdirSync } from 'node:fs';
+import { constants } from 'node:os';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { ulid } from '../db/ids';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
-import { err, ok, type PortalTool, type ToolStreamContext } from './types';
+import { ensureZapGitignore, scratchSubdir } from './zap-dir';
+import {
+	deriveToolResultViews,
+	err,
+	ok,
+	type PortalTool,
+	type ToolResult,
+	type ToolStreamContext
+} from './types';
 
+// In-context output cap: the model sees up to this much verbatim; anything past
+// it is spilled to `.zap/scratch/tool_results/` and the persisted path returned
+// so the model can Read the full output. Mirrors the SDK's own persisted-output
+// behavior instead of killing the process and discarding output.
 const MAX_SHELL_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_SHELL_OUTPUT_BYTES = 32 * 1024;
+// Disk cap for the spill file. Past this the remainder is dropped — the
+// in-context preview still gives the model a usable (bounded) view.
+const MAX_PERSISTED_OUTPUT_BYTES = 5 * 1024 * 1024;
+// Preview length in the persisted-output block. The SDK labels it "first 2KB"
+// but uses decimal KB (2000 bytes), matching the captured golden.
+const PERSISTED_PREVIEW_BYTES = 2_000;
 
+// Mirrors the Agent SDK's BashInput (sdk-tools.d.ts) so the aliased SDK `Bash`
+// tool (which sends these field names verbatim) parses cleanly. `cwd` and
+// `maxOutputBytes` are portal extensions — harmless additions to the contract.
 const ShellArgs = z
 	.object({
 		command: z.string().trim().min(1).max(20_000),
+		timeout: z.number().int().min(100).max(600_000).optional().default(120_000),
+		// Accepted for SDK compatibility and ignored: the description is a
+		// no-op for a tool that renders its own output.
+		description: z.string().max(4_000).optional(),
+		// Not supported: the portal always runs commands in the foreground.
+		run_in_background: z.boolean().optional(),
+		// Not supported: the portal never disables the sandbox.
+		dangerouslyDisableSandbox: z.boolean().optional(),
 		cwd: z.string().trim().min(1).max(4_096).optional(),
-		timeoutMs: z.number().int().min(100).max(120_000).optional().default(30_000),
 		maxOutputBytes: z
 			.number()
 			.int()
@@ -42,13 +73,85 @@ function killProcessTree(pid: number, signal: NodeJS.Signals): void {
 	}
 }
 
+// Signal name → number, for turning a signal-killed `close` (code null) into a
+// conventional 128+signal exit code.
+const SIGNAL_NUMBERS = Object.fromEntries(
+	Object.entries(constants.signals).map(([name, num]) => [name, num as number])
+);
+
+function exitCodeFor(code: number | null, signal: NodeJS.Signals | null): number | null {
+	if (code !== null) return code;
+	if (signal !== null) {
+		const num = SIGNAL_NUMBERS[signal];
+		if (typeof num === 'number') return 128 + num;
+	}
+	return null;
+}
+
+// The model-facing rendering of a Bash run, matching the captured golden
+// (tests/fixtures/golden/Bash). Non-zero exits render the output (if any) plus
+// an `Exit code N` note; empty successful output renders the SDK's
+// `(Bash completed with no output)`; oversized output renders the persisted
+// block with a size label and a 2KB preview.
+function renderBashText(opts: {
+	stdout: string;
+	stderr: string;
+	exitCode: number | null;
+	timedOut: boolean;
+	timedOutAfterMs: number | undefined;
+	aborted: boolean;
+	interrupted: boolean;
+	persisted: { path: string; size: number; preview: string } | null;
+}): string {
+	const combined = [opts.stdout.trimEnd(), opts.stderr.trimEnd()]
+		.filter((part) => part.length > 0)
+		.join('\n');
+	// A process we killed (timeout/abort) or one killed by an interrupt
+	// signal is not a genuine exit — its 128+signal code would be noise next
+	// to the real note, so it is not rendered as an `Exit code`.
+	const genuineExit = !opts.timedOut && !opts.aborted && !opts.interrupted;
+	const note = opts.timedOut
+		? `\n\nTimed out after ${opts.timedOutAfterMs}ms`
+		: opts.aborted || opts.interrupted
+			? '\n\nInterrupted'
+			: '';
+	let body: string;
+	if (opts.persisted) {
+		body = persistedOutputBlock(opts.persisted);
+		if (genuineExit && opts.exitCode !== 0) body += `\n\nExit code ${opts.exitCode}`;
+	} else if (genuineExit && opts.exitCode !== 0) {
+		body = combined ? `${combined}\n\nExit code ${opts.exitCode}` : `Exit code ${opts.exitCode}`;
+	} else {
+		body = combined || (note ? '' : '(Bash completed with no output)');
+	}
+	return body + note;
+}
+
+// The `<persisted-output>` block the SDK renders when a Bash run overflows the
+// inline budget: size label, saved path, and a preview of the first 2KB (cut to
+// a complete line).
+function persistedOutputBlock(p: { path: string; size: number; preview: string }): string {
+	const size = `${(p.size / 1024).toFixed(1)}KB`;
+	const lastNewline = p.preview.lastIndexOf('\n');
+	const previewLines =
+		p.preview.length === 0
+			? ''
+			: p.preview.endsWith('\n')
+				? p.preview.slice(0, -1)
+				: lastNewline > 0
+					? p.preview.slice(0, lastNewline)
+					: p.preview;
+	return `<persisted-output>\nOutput too large (${size}). Full output saved to: ${p.path}\n\nPreview (first 2KB):\n${previewLines}\n...\n</persisted-output>`;
+}
+
 function runShell(
+	workspaceRoot: string,
 	command: string,
 	cwd: string,
 	timeoutMs: number,
 	maxOutputBytes: number,
 	ctx?: ToolStreamContext
-): Promise<ReturnType<typeof ok>> {
+): Promise<ToolResult> {
 	return new Promise((resolveResult) => {
 		const child = spawn('/bin/bash', ['-lc', command], {
 			cwd,
@@ -61,8 +164,17 @@ function runShell(
 		let truncated = false;
 		let timedOut = false;
 		let aborted = false;
-		let outputLimitReached = false;
 		let settled = false;
+		// First PERSISTED_PREVIEW_BYTES of the full output, captured as it
+		// arrives (before any cap applies) for the persisted preview.
+		let previewPrefix = '';
+		// Non-null once the in-context cap is hit: the spill file holds the FULL
+		// output (the buffered prefix plus every subsequent chunk).
+		let spill: {
+			stream: ReturnType<typeof createWriteStream>;
+			path: string;
+			bytes: number;
+		} | null = null;
 		const timeoutHandle = setTimeout(() => {
 			timedOut = true;
 			ctx?.progress(`Command timed out after ${timeoutMs}ms.`);
@@ -70,61 +182,123 @@ function runShell(
 			setTimeout(() => killProcessTree(child.pid!, 'SIGKILL'), 250).unref();
 		}, timeoutMs);
 
+		const combinedText = () => `${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`;
+
+		const writeToSpill = (chunk: Buffer) => {
+			if (!spill || spill.bytes >= MAX_PERSISTED_OUTPUT_BYTES) return;
+			const allowed = MAX_PERSISTED_OUTPUT_BYTES - spill.bytes;
+			const toWrite = chunk.subarray(0, allowed);
+			spill.bytes += toWrite.length;
+			spill.stream.write(toWrite);
+		};
+
+		const beginSpill = (overflow: Buffer) => {
+			if (spill) return;
+			// `.zap/.gitignore` covers the whole scratch tree, so the spill file
+			// is already ignored; ensure the ignore exists for fresh workspaces.
+			void ensureZapGitignore(workspaceRoot).catch(() => {});
+			const dir = join(workspaceRoot, scratchSubdir('tool_results'));
+			mkdirSync(dir, { recursive: true });
+			const path = join(dir, `${ulid()}.txt`);
+			const stream = createWriteStream(path);
+			stream.on('error', () => {
+				// Best-effort spill; a failed persist must not fail the command.
+			});
+			spill = { stream, path, bytes: 0 };
+			writeToSpill(Buffer.from(stdout + stderr, 'utf8'));
+			writeToSpill(overflow);
+		};
+
 		const append = (target: 'stdout' | 'stderr', chunk: Buffer) => {
-			if (outputBytes >= maxOutputBytes) {
-				truncated = true;
+			if (previewPrefix.length < PERSISTED_PREVIEW_BYTES) {
+				const remaining = PERSISTED_PREVIEW_BYTES - previewPrefix.length;
+				previewPrefix += chunk.subarray(0, remaining).toString('utf8');
+			}
+			if (spill) {
+				writeToSpill(chunk);
 				return;
 			}
 			const remaining = maxOutputBytes - outputBytes;
-			const text = chunk.subarray(0, remaining).toString('utf8');
-			outputBytes += Buffer.byteLength(text);
-			if (Buffer.byteLength(text) < chunk.length) {
+			if (remaining <= 0) {
 				truncated = true;
-				if (!outputLimitReached) {
-					outputLimitReached = true;
-					ctx?.progress(`Command output exceeded ${maxOutputBytes} bytes.`);
-					killProcessTree(child.pid!, 'SIGTERM');
-				}
+				beginSpill(chunk);
+				return;
 			}
+			const text = chunk.subarray(0, remaining).toString('utf8');
+			const consumed = Buffer.byteLength(text);
+			outputBytes += consumed;
 			if (target === 'stdout') stdout += text;
 			else stderr += text;
-			ctx?.partial(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`);
+			if (consumed < chunk.length) {
+				truncated = true;
+				beginSpill(chunk.subarray(consumed));
+			}
+			ctx?.partial(combinedText());
 		};
 
-		const finish = (result: ReturnType<typeof ok>) => {
+		const finish = async (result: ToolResult) => {
 			if (settled) return;
 			settled = true;
 			if (timeoutHandle) clearTimeout(timeoutHandle);
-			ctx?.partial(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`);
+			ctx?.partial(combinedText());
+			if (spill) {
+				await new Promise<void>((resolveFlush) => spill!.stream.end(resolveFlush));
+			}
 			resolveResult(result);
 		};
 
 		child.stdout.on('data', (chunk: Buffer) => append('stdout', chunk));
 		child.stderr.on('data', (chunk: Buffer) => append('stderr', chunk));
-		child.on(
-			'error',
-			(error) => finish(err(error.message, { code: 'shell_spawn_failed' })) as never
-		);
+		child.on('error', (error) => void finish(err(error.message, { code: 'shell_spawn_failed' })));
 		child.on('close', (code, signal) => {
-			const result = {
+			const exitCode = exitCodeFor(code, signal);
+			const interrupted = aborted || (code === null && signal !== null && !timedOut);
+			const payload = {
 				command,
 				cwd,
 				stdout,
 				stderr,
-				exitCode: code,
+				exitCode,
 				signal,
-				timedOut,
-				aborted,
-				truncated
+				interrupted,
+				timedOutAfterMs: timedOut ? timeoutMs : undefined,
+				truncated,
+				...(spill && spill.bytes > 0
+					? { persistedOutputPath: spill.path, persistedOutputSize: spill.bytes }
+					: {}),
+				...(exitCode === 127 ? { returnCodeInterpretation: 'Command not found' } : {}),
+				...(exitCode === 126
+					? { returnCodeInterpretation: 'Permission denied or command is not executable' }
+					: {})
 			};
-			finish(
-				ok(
-					result,
-					code === 0 && !timedOut && !aborted
-						? 'Command completed.'
-						: 'Command did not complete successfully.'
-				)
-			);
+			const rendered = renderBashText({
+				stdout,
+				stderr,
+				exitCode,
+				timedOut,
+				timedOutAfterMs: timedOut ? timeoutMs : undefined,
+				aborted,
+				interrupted,
+				persisted:
+					spill && spill.bytes > 0
+						? { path: spill.path, size: spill.bytes, preview: previewPrefix }
+						: null
+			});
+			// A genuine non-zero exit (not caused by our own timeout/abort kill,
+			// and not an interrupt signal) is an error result — the SDK renders
+			// `Exit code N` with isError true. Timeouts/aborts/interrupts keep a
+			// successful envelope with their flag fields set.
+			const genuineFailure = !timedOut && !aborted && !interrupted && exitCode !== 0;
+			const result: ToolResult = genuineFailure
+				? err(rendered)
+				: ok(
+						payload,
+						exitCode === 0 && !timedOut && !aborted
+							? 'Command completed.'
+							: 'Command did not complete successfully.',
+						{ views: [{ type: 'text', text: rendered }] }
+					);
+			void finish(result);
 		});
 
 		const onAbort = () => {
@@ -144,20 +318,33 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 		{
 			name: 'shell_exec',
 			description:
-				'Run a non-interactive Bash command in the current workspace. The command may use pipelines and shell syntax. `cwd` is workspace-relative and cannot escape the workspace. Output is capped and long-running commands are terminated at the timeout.',
+				'Run a non-interactive Bash command in the current workspace, mirroring the SDK Bash contract. The command may use pipelines and shell syntax. `timeout` is in milliseconds (default 120000, max 600000); `cwd` is a workspace-relative working directory (portal extension) that cannot escape the workspace. Output past the in-context cap is spilled to `.zap/scratch/tool_results/` and the full path is returned for the model to read. `run_in_background` and `dangerouslyDisableSandbox` are not supported.',
 			argsSchema: ShellArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					command: { type: 'string', description: 'Bash command to run.' },
-					cwd: { type: 'string', description: 'Optional workspace-relative working directory.' },
-					timeoutMs: {
+					timeout: {
 						type: 'number',
-						description: 'Timeout in milliseconds, from 100 to 120000.'
+						description: 'Timeout in milliseconds, from 100 to 600000 (default 120000).'
 					},
+					description: {
+						type: 'string',
+						description: 'Accepted for SDK compatibility and ignored.'
+					},
+					run_in_background: {
+						type: 'boolean',
+						description: 'Not supported: commands always run in the foreground.'
+					},
+					dangerouslyDisableSandbox: {
+						type: 'boolean',
+						description: 'Not supported: the portal never disables the sandbox.'
+					},
+					cwd: { type: 'string', description: 'Optional workspace-relative working directory.' },
 					maxOutputBytes: {
 						type: 'number',
-						description: 'Maximum combined stdout/stderr bytes, from 1024 to 65536.'
+						description:
+							'Optional in-context output cap in bytes (1024-65536, default 32768); overflow spills to disk.'
 					}
 				},
 				required: ['command'],
@@ -165,13 +352,55 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 			},
 			async handler(args, ctx) {
 				const parsed = ShellArgs.parse(args);
+				if (parsed.run_in_background === true) {
+					return err(
+						'run_in_background is not supported: the portal shell tool runs commands in the foreground. Re-run without run_in_background.'
+					);
+				}
+				if (parsed.dangerouslyDisableSandbox === true) {
+					return err(
+						'dangerouslyDisableSandbox is not supported: the portal never disables the sandbox. Re-run without dangerouslyDisableSandbox.'
+					);
+				}
 				const cwd = resolveCwd(workspaceRoot, parsed.cwd);
 				if (cwd === null)
 					return err('cwd must resolve to a directory inside the workspace.', {
 						code: 'invalid_cwd'
 					});
-				return runShell(parsed.command, cwd, parsed.timeoutMs, parsed.maxOutputBytes, ctx);
+				return runShell(
+					workspaceRoot,
+					parsed.command,
+					cwd,
+					parsed.timeout,
+					parsed.maxOutputBytes,
+					ctx
+				);
 			}
 		}
 	];
+}
+
+// The text a model sees for a Bash call (used by the golden conformance
+// registry; the tool handler reuses `runShell`).
+export async function renderShellModelText(
+	args: Record<string, unknown>,
+	cwd: string
+): Promise<string> {
+	const parsed = ShellArgs.parse(args);
+	if (parsed.run_in_background === true || parsed.dangerouslyDisableSandbox === true) {
+		return 'unsupported';
+	}
+	const resolvedCwd = resolveCwd(cwd, parsed.cwd);
+	if (resolvedCwd === null) {
+		return deriveToolResultViews(err('cwd must resolve to a directory inside the workspace.'))
+			.modelText;
+	}
+	const result = await runShell(
+		cwd,
+		parsed.command,
+		resolvedCwd,
+		parsed.timeout,
+		parsed.maxOutputBytes
+	);
+	return deriveToolResultViews(result).modelText;
 }

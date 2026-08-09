@@ -1,6 +1,7 @@
 import { renderEditModelText, renderWriteModelText } from '../src/lib/server/tools/edit-file';
 import { renderGlobModelText, renderGrepModelText } from '../src/lib/server/tools/grep';
 import { renderReadModelText } from '../src/lib/server/tools/read';
+import { renderShellModelText } from '../src/lib/server/tools/shell';
 
 /**
  * Registry for golden-tool conformance implementations.
@@ -63,6 +64,12 @@ registerGoldenToolImplementation('Glob', {
 registerGoldenToolImplementation('Read', {
 	render(_name, args, ctx) {
 		return renderReadModelText(args, ctx.cwd);
+	}
+});
+
+registerGoldenToolImplementation('Bash', {
+	render(_name, args, ctx) {
+		return renderShellModelText(args, ctx.cwd);
 	}
 });
 
