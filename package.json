@@ -24,6 +24,7 @@
 		"test:e2e:ui": "pnpm run build && playwright test --ui",
 		"bench:conversation-load": "node scripts/bench-conversation-load.mjs",
 		"report:adversary-shadow": "node scripts/adversary-shadow-report.mjs",
+		"capture:tool-golden": "node scripts/capture-tool-golden.mjs",
 		"probe:adversary": "node scripts/adversary-probe.mjs",
 		"verify": "node scripts/verify.mjs",
 		"verify:sequential": "node scripts/verify.mjs --concurrency 1",
