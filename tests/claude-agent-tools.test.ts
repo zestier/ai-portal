@@ -132,7 +132,6 @@ describe('buildClaudePortalTools', () => {
 			'shell_exec',
 			'read_file',
 			'list_files',
-			'grep',
 			'create_file',
 			'replace_lines',
 			'replace_text'
@@ -149,7 +148,10 @@ describe('buildClaudePortalTools', () => {
 			'ticket_add',
 			'template_list',
 			'worktree_create',
-			'permission_capabilities'
+			'permission_capabilities',
+			// `grep` is rerouted to the portal implementation via toolAliases
+			// ({ Grep: 'mcp__portal__grep' }), so it is exposed, not omitted.
+			'grep'
 		];
 		for (const name of kept) {
 			expect(names.has(name)).toBe(true);

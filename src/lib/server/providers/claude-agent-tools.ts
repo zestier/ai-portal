@@ -31,7 +31,6 @@ const SDK_BUILTIN_TOOL_DUPLICATES = new Set([
 	'shell_exec',
 	'read_file',
 	'list_files',
-	'grep',
 	'create_file',
 	'replace_lines',
 	'replace_text'

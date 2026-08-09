@@ -60,10 +60,12 @@ function toolResultText(content: unknown): string {
  *  - persisted-output paths: Bash truncation reports a machine- and
  *    session-unique `tool-results/<id>.txt`; the whole path token is
  *    normalized to a placeholder.
- * Beyond this list, `Grep` file listings (e.g. `Grep/files`) are in the
- * captured fixture's directory order, which is filesystem-dependent — if a
- * portal Grep implementation sorts differently, that is a deliberate,
- * documented divergence to add here rather than a harness bug.
+ * Beyond this list, `Grep` file listings (e.g. `Grep/files`) follow the
+ * captured fixture's directory order, which is filesystem-dependent. The
+ * portal implementation preserves rg's traversal order like the SDK does, so
+ * a replay in a different tmpdir can differ; `sortGrepFileList` below sorts
+ * the file block on BOTH sides, making the comparison order-independent. This
+ * is the documented divergence anticipated above.
  * If a portal implementation introduces a NEW divergence, document it here
  * rather than loosening the comparison.
  */
@@ -72,6 +74,16 @@ function normalize(text: string, root: string): string {
 		.replaceAll(root + '/', '')
 		.replaceAll(root, '')
 		.replace(/saved to: \S+/g, 'saved to: <PERSISTED_OUTPUT_PATH>');
+}
+
+// Grep file listings are "Found N file(s)\n<path>\n<path>..." in rg's
+// filesystem-dependent traversal order. Sort the block after the summary line
+// so replays in a fresh tmpdir compare equal to the capture.
+function sortGrepFileList(text: string): string {
+	const lines = text.split('\n');
+	const index = lines.findIndex((line) => /^Found \d+ file/.test(line));
+	if (index < 0 || index >= lines.length - 1) return text;
+	return [...lines.slice(0, index + 1), ...lines.slice(index + 1).sort()].join('\n');
 }
 
 async function readCaseFile(c: GoldenCase, ext: string): Promise<string> {
@@ -148,8 +160,12 @@ describe('golden conformance: portal tool implementations', () => {
 			if (!impl) throw new Error(`unreachable: ${c.tool} not in registry`);
 			const actual = await impl.render(c.name, file.args, { cwd });
 			const golden = await readCaseFile(c, 'text');
-			expect(normalize(actual, cwd), `${c.tool}/${c.name}`).toBe(
-				normalize(golden, manifest.fixtureRoot)
+			const normalizeBoth = (text: string, root: string): string => {
+				const normalized = normalize(text, root);
+				return c.tool === 'Grep' ? sortGrepFileList(normalized) : normalized;
+			};
+			expect(normalizeBoth(actual, cwd), `${c.tool}/${c.name}`).toBe(
+				normalizeBoth(golden, manifest.fixtureRoot)
 			);
 		}
 	});

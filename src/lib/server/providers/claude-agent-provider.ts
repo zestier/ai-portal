@@ -396,6 +396,7 @@ export function openClaudeAgentSession(
 						])
 					},
 					tools: [...BUILTIN_TOOLS],
+					toolAliases: { Grep: 'mcp__portal__grep' },
 					...(providerSessionId !== opts.conversationId ? { resume: providerSessionId } : {})
 				}
 			});

@@ -1,3 +1,5 @@
+import { renderGrepModelText } from '../src/lib/server/tools/grep';
+
 /**
  * Registry for golden-tool conformance implementations.
  *
@@ -43,3 +45,9 @@ export function registerGoldenToolImplementation(
 export function goldenToolImplementations(): ReadonlyMap<string, GoldenToolImplementation> {
 	return implementations;
 }
+
+registerGoldenToolImplementation('Grep', {
+	render(_name, args, ctx) {
+		return renderGrepModelText(args, ctx.cwd);
+	}
+});

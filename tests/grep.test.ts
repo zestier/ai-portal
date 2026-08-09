@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildGrepTools } from '../src/lib/server/tools/grep';
+import { buildGrepTools, type GrepResult } from '../src/lib/server/tools/grep';
 import { WorktreeSelector } from '../src/lib/server/tools/worktree-selector';
 
 function tool(workspace: string, name: 'grep' | 'list_files') {
@@ -18,6 +18,11 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 	}
 }
 
+function grepResult(result: { ok: boolean; result?: unknown }): GrepResult {
+	if (!result.ok) throw new Error('expected ok result');
+	return result.result as GrepResult;
+}
+
 describe('worktree selector', () => {
 	it('treats dot as the local workspace selector', () => {
 		expect(WorktreeSelector.parse('.')).toBeUndefined();
@@ -27,7 +32,7 @@ describe('worktree selector', () => {
 });
 
 describe('grep', () => {
-	it('returns bounded line matches and supports globs', async () => {
+	it('defaults to files_with_matches and supports globs', async () => {
 		await withWorkspace(async (workspace) => {
 			await writeFile(join(workspace, 'one.ts'), 'const needle = 1;\n');
 			await writeFile(join(workspace, 'two.txt'), 'needle\n');
@@ -35,12 +40,88 @@ describe('grep', () => {
 				pattern: 'needle',
 				glob: '**/*.ts'
 			});
-			expect(result).toMatchObject({ ok: true, result: { matches: true, truncated: false } });
-			if (result.ok) {
-				expect(result.result as { output: string }).toMatchObject({
-					output: expect.stringContaining('one.ts:1:const needle = 1;')
-				});
-			}
+			expect(grepResult(result)).toMatchObject({
+				mode: 'files_with_matches',
+				numFiles: 1,
+				filenames: ['one.ts'],
+				totalFiles: 1
+			});
+		});
+	});
+
+	it('returns content lines in rg path:line:content form', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'one.ts'), 'needle one\nother\nneedle two\n');
+			const result = await tool(workspace, 'grep').handler({
+				pattern: 'needle',
+				output_mode: 'content',
+				path: 'one.ts'
+			});
+			expect(grepResult(result)).toMatchObject({
+				mode: 'content',
+				numLines: 2,
+				totalLines: 2,
+				content: 'one.ts:1:needle one\none.ts:3:needle two'
+			});
+		});
+	});
+
+	it('omits line numbers when -n is false', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'one.ts'), 'needle\n');
+			const result = await tool(workspace, 'grep').handler({
+				pattern: 'needle',
+				output_mode: 'content',
+				path: 'one.ts',
+				'-n': false
+			});
+			expect(grepResult(result)).toMatchObject({ content: 'one.ts:needle' });
+		});
+	});
+
+	it('honors context around matches in content mode', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'one.ts'), 'needle one\nother\nneedle two\n');
+			const result = await tool(workspace, 'grep').handler({
+				pattern: 'needle',
+				output_mode: 'content',
+				path: 'one.ts',
+				context: 1
+			});
+			expect(grepResult(result)).toMatchObject({
+				content: 'one.ts:1:needle one\none.ts-2-other\none.ts:3:needle two'
+			});
+		});
+	});
+
+	it('returns unique matching files in files_with_matches mode', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'one.ts'), 'needle\nneedle\n');
+			await writeFile(join(workspace, 'two.ts'), 'needle\n');
+			const result = await tool(workspace, 'grep').handler({
+				pattern: 'needle',
+				output_mode: 'files_with_matches'
+			});
+			const parsed = grepResult(result);
+			expect(parsed).toMatchObject({ mode: 'files_with_matches', numFiles: 2, totalFiles: 2 });
+			expect([...(parsed.filenames ?? [])].sort()).toEqual(['one.ts', 'two.ts']);
+		});
+	});
+
+	it('returns per-file match counts in count mode', async () => {
+		await withWorkspace(async (workspace) => {
+			await writeFile(join(workspace, 'one.ts'), 'needle\nother\nneedle\n');
+			const result = await tool(workspace, 'grep').handler({
+				pattern: 'needle',
+				output_mode: 'count',
+				path: 'one.ts'
+			});
+			expect(grepResult(result)).toMatchObject({
+				mode: 'count',
+				numFiles: 1,
+				numMatches: 2,
+				filenames: ['one.ts']
+			});
 		});
 	});
 
@@ -59,14 +140,13 @@ describe('grep', () => {
 			await writeFile(join(workspace, 'large.txt'), `${'needle '.padEnd(300, 'x')}\n`.repeat(500));
 			const result = await tool(workspace, 'grep').handler({
 				pattern: 'needle',
-				maxMatches: 500
+				output_mode: 'content',
+				head_limit: 0
 			});
-			expect(result).toMatchObject({ ok: true, result: { matches: true, truncated: true } });
-			if (result.ok) {
-				expect(Buffer.byteLength((result.result as { output: string }).output)).toBeLessThanOrEqual(
-					100_000
-				);
-			}
+			const parsed = grepResult(result);
+			expect(parsed.truncated).toBe(true);
+			expect(parsed.numLines).toBe(500);
+			expect(parsed.content).toContain('[truncated: results exceed 100KB]');
 		});
 	});
 
@@ -84,41 +164,7 @@ describe('grep', () => {
 				pattern: 'needle',
 				worktree: '.'
 			});
-			expect(result).toMatchObject({ ok: true, result: { matches: true } });
-		});
-	});
-
-	it('can return only file and line locations', async () => {
-		await withWorkspace(async (workspace) => {
-			await writeFile(join(workspace, 'one.ts'), 'needle one\nother\nneedle two\n');
-			const result = await tool(workspace, 'grep').handler({
-				pattern: 'needle',
-				output: 'lines'
-			});
-
-			expect(result).toMatchObject({ ok: true });
-			if (result.ok) {
-				expect((result.result as { output: string }).output).toBe('one.ts:1\none.ts:3\n');
-			}
-		});
-	});
-
-	it('can return only unique matching files', async () => {
-		await withWorkspace(async (workspace) => {
-			await writeFile(join(workspace, 'one.ts'), 'needle\nneedle\n');
-			await writeFile(join(workspace, 'two.ts'), 'needle\n');
-			const result = await tool(workspace, 'grep').handler({
-				pattern: 'needle',
-				output: 'files'
-			});
-
-			expect(result).toMatchObject({ ok: true });
-			if (result.ok) {
-				expect((result.result as { output: string }).output.trim().split('\n').sort()).toEqual([
-					'one.ts',
-					'two.ts'
-				]);
-			}
+			expect(grepResult(result)).toMatchObject({ mode: 'files_with_matches', numFiles: 1 });
 		});
 	});
 });
