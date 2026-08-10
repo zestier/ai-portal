@@ -98,6 +98,21 @@ export function revokeForcedRetry(token: string): void {
 }
 
 /**
+ * Atomically consume a pending token for DIRECT execution. Returns the entry
+ * only if it was still pending, deleting it in the same synchronous step, so
+ * exactly one concurrent escalation of the same token can execute the call.
+ * The caller runs `entry.args` through the resolved tool's handler and returns
+ * the result directly — there is no re-issued request for
+ * `consumeForcedRetryMatch` to match.
+ */
+export function takeForcedRetry(token: string): ForcedRetryEntry | null {
+	const entry = store.get(token);
+	if (!entry || entry.status !== 'pending') return null;
+	store.delete(token);
+	return entry;
+}
+
+/**
  * Find and consume a one-shot approved token matching a permission request.
  * Matching is exact on conversation, tool, permission kind, and scope key. The
  * args hash is compared ONLY when there is no scope key (custom-tool requests,

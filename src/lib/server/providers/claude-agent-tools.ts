@@ -49,6 +49,13 @@ export function buildClaudePortalTools(args: {
 	getApprovalMode(): ApprovalMode;
 	emit(event: PortalEvent): void;
 	getSignal(): AbortSignal;
+	/**
+	 * Resolves a denied tool name to the portal tool whose handler owns it, so
+	 * a `force_retry_tool` approval can execute the call directly. Built by the
+	 * provider from its tool set (see claude-agent-provider.ts); the catalog
+	 * and tests omit it to keep the approve-then-retry flow.
+	 */
+	resolvePortalTool?: (name: string) => PortalTool | null;
 }): PortalTool[] {
 	const { opts } = args;
 	return filterPortalToolGroups(
@@ -107,7 +114,10 @@ export function buildClaudePortalTools(args: {
 				policy: opts.policy,
 				getMode: args.getMode,
 				getApprovalMode: args.getApprovalMode,
-				emit: args.emit
+				emit: args.emit,
+				...(args.resolvePortalTool !== undefined
+					? { resolvePortalTool: args.resolvePortalTool }
+					: {})
 			}),
 			memory: buildMemoryTools({
 				userId: opts.userId,

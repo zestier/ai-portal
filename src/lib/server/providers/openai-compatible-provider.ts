@@ -625,13 +625,19 @@ export function openOpenAICompatibleSession(
 		approvalMode = mode;
 	}
 
+	// Populated after the tool set is assembled (the resolver is only consulted
+	// at force-retry approval time), so it can be threaded into the builders
+	// before the names exist.
+	const toolsByName = new Map<string, PortalTool>();
+	const resolvePortalTool = (name: string): PortalTool | null => toolsByName.get(name) ?? null;
 	const tools = buildOpenAITools({
 		opts,
 		getMode: () => currentMode,
 		getApprovalMode: () => approvalMode,
-		emit
+		emit,
+		resolvePortalTool
 	});
-	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+	for (const tool of tools) toolsByName.set(tool.name, tool);
 	// Seed our standing guidance as a single leading system message, once per
 	// session (before any restored history). Providers without a native system
 	// prompt channel — like this OpenAI-compatible/LM Studio path — carry it as
@@ -1065,6 +1071,8 @@ function buildOpenAITools(opts: {
 	getMode: () => SessionMode;
 	getApprovalMode: () => ApprovalMode;
 	emit: (ev: PortalEvent) => void;
+	/** Resolves a denied tool name to its portal tool for direct force-retry execution. */
+	resolvePortalTool?: (name: string) => PortalTool | null;
 }): PortalTool[] {
 	return filterPortalToolGroups(
 		{
@@ -1119,7 +1127,10 @@ function buildOpenAITools(opts: {
 				policy: opts.opts.policy,
 				getMode: opts.getMode,
 				getApprovalMode: opts.getApprovalMode,
-				emit: opts.emit
+				emit: opts.emit,
+				...(opts.resolvePortalTool !== undefined
+					? { resolvePortalTool: opts.resolvePortalTool }
+					: {})
 			}),
 			memory: buildMemoryTools({
 				userId: opts.opts.userId,

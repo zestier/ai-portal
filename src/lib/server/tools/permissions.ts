@@ -20,7 +20,12 @@ import {
 } from '$lib/permissions/scope-summary';
 import { GrantScopeSchema, refineScopeToolAlignment } from '$lib/permissions/scope-schema';
 import { FORCE_RETRY_TOOL_NAME, GRANT_REQUEST_TOOL_NAME } from './self-interactive';
-import { approveForcedRetry, getForcedRetry, revokeForcedRetry } from '../runtime/forced-retry';
+import {
+	approveForcedRetry,
+	getForcedRetry,
+	revokeForcedRetry,
+	takeForcedRetry
+} from '../runtime/forced-retry';
 import {
 	isInteractivePromptCancelledError,
 	newRequestId,
@@ -68,6 +73,18 @@ export function buildPermissionTools(opts: {
 	/** Pushes an event into the active turn's stream. Required so the
 	 * grant-request tool can raise a human permission dialog. */
 	emit: (ev: PortalEvent) => void;
+	/**
+	 * Resolves a denied tool name (either the SDK alias the PreToolUse hook may
+	 * report — `Bash`, `Read`, `Edit`, `Write`, `Glob`, `Grep` — or the portal
+	 * name itself, `shell_exec`, `read`, …) to the portal tool whose handler
+	 * owns the call. When it resolves, a `force_retry_tool` approval executes
+	 * the originally captured tool + args directly and returns the underlying
+	 * `ToolResult`, instead of marking the token approved for a re-issued call.
+	 * Null for unresolvable (SDK-native) tools keeps the approve-then-retry
+	 * flow. Providers build it from their portal tool set; the catalog stub
+	 * omits it (direct execution is a runtime concern).
+	 */
+	resolvePortalTool?: (name: string) => PortalTool | null;
 }): PortalTool[] {
 	return [
 		{
@@ -316,19 +333,22 @@ const ForceRetryArgs = z
 // the call site. Its handler looks up the one-shot token that the interactive
 // adapter minted when the exact call was denied (see runtime/forced-retry.ts)
 // and raises a fresh approve-once human dialog showing the originally captured
-// tool + args. Approving marks the token approved; the matching retry of the
-// tool (same tool, same command/path/url; incidental args may differ) is
-// auto-allowed by `consumeForcedRetryMatch` and the SDK executes it natively.
-// The token is one-shot, so a further request is denied again.
+// tool + args. Approving executes the DENIED call for portal-owned tools (the
+// resolver finds the portal tool, the captured args run verbatim through its
+// handler, and the underlying ToolResult is returned — no re-issue needed) and
+// otherwise marks the token approved so a matching retry is auto-allowed by
+// `consumeForcedRetryMatch` and the SDK executes it natively. The token is
+// one-shot in both paths, so a further request is denied again.
 function buildForceRetryTool(opts: {
 	conversationId: string;
 	policy: PermissionPolicy;
 	emit: (ev: PortalEvent) => void;
+	resolvePortalTool?: (name: string) => PortalTool | null;
 }): PortalTool {
 	return {
 		name: FORCE_RETRY_TOOL_NAME,
 		description:
-			'Escalate ONE previously denied tool call to a fresh human approval prompt. Pass the one-shot token from the denial feedback plus a concise reason. If the human approves, the retried call (same command/path/url; incidental args may differ) is auto-allowed and executes exactly once — it saves nothing. Default way to override a denial; use `request_permission_grant` only for a durable, saved rule.',
+			'Escalate ONE previously denied tool call to a fresh human approval prompt. Pass the one-shot token from the denial feedback plus a concise reason. If the human approves, the exact denied call (portal-owned tools) executes immediately with the originally captured args; other tools require retrying the same call (same command/path/url; incidental args may differ), which is then auto-allowed. Either way it executes exactly once — it saves nothing. Default way to override a denial; use `request_permission_grant` only for a durable, saved rule.',
 		argsSchema: ForceRetryArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -346,7 +366,7 @@ function buildForceRetryTool(opts: {
 			required: ['token', 'reason'],
 			additionalProperties: false
 		},
-		async handler(args) {
+		async handler(args, ctx) {
 			const parsed = ForceRetryArgs.parse(args);
 			const entry = getForcedRetry(parsed.token);
 			if (!entry) {
@@ -410,6 +430,41 @@ function buildForceRetryTool(opts: {
 			}
 
 			if (response.decision === 'allow-once' || response.decision === 'allow-always') {
+				// Portal-owned tools execute DIRECTLY on approval: the captured
+				// args run verbatim through the tool's handler (exactly what the
+				// human saw and approved — more faithful than a re-issued call
+				// whose incidental args could have drifted), and the underlying
+				// ToolResult envelope is returned. The token is consumed atomically
+				// (`takeForcedRetry`) so a concurrent escalation of the same token
+				// cannot also execute, and a re-issued call after this cannot
+				// double-run — it is simply denied fresh.
+				const portalTool = opts.resolvePortalTool ? opts.resolvePortalTool(entry.tool) : null;
+				if (portalTool) {
+					if (entry.args === null) {
+						// Nothing to execute — the denied request carried no captured
+						// args. Error explicitly rather than approve-then-retry: a
+						// custom-tool re-issue could never match an args-less entry,
+						// which would loop. Revoke so the approval cannot be replayed.
+						revokeForcedRetry(parsed.token);
+						return err(
+							'The denied request carried no captured arguments, so the approved call cannot be executed directly. Re-issue the original tool call; its fresh denial will mint a new token.',
+							{ code: 'force_retry_missing_args' }
+						);
+					}
+					const taken = takeForcedRetry(parsed.token);
+					if (!taken) {
+						return err('This forced-retry token has already been resolved.', {
+							code: 'force_retry_resolved'
+						});
+					}
+					try {
+						return await portalTool.handler(entry.args, ctx);
+					} catch (e) {
+						return err(e instanceof Error ? e.message : String(e));
+					}
+				}
+
+				// Unresolvable (SDK-native) tool: keep the approve-then-retry flow.
 				// `approveForcedRetry` only records while the token is still
 				// `pending`; a concurrent escalation of the same token (or a
 				// pruned entry) can make it false, and reporting success then
@@ -481,7 +536,7 @@ function permissionCapabilities(opts: {
 			forceRetry: {
 				supported: true,
 				guidance:
-					'The default for any in-the-moment / one-off unblock. When a call is denied, the denial feedback carries a one-shot `force_retry_tool` token. Call `force_retry_tool` with that token and a concise reason (>= 20 chars) to raise a human prompt for that call; if the human approves, the retried call (same command/path/url; incidental args may differ) is auto-allowed and executes. It saves nothing.'
+					'The default for any in-the-moment / one-off unblock. When a call is denied, the denial feedback carries a one-shot `force_retry_tool` token. Call `force_retry_tool` with that token and a concise reason (>= 20 chars) to raise a human prompt for that call; if the human approves, the exact denied call (portal-owned tools) executes immediately with the captured args, otherwise a matching retry is auto-allowed. It saves nothing.'
 			},
 			requestPermissionGrant: {
 				supported: true,

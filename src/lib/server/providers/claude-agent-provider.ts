@@ -12,7 +12,7 @@ import { workspaceRootsFor } from '../leases';
 import { AsyncQueue } from '../runtime/async-queue';
 import { buildPortalSystemGuidance } from '../runtime/system-guidance';
 import { createInteractiveCallbacks } from '../copilot/interactive-adapter';
-import { buildPermissionRequestResolver } from '../tools/types';
+import { buildPermissionRequestResolver, type PortalTool } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { buildClaudePortalTools, createClaudePortalMcpServer } from './claude-agent-tools';
 import { ensureClaudeAgentSkills } from './claude-agent-skills';
@@ -177,16 +177,36 @@ export function openClaudeAgentSession(
 	function emit(event: PortalEvent) {
 		activeQueue?.push(event);
 	}
+	// SDK built-in tools aliased to their portal twin (see `toolAliases` below).
+	// The PreToolUse hook reports either the alias name (`Bash`, `Read`, …) or
+	// the normalized portal name (`shell_exec`, `read`, …) for a call, so the
+	// force-retry resolver must map both to the portal tool that owns it.
+	const SDK_ALIAS_TO_PORTAL: Record<string, string> = {
+		Bash: 'shell_exec',
+		Read: 'read',
+		Edit: 'edit',
+		Write: 'write',
+		Glob: 'glob',
+		Grep: 'grep'
+	};
+	// Populated after the tool set is assembled (the resolver is only consulted
+	// at force-retry approval time, never during construction), so the resolver
+	// can be threaded into `buildClaudePortalTools` before the names exist.
+	const portalToolsByName = new Map<string, PortalTool>();
+	const resolvePortalTool = (name: string): PortalTool | null => {
+		const normalized = normalizePortalToolName(name);
+		const portalName = SDK_ALIAS_TO_PORTAL[normalized] ?? normalized;
+		return portalToolsByName.get(portalName) ?? null;
+	};
 	const portalTools = buildClaudePortalTools({
 		opts,
 		getMode: () => currentMode,
 		getApprovalMode: () => approvalMode,
 		emit,
-		getSignal: () => activeAbortController?.signal ?? new AbortController().signal
+		getSignal: () => activeAbortController?.signal ?? new AbortController().signal,
+		resolvePortalTool
 	});
-	const portalToolsByName = new Map<string, (typeof portalTools)[number]>(
-		portalTools.map((portalTool) => [portalTool.name, portalTool] as const)
-	);
+	for (const portalTool of portalTools) portalToolsByName.set(portalTool.name, portalTool);
 	const portalMcpServer = createClaudePortalMcpServer(portalTools, {
 		emit,
 		getSignal: () => activeAbortController?.signal ?? new AbortController().signal

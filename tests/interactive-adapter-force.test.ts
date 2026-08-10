@@ -7,15 +7,16 @@ import type {
 	PortalEvent,
 	SessionMode
 } from '../src/lib/types';
-import type { ToolStreamContext } from '../src/lib/server/tools/types';
+import { err, ok, type PortalTool, type ToolStreamContext } from '../src/lib/server/tools/types';
 
 // A denial mints a one-shot token and embeds a `force_retry_tool` hint in the
 // deny feedback. Calling `force_retry_tool` with that token raises a fresh,
-// approve-once human dialog for the EXACT denied call (original tool + args);
-// if the human approves, the retried identical request is auto-allowed by
-// `consumeForcedRetryMatch` — bypassing every guard the first request tripped —
-// and the SDK executes it natively. The token is one-shot, so a third identical
-// request is denied again.
+// approve-once human dialog for the EXACT denied call (original tool + args).
+// If the human approves, portal-owned tools (those the `resolvePortalTool`
+// resolver finds) execute DIRECTLY with the originally captured args and return
+// the underlying ToolResult; other tools mark the token approved so a matching
+// retry is auto-allowed by `consumeForcedRetryMatch`. Either way it runs once —
+// the token is one-shot, so a third identical request is denied again.
 //
 // These tests drive the adapter's `onPermissionRequest` directly so each
 // short-circuit can be configured precisely, and the `force_retry_tool`
@@ -47,6 +48,8 @@ interface HarnessOverrides {
 	behavior?: 'normal' | 'always-prompt' | 'never-prompt';
 	validateCustomToolArgs?: (toolName: string, args: unknown) => { feedback: string } | null;
 	mode?: SessionMode;
+	/** Resolves denied tool names to portal tools for direct-execution tests. */
+	resolvePortalTool?: (name: string) => PortalTool | null;
 }
 
 let convCounter = 0;
@@ -89,7 +92,10 @@ async function makeHarness(overrides: HarnessOverrides = {}) {
 		policy: adapterOpts.policy,
 		getMode: () => overrides.mode ?? 'interactive',
 		getApprovalMode: adapterOpts.getApprovalMode,
-		emit: adapterOpts.emit
+		emit: adapterOpts.emit,
+		...(overrides.resolvePortalTool !== undefined
+			? { resolvePortalTool: overrides.resolvePortalTool }
+			: {})
 	});
 	const forceRetryTool = tools.find((t) => t.name === 'force_retry_tool');
 	if (!forceRetryTool) throw new Error('force_retry_tool was not built');
@@ -352,6 +358,159 @@ describe('force_retry_tool is the universal escalation', () => {
 		});
 	});
 
+	describe('approving a forced retry on a portal-owned tool executes it directly', () => {
+		// A schema-invalid custom-tool request auto-denies (minting a token
+		// without a dialog); the escalation then approves and the resolvable
+		// tool must run with the captured args, returning its own ToolResult.
+		const customReq = (args: Record<string, unknown>): Record<string, unknown> => ({
+			kind: 'custom-tool',
+			toolName: 'stub_tool',
+			args
+		});
+		const harnessForStub = (stubTool: PortalTool) =>
+			makeHarness({
+				validateCustomToolArgs: () => ({ feedback: 'args do not match schema' }),
+				resolvePortalTool: (name) => (name === 'stub_tool' ? stubTool : null)
+			});
+
+		it('returns the underlying ToolResult with the captured args, token consumed one-shot', async () => {
+			const captured: unknown[] = [];
+			const stubTool: PortalTool = {
+				name: 'stub_tool',
+				description: 'stub',
+				parameters: {},
+				async handler(args) {
+					captured.push(args);
+					return ok({ ran: true, args }, 'stub ran');
+				}
+			};
+			const harness = await harnessForStub(stubTool);
+			const { token, retryResult } = await denyThenForceRetry(
+				harness,
+				customReq({ pattern: 'x' }),
+				'allow-once'
+			);
+			// The underlying ToolResult envelope, not an `{approved:true}` wrapper.
+			expect(retryResult).toMatchObject({
+				ok: true,
+				result: { ran: true, args: { pattern: 'x' } }
+			});
+			expect(captured).toEqual([{ pattern: 'x' }]);
+			// Token consumed one-shot: a re-issued identical request is denied
+			// fresh (minting a new token), never re-executed.
+			const retried = await harness.onPermissionRequest(customReq({ pattern: 'x' }));
+			expect(retried).toMatchObject({ kind: 'reject' });
+			expect(tokenFromFeedback((retried as { feedback: string }).feedback)).not.toBe(token);
+		});
+
+		it('returns the underlying error envelope when the tool errors', async () => {
+			const stubTool: PortalTool = {
+				name: 'stub_tool',
+				description: 'stub',
+				parameters: {},
+				async handler() {
+					return err('stub failed', { code: 'stub_error' });
+				}
+			};
+			const harness = await harnessForStub(stubTool);
+			const { retryResult } = await denyThenForceRetry(harness, customReq({}), 'allow-once');
+			expect(retryResult).toMatchObject({ ok: false });
+			expect((retryResult as { error: { code: string } }).error.code).toBe('stub_error');
+		});
+
+		it('passes the denied tool name to the resolver so SDK aliases resolve', async () => {
+			const resolved: string[] = [];
+			const stubTool: PortalTool = {
+				name: 'shell_exec',
+				description: 'stub',
+				parameters: {},
+				async handler() {
+					return ok({ ran: true });
+				}
+			};
+			const harness = await makeHarness({
+				validateCustomToolArgs: () => ({ feedback: 'args do not match schema' }),
+				resolvePortalTool: (name) => {
+					resolved.push(name);
+					return name === 'Bash' || name === 'shell_exec' ? stubTool : null;
+				}
+			});
+			const req: Record<string, unknown> = {
+				kind: 'shell',
+				toolName: 'Bash',
+				fullCommandText: 'echo hi',
+				args: { command: 'echo hi' }
+			};
+			const { retryResult } = await denyThenForceRetry(harness, req, 'allow-once');
+			expect(retryResult).toMatchObject({ ok: true, result: { ran: true } });
+			expect(resolved).toContain('Bash');
+		});
+
+		it('runs exactly once when two escalations of one token are approved', async () => {
+			let executions = 0;
+			const stubTool: PortalTool = {
+				name: 'stub_tool',
+				description: 'stub',
+				parameters: {},
+				async handler() {
+					executions += 1;
+					return ok({ ran: true });
+				}
+			};
+			const harness = await harnessForStub(stubTool);
+			const first = await harness.onPermissionRequest(customReq({ a: 1 }));
+			expect(first).toMatchObject({ kind: 'reject' });
+			const token = tokenFromFeedback((first as { feedback: string }).feedback);
+
+			const p1 = harness.forceRetryTool.handler({ token, reason: REASON }, stream());
+			const v1 = await waitForDialog(harness);
+			const p2 = harness.forceRetryTool.handler({ token, reason: REASON }, stream());
+			let views: ReturnType<typeof harness.interactive.listForConversation> = [];
+			for (let i = 0; i < 300 && views.length < 2; i++) {
+				views = harness.interactive.listForConversation(harness.conversationId);
+				if (views.length >= 2) break;
+				await new Promise((r) => setTimeout(r, 1));
+			}
+			expect(views.length).toBe(2);
+
+			resolveDialog(harness, v1, 'allow-once');
+			resolveDialog(harness, views[1], 'allow-once');
+			const [r1, r2] = await Promise.all([p1, p2]);
+			expect(executions).toBe(1);
+			expect(r1).toMatchObject({ ok: true, result: { ran: true } });
+			expect(r2).toMatchObject({ ok: false });
+			expect((r2 as { error: { code: string } }).error.code).toBe('force_retry_resolved');
+		});
+
+		it('errors force_retry_missing_args when the denied request carried no args', async () => {
+			const stubTool: PortalTool = {
+				name: 'stub_tool',
+				description: 'stub',
+				parameters: {},
+				async handler() {
+					return ok({ ran: true });
+				}
+			};
+			const harness = await harnessForStub(stubTool);
+			// No `args` field, so the minted entry carries args:null — nothing to
+			// execute directly.
+			const first = await harness.onPermissionRequest({
+				kind: 'custom-tool',
+				toolName: 'stub_tool'
+			});
+			expect(first).toMatchObject({ kind: 'reject' });
+			const token = tokenFromFeedback((first as { feedback: string }).feedback);
+			const retryPromise = harness.forceRetryTool.handler({ token, reason: REASON }, stream());
+			const view = await waitForDialog(harness);
+			resolveDialog(harness, view, 'allow-once');
+			const retryResult = await retryPromise;
+			expect(retryResult).toMatchObject({ ok: false });
+			expect((retryResult as { error: { code: string } }).error.code).toBe(
+				'force_retry_missing_args'
+			);
+		});
+	});
+
 	describe('a forced-retry approval covers incidental args drift (scope-keyed)', () => {
 		it('approves a shell retry that adds an incidental args field', async () => {
 			const harness = await makeHarness();
@@ -412,8 +571,11 @@ describe('force_retry_tool is the universal escalation', () => {
 				args: { subject }
 			});
 			await denyThenForceRetry(harness, toolReq('initial subject'), 'allow-once');
-			// Custom-tool has no scope key — args are the only identity, so a
-			// drifted retry is still denied (strictness preserved).
+			// The harness wires no `resolvePortalTool`, so this custom-tool denial
+			// stays on the approve-then-retry fall-back path: no scope key means
+			// args are the only identity, so a drifted retry is still denied
+			// (strictness preserved). A resolvable portal tool would have executed
+			// directly with the captured args instead, eliminating the drift class.
 			const retried = await harness.onPermissionRequest(toolReq('drifted subject'));
 			expect(retried).toMatchObject({ kind: 'reject' });
 		});

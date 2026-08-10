@@ -49,7 +49,7 @@ import { buildEditFileTools } from '../tools/edit-file';
 import { buildWorktreeTools } from '../tools/worktree';
 import { workspaceRootsFor } from '../leases';
 import { filterPortalToolGroups } from '../tools/filter-groups';
-import { buildPermissionRequestResolver } from '../tools/types';
+import { buildPermissionRequestResolver, type PortalTool } from '../tools/types';
 import { buildToolArgsValidator } from '../tools/schema-error';
 import { wrapToolsForStreaming } from './tool-streaming';
 import { ticketWorkspaceFromConversation } from '../ticket-workspace';
@@ -262,7 +262,12 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 	// so a cancelled turn stops their incremental emission.
 	let currentTurnSignal: AbortSignal | null = null;
 	const toolPermissionBehavior = new Map<string, 'normal' | 'always-prompt' | 'never-prompt'>();
-
+	// Populated after `portalTools` is assembled (see the loop below); consulted
+	// only at force-retry approval time, so the resolver can be threaded into
+	// `buildPermissionTools` before the names exist.
+	const portalToolsByName = new Map<string, PortalTool>();
+	const resolvePortalTool = (name: string): PortalTool | null =>
+		portalToolsByName.get(name) ?? null;
 	const eventAdapter = new SdkEventAdapter({
 		conversationId: opts.conversationId,
 		getQueue: () => activeQueue,
@@ -329,7 +334,8 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 				policy: opts.policy,
 				getMode: () => currentMode,
 				getApprovalMode: () => approvalMode,
-				emit
+				emit,
+				resolvePortalTool
 			}),
 			memory: buildMemoryTools({
 				userId: opts.userId,
@@ -432,6 +438,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 		onAutoModeSwitchRequest: onAutoModeSwitch
 	};
 	for (const tool of portalTools) {
+		portalToolsByName.set(tool.name, tool);
 		if (
 			tool.permissionBehavior === 'always-prompt' ||
 			tool.permissionBehavior === 'normal' ||
