@@ -229,7 +229,7 @@ describe('claudeAgentProvider', () => {
 			: null;
 	}
 
-	it('gates every built-in tool call through the portal via the PreToolUse hook', async () => {
+	it('gates every tool call through the portal via the PreToolUse hook', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
 		queryMock.mockImplementation(({ options }) => {
@@ -251,7 +251,7 @@ describe('claudeAgentProvider', () => {
 		expect(preToolUse).not.toBeNull();
 		const decision = await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Read',
+			tool_name: 'mcp__portal__read',
 			tool_input: { file_path: '/tmp/example.ts' },
 			tool_use_id: 'tool-read-1'
 		});
@@ -262,24 +262,18 @@ describe('claudeAgentProvider', () => {
 				permissionDecision: 'allow'
 			}
 		});
-		// The hook is the single gate: canUseTool is gone, the allowlist and
-		// built-in tool surface are unchanged.
+		// The hook is the single gate: canUseTool is gone, the SDK coding
+		// built-ins are stripped, and only the Agent subagent built-in remains.
 		expect(queryMock.mock.calls[0][0].options).toMatchObject({
 			allowedTools: ['Agent'],
-			tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent'],
-			toolAliases: {
-				Glob: 'mcp__portal__glob',
-				Grep: 'mcp__portal__grep',
-				Write: 'mcp__portal__write',
-				Edit: 'mcp__portal__edit',
-				Bash: 'mcp__portal__shell_exec'
-			}
+			tools: ['Agent']
 		});
+		expect(queryMock.mock.calls[0][0].options.toolAliases).toBeUndefined();
 		expect(queryMock.mock.calls[0][0].options.canUseTool).toBeUndefined();
 		expect(queryMock.mock.calls[0][0].options.mcpServers.portal.type).toBe('sdk');
 	});
 
-	it('injects the provider cwd as Glob path so a bare pattern call is scoped and allowed', async () => {
+	it('injects the provider cwd as portal glob path so a bare pattern call is scoped and allowed', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
 		queryMock.mockImplementation(({ options }) => {
@@ -297,7 +291,7 @@ describe('claudeAgentProvider', () => {
 		await collect(session.send('search files', new AbortController().signal));
 		const decision = await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Glob',
+			tool_name: 'mcp__portal__glob',
 			tool_input: { pattern: '**/*.{ts,tsx,js,jsx,mjs,cjs}' },
 			tool_use_id: 'tool-glob-1'
 		});
@@ -317,7 +311,7 @@ describe('claudeAgentProvider', () => {
 		});
 	});
 
-	it('leaves Glob/Grep calls that already carry a path unrewritten', async () => {
+	it('leaves glob/grep calls that already carry a path unrewritten', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
 		queryMock.mockImplementation(({ options }) => {
@@ -335,7 +329,7 @@ describe('claudeAgentProvider', () => {
 		await collect(session.send('search files', new AbortController().signal));
 		const decision = await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Grep',
+			tool_name: 'mcp__portal__grep',
 			tool_input: { pattern: 'readFileSync', path: '/tmp/src' },
 			tool_use_id: 'tool-grep-1'
 		});
@@ -349,27 +343,30 @@ describe('claudeAgentProvider', () => {
 	});
 
 	it.each([
-		['Read (absolute)', 'Read', { file_path: '/tmp/src/a.ts' }],
-		['Read (relative)', 'Read', { file_path: 'src/a.ts' }],
+		['read (absolute)', 'mcp__portal__read', { file_path: '/tmp/src/a.ts' }],
+		['read (relative)', 'mcp__portal__read', { file_path: 'src/a.ts' }],
 		[
-			'Edit (in-workspace)',
-			'Edit',
+			'edit (in-workspace)',
+			'mcp__portal__edit',
 			{ file_path: '/tmp/src/a.ts', old_string: 'x', new_string: 'y' }
 		],
-		['Write (in-workspace)', 'Write', { file_path: '/tmp/src/b.ts', content: 'x' }],
+		['write (in-workspace)', 'mcp__portal__write', { file_path: '/tmp/src/b.ts', content: 'x' }],
+		['glob (bare pattern)', 'mcp__portal__glob', { pattern: '**/*.{ts,tsx,js,jsx,mjs,cjs}' }],
+		['glob (with path)', 'mcp__portal__glob', { pattern: '**/*.ts', path: '/tmp/src' }],
+		['glob (relative path)', 'mcp__portal__glob', { pattern: '**/*.ts', path: 'src' }],
+		['grep (bare pattern)', 'mcp__portal__grep', { pattern: 'readFileSync' }],
+		['grep (with path)', 'mcp__portal__grep', { pattern: 'readFileSync', path: '/tmp/src' }],
+		['grep (relative path)', 'mcp__portal__grep', { pattern: 'readFileSync', path: 'src' }],
 		[
-			'NotebookEdit (in-workspace)',
-			'NotebookEdit',
-			{ notebook_path: '/tmp/src/n.ipynb', cell_id: 'c1', new_value: 'x' }
+			'edit (relative)',
+			'mcp__portal__edit',
+			{ file_path: 'src/a.ts', old_string: 'x', new_string: 'y' }
 		],
-		['Glob (bare pattern)', 'Glob', { pattern: '**/*.{ts,tsx,js,jsx,mjs,cjs}' }],
-		['Glob (with path)', 'Glob', { pattern: '**/*.ts', path: '/tmp/src' }],
-		['Glob (relative path)', 'Glob', { pattern: '**/*.ts', path: 'src' }],
-		['Grep (bare pattern)', 'Grep', { pattern: 'readFileSync' }],
-		['Grep (with path)', 'Grep', { pattern: 'readFileSync', path: '/tmp/src' }],
-		['Grep (relative path)', 'Grep', { pattern: 'readFileSync', path: 'src' }],
-		['Edit (relative)', 'Edit', { file_path: 'src/a.ts', old_string: 'x', new_string: 'y' }],
-		['Write (relative, nested)', 'Write', { file_path: 'src/deep/new.ts', content: 'x' }],
+		[
+			'write (relative, nested)',
+			'mcp__portal__write',
+			{ file_path: 'src/deep/new.ts', content: 'x' }
+		],
 		['create_directory (in-workspace)', 'mcp__portal__create_directory', { path: 'newdir' }],
 		['move (in-workspace)', 'mcp__portal__move', { source: 'a.txt', destination: 'b.txt' }],
 		['trash (in-workspace)', 'mcp__portal__trash', { path: 'a.txt' }],
@@ -429,50 +426,7 @@ describe('claudeAgentProvider', () => {
 		);
 	});
 
-	it('a saved shell allow grant auto-allows an SDK Bash call without a dialog', async () => {
-		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
-			null;
-		queryMock.mockImplementation(({ options }) => {
-			preToolUse = capturePreToolUseHook(options);
-			return messages({
-				type: 'result',
-				subtype: 'success',
-				session_id: '33333333-3333-4333-8333-333333333333'
-			} as SDKMessage);
-		});
-		const settings = await import('../src/lib/server/db/repos/settings');
-		settings.addGrant({
-			userId: 'user-1',
-			conversationId: null,
-			tool: 'shell',
-			permissionKind: 'shell',
-			scope: {
-				kind: 'shell',
-				rule: { command: [{ token: 'ls' }], positionals: { kind: 'any' } }
-			},
-			decision: 'allow'
-		});
-		const { claudeAgentProvider } =
-			await import('../src/lib/server/providers/claude-agent-provider');
-		const session = await claudeAgentProvider.openSession(baseOpts);
-
-		await collect(session.send('list files', new AbortController().signal));
-		const decision = await preToolUse!({
-			hook_event_name: 'PreToolUse',
-			tool_name: 'Bash',
-			tool_input: { command: 'ls -la' },
-			tool_use_id: 'tool-bash-1'
-		});
-
-		expect(decision).toEqual({
-			hookSpecificOutput: {
-				hookEventName: 'PreToolUse',
-				permissionDecision: 'allow'
-			}
-		});
-	});
-
-	it('maps the aliased Bash (normalized mcp__portal__shell_exec) to shell kind', async () => {
+	it('a saved shell allow grant auto-allows a portal shell_exec call without a dialog', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
 		queryMock.mockImplementation(({ options }) => {
@@ -504,7 +458,7 @@ describe('claudeAgentProvider', () => {
 			hook_event_name: 'PreToolUse',
 			tool_name: 'mcp__portal__shell_exec',
 			tool_input: { command: 'ls -la' },
-			tool_use_id: 'tool-bash-2'
+			tool_use_id: 'tool-bash-1'
 		});
 
 		expect(decision).toEqual({
@@ -515,7 +469,7 @@ describe('claudeAgentProvider', () => {
 		});
 	});
 
-	it('a saved read deny blocks an SDK built-in Read call with feedback', async () => {
+	it('a saved read deny blocks a portal read call with feedback', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
 		queryMock.mockImplementation(({ options }) => {
@@ -547,7 +501,7 @@ describe('claudeAgentProvider', () => {
 		await collect(session.send('read secret', new AbortController().signal));
 		const decision = await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Read',
+			tool_name: 'mcp__portal__read',
 			tool_input: { file_path: '/tmp/secret.txt' },
 			tool_use_id: 'tool-read-2'
 		});
@@ -560,7 +514,7 @@ describe('claudeAgentProvider', () => {
 		expect(out.permissionDecisionReason).toContain('Read denied by test grant.');
 	});
 
-	it('writes audit rows for calls that previously bypassed the portal', async () => {
+	it('writes audit rows for portal calls under the hook', async () => {
 		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
 			null;
 		queryMock.mockImplementation(({ options }) => {
@@ -589,14 +543,14 @@ describe('claudeAgentProvider', () => {
 		await collect(session.send('inspect files', new AbortController().signal));
 		await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Read',
+			tool_name: 'mcp__portal__read',
 			tool_input: { file_path: '/workspace/example.ts' },
 			tool_use_id: 'tool-read-3'
 		});
 
 		const audit = settings.listRecentDecisionsForUser('user-1', 10);
 		expect(audit).toEqual(
-			expect.arrayContaining([expect.objectContaining({ tool: 'Read', decision: 'auto-allow' })])
+			expect.arrayContaining([expect.objectContaining({ tool: 'read', decision: 'auto-allow' })])
 		);
 	});
 
@@ -755,7 +709,7 @@ describe('claudeAgentProvider', () => {
 							{
 								type: 'tool_use',
 								id: 'read-call-1',
-								name: 'Read',
+								name: 'mcp__portal__read',
 								input: { file_path: '/tmp/a.ts' }
 							}
 						]

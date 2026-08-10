@@ -28,9 +28,10 @@ const MAX_PERSISTED_OUTPUT_BYTES = 5 * 1024 * 1024;
 // but uses decimal KB (2000 bytes), matching the captured golden.
 const PERSISTED_PREVIEW_BYTES = 2_000;
 
-// Mirrors the Agent SDK's BashInput (sdk-tools.d.ts) so the aliased SDK `Bash`
-// tool (which sends these field names verbatim) parses cleanly. `cwd` and
-// `maxOutputBytes` are portal extensions — harmless additions to the contract.
+// Mirrors the Agent SDK's BashInput (sdk-tools.d.ts) so the portal shell tool
+// keeps the SDK's field names (`description`, `run_in_background`,
+// `dangerouslyDisableSandbox`) verbatim. `cwd` and `maxOutputBytes` are portal
+// extensions — harmless additions to the contract.
 const ShellArgs = z
 	.object({
 		command: z.string().trim().min(1).max(20_000),

@@ -176,11 +176,11 @@ describe('claudeAgentProvider fs permissions inside worktree leases', () => {
 			})
 		);
 
-		// SDK built-ins pointed at the lease auto-approve too — the paths a
+		// Portal fs tools pointed at the lease auto-approve too — the paths a
 		// sub-agent handed a lease path actually reads and searches.
 		const readLease = await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Read',
+			tool_name: 'mcp__portal__read',
 			tool_input: { file_path: join(leasePath, 'README.md') },
 			tool_use_id: 'tool-lease-read'
 		});
@@ -192,7 +192,7 @@ describe('claudeAgentProvider fs permissions inside worktree leases', () => {
 
 		const globLease = await preToolUse!({
 			hook_event_name: 'PreToolUse',
-			tool_name: 'Glob',
+			tool_name: 'mcp__portal__glob',
 			tool_input: { pattern: '**/*.md', path: leasePath },
 			tool_use_id: 'tool-lease-glob'
 		});

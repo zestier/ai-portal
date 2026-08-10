@@ -31,11 +31,12 @@ import { buildWorktreeTools } from '../tools/worktree';
 import type { ProviderOpenOptions } from './provider';
 
 // Portal tools that duplicate the Agent SDK's built-in coding tools
-// (Read/Edit/Write/Glob/Grep/Bash). The SDK provides these natively, so the
-// portal omits them rather than exposing two tools with the same job. The
-// rerouted tools (`read`, `grep`, `glob`, `write`, `edit`, `shell_exec`) are
-// intentionally NOT here — they are exposed and reached via toolAliases
-// ({ Read: 'mcp__portal__read', Bash: 'mcp__portal__shell_exec', ... }).
+// (Read/Edit/Write/Glob/Grep/Bash). The claude-agent provider no longer exposes
+// the SDK built-ins (`tools: ['Agent']`), so the portal tools `read`, `grep`,
+// `glob`, `write`, `edit`, `shell_exec` carry those jobs. The hidden helpers
+// here (`read_file`/`list_files`/`replace_lines`/`replace_text`) stay filtered
+// out of the model-facing MCP server: they are client-side display/render
+// helpers, and re-exposing them would only add tokens to every context window.
 const SDK_BUILTIN_TOOL_DUPLICATES = new Set([
 	'read_file',
 	'list_files',

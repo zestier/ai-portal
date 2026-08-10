@@ -244,23 +244,15 @@ describe('buildClaudePortalTools', () => {
 			'template_list',
 			'worktree_create',
 			'permission_capabilities',
-			// `read` mirrors the SDK Read via toolAliases ({ Read: 'mcp__portal__read' }),
-			// so it is exposed, not omitted.
+			// `read`/`grep`/`glob`/`write`/`edit`/`shell_exec` are exposed
+			// (not filtered as SDK-built-in duplicates): they are the portal
+			// twins that carry the jobs of the stripped SDK built-ins
+			// (`Read`/`Grep`/`Glob`/`Write`/`Edit`/`Bash`).
 			'read',
-			// `grep` is rerouted to the portal implementation via toolAliases
-			// ({ Grep: 'mcp__portal__grep' }), so it is exposed, not omitted.
 			'grep',
-			// `glob` mirrors the SDK Glob via toolAliases ({ Glob: 'mcp__portal__glob' }),
-			// so it is exposed, not omitted.
 			'glob',
-			// `write` mirrors the SDK Write via toolAliases ({ Write: 'mcp__portal__write' }),
-			// so it is exposed, not omitted.
 			'write',
-			// `edit` mirrors the SDK Edit via toolAliases ({ Edit: 'mcp__portal__edit' }),
-			// so it is exposed, not omitted.
 			'edit',
-			// `shell_exec` mirrors the SDK Bash via toolAliases ({ Bash: 'mcp__portal__shell_exec' }),
-			// so it is exposed, not omitted.
 			'shell_exec'
 		];
 		for (const name of kept) {

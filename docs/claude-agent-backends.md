@@ -84,25 +84,28 @@ worktrees, and UI event rendering.
 Portal tools are exposed to the runtime through an in-process MCP server. Tool
 groups disabled on a conversation are omitted from that server.
 
-Every tool call — SDK built-ins (`Bash`, `Read`, `Edit`, ...), portal MCP
-tools, and subagent inner tool calls — is gated by a single `PreToolUse` hook
-that routes through the same portal permission gateway as other providers
-(grants, policy, approval mode, audit). The hook's allow/deny is terminal, so
-the portal stays authoritative even for read-only tools and allowlisted shell
-commands that the SDK would otherwise auto-approve. `canUseTool` is not used.
-Built-in requests carry the CLI tool name (`Bash`, `Read`) while saved grants
-are keyed by the canonical permission vocabulary (`shell`, `read`, `write`,
-`edit`, `url`); the gateway matches either form, so seed and settings-form
-grants apply to SDK built-in calls.
+Every tool call — portal MCP tools and subagent inner tool calls — is gated by
+a single `PreToolUse` hook that routes through the same portal permission
+gateway as other providers (grants, policy, approval mode, audit). The hook's
+allow/deny is terminal, so the portal stays authoritative even for read-only
+tools and allowlisted shell commands that the SDK would otherwise auto-approve.
+`canUseTool` is not used. The SDK coding built-ins (`Bash`, `Read`, `Edit`, ...)
+are not exposed: the provider passes `tools: ['Agent']` alongside the portal
+MCP server, so the only SDK built-in surface is the `Agent` subagent tool.
+Every file/shell/git operation goes through a `mcp__portal__*` tool whose name
+maps to the permission kind it exercises (`shell_exec` → `shell`,
+`read`/`glob`/`grep` → `read`, `edit` → `edit`, `write` → `write`), so saved
+grants keyed by the canonical permission vocabulary (`shell`, `read`, `write`,
+`edit`, `url`) apply directly.
 
 Portal tools that duplicate an Agent SDK built-in coding tool (`read_file`,
 `list_files`, `replace_lines`, `replace_text`) are omitted so the model sees
-one tool per job. `read`, `grep`, `glob`, `write`, `edit`, and `shell_exec` are
-the exceptions: their SDK counterparts (`Read`, `Grep`, `Glob`, `Write`, `Edit`,
-`Bash`) are rerouted to the portal implementations via `toolAliases`, so the
-portal tools are exposed rather than omitted. The rerouted `Bash` spills
-oversized output to `.zap/scratch/tool_results/` and returns the persisted path
-so the model can read the full output, instead of killing the command.
+one tool per job — they stay client-side display/render helpers, not
+model-facing tools. `read`, `grep`, `glob`, `write`, `edit`, and `shell_exec`
+carry the jobs the SDK built-ins (`Read`, `Grep`, `Glob`, `Write`, `Edit`,
+`Bash`) used to. The `shell_exec` tool spills oversized output to
+`.zap/scratch/tool_results/` and returns the persisted path so the model can
+read the full output, instead of killing the command.
 Agent SDK session ids are persisted separately from portal conversation ids so
 sessions can resume after a process restart.
 

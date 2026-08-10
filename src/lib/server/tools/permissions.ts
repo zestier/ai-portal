@@ -74,15 +74,14 @@ export function buildPermissionTools(opts: {
 	 * grant-request tool can raise a human permission dialog. */
 	emit: (ev: PortalEvent) => void;
 	/**
-	 * Resolves a denied tool name (either the SDK alias the PreToolUse hook may
-	 * report — `Bash`, `Read`, `Edit`, `Write`, `Glob`, `Grep` — or the portal
-	 * name itself, `shell_exec`, `read`, …) to the portal tool whose handler
-	 * owns the call. When it resolves, a `force_retry_tool` approval executes
-	 * the originally captured tool + args directly and returns the underlying
-	 * `ToolResult`, instead of marking the token approved for a re-issued call.
-	 * Null for unresolvable (SDK-native) tools keeps the approve-then-retry
-	 * flow. Providers build it from their portal tool set; the catalog stub
-	 * omits it (direct execution is a runtime concern).
+	 * Resolves a denied tool name (a portal tool name as the PreToolUse hook
+	 * reports it — `shell_exec`, `read`, `git_status`, …) to the portal tool
+	 * whose handler owns the call. When it resolves, a `force_retry_tool`
+	 * approval executes the originally captured tool + args directly and
+	 * returns the underlying `ToolResult`, instead of marking the token
+	 * approved for a re-issued call. Null for unresolvable tools keeps the
+	 * approve-then-retry flow. Providers build it from their portal tool set;
+	 * the catalog stub omits it (direct execution is a runtime concern).
 	 */
 	resolvePortalTool?: (name: string) => PortalTool | null;
 }): PortalTool[] {

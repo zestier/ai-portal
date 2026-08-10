@@ -418,7 +418,7 @@ describe('force_retry_tool is the universal escalation', () => {
 			expect((retryResult as { error: { code: string } }).error.code).toBe('stub_error');
 		});
 
-		it('passes the denied tool name to the resolver so SDK aliases resolve', async () => {
+		it('passes the denied tool name to the resolver so the owning portal tool resolves', async () => {
 			const resolved: string[] = [];
 			const stubTool: PortalTool = {
 				name: 'shell_exec',
@@ -432,18 +432,18 @@ describe('force_retry_tool is the universal escalation', () => {
 				validateCustomToolArgs: () => ({ feedback: 'args do not match schema' }),
 				resolvePortalTool: (name) => {
 					resolved.push(name);
-					return name === 'Bash' || name === 'shell_exec' ? stubTool : null;
+					return name === 'shell_exec' ? stubTool : null;
 				}
 			});
 			const req: Record<string, unknown> = {
 				kind: 'shell',
-				toolName: 'Bash',
+				toolName: 'shell_exec',
 				fullCommandText: 'echo hi',
 				args: { command: 'echo hi' }
 			};
 			const { retryResult } = await denyThenForceRetry(harness, req, 'allow-once');
 			expect(retryResult).toMatchObject({ ok: true, result: { ran: true } });
-			expect(resolved).toContain('Bash');
+			expect(resolved).toContain('shell_exec');
 		});
 
 		it('runs exactly once when two escalations of one token are approved', async () => {

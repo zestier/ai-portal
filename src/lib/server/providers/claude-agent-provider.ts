@@ -31,7 +31,11 @@ import type {
 
 const providerId = 'claude-agent' as const;
 const displayName = 'Claude Agent SDK';
-const BUILTIN_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent'] as const;
+// The only SDK built-in tool still exposed. The SDK coding built-ins
+// (Read/Edit/Write/Glob/Grep/Bash) are stripped: the portal twins
+// (`mcp__portal__read`/`edit`/`write`/`glob`/`grep`/`shell_exec`) carry those
+// jobs, and exposing both duplicates their schemas in every context window.
+const BUILTIN_TOOLS = ['Agent'] as const;
 const MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 
 type ClaudeAgentConfig = {
@@ -257,27 +261,16 @@ export function openClaudeAgentSession(
 	function emit(event: PortalEvent) {
 		activeQueue?.push(event);
 	}
-	// SDK built-in tools aliased to their portal twin (see `toolAliases` below).
-	// The PreToolUse hook reports either the alias name (`Bash`, `Read`, …) or
-	// the normalized portal name (`shell_exec`, `read`, …) for a call, so the
-	// force-retry resolver must map both to the portal tool that owns it.
-	const SDK_ALIAS_TO_PORTAL: Record<string, string> = {
-		Bash: 'shell_exec',
-		Read: 'read',
-		Edit: 'edit',
-		Write: 'write',
-		Glob: 'glob',
-		Grep: 'grep'
-	};
+	// Every tool (except the SDK `Agent` subagent built-in) is a portal tool, and
+	// the PreToolUse hook reports the normalized portal name (`shell_exec`, `read`,
+	// …), so the force-retry resolver maps it straight to the portal tool that
+	// owns the call — no SDK-alias map.
 	// Populated after the tool set is assembled (the resolver is only consulted
 	// at force-retry approval time, never during construction), so the resolver
 	// can be threaded into `buildClaudePortalTools` before the names exist.
 	const portalToolsByName = new Map<string, PortalTool>();
-	const resolvePortalTool = (name: string): PortalTool | null => {
-		const normalized = normalizePortalToolName(name);
-		const portalName = SDK_ALIAS_TO_PORTAL[normalized] ?? normalized;
-		return portalToolsByName.get(portalName) ?? null;
-	};
+	const resolvePortalTool = (name: string): PortalTool | null =>
+		portalToolsByName.get(normalizePortalToolName(name)) ?? null;
 	const portalTools = buildClaudePortalTools({
 		opts,
 		getMode: () => currentMode,
@@ -415,17 +408,18 @@ export function openClaudeAgentSession(
 					allowedTools: ['Agent'],
 					hooks: {
 						// Single permission gate. The PreToolUse hook fires for
-						// EVERY tool call (SDK built-ins, portal MCP tools, and
-						// subagent inner tool calls) before the CLI's own
-						// permission machinery runs, so the portal gateway —
+						// EVERY tool call (portal MCP tools and subagent inner
+						// tool calls) before the CLI's own permission machinery
+						// runs, so the portal gateway —
 						// `onPermissionRequest` → `decideCore` → grants/policy —
 						// stays authoritative the way it is for other providers.
 						// A `canUseTool` callback is only consulted for calls the
 						// CLI already decided need permission (reads and
-						// allowlisted Bash never reach it), so it cannot gate
-						// those; the hook can, and its allow/deny decision is
-						// terminal. The handler runs in-process and awaits the
-						// interactive dialog exactly like `canUseTool` did.
+						// allowlisted shell commands never reach it), so it
+						// cannot gate those; the hook can, and its allow/deny
+						// decision is terminal. The handler runs in-process and
+						// awaits the interactive dialog exactly like
+						// `canUseTool` did.
 						PreToolUse: [
 							{
 								hooks: [
@@ -459,7 +453,7 @@ export function openClaudeAgentSession(
 										// no ask-for-path fallback needed.
 										let input = rawInput;
 										if (
-											(toolName === 'Glob' || toolName === 'Grep') &&
+											(toolName === 'glob' || toolName === 'grep') &&
 											typeof rawInput.path !== 'string'
 										) {
 											input = { ...rawInput, path: opts.workingDirectory };
@@ -502,23 +496,9 @@ export function openClaudeAgentSession(
 					systemPrompt: {
 						type: 'preset',
 						preset: 'claude_code',
-						append: buildPortalSystemGuidance([
-							...BUILTIN_TOOLS,
-							...portalTools.map((portalTool) => portalTool.name)
-						])
+						append: buildPortalSystemGuidance(portalTools.map((portalTool) => portalTool.name))
 					},
 					tools: [...BUILTIN_TOOLS],
-					// Aliased built-ins route their calls to the portal tool. The
-					// portal tool renders its own model-facing views (attached as
-					// the envelope's `views`), so the alias is routing-only.
-					toolAliases: {
-						Read: 'mcp__portal__read',
-						Glob: 'mcp__portal__glob',
-						Grep: 'mcp__portal__grep',
-						Write: 'mcp__portal__write',
-						Edit: 'mcp__portal__edit',
-						Bash: 'mcp__portal__shell_exec'
-					},
 					...(providerSessionId !== opts.conversationId ? { resume: providerSessionId } : {})
 				}
 			});
@@ -731,15 +711,13 @@ function permissionRequest(toolName: string, input: Record<string, unknown>, too
 	const path =
 		typeof input.file_path === 'string'
 			? input.file_path
-			: typeof input.notebook_path === 'string'
-				? input.notebook_path
-				: typeof input.path === 'string'
-					? input.path
-					: undefined;
-	// Bash is aliased to the portal shell tool; the PreToolUse hook sees either
-	// the SDK alias name (`Bash`) or the normalized portal name (`shell_exec`).
-	// Both map to the shell permission kind so saved shell grants apply.
-	if (toolName === 'Bash' || toolName === 'shell_exec') {
+			: typeof input.path === 'string'
+				? input.path
+				: undefined;
+	// Portal tools key the permission kind directly by name: shell_exec → shell,
+	// read/glob/grep → read, edit → edit, write → write. The SDK coding built-ins
+	// are no longer exposed, so there are no alias names to map.
+	if (toolName === 'shell_exec') {
 		const command = typeof input.command === 'string' ? input.command : undefined;
 		return {
 			kind: 'shell',
@@ -749,7 +727,7 @@ function permissionRequest(toolName: string, input: Record<string, unknown>, too
 			args: input
 		};
 	}
-	if (toolName === 'Read' || toolName === 'Glob' || toolName === 'Grep') {
+	if (toolName === 'read' || toolName === 'glob' || toolName === 'grep') {
 		return {
 			kind: 'read',
 			toolName,
@@ -758,7 +736,7 @@ function permissionRequest(toolName: string, input: Record<string, unknown>, too
 			args: input
 		};
 	}
-	if (toolName === 'Edit' || toolName === 'NotebookEdit') {
+	if (toolName === 'edit') {
 		return {
 			kind: 'edit',
 			toolName,
@@ -767,7 +745,7 @@ function permissionRequest(toolName: string, input: Record<string, unknown>, too
 			args: input
 		};
 	}
-	if (toolName === 'Write') {
+	if (toolName === 'write') {
 		return {
 			kind: 'write',
 			toolName,
