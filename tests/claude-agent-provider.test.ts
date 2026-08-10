@@ -262,14 +262,16 @@ describe('claudeAgentProvider', () => {
 				permissionDecision: 'allow'
 			}
 		});
-		// The hook is the single gate: canUseTool is gone, the SDK coding
-		// built-ins are stripped, and only the Agent subagent built-in remains.
+		// The hook is the instant gate for auto-decisions; `canUseTool` carries
+		// the human-prompt path (returned by the hook as `permissionDecision:
+		// 'ask'`). The SDK coding built-ins are stripped, and only the Agent
+		// subagent built-in remains.
 		expect(queryMock.mock.calls[0][0].options).toMatchObject({
 			allowedTools: ['Agent'],
 			tools: ['Agent']
 		});
 		expect(queryMock.mock.calls[0][0].options.toolAliases).toBeUndefined();
-		expect(queryMock.mock.calls[0][0].options.canUseTool).toBeUndefined();
+		expect(queryMock.mock.calls[0][0].options.canUseTool).toEqual(expect.any(Function));
 		expect(queryMock.mock.calls[0][0].options.mcpServers.portal.type).toBe('sdk');
 	});
 
@@ -512,6 +514,85 @@ describe('claudeAgentProvider', () => {
 		};
 		expect(out.permissionDecision).toBe('deny');
 		expect(out.permissionDecisionReason).toContain('Read denied by test grant.');
+	});
+
+	it('returns ask from the hook for a prompt-worthy portal tool call', async () => {
+		let preToolUse: ((input: Record<string, unknown>) => Promise<Record<string, unknown>>) | null =
+			null;
+		queryMock.mockImplementation(({ options }) => {
+			preToolUse = capturePreToolUseHook(options);
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		await collect(session.send('read secret', new AbortController().signal));
+		// A read outside the conversation's workspace root (/tmp) needs a human
+		// dialog under `policy: 'prompt'`. The hook must NOT await it (the CLI's
+		// hook clock would kill a slow human); it defers via `ask` to the CLI's
+		// own permission flow → `canUseTool`.
+		const decision = await preToolUse!({
+			hook_event_name: 'PreToolUse',
+			tool_name: 'mcp__portal__read',
+			tool_input: { file_path: '/etc/passwd' },
+			tool_use_id: 'tool-ask-hook'
+		});
+
+		expect(decision).toEqual({
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse',
+				permissionDecision: 'ask'
+			}
+		});
+	});
+
+	it('consults canUseTool for a prompt-worthy portal tool call', async () => {
+		let canUseTool:
+			| ((
+					toolName: string,
+					input: Record<string, unknown>,
+					options: { toolUseID: string; signal: AbortSignal; requestId: string }
+			  ) => Promise<unknown>)
+			| undefined;
+		queryMock.mockImplementation(({ options }) => {
+			canUseTool = options.canUseTool;
+			return messages({
+				type: 'result',
+				subtype: 'success',
+				session_id: '33333333-3333-4333-8333-333333333333'
+			} as SDKMessage);
+		});
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+		await collect(session.send('read secret', new AbortController().signal));
+
+		expect(canUseTool).toBeDefined();
+		const interactive = await import('../src/lib/server/runtime/interactive-requests');
+		const pending = canUseTool!(
+			'mcp__portal__read',
+			{ file_path: '/etc/passwd' },
+			{ toolUseID: 'tool-ask-1', signal: new AbortController().signal, requestId: 'req-ask-1' }
+		);
+		// The prompt-worthy call parks in the portal's interactive registry;
+		// resolving it as the human would routes the allow back through the
+		// canUseTool → `onPermissionRequest` gateway.
+		await vi.waitFor(() => {
+			expect(interactive.listForConversation('conv-claude-agent')).toHaveLength(1);
+		});
+		const [req] = interactive.listForConversation('conv-claude-agent');
+		interactive.resolve(req.requestId, 'user-1', { kind: 'permission', decision: 'allow-once' });
+
+		await expect(pending).resolves.toEqual({
+			behavior: 'allow',
+			updatedInput: { file_path: '/etc/passwd' },
+			toolUseID: 'tool-ask-1'
+		});
 	});
 
 	it('writes audit rows for portal calls under the hook', async () => {

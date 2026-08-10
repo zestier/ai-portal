@@ -286,7 +286,7 @@ export function openClaudeAgentSession(
 	});
 	const validateCustomToolArgs = buildToolArgsValidator(portalTools);
 	const derivePermissionRequest = buildPermissionRequestResolver(portalTools);
-	const { onPermissionRequest } = createInteractiveCallbacks({
+	const { onPermissionRequest, evaluatePermissionRequest } = createInteractiveCallbacks({
 		conversationId: opts.conversationId,
 		userId: opts.userId,
 		workingDirectory: opts.workingDirectory,
@@ -406,20 +406,46 @@ export function openClaudeAgentSession(
 					includePartialMessages: true,
 					agentProgressSummaries: true,
 					allowedTools: ['Agent'],
+					canUseTool: async (toolName, input, permissionOptions) => {
+						const decision = await onPermissionRequest(
+							permissionRequest(
+								normalizePortalToolName(toolName),
+								input,
+								permissionOptions.toolUseID
+							)
+						);
+						if (decision.kind === 'approve-once') {
+							return {
+								behavior: 'allow',
+								updatedInput: input,
+								toolUseID: permissionOptions.toolUseID
+							};
+						}
+						return {
+							behavior: 'deny',
+							message:
+								'feedback' in decision && typeof decision.feedback === 'string'
+									? decision.feedback
+									: 'Permission denied.',
+							interrupt: decision.kind === 'user-not-available',
+							toolUseID: permissionOptions.toolUseID
+						};
+					},
 					hooks: {
-						// Single permission gate. The PreToolUse hook fires for
-						// EVERY tool call (portal MCP tools and subagent inner
-						// tool calls) before the CLI's own permission machinery
-						// runs, so the portal gateway —
-						// `onPermissionRequest` → `decideCore` → grants/policy —
-						// stays authoritative the way it is for other providers.
-						// A `canUseTool` callback is only consulted for calls the
-						// CLI already decided need permission (reads and
-						// allowlisted shell commands never reach it), so it
-						// cannot gate those; the hook can, and its allow/deny
-						// decision is terminal. The handler runs in-process and
-						// awaits the interactive dialog exactly like
-						// `canUseTool` did.
+						// Hybrid gate. The PreToolUse hook fires for EVERY tool call
+						// (portal MCP tools and subagent inner tool calls) and is the
+						// *instant* gate: grants, policy, never-prompt, forced-retry,
+						// and approval mode all settle here as a terminal allow/deny
+						// with no human await — so the portal gateway stays
+						// authoritative even for calls the CLI would auto-approve on
+						// its own. On the human-prompt path the hook returns
+						// `permissionDecision: 'ask'` and lets the CLI fall through to
+						// its own permission flow, which consults `canUseTool` above —
+						// the same `onPermissionRequest` → `decideCore` gateway, but
+						// awaited through the SDK's unbounded permission prompt
+						// instead of the CLI's 600s hook clock. A prompt that is
+						// cancelled (turn abort, disconnect) still rejects the pending
+						// deferred, so abort paths keep working.
 						PreToolUse: [
 							{
 								hooks: [
@@ -458,10 +484,18 @@ export function openClaudeAgentSession(
 										) {
 											input = { ...rawInput, path: opts.workingDirectory };
 										}
-										const decision = await onPermissionRequest(
+										const evaluation = await evaluatePermissionRequest(
 											permissionRequest(toolName, input, hookInput.tool_use_id)
 										);
-										if (decision.kind === 'approve-once') {
+										if (evaluation.kind === 'prompt') {
+											return {
+												hookSpecificOutput: {
+													hookEventName: 'PreToolUse',
+													permissionDecision: 'ask'
+												}
+											};
+										}
+										if (evaluation.kind === 'approve-once') {
 											return {
 												hookSpecificOutput: {
 													hookEventName: 'PreToolUse',
@@ -474,10 +508,7 @@ export function openClaudeAgentSession(
 											hookSpecificOutput: {
 												hookEventName: 'PreToolUse',
 												permissionDecision: 'deny',
-												permissionDecisionReason:
-													'feedback' in decision && typeof decision.feedback === 'string'
-														? decision.feedback
-														: 'Permission denied.'
+												permissionDecisionReason: evaluation.feedback ?? 'Permission denied.'
 											}
 										};
 									}

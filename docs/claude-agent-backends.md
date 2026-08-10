@@ -85,13 +85,19 @@ Portal tools are exposed to the runtime through an in-process MCP server. Tool
 groups disabled on a conversation are omitted from that server.
 
 Every tool call — portal MCP tools and subagent inner tool calls — is gated by
-a single `PreToolUse` hook that routes through the same portal permission
-gateway as other providers (grants, policy, approval mode, audit). The hook's
-allow/deny is terminal, so the portal stays authoritative even for read-only
-tools and allowlisted shell commands that the SDK would otherwise auto-approve.
-`canUseTool` is not used. The SDK coding built-ins (`Bash`, `Read`, `Edit`, ...)
-are not exposed: the provider passes `tools: ['Agent']` alongside the portal
-MCP server, so the only SDK built-in surface is the `Agent` subagent tool.
+a `PreToolUse` hook plus a `canUseTool` callback that together route through the
+same portal permission gateway as other providers (grants, policy, approval
+mode, audit). The hook is the *instant* gate: it settles grants, policy,
+never-prompt tools, forced-retry, and approval mode as a terminal allow/deny
+with no human await, so the portal stays authoritative even for read-only tools
+and allowlisted shell commands that the SDK would otherwise auto-approve. On a
+human-prompt path the hook returns `permissionDecision: 'ask'` and the CLI
+falls through to its own permission flow, which consults `canUseTool` — the
+same `onPermissionRequest` gateway, but awaited through the SDK's unbounded
+permission prompt (no park deadline) instead of the CLI's 600s hook clock. The
+SDK coding built-ins (`Bash`, `Read`, `Edit`, ...) are not exposed: the provider
+passes `tools: ['Agent']` alongside the portal MCP server, so the only SDK
+built-in surface is the `Agent` subagent tool.
 Every file/shell/git operation goes through a `mcp__portal__*` tool whose name
 maps to the permission kind it exercises (`shell_exec` → `shell`,
 `read`/`glob`/`grep` → `read`, `edit` → `edit`, `write` → `write`), so saved

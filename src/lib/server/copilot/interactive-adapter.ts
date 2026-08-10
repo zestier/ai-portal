@@ -3,6 +3,7 @@ import type {
 	ElicitationSchema,
 	ImagePreview,
 	InteractiveKind,
+	InteractivePermissionView,
 	InteractiveRequestView,
 	InteractiveRequestViewBody,
 	InteractiveResponse,
@@ -50,7 +51,11 @@ import {
 } from '$lib/permissions/prompt-template';
 import * as promptTemplatesRepo from '../db/repos/prompt-templates';
 import { getLease } from '../leases';
-import { createShadowRecorder, type ShadowRecorder } from '../permissions/adversary/shadow';
+import {
+	createShadowRecorder,
+	type ShadowHandle,
+	type ShadowRecorder
+} from '../permissions/adversary/shadow';
 import type { ShadowResolutionSource } from '../db/repos/shadow-decisions';
 import type { ToolPermissionRequest } from '../tools/types';
 import { checkWorkspaceFileGate } from '../permissions/workspace-file-gate';
@@ -210,11 +215,36 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		return { keys, imagePreview };
 	};
 
-	// Inner decision logic. Wrapped by `onPermissionRequest` (below) so a
-	// prompt that is cancelled out from under us (turn abort, timeout, client
-	// disconnect, or capacity eviction) is reported to the SDK as
-	// "user-not-available" rather than a user denial.
-	const decideCore = async (req: PermissionRequestLike, imagePreview?: ImagePreview) => {
+	// Result of the evaluation phase of a permission request. `prompt` is
+	// returned when a human dialog is required; it carries the dialog view plus
+	// a `finalize` that settles the decision once the human answers.
+	// `evaluatePermissionRequest` never prompts — it backs both `decideCore`
+	// (which raises the dialog) and the claude-agent provider's PreToolUse
+	// hook, which returns `permissionDecision: 'ask'` on the `prompt` case so
+	// the SDK's own permission flow (and its unbounded `canUseTool` wait) owns
+	// the human prompt.
+	type PermissionEvaluation =
+		| { kind: 'approve-once' }
+		| { kind: 'reject'; feedback?: string }
+		| {
+				kind: 'prompt';
+				view: InteractivePermissionView;
+				/**
+				 * Adversary-shadow population for this prompt; `null` for dialogs
+				 * that are deliberately never shadowed (`always-prompt`).
+				 */
+				shadowSource: 'prompt-grant' | 'prompt-policy' | null;
+				observeShadow: (source: 'prompt-grant' | 'prompt-policy') => ShadowHandle | null;
+				finalize: (
+					response: Extract<InteractiveResponse, { kind: 'permission' }>,
+					shadow: ShadowHandle | null
+				) => { kind: 'approve-once' } | { kind: 'reject'; feedback?: string };
+		  };
+
+	const evaluatePermissionRequest = async (
+		req: PermissionRequestLike,
+		imagePreview?: ImagePreview
+	): Promise<PermissionEvaluation> => {
 		const tool = req.toolName ?? req.kind ?? 'unknown';
 		// A tool may declare that its permission should be evaluated as a
 		// filesystem request on a derived path (see `derivePermissionRequest`).
@@ -515,9 +545,14 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 				tool === 'template_update'
 					? loadTemplateBeforeSnapshot(req.args, opts.userId, opts.conversationId)
 					: undefined;
-			const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
-				'permission',
-				{
+			return {
+				kind: 'prompt' as const,
+				// `always-prompt` dialogs are deliberately NOT shadowed (an
+				// adversary could never settle them) and are audited as
+				// auto-allows once the human approves.
+				shadowSource: null,
+				observeShadow,
+				view: {
 					kind: 'permission',
 					tool,
 					permissionKind,
@@ -529,13 +564,15 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					imagePreview,
 					...(templateBefore !== undefined ? { templateBefore } : {}),
 					...(commitTarget !== undefined ? { commitTarget } : {})
+				},
+				finalize: (response) => {
+					if (response.decision === 'deny' || response.decision === 'deny-always') {
+						return deny(denyFeedbackOf(response));
+					}
+					audit('auto-allow');
+					return { kind: 'approve-once' } as const;
 				}
-			);
-			if (response.decision === 'deny' || response.decision === 'deny-always') {
-				return deny(denyFeedbackOf(response));
-			}
-			audit('auto-allow');
-			return { kind: 'approve-once' } as const;
+			};
 		}
 		const evaluation = getEval();
 		if (evaluation.kind === 'allow') {
@@ -597,13 +634,11 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 		// Phase 0 adversary shadow; see `observeShadow` above. Strictly
 		// observational — the prompt below is raised and awaited identically
 		// whether or not the adversary ever responds.
-		const shadow = observeShadow(
-			evaluation.kind === 'prompt-grant' ? 'prompt-grant' : 'prompt-policy'
-		);
-
-		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
-			'permission',
-			{
+		return {
+			kind: 'prompt' as const,
+			shadowSource: evaluation.kind === 'prompt-grant' ? 'prompt-grant' : 'prompt-policy',
+			observeShadow,
+			view: {
 				kind: 'permission',
 				tool,
 				permissionKind,
@@ -616,16 +651,38 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 					: {}),
 				...(shellAnalysis !== undefined ? { shellAnalysis } : {}),
 				...(imagePreview !== undefined ? { imagePreview } : {})
+			},
+			finalize: (response, shadow) => {
+				// Only a real answer produces a label. A cancelled or expired
+				// prompt throws out of `askInteractive`, leaving `human_decision`
+				// NULL, which the scorer excludes rather than counting as a denial.
+				shadow?.recordHuman(response.decision);
+				if (response.decision === 'deny' || response.decision === 'deny-always') {
+					return deny(denyFeedbackOf(response));
+				}
+				return { kind: 'approve-once' } as const;
 			}
+		};
+	};
+
+	// Inner decision logic: evaluate, and when a human dialog is required,
+	// raise and await it. Wrapped by `onPermissionRequest` (below) so a prompt
+	// that is cancelled out from under us (turn abort, timeout, client
+	// disconnect, or capacity eviction) is reported to the SDK as
+	// "user-not-available" rather than a user denial.
+	const decideCore = async (req: PermissionRequestLike, imagePreview?: ImagePreview) => {
+		const evaluation = await evaluatePermissionRequest(req, imagePreview);
+		if (evaluation.kind !== 'prompt') return evaluation;
+		// The shadow observation fires BEFORE the prompt is raised — a cancelled
+		// prompt still leaves its row behind with `human_decision` NULL.
+		const shadow = evaluation.shadowSource
+			? evaluation.observeShadow(evaluation.shadowSource)
+			: null;
+		const response = await askInteractive<Extract<InteractiveResponse, { kind: 'permission' }>>(
+			'permission',
+			evaluation.view
 		);
-		// Only a real answer produces a label. A cancelled or expired prompt
-		// throws out of `askInteractive` above, leaving `human_decision` NULL,
-		// which the scorer excludes rather than counting as a denial.
-		shadow?.recordHuman(response.decision);
-		if (response.decision === 'deny' || response.decision === 'deny-always') {
-			return deny(denyFeedbackOf(response));
-		}
-		return { kind: 'approve-once' } as const;
+		return evaluation.finalize(response, shadow);
 	};
 
 	// Capture-then-decide wrapper. Stages any viewable image before the
@@ -770,6 +827,7 @@ export function createInteractiveCallbacks(opts: InteractiveAdapterOptions) {
 
 	return {
 		onPermissionRequest,
+		evaluatePermissionRequest,
 		onUserInputRequest,
 		onElicitationRequest,
 		onExitPlanMode,
