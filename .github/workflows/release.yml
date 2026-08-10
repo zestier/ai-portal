@@ -181,3 +181,47 @@ jobs:
           subject-name: ${{ steps.image.outputs.value }}
           subject-digest: ${{ steps.digest.outputs.value }}
           push-to-registry: true
+
+  # Build the npm tarball and attach it to the tag's GitHub release. This is
+  # a "regular" tarball: dependencies (including native modules such as
+  # better-sqlite3) resolve from the registry at install time, so it is not
+  # offline-installable. Consumers install it with
+  # `npm i https://github.com/<owner>/zap/releases/download/<tag>/zap-<tag>.tgz`.
+  pack:
+    needs: ci
+    runs-on: ubuntu-latest
+    # Tag pushes only. workflow_dispatch runs against a branch ref, where
+    # there is no release to attach to.
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Pack tarball
+        run: |
+          tarball=$(npm pack)
+          mv "$tarball" "zap-$GITHUB_REF_NAME.tgz"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "zap-$GITHUB_REF_NAME.tgz"

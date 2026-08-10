@@ -4,6 +4,11 @@
 	"private": true,
 	"type": "module",
 	"description": "Self-hosted web portal for the GitHub Copilot agent SDK.",
+	"files": [
+		"build",
+		"src/lib/server/db/migrations",
+		"README.md"
+	],
 	"scripts": {
 		"dev": "vite dev",
 		"dev:isolated": "node scripts/dev-isolated.mjs",
