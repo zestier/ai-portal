@@ -5,7 +5,7 @@ import {
 	type SDKMessage
 } from '@anthropic-ai/claude-agent-sdk';
 import { ulid } from 'ulid';
-import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
+import type { ApprovalMode, PortalEvent, SessionMode, ProviderInstance } from '$lib/types';
 import { loadConfig } from '../config';
 import { log } from '../log';
 import { workspaceRootsFor } from '../leases';
@@ -18,11 +18,21 @@ import { buildClaudePortalTools, createClaudePortalMcpServer } from './claude-ag
 import { ensureClaudeAgentSkills } from './claude-agent-skills';
 import { discoverRepoPlugins } from './claude-agent-repo-plugins';
 import { pollContextUsage } from './claude-agent-context-usage';
-import type { ModelBackendProvider, ProviderOpenOptions, ProviderSession } from './provider';
+import { fetchWithTimeout, parseJson } from './provider-utils';
+import type {
+	ModelBackendProvider,
+	ProviderCapabilities,
+	ProviderModelInfo,
+	ProviderOpenOptions,
+	ProviderSession,
+	ProviderStatusBehavior,
+	ProviderUiInfo
+} from './provider';
 
 const providerId = 'claude-agent' as const;
 const displayName = 'Claude Agent SDK';
 const BUILTIN_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', 'Agent'] as const;
+const MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 
 type ClaudeAgentConfig = {
 	baseUrl?: string | undefined;
@@ -30,118 +40,188 @@ type ClaudeAgentConfig = {
 	maxTurns: number;
 };
 
-export const claudeAgentProvider: ModelBackendProvider = {
-	id: providerId,
-	displayName,
-	ui: {
-		chatPlaceholder: `Message ${displayName}...`,
-		defaultModelPlaceholder: 'claude-sonnet-4-6',
-		setupHint:
-			'Configure CLAUDE_AGENT_API_KEY. Set CLAUDE_AGENT_BASE_URL for an Anthropic-compatible endpoint such as DeepSeek.',
-		setupHintVisibility: 'always'
-	},
-	status: { probe: 'always' },
-	capabilities: {
-		authStatus: true,
-		modelList: false,
-		session: { open: true, resume: true, dispose: true, abort: true },
-		stream: { send: true, contract: 'PortalEvent' },
-		controls: { mode: true, approvalMode: true, resetSessionApprovals: false },
-		features: {
-			modes: {
-				supported: true,
-				behavior: 'supported',
-				label: 'Runtime modes',
-				description: 'Plan mode is forwarded to the Agent SDK on the next turn.'
-			},
-			approvalMode: {
-				supported: true,
-				behavior: 'portal-enforced',
-				label: 'Approval mode',
-				description: 'The portal enforces approval modes through the Agent SDK permission callback.'
-			},
-			contextUsage: {
-				supported: true,
-				behavior: 'supported',
-				label: 'Context usage',
-				description:
-					'Context-window usage is polled from the Agent SDK after each turn via getContextUsage().'
-			},
-			subagents: {
-				supported: true,
-				behavior: 'supported',
-				label: 'Subagents',
-				description: 'The Agent SDK general-purpose subagent is available through its Agent tool.'
-			},
-			mcpInfoEvents: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'MCP info events',
-				description: 'Agent SDK MCP informational events are not yet exposed.'
-			},
-			planExit: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Plan exit',
-				description: 'Plan-exit interaction is not yet bridged to the portal.'
-			},
-			elicitation: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Elicitation',
-				description: 'Agent SDK elicitation is not yet bridged to the portal.'
-			}
-		},
-		optionalRuntimeFeatures: {
-			infiniteSessionMetadata: false,
-			permissionCallbacks: true,
-			userInputCallbacks: false,
-			elicitationCallbacks: false,
-			exitPlanModeCallbacks: false,
-			autoModeSwitchCallbacks: false,
-			contextWindowEvents: false,
-			contextCompactionEvents: true,
-			fileEditEvents: false,
-			reasoningEvents: true,
-			subagentLifecycleEvents: true
-		},
-		localModelLoad: { primeAfterModelSwap: false },
-		sideCompletion: false
-	},
-	async fetchAuthStatus() {
-		const cfg = providerConfig();
-		return cfg.apiKey
-			? {
-					isAuthenticated: true,
-					authType: 'api-key',
-					statusMessage: cfg.baseUrl ?? 'Anthropic API'
-				}
-			: {
-					isAuthenticated: false,
-					statusMessage: `${displayName} requires CLAUDE_AGENT_API_KEY.`
-				};
-	},
-	async listModels() {
-		return [];
-	},
-	async openSession(opts) {
-		const cfg = providerConfig();
-		if (!cfg.apiKey) throw new Error(`${displayName} requires CLAUDE_AGENT_API_KEY.`);
-		const [skillPluginPaths, repoPluginPaths] = await Promise.all([
-			ensureClaudeAgentSkills(loadConfig().DATA_DIR),
-			discoverRepoPlugins(opts.workingDirectory)
-		]);
-		return openClaudeAgentSession(cfg, opts, skillPluginPaths, repoPluginPaths);
-	}
+interface AnthropicModelsResponse {
+	data?: Array<{ id?: string; display_name?: string }>;
+	error?: { message?: string };
+}
+
+const ui: ProviderUiInfo = {
+	chatPlaceholder: `Message ${displayName}...`,
+	defaultModelPlaceholder: 'claude-sonnet-4-6',
+	setupHint:
+		'Configure CLAUDE_AGENT_API_KEY. Set CLAUDE_AGENT_BASE_URL for an Anthropic-compatible endpoint such as DeepSeek.',
+	setupHintVisibility: 'always'
 };
 
-function providerConfig(): ClaudeAgentConfig {
+const status: ProviderStatusBehavior = { probe: 'always' };
+
+const capabilities: ProviderCapabilities = {
+	authStatus: true,
+	modelList: true,
+	session: { open: true, resume: true, dispose: true, abort: true },
+	stream: { send: true, contract: 'PortalEvent' },
+	controls: { mode: true, approvalMode: true, resetSessionApprovals: false },
+	features: {
+		modes: {
+			supported: true,
+			behavior: 'supported',
+			label: 'Runtime modes',
+			description: 'Plan mode is forwarded to the Agent SDK on the next turn.'
+		},
+		approvalMode: {
+			supported: true,
+			behavior: 'portal-enforced',
+			label: 'Approval mode',
+			description: 'The portal enforces approval modes through the Agent SDK permission callback.'
+		},
+		contextUsage: {
+			supported: true,
+			behavior: 'supported',
+			label: 'Context usage',
+			description:
+				'Context-window usage is polled from the Agent SDK after each turn via getContextUsage().'
+		},
+		subagents: {
+			supported: true,
+			behavior: 'supported',
+			label: 'Subagents',
+			description: 'The Agent SDK general-purpose subagent is available through its Agent tool.'
+		},
+		mcpInfoEvents: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'MCP info events',
+			description: 'Agent SDK MCP informational events are not yet exposed.'
+		},
+		planExit: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Plan exit',
+			description: 'Plan-exit interaction is not yet bridged to the portal.'
+		},
+		elicitation: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Elicitation',
+			description: 'Agent SDK elicitation is not yet bridged to the portal.'
+		}
+	},
+	optionalRuntimeFeatures: {
+		infiniteSessionMetadata: false,
+		permissionCallbacks: true,
+		userInputCallbacks: false,
+		elicitationCallbacks: false,
+		exitPlanModeCallbacks: false,
+		autoModeSwitchCallbacks: false,
+		contextWindowEvents: false,
+		contextCompactionEvents: true,
+		fileEditEvents: false,
+		reasoningEvents: true,
+		subagentLifecycleEvents: true
+	},
+	localModelLoad: { primeAfterModelSwap: false },
+	sideCompletion: false
+};
+
+/**
+ * Build a claude-agent provider for one configured instance. The built-in
+ * instance (`id === 'claude-agent'`) is exported as `claudeAgentProvider`;
+ * extra `ZAP_PROVIDERS_JSON` instances get a per-instance object whose config
+ * (base URL, key, pinned models) is captured in the closure while everything
+ * else stays shared.
+ */
+export function createClaudeAgentProvider(instance: ProviderInstance): ModelBackendProvider {
+	return {
+		id: instance.id,
+		type: instance.type,
+		displayName: instance.label ?? displayName,
+		ui,
+		status,
+		capabilities,
+		async fetchAuthStatus() {
+			const cfg = providerConfig(instance);
+			return cfg.apiKey
+				? {
+						isAuthenticated: true,
+						authType: 'api-key',
+						statusMessage: cfg.baseUrl ?? 'Anthropic API'
+					}
+				: {
+						isAuthenticated: false,
+						statusMessage: `${displayName} requires CLAUDE_AGENT_API_KEY.`
+					};
+		},
+		async listModels() {
+			const cfg = providerConfig(instance);
+			// Pinned models win; then /models discovery on the instance's endpoint;
+			// then the manual-entry fallback (empty list).
+			if (instance.models && instance.models.length > 0) {
+				return instance.models.map((id) => ({ id, name: id }));
+			}
+			if (cfg.baseUrl) {
+				const discovered = await probeAnthropicModels(cfg);
+				if (discovered.length > 0) return discovered;
+			}
+			return [];
+		},
+		async openSession(opts) {
+			const cfg = providerConfig(instance);
+			if (!cfg.apiKey) throw new Error(`${displayName} requires CLAUDE_AGENT_API_KEY.`);
+			const [skillPluginPaths, repoPluginPaths] = await Promise.all([
+				ensureClaudeAgentSkills(loadConfig().DATA_DIR),
+				discoverRepoPlugins(opts.workingDirectory)
+			]);
+			return openClaudeAgentSession(cfg, opts, skillPluginPaths, repoPluginPaths);
+		}
+	};
+}
+
+export const claudeAgentProvider = createClaudeAgentProvider({
+	id: providerId,
+	type: providerId
+});
+
+function providerConfig(instance?: ProviderInstance): ClaudeAgentConfig {
 	const cfg = loadConfig();
 	return {
-		baseUrl: cfg.CLAUDE_AGENT_BASE_URL,
-		apiKey: cfg.CLAUDE_AGENT_API_KEY,
+		// Configured instances carry their endpoint; built-ins fall back to env so
+		// a config reset in tests (or a restarted process) is picked up fresh. A
+		// JSON instance never inherits the env key — no key means no auth.
+		baseUrl: instance?.baseUrl ?? cfg.CLAUDE_AGENT_BASE_URL,
+		apiKey: instance && instance.id !== instance.type ? instance.apiKey : cfg.CLAUDE_AGENT_API_KEY,
 		maxTurns: cfg.CLAUDE_AGENT_MAX_TURNS
 	};
+}
+
+/** Best-effort model discovery against an Anthropic-compatible `/v1/models`. */
+async function probeAnthropicModels(cfg: ClaudeAgentConfig): Promise<ProviderModelInfo[]> {
+	try {
+		const res = await fetchWithTimeout(
+			`${cfg.baseUrl!.replace(/\/+$/, '')}/v1/models`,
+			{
+				headers: {
+					...(cfg.apiKey ? { 'x-api-key': cfg.apiKey, authorization: `Bearer ${cfg.apiKey}` } : {}),
+					'content-type': 'application/json'
+				}
+			},
+			MODEL_DISCOVERY_TIMEOUT_MS
+		);
+		const body = (await parseJson(res)) as AnthropicModelsResponse;
+		if (!res.ok) {
+			log.warn('claude_agent.models_failed', {
+				provider: cfg.baseUrl,
+				status: res.status,
+				err: body.error?.message ?? res.statusText
+			});
+			return [];
+		}
+		return (body.data ?? [])
+			.filter((m): m is { id: string; display_name?: string } => typeof m.id === 'string')
+			.map((m) => ({ id: m.id, name: m.display_name ?? m.id }));
+	} catch (e) {
+		log.warn('claude_agent.models_failed', { provider: cfg.baseUrl, err: String(e) });
+		return [];
+	}
 }
 
 function queryEnvironment(cfg: ClaudeAgentConfig): Record<string, string | undefined> {
@@ -226,7 +306,7 @@ export function openClaudeAgentSession(
 		getPermissionBehavior: (toolName) =>
 			portalToolsByName.get(toolName)?.permissionBehavior ?? 'normal',
 		getAgentModel: () => opts.model,
-		getAgentBackend: () => providerId,
+		getAgentBackend: () => opts.provider ?? providerId,
 		getAdversaryModel: () => opts.adversaryModel ?? null,
 		getAdversaryBackend: () => opts.adversaryBackend ?? null,
 		validateCustomToolArgs: (toolName, toolArgs) =>
@@ -235,7 +315,7 @@ export function openClaudeAgentSession(
 			derivePermissionRequest(normalizePortalToolName(toolName), toolArgs)
 	});
 	const session: ProviderSession = {
-		provider: providerId,
+		provider: opts.provider ?? providerId,
 		conversationId: opts.conversationId,
 		providerSessionId,
 		workingDirectory: opts.workingDirectory,

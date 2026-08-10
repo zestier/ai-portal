@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { resolve } from 'node:path';
-import { BACKEND_PROVIDER_IDS, MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
+import {
+	BACKEND_PROVIDER_IDS,
+	MEMORY_EXTRACTOR_BACKEND_IDS,
+	type BackendProviderId,
+	type ProviderInstance
+} from '$lib/types';
 
 const optionalUrl = z
 	.string()
@@ -35,6 +40,82 @@ const pathList = z
 					.filter(Boolean)
 			: []
 	);
+
+// One entry of `ZAP_PROVIDERS_JSON`: a second (or third…) configured backend
+// instance. `type` picks the implementation; `id` is the identity stored on
+// conversations and settings. `copilot` is rejected as a type below — it stays
+// a single built-in.
+const providerInstanceSchema = z.object({
+	id: z.string().trim().min(1, 'id is required'),
+	type: z.enum(BACKEND_PROVIDER_IDS),
+	label: z.string().trim().min(1).optional(),
+	baseUrl: z.string().trim().url().optional(),
+	apiKey: z.string().trim().min(1).optional(),
+	models: z.array(z.string().trim().min(1, 'model id is required')).optional()
+});
+
+// Cross-entry constraints that only make sense once the whole array is parsed:
+// no duplicate ids (including collisions with the built-in instances, which own
+// the bare type ids), no copilot duplicates, and url-backed instances must
+// declare an endpoint (they have no env fallback to inherit).
+const providerInstancesSchema = z.array(providerInstanceSchema).superRefine((list, ctx) => {
+	const seen = new Set<string>();
+	for (const [i, inst] of list.entries()) {
+		if (inst.type === 'copilot') {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: [i, 'type'],
+				message: `type 'copilot' cannot be duplicated; copilot stays a single built-in instance`
+			});
+		}
+		if (BACKEND_PROVIDER_IDS.includes(inst.id as BackendProviderId)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: [i, 'id'],
+				message: `'${inst.id}' is a built-in provider id; give this instance a different id`
+			});
+		} else if (seen.has(inst.id)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: [i, 'id'],
+				message: `duplicate provider instance id '${inst.id}'`
+			});
+		}
+		seen.add(inst.id);
+		if (inst.type !== 'copilot' && !inst.baseUrl) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: [i, 'baseUrl'],
+				message: `baseUrl is required for a '${inst.type}' instance`
+			});
+		}
+	}
+});
+
+// `ZAP_PROVIDERS_JSON` holds extra configured backend instances as a JSON
+// array. The `transform` parses the string; `.pipe` then validates the shape
+// and the cross-entry constraints. Both failure modes report under the
+// `ZAP_PROVIDERS_JSON[...]` path so `loadConfig`'s error output names the
+// offending field.
+const providersJson = z
+	.string()
+	.trim()
+	.optional()
+	.transform((raw, ctx) => {
+		if (!raw) return [] as ProviderInstance[];
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch (e) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: `not valid JSON: ${e instanceof Error ? e.message : String(e)}`
+			});
+			return z.NEVER;
+		}
+		return parsed;
+	})
+	.pipe(providerInstancesSchema);
 
 const Schema = z
 	.object({
@@ -128,7 +209,12 @@ const Schema = z
 			.trim()
 			.optional()
 			.transform((v) => (v ? v : undefined)),
-		DEFAULT_BACKEND_PROVIDER: z.enum(BACKEND_PROVIDER_IDS).default('copilot'),
+		// Names the default provider INSTANCE. Any configured instance id works
+		// (a bare type id means that type's built-in instance); an unknown value
+		// is coerced to the copilot built-in by `normalizeProviderInstance`.
+		DEFAULT_BACKEND_PROVIDER: z.string().trim().default('copilot'),
+		// Extra configured backend instances beyond the env-fed built-ins.
+		ZAP_PROVIDERS_JSON: providersJson,
 		DEFAULT_MODEL: z.string().default('claude-sonnet-4.5'),
 		CLAUDE_AGENT_BASE_URL: optionalUrl,
 		CLAUDE_AGENT_API_KEY: z.string().optional(),

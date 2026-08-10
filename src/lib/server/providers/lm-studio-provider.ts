@@ -9,18 +9,21 @@ import {
 	type OpenAICompatibleConfig
 } from './openai-compatible-provider';
 import { BoundedTtlCache } from '../copilot/bounded-ttl-cache';
-import type { BackendProviderId } from '$lib/types';
+import type { BackendProviderId, ProviderInstance } from '$lib/types';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
+	ProviderCapabilities,
 	ProviderCompletionRequest,
 	ProviderModelInfo,
 	ProviderOpenOptions,
-	ProviderSession
+	ProviderSession,
+	ProviderStatusBehavior,
+	ProviderUiInfo
 } from './provider';
 
 interface LMStudioConfig {
-	id: Extract<BackendProviderId, 'lm-studio'>;
+	id: string;
 	displayName: string;
 	nativeBaseUrl: string;
 	openAIBaseUrl: string;
@@ -60,214 +63,241 @@ const modelContextCache = new BoundedTtlCache<string, number>({
 	maxEntries: MODEL_CONTEXT_CACHE_MAX
 });
 
-export const lmStudioProvider: ModelBackendProvider = {
-	id: providerId,
-	displayName,
-	ui: {
-		chatPlaceholder: 'Message LM Studio...',
-		defaultModelPlaceholder: 'publisher/model-name',
-		setupHint:
-			'Start the LM Studio local server. The portal uses LM Studio /v1 chat completions for stateless chats and /api/v1/models for model context metadata.',
-		setupHintVisibility: 'always'
-	},
-	status: {
-		probe: 'when-default',
-		skippedStatusMessage: 'Not checked because LM Studio is not the default provider.'
-	},
-	capabilities: {
-		authStatus: true,
-		modelList: true,
-		session: {
-			open: true,
-			resume: false,
-			dispose: true,
-			abort: true
-		},
-		stream: {
-			send: true,
-			contract: 'PortalEvent'
-		},
-		controls: {
-			mode: false,
-			approvalMode: true,
-			resetSessionApprovals: false
-		},
-		features: {
-			modes: {
-				supported: false,
-				behavior: 'no-op',
-				label: 'Runtime modes',
-				description:
-					'LM Studio OpenAI-compatible chats do not expose Copilot runtime modes. The saved mode is retained for portal permission semantics; it is not sent to LM Studio.'
-			},
-			approvalMode: {
-				supported: true,
-				behavior: 'portal-enforced',
-				label: 'Approval mode',
-				description:
-					'The approval mode is enforced by the portal for portal-hosted tools. LM Studio does not receive a separate runtime approve-all signal.'
-			},
-			contextUsage: {
-				supported: true,
-				behavior: 'supported',
-				label: 'Context usage',
-				description:
-					'LM Studio context usage is shown when streamed OpenAI-compatible usage is available; context limits come from native model metadata.'
-			},
-			subagents: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Subagents',
-				description: 'The Copilot subagent/task runtime is unavailable in LM Studio sessions.'
-			},
-			mcpInfoEvents: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'MCP info events',
-				description:
-					'MCP sampling, OAuth, and external-tool info events are Copilot SDK events and are not emitted by LM Studio OpenAI-compatible sessions.'
-			},
-			planExit: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Plan exit',
-				description:
-					'LM Studio OpenAI-compatible sessions do not support Copilot plan-exit callbacks.'
-			},
-			elicitation: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Elicitation',
-				description:
-					'LM Studio OpenAI-compatible sessions do not support Copilot elicitation callbacks.'
-			}
-		},
-		optionalRuntimeFeatures: {
-			infiniteSessionMetadata: false,
-			permissionCallbacks: true,
-			userInputCallbacks: false,
-			elicitationCallbacks: false,
-			exitPlanModeCallbacks: false,
-			autoModeSwitchCallbacks: false,
-			contextWindowEvents: true,
-			contextCompactionEvents: false,
-			fileEditEvents: false,
-			reasoningEvents: true,
-			subagentLifecycleEvents: false
-		},
-		localModelLoad: {
-			primeAfterModelSwap: true
-		},
-		sideCompletion: true
-	},
-	async fetchAuthStatus(): Promise<ProviderAuthStatus> {
-		const cfg = providerConfig();
-		try {
-			const res = await fetchWithTimeout(
-				nativeEndpoint(cfg.nativeBaseUrl, '/models'),
-				{
-					headers: requestHeaders(cfg)
-				},
-				MODEL_DISCOVERY_TIMEOUT_MS
-			);
-			if (res.ok) {
-				return {
-					isAuthenticated: true,
-					authType: cfg.apiKey ? 'api-token' : 'none',
-					statusMessage: cfg.nativeBaseUrl
-				};
-			}
-			return {
-				isAuthenticated: false,
-				...(cfg.apiKey ? { authType: 'api-token' } : {}),
-				statusMessage: `${displayName} returned ${res.status}: ${res.statusText}`
-			};
-		} catch (e) {
-			return {
-				isAuthenticated: false,
-				statusMessage: backendErrorMessage(cfg, e)
-			};
-		}
-	},
-	async listModels(): Promise<ProviderModelInfo[]> {
-		const cfg = providerConfig();
-		try {
-			const res = await fetchWithTimeout(
-				nativeEndpoint(cfg.nativeBaseUrl, '/models'),
-				{
-					headers: requestHeaders(cfg)
-				},
-				MODEL_DISCOVERY_TIMEOUT_MS
-			);
-			const body = (await parseJson(res)) as ModelsResponse;
-			if (!res.ok) {
-				log.warn('lm_studio.models_failed', {
-					status: res.status,
-					err: body.error?.message ?? res.statusText
-				});
-				return [];
-			}
-			return (body.models ?? [])
-				.filter((model) => model.type === 'llm' && typeof model.key === 'string')
-				.map((model) => {
-					const loadedId = model.loaded_instances?.find((instance) => instance.id)?.id;
-					const maxContext =
-						model.loaded_instances?.find((instance) => instance.config?.context_length)?.config
-							?.context_length ?? model.max_context_length;
-					return {
-						id: loadedId ?? model.key!,
-						name: model.display_name ?? model.key!,
-						...(typeof maxContext === 'number'
-							? { capabilities: { limits: { max_context_window_tokens: maxContext } } }
-							: {})
-					};
-				});
-		} catch (e) {
-			log.warn('lm_studio.models_failed', { err: String(e) });
-			return [];
-		}
-	},
-	async openSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
-		const cfg = providerConfig();
-		const tokenLimit = await fetchModelContextLength(cfg, opts.model);
-		const sessionCfg: OpenAICompatibleConfig = {
-			id: cfg.id,
-			displayName: cfg.displayName,
-			baseUrl: cfg.openAIBaseUrl,
-			apiKey: cfg.apiKey,
-			maxToolIterations: cfg.maxToolIterations,
-			contextRestoreMessages: cfg.contextRestoreMessages,
-			sampling: cfg.sampling,
-			contextTokenLimit: tokenLimit,
-			includeUsage: tokenLimit !== null
-		};
-		return openOpenAICompatibleSession(sessionCfg, opts);
-	},
-	async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
-		const cfg = providerConfig();
-		await primeOpenAICompatibleModel(
-			{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
-			model,
-			opts
-		);
-	},
-	async complete(req: ProviderCompletionRequest): Promise<string> {
-		const cfg = providerConfig();
-		return completeOpenAICompatible(
-			{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
-			req
-		);
-	}
+const ui: ProviderUiInfo = {
+	chatPlaceholder: 'Message LM Studio...',
+	defaultModelPlaceholder: 'publisher/model-name',
+	setupHint:
+		'Start the LM Studio local server. The portal uses LM Studio /v1 chat completions for stateless chats and /api/v1/models for model context metadata.',
+	setupHintVisibility: 'always'
 };
 
-function providerConfig(): LMStudioConfig {
-	const cfg = loadConfig();
+const status: ProviderStatusBehavior = {
+	probe: 'when-default',
+	skippedStatusMessage: 'Not checked because LM Studio is not the default provider.'
+};
+
+const capabilities: ProviderCapabilities = {
+	authStatus: true,
+	modelList: true,
+	session: {
+		open: true,
+		resume: false,
+		dispose: true,
+		abort: true
+	},
+	stream: {
+		send: true,
+		contract: 'PortalEvent'
+	},
+	controls: {
+		mode: false,
+		approvalMode: true,
+		resetSessionApprovals: false
+	},
+	features: {
+		modes: {
+			supported: false,
+			behavior: 'no-op',
+			label: 'Runtime modes',
+			description:
+				'LM Studio OpenAI-compatible chats do not expose Copilot runtime modes. The saved mode is retained for portal permission semantics; it is not sent to LM Studio.'
+		},
+		approvalMode: {
+			supported: true,
+			behavior: 'portal-enforced',
+			label: 'Approval mode',
+			description:
+				'The approval mode is enforced by the portal for portal-hosted tools. LM Studio does not receive a separate runtime approve-all signal.'
+		},
+		contextUsage: {
+			supported: true,
+			behavior: 'supported',
+			label: 'Context usage',
+			description:
+				'LM Studio context usage is shown when streamed OpenAI-compatible usage is available; context limits come from native model metadata.'
+		},
+		subagents: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Subagents',
+			description: 'The Copilot subagent/task runtime is unavailable in LM Studio sessions.'
+		},
+		mcpInfoEvents: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'MCP info events',
+			description:
+				'MCP sampling, OAuth, and external-tool info events are Copilot SDK events and are not emitted by LM Studio OpenAI-compatible sessions.'
+		},
+		planExit: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Plan exit',
+			description:
+				'LM Studio OpenAI-compatible sessions do not support Copilot plan-exit callbacks.'
+		},
+		elicitation: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Elicitation',
+			description:
+				'LM Studio OpenAI-compatible sessions do not support Copilot elicitation callbacks.'
+		}
+	},
+	optionalRuntimeFeatures: {
+		infiniteSessionMetadata: false,
+		permissionCallbacks: true,
+		userInputCallbacks: false,
+		elicitationCallbacks: false,
+		exitPlanModeCallbacks: false,
+		autoModeSwitchCallbacks: false,
+		contextWindowEvents: true,
+		contextCompactionEvents: false,
+		fileEditEvents: false,
+		reasoningEvents: true,
+		subagentLifecycleEvents: false
+	},
+	localModelLoad: {
+		primeAfterModelSwap: true
+	},
+	sideCompletion: true
+};
+
+/**
+ * Build an LM Studio provider for one configured instance. The built-in
+ * instance (`id === 'lm-studio'`) is exported as `lmStudioProvider`; extra
+ * `ZAP_PROVIDERS_JSON` instances get a per-instance object capturing their
+ * endpoint config in the closure.
+ */
+export function createLMStudioProvider(instance: ProviderInstance): ModelBackendProvider {
 	return {
-		id: providerId,
-		displayName,
-		nativeBaseUrl: cfg.LMSTUDIO_BASE_URL,
-		openAIBaseUrl: openAIEndpointBase(cfg.LMSTUDIO_BASE_URL),
-		apiKey: cfg.LMSTUDIO_API_KEY ?? null,
+		id: instance.id,
+		type: instance.type,
+		displayName: instance.label ?? displayName,
+		ui,
+		status,
+		capabilities,
+		async fetchAuthStatus(): Promise<ProviderAuthStatus> {
+			const cfg = providerConfig(instance);
+			try {
+				const res = await fetchWithTimeout(
+					nativeEndpoint(cfg.nativeBaseUrl, '/models'),
+					{
+						headers: requestHeaders(cfg)
+					},
+					MODEL_DISCOVERY_TIMEOUT_MS
+				);
+				if (res.ok) {
+					return {
+						isAuthenticated: true,
+						authType: cfg.apiKey ? 'api-token' : 'none',
+						statusMessage: cfg.nativeBaseUrl
+					};
+				}
+				return {
+					isAuthenticated: false,
+					...(cfg.apiKey ? { authType: 'api-token' } : {}),
+					statusMessage: `${displayName} returned ${res.status}: ${res.statusText}`
+				};
+			} catch (e) {
+				return {
+					isAuthenticated: false,
+					statusMessage: backendErrorMessage(cfg, e)
+				};
+			}
+		},
+		async listModels(): Promise<ProviderModelInfo[]> {
+			const cfg = providerConfig(instance);
+			if (instance.models && instance.models.length > 0)
+				return instance.models.map((id) => ({ id, name: id }));
+			try {
+				const res = await fetchWithTimeout(
+					nativeEndpoint(cfg.nativeBaseUrl, '/models'),
+					{
+						headers: requestHeaders(cfg)
+					},
+					MODEL_DISCOVERY_TIMEOUT_MS
+				);
+				const body = (await parseJson(res)) as ModelsResponse;
+				if (!res.ok) {
+					log.warn('lm_studio.models_failed', {
+						status: res.status,
+						err: body.error?.message ?? res.statusText
+					});
+					return [];
+				}
+				return (body.models ?? [])
+					.filter((model) => model.type === 'llm' && typeof model.key === 'string')
+					.map((model) => {
+						const loadedId = model.loaded_instances?.find((instance) => instance.id)?.id;
+						const maxContext =
+							model.loaded_instances?.find((instance) => instance.config?.context_length)?.config
+								?.context_length ?? model.max_context_length;
+						return {
+							id: loadedId ?? model.key!,
+							name: model.display_name ?? model.key!,
+							...(typeof maxContext === 'number'
+								? { capabilities: { limits: { max_context_window_tokens: maxContext } } }
+								: {})
+						};
+					});
+			} catch (e) {
+				log.warn('lm_studio.models_failed', { err: String(e) });
+				return [];
+			}
+		},
+		async openSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
+			const cfg = providerConfig(instance);
+			const tokenLimit = await fetchModelContextLength(cfg, opts.model);
+			const sessionCfg: OpenAICompatibleConfig = {
+				id: cfg.id,
+				displayName: cfg.displayName,
+				baseUrl: cfg.openAIBaseUrl,
+				apiKey: cfg.apiKey,
+				maxToolIterations: cfg.maxToolIterations,
+				contextRestoreMessages: cfg.contextRestoreMessages,
+				sampling: cfg.sampling,
+				contextTokenLimit: tokenLimit,
+				includeUsage: tokenLimit !== null
+			};
+			return openOpenAICompatibleSession(sessionCfg, opts);
+		},
+		async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
+			const cfg = providerConfig(instance);
+			await primeOpenAICompatibleModel(
+				{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
+				model,
+				opts
+			);
+		},
+		async complete(req: ProviderCompletionRequest): Promise<string> {
+			const cfg = providerConfig(instance);
+			return completeOpenAICompatible(
+				{ baseUrl: cfg.openAIBaseUrl, apiKey: cfg.apiKey, displayName: cfg.displayName },
+				req
+			);
+		}
+	};
+}
+
+export const lmStudioProvider = createLMStudioProvider({
+	id: providerId,
+	type: providerId
+});
+
+function providerConfig(instance?: ProviderInstance): LMStudioConfig {
+	const cfg = loadConfig();
+	const baseUrl = instance?.baseUrl ?? cfg.LMSTUDIO_BASE_URL;
+	return {
+		id: instance?.id ?? providerId,
+		displayName: instance?.label ?? displayName,
+		nativeBaseUrl: baseUrl,
+		openAIBaseUrl: openAIEndpointBase(baseUrl),
+		// JSON instances never inherit the env key — no key means no auth.
+		apiKey:
+			instance && instance.id !== instance.type
+				? (instance.apiKey ?? null)
+				: (cfg.LMSTUDIO_API_KEY ?? null),
 		maxToolIterations: cfg.OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS,
 		contextRestoreMessages: cfg.OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES,
 		sampling: openAICompatibleSamplingOptions(cfg)

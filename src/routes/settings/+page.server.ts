@@ -26,10 +26,8 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import {
-	normalizeBackendProvider,
 	normalizeContextTier,
 	normalizeThemeAccent,
-	BACKEND_PROVIDER_IDS,
 	APPROVAL_MODES,
 	CONTEXT_TIER_IDS,
 	MEMORY_EXTRACTOR_BACKEND_IDS,
@@ -40,6 +38,7 @@ import {
 	type SessionMode,
 	type UserSettings
 } from '$lib/types';
+import { normalizeProviderInstance } from '$lib/server/providers/registry';
 import {
 	GrantInputSchema,
 	permissionKindForTool,
@@ -84,6 +83,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 				log.warn('settings.provider_status_failed', { provider: provider.id, err: String(e) });
 				return {
 					id: provider.id,
+					type: provider.type,
 					displayName: provider.displayName,
 					ui: provider.ui,
 					auth: { isAuthenticated: false, statusMessage: String(e) },
@@ -116,7 +116,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 const SaveSchema = z.object({
-	defaultProvider: z.enum(BACKEND_PROVIDER_IDS),
+	defaultProvider: z.string().trim().min(1),
 	defaultModel: z.string().optional(),
 	defaultWorkdir: z.string().optional(),
 	defaultConversationMode: z.enum(SESSION_MODES),
@@ -253,7 +253,7 @@ export const actions: Actions = {
 			});
 		}
 		const next: UserSettings = {
-			defaultProvider: normalizeBackendProvider(parsed.data.defaultProvider),
+			defaultProvider: normalizeProviderInstance(parsed.data.defaultProvider),
 			defaultModel: parsed.data.defaultModel ?? null,
 			defaultWorkdir: parsed.data.defaultWorkdir ?? null,
 			defaultConversationMode: parsed.data.defaultConversationMode as SessionMode,

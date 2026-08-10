@@ -9,7 +9,8 @@ import {
 	type CommitMemoryPatchInput,
 	type MemoryPatchProposal
 } from '../engine';
-import { loadConfig } from '$lib/server/config';
+import { loadConfig, type AppConfig } from '$lib/server/config';
+import { getDefaultInstanceId, getInstance } from '$lib/server/providers/registry';
 import { redactSensitiveText, truncate } from './utils';
 import {
 	buildWriteToolSpecs,
@@ -911,11 +912,12 @@ export function createMemoryExtractor(
 	const wantsModel = backend === 'openai-compatible' || backend === 'openai-compatible-tools';
 	if (wantsModel) {
 		const model = opts.model?.trim() || cfg.MEMORY_EXTRACTOR_MODEL;
-		if (cfg.OPENAI_COMPATIBLE_BASE_URL && model) {
+		const { baseUrl, apiKey } = openAICompatibleExtractorConfig(cfg);
+		if (baseUrl && model) {
 			if (backend === 'openai-compatible-tools') {
 				return new ToolCallingMemoryExtractor({
-					baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL,
-					apiKey: cfg.OPENAI_COMPATIBLE_API_KEY,
+					baseUrl,
+					apiKey,
 					model,
 					timeoutMs: cfg.MEMORY_EXTRACTOR_TIMEOUT_MS,
 					maxInputChars: cfg.MEMORY_EXTRACTOR_MAX_INPUT_CHARS,
@@ -926,8 +928,8 @@ export function createMemoryExtractor(
 				});
 			}
 			return new OpenAICompatibleMemoryExtractor({
-				baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL,
-				apiKey: cfg.OPENAI_COMPATIBLE_API_KEY,
+				baseUrl,
+				apiKey,
 				model,
 				timeoutMs: cfg.MEMORY_EXTRACTOR_TIMEOUT_MS,
 				maxInputChars: cfg.MEMORY_EXTRACTOR_MAX_INPUT_CHARS
@@ -939,14 +941,39 @@ export function createMemoryExtractor(
 		// failure. Surface it so misconfiguration is diagnosable.
 		log.warn('memory.extractor.fallback_heuristic', {
 			backend,
-			hasBaseUrl: Boolean(cfg.OPENAI_COMPATIBLE_BASE_URL),
+			hasBaseUrl: Boolean(baseUrl),
 			hasModel: Boolean(model),
-			reason: !cfg.OPENAI_COMPATIBLE_BASE_URL
-				? 'OPENAI_COMPATIBLE_BASE_URL is not set'
+			reason: !baseUrl
+				? 'no OpenAI-compatible base URL configured (OPENAI_COMPATIBLE_BASE_URL or the default instance)'
 				: 'no extractor model configured (set MEMORY_EXTRACTOR_MODEL or a per-conversation extractor model)'
 		});
 	}
 	return new HeuristicMemoryExtractor();
+}
+
+/**
+ * The endpoint for the model-backed extractor. When the deployment default
+ * instance is itself an openai-compatible backend, its per-instance config
+ * wins; otherwise the env-fed built-in `openai-compatible` instance is used
+ * (which is what `OPENAI_COMPATIBLE_*` fed historically). This is the ONLY
+ * instance the extractor consults — per-conversation extractor instances are
+ * out of scope; a non-default instance never harvests here.
+ */
+function openAICompatibleExtractorConfig(cfg: AppConfig): {
+	baseUrl: string | null;
+	apiKey: string | null;
+} {
+	const defaultInstance = getInstance(getDefaultInstanceId());
+	if (defaultInstance?.type === 'openai-compatible') {
+		return {
+			baseUrl: defaultInstance.baseUrl ?? cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
+			apiKey: defaultInstance.apiKey ?? cfg.OPENAI_COMPATIBLE_API_KEY ?? null
+		};
+	}
+	return {
+		baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
+		apiKey: cfg.OPENAI_COMPATIBLE_API_KEY ?? null
+	};
 }
 
 /**

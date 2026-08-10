@@ -2,14 +2,13 @@ import { ulid } from '../ids';
 import { getDb } from '../index';
 import { loadConfig } from '../../config';
 import { purgeSessionSearchIndex } from './memory';
+import { normalizeProviderInstance } from '../../providers/registry';
 import {
 	normalizeApprovalMode,
-	normalizeBackendProvider,
 	normalizeMemoryExtractorBackend,
 	normalizeMemoryMode,
 	normalizeSessionMode,
 	type ApprovalMode,
-	type BackendProviderId,
 	type Conversation,
 	type MemoryExtractorBackend,
 	type MemoryMode,
@@ -91,7 +90,7 @@ function rowToConv(r: ConvRow): Conversation {
 		userId: r.user_id,
 		title: r.title,
 		workdir: r.workdir,
-		provider: normalizeBackendProvider(r.provider),
+		provider: normalizeProviderInstance(r.provider),
 		model: r.model,
 		mode,
 		memoryMode: normalizeMemoryMode(r.memory_mode),
@@ -156,7 +155,7 @@ export function list(userId: string, opts: ListOpts = {}): Conversation[] {
 export interface CreateInput {
 	title: string;
 	workdir: string;
-	provider?: BackendProviderId;
+	provider?: string;
 	model: string | null;
 	mode?: SessionMode;
 	approvalMode?: ApprovalMode;
@@ -201,8 +200,9 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const adversaryBackend = normalizeOptionalModel(input.adversaryBackend);
 	const globalMemoryEnabled = input.globalMemoryEnabled === true;
 	const disabledToolGroups = sanitizeDisabledToolGroups(input.disabledToolGroups);
-	const provider =
-		input.provider ?? normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
+	const provider = normalizeProviderInstance(
+		input.provider ?? loadConfig().DEFAULT_BACKEND_PROVIDER
+	);
 	const draftPrompt = input.draftPrompt ?? null;
 	const workspaceKind = input.workspaceKind ?? 'shared';
 	const workspaceKey = input.workspaceKey ?? effectiveWorkdir(input.workdir);

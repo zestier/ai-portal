@@ -1,6 +1,5 @@
 import type {
 	ApprovalMode,
-	BackendProviderId,
 	ElicitationSchema,
 	ImagePreview,
 	InteractiveKind,
@@ -104,7 +103,7 @@ interface InteractiveAdapterOptions {
 	 * reviewer's backend to the agent's.
 	 */
 	getAgentModel?: (() => string | null) | undefined;
-	getAgentBackend?: (() => BackendProviderId | null) | undefined;
+	getAgentBackend?: (() => string | null) | undefined;
 	/**
 	 * The conversation's effective adversary (shadow reviewer) model and the
 	 * backend that should serve it, or null to fall back to the server default.

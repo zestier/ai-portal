@@ -31,6 +31,7 @@ import type {
 	ApprovalMode,
 	BackendProviderId,
 	PortalEvent,
+	ProviderInstance,
 	SessionMode,
 	ToolCallRecord
 } from '$lib/types';
@@ -40,15 +41,18 @@ import { createInteractiveCallbacks } from '../copilot/interactive-adapter';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
+	ProviderCapabilities,
 	ProviderCompletionRequest,
 	ProviderConversationMessage,
 	ProviderModelInfo,
 	ProviderOpenOptions,
-	ProviderSession
+	ProviderSession,
+	ProviderStatusBehavior,
+	ProviderUiInfo
 } from './provider';
 
 export interface OpenAICompatibleConfig {
-	id: BackendProviderId;
+	id: string;
 	displayName: string;
 	baseUrl: string | null;
 	apiKey: string | null;
@@ -153,165 +157,185 @@ const CHAT_RESPONSE_TIMEOUT_MS = 120_000;
 // abort signal with its own (shorter) deadline; whichever fires first wins.
 const PRIME_REQUEST_TIMEOUT_MS = 15_000;
 
-export const openAICompatibleProvider: ModelBackendProvider = {
-	id: providerId,
-	displayName,
-	ui: {
-		chatPlaceholder: `Message ${displayName}...`,
-		defaultModelPlaceholder: 'model-id',
-		setupHint:
-			'Configure OPENAI_COMPATIBLE_BASE_URL to a local or remote OpenAI-compatible /v1 endpoint. Add OPENAI_COMPATIBLE_API_KEY only if the backend requires bearer auth.',
-		setupHintVisibility: 'always'
+const ui: ProviderUiInfo = {
+	chatPlaceholder: `Message ${displayName}...`,
+	defaultModelPlaceholder: 'model-id',
+	setupHint:
+		'Configure OPENAI_COMPATIBLE_BASE_URL to a local or remote OpenAI-compatible /v1 endpoint. Add OPENAI_COMPATIBLE_API_KEY only if the backend requires bearer auth.',
+	setupHintVisibility: 'always'
+};
+
+const status: ProviderStatusBehavior = { probe: 'always' };
+
+const capabilities: ProviderCapabilities = {
+	authStatus: true,
+	modelList: true,
+	session: {
+		open: true,
+		resume: false,
+		dispose: true,
+		abort: true
 	},
-	status: {
-		probe: 'always'
+	stream: {
+		send: true,
+		contract: 'PortalEvent'
 	},
-	capabilities: {
-		authStatus: true,
-		modelList: true,
-		session: {
-			open: true,
-			resume: false,
-			dispose: true,
-			abort: true
-		},
-		stream: {
-			send: true,
-			contract: 'PortalEvent'
-		},
-		controls: {
-			mode: false,
-			approvalMode: true,
-			resetSessionApprovals: false
-		},
-		features: {
-			modes: {
-				supported: false,
-				behavior: 'no-op',
-				label: 'Runtime modes',
-				description:
-					'OpenAI-compatible backends do not expose Copilot runtime modes. The saved mode is retained for portal permission semantics; it is not sent to the model provider.'
-			},
-			approvalMode: {
-				supported: true,
-				behavior: 'portal-enforced',
-				label: 'Approval mode',
-				description:
-					'The approval mode is enforced by the portal for portal-hosted tools. OpenAI-compatible backends do not receive a separate runtime approve-all signal.'
-			},
-			contextUsage: {
-				supported: true,
-				behavior: 'supported',
-				label: 'Context usage',
-				description:
-					'OpenAI-compatible usage is shown when the backend streams token usage and a model context window is known.'
-			},
-			subagents: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Subagents',
-				description:
-					'The Copilot subagent/task runtime is unavailable; subagent tools and lifecycle events are not exposed.'
-			},
-			mcpInfoEvents: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'MCP info events',
-				description:
-					'MCP sampling, OAuth, and external-tool info events are Copilot SDK events and are not emitted by OpenAI-compatible sessions.'
-			},
-			planExit: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Plan exit',
-				description:
-					'OpenAI-compatible sessions do not support Copilot plan-exit callbacks; there is no plan approval dialog to exit.'
-			},
-			elicitation: {
-				supported: false,
-				behavior: 'unsupported',
-				label: 'Elicitation',
-				description:
-					'OpenAI-compatible sessions do not support Copilot elicitation callbacks; no elicitation dialogs are raised.'
-			}
-		},
-		optionalRuntimeFeatures: {
-			infiniteSessionMetadata: false,
-			permissionCallbacks: true,
-			userInputCallbacks: false,
-			elicitationCallbacks: false,
-			exitPlanModeCallbacks: false,
-			autoModeSwitchCallbacks: false,
-			contextWindowEvents: true,
-			contextCompactionEvents: false,
-			fileEditEvents: false,
-			reasoningEvents: true,
-			subagentLifecycleEvents: false
-		},
-		localModelLoad: {
-			primeAfterModelSwap: true
-		},
-		sideCompletion: true
+	controls: {
+		mode: false,
+		approvalMode: true,
+		resetSessionApprovals: false
 	},
-	async fetchAuthStatus(): Promise<ProviderAuthStatus> {
-		const cfg = providerConfig();
-		if (!cfg.baseUrl) {
-			return {
-				isAuthenticated: false,
-				statusMessage: `${displayName} requires a base URL.`
-			};
+	features: {
+		modes: {
+			supported: false,
+			behavior: 'no-op',
+			label: 'Runtime modes',
+			description:
+				'OpenAI-compatible backends do not expose Copilot runtime modes. The saved mode is retained for portal permission semantics; it is not sent to the model provider.'
+		},
+		approvalMode: {
+			supported: true,
+			behavior: 'portal-enforced',
+			label: 'Approval mode',
+			description:
+				'The approval mode is enforced by the portal for portal-hosted tools. OpenAI-compatible backends do not receive a separate runtime approve-all signal.'
+		},
+		contextUsage: {
+			supported: true,
+			behavior: 'supported',
+			label: 'Context usage',
+			description:
+				'OpenAI-compatible usage is shown when the backend streams token usage and a model context window is known.'
+		},
+		subagents: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Subagents',
+			description:
+				'The Copilot subagent/task runtime is unavailable; subagent tools and lifecycle events are not exposed.'
+		},
+		mcpInfoEvents: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'MCP info events',
+			description:
+				'MCP sampling, OAuth, and external-tool info events are Copilot SDK events and are not emitted by OpenAI-compatible sessions.'
+		},
+		planExit: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Plan exit',
+			description:
+				'OpenAI-compatible sessions do not support Copilot plan-exit callbacks; there is no plan approval dialog to exit.'
+		},
+		elicitation: {
+			supported: false,
+			behavior: 'unsupported',
+			label: 'Elicitation',
+			description:
+				'OpenAI-compatible sessions do not support Copilot elicitation callbacks; no elicitation dialogs are raised.'
 		}
-		return {
-			isAuthenticated: true,
-			authType: cfg.apiKey ? 'api-key' : 'none',
-			statusMessage: cfg.baseUrl
-		};
 	},
-	async listModels(): Promise<ProviderModelInfo[]> {
-		const cfg = providerConfig();
-		if (!cfg.baseUrl) return [];
-		try {
-			const res = await fetchWithTimeout(
-				endpoint(cfg.baseUrl, '/models'),
-				{
-					headers: requestHeaders(cfg)
-				},
-				MODEL_DISCOVERY_TIMEOUT_MS
-			);
-			const body = (await parseJson(res)) as ModelsResponse;
-			if (!res.ok) {
+	optionalRuntimeFeatures: {
+		infiniteSessionMetadata: false,
+		permissionCallbacks: true,
+		userInputCallbacks: false,
+		elicitationCallbacks: false,
+		exitPlanModeCallbacks: false,
+		autoModeSwitchCallbacks: false,
+		contextWindowEvents: true,
+		contextCompactionEvents: false,
+		fileEditEvents: false,
+		reasoningEvents: true,
+		subagentLifecycleEvents: false
+	},
+	localModelLoad: {
+		primeAfterModelSwap: true
+	},
+	sideCompletion: true
+};
+
+/**
+ * Build an OpenAI-compatible provider for one configured instance. The built-in
+ * instance (`id === 'openai-compatible'`) is exported as `openAICompatibleProvider`;
+ * extra `ZAP_PROVIDERS_JSON` instances get a per-instance object capturing their
+ * endpoint config in the closure.
+ */
+export function createOpenAICompatibleProvider(instance: ProviderInstance): ModelBackendProvider {
+	return {
+		id: instance.id,
+		type: instance.type,
+		displayName: instance.label ?? displayName,
+		ui,
+		status,
+		capabilities,
+		async fetchAuthStatus(): Promise<ProviderAuthStatus> {
+			const cfg = providerConfig(instance);
+			if (!cfg.baseUrl) {
+				return {
+					isAuthenticated: false,
+					statusMessage: `${displayName} requires a base URL.`
+				};
+			}
+			return {
+				isAuthenticated: true,
+				authType: cfg.apiKey ? 'api-key' : 'none',
+				statusMessage: cfg.baseUrl
+			};
+		},
+		async listModels(): Promise<ProviderModelInfo[]> {
+			const cfg = providerConfig(instance);
+			if (instance.models && instance.models.length > 0)
+				return instance.models.map((id) => ({ id, name: id }));
+			if (!cfg.baseUrl) return [];
+			try {
+				const res = await fetchWithTimeout(
+					endpoint(cfg.baseUrl, '/models'),
+					{
+						headers: requestHeaders(cfg)
+					},
+					MODEL_DISCOVERY_TIMEOUT_MS
+				);
+				const body = (await parseJson(res)) as ModelsResponse;
+				if (!res.ok) {
+					log.warn('openai_compatible.models_failed', {
+						provider: cfg.id,
+						status: res.status,
+						err: body.error?.message ?? res.statusText
+					});
+					return [];
+				}
+				return (body.data ?? [])
+					.filter((m): m is { id: string; name?: string } => typeof m.id === 'string')
+					.map((m) => ({ id: m.id, name: m.name ?? m.id }));
+			} catch (e) {
 				log.warn('openai_compatible.models_failed', {
 					provider: cfg.id,
-					status: res.status,
-					err: body.error?.message ?? res.statusText
+					err: String(e)
 				});
 				return [];
 			}
-			return (body.data ?? [])
-				.filter((m): m is { id: string; name?: string } => typeof m.id === 'string')
-				.map((m) => ({ id: m.id, name: m.name ?? m.id }));
-		} catch (e) {
-			log.warn('openai_compatible.models_failed', {
-				provider: cfg.id,
-				err: String(e)
-			});
-			return [];
+		},
+		async openSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
+			const cfg = providerConfig(instance);
+			if (!cfg.baseUrl) throw new Error(`${displayName} requires a base URL.`);
+			return openOpenAICompatibleSession(cfg, opts);
+		},
+		async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
+			const cfg = providerConfig(instance);
+			await primeOpenAICompatibleModel(cfg, model, opts);
+		},
+		async complete(req: ProviderCompletionRequest): Promise<string> {
+			const cfg = providerConfig(instance);
+			return completeOpenAICompatible(cfg, req);
 		}
-	},
-	async openSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
-		const cfg = providerConfig();
-		if (!cfg.baseUrl) throw new Error(`${displayName} requires a base URL.`);
-		return openOpenAICompatibleSession(cfg, opts);
-	},
-	async primeModel(model: string, opts: { signal: AbortSignal }): Promise<void> {
-		const cfg = providerConfig();
-		await primeOpenAICompatibleModel(cfg, model, opts);
-	},
-	async complete(req: ProviderCompletionRequest): Promise<string> {
-		const cfg = providerConfig();
-		return completeOpenAICompatible(cfg, req);
-	}
-};
+	};
+}
+
+export const openAICompatibleProvider = createOpenAICompatibleProvider({
+	id: providerId,
+	type: providerId
+});
 
 /**
  * One-shot, tool-less, non-streaming chat completion against an
@@ -412,13 +436,17 @@ export async function primeOpenAICompatibleModel(
 	}
 }
 
-function providerConfig(): OpenAICompatibleConfig {
+function providerConfig(instance?: ProviderInstance): OpenAICompatibleConfig {
 	const cfg = loadConfig();
 	return {
-		id: providerId,
-		displayName,
-		baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
-		apiKey: cfg.OPENAI_COMPATIBLE_API_KEY ?? null,
+		id: instance?.id ?? providerId,
+		displayName: instance?.label ?? displayName,
+		baseUrl: instance?.baseUrl ?? cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
+		// JSON instances never inherit the env key — no key means no auth.
+		apiKey:
+			instance && instance.id !== instance.type
+				? (instance.apiKey ?? null)
+				: (cfg.OPENAI_COMPATIBLE_API_KEY ?? null),
 		maxToolIterations: cfg.OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS,
 		contextRestoreMessages: cfg.OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES,
 		sampling: openAICompatibleSamplingOptions(cfg),

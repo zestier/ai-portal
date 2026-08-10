@@ -34,7 +34,7 @@ import {
 	MemoryExtractorHttpError
 } from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
-import type { MemoryExtractorBackend, MemoryMode, BackendProviderId } from '$lib/types';
+import type { MemoryExtractorBackend, MemoryMode } from '$lib/types';
 import { getProvider, type ProviderOpenOptions, type ProviderSession } from '../providers';
 import type { PortalEvent } from '$lib/types';
 
@@ -1125,7 +1125,7 @@ const PRIME_MAIN_MODEL_DEADLINE_MS = 10_000;
  */
 async function primeMainModel(o: {
 	cfg: ReturnType<typeof loadConfig>;
-	provider: BackendProviderId | undefined;
+	provider: string | undefined;
 	mainModel: string | null | undefined;
 	extractorModel?: string | null | undefined;
 	extractorBackend?: MemoryExtractorBackend | null | undefined;
@@ -1438,7 +1438,7 @@ export interface StartExtractionRetryOptions {
 	// Main conversation provider + model, used to prime (re-warm) the main model
 	// after the retry's extraction on local load/unload backends. Optional;
 	// priming is skipped when absent or when the provider doesn't benefit.
-	mainProvider?: BackendProviderId | null | undefined;
+	mainProvider?: string | null | undefined;
 	mainModel?: string | null | undefined;
 	memory: {
 		mode: MemoryMode;

@@ -1,9 +1,12 @@
 import { copilotProvider } from '../copilot/copilot-provider';
-import { claudeAgentProvider } from './claude-agent-provider';
-import { lmStudioProvider } from './lm-studio-provider';
-import { openAICompatibleProvider } from './openai-compatible-provider';
-import { loadConfig } from '../config';
-import { normalizeBackendProvider, type BackendProviderId } from '$lib/types';
+import { createClaudeAgentProvider, claudeAgentProvider } from './claude-agent-provider';
+import { createLMStudioProvider, lmStudioProvider } from './lm-studio-provider';
+import {
+	createOpenAICompatibleProvider,
+	openAICompatibleProvider
+} from './openai-compatible-provider';
+import type { BackendProviderId, ProviderInstance } from '$lib/types';
+import { getDefaultInstanceId, getInstance, listInstances } from './registry';
 import type {
 	ModelBackendProvider,
 	ProviderAuthStatus,
@@ -23,23 +26,47 @@ export type {
 	ProviderUiInfo
 } from './provider';
 
-const providers: Record<BackendProviderId, ModelBackendProvider> = {
+const builtinProviders: Record<BackendProviderId, ModelBackendProvider> = {
 	copilot: copilotProvider,
 	'claude-agent': claudeAgentProvider,
 	'openai-compatible': openAICompatibleProvider,
 	'lm-studio': lmStudioProvider
 };
 
+/**
+ * Resolve an instance to its provider object. Built-in instances (id === type)
+ * return the module singleton so existing references/test spies stay stable;
+ * ZAP_PROVIDERS_JSON instances get a fresh factory object capturing their
+ * instance config in the closure.
+ */
+function providerFor(instance: ProviderInstance): ModelBackendProvider {
+	if (instance.id === instance.type) return builtinProviders[instance.type];
+	switch (instance.type) {
+		case 'claude-agent':
+			return createClaudeAgentProvider(instance);
+		case 'openai-compatible':
+			return createOpenAICompatibleProvider(instance);
+		case 'lm-studio':
+			return createLMStudioProvider(instance);
+		case 'copilot':
+			return copilotProvider;
+	}
+}
+
 export function listProviders(): ModelBackendProvider[] {
-	return Object.values(providers);
+	return listInstances().map(providerFor);
 }
 
 export function getProvider(id: string | null | undefined): ModelBackendProvider {
-	return providers[normalizeBackendProvider(id)];
+	// Unknown ids resolve to the default instance, matching how
+	// normalizeProviderInstance coerces stored values (a legacy bare type id is
+	// itself a built-in instance id, so it matches here).
+	const instance = getInstance(id) ?? getInstance(getDefaultInstanceId())!;
+	return providerFor(instance);
 }
 
-export function getDefaultProviderId(): BackendProviderId {
-	return normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER);
+export function getDefaultProviderId(): string {
+	return getDefaultInstanceId();
 }
 
 export function getDefaultProvider(): ModelBackendProvider {
@@ -49,7 +76,7 @@ export function getDefaultProvider(): ModelBackendProvider {
 export async function fetchAuthStatus(
 	userId: string,
 	providerAuthToken?: string,
-	provider: BackendProviderId = getDefaultProviderId()
+	provider: string = getDefaultProviderId()
 ): Promise<ProviderAuthStatus> {
 	return getProvider(provider).fetchAuthStatus(userId, providerAuthToken);
 }
@@ -57,7 +84,7 @@ export async function fetchAuthStatus(
 export async function fetchModels(
 	userId: string,
 	providerAuthToken?: string,
-	provider: BackendProviderId = getDefaultProviderId()
+	provider: string = getDefaultProviderId()
 ): Promise<ProviderModelInfo[]> {
 	return getProvider(provider).listModels(userId, providerAuthToken);
 }

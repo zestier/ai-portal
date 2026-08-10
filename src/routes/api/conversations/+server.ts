@@ -6,13 +6,8 @@ import * as settings from '$lib/server/db/repos/settings';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { loadConfig } from '$lib/server/config';
 import { getDefaultProviderId } from '$lib/server/providers';
-import {
-	APPROVAL_MODES,
-	BACKEND_PROVIDER_IDS,
-	MEMORY_EXTRACTOR_BACKEND_IDS,
-	SESSION_MODES,
-	normalizeBackendProvider
-} from '$lib/types';
+import { APPROVAL_MODES, MEMORY_EXTRACTOR_BACKEND_IDS, SESSION_MODES } from '$lib/types';
+import { normalizeProviderInstance } from '$lib/server/providers/registry';
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
@@ -41,7 +36,7 @@ export const GET: RequestHandler = ({ locals, url }) => {
 const CreateBody = z
 	.object({
 		title: z.string().min(1).max(200).default('New chat'),
-		provider: z.enum(BACKEND_PROVIDER_IDS).optional(),
+		provider: z.string().trim().min(1).optional(),
 		model: z.string().min(1).optional(),
 		workdir: z.string().min(1).optional(),
 		mode: z.enum(SESSION_MODES).optional(),
@@ -156,7 +151,7 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 			workspaceKind: managedWorktree ? 'managed-worktree' : 'shared',
 			workspaceKey: managedWorktree?.sourceWorkdir ?? workdir,
 			...(managedWorktree ? { managedWorktree } : {}),
-			provider: normalizeBackendProvider(provider),
+			provider: normalizeProviderInstance(provider),
 			model,
 			mode: body.mode ?? userSettings.defaultConversationMode,
 			approvalMode: body.approvalMode ?? userSettings.defaultApprovalMode,

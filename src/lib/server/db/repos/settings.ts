@@ -1,9 +1,9 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
 import { loadConfig } from '../../config';
+import { normalizeProviderInstance } from '../../providers/registry';
 import {
 	normalizeApprovalMode,
-	normalizeBackendProvider,
 	normalizeContextTier,
 	normalizeMemoryExtractorBackend,
 	normalizeSessionMode,
@@ -37,7 +37,7 @@ function rowToSettings(r: SettingsRow): UserSettings {
 	// migration ran in dev HMR).
 	const policy: PermissionPolicy = raw === 'allow-all' || raw === 'deny-all' ? raw : 'prompt';
 	return {
-		defaultProvider: normalizeBackendProvider(r.default_provider),
+		defaultProvider: normalizeProviderInstance(r.default_provider),
 		defaultModel: r.default_model,
 		defaultWorkdir: r.default_workdir,
 		defaultConversationMode: normalizeSessionMode(r.default_mode),
@@ -69,7 +69,7 @@ export function get(userId: string): UserSettings | null {
  */
 export function defaults(): UserSettings {
 	return {
-		defaultProvider: normalizeBackendProvider(loadConfig().DEFAULT_BACKEND_PROVIDER),
+		defaultProvider: normalizeProviderInstance(loadConfig().DEFAULT_BACKEND_PROVIDER),
 		defaultModel: null,
 		defaultWorkdir: null,
 		defaultConversationMode: 'interactive',

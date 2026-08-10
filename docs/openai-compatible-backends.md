@@ -83,6 +83,33 @@ provider (`DEFAULT_BACKEND_PROVIDER=lm-studio`). It uses LM Studio's
 OpenAI-compatible `/v1/chat/completions` endpoint for stateless chats, while
 still reading native `/api/v1/models` metadata for context-window limits.
 
+## Multiple instances
+
+A single deployment can run several `openai-compatible` (or `lm-studio`)
+backends at once via `ZAP_PROVIDERS_JSON`, each with its own endpoint, key, and
+model list:
+
+```bash
+ZAP_PROVIDERS_JSON='[
+  { "id": "lm-local", "type": "openai-compatible", "label": "Local",
+    "baseUrl": "http://127.0.0.1:1234/v1", "models": ["local-model"] },
+  { "id": "gateway", "type": "openai-compatible", "label": "Gateway",
+    "baseUrl": "https://gw.example/v1", "apiKey": "<token>" }
+]'
+```
+
+Each entry is an instance: a unique `id` (not a built-in provider id such as
+`openai-compatible`), `type`, optional `label`, `baseUrl`, `apiKey`, and
+`models`. Explicit `models` win; otherwise the instance discovers them via its
+`/models` endpoint, falling back to manual entry. Duplicate types are fine;
+duplicate or reserved ids are rejected at startup with the offending field
+named. Conversations store the instance id, so each conversation pins one
+instance and its endpoint. The env-fed instances (`OPENAI_COMPATIBLE_*`,
+`LMSTUDIO_*`) always exist as ids `openai-compatible` and `lm-studio` and
+remain the default when `ZAP_PROVIDERS_JSON` is unset. `claude-agent` instances
+share this variable; see
+[claude-agent-backends.md](claude-agent-backends.md).
+
 When a live OpenAI-compatible provider session is unavailable, the portal
 restores continuity by replaying a bounded suffix of persisted complete messages
 before the new user turn. The replay is capped by

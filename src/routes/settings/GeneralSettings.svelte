@@ -7,10 +7,8 @@
 		type SettingsData
 	} from './settings-types';
 	import {
-		BACKEND_PROVIDER_IDS,
 		THEME_ACCENTS,
 		type ApprovalMode,
-		type BackendProviderId,
 		type MemoryExtractorBackend,
 		type ProviderRuntimeFeatureStatus,
 		type SessionMode,
@@ -75,7 +73,8 @@
 		form: FormResult | null;
 	} = $props();
 
-	let selectedProvider = $state<BackendProviderId>(BACKEND_PROVIDER_IDS[0]);
+	// svelte-ignore state_referenced_locally
+	let selectedProvider = $state<string>(settings.defaultProvider);
 	let selectedModelChoice = $state('');
 	let customModel = $state('');
 	let selectedExtractorBackend = $state<MemoryExtractorBackend | ''>('');
@@ -111,6 +110,20 @@
 	const selectedProviderStatus = $derived(
 		providers.find((provider) => provider.id === selectedProvider) ?? providers[0]
 	);
+	// How many configured instances share each type, so two same-type instances
+	// (e.g. two claude-agent backends) stay distinguishable in cards and the picker.
+	const typeCounts = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const provider of providers) {
+			counts.set(provider.type, (counts.get(provider.type) ?? 0) + 1);
+		}
+		return counts;
+	});
+	function providerLabel(provider: ProviderStatus): string {
+		return (typeCounts.get(provider.type) ?? 0) > 1
+			? `${provider.displayName} (${provider.type}: ${provider.id})`
+			: provider.displayName;
+	}
 	const modeFeature = $derived(selectedProviderStatus.capabilities.features.modes);
 	const runtimeModesSupported = $derived(
 		modeFeature.supported && modeFeature.behavior === 'supported'
@@ -234,7 +247,12 @@
 					class:bad={provider.statusChecked && !provider.auth.isAuthenticated}
 				>
 					<div class="provider-card-header">
-						<strong>{provider.displayName}</strong>
+						<div class="provider-card-title">
+							<strong>{provider.displayName}</strong>
+							{#if (typeCounts.get(provider.type) ?? 0) > 1}
+								<Pill tone="neutral">{provider.type}</Pill>
+							{/if}
+						</div>
 						<Pill
 							tone={provider.statusChecked && provider.auth.isAuthenticated ? 'success' : 'neutral'}
 						>
@@ -276,7 +294,7 @@
 			Default provider
 			<select name="defaultProvider" bind:value={selectedProvider}>
 				{#each providers as provider (provider.id)}
-					<option value={provider.id}>{provider.displayName}</option>
+					<option value={provider.id}>{providerLabel(provider)}</option>
 				{/each}
 			</select>
 			<span class="muted small">
@@ -452,7 +470,7 @@
 			<select name="defaultAdversaryBackend" bind:value={selectedAdversaryBackend}>
 				<option value="">Same backend as the conversation</option>
 				{#each adversaryBackendOptions as provider (provider.id)}
-					<option value={provider.id}>{provider.displayName}</option>
+					<option value={provider.id}>{providerLabel(provider)}</option>
 				{/each}
 			</select>
 			<span class="muted small">
@@ -631,6 +649,15 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 		align-items: center;
+	}
+	.provider-card-title {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		min-width: 0;
+	}
+	.provider-card-title strong {
+		overflow-wrap: anywhere;
 	}
 	dl {
 		display: grid;

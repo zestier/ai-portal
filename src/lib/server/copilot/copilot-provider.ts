@@ -646,6 +646,7 @@ export async function open(opts: BridgeOpenOptions): Promise<ConversationSession
 
 export const copilotProvider: ModelBackendProvider = {
 	id: 'copilot',
+	type: 'copilot',
 	displayName: 'GitHub Copilot',
 	ui: {
 		chatPlaceholder: 'Message GitHub Copilot...',

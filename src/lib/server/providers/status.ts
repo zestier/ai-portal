@@ -7,7 +7,8 @@ import type {
 } from './provider';
 
 export type ProviderStatusSnapshot = {
-	id: BackendProviderId;
+	id: string;
+	type: BackendProviderId;
 	displayName: string;
 	ui: ProviderUiInfo;
 	auth: {
@@ -26,18 +27,18 @@ export type ProviderStatusLoader = {
 	fetchAuthStatus(
 		userId: string,
 		providerAuthToken: string | undefined,
-		provider: BackendProviderId
+		provider: string
 	): Promise<ProviderAuthStatus>;
 	fetchModels(
 		userId: string,
 		providerAuthToken: string | undefined,
-		provider: BackendProviderId
+		provider: string
 	): Promise<ProviderModelInfo[]>;
 };
 
 export function shouldProbeProviderStatus(
 	provider: ModelBackendProvider,
-	defaultProvider: BackendProviderId
+	defaultProvider: string
 ): boolean {
 	return provider.status.probe === 'always' || provider.id === defaultProvider;
 }
@@ -47,13 +48,14 @@ export async function loadProviderStatus(
 	opts: {
 		userId: string;
 		providerAuthToken?: string;
-		defaultProvider: BackendProviderId;
+		defaultProvider: string;
 		loader: ProviderStatusLoader;
 	}
 ): Promise<ProviderStatusSnapshot> {
 	if (!shouldProbeProviderStatus(provider, opts.defaultProvider)) {
 		return {
 			id: provider.id,
+			type: provider.type,
 			displayName: provider.displayName,
 			ui: provider.ui,
 			auth: {
@@ -85,6 +87,7 @@ export async function loadProviderStatus(
 	if (modelsResult.status === 'rejected') errors.push(`models: ${reason(modelsResult.reason)}`);
 	return {
 		id: provider.id,
+		type: provider.type,
 		displayName: provider.displayName,
 		ui: provider.ui,
 		auth: {

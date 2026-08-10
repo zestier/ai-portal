@@ -43,7 +43,8 @@ export interface ProviderStatusBehavior {
 }
 
 export interface ProviderOpenOptions {
-	provider?: BackendProviderId;
+	/** Instance id of the backend serving this conversation (see `ProviderInstance`). */
+	provider?: string;
 	conversationId: string;
 	providerSessionId?: string;
 	userId: string;
@@ -111,7 +112,8 @@ export interface ProviderConversationMessage {
 }
 
 export interface ProviderSession {
-	provider?: BackendProviderId;
+	/** Instance id of the backend serving this session. */
+	provider?: string;
 	conversationId: string;
 	providerSessionId: string;
 	workingDirectory: string;
@@ -158,7 +160,10 @@ export interface ProviderCompletionRequest {
 }
 
 export interface ModelBackendProvider {
-	id: BackendProviderId;
+	/** Instance id. Built-in instances use their type id; extra instances use their configured id. */
+	id: string;
+	/** The implementation type. */
+	type: BackendProviderId;
 	displayName: string;
 	ui: ProviderUiInfo;
 	status: ProviderStatusBehavior;

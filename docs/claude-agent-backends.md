@@ -36,6 +36,40 @@ The portal passes these values to each Agent SDK subprocess as
 process environment. Model availability and model identifiers are controlled by
 the configured endpoint.
 
+## Multiple claude-agent instances
+
+A single deployment can run several claude-agent backends at once — for example
+Anthropic direct plus a proxy — with a different model list and endpoint per
+instance. Define them with `ZAP_PROVIDERS_JSON`:
+
+```bash
+ZAP_PROVIDERS_JSON='[
+  { "id": "anthropic-direct", "type": "claude-agent", "label": "Anthropic",
+    "apiKey": "<anthropic-api-key>" },
+  { "id": "deepseek-proxy", "type": "claude-agent", "label": "DeepSeek",
+    "baseUrl": "https://api.deepseek.com/anthropic", "apiKey": "<deepseek-api-key>",
+    "models": ["deepseek-chat"] }
+]'
+```
+
+Each entry is an instance: `id` (unique, and not a built-in provider id such as
+`claude-agent`), `type` (`claude-agent` | `openai-compatible` | `lm-studio`),
+optional `label` shown in the UI, optional `baseUrl`, optional `apiKey`, and
+optional `models` (explicit model ids; when omitted the instance probes its
+endpoint's `/v1/models`, falling back to manual entry). Duplicate types are
+fine; duplicate or reserved ids are rejected at startup with the offending
+field named. Conversations store the instance id, so each conversation pins one
+instance and its model list and endpoint.
+
+The single env-fed instance (`CLAUDE_AGENT_BASE_URL` / `CLAUDE_AGENT_API_KEY`)
+always exists as id `claude-agent` and remains the default when
+`ZAP_PROVIDERS_JSON` is unset, so a legacy env-only deployment behaves exactly
+as before. Instances in `ZAP_PROVIDERS_JSON` are additional choices in
+**Settings → General → Default provider** and the conversation settings.
+
+`openai-compatible` and `lm-studio` instances work the same way and share this
+variable; see [openai-compatible-backends.md](openai-compatible-backends.md).
+
 Existing conversations retain their selected provider. Set the default before
 creating a conversation, or select **Claude Agent SDK** and enter the model id
 in the conversation settings.

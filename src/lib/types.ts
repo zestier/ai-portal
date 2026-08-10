@@ -21,7 +21,7 @@ export interface Conversation {
 	userId: string;
 	title: string;
 	workdir: string;
-	provider: BackendProviderId;
+	provider: ProviderInstanceId;
 	model: string | null;
 	/**
 	 * Agent mode for this conversation. Mirrors the SDK's `SessionMode`
@@ -498,6 +498,36 @@ export function normalizeBackendProvider(raw: string | null | undefined): Backen
 		: 'copilot';
 }
 
+/**
+ * Identity of a configured provider instance. Conversations, settings and the
+ * session pool store THIS, not the provider type: several instances of the same
+ * type (e.g. two claude-agent backends) can then coexist, each with its own
+ * endpoint and model list. The built-in instances reuse their type id as the
+ * instance id, so `'claude-agent'` names both a type and that type's env-fed
+ * default instance — which is what keeps legacy env-only deployments working.
+ */
+export type ProviderInstanceId = string;
+
+/**
+ * A configured backend instance. `id` is the identity stored on conversations;
+ * `type` selects the implementation. Built-in instances (id === type id) carry
+ * no endpoint fields and read their config from the environment at call time.
+ */
+export interface ProviderInstance {
+	id: ProviderInstanceId;
+	type: BackendProviderId;
+	/** Optional display label; falls back to the type's display name. */
+	label?: string | undefined;
+	/** Optional endpoint override. Built-ins fall back to their env vars. */
+	baseUrl?: string | undefined;
+	apiKey?: string | undefined;
+	/**
+	 * Optional pinned model list. When present it wins over `/models` discovery
+	 * (and over the empty manual list) for this instance.
+	 */
+	models?: string[] | undefined;
+}
+
 export type ProviderRuntimeFeature =
 	| 'modes'
 	| 'approvalMode'
@@ -747,7 +777,7 @@ export interface ProviderInitialMessagePreview {
 }
 
 export interface UserSettings {
-	defaultProvider: BackendProviderId;
+	defaultProvider: ProviderInstanceId;
 	defaultModel: string | null;
 	defaultWorkdir: string | null;
 	defaultConversationMode: SessionMode;

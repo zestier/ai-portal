@@ -30,7 +30,7 @@ import type { ShadowResolutionSource } from '../../db/repos/shadow-decisions';
 import { BoundedTtlCache } from '../../copilot/bounded-ttl-cache';
 import { withTimeout } from '../../runtime/with-timeout';
 import type { ProviderCompletionRequest } from '../../providers/provider';
-import { normalizeBackendProvider, type BackendProviderId } from '$lib/types';
+import { getInstance, normalizeProviderInstance } from '../../providers/registry';
 import { reviewPermissionRequest, adversaryExperimentKey, type AdversaryOutcome } from './client';
 import {
 	buildAdversaryFacts,
@@ -64,7 +64,7 @@ export interface ShadowObserveInput extends BuildAdversaryFactsInput {
 	 * treat as safe to proceed since the shadow has no authority either way.
 	 */
 	agentModel?: string | null | undefined;
-	agentBackend?: BackendProviderId | null | undefined;
+	agentBackend?: string | null | undefined;
 }
 
 /** Returned per observed request so the caller can attach the human's answer. */
@@ -82,7 +82,7 @@ export interface ShadowRecorder {
 }
 
 interface ResolvedShadowConfig {
-	backend: BackendProviderId;
+	backend: string;
 	model: string;
 	timeoutMs: number;
 	maxArgChars: number;
@@ -364,7 +364,7 @@ function persistOutcome(id: string, outcome: AdversaryOutcome, memoized: boolean
 function resolveConfig(
 	conversationModel: string | null | undefined,
 	conversationBackend: string | null | undefined,
-	agentBackend: BackendProviderId | null | undefined
+	agentBackend: string | null | undefined
 ): ResolvedShadowConfig | null {
 	const cfg = loadConfig();
 	const model = conversationModel?.trim() || cfg.ADVERSARY_SHADOW_MODEL?.trim();
@@ -374,22 +374,22 @@ function resolveConfig(
 	if (!model) return null;
 
 	const requestedRaw = conversationBackend?.trim() || cfg.ADVERSARY_SHADOW_BACKEND?.trim();
-	// `normalizeBackendProvider` coerces an unknown id to the default rather
-	// than throwing, so an explicit but unrecognised value must be rejected
-	// here — silently reviewing on some other backend would mislabel the rows.
-	const requested = requestedRaw ? asBackendProviderId(requestedRaw) : null;
+	// An explicit but unrecognised instance id must be rejected rather than
+	// silently reviewing on some other backend — that would mislabel the rows.
+	const requested = requestedRaw ? asProviderInstanceId(requestedRaw) : null;
 	if (requestedRaw && !requested) {
 		warnOnce('adversary.shadow_unknown_backend', {
 			backend: requestedRaw,
-			reason: 'configured adversary backend is not a known provider id; the shadow cannot run'
+			reason:
+				'configured adversary backend is not a known provider instance id; the shadow cannot run'
 		});
 		return null;
 	}
 	// `agentBackend` is null only when a provider did not report one. Falling
 	// back to the deployment default keeps the row labelled with a real backend
 	// rather than guessing.
-	const backend: BackendProviderId =
-		requested ?? agentBackend ?? normalizeBackendProvider(cfg.DEFAULT_BACKEND_PROVIDER);
+	const backend: string =
+		requested ?? agentBackend ?? normalizeProviderInstance(cfg.DEFAULT_BACKEND_PROVIDER);
 
 	return {
 		backend,
@@ -416,10 +416,7 @@ function resolveConfig(
  * A backend that cannot side-complete rejects rather than returning null, so it
  * lands as a visible `status='error'` row instead of a log line nobody reads.
  */
-async function completeVia(
-	backend: BackendProviderId,
-	req: ProviderCompletionRequest
-): Promise<string> {
+async function completeVia(backend: string, req: ProviderCompletionRequest): Promise<string> {
 	const { getProvider } = await import('../../providers');
 	const provider = getProvider(backend);
 	if (!provider.capabilities.sideCompletion || typeof provider.complete !== 'function') {
@@ -437,9 +434,8 @@ async function completeVia(
 	return provider.complete({ ...req, providerAuthToken });
 }
 
-function asBackendProviderId(value: string): BackendProviderId | null {
-	const normalized = normalizeBackendProvider(value);
-	return normalized === value ? normalized : null;
+function asProviderInstanceId(value: string): string | null {
+	return getInstance(value) ? value : null;
 }
 
 // Process-wide so a misconfigured deployment says so once rather than once per
