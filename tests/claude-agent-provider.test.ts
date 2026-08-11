@@ -719,7 +719,7 @@ describe('claudeAgentProvider', () => {
 				expect.objectContaining({
 					type: 'tool.call',
 					toolCallId: 'agent-call-1',
-					tool: 'Agent'
+					tool: 'task'
 				}),
 				{
 					type: 'subagent.lifecycle',
@@ -737,6 +737,111 @@ describe('claudeAgentProvider', () => {
 					type: 'subagent.lifecycle',
 					toolCallId: 'agent-call-1',
 					agentId: 'agent-call-1',
+					status: 'completed'
+				}
+			])
+		);
+	});
+
+	it('canonicalizes the Task alias and preserves inner tool call names', async () => {
+		queryMock.mockReturnValue(
+			messages(
+				{
+					type: 'assistant',
+					uuid: 'assistant-nested',
+					session_id: '44444444-4444-4444-8444-444444444444',
+					parent_tool_use_id: null,
+					message: {
+						content: [
+							{
+								type: 'tool_use',
+								id: 'agent-call-2',
+								name: 'Task',
+								input: { prompt: 'inspect' }
+							}
+						]
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'assistant',
+					uuid: 'assistant-inner',
+					session_id: '44444444-4444-4444-8444-444444444444',
+					parent_tool_use_id: 'agent-call-2',
+					message: {
+						content: [
+							{
+								type: 'tool_use',
+								id: 'read-call-1',
+								name: 'Read',
+								input: { file_path: '/tmp/a.ts' }
+							}
+						]
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'user',
+					parent_tool_use_id: 'agent-call-2',
+					message: {
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'read-call-1',
+								content: 'file contents'
+							}
+						]
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'user',
+					parent_tool_use_id: null,
+					message: {
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'agent-call-2',
+								content: 'inspection complete'
+							}
+						]
+					}
+				} as unknown as SDKMessage,
+				{
+					type: 'result',
+					subtype: 'success',
+					session_id: '44444444-4444-4444-8444-444444444444'
+				} as SDKMessage
+			)
+		);
+		const { claudeAgentProvider } =
+			await import('../src/lib/server/providers/claude-agent-provider');
+		const session = await claudeAgentProvider.openSession(baseOpts);
+
+		const events = await collect(session.send('delegate', new AbortController().signal));
+
+		expect(events).toEqual(
+			expect.arrayContaining([
+				// The `Task` alias canonicalizes to `task` like `Agent`.
+				expect.objectContaining({
+					type: 'tool.call',
+					toolCallId: 'agent-call-2',
+					tool: 'task'
+				}),
+				// Inner tool calls keep their real name and thread the parent id.
+				expect.objectContaining({
+					type: 'tool.call',
+					toolCallId: 'read-call-1',
+					tool: 'Read',
+					parentToolCallId: 'agent-call-2'
+				}),
+				{
+					type: 'subagent.lifecycle',
+					toolCallId: 'agent-call-2',
+					agentId: 'agent-call-2',
+					status: 'running'
+				},
+				{
+					type: 'subagent.lifecycle',
+					toolCallId: 'agent-call-2',
+					agentId: 'agent-call-2',
 					status: 'completed'
 				}
 			])

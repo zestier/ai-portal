@@ -558,6 +558,12 @@ export function openClaudeAgentSession(
 					for (const block of message.message.content) {
 						if (block.type === 'tool_use') {
 							const toolName = normalizePortalToolName(block.name);
+							// SDK subagent spawns keep the client-facing canonical name
+							// `task` (matching the Copilot backend) so the existing
+							// SubagentCall card, trim exemption, and child selection all
+							// apply unchanged. Inner tool calls keep their real names.
+							const portalToolName =
+								toolName === 'Agent' || toolName === 'Task' ? 'task' : toolName;
 							const parentToolCallId = message.parent_tool_use_id ?? undefined;
 							// A tool_use ends this agent's current thinking burst.
 							closeReasoningSegment(parentToolCallId);
@@ -566,7 +572,7 @@ export function openClaudeAgentSession(
 							queue.push({
 								type: 'tool.call',
 								toolCallId: block.id,
-								tool: toolName,
+								tool: portalToolName,
 								args: block.input,
 								...(parentToolCallId !== undefined ? { parentToolCallId } : {})
 							});
