@@ -1,6 +1,6 @@
 ---
 name: repo-toolchain
-description: How to run, build, test, and serve this repo correctly — invoke package.json scripts (`pnpm format`/`lint`/`check`/`test`/`run verify`) instead of raw binaries, and run exploratory work against `pnpm dev:isolated` rather than `pnpm dev` so scratch activity never pollutes the live `./data` DB.
+description: Use whenever you run, build, test, format, typecheck, or serve this repo, or before declaring any task here done. Commands go through the package.json scripts (`pnpm format`/`lint`/`check`/`test`/`run verify`) instead of raw binaries, and exploratory work runs against `pnpm dev:isolated` rather than `pnpm dev` so scratch activity never pollutes the live `./data` DB.
 ---
 
 # Repo toolchain
