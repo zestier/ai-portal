@@ -502,7 +502,7 @@ async function main() {
 			AUTH_MODE: 'none',
 			I_KNOW_THIS_IS_LOCAL: '1',
 			ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-			COPILOT_STUB: '1',
+			PI_STUB: '1',
 			LOG_LEVEL: 'warn',
 			DB_MIGRATIONS_DIR: join(repoRoot, 'src/lib/server/db/migrations'),
 			ORIGIN: baseUrl,

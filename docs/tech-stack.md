@@ -4,8 +4,8 @@
 
 - One repo, one process, one deploy. SSR + server endpoints + static assets
   from the same toolchain.
-- The Copilot SDK is Node-native; SvelteKit's Node adapter lets us call it
-  directly from `+server.ts` without a separate API tier.
+- The pi coding-agent SDK is Node-native; SvelteKit's Node adapter lets us
+  call it directly from `+server.ts` without a separate API tier.
 - Svelte 5 runes (`$state`, `$derived`) map cleanly onto streaming chat state.
 - Small client bundle — important for a tool that may be loaded over a slow
   tunnel from a phone.
@@ -15,9 +15,8 @@ specifics beyond file conventions.)
 
 ## Runtime
 
-- **Node.js ≥ 24** (declared in `engines`; the Copilot CLI bundled by
-  `@github/copilot-sdk` requires a recent Node, and we use a few `node:`
-  builtins that are only stable on 22+).
+- **Node.js ≥ 24** (declared in `engines`; we use a few `node:` builtins that
+  are only stable on 22+).
 - **TypeScript** everywhere. `strict: true`.
 - **`@sveltejs/adapter-node`** for production build.
 
@@ -26,7 +25,7 @@ specifics beyond file conventions.)
 | Purpose                  | Package                                            |
 |--------------------------|----------------------------------------------------|
 | Web framework            | `@sveltejs/kit`, `svelte` (v5)                     |
-| Copilot integration      | `@github/copilot-sdk`                              |
+| Agent integration        | `@earendil-works/pi-coding-agent`                  |
 | DB                       | `better-sqlite3` (sync, fast, embedded)            |
 | Migrations               | Hand-rolled in `src/lib/server/db/migrations/`     |
 | Schema/validation        | `zod`                                              |
@@ -64,12 +63,15 @@ zap/
 │  │  │                          # DiffView, ContextMeter,
 │  │  │                          # ReasoningBlock, … + ui/
 │  │  ├─ server/
-│  │  │  ├─ copilot/
-│  │  │  │  ├─ bridge.ts          # compatibility facade
-│  │  │  │  ├─ copilot-provider.ts # SDK wrapper, event normalization
-│  │  │  │  ├─ bridge-stub.ts     # in-process stub (e2e via COPILOT_STUB)
-│  │  │  │  ├─ pool.ts            # conversation→session map, idle reaper
-│  │  │  │  ├─ turn-runner.ts     # per-turn event log + persistence
+│  │  │  ├─ pi/                    # pi coding-agent SDK integration
+│  │  │  │  ├─ index.ts            # openPiSession, model runtime
+│  │  │  │  ├─ session.ts          # SDK session wrapper
+│  │  │  │  ├─ session-contract.ts # Provider* session types
+│  │  │  │  ├─ events.ts           # event normalization
+│  │  │  │  └─ stub-server.ts      # in-process stub (e2e via PI_STUB)
+│  │  │  ├─ runtime/
+│  │  │  │  ├─ pool.ts             # conversation→session map, idle reaper
+│  │  │  │  ├─ turn-runner.ts      # per-turn event log + persistence
 │  │  │  │  ├─ async-queue.ts
 │  │  │  │  └─ interactive-requests.ts
 │  │  │  ├─ db/
@@ -120,7 +122,6 @@ zap/
 │        │     └─ turns/
 │        │        ├─ +server.ts                       # POST start turn
 │        │        └─ [turnId]/stream/+server.ts       # GET SSE, DELETE cancel
-│        ├─ copilot/                # status, models
 │        └─ health/+server.ts
 ├─ static/
 ├─ scripts/
@@ -150,7 +151,7 @@ invalid config.
 | `PORT`                    | `3000`                   | Listen port.                         |
 | `HOST`                    | `127.0.0.1`              | Listen address.                      |
 | `DATA_DIR`                | `./data`                 | DB root (`portal.db` + legacy workspaces dir). |
-| `PROJECT_ROOT`            | *(process cwd)*          | The directory the Copilot SDK and the FS/git tabs operate inside. Shared by all conversations. |
+| `PROJECT_ROOT`            | *(process cwd)*          | The directory the pi agent and the FS/git tabs operate inside. Shared by all conversations. |
 | `SESSION_SECRET`          | *(required unless `AUTH_MODE=none`)* | Signs session cookies (≥ 32 chars). |
 | `SESSION_TTL_SECONDS`     | `2592000` (30 days)      | Lifetime of an issued session cookie. Shorten for security-sensitive deployments; existing cookies keep their own `exp` and aren't invalidated early. |
 | `ENCRYPTION_KEY`          | *(required, base64 of 32 raw bytes)* | At-rest encryption for tokens. |
@@ -160,26 +161,11 @@ invalid config.
 | `GITHUB_CLIENT_SECRET`    | —                        | OAuth app secret (`github` mode).    |
 | `ALLOWED_GITHUB_LOGINS`   | —                        | Comma-separated allowlist (`github` mode, non-empty). |
 | `SHARED_SECRET`           | —                        | If `AUTH_MODE=shared-secret`.        |
-| `COPILOT_GITHUB_TOKEN`    | —                        | Optional: forwarded to the SDK.      |
-| `COPILOT_CLI_URL`         | —                        | If set, connect to an external `copilot --headless --port N` instead of spawning the bundled CLI. See `docs/deployment.md` Topology C. |
-| `COPILOT_CONNECTION_TOKEN`| —                        | Token for a token-protected remote CLI (`COPILOT_CLI_URL`). Must match the CLI's `COPILOT_CONNECTION_TOKEN`; forwarded to the SDK as the `RuntimeConnection.forUri` connection token. |
-| `COPILOT_CONTEXT_TIER`    | `default`                | Instance-wide default context window tier: `default` (standard ~200k) or `long_context` (the 1M window). Each user can override this in **Settings → Context window tier**; the per-user choice wins, falling back to this env value when unset. The 1M tier is premium/separately-billed and must also be enabled for the account; newer Copilot CLIs only grant the large window when explicitly requested. Forwarded as the SDK's `contextTier` session field. |
-| `DEFAULT_BACKEND_PROVIDER`| `copilot`                | Default backend for new conversations: `copilot` \| `claude-agent` \| `openai-compatible` \| `lm-studio`. |
-| `DEFAULT_MODEL`           | `claude-sonnet-4.5`      | Default model id for new conversations, stored separately from the provider id. |
-| `CLAUDE_AGENT_BASE_URL`   | —                        | Optional Anthropic-compatible API base URL used by Claude Agent SDK sessions. Leave unset for Anthropic; use `https://api.deepseek.com/anthropic` for DeepSeek. |
-| `CLAUDE_AGENT_API_KEY`    | —                        | API credential passed only to the Claude Agent SDK child process as `ANTHROPIC_AUTH_TOKEN`. |
-| `CLAUDE_AGENT_MAX_TURNS`  | `50`                     | Maximum Agent SDK turns for one portal user turn. |
-| `OPENAI_COMPATIBLE_BASE_URL` | —                     | Trusted operator-configured base `/v1` URL for an OpenAI-compatible backend; may intentionally be hosted, local, or private. |
-| `OPENAI_COMPATIBLE_API_KEY` | —                      | Optional bearer token for the generic OpenAI-compatible backend. |
-| `OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS` | `8`       | Maximum OpenAI-compatible tool-calling loops before the portal stops the turn. |
-| `OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES` | `20`  | Maximum complete portal messages replayed when a fresh OpenAI-compatible session restores context. |
-| `OPENAI_COMPATIBLE_TEMPERATURE` | — | Optional sampling temperature for OpenAI-compatible and LM Studio chat completions. Leave unset to use backend/model defaults. |
-| `OPENAI_COMPATIBLE_TOP_P` | — | Optional nucleus sampling value for OpenAI-compatible and LM Studio chat completions. Leave unset to use backend/model defaults. |
-| `OPENAI_COMPATIBLE_PRESENCE_PENALTY` | — | Optional topic repetition penalty for OpenAI-compatible and LM Studio chat completions. Leave unset to use backend/model defaults. |
-| `OPENAI_COMPATIBLE_FREQUENCY_PENALTY` | — | Optional token repetition penalty for OpenAI-compatible and LM Studio chat completions. Leave unset to use backend/model defaults. |
-| `LMSTUDIO_BASE_URL`       | `http://127.0.0.1:1234`  | Base URL for LM Studio's local server. The portal uses `/v1` for chat and `/api/v1` for model metadata. |
-| `LMSTUDIO_API_KEY`        | —                        | Optional LM Studio API token when server authentication is enabled. |
-| `ZAP_PROVIDERS_JSON`      | —                        | JSON array of additional provider instances: `[{ "id", "type", "label"?, "baseUrl"?, "apiKey"?, "models"? }]`. `type` is `claude-agent` \| `openai-compatible` \| `lm-studio`; duplicate types allowed, duplicate or reserved ids rejected at startup with the offending field named. Conversations pin an instance id; the env-fed built-in for each type always exists under that type's id. See `docs/claude-agent-backends.md` and `docs/openai-compatible-backends.md`. |
+| `DEFAULT_MODEL`           | `claude-sonnet-4.5`      | Default model id for new conversations (a pi model id, `providerId/modelId`). |
+| `PI_MODEL`                | `anthropic/claude-sonnet-4-5` | Pi model id (`providerId/modelId`) for the pi path, used when `PI_STUB` is unset. |
+| `PI_STUB`                 | —                        | Set to `1` to run the pi path against the in-process stub model. Used by e2e tests. |
+| `OPENAI_COMPATIBLE_BASE_URL` | —                     | Trusted operator-configured base `/v1` URL for OpenAI-compatible model calls (memory extraction, adversary shadow review); may intentionally be hosted, local, or private. |
+| `OPENAI_COMPATIBLE_API_KEY` | —                      | Optional bearer token for OpenAI-compatible model calls. |
 | `MEMORY_EXTRACTOR_BACKEND` | `heuristic`             | Server-wide default backend for harvesting durable memories from conversations: `heuristic` (local, no network) \| `openai-compatible` (single-shot JSON patch) \| `openai-compatible-tools` (a dedicated background agent that stores memory by calling the memory tools, with per-call validation feedback). Falls back to heuristic if the openai-compatible base URL/model is missing. A user default (Settings → General) seeds new conversations, and a per-conversation override (chat header) wins; an unset conversation column resolves to this env value. |
 | `MEMORY_EXTRACTOR_MODEL`  | —                        | Server-wide default model id for the `openai-compatible`/`openai-compatible-tools` extractor. A user default (Settings → General) seeds new conversations and a per-conversation override takes precedence; without either, extraction stays heuristic. Uses `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY`. |
 | `MEMORY_EXTRACTOR_TIMEOUT_MS` | `20000`              | Request timeout (ms) for each model-backed extraction request. |
@@ -197,5 +183,4 @@ invalid config.
 | `TURN_ABORT_FINALIZE_DEADLINE_MS` | `5000`           | After a user Stop, the turn must reach a terminal state and free the conversation within this deadline even if post-turn memory extraction hasn't unwound; the stuck extraction is abandoned past this point. |
 | `LOG_LEVEL`               | `info`                   | `debug` \| `info` \| `warn` \| `error`. |
 | `ENABLE_REDEPLOY`         | —                        | Set to `1` to enable `POST /api/admin/redeploy` (only meaningful under `pnpm run serve`). |
-| `COPILOT_STUB`            | —                        | Set to `1` to swap the real SDK for the in-process stub. Used by e2e tests. |
 | `DB_MIGRATIONS_DIR`       | *(auto)*                 | Explicit override for the migrations directory. Useful when cwd isn't the repo root. |

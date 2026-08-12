@@ -106,7 +106,7 @@ export const PORTAL_SECRET_ENV_NAMES: readonly string[] = [
 	'ENCRYPTION_KEY',
 	'GITHUB_CLIENT_SECRET',
 	'SHARED_SECRET',
-	'COPILOT_GITHUB_TOKEN'
+	'OPENAI_COMPATIBLE_API_KEY'
 ] as const;
 
 const PORTAL_SECRET_ENV_SET = new Set(PORTAL_SECRET_ENV_NAMES.map((n) => n.toUpperCase()));

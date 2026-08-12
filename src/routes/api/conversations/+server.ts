@@ -5,9 +5,7 @@ import * as convs from '$lib/server/db/repos/conversations';
 import * as settings from '$lib/server/db/repos/settings';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { loadConfig } from '$lib/server/config';
-import { getDefaultProviderId } from '$lib/server/providers';
-import { APPROVAL_MODES, MEMORY_EXTRACTOR_BACKEND_IDS, SESSION_MODES } from '$lib/types';
-import { normalizeProviderInstance } from '$lib/server/providers/registry';
+import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
@@ -36,15 +34,12 @@ export const GET: RequestHandler = ({ locals, url }) => {
 const CreateBody = z
 	.object({
 		title: z.string().min(1).max(200).default('New chat'),
-		provider: z.string().trim().min(1).optional(),
 		model: z.string().min(1).optional(),
 		workdir: z.string().min(1).optional(),
 		mode: z.enum(SESSION_MODES).optional(),
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
 		memoryExtractorModel: z.string().min(1).optional(),
-		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
 		adversaryModel: z.string().min(1).optional(),
-		adversaryBackend: z.string().min(1).optional(),
 		/**
 		 * Optional chat prompt-template to seed conversation settings from. When it
 		 * resolves to one of the caller's own chat templates, its
@@ -62,7 +57,6 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 	const body = await parseBody(request, CreateBody);
 	const cfg = loadConfig();
 	const userSettings = settings.get(userId) ?? settings.defaults();
-	const provider = body.provider ?? userSettings.defaultProvider ?? getDefaultProviderId();
 	const model = body.model ?? userSettings.defaultModel ?? cfg.DEFAULT_MODEL;
 
 	// Seed tool-group scoping from a chat template when one is supplied and owned
@@ -151,18 +145,11 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 			workspaceKind: managedWorktree ? 'managed-worktree' : 'shared',
 			workspaceKey: managedWorktree?.sourceWorkdir ?? workdir,
 			...(managedWorktree ? { managedWorktree } : {}),
-			provider: normalizeProviderInstance(provider),
 			model,
 			mode: body.mode ?? userSettings.defaultConversationMode,
 			approvalMode: body.approvalMode ?? userSettings.defaultApprovalMode,
-			// Seed-only, mirroring model/mode precedence: explicit create-body field
-			// wins, else the user's default, else NULL (resolved from env at runtime).
-			memoryExtractorModel:
-				body.memoryExtractorModel ?? userSettings.defaultMemoryExtractorModel ?? null,
-			memoryExtractorBackend:
-				body.memoryExtractorBackend ?? userSettings.defaultMemoryExtractorBackend ?? null,
-			adversaryModel: body.adversaryModel ?? userSettings.defaultAdversaryModel ?? null,
-			adversaryBackend: body.adversaryBackend ?? userSettings.defaultAdversaryBackend ?? null,
+			memoryExtractorModel: body.memoryExtractorModel ?? null,
+			adversaryModel: body.adversaryModel ?? null,
 			disabledToolGroups
 		});
 	} catch (cause) {

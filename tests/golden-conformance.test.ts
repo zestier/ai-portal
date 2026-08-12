@@ -28,10 +28,11 @@ interface GoldenCaseFile {
 }
 
 /**
- * The exact projection the Claude-agent provider feeds the model for a
- * tool_result (src/lib/server/providers/claude-agent-provider.ts,
- * `toolResultText`). Mirrored here so the integrity test can verify each
- * golden `.text` is exactly the projection of its `.json` content.
+ * The exact projection a portal tool implementation must emit for a
+ * tool_result (the contract the former claude-agent provider fed the model,
+ * now the contract for the pi path). Mirrored here so the integrity test can
+ * verify each golden `.text` is exactly the projection of its `.json`
+ * content.
  */
 function toolResultText(content: unknown): string {
 	if (typeof content === 'string') return content;

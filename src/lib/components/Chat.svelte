@@ -5,13 +5,11 @@
 		ApprovalMode,
 		Conversation,
 		ConversationUsage,
-		MemoryExtractorBackend,
 		MemoryMode,
 		Message,
 		PortalEvent,
 		InteractiveRequestView,
-		InteractiveResponse,
-		ProviderCapabilities
+		InteractiveResponse
 	} from '$lib/types';
 	import Message_ from './Message.svelte';
 	import InteractiveRequestDialog from './InteractiveRequestDialog.svelte';
@@ -59,19 +57,11 @@
 		initialActiveTurnId = null,
 		initialPendingInteractive = [],
 		initialComposer = '',
-		providerCapabilities,
-		providerDisplayName,
-		providerModels,
-		providerModelsError = null,
 		defaultModelPlaceholder,
 		effectiveModel,
 		chatPlaceholder
 	}: {
 		conversation: Conversation;
-		providerCapabilities: ProviderCapabilities;
-		providerDisplayName: string;
-		providerModels: { id: string; name: string; maxContextWindowTokens?: number }[];
-		providerModelsError?: string | null;
 		defaultModelPlaceholder: string;
 		effectiveModel: string;
 		chatPlaceholder: string;
@@ -113,9 +103,6 @@
 	let memoryMode = $state<MemoryMode>(untrack(() => conversation.memoryMode));
 	let memoryExtractorModel = $state<string | null>(
 		untrack(() => conversation.memoryExtractorModel)
-	);
-	let memoryExtractorBackend = $state<MemoryExtractorBackend | null>(
-		untrack(() => conversation.memoryExtractorBackend)
 	);
 	let globalMemoryEnabled = $state<boolean>(untrack(() => conversation.globalMemoryEnabled));
 	let approvalMode = $state<ApprovalMode>(untrack(() => conversation.approvalMode));
@@ -206,7 +193,6 @@
 			sessionMode = conversation.mode;
 			memoryMode = conversation.memoryMode;
 			memoryExtractorModel = conversation.memoryExtractorModel;
-			memoryExtractorBackend = conversation.memoryExtractorBackend;
 			globalMemoryEnabled = conversation.globalMemoryEnabled;
 			approvalMode = conversation.approvalMode;
 			disabledToolGroups = conversation.disabledToolGroups;
@@ -1410,11 +1396,7 @@
 	<ChatHeader
 		{title}
 		{conversation}
-		{providerCapabilities}
-		{providerDisplayName}
 		model={sessionModel}
-		{providerModels}
-		{providerModelsError}
 		{defaultModelPlaceholder}
 		{parent}
 		{usage}
@@ -1422,7 +1404,6 @@
 		mode={sessionMode}
 		{memoryMode}
 		{memoryExtractorModel}
-		{memoryExtractorBackend}
 		{globalMemoryEnabled}
 		{approvalMode}
 		{disabledToolGroups}
@@ -1433,8 +1414,6 @@
 			if (patch.memoryMode !== undefined) memoryMode = patch.memoryMode;
 			if (patch.memoryExtractorModel !== undefined)
 				memoryExtractorModel = patch.memoryExtractorModel;
-			if (patch.memoryExtractorBackend !== undefined)
-				memoryExtractorBackend = patch.memoryExtractorBackend;
 			if (patch.globalMemoryEnabled !== undefined) globalMemoryEnabled = patch.globalMemoryEnabled;
 			if (patch.approvalMode !== undefined) approvalMode = patch.approvalMode;
 			if (patch.disabledToolGroups !== undefined) disabledToolGroups = patch.disabledToolGroups;

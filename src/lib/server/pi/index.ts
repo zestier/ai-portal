@@ -10,7 +10,7 @@
 
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { loadConfig } from '../config';
-import type { ProviderOpenOptions, ProviderSession } from '../providers';
+import type { ProviderOpenOptions, ProviderSession } from './session-contract';
 import { createPiProviderSession, type PiPermissionResolver, type PiModel } from './session';
 import { getStubModel, isPiStubMode } from './stub-server';
 

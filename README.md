@@ -1,16 +1,17 @@
 # Zestier's AI Portal
 
-Zestier's AI Portal (ZAP) is a self-hosted web portal for interacting with
-GitHub Copilot's agent runtime, built on top of the official
-[`github/copilot-sdk`](https://github.com/github/copilot-sdk). Intended to be run
-on a personal/home machine and exposed via a Cloudflare Tunnel (or similar) for
-remote access from a phone or laptop.
+Zestier's AI Portal (ZAP) is a self-hosted web portal for interacting with an
+agentic coding runtime, built on top of the
+[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+SDK. Intended to be run on a personal/home machine and exposed via a
+Cloudflare Tunnel (or similar) for remote access from a phone or laptop.
 
 > **Status:** Phases 0–3 of the roadmap are implemented (single-user
 > local chat, tools/permissions/diffs, OAuth + Cloudflare Tunnel
 > deployment, plus a read-only git-aware file browser and edit/retry
-> forking). The Copilot SDK is pinned to `@github/copilot-sdk@1.0.1`;
-> see `package.json`.
+> forking). Sessions are pi SDK sessions against the configured `PI_MODEL`
+> (`providerId/modelId`); `PI_STUB=1` swaps in an in-process stub model
+> for e2e tests.
 
 ## Quick start (local, no auth)
 
@@ -21,9 +22,9 @@ cp .env.example .env
 #   openssl rand -base64 48   # SESSION_SECRET
 # For pure-local dev, leave AUTH_MODE=none and set HOST=127.0.0.1 +
 # I_KNOW_THIS_IS_LOCAL=1.
-
-# Authenticate the Copilot CLI on the host (the SDK reuses these creds):
-#   pnpm dlx @github/copilot auth login
+#
+# Point PI_MODEL at a model id your pi SDK provider can serve, or set
+# PI_STUB=1 to run against the in-process stub (no credentials needed).
 
 corepack enable        # one-time, to provide pnpm
 pnpm install
@@ -51,7 +52,7 @@ See [docs/deployment.md](docs/deployment.md) for the OAuth + tunnel setup.
 | `pnpm run lint`                      | ESLint + Prettier check.                                                           |
 | `pnpm run format`                    | Prettier write.                                                                    |
 | `pnpm test`                          | Vitest unit tests.                                                                 |
-| `pnpm run test:e2e`                  | Build + Playwright e2e (uses stubbed Copilot).                                     |
+| `pnpm run test:e2e`                  | Build + Playwright e2e (uses the stubbed pi model).                                |
 | `pnpm run test:e2e:run`              | Playwright e2e only; expects `build/` to already exist.                            |
 | `pnpm run verify`                    | Serial lint/unit/build/check/e2e gate used by redeploy and pre-commit.             |
 | `pnpm run verify -- --concurrency 3` | Run the same gate with up to three independent phases in parallel.                 |
@@ -79,10 +80,10 @@ redeploy logs identify failures clearly.
 
 ## Goals
 
-- A clean web chat UI for Copilot agent sessions — comparable in feel to the
-  VS Code Copilot Chat pane, but accessible from any browser.
+- A clean web chat UI for agent sessions — a browser-accessible pane for
+  driving the configured agent on the host.
 - Self-hosted, single-user-first. No cloud middleman.
-- Use the **official** GitHub Copilot SDK only. No reverse-engineered endpoints,
+- Use the official pi coding-agent SDK only. No reverse-engineered endpoints,
   no ToS gray areas.
 - Persist conversations locally so sessions survive restarts and can be resumed.
 - Trivial to deploy: `docker compose up` + a Cloudflare Tunnel.
@@ -91,8 +92,8 @@ redeploy logs identify failures clearly.
 
 - Multi-tenant SaaS. Single-user, optionally with a small allowlist of GitHub
   accounts later.
-- A Copilot Extensions marketplace / `@agent` registry.
-- Full feature parity with VS Code Copilot Chat (no native diff view editor,
+- An extensions marketplace / `@agent` registry.
+- Full feature parity with a desktop chat pane (no native diff view editor,
   no inline-edit-in-file UX beyond showing the diff produced by the agent).
 - Mobile-native apps. Web is responsive; that's enough.
 
@@ -103,10 +104,9 @@ package-manager caches, one set of long-lived side effects (pushed
 branches, deployed services, mutated databases, sent webhooks). The
 portal models conversations as if they were independent tabs, but the
 substrate underneath them is not. This is not unique to this portal —
-Copilot CLI, VS Code Copilot Chat, and similar tools all share the same
-limitation — but the portal makes it easier to forget, because you can
-fire off a second conversation from your phone while the first is still
-running on your laptop.
+any CLI agent runtime shares the same limitation — but the portal makes
+it easier to forget, because you can fire off a second conversation from
+your phone while the first is still running on your laptop.
 
 Treat the portal like a single keyboard:
 
@@ -141,18 +141,12 @@ host-sandbox guarantee. See [docs/auth-and-security.md](docs/auth-and-security.m
 
 1. [docs/architecture.md](docs/architecture.md) — Components and data flow.
 2. [docs/tech-stack.md](docs/tech-stack.md) — SvelteKit, rationale, dependencies.
-3. [docs/backend-sdk-integration.md](docs/backend-sdk-integration.md) — How the
-   server uses `@github/copilot-sdk`, session lifecycle, streaming.
-4. [docs/frontend-ui.md](docs/frontend-ui.md) — Routes, components, UX details.
-5. [docs/auth-and-security.md](docs/auth-and-security.md) — Login, tunnel exposure,
+3. [docs/frontend-ui.md](docs/frontend-ui.md) — Routes, components, UX details.
+4. [docs/auth-and-security.md](docs/auth-and-security.md) — Login, tunnel exposure,
    threat model.
-6. [docs/persistence.md](docs/persistence.md) — SQLite schema, conversation storage.
-7. [docs/deployment.md](docs/deployment.md) — Dockerfile, compose, Cloudflare Tunnel.
-8. [docs/openai-compatible-backends.md](docs/openai-compatible-backends.md) —
-   OpenAI-compatible backend setup, settings, and feature differences.
-9. [docs/claude-agent-backends.md](docs/claude-agent-backends.md) — Claude Agent
-   SDK setup for Anthropic-compatible providers such as DeepSeek.
-10. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
+5. [docs/persistence.md](docs/persistence.md) — SQLite schema, conversation storage.
+6. [docs/deployment.md](docs/deployment.md) — Dockerfile, compose, Cloudflare Tunnel.
+7. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md) for testing, style, and the quality
 gate, and [AGENTS.md](AGENTS.md) for agent-specific guidance.
@@ -164,13 +158,11 @@ Browser (SvelteKit client)
        │  HTTPS, SSE for streaming
        ▼
 SvelteKit server (Node adapter)
-       │  @github/copilot-sdk (JSON-RPC over stdio)
+       │  @earendil-works/pi-coding-agent (session per conversation)
        ▼
-copilot CLI (server mode, child process)
-       │  HTTPS
-       ▼
-GitHub Copilot backend
+pi agent runtime — model resolved from PI_MODEL (providerId/modelId),
+or the in-process stub model when PI_STUB=1
 ```
 
-Persistence (SQLite) lives next to the SvelteKit server. One Copilot CLI
-subprocess per active session, managed by the SDK.
+Persistence (SQLite) lives next to the SvelteKit server. Sessions are held
+in `src/lib/server/runtime/pool.ts` and reaped after an idle timeout.

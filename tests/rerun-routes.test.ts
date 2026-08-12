@@ -73,8 +73,7 @@ describe('rerun routes: error surfacing', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 		const u1 = messages.append(conv.id, { role: 'user', content: 'original' });
 
@@ -104,8 +103,7 @@ describe('rerun routes: error surfacing', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 		// Editing an assistant message is rejected with `not_user_message` (400).
 		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply' });
@@ -130,8 +128,7 @@ describe('rerun routes: error surfacing', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 		messages.append(conv.id, { role: 'user', content: 'q' });
 		const a1 = messages.append(conv.id, { role: 'assistant', content: 'a' });
@@ -171,8 +168,7 @@ describe('rerun routes: error surfacing', () => {
 				branch: `portal/${conversationId}`,
 				baseSha: 'a'.repeat(40)
 			},
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 		const userMessage = messages.append(conversation.id, {
 			role: 'user',
@@ -222,8 +218,7 @@ describe('rerun routes: error surfacing', () => {
 		const conversation = convs.create(user.id, {
 			title: 'source',
 			workdir: source,
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 		const userMessage = messages.append(conversation.id, {
 			role: 'user',
@@ -254,8 +249,7 @@ describe('rerun routes: error surfacing', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 		const u1 = messages.append(conv.id, { role: 'user', content: 'original' });
 

@@ -84,12 +84,6 @@
 		</p>
 	{:else}
 		<dl class="meta">
-			{#if input.provider}
-				<div>
-					<dt class="eyebrow">Provider</dt>
-					<dd>{input.provider}</dd>
-				</div>
-			{/if}
 			{#if input.model}
 				<div>
 					<dt class="eyebrow">Model</dt>

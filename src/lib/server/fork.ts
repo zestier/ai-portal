@@ -202,7 +202,6 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 			workspaceKind: managedWorktree ? 'managed-worktree' : source.workspaceKind,
 			workspaceKey: source.workspaceKey,
 			...(managedWorktree ? { managedWorktree } : {}),
-			provider: source.provider,
 			model: source.model,
 			mode: source.mode,
 			// A fork inherits `auto-deny` but never `auto-approve`. This is the
@@ -214,12 +213,10 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 			approvalMode: source.approvalMode === 'auto-deny' ? 'auto-deny' : 'ask',
 			memoryMode: source.memoryMode,
 			memoryExtractorModel: source.memoryExtractorModel,
-			memoryExtractorBackend: source.memoryExtractorBackend,
 			// Carried over like the harvester settings: a fork continues the same
 			// measurement. Unlike `approvalMode` there is no safety asymmetry to
 			// worry about — the shadow reviewer has no authority either way.
 			adversaryModel: source.adversaryModel,
-			adversaryBackend: source.adversaryBackend,
 			globalMemoryEnabled: source.globalMemoryEnabled,
 			disabledToolGroups: source.disabledToolGroups,
 			forkedFromConversationId: source.id,

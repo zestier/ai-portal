@@ -96,7 +96,7 @@ describe('parseActionsConfig — fail closed', () => {
 			'ENCRYPTION_KEY',
 			'GITHUB_CLIENT_SECRET',
 			'SHARED_SECRET',
-			'COPILOT_GITHUB_TOKEN'
+			'OPENAI_COMPATIBLE_API_KEY'
 		]) {
 			const res = parseActionsConfig({
 				version: 1,

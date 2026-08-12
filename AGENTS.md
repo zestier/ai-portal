@@ -1,15 +1,13 @@
 # Agent guidelines
 
-Notes for AI coding agents (Copilot CLI, Claude, etc.) working in this repo.
+Notes for AI coding agents (Claude Code, etc.) working in this repo.
 
 ## Repo skills
 
-Repo-local skills ship in `agent-plugins/zap-skills/` (a Claude Agent SDK
-plugin). The claude-agent provider loads every `agent-plugins/` subfolder that
-carries the SDK plugin manifest, so these skills are invocable in a running
-agent, not just prose here: `repo-toolchain` and
-`browser-testing` mirror the sections below. See
-`docs/claude-agent-backends.md` for the load path.
+Repo-local skills formerly shipped in `agent-plugins/zap-skills/` as a Claude
+Agent SDK plugin, loaded by the claude-agent provider. With that provider
+removed, skills are no longer loaded from the repo; the guidance lives in
+this file.
 
 ## Ticket-first workflow
 
@@ -142,8 +140,8 @@ endpoints, which mutate state under the live local user.
 
 ## When you are _yourself_ running through this portal
 
-If your harness is `copilot --headless` and this portal is rendering your
-chat, the same `InteractiveRequestDialog` you can read in `src/lib/components/`
+If this portal is rendering your chat, the same `InteractiveRequestDialog`
+you can read in `src/lib/components/`
 **is the UI a user clicks to approve your tool calls**. A few corollaries
 that are easy to miss otherwise:
 
@@ -159,12 +157,12 @@ that are easy to miss otherwise:
   wait indefinitely until the user answers or the turn is aborted. If a
   tool call appears to hang, the user simply hasn't clicked yet — don't
   chase it as a bug.
-- **Auto-approvals are audited.** `bridge.ts` writes `auto-allow` /
-  `auto-deny` rows to `permission_decisions` when the user's policy or a
-  stored grant settles a request without a dialog. The settings page
-  surfaces these — useful for confirming "did my recent grant actually
+- **Auto-approvals are audited.** `runtime/interactive-requests.ts` writes
+  `auto-allow` / `auto-deny` rows to `permission_decisions` when the user's
+  policy or a stored grant settles a request without a dialog. The settings
+  page surfaces these — useful for confirming "did my recent grant actually
   fire?" without instrumenting code.
 - **The portal's permissions UX (policy, grants, scope picker) is
-  orthogonal to the Copilot CLI's own approval prompts.** If you're
-  running outside the portal (regular CLI, no headless server), nothing
+  orthogonal to any approval prompts your own harness shows.** If you're
+  running outside the portal (regular CLI), nothing
   in this repo affects which of your tool calls get auto-approved.

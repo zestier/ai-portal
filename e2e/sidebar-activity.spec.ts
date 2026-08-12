@@ -55,7 +55,7 @@ test('a reply that arrives while the user is watching is never flagged unseen', 
 	const id = await createConversation(request, uniqueTitle('E2E activity watched'));
 	await page.goto(`/conversations/${id}`);
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.fill('reply while I watch');
 	await composer.press('Enter');
 	await waitForAssistantMessage(request, id, /Stubbed reply to: reply while I watch/);

@@ -122,10 +122,6 @@
 	>
 		<Chat
 			conversation={data.conversation}
-			providerCapabilities={data.providerCapabilities}
-			providerDisplayName={data.providerDisplayName}
-			providerModels={data.providerModels}
-			providerModelsError={data.providerModelsError}
 			defaultModelPlaceholder={data.defaultModelPlaceholder}
 			effectiveModel={data.effectiveModel}
 			chatPlaceholder={data.chatPlaceholder}

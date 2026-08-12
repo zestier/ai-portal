@@ -155,7 +155,7 @@ transcript card (see below), not a page-blocking overlay.
 ### `InteractiveRequestDialog.svelte`
 
 Inline transcript card (not a backdrop modal) that handles every interactive-request kind the
-Copilot SDK can ask for: tool permission (Allow once / Allow always /
+agent runtime can ask for: tool permission (Allow once / Allow always /
 Deny), auto-mode-switch on rate limit, user_input (choices + freeform),
 elicitation (schema-driven form or url mode), exit_plan_mode (per-action
 buttons), and informational sampling / mcp_oauth / external_tool surfaces.
@@ -275,7 +275,7 @@ Data flow:
 ## Empty / error states
 
 - New install with no conversations: large CTA, links to settings to verify
-  Copilot auth.
+  the model session works.
 - Auth missing: chat send is disabled with a banner pointing to `/settings`.
 - SSE disconnect mid-stream: keep what was streamed, show "interrupted",
   offer "Resume" (which sends an empty continuation prompt).

@@ -13,14 +13,14 @@ function event(partial: unknown): AgentSessionEvent {
 describe('PiEventMapper', () => {
 	it('maps message_start / text_delta / message_end to portal events', () => {
 		const mapper = new PiEventMapper(MESSAGE_ID);
-		expect(mapper.map(event({ type: 'message_start', message: {} }))).toEqual([
+		expect(mapper.map(event({ type: 'message_start', message: { role: 'assistant' } }))).toEqual([
 			{ type: 'message.start', messageId: MESSAGE_ID, role: 'assistant' }
 		]);
 		expect(
 			mapper.map(
 				event({
 					type: 'message_update',
-					message: {},
+					message: { role: 'assistant' },
 					assistantMessageEvent: {
 						type: 'text_delta',
 						contentIndex: 0,
@@ -30,10 +30,18 @@ describe('PiEventMapper', () => {
 				})
 			)
 		).toEqual([{ type: 'message.delta', messageId: MESSAGE_ID, text: 'Hello' }]);
-		expect(mapper.map(event({ type: 'message_end', message: {} }))).toEqual([
+		expect(mapper.map(event({ type: 'message_end', message: { role: 'assistant' } }))).toEqual([
 			{ type: 'message.end', messageId: MESSAGE_ID }
 		]);
 		expect(mapper.ended).toBe(true);
+	});
+
+	it('skips the user prompt echo pi emits before the assistant reply', () => {
+		const mapper = new PiEventMapper(MESSAGE_ID);
+		expect(mapper.map(event({ type: 'message_start', message: { role: 'user' } }))).toEqual([]);
+		expect(mapper.map(event({ type: 'message_end', message: { role: 'user' } }))).toEqual([]);
+		// The echo never counts as the turn's message ending.
+		expect(mapper.ended).toBe(false);
 	});
 
 	it('keeps one reasoning segment per thinking block across deltas', () => {

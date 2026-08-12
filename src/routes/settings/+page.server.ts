@@ -2,18 +2,6 @@ import { redirect, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { PageServerLoad, Actions } from './$types';
 import * as settings from '$lib/server/db/repos/settings';
-import {
-	fetchAuthStatus,
-	fetchModels,
-	getDefaultProviderId,
-	listProviders
-} from '$lib/server/providers';
-import {
-	loadProviderStatus,
-	shouldProbeProviderStatus,
-	type ProviderStatusSnapshot
-} from '$lib/server/providers/status';
-import { providerAuthToken } from '$lib/server/providers/auth';
 import { effectiveWorkdir, resolveAndValidate } from '$lib/server/workdir';
 import { loadConfig } from '$lib/server/config';
 import { getDeployMetadata } from '$lib/server/deploy';
@@ -26,11 +14,8 @@ import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import {
-	normalizeContextTier,
 	normalizeThemeAccent,
 	APPROVAL_MODES,
-	CONTEXT_TIER_IDS,
-	MEMORY_EXTRACTOR_BACKEND_IDS,
 	SESSION_MODES,
 	THEME_ACCENT_IDS,
 	type ApprovalMode,
@@ -38,7 +23,6 @@ import {
 	type SessionMode,
 	type UserSettings
 } from '$lib/types';
-import { normalizeProviderInstance } from '$lib/server/providers/registry';
 import {
 	GrantInputSchema,
 	permissionKindForTool,
@@ -56,7 +40,6 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.userId;
 	const cfg = loadConfig();
 	const currentSettings = settings.get(userId) ?? settings.defaults();
-	const defaultProvider = currentSettings.defaultProvider;
 
 	// Make sure the ticket-action defaults exist so the Prompts tab can manage
 	// them even before the user has visited a page that lazy-seeds them.
@@ -67,42 +50,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const purged = settings.pruneExpiredGrants();
 	if (purged > 0) log.info('settings.grants_pruned', { count: purged });
 
-	const providers = await Promise.all(
-		listProviders().map(async (provider): Promise<ProviderStatusSnapshot> => {
-			try {
-				const authToken = shouldProbeProviderStatus(provider, defaultProvider)
-					? providerAuthToken(provider.id, userId)
-					: undefined;
-				return await loadProviderStatus(provider, {
-					userId,
-					defaultProvider,
-					loader: { fetchAuthStatus, fetchModels },
-					...(authToken !== undefined ? { providerAuthToken: authToken } : {})
-				});
-			} catch (e) {
-				log.warn('settings.provider_status_failed', { provider: provider.id, err: String(e) });
-				return {
-					id: provider.id,
-					type: provider.type,
-					displayName: provider.displayName,
-					ui: provider.ui,
-					auth: { isAuthenticated: false, statusMessage: String(e) },
-					models: [],
-					capabilities: provider.capabilities,
-					statusChecked: true,
-					error: e instanceof Error ? e.message : String(e)
-				};
-			}
-		})
-	);
-	const defaultProviderStatus =
-		providers.find((provider) => provider.id === defaultProvider) ?? providers[0];
-
 	return {
 		settings: currentSettings,
-		defaultProvider: getDefaultProviderId(),
-		providers,
-		defaultProviderStatus,
 		recentDecisions: settings.listRecentDecisionsForUser(userId, 25),
 		grants: markSeedGrants(settings.listGrantsForUser(userId)),
 		workspaceFile: getWorkspaceFileStatus(userId, effectiveWorkdir(currentSettings.defaultWorkdir)),
@@ -116,19 +65,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 const SaveSchema = z.object({
-	defaultProvider: z.string().trim().min(1),
 	defaultModel: z.string().optional(),
 	defaultWorkdir: z.string().optional(),
 	defaultConversationMode: z.enum(SESSION_MODES),
 	defaultApprovalMode: z.enum(APPROVAL_MODES),
 	defaultPolicy: z.enum(['prompt', 'allow-all', 'deny-all']),
 	theme: z.enum(['dark', 'light', 'system']),
-	accent: z.enum(THEME_ACCENT_IDS as unknown as [string, ...string[]]),
-	defaultMemoryExtractorModel: z.string().optional(),
-	defaultMemoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).optional(),
-	defaultAdversaryModel: z.string().optional(),
-	defaultAdversaryBackend: z.string().optional(),
-	defaultContextTier: z.enum(CONTEXT_TIER_IDS).optional()
+	accent: z.enum(THEME_ACCENT_IDS as unknown as [string, ...string[]])
 });
 
 const PromptTemplateSchema = z
@@ -205,19 +148,12 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const parsed = SaveSchema.safeParse({
 			defaultModel: (data.get('defaultModel') as string) || undefined,
-			defaultProvider: data.get('defaultProvider'),
 			defaultWorkdir: (data.get('defaultWorkdir') as string) || undefined,
 			defaultConversationMode: data.get('defaultConversationMode'),
 			defaultApprovalMode: data.get('defaultApprovalMode'),
 			defaultPolicy: data.get('defaultPolicy'),
 			theme: data.get('theme'),
-			accent: data.get('accent'),
-			defaultMemoryExtractorModel: (data.get('defaultMemoryExtractorModel') as string) || undefined,
-			defaultMemoryExtractorBackend:
-				(data.get('defaultMemoryExtractorBackend') as string) || undefined,
-			defaultAdversaryModel: (data.get('defaultAdversaryModel') as string) || undefined,
-			defaultAdversaryBackend: (data.get('defaultAdversaryBackend') as string) || undefined,
-			defaultContextTier: (data.get('defaultContextTier') as string) || undefined
+			accent: data.get('accent')
 		});
 		if (!parsed.success) {
 			return {
@@ -253,19 +189,13 @@ export const actions: Actions = {
 			});
 		}
 		const next: UserSettings = {
-			defaultProvider: normalizeProviderInstance(parsed.data.defaultProvider),
 			defaultModel: parsed.data.defaultModel ?? null,
 			defaultWorkdir: parsed.data.defaultWorkdir ?? null,
 			defaultConversationMode: parsed.data.defaultConversationMode as SessionMode,
 			defaultApprovalMode: parsed.data.defaultApprovalMode as ApprovalMode,
 			defaultPolicy: parsed.data.defaultPolicy as PermissionPolicy,
 			theme: parsed.data.theme,
-			accent: normalizeThemeAccent(parsed.data.accent),
-			defaultMemoryExtractorModel: parsed.data.defaultMemoryExtractorModel ?? null,
-			defaultMemoryExtractorBackend: parsed.data.defaultMemoryExtractorBackend ?? null,
-			defaultAdversaryModel: parsed.data.defaultAdversaryModel ?? null,
-			defaultAdversaryBackend: parsed.data.defaultAdversaryBackend ?? null,
-			defaultContextTier: normalizeContextTier(parsed.data.defaultContextTier ?? null)
+			accent: normalizeThemeAccent(parsed.data.accent)
 		};
 		settings.save(locals.userId, next);
 		return { ok: true, formId: 'save' };

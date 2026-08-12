@@ -1,11 +1,6 @@
 import { z } from 'zod';
 import { resolve } from 'node:path';
-import {
-	BACKEND_PROVIDER_IDS,
-	MEMORY_EXTRACTOR_BACKEND_IDS,
-	type BackendProviderId,
-	type ProviderInstance
-} from '$lib/types';
+import { MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
 
 const optionalUrl = z
 	.string()
@@ -41,81 +36,8 @@ const pathList = z
 			: []
 	);
 
-// One entry of `ZAP_PROVIDERS_JSON`: a second (or third…) configured backend
-// instance. `type` picks the implementation; `id` is the identity stored on
-// conversations and settings. `copilot` is rejected as a type below — it stays
-// a single built-in.
-const providerInstanceSchema = z.object({
-	id: z.string().trim().min(1, 'id is required'),
-	type: z.enum(BACKEND_PROVIDER_IDS),
-	label: z.string().trim().min(1).optional(),
-	baseUrl: z.string().trim().url().optional(),
-	apiKey: z.string().trim().min(1).optional(),
-	models: z.array(z.string().trim().min(1, 'model id is required')).optional()
-});
-
-// Cross-entry constraints that only make sense once the whole array is parsed:
-// no duplicate ids (including collisions with the built-in instances, which own
-// the bare type ids), no copilot duplicates, and url-backed instances must
-// declare an endpoint (they have no env fallback to inherit).
-const providerInstancesSchema = z.array(providerInstanceSchema).superRefine((list, ctx) => {
-	const seen = new Set<string>();
-	for (const [i, inst] of list.entries()) {
-		if (inst.type === 'copilot') {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: [i, 'type'],
-				message: `type 'copilot' cannot be duplicated; copilot stays a single built-in instance`
-			});
-		}
-		if (BACKEND_PROVIDER_IDS.includes(inst.id as BackendProviderId)) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: [i, 'id'],
-				message: `'${inst.id}' is a built-in provider id; give this instance a different id`
-			});
-		} else if (seen.has(inst.id)) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: [i, 'id'],
-				message: `duplicate provider instance id '${inst.id}'`
-			});
-		}
-		seen.add(inst.id);
-		if (inst.type !== 'copilot' && !inst.baseUrl) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: [i, 'baseUrl'],
-				message: `baseUrl is required for a '${inst.type}' instance`
-			});
-		}
-	}
-});
-
-// `ZAP_PROVIDERS_JSON` holds extra configured backend instances as a JSON
-// array. The `transform` parses the string; `.pipe` then validates the shape
-// and the cross-entry constraints. Both failure modes report under the
-// `ZAP_PROVIDERS_JSON[...]` path so `loadConfig`'s error output names the
-// offending field.
-const providersJson = z
-	.string()
-	.trim()
-	.optional()
-	.transform((raw, ctx) => {
-		if (!raw) return [] as ProviderInstance[];
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(raw);
-		} catch (e) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: `not valid JSON: ${e instanceof Error ? e.message : String(e)}`
-			});
-			return z.NEVER;
-		}
-		return parsed;
-	})
-	.pipe(providerInstancesSchema);
+// `ZAP_PROVIDERS_JSON`/provider instances were deleted with the backend-provider
+// layer; the config below is the remaining portal-domain surface.
 
 const Schema = z
 	.object({
@@ -186,50 +108,13 @@ const Schema = z
 
 		SHARED_SECRET: z.string().min(32).optional(),
 
-		COPILOT_GITHUB_TOKEN: z.string().optional(),
-		// Pin the session context window tier. The 1M ("long_context") window is
-		// a premium, separately-billed tier that newer Copilot CLIs gate behind
-		// an explicit opt-in; sessions otherwise default to the standard (~200k)
-		// window. Set to "long_context" to request the large window on every
-		// session. Forwarded as the SDK's `contextTier` session-config field.
-		COPILOT_CONTEXT_TIER: z.enum(['default', 'long_context']).default('default'),
-		// Per-call timeout (ms) for Copilot SDK lifecycle calls (client start,
-		// session metadata lookup, create/resume). A hung CLI subprocess must not
-		// pin a request — and the per-user `starting` dedupe lock — open forever.
-		// 0 disables the guard.
-		COPILOT_SDK_CALL_TIMEOUT_MS: z.coerce.number().int().min(0).default(60_000),
-		// Connection token for a token-protected remote CLI reached via
-		// COPILOT_CLI_URL. Must match the COPILOT_CONNECTION_TOKEN set on the
-		// `copilot --headless` server. Forwarded to the SDK as the
-		// `RuntimeConnection.forUri` connection token; the SDK does not read
-		// this from the environment for URI connections, so the portal must
-		// pass it explicitly or the connect handshake is rejected.
-		COPILOT_CONNECTION_TOKEN: z
-			.string()
-			.trim()
-			.optional()
-			.transform((v) => (v ? v : undefined)),
-		// Names the default provider INSTANCE. Any configured instance id works
-		// (a bare type id means that type's built-in instance); an unknown value
-		// is coerced to the copilot built-in by `normalizeProviderInstance`.
-		DEFAULT_BACKEND_PROVIDER: z.string().trim().default('copilot'),
-		// Extra configured backend instances beyond the env-fed built-ins.
-		ZAP_PROVIDERS_JSON: providersJson,
+		// Default model id when a conversation has no model of its own.
 		DEFAULT_MODEL: z.string().default('claude-sonnet-4.5'),
-		CLAUDE_AGENT_BASE_URL: optionalUrl,
-		CLAUDE_AGENT_API_KEY: z.string().optional(),
-		CLAUDE_AGENT_MAX_TURNS: z.coerce.number().int().positive().default(50),
+		// Endpoint for the memory extractor's model-backed completion. Kept until
+		// T5 re-wires the extractor onto pi-ai `complete`; the chat openai-compatible
+		// provider that shared these keys was deleted.
 		OPENAI_COMPATIBLE_BASE_URL: optionalUrl,
 		OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
-		OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(8),
-		OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES: z.coerce.number().int().positive().default(20),
-		OPENAI_COMPATIBLE_CONTEXT_TOKEN_LIMIT: z.coerce.number().int().positive().optional(),
-		OPENAI_COMPATIBLE_TEMPERATURE: z.coerce.number().min(0).max(2).optional(),
-		OPENAI_COMPATIBLE_TOP_P: z.coerce.number().min(0).max(1).optional(),
-		OPENAI_COMPATIBLE_PRESENCE_PENALTY: z.coerce.number().min(-2).max(2).optional(),
-		OPENAI_COMPATIBLE_FREQUENCY_PENALTY: z.coerce.number().min(-2).max(2).optional(),
-		LMSTUDIO_BASE_URL: z.string().trim().url().default('http://127.0.0.1:1234'),
-		LMSTUDIO_API_KEY: z.string().optional(),
 		MEMORY_EXTRACTOR_BACKEND: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).default('heuristic'),
 		MEMORY_EXTRACTOR_MODEL: z.string().trim().optional(),
 		MEMORY_EXTRACTOR_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
@@ -239,8 +124,8 @@ const Schema = z
 		// Grace added on top of the extractor wall-clock budget before the
 		// turn-runner watchdog force-finalizes the post-turn extraction phase.
 		// The ceiling (wallclock + grace) bounds ONLY the post-turn extraction
-		// phase so an abort-ignoring provider can never hold the turn open; the
-		// main agent turn stays unbounded.
+		// phase so an abort-ignoring completion can never hold the turn open;
+		// the main agent turn stays unbounded.
 		MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS: z.coerce.number().int().min(0).default(15_000),
 		// Tool-calling extractor: how the backend is told to choose tools.
 		// 'auto' lets the model decide each step; 'required' forces a tool call
@@ -268,18 +153,6 @@ const Schema = z
 		// How often the memory maintenance task (retention sweep + vacuum) runs,
 		// in minutes. Must be positive.
 		MEMORY_MAINTENANCE_INTERVAL_MIN: z.coerce.number().int().positive().default(720),
-
-		// Kill switch (default on) for post-extraction main-model priming. On
-		// local load/unload backends (Ollama via openai-compatible, LM Studio)
-		// the model-backed memory extractor can evict the main chat model from
-		// VRAM; when enabled the runtime re-warms the main model after extraction
-		// so the next user turn skips the cold model-load stall. Set to "0"/
-		// "false" to disable globally. Only fires when priming is useful (local
-		// backend, model-backed extractor, and extractor model ≠ main model).
-		MEMORY_PRIME_MAIN_MODEL: z
-			.string()
-			.optional()
-			.transform((v) => v !== '0' && v !== 'false'),
 
 		// --- Adversarial approval mode, Phase 0 (shadow measurement) ---
 		//
@@ -335,17 +208,10 @@ const Schema = z
 			.optional()
 			.transform((v) => v === '1' || v === 'true'),
 
-		// When "1", `copilot-provider.ts` swaps the real Copilot SDK for the
-		// in-process stub in `bridge-stub.ts`. Used by e2e tests.
-		COPILOT_STUB: z
-			.string()
-			.optional()
-			.transform((v) => v === '1' || v === 'true'),
-
-		// --- pi SDK session plumbing (T1) ---
-		// When "1", the turn-runner swaps the provider layer for an in-process
-		// pi `createAgentSession` backed by a tiny OpenAI-compatible stub model
-		// (`stub-server.ts`). Used by e2e tests; mirrors COPILOT_STUB.
+		// --- pi SDK session plumbing ---
+		// When "1", the turn-runner uses an in-process pi `createAgentSession`
+		// backed by a tiny OpenAI-compatible stub model (`stub-server.ts`). Used
+		// by e2e tests so they don't need real pi-ai credentials.
 		PI_STUB: z
 			.string()
 			.optional()

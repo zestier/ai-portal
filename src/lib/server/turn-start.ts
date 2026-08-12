@@ -4,15 +4,12 @@ import * as settings from '$lib/server/db/repos/settings';
 import * as pool from '$lib/server/runtime/pool';
 import { loadConfig } from '$lib/server/config';
 import { startTurn } from '$lib/server/runtime/turn-runner';
-import { getProvider } from '$lib/server/providers';
-import { providerAuthToken } from '$lib/server/providers/auth';
 import { snapshot as takeSnapshot } from '$lib/server/snapshots';
 import { resolveConversationWorkspace } from '$lib/server/workdir';
 import { log } from '$lib/server/log';
 import { buildPromptWithMemory, isEnabled } from '$lib/server/memory/engine';
 import { isModelBackedExtractorConfigured } from '$lib/server/memory/extractor';
 import type { Conversation, Message, PortalEvent } from '$lib/types';
-import type { ProviderConversationMessage } from '$lib/server/providers/provider';
 
 export interface StartTurnFromUserMessageOptions {
 	includePriorMessages?: boolean;
@@ -28,16 +25,13 @@ export async function startTurnFromUserMessage(
 
 	const cfg = loadConfig();
 	const userSettings = settings.get(conv.userId) ?? settings.defaults();
-	const provider = getProvider(conv.provider);
 	const memoryEnabled = isEnabled(conv.memoryMode);
-	let providerSessionId = conv.providerSessionId;
 	if (memoryEnabled) {
+		// A memory-backed turn rebuilds the session's prompt from portal state,
+		// so any prior session is released to avoid stale context leaking in.
 		await pool.release(conv.id);
-		providerSessionId = convs.rotateProviderSession(conv.id, conv.userId) ?? providerSessionId;
 	}
-	const promptIncludesPriorMessages =
-		!memoryEnabled &&
-		(opts.includePriorMessages || provider.shouldEmbedPriorMessages?.(providerSessionId) === true);
+	const promptIncludesPriorMessages = !memoryEnabled && opts.includePriorMessages === true;
 	const prompt = memoryEnabled
 		? buildPromptWithMemory({
 				conversationId: conv.id,
@@ -47,48 +41,28 @@ export async function startTurnFromUserMessage(
 				globalMemoryEnabled: conv.globalMemoryEnabled,
 				includeRecentTranscript: true,
 				extractorPresent: isModelBackedExtractorConfigured({
-					model: conv.memoryExtractorModel,
-					backend: conv.memoryExtractorBackend
+					model: conv.memoryExtractorModel
 				})
 			})
 		: promptIncludesPriorMessages
 			? buildPromptWithPriorMessages(conv.id, userMsg)
 			: userMsg.content;
-	const authToken = providerAuthToken(conv.provider, conv.userId);
-	const initialMessages =
-		!memoryEnabled && !promptIncludesPriorMessages && !provider.capabilities.session.resume
-			? buildProviderInitialMessages(conv.id, userMsg)
-			: undefined;
 	const turn = await startTurn({
 		conversationId: conv.id,
 		prompt,
 		userMessageId: userMsg.id,
 		bridge: {
 			conversationId: conv.id,
-			providerSessionId,
 			userId: conv.userId,
 			workingDirectory: workdir,
 			workspaceKey: conv.workspaceKey,
-			provider: conv.provider,
 			model: conv.model ?? cfg.DEFAULT_MODEL,
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
 			approvalMode: conv.approvalMode,
-			adversaryModel: conv.adversaryModel,
-			adversaryBackend: conv.adversaryBackend,
 			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
-			globalMemoryEnabled: conv.globalMemoryEnabled,
-			...(authToken !== undefined ? { providerAuthToken: authToken } : {}),
-			...(initialMessages !== undefined ? { initialMessages } : {}),
-			onProviderSessionIdChange: (providerSessionId) => {
-				const updated = convs.setProviderSessionId(conv.id, conv.userId, providerSessionId);
-				if (!updated) {
-					throw new Error(
-						`Failed to persist ${conv.provider} provider session id for conversation ${conv.id}: ${providerSessionId}`
-					);
-				}
-			}
+			globalMemoryEnabled: conv.globalMemoryEnabled
 		},
 		initialEvents: opts.initialEvents,
 		memory: memoryEnabled
@@ -96,8 +70,7 @@ export async function startTurnFromUserMessage(
 					mode: conv.memoryMode,
 					userMessageId: userMsg.id,
 					userContent: userMsg.content,
-					extractorModel: conv.memoryExtractorModel,
-					extractorBackend: conv.memoryExtractorBackend
+					extractorModel: conv.memoryExtractorModel
 				}
 			: undefined,
 		beforeSend: async () => {
@@ -139,22 +112,4 @@ export function buildPromptWithPriorMessages(conversationId: string, userMsg: Me
 		'',
 		userMsg.content
 	].join('\n');
-}
-
-export function buildProviderInitialMessages(
-	conversationId: string,
-	userMsg: Message
-): ProviderConversationMessage[] {
-	const transcript = messages.listByConversation(conversationId);
-	const targetIdx = transcript.findIndex((m) => m.id === userMsg.id);
-	if (targetIdx <= 0) return [];
-	return transcript
-		.slice(0, targetIdx)
-		.filter((m) => m.status === 'complete' && (m.content.trim() || (m.toolCalls?.length ?? 0) > 0))
-		.map((m) => ({
-			role: m.role,
-			content: m.content,
-			status: m.status,
-			...(m.toolCalls !== undefined ? { toolCalls: m.toolCalls } : {})
-		}));
 }

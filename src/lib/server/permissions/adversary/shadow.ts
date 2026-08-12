@@ -27,10 +27,9 @@ import { log } from '../../log';
 import { ulid } from '../../db/ids';
 import * as shadowRepo from '../../db/repos/shadow-decisions';
 import type { ShadowResolutionSource } from '../../db/repos/shadow-decisions';
-import { BoundedTtlCache } from '../../copilot/bounded-ttl-cache';
+import { BoundedTtlCache } from '../../cache';
 import { withTimeout } from '../../runtime/with-timeout';
-import type { ProviderCompletionRequest } from '../../providers/provider';
-import { getInstance, normalizeProviderInstance } from '../../providers/registry';
+import type { ProviderCompletionRequest } from '../../pi/session-contract';
 import { reviewPermissionRequest, adversaryExperimentKey, type AdversaryOutcome } from './client';
 import {
 	buildAdversaryFacts,
@@ -144,7 +143,7 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 	let inFlight = 0;
 
 	const observe = (input: ShadowObserveInput): ShadowHandle | null => {
-		const cfg = resolveConfig(opts.getModel?.(), opts.getBackend?.(), input.agentBackend);
+		const cfg = resolveConfig(opts.getModel?.(), opts.getBackend?.());
 		if (!cfg) return null;
 		// Backend-qualified, because a bare model id is only meaningful within
 		// one backend's namespace. Comparing raw strings across namespaces was
@@ -192,7 +191,6 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 				scopeKey: input.scopeKey,
 				argsHash: input.argsHash,
 				adversaryModel: cfg.model,
-				adversaryBackend: cfg.backend,
 				experimentKey: adversaryExperimentKey({
 					backend: cfg.backend,
 					model: cfg.model,
@@ -353,18 +351,15 @@ function persistOutcome(id: string, outcome: AdversaryOutcome, memoized: boolean
  * server default. A configured model IS the enablement — no model anywhere
  * means the shadow simply never runs, which is the default.
  *
- * The BACKEND is resolved independently, and falls back to the conversation's
- * own. That fallback is the point of this design: the reviewer needs to be a
- * different *model* from the agent, which says nothing about needing a
- * different *backend*. Requiring a second endpoint confined the whole
- * experiment to deployments that had stood one up, while adding a data-egress
- * destination that the chat backend — which already sees every tool call and
- * its arguments — did not need.
+ * The BACKEND is now a label only: the provider layer that used to serve
+ * out-of-band completions was deleted (T2), so the reviewer's completion is
+ * re-wired onto pi-ai in T5. Until then `complete` rejects unless a test seam
+ * is injected. The label still lands in `experiment_key` so rows stay grouped
+ * by the endpoint that would have served them.
  */
 function resolveConfig(
 	conversationModel: string | null | undefined,
-	conversationBackend: string | null | undefined,
-	agentBackend: string | null | undefined
+	conversationBackend: string | null | undefined
 ): ResolvedShadowConfig | null {
 	const cfg = loadConfig();
 	const model = conversationModel?.trim() || cfg.ADVERSARY_SHADOW_MODEL?.trim();
@@ -373,23 +368,8 @@ function resolveConfig(
 	// about it would be noise.
 	if (!model) return null;
 
-	const requestedRaw = conversationBackend?.trim() || cfg.ADVERSARY_SHADOW_BACKEND?.trim();
-	// An explicit but unrecognised instance id must be rejected rather than
-	// silently reviewing on some other backend — that would mislabel the rows.
-	const requested = requestedRaw ? asProviderInstanceId(requestedRaw) : null;
-	if (requestedRaw && !requested) {
-		warnOnce('adversary.shadow_unknown_backend', {
-			backend: requestedRaw,
-			reason:
-				'configured adversary backend is not a known provider instance id; the shadow cannot run'
-		});
-		return null;
-	}
-	// `agentBackend` is null only when a provider did not report one. Falling
-	// back to the deployment default keeps the row labelled with a real backend
-	// rather than guessing.
 	const backend: string =
-		requested ?? agentBackend ?? normalizeProviderInstance(cfg.DEFAULT_BACKEND_PROVIDER);
+		conversationBackend?.trim() || cfg.ADVERSARY_SHADOW_BACKEND?.trim() || 'pi';
 
 	return {
 		backend,
@@ -397,53 +377,9 @@ function resolveConfig(
 		timeoutMs: cfg.ADVERSARY_SHADOW_TIMEOUT_MS,
 		maxArgChars: cfg.ADVERSARY_SHADOW_MAX_ARG_CHARS,
 		maxInFlight: cfg.ADVERSARY_SHADOW_MAX_IN_FLIGHT,
-		complete: (req) => completeVia(backend, req)
+		complete: () =>
+			Promise.reject(
+				new Error('adversary shadow completion is not wired; re-wire onto pi-ai in T5')
+			)
 	};
-}
-
-/**
- * Dispatch one completion to a backend, resolving the provider registry at call
- * time.
- *
- * The `import()` is not laziness for its own sake — it breaks a genuine import
- * cycle. `providers/index` reaches this module through
- * copilot-provider → interactive-adapter → shadow, so a static import here
- * leaves the registry half-initialized for whichever module the graph happens
- * to enter first, and `getProvider` returns undefined. Resolving inside an
- * already-async, already fire-and-forget call costs nothing and cannot observe
- * a partially-evaluated module.
- *
- * A backend that cannot side-complete rejects rather than returning null, so it
- * lands as a visible `status='error'` row instead of a log line nobody reads.
- */
-async function completeVia(backend: string, req: ProviderCompletionRequest): Promise<string> {
-	const { getProvider } = await import('../../providers');
-	const provider = getProvider(backend);
-	if (!provider.capabilities.sideCompletion || typeof provider.complete !== 'function') {
-		throw new Error(`backend ${backend} does not support out-of-band completions`);
-	}
-	// Resolve the backend's per-user credential the same way the route layer
-	// does. Omitting it is NOT harmless on Copilot: `getClient` caches one client
-	// per user, first caller wins, and applies `gitHubToken` only at
-	// construction. A token-less shadow call that happens to run before the
-	// user's first Copilot conversation would cache a client built from the
-	// machine's logged-in identity, and every later real turn for that user
-	// would silently inherit it — a no-authority experiment changing who real
-	// work runs as.
-	const providerAuthToken = req.userId ? provider.resolveAuthToken?.(req.userId) : undefined;
-	return provider.complete({ ...req, providerAuthToken });
-}
-
-function asProviderInstanceId(value: string): string | null {
-	return getInstance(value) ? value : null;
-}
-
-// Process-wide so a misconfigured deployment says so once rather than once per
-// permission dialog.
-const warned = new Set<string>();
-function warnOnce(event: string, fields: Record<string, unknown>): void {
-	const key = `${event}:${JSON.stringify(fields)}`;
-	if (warned.has(key)) return;
-	warned.add(key);
-	log.warn(event, fields);
 }

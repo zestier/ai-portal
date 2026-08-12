@@ -1,17 +1,12 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { ToolInvocation } from '@github/copilot-sdk';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
 
 // Small PNG magic bytes for testing image MIME sniffing
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
 const TEXT_BYTES = Buffer.from('hello world\n', 'utf8');
-
-function fakeInvocation(toolCallId: string): ToolInvocation {
-	return { sessionId: 's', toolCallId, toolName: 'demo', arguments: {} };
-}
 
 async function imports() {
 	const users = await import('../src/lib/server/db/repos/users');
@@ -587,52 +582,5 @@ describe('ticket_get includes attachments metadata', () => {
 		expect(result.ok).toBe(true);
 		const data = result.ok && (result.result as Record<string, unknown>);
 		expect(data).not.toHaveProperty('attachments');
-	});
-});
-
-describe('toSdkResult binary projection', () => {
-	it('passes binary results through to binaryResultsForLlm', async () => {
-		const { wrapToolsForStreaming } = await import('../src/lib/server/copilot/tool-streaming');
-		const { ok } = await import('../src/lib/server/tools/types');
-
-		const binary = [
-			{ data: 'abc123', mimeType: 'image/png', type: 'image' as const, description: 'shot.png' }
-		];
-		const tool = {
-			name: 'demo',
-			description: 'demo',
-			parameters: { type: 'object' },
-			handler: async () => ok({ id: 'att-1' }, 'attached', { binary })
-		};
-
-		const [wrapped] = wrapToolsForStreaming(
-			[tool],
-			() => {},
-			() => null
-		);
-		const result = await wrapped.handler!({}, fakeInvocation('tc-1'));
-
-		expect(result).toMatchObject({ binaryResultsForLlm: binary });
-	});
-
-	it('does not set binaryResultsForLlm when binary is absent', async () => {
-		const { wrapToolsForStreaming } = await import('../src/lib/server/copilot/tool-streaming');
-		const { ok } = await import('../src/lib/server/tools/types');
-
-		const tool = {
-			name: 'demo',
-			description: 'demo',
-			parameters: { type: 'object' },
-			handler: async () => ok('plain result')
-		};
-
-		const [wrapped] = wrapToolsForStreaming(
-			[tool],
-			() => {},
-			() => null
-		);
-		const result = await wrapped.handler!({}, fakeInvocation('tc-2'));
-
-		expect(result).not.toHaveProperty('binaryResultsForLlm');
 	});
 });

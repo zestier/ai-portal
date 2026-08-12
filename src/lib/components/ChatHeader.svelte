@@ -3,9 +3,6 @@
 		ApprovalMode,
 		Conversation,
 		ConversationUsage,
-		ProviderRuntimeFeatureStatus,
-		ProviderCapabilities,
-		MemoryExtractorBackend,
 		MemoryMode,
 		SessionMode,
 		WorktreeIntegration
@@ -19,11 +16,7 @@
 	let {
 		title,
 		conversation,
-		providerCapabilities,
-		providerDisplayName,
 		model,
-		providerModels,
-		providerModelsError = null,
 		defaultModelPlaceholder,
 		parent = null,
 		usage = null,
@@ -31,7 +24,6 @@
 		mode,
 		memoryMode,
 		memoryExtractorModel,
-		memoryExtractorBackend,
 		globalMemoryEnabled,
 		approvalMode,
 		disabledToolGroups,
@@ -40,11 +32,7 @@
 	}: {
 		title: string;
 		conversation: Conversation;
-		providerCapabilities: ProviderCapabilities;
-		providerDisplayName: string;
 		model: string;
-		providerModels: { id: string; name: string; maxContextWindowTokens?: number }[];
-		providerModelsError?: string | null;
 		defaultModelPlaceholder: string;
 		parent?: {
 			id: string;
@@ -57,7 +45,6 @@
 		mode: SessionMode;
 		memoryMode: MemoryMode;
 		memoryExtractorModel: string | null;
-		memoryExtractorBackend: MemoryExtractorBackend | null;
 		globalMemoryEnabled: boolean;
 		approvalMode: ApprovalMode;
 		disabledToolGroups: PortalToolGroupId[];
@@ -69,7 +56,6 @@
 			mode?: SessionMode;
 			memoryMode?: MemoryMode;
 			memoryExtractorModel?: string | null;
-			memoryExtractorBackend?: MemoryExtractorBackend | null;
 			globalMemoryEnabled?: boolean;
 			approvalMode?: ApprovalMode;
 			disabledToolGroups?: PortalToolGroupId[];
@@ -81,27 +67,15 @@
 	let savingMode = $state(false);
 	let savingMemory = $state(false);
 	let savingHarvester = $state(false);
-	let savingHarvesterBackend = $state(false);
 	let savingGlobalMemory = $state(false);
 	let savingApprove = $state(false);
 	let savingToolGroups = $state(false);
 	let approveConfirmOpen = $state(false);
-	let resetting = $state(false);
-	let resetFlash = $state<'ok' | 'err' | null>(null);
-	let resetTimer: ReturnType<typeof setTimeout> | null = null;
-	let selectedModelChoice = $state('');
 	let customModel = $state('');
 	let selectedHarvesterChoice = $state('');
 	let customHarvesterModel = $state('');
 	const CUSTOM_MODEL_OPTION = '__custom__';
 	const DEFAULT_HARVESTER_OPTION = '__default__';
-	const DEFAULT_HARVESTER_BACKEND_OPTION = '__default__';
-
-	const HARVESTER_BACKENDS: { value: MemoryExtractorBackend; label: string }[] = [
-		{ value: 'heuristic', label: 'Heuristic (local)' },
-		{ value: 'openai-compatible', label: 'OpenAI-compatible (single-shot)' },
-		{ value: 'openai-compatible-tools', label: 'OpenAI-compatible (tools)' }
-	];
 
 	const MODES: { value: SessionMode; label: string; hint: string }[] = [
 		{
@@ -161,27 +135,10 @@
 		}
 	];
 
-	const modeFeature = $derived(providerCapabilities.features.modes);
-	const approvalModeFeature = $derived(providerCapabilities.features.approvalMode);
-	// Only `auto-approve` needs the provider to mirror the setting into its
-	// runtime; `ask` and `auto-deny` are settled entirely by the portal.
-	const autoApproveSupported = $derived(approvalModeFeature.supported);
 	const currentApprovalNote = $derived(
 		APPROVAL_MODE_OPTIONS.find((opt) => opt.value === approvalMode)?.note ?? ''
 	);
-	const supportsRuntimeModes = $derived(
-		modeFeature.supported && modeFeature.behavior === 'supported'
-	);
-	const showContextMeter = $derived(
-		providerCapabilities.features.contextUsage.supported || usage !== null
-	);
-	const unavailableRuntimeFeatures = $derived.by(() =>
-		Object.values(providerCapabilities.features).filter(
-			(feature): feature is ProviderRuntimeFeatureStatus =>
-				!feature.supported || feature.behavior === 'no-op'
-		)
-	);
-	const currentModeLabel = $derived(MODES.find((opt) => opt.value === mode)?.label ?? mode);
+	const showContextMeter = $derived(usage !== null);
 	const selectedCustomModel = $derived(customModel.trim());
 	const customModelUnchanged = $derived(selectedCustomModel === model);
 	const customModelInvalid = $derived(selectedCustomModel.length === 0 || customModelUnchanged);
@@ -193,19 +150,9 @@
 	);
 
 	$effect(() => {
-		const modelIds = new Set(providerModels.map((providerModel) => providerModel.id));
-		if (modelIds.has(model)) {
-			selectedModelChoice = model;
-			customModel = '';
-		} else {
-			selectedModelChoice = CUSTOM_MODEL_OPTION;
-			customModel = model;
-		}
+		customModel = model;
 		if (!memoryExtractorModel) {
 			selectedHarvesterChoice = DEFAULT_HARVESTER_OPTION;
-			customHarvesterModel = '';
-		} else if (modelIds.has(memoryExtractorModel)) {
-			selectedHarvesterChoice = memoryExtractorModel;
 			customHarvesterModel = '';
 		} else {
 			selectedHarvesterChoice = CUSTOM_MODEL_OPTION;
@@ -213,23 +160,11 @@
 		}
 	});
 
-	function formatContextWindow(tokens: number | undefined): string {
-		if (!tokens || !Number.isFinite(tokens)) return 'context size unknown';
-		if (tokens >= 1_000_000) {
-			const m = tokens / 1_000_000;
-			const str = m >= 10 ? m.toFixed(0) : m.toFixed(1).replace(/\.0$/, '');
-			return `${str}M ctx`;
-		}
-		if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K ctx`;
-		return `${tokens} ctx`;
-	}
-
 	async function patchSession(body: {
 		model?: string;
 		mode?: SessionMode;
 		memoryMode?: MemoryMode;
 		memoryExtractorModel?: string | null;
-		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		globalMemoryEnabled?: boolean;
 		approvalMode?: ApprovalMode;
 		disabledToolGroups?: PortalToolGroupId[];
@@ -254,14 +189,6 @@
 			onSettingsChange?.({ model: prev });
 		} finally {
 			savingModel = false;
-		}
-	}
-
-	function selectModel(e: Event) {
-		const next = (e.currentTarget as HTMLSelectElement).value;
-		selectedModelChoice = next;
-		if (next !== CUSTOM_MODEL_OPTION) {
-			void chooseModel(next);
 		}
 	}
 
@@ -316,27 +243,6 @@
 		} else if (next !== CUSTOM_MODEL_OPTION) {
 			void chooseHarvesterModel(next);
 		}
-	}
-
-	async function chooseHarvesterBackend(next: MemoryExtractorBackend | null) {
-		if (next === memoryExtractorBackend || savingHarvesterBackend || modelChangeDisabled) return;
-		savingHarvesterBackend = true;
-		const prev = memoryExtractorBackend;
-		onSettingsChange?.({ memoryExtractorBackend: next });
-		try {
-			await patchSession({ memoryExtractorBackend: next });
-		} catch {
-			onSettingsChange?.({ memoryExtractorBackend: prev });
-		} finally {
-			savingHarvesterBackend = false;
-		}
-	}
-
-	function selectHarvesterBackend(e: Event) {
-		const next = (e.currentTarget as HTMLSelectElement).value;
-		void chooseHarvesterBackend(
-			next === DEFAULT_HARVESTER_BACKEND_OPTION ? null : (next as MemoryExtractorBackend)
-		);
 	}
 
 	async function toggleGlobalMemory(e: Event) {
@@ -416,23 +322,6 @@
 			target.checked = !prev.includes(id);
 		} finally {
 			savingToolGroups = false;
-		}
-	}
-
-	async function resetApprovals() {
-		if (resetting) return;
-		resetting = true;
-		try {
-			const res = await fetch(`/api/conversations/${conversation.id}/session`, {
-				method: 'POST'
-			});
-			resetFlash = res.ok ? 'ok' : 'err';
-		} catch {
-			resetFlash = 'err';
-		} finally {
-			resetting = false;
-			if (resetTimer) clearTimeout(resetTimer);
-			resetTimer = setTimeout(() => (resetFlash = null), 2400);
 		}
 	}
 
@@ -599,8 +488,6 @@
 		<div class="details-inner">
 			<div class="details-body">
 				<dl class="header-meta">
-					<dt>Provider</dt>
-					<dd>{providerDisplayName}</dd>
 					<dt>Model</dt>
 					<dd>{model}</dd>
 					<dt>Workdir</dt>
@@ -682,109 +569,49 @@
 				{#if showContextMeter}
 					<ContextMeter {usage} {recentCompaction} />
 				{/if}
-				{#if unavailableRuntimeFeatures.length > 0}
-					<div class="capability-notes" aria-label="Provider capability notes">
-						<strong>Provider capability limits</strong>
-						<ul>
-							{#each unavailableRuntimeFeatures as feature (feature.label)}
-								<li>
-									<span>{feature.label}</span>
-									<small>{feature.description}</small>
-								</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
 				<div class="session-settings" role="group" aria-label="Session settings">
 					<div class="setting-row model-row">
 						<span class="setting-label">Model</span>
-						{#if providerModels.length > 0}
-							<select
-								class="model-select"
-								aria-label="Session model"
-								bind:value={selectedModelChoice}
-								disabled={savingModel || modelChangeDisabled}
-								onchange={selectModel}
-							>
-								{#each providerModels as providerModel (providerModel.id)}
-									<option value={providerModel.id}>
-										{providerModel.name} — {providerModel.id} ({formatContextWindow(
-											providerModel.maxContextWindowTokens
-										)})
-									</option>
-								{/each}
-								<option value={CUSTOM_MODEL_OPTION}>Enter a custom model id…</option>
-							</select>
-						{:else}
-							<input
-								class="model-input"
-								bind:value={customModel}
-								placeholder={defaultModelPlaceholder}
-								disabled={savingModel || modelChangeDisabled}
-								aria-label="Custom session model id"
-								onkeydown={(e) => {
-									if (e.key === 'Enter' && !customModelInvalid)
-										void chooseModel(selectedCustomModel);
-								}}
-							/>
-						{/if}
-						{#if selectedModelChoice === CUSTOM_MODEL_OPTION}
-							<div class="model-custom">
-								{#if providerModels.length > 0}
-									<input
-										class="model-input"
-										bind:value={customModel}
-										placeholder={defaultModelPlaceholder}
-										disabled={savingModel || modelChangeDisabled}
-										aria-label="Custom session model id"
-										onkeydown={(e) => {
-											if (e.key === 'Enter' && !customModelInvalid)
-												void chooseModel(selectedCustomModel);
-										}}
-									/>
-								{/if}
-								<button
-									type="button"
-									class="save-model-btn"
-									disabled={savingModel || modelChangeDisabled || customModelInvalid}
-									onclick={() => chooseModel(selectedCustomModel)}
-								>
-									{savingModel ? 'Saving…' : 'Save model'}
-								</button>
-							</div>
-						{/if}
+						<input
+							class="model-input"
+							bind:value={customModel}
+							placeholder={defaultModelPlaceholder}
+							disabled={savingModel || modelChangeDisabled}
+							aria-label="Session model id"
+							onkeydown={(e) => {
+								if (e.key === 'Enter' && !customModelInvalid) void chooseModel(selectedCustomModel);
+							}}
+						/>
+						<button
+							type="button"
+							class="save-model-btn"
+							disabled={savingModel || modelChangeDisabled || customModelInvalid}
+							onclick={() => chooseModel(selectedCustomModel)}
+						>
+							{savingModel ? 'Saving…' : 'Save model'}
+						</button>
 						{#if modelChangeDisabled}
 							<span class="unsupported-chip">model locked during turn</span>
-						{:else if providerModelsError}
-							<span class="unsupported-chip" title={providerModelsError}
-								>model list unavailable</span
-							>
 						{/if}
 					</div>
 					<div class="setting-row">
 						<span class="setting-label">Mode</span>
-						{#if supportsRuntimeModes}
-							<div class="seg" role="radiogroup" aria-label="Session mode" aria-busy={savingMode}>
-								{#each MODES as opt (opt.value)}
-									<button
-										type="button"
-										role="radio"
-										aria-checked={mode === opt.value}
-										class="seg-btn"
-										class:active={mode === opt.value}
-										title={opt.hint}
-										disabled={savingMode}
-										onclick={() => chooseMode(opt.value)}
-									>
-										{opt.label}
-									</button>
-								{/each}
-							</div>
-						{:else}
-							<span class="unsupported-chip" title={modeFeature.description}>
-								{currentModeLabel} · provider no-op
-							</span>
-						{/if}
+						<div class="seg" role="radiogroup" aria-label="Session mode" aria-busy={savingMode}>
+							{#each MODES as opt (opt.value)}
+								<button
+									type="button"
+									role="radio"
+									aria-checked={mode === opt.value}
+									class="seg-btn"
+									class:active={mode === opt.value}
+									title={opt.hint}
+									disabled={savingMode}
+									onclick={() => chooseMode(opt.value)}
+								>
+									{opt.label}
+								</button>
+							{/each}
+						</div>
 					</div>
 					<div class="setting-row">
 						<span class="setting-label">Memory</span>
@@ -822,27 +649,6 @@
 					</div>
 					{#if memoryMode !== 'off'}
 						<div class="setting-row model-row">
-							<span class="setting-label">Backend</span>
-							<select
-								class="model-select"
-								aria-label="Memory harvester backend"
-								value={memoryExtractorBackend ?? DEFAULT_HARVESTER_BACKEND_OPTION}
-								disabled={savingHarvesterBackend || modelChangeDisabled}
-								onchange={selectHarvesterBackend}
-							>
-								<option value={DEFAULT_HARVESTER_BACKEND_OPTION}>Server default backend</option>
-								{#each HARVESTER_BACKENDS as opt (opt.value)}
-									<option value={opt.value}>{opt.label}</option>
-								{/each}
-							</select>
-							<span
-								class="unsupported-chip"
-								title="Heuristic keeps the main model owning memory writes; OpenAI-compatible backends run a model-backed extractor. Leave default to use server settings."
-							>
-								{memoryExtractorBackend ?? 'server default'}
-							</span>
-						</div>
-						<div class="setting-row model-row">
 							<span class="setting-label">Harvester</span>
 							<select
 								class="model-select"
@@ -852,11 +658,6 @@
 								onchange={selectHarvesterModel}
 							>
 								<option value={DEFAULT_HARVESTER_OPTION}>Server default harvester</option>
-								{#each providerModels as providerModel (providerModel.id)}
-									<option value={providerModel.id}>
-										{providerModel.name} — {providerModel.id}
-									</option>
-								{/each}
 								<option value={CUSTOM_MODEL_OPTION}>Enter a custom harvester model id…</option>
 							</select>
 							{#if selectedHarvesterChoice === CUSTOM_MODEL_OPTION}
@@ -917,37 +718,9 @@
 							onchange={chooseApprovalMode}
 						>
 							{#each APPROVAL_MODE_OPTIONS as opt (opt.value)}
-								<option
-									value={opt.value}
-									disabled={opt.value === 'auto-approve' && !autoApproveSupported}
-								>
-									{opt.label}
-								</option>
+								<option value={opt.value}>{opt.label}</option>
 							{/each}
 						</select>
-						{#if providerCapabilities.controls.resetSessionApprovals}
-							<button
-								type="button"
-								class="reset-btn"
-								disabled={resetting}
-								onclick={resetApprovals}
-								title="Clear the runtime's session-scoped approvals."
-							>
-								{resetting ? 'Resetting…' : 'Reset session approvals'}
-							</button>
-						{:else}
-							<span
-								class="unsupported-chip"
-								title="This provider has no session approval cache to clear."
-							>
-								approval reset unavailable
-							</span>
-						{/if}
-						{#if resetFlash === 'ok'}
-							<span class="reset-flash ok" aria-live="polite">Cleared</span>
-						{:else if resetFlash === 'err'}
-							<span class="reset-flash err" aria-live="polite">Failed</span>
-						{/if}
 					</div>
 					<p class="approve-warning" class:neutral={approvalMode === 'ask'} role="note">
 						{currentApprovalNote}
@@ -971,8 +744,8 @@
 							{/each}
 						</div>
 						<p class="tool-groups-note" role="note">
-							Native CLI tools (bash, view, edit, task, web_fetch…) come from the Copilot runtime
-							and are always available — these toggles only cover portal-injected tools. Disabling
+							Runtime-native tools (bash, view, edit, task, web_fetch…) are always available — these
+							toggles only cover portal-injected tools. Disabling
 							<strong>Permissions</strong> removes the agent's self-service grant tools; disabling
 							<strong>Memory</strong> gates the memory tools on top of the memory-mode setting. Changes
 							take effect on the next turn.
@@ -1123,12 +896,6 @@
 	.parent-crumb a:hover {
 		text-decoration-color: currentColor;
 	}
-	.capability-notes {
-		padding: var(--space-2);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-	}
 	.unmerged-pill {
 		flex: none;
 		font-size: var(--fs-xs);
@@ -1171,24 +938,6 @@
 	}
 	.worktree-flash.err {
 		color: var(--danger);
-	}
-	.capability-notes strong {
-		display: block;
-		margin-bottom: var(--space-1);
-	}
-	.capability-notes ul {
-		margin: 0;
-		padding-left: 1.1rem;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
-	}
-	.capability-notes li span {
-		font-weight: 600;
-	}
-	.capability-notes li small {
-		display: block;
-		opacity: 0.75;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.chat-header-details,
@@ -1293,19 +1042,6 @@
 	.approve-toggle input[type='checkbox'] {
 		margin: 0;
 	}
-	.reset-btn {
-		background: var(--surface-2);
-		border: 1px solid var(--border);
-		color: inherit;
-		font: inherit;
-		font-size: var(--fs-xs);
-		padding: 2px 8px;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	.reset-btn:hover:not(:disabled) {
-		background: var(--surface-3, var(--surface-2));
-	}
 	.save-model-btn {
 		background: var(--surface-2);
 		border: 1px solid var(--border);
@@ -1321,19 +1057,9 @@
 	}
 	.model-select:disabled,
 	.model-input:disabled,
-	.save-model-btn:disabled,
-	.reset-btn:disabled {
+	.save-model-btn:disabled {
 		opacity: 0.5;
 		cursor: progress;
-	}
-	.reset-flash {
-		font-size: var(--fs-xs);
-	}
-	.reset-flash.ok {
-		color: var(--success);
-	}
-	.reset-flash.err {
-		color: var(--danger);
 	}
 	.unsupported-chip {
 		display: inline-flex;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProviderOpenOptions } from '../src/lib/server/providers';
+import type { ProviderOpenOptions } from '../src/lib/server/pi/session-contract';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
 

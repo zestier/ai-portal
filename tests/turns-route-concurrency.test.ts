@@ -53,8 +53,7 @@ describe('turns POST concurrency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		// First call parks inside startTurnFromUserMessage (reservation held).
@@ -109,8 +108,7 @@ describe('turns POST concurrency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		startTurnMock.mockResolvedValue({ id: 'turn-1' });
@@ -159,8 +157,7 @@ describe('turns POST concurrency', () => {
 				baseSha: 'a'.repeat(40)
 			},
 			draftPrompt: 'keep this draft',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		const result = await capture(() =>

@@ -48,7 +48,6 @@ async function seed() {
 			scopeKey: `cmd-${id}`,
 			argsHash: null,
 			adversaryModel: 'reviewer-model',
-			adversaryBackend: 'openai-compatible',
 			experimentKey,
 			promptVersion: 1,
 			factsKey: `facts-${id}`,

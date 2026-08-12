@@ -37,10 +37,15 @@ export class PiEventMapper {
 	map(event: AgentSessionEvent): PortalEvent[] {
 		switch (event.type) {
 			case 'message_start':
+				// pi echoes the prompt as a `role: 'user'` message_start/message_end
+				// pair before the assistant reply; the portal already persists the
+				// user message, so only assistant messages map to the turn stream.
+				if (event.message.role !== 'assistant') return [];
 				return [{ type: 'message.start', messageId: this.messageId, role: 'assistant' }];
 			case 'message_update':
 				return this.mapMessageUpdate(event.assistantMessageEvent);
 			case 'message_end':
+				if (event.message.role !== 'assistant') return [];
 				this.messageEnded = true;
 				return [{ type: 'message.end', messageId: this.messageId }];
 			case 'tool_execution_start':

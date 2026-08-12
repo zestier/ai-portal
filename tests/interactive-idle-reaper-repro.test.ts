@@ -25,9 +25,8 @@ import { setupLocalEnv } from './helpers/env';
 
 const openMock = vi.fn();
 
-vi.mock('../src/lib/server/providers', () => ({
-	getDefaultProviderId: () => 'copilot',
-	open: (...args: unknown[]) => openMock(...args)
+vi.mock('../src/lib/server/pi', () => ({
+	openPiSession: (...args: unknown[]) => openMock(...args)
 }));
 
 async function importModules() {

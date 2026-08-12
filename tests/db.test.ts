@@ -64,10 +64,8 @@ describe('db migrations + repos', () => {
 		const c = convs.create(u.id, {
 			title: 't',
 			workdir: '/tmp',
-			provider: 'copilot',
 			model: 'm'
 		});
-		expect(c.provider).toBe('copilot');
 		messages.append(c.id, { role: 'user', content: 'hello' });
 		messages.append(c.id, { role: 'assistant', content: 'world' });
 		const list = messages.listByConversation(c.id);
@@ -82,7 +80,6 @@ describe('db migrations + repos', () => {
 		});
 		expect(convs.get(c.id, other.id)).toBeNull();
 		expect(convs.get(c.id, u.id)?.title).toBe('t');
-		expect(convs.get(c.id, u.id)?.provider).toBe('copilot');
 	});
 
 	it('normalizes the workspace key for conversations upgraded from before migration 061', () => {
@@ -92,20 +89,6 @@ describe('db migrations + repos', () => {
 		getDb().prepare('UPDATE conversations SET workspace_key = NULL WHERE id = ?').run(c.id);
 
 		expect(convs.get(c.id, u.id)?.workspaceKey).toBe(projectRoot);
-	});
-
-	it('round-trips conversation provider separately from model', () => {
-		const u = users.ensureLocalUser();
-		const c = convs.create(u.id, {
-			title: 'local',
-			workdir: '/tmp',
-			provider: 'openai-compatible',
-			model: 'local-model'
-		});
-		expect(convs.get(c.id, u.id)).toMatchObject({
-			provider: 'openai-compatible',
-			model: 'local-model'
-		});
 	});
 
 	it('round-trips the approval mode independently of the session mode', () => {
@@ -651,74 +634,46 @@ describe('db migrations + repos', () => {
 		const s = settings.defaults();
 		expect(s.defaultPolicy).toBe('prompt');
 		settings.save(u.id, {
-			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
 			defaultWorkdir: null,
 			defaultConversationMode: 'autopilot',
 			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
-			accent: 'violet',
-			defaultMemoryExtractorModel: 'harvester-x',
-			defaultMemoryExtractorBackend: 'openai-compatible-tools',
-			defaultAdversaryModel: 'reviewer-x',
-			defaultAdversaryBackend: 'copilot',
-			defaultContextTier: 'long_context'
+			accent: 'violet'
 		});
 		expect(settings.get(u.id)).toEqual({
-			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
 			defaultWorkdir: null,
 			defaultConversationMode: 'autopilot',
 			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
-			accent: 'violet',
-			defaultMemoryExtractorModel: 'harvester-x',
-			defaultMemoryExtractorBackend: 'openai-compatible-tools',
-			defaultAdversaryModel: 'reviewer-x',
-			defaultAdversaryBackend: 'copilot',
-			defaultContextTier: 'long_context'
+			accent: 'violet'
 		});
 		// '(use server default)' round-trips as NULL for every optional default.
 		settings.save(u.id, {
-			defaultProvider: 'openai-compatible',
 			defaultModel: 'claude',
 			defaultWorkdir: null,
 			defaultConversationMode: 'autopilot',
 			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
-			accent: 'default',
-			defaultMemoryExtractorModel: null,
-			defaultMemoryExtractorBackend: null,
-			defaultAdversaryModel: null,
-			defaultAdversaryBackend: null,
-			defaultContextTier: null
+			accent: 'default'
 		});
-		expect(settings.get(u.id)?.defaultMemoryExtractorModel).toBeNull();
-		expect(settings.get(u.id)?.defaultMemoryExtractorBackend).toBeNull();
-		expect(settings.get(u.id)?.defaultAdversaryModel).toBeNull();
-		expect(settings.get(u.id)?.defaultAdversaryBackend).toBeNull();
-		expect(settings.get(u.id)?.defaultContextTier).toBeNull();
+		expect(settings.get(u.id)?.accent).toBe('default');
 	});
 
 	it('coerces a stale legacy allow-readonly policy row to prompt', () => {
 		const u = users.ensureLocalUser();
 		settings.save(u.id, {
-			defaultProvider: 'copilot',
 			defaultModel: null,
 			defaultWorkdir: null,
 			defaultConversationMode: 'interactive',
 			defaultApprovalMode: 'ask',
 			defaultPolicy: 'prompt',
 			theme: 'dark',
-			accent: 'default',
-			defaultMemoryExtractorModel: null,
-			defaultMemoryExtractorBackend: null,
-			defaultAdversaryModel: null,
-			defaultAdversaryBackend: null,
-			defaultContextTier: null
+			accent: 'default'
 		});
 		// Simulate a row that escaped migration 008.
 		getDb()

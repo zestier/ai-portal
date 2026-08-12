@@ -28,7 +28,7 @@ describe('buildActionEnv (default-deny)', () => {
 		const source = {
 			PATH: '/usr/bin',
 			HOME: '/home/x',
-			COPILOT_GITHUB_TOKEN: 'ghp_secret',
+			OPENAI_COMPATIBLE_API_KEY: 'sk_secret',
 			SESSION_SECRET: 'super-secret',
 			VERCEL_TOKEN: 'vercel-value'
 		};
@@ -36,7 +36,7 @@ describe('buildActionEnv (default-deny)', () => {
 		expect(env.PATH).toBe('/usr/bin');
 		expect(env.HOME).toBe('/home/x');
 		// Secrets are not copied into a default-deny child.
-		expect(env.COPILOT_GITHUB_TOKEN).toBeUndefined();
+		expect(env.OPENAI_COMPATIBLE_API_KEY).toBeUndefined();
 		expect(env.SESSION_SECRET).toBeUndefined();
 		expect(env.VERCEL_TOKEN).toBeUndefined();
 	});
@@ -59,7 +59,7 @@ describe('buildActionEnv (default-deny)', () => {
 			VERCEL_TOKEN: 'vercel-value',
 			SESSION_SECRET: 'portal-session',
 			ENCRYPTION_KEY: 'portal-key',
-			COPILOT_GITHUB_TOKEN: 'ghp_portal',
+			OPENAI_COMPATIBLE_API_KEY: 'sk_portal',
 			GITHUB_CLIENT_SECRET: 'portal-oauth',
 			SHARED_SECRET: 'portal-shared'
 		};
@@ -68,7 +68,7 @@ describe('buildActionEnv (default-deny)', () => {
 				'VERCEL_TOKEN',
 				'SESSION_SECRET',
 				'ENCRYPTION_KEY',
-				'COPILOT_GITHUB_TOKEN',
+				'OPENAI_COMPATIBLE_API_KEY',
 				'GITHUB_CLIENT_SECRET',
 				'SHARED_SECRET'
 			],
@@ -79,7 +79,7 @@ describe('buildActionEnv (default-deny)', () => {
 		// None of the portal's own credentials are copied in.
 		expect(env.SESSION_SECRET).toBeUndefined();
 		expect(env.ENCRYPTION_KEY).toBeUndefined();
-		expect(env.COPILOT_GITHUB_TOKEN).toBeUndefined();
+		expect(env.OPENAI_COMPATIBLE_API_KEY).toBeUndefined();
 		expect(env.GITHUB_CLIENT_SECRET).toBeUndefined();
 		expect(env.SHARED_SECRET).toBeUndefined();
 	});

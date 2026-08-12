@@ -9,10 +9,7 @@ import * as memory from '$lib/server/db/repos/memory';
 import { getBuiltInPromptTemplate, buildRefinePromptSeed } from '$lib/prompt-templates';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
-import { fetchModels, getProvider } from '$lib/server/providers';
-import { providerAuthToken } from '$lib/server/providers/auth';
 import { loadConfig } from '$lib/server/config';
-import { log } from '$lib/server/log';
 import { ticketWorkspaceFromConversation } from '$lib/server/ticket-workspace';
 import { interpolateTicketPrompt } from '$lib/tickets/chat';
 import {
@@ -97,31 +94,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// page load shows them immediately, without waiting for the SSE stream
 	// to (re-)emit the `interactive.request` event.
 	const pendingInteractive = listPendingInteractive(conv.id);
-	const provider = getProvider(conv.provider);
 	const cfg = loadConfig();
-	let providerModels: { id: string; name: string; maxContextWindowTokens?: number }[] = [];
-	let providerModelsError: string | null = null;
-	try {
-		const models = await fetchModels(
-			conv.userId,
-			providerAuthToken(conv.provider, conv.userId),
-			conv.provider
-		);
-		providerModels = models.map((m) => ({
-			id: m.id,
-			name: m.name,
-			...(m.capabilities?.limits?.max_context_window_tokens !== undefined
-				? { maxContextWindowTokens: m.capabilities.limits.max_context_window_tokens }
-				: {})
-		}));
-	} catch (e) {
-		providerModelsError = String(e);
-		log.warn('conversation.models.failed', {
-			conversationId: conv.id,
-			provider: conv.provider,
-			err: providerModelsError
-		});
-	}
 
 	// If this conversation was forked, surface parent info for a
 	// breadcrumb. Resolves silently to null if the parent was deleted or
@@ -152,13 +125,9 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 
 	return {
 		conversation: conv,
-		providerCapabilities: provider.capabilities,
-		providerDisplayName: provider.displayName,
-		providerModels,
-		providerModelsError,
-		defaultModelPlaceholder: provider.ui.defaultModelPlaceholder,
 		effectiveModel: conv.model ?? cfg.DEFAULT_MODEL,
-		chatPlaceholder: provider.ui.chatPlaceholder,
+		defaultModelPlaceholder: cfg.PI_MODEL ?? 'provider/model',
+		chatPlaceholder: 'Message…',
 		messages: msgs,
 		contextUsage,
 		memorySnapshot,

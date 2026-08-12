@@ -125,17 +125,6 @@ describe('memory-backed sessions', () => {
 			true
 		);
 		expect(convs.get(conv.id, user.id)?.memoryExtractorModel).toBeNull();
-		expect(conv.memoryExtractorBackend).toBeNull();
-		expect(
-			convs.updateSessionSettings(conv.id, user.id, {
-				memoryExtractorBackend: 'openai-compatible-tools'
-			})
-		).toBe(true);
-		expect(convs.get(conv.id, user.id)?.memoryExtractorBackend).toBe('openai-compatible-tools');
-		expect(convs.updateSessionSettings(conv.id, user.id, { memoryExtractorBackend: null })).toBe(
-			true
-		);
-		expect(convs.get(conv.id, user.id)?.memoryExtractorBackend).toBeNull();
 		expect(convs.updateSessionSettings(conv.id, user.id, { globalMemoryEnabled: true })).toBe(true);
 		expect(convs.get(conv.id, user.id)?.globalMemoryEnabled).toBe(true);
 	});
@@ -6421,47 +6410,30 @@ describe('memory extractor backend defaults + override resolution', () => {
 		expect(extractor.kind).toBe('heuristic');
 	});
 
-	it('seeds new conversations with the user default backend + model', async () => {
+	it('seeds the memory extractor model from the create body only', async () => {
+		// The user-level default extractor backend/model columns were dropped
+		// (migration 072): the extractor's model now comes from the create body
+		// alone, like any other per-conversation field.
 		const users = await import('../src/lib/server/db/repos/users');
-		const settings = await import('../src/lib/server/db/repos/settings');
 		const { POST } = await import('../src/routes/api/conversations/+server');
 		const user = users.ensureLocalUser();
-		settings.save(user.id, {
-			defaultProvider: 'copilot',
-			defaultModel: null,
-			defaultWorkdir: null,
-			defaultConversationMode: 'interactive',
-			defaultApprovalMode: 'ask',
-			defaultPolicy: 'prompt',
-			theme: 'dark',
-			accent: 'default',
-			defaultMemoryExtractorModel: 'seeded-harvester',
-			defaultMemoryExtractorBackend: 'openai-compatible-tools',
-			defaultAdversaryModel: null,
-			defaultAdversaryBackend: null,
-			defaultContextTier: null
-		});
 
 		const seeded = await callCreate(POST, user.id, {});
-		expect(seeded.memoryExtractorModel).toBe('seeded-harvester');
-		expect(seeded.memoryExtractorBackend).toBe('openai-compatible-tools');
+		expect(seeded.memoryExtractorModel).toBeNull();
 
-		// Explicit create-body field wins over the user default.
+		// Explicit create-body field seeds the conversation.
 		const overridden = await callCreate(POST, user.id, {
-			memoryExtractorModel: 'body-harvester',
-			memoryExtractorBackend: 'openai-compatible'
+			memoryExtractorModel: 'body-harvester'
 		});
 		expect(overridden.memoryExtractorModel).toBe('body-harvester');
-		expect(overridden.memoryExtractorBackend).toBe('openai-compatible');
 	});
 
-	it('leaves backend/model NULL when the user has no defaults', async () => {
+	it('leaves memory extractor model NULL when the create body omits it', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const { POST } = await import('../src/routes/api/conversations/+server');
 		const user = users.ensureLocalUser();
 		const created = await callCreate(POST, user.id, {});
 		expect(created.memoryExtractorModel).toBeNull();
-		expect(created.memoryExtractorBackend).toBeNull();
 	});
 });
 

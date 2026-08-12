@@ -47,36 +47,12 @@
 		model = defaults.model ?? '';
 	});
 
-	// Model ids are fetched lazily (the provider probe is not cheap) and only
-	// once the dialog is actually opened. A failure degrades to "default model"
-	// plus whatever the template already stored.
-	let models = $state<string[] | null>(null);
-	let loadingModels = $state(false);
-
-	$effect(() => {
-		if (!open || models || loadingModels) return;
-		loadingModels = true;
-		void (async () => {
-			try {
-				const res = await fetch('/api/providers/status');
-				const body = res.ok ? await res.json() : null;
-				const ids = Array.isArray(body?.models)
-					? body.models.map((m: { id?: unknown }) => String(m?.id ?? '')).filter(Boolean)
-					: [];
-				models = ids;
-			} catch {
-				models = [];
-			} finally {
-				loadingModels = false;
-			}
-		})();
-	});
-
-	// Always offer the currently selected id, even when the provider no longer
-	// lists it, so reviewing a stale override doesn't silently drop it.
+	// The model list is not discoverable without the provider layer; the select
+	// offers the template's stored override (kept so reviewing a launch never
+	// silently drops it) or the server default.
 	const modelChoices = $derived.by(() => {
-		const ids = [...(models ?? [])];
-		if (model && !ids.includes(model)) ids.unshift(model);
+		const ids: string[] = [];
+		if (model) ids.push(model);
 		return ids;
 	});
 
@@ -155,7 +131,7 @@
 			<label>
 				Model
 				<select bind:value={model} disabled={busy}>
-					<option value="">{loadingModels ? 'Loading models...' : 'Use my default model'}</option>
+					<option value="">Use my default model</option>
 					{#each modelChoices as modelId (modelId)}
 						<option value={modelId}>{modelId}</option>
 					{/each}

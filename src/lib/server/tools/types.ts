@@ -37,8 +37,8 @@ export interface ToolBinaryResult {
 // A model-facing rendered view a tool may attach to a successful result. The
 // tool renders its own output (rg-style Grep, numbered Read, diff-after-Edit,
 // raw Bash) as a typed array so the same views reach the model on every
-// provider edge — the claude-agent MCP adapter forwards them verbatim as MCP
-// content blocks (text and image), the string edges join the text blocks.
+// provider edge — the pi session forwards them verbatim as content blocks
+// (text and image), the string edges join the text blocks.
 // Mirrors the MCP/SDK content-block shape on purpose.
 export type ToolResultView =
 	| { type: 'text'; text: string }

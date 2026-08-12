@@ -12,13 +12,13 @@ Runs under `@sveltejs/adapter-node`. Serves:
 
 A single Node process. No separate API server.
 
-### 2. Model backend provider
+### 2. Agent session layer
 
-A server-side module (`$lib/server/copilot/`) that exposes a provider
-interface for model backends. GitHub Copilot is the default implementation via
-[`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk);
-OpenAI-compatible backends can be added behind the same provider boundary.
-Responsible for:
+A server-side module (`$lib/server/pi/`) that opens and drives model sessions
+through the [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+SDK. A process-wide `ModelRuntime` resolves the configured `PI_MODEL`
+(`providerId/modelId`); `PI_STUB=1` swaps in an in-process OpenAI-compatible
+stub model for e2e tests. Responsible for:
 
 - Reporting provider auth status and available models.
 - Opening/resuming/disposing per-conversation **sessions** on top of the
@@ -43,7 +43,7 @@ See [persistence.md](persistence.md).
 ### 4. Working directory
 
 Each conversation carries its own persisted `workdir`. New conversations
-default to `PROJECT_ROOT`, but can override it; the Copilot SDK, turn
+default to `PROJECT_ROOT`, but can override it; the pi agent, turn
 snapshots, and the file/git routes all resolve from that conversation row.
 Legacy `DATA_DIR/workspaces/<id>/` paths still fold back to `PROJECT_ROOT`
 via `src/lib/server/workdir.ts`.
@@ -261,12 +261,11 @@ discriminated `{ kind, ... }` body. The legacy
 
 ## Concurrency model
 
-- **One Copilot provider client per portal user**, lazily started on first use
-  and kept by the default provider implementation in `copilot/copilot-provider.ts`. With
-  the documented `ALLOWED_GITHUB_LOGINS` allowlist this keeps Copilot API
-  attribution (billing, audit) tied to the GitHub identity that actually sent
-  the turn instead of whichever user logged in first after process boot. In the
-  common single-user deployment there is exactly one entry.
+- **One shared pi `ModelRuntime` per portal process**, created lazily on first
+  use (`pi/index.ts`). Auth and model-catalog state live on the runtime, so
+  every pi session sees the same snapshot; `PI_STUB=1` registers the stub
+  model on it once. In the common single-user deployment there is exactly one
+  entry.
 - **One provider session per conversation**, kept alive until idle for N
   minutes (configurable, default 15) or explicitly closed. Held in a
   small in-memory `Map<conversationId, Session>` (`runtime/pool.ts`).
@@ -284,12 +283,11 @@ discriminated `{ kind, ... }` body. The legacy
 
 ## Failure modes and recovery
 
-- **CLI subprocess crash** — SDK surfaces an error; the bridge marks the
-  shared client dead, persists a system message in the conversation, and
-  the next user message respawns it.
-- **Network error to Copilot backend** — surfaced as a normal `error` event;
+- **SDK session failure** — surfaces as an error; the session is marked dead
+  and disposed, a system message is persisted in the conversation, and the
+  next user message respawns it.
+- **Network error to the model backend** — surfaced as a normal `error` event;
   user can retry without losing conversation state.
 - **Server restart** — conversations are durable in SQLite. SDK sessions
-  and the shared client are ephemeral and recreated on demand. Any
-  in-flight assistant turn that was not finalized is marked `interrupted`
-  and shown as such in the UI.
+  are ephemeral and recreated on demand. Any in-flight assistant turn that was
+  not finalized is marked `interrupted` and shown as such in the UI.

@@ -208,8 +208,6 @@ Change the single workspace root into an ordered **set**:
 | `permissions/predicates/fs.ts` (~L41)          | `rule.root === 'workspace' ? ctx.workspaceRoots : [ctx.sessionWorkspaceRoot]`               |
 | `permissions/predicates/shell.ts` (~L164, 222) | `workspace-paths` matches if the path is in **any** root                                    |
 | `runtime/interactive-requests.ts` (~L586, 605) | `PolicyContext.workspaceRoots`; `decideByPolicy` uses `isPathInAnyWorkspace`                |
-| `copilot/interactive-adapter.ts` (~L296, 309)  | pass `opts.getWorkspaceRoots()` instead of `opts.workingDirectory`                          |
-| `providers/openai-compatible-provider.ts` (~L569) | same                                                                                    |
 
 **`getWorkspaceRoots` must be a callback, not a value.** A lease created during
 turn N has to be auto-allowed within turn N; a value captured at session
@@ -285,10 +283,8 @@ reasons are narrower than the obvious ones, so they are worth writing down.
   serialize and the quota check cannot be raced.
 - **Little wall-clock gain.** The dominant mutation (`git worktree add`) runs
   inside that lock, so N array items and N calls queue behind the same lock. The
-  runtimes differ on concurrency — the OpenAI-compatible provider awaits a turn's
-  tool calls one at a time, while the Copilot SDK dispatches each external tool
-  request fire-and-forget, so handlers there can overlap — but neither changes
-  that outcome. Overlapping calls also offset the one thing a batch could
+  runtimes dispatch a turn's external tool requests one at a time, so handlers
+  there do not overlap — but that doesn't change that outcome. Overlapping calls also offset the one thing a batch could
   amortize, the per-call preflight that runs _outside_ the lock
   (`inspectRepository` + `rev-parse` in `createWorktreeForSlot`).
 - **The approval cost is already fixable without a new API.** `worktree_create`
@@ -761,13 +757,11 @@ array at every call site — so the diff is reviewable as a refactor.
 
 ### W2.4 — Provider adapters supply live roots
 
-`copilot/interactive-adapter.ts` (L67, L296, L309),
-`providers/openai-compatible-provider.ts` (L569),
-`tests/permission-live-roots.test.ts`
+`pi/session.ts`, `tests/permission-live-roots.test.ts`
 
 Replace `workingDirectory: string` in `InteractiveAdapterOptions` with
 `getWorkspaceRoots(): string[]`, alongside the existing `getSessionWorkspacePath`
-callback. Both providers pass
+callback. The pi session passes
 `() => conversationWorkspaceRoots(conversation)`.
 
 **`workingDirectory` is still needed** at L119 for `maybeCaptureImage` — that
@@ -820,8 +814,7 @@ orchestrator hand the path to a sub-agent.
 
 ### W3.3 — Wire into both providers
 
-`copilot/copilot-provider.ts` (~L241), `providers/openai-compatible-provider.ts`
-(~L979)
+`pi/session.ts`
 
 Add `worktree: buildWorktreeTools(...)` to the `filterPortalToolGroups` record.
 

@@ -17,7 +17,6 @@ export const GET: RequestHandler = ({ params, locals }) => {
 	lines.push('');
 	lines.push(`- Created: ${new Date(conv.createdAt).toISOString()}`);
 	lines.push(`- Workdir: \`${conv.workdir}\``);
-	lines.push(`- Provider: ${conv.provider}`);
 	if (conv.model) lines.push(`- Model: ${conv.model}`);
 	lines.push(`- Memory mode: ${conv.memoryMode}`);
 	lines.push('');

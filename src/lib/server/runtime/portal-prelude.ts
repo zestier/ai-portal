@@ -13,7 +13,7 @@
 // prelude avoids re-paying those tokens on every turn.
 //
 // IMPORTANT: nothing here is authoritative. Allow/deny decisions are
-// enforced by the matcher in `interactive-adapter.ts`.
+// enforced by the matcher in `permissions/matcher.ts`.
 
 export const PORTAL_PRELUDE = [
 	'[Portal context — auto-injected; not authored by the user]',

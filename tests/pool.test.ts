@@ -3,9 +3,8 @@ import { setupLocalEnv } from './helpers/env';
 
 const openMock = vi.fn();
 
-vi.mock('../src/lib/server/providers', () => ({
-	getDefaultProviderId: () => 'copilot',
-	open: (...args: unknown[]) => openMock(...args)
+vi.mock('../src/lib/server/pi', () => ({
+	openPiSession: (...args: unknown[]) => openMock(...args)
 }));
 
 async function importPool() {
@@ -13,7 +12,7 @@ async function importPool() {
 	return await import('../src/lib/server/runtime/pool');
 }
 
-describe('copilot session pool', () => {
+describe('session pool', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-pool-test-');
 		openMock.mockReset();
@@ -102,26 +101,28 @@ describe('copilot session pool', () => {
 		expect(second.workingDirectory).toBe('/tmp/work-b');
 	});
 
-	it('treats legacy sessions without a provider as Copilot-only', async () => {
-		const legacyCopilotSession = {
+	it('recreates a live session when the requested provider label differs', async () => {
+		// The pool is pi-only now: a session without an explicit provider is
+		// treated as `pi`, so a later acquire for a different label is a
+		// mismatch and the old session is torn down.
+		const piSession = {
 			conversationId: 'conv-1',
 			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
 			lastUsed: Date.now(),
 			send: vi.fn(),
 			abort: vi.fn(),
 			dispose: vi.fn().mockResolvedValue(undefined),
 			setMode: vi.fn(),
-			setApproveAll: vi.fn(),
+			setApprovalMode: vi.fn(),
 			resetSessionApprovals: vi.fn()
 		};
-		const openAICompatibleSession = {
-			...legacyCopilotSession,
+		const labeledSession = {
+			...piSession,
 			provider: 'openai-compatible' as const,
 			dispose: vi.fn().mockResolvedValue(undefined)
 		};
-		openMock
-			.mockResolvedValueOnce(legacyCopilotSession)
-			.mockResolvedValueOnce(openAICompatibleSession);
+		openMock.mockResolvedValueOnce(piSession).mockResolvedValueOnce(labeledSession);
 		const pool = await importPool();
 
 		const first = await pool.acquire({
@@ -136,12 +137,12 @@ describe('copilot session pool', () => {
 			conversationId: 'conv-1',
 			userId: 'user-1',
 			workingDirectory: '/tmp/work-a',
-			model: 'local-model',
+			model: 'gpt-4',
 			policy: 'prompt'
 		});
 
 		expect(first).not.toBe(second);
-		expect(legacyCopilotSession.dispose).toHaveBeenCalledTimes(1);
+		expect(piSession.dispose).toHaveBeenCalledTimes(1);
 		expect(openMock).toHaveBeenCalledTimes(2);
 		expect(second.provider).toBe('openai-compatible');
 	});

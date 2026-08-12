@@ -2,15 +2,14 @@ import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { authorizeConversation } from '$lib/server/conversation-auth';
-import * as convs from '$lib/server/db/repos/conversations';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import * as settings from '$lib/server/db/repos/settings';
 import * as usage from '$lib/server/db/repos/usage';
 import { loadConfig } from '$lib/server/config';
 import { effectiveWorkdir } from '$lib/server/workdir';
+import * as pool from '$lib/server/runtime/pool';
 import { getTurn, startTurn } from '$lib/server/runtime/turn-runner';
-import { providerAuthToken } from '$lib/server/providers/auth';
 import { parseBody } from '$lib/server/validate';
 import { argsHash } from '$lib/server/tool-invocation';
 import { isEnabled } from '$lib/server/memory/engine';
@@ -81,8 +80,9 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	});
 	messages.truncateAfterMessage(conv.id, original.messageId);
 	usage.remove(conv.id);
-	const providerSessionId =
-		convs.rotateProviderSession(conv.id, conv.userId) ?? conv.providerSessionId;
+	// Drop the pooled session synchronously (map deletion before the first await
+	// in `release`) so the rerun opens a fresh, independent one.
+	void pool.release(conv.id);
 
 	const cfg = loadConfig();
 	const userSettings = settings.get(conv.userId) ?? settings.defaults();
@@ -92,34 +92,27 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		content: `Manual tool rerun: rerun failed tool call ${original.id} (${original.tool}) with its exact stored arguments.`,
 		status: 'complete'
 	});
-	const providerToken = providerAuthToken(conv.provider, conv.userId);
 	const turn = await startTurn({
 		conversationId: conv.id,
 		prompt,
 		bridge: {
 			conversationId: conv.id,
-			providerSessionId,
 			userId: conv.userId,
 			workingDirectory: effectiveWorkdir(conv.workdir),
-			provider: conv.provider,
 			model: conv.model ?? cfg.DEFAULT_MODEL,
 			policy: userSettings.defaultPolicy,
 			mode: conv.mode,
 			approvalMode: conv.approvalMode,
-			adversaryModel: conv.adversaryModel,
-			adversaryBackend: conv.adversaryBackend,
 			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
-			globalMemoryEnabled: conv.globalMemoryEnabled,
-			...(providerToken !== undefined ? { providerAuthToken: providerToken } : {})
+			globalMemoryEnabled: conv.globalMemoryEnabled
 		},
 		memory: isEnabled(conv.memoryMode)
 			? {
 					mode: conv.memoryMode,
 					userMessageId: userMessage.id,
 					userContent: userMessage.content,
-					extractorModel: conv.memoryExtractorModel,
-					extractorBackend: conv.memoryExtractorBackend
+					extractorModel: conv.memoryExtractorModel
 				}
 			: undefined
 	});

@@ -13,7 +13,7 @@ that needs:
 - `git` available in `PATH` inside the container (already included in the
   image).
 
-Three deployment topologies are supported:
+Two deployment topologies are supported:
 
 - **A. Standalone** — single host, no devcontainer involvement.
   Recommended default.
@@ -21,9 +21,6 @@ Three deployment topologies are supported:
   alongside a devcontainer that mounts the same workspace. Both
   containers must see the project tree at the same absolute path with
   matching UIDs.
-- **C. Remote CLI** — the Copilot CLI runs as a long-lived headless
-  JSON-RPC server, and the portal
-  connects to it over TCP via the SDK's `cliUrl` option.
 
 ## Topology A — Standalone
 
@@ -151,104 +148,8 @@ Constraints (all enforced or assumed by the codebase):
    "UID / permissions" above).
 
 The devcontainer remains responsible for *interactive* development
-(editor, language servers, terminals); the portal runs Copilot agents
-against the same files in the background.
-
-## Topology C — Remote CLI
-
-The portal can connect to an externally-managed `copilot` process
-instead of spawning the bundled one. The Copilot CLI exposes a hidden
-headless JSON-RPC server mode that the SDK's `cliUrl` option talks to.
-
-This is the right topology when:
-
-- The agent's shell tool should run inside a devcontainer (or another
-  host) with its own toolchain, while the portal stays on the host.
-- You want a single long-lived agent process whose state survives portal
-  restarts and redeploys.
-- You want the human and the portal sharing one Copilot auth — the
-  remote CLI owns its own `~/.copilot/accounts.json`; the portal does
-  not need `COPILOT_GITHUB_TOKEN` in this mode.
-
-### 1. Start the headless CLI
-
-Inside the devcontainer (or wherever you want the agent to run):
-
-```bash
-copilot login              # one-time, populates ~/.copilot/accounts.json
-copilot --headless --port 9000
-```
-
-`--headless` (alias `--server`) is undocumented in `copilot --help` but
-is the supported pairing for the SDK's `cliUrl`. It runs the CLI as a
-long-lived JSON-RPC server with no TUI. Bind to `127.0.0.1` only unless
-the portal is on a different host; the JSON-RPC server has no
-authentication of its own.
-
-Other flags that may be useful on the headless side:
-
-- `-C <directory>` — change cwd before doing anything else.
-- `--add-dir <directory>` — additional directories the CLI is allowed
-  to touch.
-- `--log-dir /some/path` — surface CLI logs somewhere you can tail.
-
-### 2. Point the portal at it
-
-Set `COPILOT_CLI_URL` to the headless server's address. Accepted forms
-(see `CopilotClient.parseCliUrl`): bare port `"9000"`, `"host:9000"`,
-or `"http://host:9000"`.
-
-```bash
-# .env
-COPILOT_CLI_URL=host.docker.internal:9000   # portal in Docker, CLI on host
-# or, when portal and CLI are on the same host network:
-# COPILOT_CLI_URL=127.0.0.1:9000
-```
-
-When `COPILOT_CLI_URL` is set, `copilot-provider.ts` constructs the SDK client
-with `{ connection: RuntimeConnection.forUri(cliUrl, { connectionToken }) }` and
-does NOT pass `gitHubToken` or `useLoggedInUser` — the remote CLI manages its
-own auth. If `COPILOT_CONNECTION_TOKEN` is set (see below) it is forwarded as
-the `RuntimeConnection.forUri` connection token.
-
-### Caveats
-
-- **Optional auth on the JSON-RPC port.** Without a token the CLI prints
-  this warning at startup:
-
-  > Warning: No COPILOT_CONNECTION_TOKEN was set, so connections will
-  > be accepted from any client
-
-  Setting `COPILOT_CONNECTION_TOKEN` on the CLI side makes it require
-  clients to include a matching token in the handshake. Set the **same**
-  value as `COPILOT_CONNECTION_TOKEN` on the portal side — the portal
-  forwards it as the `RuntimeConnection.forUri` connection token so the
-  connect handshake authenticates:
-
-  ```bash
-  # CLI side
-  COPILOT_CONNECTION_TOKEN=<shared-secret> copilot --headless --port 9000
-  # portal side (.env)
-  COPILOT_CONNECTION_TOKEN=<shared-secret>
-  ```
-
-  > Note: `@github/copilot-sdk` only reads the token from the explicit
-  > `RuntimeConnection.forUri` connection-token option for URI connections —
-  > it does NOT fall back to the `COPILOT_CONNECTION_TOKEN` environment
-  > variable. The portal bridges that gap by reading the env var and passing
-  > it through; if you omit it on the portal side, a token-protected CLI
-  > rejects the connection.
-
-  If you leave the token unset on both sides, keep the headless port bound
-  to loopback (or an otherwise-trusted private network). Anything that can
-  reach the port can drive the agent, including running shell commands.
-- **Per-conversation working directories don't transfer.** The portal
-  passes `workingDirectory` to `createSession`, but the remote CLI
-  must already have file access to that path (start it with `-C` and
-  `--add-dir` covering everything you want the agent to touch).
-- **Restart coupling.** If the headless CLI dies, the portal's cached
-  `CopilotClient` is now pointing at nothing — restart the portal too
-  (or implement a reconnect; not done yet).
+(editor, language servers, terminals); the portal runs agents against
+the same files in the background.
 
 ## Secrets
 
@@ -265,11 +166,11 @@ stack refuses to start if either is missing.
 ## GitHub OAuth App setup
 
 1. Create an OAuth app at <https://github.com/settings/developers>.
-2. Homepage URL: `https://copilot.example.com` (your tunnel hostname).
-3. Authorization callback URL: `https://copilot.example.com/auth/callback`.
+2. Homepage URL: `https://zap.example.com` (your tunnel hostname).
+3. Authorization callback URL: `https://zap.example.com/auth/callback`.
 4. Copy client id / secret into `.env`.
 5. *(Optional)* Require this app to be approved by your organization if
-   you want org-scoped Copilot entitlement to flow through.
+   you want an org approval gate on the GitHub identity.
 
 ## Cloudflare Tunnel
 
@@ -292,7 +193,7 @@ Cloudflare side:
 1. Cloudflare dashboard → Zero Trust → Networks → Tunnels → Create tunnel.
 2. Install method: Docker → copy the `TUNNEL_TOKEN` into `.env` as
    `CLOUDFLARE_TUNNEL_TOKEN`.
-3. Public Hostname: `copilot.example.com` → Service `http://portal:3000`.
+3. Public Hostname: `zap.example.com` → Service `http://portal:3000`.
 4. *(Strongly recommended)* Zero Trust → Access → Applications →
    Self-hosted. Cover the same hostname; policy: "Emails are one of:
    you@example.com" with GitHub or Google identity provider.
@@ -301,7 +202,7 @@ With Access in front, the portal is doubly protected: CF gates at the
 network edge, and the portal's own login still applies.
 
 When fronted by a tunnel or reverse proxy, set SvelteKit's `ORIGIN` environment
-variable to the public origin (for example, `https://copilot.example.com`) so
+variable to the public origin (for example, `https://zap.example.com`) so
 same-origin checks compare against the browser-visible URL.
 
 ## Local development
@@ -358,7 +259,7 @@ the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).
 ## Resource expectations
 
 - Idle: ~150 MB RAM, negligible CPU.
-- Active session: +200–400 MB while the Copilot CLI subprocess is running.
+- Active session: +200–400 MB while an agent session is live.
 - Per `MAX_CONCURRENT_SESSIONS=4` (default), budget ~1.5 GB peak RAM.
 - Disk: DB grows with conversation history; expect tens of MB even
   after heavy use.

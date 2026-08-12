@@ -30,7 +30,7 @@ What "add a test" means in practice here:
 
 - **Pure logic / server modules → a unit test.** Vitest, fast, no browser.
 - **User-visible flows / API endpoints / cross-cutting request behavior → an e2e
-  test.** Playwright against a real build with a stubbed Copilot backend.
+  test.** Playwright against a real build with the pi stub model.
 - Most changes only need the first. Reach for e2e when the thing you changed can
   only really be exercised through an HTTP request or the rendered UI.
 
@@ -59,8 +59,8 @@ What "add a test" means in practice here:
 - Live in `e2e/` as `*.spec.ts`. Run with `pnpm run test:e2e` (builds first, then
   runs) or `pnpm run test:e2e:run` if `build/` is already current.
   `pnpm run test:e2e:ui` opens the Playwright UI.
-- The e2e server runs the **production build** with `COPILOT_STUB=1`, so tests
-  never hit the real Copilot backend — assert against the stub's deterministic
+- The e2e server runs the **production build** with `PI_STUB=1`, so tests
+  never hit a real model backend — assert against the stub's deterministic
   behavior rather than live model output.
 - Each run gets an isolated `DATA_DIR` (`e2e/.tmp-data`) and `AUTH_MODE=none`; the
   config in [`playwright.config.ts`](playwright.config.ts) documents the

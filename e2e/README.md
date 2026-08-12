@@ -1,8 +1,8 @@
 # Playwright e2e tests
 
 End-to-end tests for the portal, run against the production build with an
-isolated SQLite database and a **stubbed** Copilot client (`COPILOT_STUB=1`)
-so no real GitHub Copilot credentials or network are required.
+isolated SQLite database and a **stubbed** pi model (`PI_STUB=1`) so no real
+model credentials or network are required.
 
 ## Run locally
 
@@ -25,7 +25,9 @@ risk of Playwright driving the live server or its DB.
 
 ## Stub mode
 
-When the server starts with `COPILOT_STUB=1`, `bridge.ts` swaps the real
-`CopilotClient` for an in-process fake that responds to `send({prompt})`
-with a streamed `"Stubbed reply to: <prompt>"`. The full turn-runner,
-SSE, and persistence paths are exercised normally.
+When the server starts with `PI_STUB=1`, `src/lib/server/pi/session.ts`
+registers an in-process OpenAI-compatible stub model (`stub-server.ts`) into the
+pi runtime instead of loading a real model. The pi SDK drives the stub over
+real HTTP, and the model replies with a streamed `"Stubbed reply to: <last user
+message>"`. The full turn-runner, SSE, and persistence paths are exercised
+normally.

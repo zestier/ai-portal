@@ -1,16 +1,12 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
-import { loadConfig } from '../../config';
 import { purgeSessionSearchIndex } from './memory';
-import { normalizeProviderInstance } from '../../providers/registry';
 import {
 	normalizeApprovalMode,
-	normalizeMemoryExtractorBackend,
 	normalizeMemoryMode,
 	normalizeSessionMode,
 	type ApprovalMode,
 	type Conversation,
-	type MemoryExtractorBackend,
 	type MemoryMode,
 	type SessionMode,
 	type WorkspaceKind
@@ -38,20 +34,16 @@ interface ConvRow {
 	user_id: string;
 	title: string;
 	workdir: string;
-	provider: string | null;
 	model: string | null;
 	created_at: number;
 	updated_at: number;
 	archived_at: number | null;
 	forked_from_conversation_id: string | null;
 	forked_from_message_id: string | null;
-	provider_session_id: string | null;
 	mode: string | null;
 	memory_mode: string | null;
 	memory_extractor_model: string | null;
-	memory_extractor_backend: string | null;
 	adversary_model: string | null;
-	adversary_backend: string | null;
 	global_memory_enabled: number | null;
 	approval_mode: string | null;
 	disabled_tool_groups: string | null;
@@ -90,14 +82,11 @@ function rowToConv(r: ConvRow): Conversation {
 		userId: r.user_id,
 		title: r.title,
 		workdir: r.workdir,
-		provider: normalizeProviderInstance(r.provider),
 		model: r.model,
 		mode,
 		memoryMode: normalizeMemoryMode(r.memory_mode),
 		memoryExtractorModel: r.memory_extractor_model ?? null,
-		memoryExtractorBackend: normalizeMemoryExtractorBackend(r.memory_extractor_backend),
 		adversaryModel: r.adversary_model ?? null,
-		adversaryBackend: r.adversary_backend ?? null,
 		globalMemoryEnabled: r.global_memory_enabled === 1,
 		approvalMode: normalizeApprovalMode(r.approval_mode),
 		disabledToolGroups: parseDisabledToolGroups(r.disabled_tool_groups),
@@ -106,7 +95,6 @@ function rowToConv(r: ConvRow): Conversation {
 		archivedAt: r.archived_at,
 		forkedFromConversationId: r.forked_from_conversation_id,
 		forkedFromMessageId: r.forked_from_message_id,
-		providerSessionId: r.provider_session_id ?? r.id,
 		draftPrompt: r.draft_prompt ?? null,
 		workspaceKind: r.workspace_kind ?? 'shared',
 		workspaceKey: r.workspace_key ?? effectiveWorkdir(r.workdir),
@@ -155,21 +143,17 @@ export function list(userId: string, opts: ListOpts = {}): Conversation[] {
 export interface CreateInput {
 	title: string;
 	workdir: string;
-	provider?: string;
 	model: string | null;
 	mode?: SessionMode;
 	approvalMode?: ApprovalMode;
 	memoryMode?: MemoryMode;
 	memoryExtractorModel?: string | null;
-	memoryExtractorBackend?: MemoryExtractorBackend | null;
 	adversaryModel?: string | null;
-	adversaryBackend?: string | null;
 	globalMemoryEnabled?: boolean;
 	disabledToolGroups?: string[];
 	id?: string;
 	forkedFromConversationId?: string | null;
 	forkedFromMessageId?: string | null;
-	providerSessionId?: string | null;
 	draftPrompt?: string | null;
 	workspaceKind?: WorkspaceKind;
 	workspaceKey?: string;
@@ -190,19 +174,13 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const now = Date.now();
 	const forkConv = input.forkedFromConversationId ?? null;
 	const forkMsg = input.forkedFromMessageId ?? null;
-	const providerSessionId = input.providerSessionId ?? id;
 	const mode = input.mode ?? 'interactive';
 	const approvalMode = normalizeApprovalMode(input.approvalMode);
 	const memoryMode = input.memoryMode ?? 'off';
 	const memoryExtractorModel = normalizeOptionalModel(input.memoryExtractorModel);
-	const memoryExtractorBackend = normalizeMemoryExtractorBackend(input.memoryExtractorBackend);
 	const adversaryModel = normalizeOptionalModel(input.adversaryModel);
-	const adversaryBackend = normalizeOptionalModel(input.adversaryBackend);
 	const globalMemoryEnabled = input.globalMemoryEnabled === true;
 	const disabledToolGroups = sanitizeDisabledToolGroups(input.disabledToolGroups);
-	const provider = normalizeProviderInstance(
-		input.provider ?? loadConfig().DEFAULT_BACKEND_PROVIDER
-	);
 	const draftPrompt = input.draftPrompt ?? null;
 	const workspaceKind = input.workspaceKind ?? 'shared';
 	const workspaceKey = input.workspaceKey ?? effectiveWorkdir(input.workdir);
@@ -210,32 +188,28 @@ export function create(userId: string, input: CreateInput): Conversation {
 	db.transaction(() => {
 		db.prepare(
 			`INSERT INTO conversations(
-			   id, user_id, title, workdir, provider, model, mode, approval_mode, memory_mode, memory_extractor_model,
-			   memory_extractor_backend, adversary_model, adversary_backend, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
-			   forked_from_conversation_id, forked_from_message_id, provider_session_id, draft_prompt,
+			   id, user_id, title, workdir, model, mode, approval_mode, memory_mode, memory_extractor_model,
+			   adversary_model, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
+			   forked_from_conversation_id, forked_from_message_id, draft_prompt,
 			   workspace_kind, workspace_key
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		).run(
 			id,
 			userId,
 			input.title,
 			input.workdir,
-			provider,
 			input.model,
 			mode,
 			approvalMode,
 			memoryMode,
 			memoryExtractorModel,
-			memoryExtractorBackend,
 			adversaryModel,
-			adversaryBackend,
 			globalMemoryEnabled ? 1 : 0,
 			JSON.stringify(disabledToolGroups),
 			now,
 			now,
 			forkConv,
 			forkMsg,
-			providerSessionId,
 			draftPrompt,
 			workspaceKind,
 			workspaceKey
@@ -265,14 +239,11 @@ export function create(userId: string, input: CreateInput): Conversation {
 		userId,
 		title: input.title,
 		workdir: input.workdir,
-		provider,
 		model: input.model,
 		mode,
 		memoryMode,
 		memoryExtractorModel,
-		memoryExtractorBackend,
 		adversaryModel,
-		adversaryBackend,
 		globalMemoryEnabled,
 		approvalMode,
 		disabledToolGroups,
@@ -281,7 +252,6 @@ export function create(userId: string, input: CreateInput): Conversation {
 		archivedAt: null,
 		forkedFromConversationId: forkConv,
 		forkedFromMessageId: forkMsg,
-		providerSessionId,
 		draftPrompt,
 		workspaceKind,
 		workspaceKey,
@@ -318,33 +288,6 @@ export function getManagedWorktree(id: string, userId: string): ManagedWorktreeM
 		: null;
 }
 
-export function rotateProviderSession(id: string, userId: string): string | null {
-	const providerSessionId = ulid();
-	const r = getDb()
-		.prepare(
-			`UPDATE conversations
-			    SET provider_session_id = ?, updated_at = ?
-			  WHERE id = ? AND user_id = ?`
-		)
-		.run(providerSessionId, Date.now(), id, userId);
-	return r.changes > 0 ? providerSessionId : null;
-}
-
-export function setProviderSessionId(
-	id: string,
-	userId: string,
-	providerSessionId: string
-): boolean {
-	const r = getDb()
-		.prepare(
-			`UPDATE conversations
-			    SET provider_session_id = ?, updated_at = ?
-			  WHERE id = ? AND user_id = ?`
-		)
-		.run(providerSessionId, Date.now(), id, userId);
-	return r.changes > 0;
-}
-
 export function rename(id: string, userId: string, title: string): boolean {
 	const r = getDb()
 		.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?')
@@ -378,9 +321,7 @@ export function updateSessionSettings(
 		mode?: SessionMode;
 		memoryMode?: MemoryMode;
 		memoryExtractorModel?: string | null;
-		memoryExtractorBackend?: MemoryExtractorBackend | null;
 		adversaryModel?: string | null;
-		adversaryBackend?: string | null;
 		globalMemoryEnabled?: boolean;
 		approvalMode?: ApprovalMode;
 		disabledToolGroups?: string[];
@@ -404,17 +345,9 @@ export function updateSessionSettings(
 		sets.push('memory_extractor_model = ?');
 		args.push(normalizeOptionalModel(patch.memoryExtractorModel));
 	}
-	if (patch.memoryExtractorBackend !== undefined) {
-		sets.push('memory_extractor_backend = ?');
-		args.push(normalizeMemoryExtractorBackend(patch.memoryExtractorBackend));
-	}
 	if (patch.adversaryModel !== undefined) {
 		sets.push('adversary_model = ?');
 		args.push(normalizeOptionalModel(patch.adversaryModel));
-	}
-	if (patch.adversaryBackend !== undefined) {
-		sets.push('adversary_backend = ?');
-		args.push(normalizeOptionalModel(patch.adversaryBackend));
 	}
 	if (patch.globalMemoryEnabled !== undefined) {
 		sets.push('global_memory_enabled = ?');

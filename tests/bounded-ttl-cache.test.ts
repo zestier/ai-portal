@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BoundedTtlCache } from '../src/lib/server/copilot/bounded-ttl-cache';
+import { BoundedTtlCache } from '../src/lib/server/cache';
 
 function clock(start = 0) {
 	let t = start;

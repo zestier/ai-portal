@@ -4,21 +4,18 @@ import type { RequestHandler } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as pool from '$lib/server/runtime/pool';
 import { getTurn } from '$lib/server/runtime/turn-runner';
-import { getProvider } from '$lib/server/providers';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { parseBody } from '$lib/server/validate';
-import { APPROVAL_MODES, MEMORY_EXTRACTOR_BACKEND_IDS, SESSION_MODES } from '$lib/types';
+import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
-import { log } from '$lib/server/log';
 
 // PATCH /api/conversations/:id/session — flip per-conversation SDK settings.
 //
-// Persists to the conversations row so a future open() picks them up, AND
-// (when a live SDK session is cached in the pool) pushes the change to the
-// running session so the active turn / next message reflects the new setting
-// without needing the session to be recreated. Model changes recreate the
-// provider session before the next turn because providers do not expose a
-// cross-runtime live set-model control.
+// Persists to the conversations row so a future open() picks them up. Model,
+// memory, and tool-group changes additionally release the pooled session so
+// the next turn opens fresh with the new values (the pi runtime has no live
+// set-model / set-tools RPC). Mode and approval-mode are settled portal-side
+// and read from the row at every turn start.
 
 const PatchBody = z
 	.object({
@@ -31,14 +28,7 @@ const PatchBody = z
 			.transform((value) => (value ? value : null))
 			.nullable()
 			.optional(),
-		memoryExtractorBackend: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).nullable().optional(),
 		adversaryModel: z
-			.string()
-			.trim()
-			.transform((value) => (value ? value : null))
-			.nullable()
-			.optional(),
-		adversaryBackend: z
 			.string()
 			.trim()
 			.transform((value) => (value ? value : null))
@@ -56,9 +46,7 @@ const PatchBody = z
 			b.mode !== undefined ||
 			b.memoryMode !== undefined ||
 			b.memoryExtractorModel !== undefined ||
-			b.memoryExtractorBackend !== undefined ||
 			b.adversaryModel !== undefined ||
-			b.adversaryBackend !== undefined ||
 			b.globalMemoryEnabled !== undefined ||
 			b.approvalMode !== undefined ||
 			b.disabledToolGroups !== undefined,
@@ -70,22 +58,16 @@ const PatchBody = z
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	const body = await parseBody(request, PatchBody);
-	const provider = getProvider(conv.provider);
 	const modelChanged = body.model !== undefined && body.model !== conv.model;
 	const memoryChanged = body.memoryMode !== undefined && body.memoryMode !== conv.memoryMode;
 	const extractorModelChanged =
 		body.memoryExtractorModel !== undefined &&
 		body.memoryExtractorModel !== conv.memoryExtractorModel;
-	const extractorBackendChanged =
-		body.memoryExtractorBackend !== undefined &&
-		body.memoryExtractorBackend !== conv.memoryExtractorBackend;
-	// Captured at session open (see `ProviderOpenOptions.adversaryModel`), so a
-	// change only takes effect once the pooled session is released — hence it
-	// joins the same guard/release set as the harvester settings rather than
-	// silently appearing to apply.
+	// Captured at session open, so a change only takes effect once the pooled
+	// session is released — hence it joins the same guard/release set as the
+	// harvester model rather than silently appearing to apply.
 	const adversaryModelChanged =
-		(body.adversaryModel !== undefined && body.adversaryModel !== conv.adversaryModel) ||
-		(body.adversaryBackend !== undefined && body.adversaryBackend !== conv.adversaryBackend);
+		body.adversaryModel !== undefined && body.adversaryModel !== conv.adversaryModel;
 	const globalMemoryChanged =
 		body.globalMemoryEnabled !== undefined && body.globalMemoryEnabled !== conv.globalMemoryEnabled;
 	const toolGroupsChanged =
@@ -96,7 +78,6 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		(modelChanged ||
 			memoryChanged ||
 			extractorModelChanged ||
-			extractorBackendChanged ||
 			adversaryModelChanged ||
 			globalMemoryChanged ||
 			toolGroupsChanged) &&
@@ -104,7 +85,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	) {
 		throw error(
 			409,
-			'Cannot change model, memory mode, harvester model, harvester backend, adversary model, global memory, or tool groups while a turn is running.'
+			'Cannot change model, memory mode, harvester model, adversary model, global memory, or tool groups while a turn is running.'
 		);
 	}
 
@@ -115,11 +96,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.memoryExtractorModel !== undefined
 			? { memoryExtractorModel: body.memoryExtractorModel }
 			: {}),
-		...(body.memoryExtractorBackend !== undefined
-			? { memoryExtractorBackend: body.memoryExtractorBackend }
-			: {}),
 		...(body.adversaryModel !== undefined ? { adversaryModel: body.adversaryModel } : {}),
-		...(body.adversaryBackend !== undefined ? { adversaryBackend: body.adversaryBackend } : {}),
 		...(body.globalMemoryEnabled !== undefined
 			? { globalMemoryEnabled: body.globalMemoryEnabled }
 			: {}),
@@ -133,91 +110,28 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		modelChanged ||
 		memoryChanged ||
 		extractorModelChanged ||
-		extractorBackendChanged ||
 		adversaryModelChanged ||
 		globalMemoryChanged ||
 		toolGroupsChanged
 	) {
-		// Portal tools are fixed at createSession/resumeSession — there is no live
-		// RPC to swap them — so releasing the pooled session is the mechanism that
-		// makes the next turn reopen with the filtered tool set.
+		// Portal tools are fixed at session open — there is no live RPC to swap
+		// them — so releasing the pooled session is the mechanism that makes the
+		// next turn reopen with the filtered tool set.
 		await pool.release(conv.id);
-	}
-	const live =
-		modelChanged ||
-		memoryChanged ||
-		extractorModelChanged ||
-		extractorBackendChanged ||
-		globalMemoryChanged ||
-		toolGroupsChanged
-			? null
-			: pool.getActive(conv.id);
-	if (live) {
-		// Best-effort: the bridge already logs detailed RPC failures, and
-		// the DB row is the source of truth for the next open(). Don't fail
-		// the request if the live SDK rejects (preview surface, capability-gated).
-		if (body.mode !== undefined && live.setMode) {
-			try {
-				await live.setMode(body.mode);
-			} catch (e) {
-				log.warn('session.set_mode_failed', { conversationId: conv.id, err: String(e) });
-			}
-		}
-		if (body.approvalMode !== undefined && live.setApprovalMode) {
-			try {
-				await live.setApprovalMode(body.approvalMode);
-			} catch (e) {
-				log.warn('session.set_approval_mode_failed', {
-					conversationId: conv.id,
-					err: String(e)
-				});
-			}
-		}
 	}
 
 	return json({
 		ok: true,
-		conversation: convs.get(conv.id, conv.userId),
-		capabilities: provider.capabilities,
-		unsupported: {
-			...(persistedPatch.mode !== undefined && !provider.capabilities.controls.mode
-				? { mode: provider.capabilities.features.modes.description }
-				: {}),
-			// Only `auto-approve` needs provider support; `ask` / `auto-deny` are
-			// settled entirely by the portal's interactive adapter.
-			...(persistedPatch.approvalMode === 'auto-approve' &&
-			!provider.capabilities.controls.approvalMode
-				? { approvalMode: provider.capabilities.features.approvalMode.description }
-				: {})
-		}
+		conversation: convs.get(conv.id, conv.userId)
 	});
 };
 
 // POST /api/conversations/:id/session — clear the SDK's session-scoped
-// approvals. Useful after the user toggles approve-all off and wants a clean
-// slate without ending the conversation.
+// approvals. The pi runtime settles approvals portal-side per request (no
+// provider approval cache), so this is a no-op kept for API compatibility.
 export const POST: RequestHandler = async ({ params, locals }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const provider = getProvider(conv.provider);
-	if (!provider.capabilities.controls.resetSessionApprovals) {
-		return json({
-			ok: true,
-			supported: false,
-			message: 'This provider has no session-scoped approval cache to reset.'
-		});
-	}
-	const live = pool.getActive(conv.id);
-	if (live?.resetSessionApprovals) {
-		try {
-			await live.resetSessionApprovals();
-		} catch (e) {
-			log.warn('session.reset_approvals_failed', {
-				conversationId: conv.id,
-				err: String(e)
-			});
-		}
-	}
-	return json({ ok: true, supported: true });
+	authorizeConversation(params.id, locals.userId);
+	return json({ ok: true, supported: false });
 };
 
 // Order-insensitive equality for two disabled-group id lists (already

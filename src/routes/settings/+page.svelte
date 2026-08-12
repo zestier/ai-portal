@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { authLabel, type FormResult, type SettingsTab } from './settings-types';
+	import { type FormResult, type SettingsTab } from './settings-types';
 	import type { PageData } from './$types';
 	import ActivityPanel from './ActivityPanel.svelte';
 	import GeneralSettings from './GeneralSettings.svelte';
@@ -62,15 +62,6 @@
 			<p class="eyebrow">Portal preferences</p>
 			<h1>Settings</h1>
 		</div>
-		<span
-			class="auth-pill"
-			class:ok={data.defaultProviderStatus.statusChecked &&
-				data.defaultProviderStatus.auth.isAuthenticated}
-		>
-			{data.defaultProviderStatus.displayName}: {data.defaultProviderStatus.statusChecked
-				? authLabel(data.defaultProviderStatus.auth)
-				: 'not selected'}
-		</span>
 	</header>
 
 	<SettingsTabs
@@ -81,12 +72,12 @@
 	/>
 
 	{#if activeTab === 'general'}
-		<GeneralSettings settings={data.settings} providers={data.providers} {form} />
+		<GeneralSettings settings={data.settings} {form} />
 	{:else if activeTab === 'prompts'}
 		<PromptsSettings
 			builtInTemplates={data.builtInPromptTemplates}
 			promptTemplates={data.promptTemplates}
-			modelOptions={data.defaultProviderStatus?.models.map((m) => m.id) ?? []}
+			modelOptions={[]}
 			{form}
 		/>
 	{:else if activeTab === 'memory'}
@@ -127,18 +118,6 @@
 	}
 	.eyebrow {
 		margin: 0 0 0.25rem;
-	}
-	.auth-pill {
-		border: 1px solid var(--border);
-		border-radius: 999px;
-		color: var(--text-muted);
-		font-size: var(--fs-md);
-		padding: 0.3rem 0.7rem;
-		white-space: nowrap;
-	}
-	.auth-pill.ok {
-		border-color: var(--success);
-		color: var(--success);
 	}
 	/* On mobile the sidebar toggle is a fixed-position hamburger at top-left;
 	   inset the header so it doesn't sit underneath. */

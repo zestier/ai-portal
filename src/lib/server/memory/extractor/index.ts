@@ -10,7 +10,6 @@ import {
 	type MemoryPatchProposal
 } from '../engine';
 import { loadConfig, type AppConfig } from '$lib/server/config';
-import { getDefaultInstanceId, getInstance } from '$lib/server/providers/registry';
 import { redactSensitiveText, truncate } from './utils';
 import {
 	buildWriteToolSpecs,
@@ -944,7 +943,7 @@ export function createMemoryExtractor(
 			hasBaseUrl: Boolean(baseUrl),
 			hasModel: Boolean(model),
 			reason: !baseUrl
-				? 'no OpenAI-compatible base URL configured (OPENAI_COMPATIBLE_BASE_URL or the default instance)'
+				? 'no OpenAI-compatible base URL configured (OPENAI_COMPATIBLE_BASE_URL)'
 				: 'no extractor model configured (set MEMORY_EXTRACTOR_MODEL or a per-conversation extractor model)'
 		});
 	}
@@ -952,24 +951,14 @@ export function createMemoryExtractor(
 }
 
 /**
- * The endpoint for the model-backed extractor. When the deployment default
- * instance is itself an openai-compatible backend, its per-instance config
- * wins; otherwise the env-fed built-in `openai-compatible` instance is used
- * (which is what `OPENAI_COMPATIBLE_*` fed historically). This is the ONLY
- * instance the extractor consults — per-conversation extractor instances are
- * out of scope; a non-default instance never harvests here.
+ * The endpoint for the model-backed extractor. Served by the env-fed
+ * `OPENAI_COMPATIBLE_BASE_URL`/`OPENAI_COMPATIBLE_API_KEY` (the provider layer
+ * that used to feed these via the default provider instance was deleted in T2).
  */
 function openAICompatibleExtractorConfig(cfg: AppConfig): {
 	baseUrl: string | null;
 	apiKey: string | null;
 } {
-	const defaultInstance = getInstance(getDefaultInstanceId());
-	if (defaultInstance?.type === 'openai-compatible') {
-		return {
-			baseUrl: defaultInstance.baseUrl ?? cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
-			apiKey: defaultInstance.apiKey ?? cfg.OPENAI_COMPATIBLE_API_KEY ?? null
-		};
-	}
 	return {
 		baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
 		apiKey: cfg.OPENAI_COMPATIBLE_API_KEY ?? null

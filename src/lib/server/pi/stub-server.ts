@@ -1,8 +1,8 @@
 // In-process OpenAI-compatible stub model for the pi path, gated by `PI_STUB=1`.
 // Lets e2e tests exercise the full turn-runner / SSE / persistence pipeline
-// without real model credentials or network, mirroring `COPILOT_STUB`
-// (`copilot/bridge-stub.ts`). The reply is deterministic (`Stubbed reply to:
-// <last user message>`) so tests can assert on the literal prompt.
+// without real model credentials or network. The reply is deterministic
+// (`Stubbed reply to: <last user message>`) so tests can assert on the literal
+// prompt.
 //
 // The stub is a real `node:http` server on 127.0.0.1 (ephemeral port) registered
 // into the pi `ModelRuntime` as an `openai-completions` provider, so the pi SDK
@@ -97,13 +97,20 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 		res.end('bad request');
 		return;
 	}
-	const reply = `Stubbed reply to: ${lastUserText(body.messages)}`;
+	const userText = lastUserText(body.messages);
+	const reply = `Stubbed reply to: ${userText}`;
 	const id = `chatcmpl-stub-${Date.now()}`;
 	const created = Math.floor(Date.now() / 1000);
 	const model = typeof body.model === 'string' ? body.model : STUB_MODEL_ID;
 
 	if (body.stream === true) {
-		writeSseReply(res, { id, created, model, reply });
+		writeSseReply(res, {
+			id,
+			created,
+			model,
+			reply,
+			slowStart: userText.includes('@trigger-slow-start')
+		});
 	} else {
 		res.writeHead(200, { 'Content-Type': 'application/json' });
 		res.end(
@@ -123,9 +130,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
 // Stream the reply as OpenAI chat-completions SSE chunks so pi's
 // openai-completions provider parses real stream deltas (not one blob).
+const SLOW_START_HOLD_MS = 1200;
 function writeSseReply(
 	res: ServerResponse,
-	opts: { id: string; created: number; model: string; reply: string }
+	opts: { id: string; created: number; model: string; reply: string; slowStart?: boolean }
 ): void {
 	res.writeHead(200, { 'Content-Type': 'text/event-stream' });
 	const chunks = opts.reply.match(/.{1,16}/g) ?? [opts.reply];
@@ -138,34 +146,40 @@ function writeSseReply(
 			model: opts.model,
 			choices: [{ index: 0, delta: delta ? { content: delta } : {}, finish_reason: finishReason }]
 		})}\n\n`;
-	// Write the first chunk immediately, then drain the rest on a short timer so
-	// the stream has multiple deltas (mirrors a real model's token cadence).
-	for (let i = 0; i <= finishIndex; i++) {
-		if (i === 0) {
-			res.write(chunkEvent(chunks[0], finishIndex === 0 ? 'stop' : null));
-			continue;
+	// `@trigger-slow-start` in the prompt holds the first byte so the turn sits
+	// in the pre-delta "setting up" state long enough to assert on; otherwise the
+	// first chunk goes out immediately and the rest drain on a short timer
+	// (mirrors a real model's token cadence).
+	const emit = () => {
+		for (let i = 0; i <= finishIndex; i++) {
+			if (i === 0) {
+				res.write(chunkEvent(chunks[0], finishIndex === 0 ? 'stop' : null));
+				continue;
+			}
+			setTimeout(() => {
+				if (i === finishIndex) res.write(chunkEvent(chunks[i], 'stop'));
+				else res.write(chunkEvent(chunks[i], null));
+			}, i * 2);
 		}
-		setTimeout(() => {
-			if (i === finishIndex) res.write(chunkEvent(chunks[i], 'stop'));
-			else res.write(chunkEvent(chunks[i], null));
-		}, i * 2);
-	}
-	res.write(
-		`data: ${JSON.stringify({
-			id: opts.id,
-			object: 'chat.completion.chunk',
-			created: opts.created,
-			model: opts.model,
-			choices: []
-		})}\n\n`
-	);
-	setTimeout(
-		() => {
-			res.write('data: [DONE]\n\n');
-			res.end();
-		},
-		(finishIndex + 1) * 2
-	);
+		res.write(
+			`data: ${JSON.stringify({
+				id: opts.id,
+				object: 'chat.completion.chunk',
+				created: opts.created,
+				model: opts.model,
+				choices: []
+			})}\n\n`
+		);
+		setTimeout(
+			() => {
+				res.write('data: [DONE]\n\n');
+				res.end();
+			},
+			(finishIndex + 1) * 2
+		);
+	};
+	if (opts.slowStart) setTimeout(emit, SLOW_START_HOLD_MS);
+	else emit();
 }
 
 function lastUserText(messages: unknown[]): string {

@@ -3,7 +3,7 @@
 // migration and the `TurnInput` type for the contract.
 
 import { getDb } from '../index';
-import type { TurnInput, ProviderInitialMessagePreview } from '$lib/types';
+import type { InitialMessagePreview, TurnInput } from '$lib/types';
 
 interface TurnInputRow {
 	message_id: string;
@@ -12,7 +12,6 @@ interface TurnInputRow {
 	full_input: string;
 	prompt_body: string;
 	prelude: string;
-	provider: string | null;
 	model: string | null;
 	mode: string | null;
 	memory_mode: string | null;
@@ -27,11 +26,10 @@ export interface RecordTurnInput {
 	fullInput: string;
 	promptBody: string;
 	prelude: string;
-	provider?: string | null;
 	model?: string | null;
 	mode?: string | null;
 	memoryMode?: string | null;
-	initialMessages?: ProviderInitialMessagePreview[] | null;
+	initialMessages?: InitialMessagePreview[] | null;
 }
 
 export function record(input: RecordTurnInput): void {
@@ -39,16 +37,15 @@ export function record(input: RecordTurnInput): void {
 	db.prepare(
 		`INSERT INTO turn_inputs(
 		   message_id, conversation_id, turn_id, full_input, prompt_body, prelude,
-		   provider, model, mode, memory_mode, initial_messages, created_at
+		   model, mode, memory_mode, initial_messages, created_at
 		 )
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(message_id) DO UPDATE SET
 		   conversation_id = excluded.conversation_id,
 		   turn_id = excluded.turn_id,
 		   full_input = excluded.full_input,
 		   prompt_body = excluded.prompt_body,
 		   prelude = excluded.prelude,
-		   provider = excluded.provider,
 		   model = excluded.model,
 		   mode = excluded.mode,
 		   memory_mode = excluded.memory_mode,
@@ -61,7 +58,6 @@ export function record(input: RecordTurnInput): void {
 		input.fullInput,
 		input.promptBody,
 		input.prelude,
-		input.provider ?? null,
 		input.model ?? null,
 		input.mode ?? null,
 		input.memoryMode ?? null,
@@ -80,10 +76,10 @@ export function get(conversationId: string, messageId: string): TurnInput | null
 }
 
 function rowToTurnInput(r: TurnInputRow): TurnInput {
-	let initialMessages: ProviderInitialMessagePreview[] | null = null;
+	let initialMessages: InitialMessagePreview[] | null = null;
 	if (r.initial_messages) {
 		try {
-			initialMessages = JSON.parse(r.initial_messages) as ProviderInitialMessagePreview[];
+			initialMessages = JSON.parse(r.initial_messages) as InitialMessagePreview[];
 		} catch {
 			initialMessages = null;
 		}
@@ -95,7 +91,6 @@ function rowToTurnInput(r: TurnInputRow): TurnInput {
 		fullInput: r.full_input,
 		promptBody: r.prompt_body,
 		prelude: r.prelude,
-		provider: r.provider,
 		model: r.model,
 		mode: r.mode,
 		memoryMode: r.memory_mode,

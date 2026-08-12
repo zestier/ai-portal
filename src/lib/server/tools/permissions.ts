@@ -201,7 +201,7 @@ function buildGrantRequestTool(opts: {
 			const parsed = GrantRequestArgs.parse(args);
 			// This tool is the structured analogue of `force_retry_tool`: it
 			// ALWAYS raises a human dialog regardless of the conversation's
-			// approval mode. Like a forced retry (see interactive-adapter.ts),
+			// approval mode. Like a forced retry (see runtime/forced-retry.ts),
 			// it must still reach a human under
 			// `auto-deny` — that mode only changes the *automatic* policy
 			// default, it does not disable the dialog UI. The prompt waits

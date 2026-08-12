@@ -137,7 +137,6 @@ CREATE TABLE permission_shadow_decisions (
   scope_key        TEXT,
   args_hash        TEXT,
   adversary_model  TEXT NOT NULL,
-  adversary_backend TEXT,           -- NULL on rows predating migration 069
   experiment_key   TEXT NOT NULL,   -- hash of prompt + renderer + truncation + backend + model
   prompt_version   INTEGER NOT NULL DEFAULT 1,
   facts_key        TEXT,            -- hash of the exact facts; also the memo key
@@ -175,7 +174,9 @@ each would require throwing the collection away if added afterwards:
   all differ), so it is recorded and folded into `experiment_key`. Added in
   migration `069_adversary_backend.sql`, when the reviewer stopped being pinned
   to `OPENAI_COMPATIBLE_BASE_URL`; NULL on older rows, which reads correctly as
-  "collected when that was the only possibility".
+  "collected when that was the only possibility". The standalone
+  `adversary_backend` column was dropped in migration `072_drop_provider_layer.sql`
+  — the backend still lives on inside `experiment_key`.
 - `prompt_sent` / `facts_key` — the exact prompt the model was sent, so a
   disagreement can be adjudicated and a prompt change re-run against old cases,
   plus a hash of the facts so repeat askings of one question can be clustered
@@ -356,7 +357,6 @@ CREATE TABLE turn_inputs (
   full_input       TEXT NOT NULL,   -- prelude + body, exactly as sent
   prompt_body      TEXT NOT NULL,   -- body without the portal prelude
   prelude          TEXT NOT NULL DEFAULT '',
-  provider         TEXT,
   model            TEXT,
   mode             TEXT,
   memory_mode      TEXT,
@@ -426,7 +426,7 @@ and live alongside the data routes:
    shared-secret and local auth modes treat the authenticated operator as the
    admin. Only meaningful when the portal is started via `pnpm run serve`.
 - `POST /api/conversations/:id/permissions/:requestId` — resolves a
-  pending Copilot tool-permission prompt. Body:
+  pending tool-permission prompt. Body:
   `{decision: 'allow-once' | 'allow-always' | 'deny'}`. Returns
   `{ok: true}` on success, `404` if the request id is unknown or no
   longer pending. The matching SSE feed for pending prompts is published

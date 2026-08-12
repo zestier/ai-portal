@@ -28,7 +28,7 @@ import {
 	type ModelRuntime
 } from '@earendil-works/pi-coding-agent';
 import type { PortalEvent } from '$lib/types';
-import type { ProviderSession } from '../providers';
+import type { ProviderSession } from './session-contract';
 import { AsyncQueue } from '../runtime/async-queue';
 import { log } from '../log';
 import { PiEventMapper } from './events';

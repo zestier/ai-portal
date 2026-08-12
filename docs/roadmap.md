@@ -6,7 +6,8 @@ Phased plan. Each phase ends in a usable artifact.
 
 - `npm create svelte@latest` → SvelteKit + TS + ESLint + Prettier + Vitest +
   Playwright.
-- Add `@sveltejs/adapter-node`, `better-sqlite3`, `zod`, `@github/copilot-sdk`.
+- Add `@sveltejs/adapter-node`, `better-sqlite3`, `zod`,
+  `@earendil-works/pi-coding-agent`.
 - Drop in `Dockerfile`, `compose.yaml`, `.env.example`.
 - CI: GitHub Actions running `npm run lint && npm run check && npm test`
   and building the Docker image (no push).
@@ -18,8 +19,8 @@ Phased plan. Each phase ends in a usable artifact.
 - `AUTH_MODE=none` (localhost-only, gated by `I_KNOW_THIS_IS_LOCAL=1`).
 - SQLite + initial migration (`users`, `conversations`, `messages`).
 - Auto-create a single local user on first run.
-- Bridge module wrapping `@github/copilot-sdk`, picking up auth from a
-  pre-run `copilot auth login` on the host.
+- Session module opening pi sessions against the configured `PI_MODEL`
+  (a `providerId/modelId` id on the process-wide model runtime).
 - Conversation create + send + SSE stream + assistant render.
 - Sidebar with conversation list, rename, delete.
 - Markdown rendering with code blocks (no syntax highlighting yet).
@@ -31,7 +32,7 @@ Phased plan. Each phase ends in a usable artifact.
   with per-file diffs.
 - Surfaced as a **Files** tab on the conversation page; chat unchanged.
 
-**Exit criteria:** I can have a multi-turn conversation with Copilot from
+**Exit criteria:** I can have a multi-turn conversation with the agent from
 a browser tab on my laptop, persistent across restarts.
 
 ## Phase 2 — Tools, permissions, diffs
@@ -43,7 +44,7 @@ a browser tab on my laptop, persistent across restarts.
 - Default policy setting in `/settings`.
 - Persist tool calls, file edits, permission decisions.
 
-**Exit criteria:** I can let Copilot edit files in a sandboxed working dir
+**Exit criteria:** I can let the agent edit files in a sandboxed working dir
 with explicit approval, and review the diffs in the UI.
 
 ## Phase 3 — Remote-safe auth and deploy
@@ -54,7 +55,7 @@ with explicit approval, and review the diffs in the UI.
 - Cloudflare Tunnel docs verified end-to-end.
 
 **Exit criteria:** I can expose the portal at
-`copilot.example.com` behind CF Access and use it from my phone safely.
+`zap.example.com` behind CF Access and use it from my phone safely.
 
 ## Phase 4 — Quality of life
 
@@ -67,7 +68,6 @@ with explicit approval, and review the diffs in the UI.
 
 ## Phase 5 — Extensibility
 
-- BYOK in `/settings` (OpenAI / Anthropic keys).
 - Custom agents / skills via the SDK's hook points, surfaced as a settings
   UI.
 - MCP server registration (the SDK supports MCP; expose a config UI).
@@ -100,4 +100,4 @@ with explicit approval, and review the diffs in the UI.
    problem; package caches, ports, external side effects still leak).
    Probably phase 4+.
 4. **Telemetry.** None planned. Confirm the SDK doesn't phone home for
-   anything beyond what the user expects from Copilot itself.
+   anything beyond what the user expects from the agent itself.

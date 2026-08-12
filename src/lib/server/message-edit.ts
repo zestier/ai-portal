@@ -3,6 +3,7 @@ import * as convs from '$lib/server/db/repos/conversations';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import * as usage from '$lib/server/db/repos/usage';
+import * as pool from '$lib/server/runtime/pool';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { cancelConversation as cancelPendingInteractive } from '$lib/server/runtime/interactive-requests';
 import { resolveConversationWorkspace } from '$lib/server/workdir';
@@ -132,7 +133,8 @@ function loadIdleConversation(
  * Shared core for inline edit and regenerate: cancel pending interactive
  * prompts, rewind session memory to the user-message prefix, truncate the
  * conversation after the user message (updating its content), clear usage, and
- * rotate the provider session so the backend produces an independent reply.
+ * release the pooled pi session so the rewritten turn opens a fresh, independent
+ * session (context is re-seeded from portal messages via `includePriorMessages`).
  */
 function rerunFromUserMessage(
 	userId: string,
@@ -158,8 +160,9 @@ function rerunFromUserMessage(
 		);
 		if (!updatedMessage) throw new InlineEditRejected('message_not_found');
 		usage.remove(conv.id);
-		const providerSessionId = convs.rotateProviderSession(conv.id, userId);
-		if (!providerSessionId) throw new InlineEditRejected('conversation_not_found');
+		// Drop the pooled session synchronously (map deletion happens before any
+		// await in `release`) so the rewritten turn opens a fresh, independent one.
+		void pool.release(conv.id);
 		return updatedMessage;
 	})();
 

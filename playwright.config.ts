@@ -101,8 +101,7 @@ export default defineConfig({
 			I_KNOW_THIS_IS_LOCAL: '1',
 			E2E_ISOLATED: '1',
 			ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-			COPILOT_STUB: '1',
-			DEFAULT_BACKEND_PROVIDER: 'copilot',
+			PI_STUB: '1',
 			LOG_LEVEL: 'warn',
 			DB_MIGRATIONS_DIR: resolve(__dirname, 'src/lib/server/db/migrations'),
 			// @sveltejs/adapter-node defaults the request protocol to `https`

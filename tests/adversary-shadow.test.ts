@@ -1,26 +1,31 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
-import type {
-	ApprovalMode,
-	InteractivePermissionDecision,
-	PermissionPolicy,
-	PortalEvent
-} from '../src/lib/types';
 import type { AdversaryOutcome } from '../src/lib/server/permissions/adversary/client';
+import type {
+	ShadowHandle,
+	ShadowObserveInput,
+	ShadowRecorder
+} from '../src/lib/server/permissions/adversary/shadow';
+import { adversaryExperimentKey } from '../src/lib/server/permissions/adversary/client';
 
 // Phase 0's whole safety story in one file: the adversary observes and records,
 // and NOTHING it does — succeeding, failing, hanging, or babbling — may change
 // what the permission path returns or what the human is shown.
+//
+// The provider layer that used to sit in front of the recorder was deleted (T2),
+// so the harness drives `createShadowRecorder.observe()` directly. The backend
+// is now a label only — it groups rows via `experiment_key` but serves nothing
+// until the completion is re-wired onto pi-ai (T5).
 
 const ADVERSARY_MODEL = 'reviewer-model';
 const AGENT_MODEL = 'agent-model';
-const AGENT_BACKEND = 'copilot' as const;
+// The conversation's own backend label; matches the shadow's default so the
+// same-model guard can actually trip.
+const AGENT_BACKEND = 'pi';
 
 let convCounter = 0;
 
 interface HarnessOptions {
-	approvalMode?: ApprovalMode;
-	policy?: PermissionPolicy;
 	/** Adversary completion seam. Omit for a canned deny. */
 	complete?: (system: string, user: string) => Promise<string>;
 	/** Skip enabling the shadow, to test the default-off path. */
@@ -29,13 +34,11 @@ interface HarnessOptions {
 	sameModel?: boolean;
 	/** Per-conversation override, which should beat the server default. */
 	conversationModel?: string;
-	/** Per-conversation reviewer backend override. */
+	/** Per-conversation reviewer backend label override. */
 	conversationBackend?: string;
-	/** The backend serving the conversation's own agent. */
-	agentBackend?: 'copilot' | 'openai-compatible' | 'lm-studio' | null;
-	/** Route through the real provider registry instead of the test seam. */
-	realDispatch?: boolean;
-	/** Point the adapter at a conversation id that does not exist in the DB. */
+	/** The backend label serving the conversation's own agent. */
+	agentBackend?: string;
+	/** Point the recorder at a conversation id that does not exist in the DB. */
 	brokenConversationId?: boolean;
 }
 
@@ -46,14 +49,8 @@ async function makeHarness(options: HarnessOptions = {}) {
 	} else {
 		process.env.ADVERSARY_SHADOW_MODEL = options.sameModel ? AGENT_MODEL : ADVERSARY_MODEL;
 	}
-	// Deliberately NOT setting OPENAI_COMPATIBLE_BASE_URL: the shadow must run
-	// on the conversation's own backend, which is the whole point of decoupling
-	// the reviewer's model from the endpoint that serves it.
 	await setupLocalEnv(`portal-shadow-test-`);
 
-	const interactive = await import('../src/lib/server/runtime/interactive-requests');
-	const { createInteractiveCallbacks } =
-		await import('../src/lib/server/copilot/interactive-adapter');
 	const { createShadowRecorder } = await import('../src/lib/server/permissions/adversary/shadow');
 	const shadowRepo = await import('../src/lib/server/db/repos/shadow-decisions');
 	const { ensureLocalUser } = await import('../src/lib/server/db/repos/users');
@@ -71,51 +68,38 @@ async function makeHarness(options: HarnessOptions = {}) {
 	let completeCalls = 0;
 	const settled: AdversaryOutcome[] = [];
 	let notifySettled: (() => void) | null = null;
-	// Mutable so a test can simulate a worktree lease appearing mid-session.
-	let workspaceRoots = ['/tmp'];
 
-	const shadowRecorder = createShadowRecorder({
+	const shadowRecorder: ShadowRecorder = createShadowRecorder({
 		getModel: () => options.conversationModel ?? null,
 		getBackend: () => options.conversationBackend ?? null,
-		// Matches how `createInteractiveCallbacks` wires it in production; the
-		// backend needs it to resolve that user's credential.
 		userId: user.id,
-		// `realDispatch` exercises the actual provider lookup instead of the test
-		// seam. It is the only way to catch a regression in that path, which is
-		// resolved through a dynamic import to break a module cycle.
-		...(options.realDispatch
-			? {}
-			: {
-					complete: async (system: string, user: string) => {
-						completeCalls++;
-						return options.complete
-							? await options.complete(system, user)
-							: '{"verdict":"deny","denyProbability":0.8,"rationale":"Reaches outside the workspace."}';
-					}
-				}),
+		complete: async (system: string, user: string) => {
+			completeCalls++;
+			return options.complete
+				? await options.complete(system, user)
+				: '{"verdict":"deny","denyProbability":0.8,"rationale":"Reaches outside the workspace."}';
+		},
 		onSettled: (outcome) => {
 			settled.push(outcome);
 			notifySettled?.();
 		}
 	});
 
-	const events: PortalEvent[] = [];
-	const { onPermissionRequest } = createInteractiveCallbacks({
-		conversationId: options.brokenConversationId
-			? 'conversation-that-does-not-exist'
-			: conversationId,
-		userId: user.id,
-		workingDirectory: '/tmp',
-		getWorkspaceRoots: () => workspaceRoots,
-		policy: options.policy ?? 'prompt',
-		emit: (ev) => events.push(ev),
-		getApprovalMode: () => options.approvalMode ?? 'ask',
-		getSessionWorkspacePath: () => null,
-		getPermissionBehavior: () => 'normal',
-		getAgentModel: () => AGENT_MODEL,
-		getAgentBackend: () => options.agentBackend ?? AGENT_BACKEND,
-		shadowRecorder
-	});
+	// Mirrors what the (deleted) permission adapter passed into `observe`:
+	// conversation id, the agent's own model/backend for the same-model guard,
+	// and the portal-derived facts of the request under review.
+	const observe = (overrides: Partial<ShadowObserveInput> = {}): ShadowHandle | null =>
+		shadowRecorder.observe({
+			conversationId: options.brokenConversationId
+				? 'conversation-that-does-not-exist'
+				: conversationId,
+			argsHash: null,
+			resolutionSource: 'prompt-policy',
+			agentModel: AGENT_MODEL,
+			agentBackend: options.agentBackend ?? AGENT_BACKEND,
+			...URL_REQUEST_FACTS,
+			...overrides
+		});
 
 	const waitForSettled = async (count = 1) => {
 		const deadline = Date.now() + 2000;
@@ -129,64 +113,35 @@ async function makeHarness(options: HarnessOptions = {}) {
 	};
 
 	return {
-		interactive,
 		shadowRepo,
 		user,
 		conversationId,
-		onPermissionRequest,
-		events,
+		observe,
 		waitForSettled,
 		rows: () => shadowRepo.listForConversation(conversationId),
-		completeCalls: () => completeCalls,
-		setWorkspaceRoots: (roots: string[]) => {
-			workspaceRoots = roots;
-		}
+		completeCalls: () => completeCalls
 	};
 }
 
-type Harness = Awaited<ReturnType<typeof makeHarness>>;
-
-const URL_REQUEST = {
-	kind: 'url',
-	toolName: 'web_fetch',
-	url: 'https://example.com/docs',
-	args: { url: 'https://example.com/docs' }
+const URL_REQUEST_FACTS = {
+	tool: 'web_fetch',
+	permissionKind: 'url',
+	scopeKey: 'https://example.com/docs',
+	args: { url: 'https://example.com/docs' },
+	workspaceRoots: ['/tmp'],
+	workingDirectory: '/tmp'
 };
-
-async function waitForPrompt(harness: Harness): Promise<{ requestId: string }> {
-	for (let i = 0; i < 500; i++) {
-		const pending = harness.interactive.listForConversation(harness.conversationId);
-		if (pending.length > 0) return pending[0] as { requestId: string };
-		await new Promise((r) => setTimeout(r, 1));
-	}
-	throw new Error('no human prompt was raised');
-}
-
-async function driveAndResolve(
-	harness: Harness,
-	decision: InteractivePermissionDecision,
-	req: Record<string, unknown> = URL_REQUEST
-) {
-	const resultPromise = harness.onPermissionRequest(req);
-	const view = await waitForPrompt(harness);
-	expect(
-		harness.interactive.resolve(view.requestId, harness.user.id, { kind: 'permission', decision })
-	).toBe(true);
-	return await resultPromise;
-}
 
 describe('adversary shadow mode', () => {
 	beforeEach(() => {
 		delete process.env.ADVERSARY_SHADOW_MODEL;
 		delete process.env.ADVERSARY_SHADOW_BACKEND;
-		delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 		delete process.env.ADVERSARY_SHADOW_MAX_IN_FLIGHT;
 	});
 
 	it('records the adversary verdict alongside the human decision', async () => {
 		const harness = await makeHarness();
-		const result = await driveAndResolve(harness, 'allow-once');
-		expect(result).toEqual({ kind: 'approve-once' });
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled();
 
 		const rows = harness.rows();
@@ -216,8 +171,7 @@ describe('adversary shadow mode', () => {
 		const harness = await makeHarness({
 			complete: async () => '{"verdict":"deny","rationale":"Untrusted host."}'
 		});
-		const result = await driveAndResolve(harness, 'deny');
-		expect(result).toMatchObject({ kind: 'reject' });
+		harness.observe()?.recordHuman('deny');
 		await harness.waitForSettled();
 		expect(harness.rows()[0]).toMatchObject({ verdict: 'deny', humanDecision: 'deny' });
 	});
@@ -238,8 +192,9 @@ describe('adversary shadow mode', () => {
 	for (const [label, complete] of failureModes) {
 		it(`leaves the decision path unchanged when the adversary ${label}`, async () => {
 			const harness = await makeHarness({ complete });
-			const result = await driveAndResolve(harness, 'allow-once');
-			expect(result).toEqual({ kind: 'approve-once' });
+			// `observe` returns a handle (never throws); the caller raises the
+			// human dialog regardless of what the adversary does afterwards.
+			harness.observe()?.recordHuman('allow-once');
 			await harness.waitForSettled();
 
 			const rows = harness.rows();
@@ -253,11 +208,11 @@ describe('adversary shadow mode', () => {
 	}
 
 	it('never blocks the human dialog on the adversary', async () => {
-		// The adversary hangs forever. The prompt must still be raised,
-		// answered, and returned — the row simply stays `pending`.
+		// The adversary hangs forever. `observe` must still return a handle
+		// synchronously and the label must attach — the row simply stays
+		// `pending`.
 		const harness = await makeHarness({ complete: () => new Promise<string>(() => {}) });
-		const result = await driveAndResolve(harness, 'allow-always');
-		expect(result).toEqual({ kind: 'approve-once' });
+		harness.observe()?.recordHuman('allow-always');
 		expect(harness.rows()[0]).toMatchObject({
 			status: 'pending',
 			verdict: null,
@@ -266,14 +221,12 @@ describe('adversary shadow mode', () => {
 	});
 
 	it('leaves no human label when the prompt is cancelled', async () => {
-		// A cancelled prompt is NOT a denial (the SDK is told
-		// `user-not-available`), so it must not be scored as one. The row keeps
-		// `humanDecision: null`, which the scorer excludes.
+		// A cancelled prompt is NOT a denial, so it must not be scored as one.
+		// The row keeps `humanDecision: null`, which the scorer excludes. The
+		// recorder never learns the dialog was cancelled — `recordHuman` is
+		// simply not called, which is the same contract the adapter followed.
 		const harness = await makeHarness();
-		const resultPromise = harness.onPermissionRequest(URL_REQUEST);
-		const view = await waitForPrompt(harness);
-		harness.interactive.cancel(view.requestId, 'turn_aborted');
-		expect(await resultPromise).toEqual({ kind: 'user-not-available' });
+		harness.observe();
 		await harness.waitForSettled();
 
 		const rows = harness.rows();
@@ -292,9 +245,9 @@ describe('adversary shadow mode', () => {
 
 	it('memoizes identical requests to one provider call', async () => {
 		const harness = await makeHarness();
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled(1);
-		await driveAndResolve(harness, 'deny');
+		harness.observe()?.recordHuman('deny');
 		await harness.waitForSettled(2);
 
 		expect(harness.completeCalls()).toBe(1);
@@ -314,10 +267,9 @@ describe('adversary shadow mode', () => {
 		// leases come and go. The identical request judged before and after a
 		// lease exists is NOT the same question.
 		const harness = await makeHarness();
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled(1);
-		harness.setWorkspaceRoots(['/tmp', '/tmp/worktree-a']);
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe({ workspaceRoots: ['/tmp', '/tmp/worktree-a'] })?.recordHuman('allow-once');
 		await harness.waitForSettled(2);
 
 		expect(harness.completeCalls()).toBe(2);
@@ -333,9 +285,9 @@ describe('adversary shadow mode', () => {
 				return '{"verdict":"allow","rationale":"Fine."}';
 			}
 		});
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled(1);
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled(2);
 
 		expect(harness.completeCalls()).toBe(2);
@@ -343,17 +295,16 @@ describe('adversary shadow mode', () => {
 	});
 
 	it('caps concurrent adversary calls and records the skips visibly', async () => {
-		// In an `auto-approve` conversation no dialog paces the requests, so an
-		// unbounded fan-out would open one completion per tool call. Over the
-		// cap the row is written as an explicit skip rather than dropped: the
-		// hole it leaves is not random (it lands on the busiest moments), so it
-		// has to be visible in the data.
+		// With no dialog pacing the requests (auto-approve), an unbounded
+		// fan-out would open one completion per tool call. Over the cap the row
+		// is written as an explicit skip rather than dropped: the hole it leaves
+		// is not random (it lands on the busiest moments), so it has to be
+		// visible in the data.
 		process.env.ADVERSARY_SHADOW_MAX_IN_FLIGHT = '1';
 		// A holder rather than a `let`: TypeScript narrows a `let` assigned only
 		// inside a callback to `never` at the call site below.
 		const gate = { release: () => {} };
 		const harness = await makeHarness({
-			approvalMode: 'auto-approve',
 			complete: () =>
 				new Promise<string>((resolve) => {
 					gate.release = () =>
@@ -362,17 +313,15 @@ describe('adversary shadow mode', () => {
 		});
 
 		// First request occupies the only slot and stays in flight.
-		expect(await harness.onPermissionRequest(URL_REQUEST)).toEqual({ kind: 'approve-once' });
+		harness.observe()?.recordHuman('allow-once');
 		// Second request has different facts (so it cannot be memoized) and
 		// finds the cap full.
-		expect(
-			await harness.onPermissionRequest({
-				kind: 'url',
-				toolName: 'web_fetch',
-				url: 'https://example.com/other',
+		harness
+			.observe({
+				scopeKey: 'https://example.com/other',
 				args: { url: 'https://example.com/other' }
 			})
-		).toEqual({ kind: 'approve-once' });
+			?.recordHuman('allow-once');
 		await harness.waitForSettled(1);
 
 		const skipped = harness.rows().filter((r) => r.status === 'error');
@@ -392,7 +341,7 @@ describe('adversary shadow mode', () => {
 
 	it('is inert unless a model is configured', async () => {
 		const harness = await makeHarness({ disabled: true });
-		expect(await driveAndResolve(harness, 'allow-once')).toEqual({ kind: 'approve-once' });
+		expect(harness.observe()).toBeNull();
 		expect(harness.rows()).toHaveLength(0);
 		expect(harness.completeCalls()).toBe(0);
 	});
@@ -402,7 +351,7 @@ describe('adversary shadow mode', () => {
 		// conversation override -> user default (seeded onto the conversation at
 		// creation) -> server default.
 		const harness = await makeHarness({ conversationModel: 'per-conversation-reviewer' });
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled();
 		expect(harness.rows()[0]?.adversaryModel).toBe('per-conversation-reviewer');
 	});
@@ -414,7 +363,7 @@ describe('adversary shadow mode', () => {
 			disabled: true,
 			conversationModel: 'user-chosen-reviewer'
 		});
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled();
 		const rows = harness.rows();
 		expect(rows).toHaveLength(1);
@@ -425,145 +374,65 @@ describe('adversary shadow mode', () => {
 		// Shared weights means shared blind spots: the run would measure
 		// self-agreement, not oversight.
 		const harness = await makeHarness({ sameModel: true });
-		expect(await driveAndResolve(harness, 'allow-once')).toEqual({ kind: 'approve-once' });
+		expect(harness.observe()).toBeNull();
 		expect(harness.rows()).toHaveLength(0);
 		expect(harness.completeCalls()).toBe(0);
 	});
 
-	it('runs on the conversation backend with no second endpoint configured', async () => {
-		// The regression this whole decoupling exists to prevent. The shadow used
-		// to hard-require OPENAI_COMPATIBLE_BASE_URL, which confined every
-		// measurement to deployments that had stood up a second endpoint. The
-		// harness deliberately leaves it unset.
-		expect(process.env.OPENAI_COMPATIBLE_BASE_URL).toBeUndefined();
+	it('defaults the backend label to the conversation backend when unset', async () => {
+		// The label is what groups rows into experiments, so it has to resolve
+		// even when the operator configured no backend at all: fall back to the
+		// conversation's own backend label, then to `pi`.
 		const harness = await makeHarness();
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled();
 		const rows = harness.rows();
 		expect(rows).toHaveLength(1);
-		expect(rows[0]?.adversaryBackend).toBe(AGENT_BACKEND);
+		expect(rows[0]?.experimentKey).toBe(
+			adversaryExperimentKey({ backend: AGENT_BACKEND, model: ADVERSARY_MODEL, maxArgChars: 4000 })
+		);
 	});
 
 	it('still runs when the model name matches but the backend differs', async () => {
-		// The old guard compared bare model ids across two namespaces, so a
-		// coincidental collision (a `gpt-5` on each side) silently disabled the
-		// shadow even though the weights were unrelated.
+		// The guard compares a model id within one backend's namespace, so a
+		// coincidental name collision across labels (a `gpt-5` on each side)
+		// must not silently disable the shadow — the weights are unrelated.
 		const harness = await makeHarness({
 			sameModel: true,
 			conversationBackend: 'openai-compatible'
 		});
-		await driveAndResolve(harness, 'allow-once');
+		harness.observe()?.recordHuman('allow-once');
 		await harness.waitForSettled();
 		const rows = harness.rows();
 		expect(rows).toHaveLength(1);
-		expect(rows[0]?.adversaryBackend).toBe('openai-compatible');
+		expect(rows[0]?.experimentKey).toBe(
+			adversaryExperimentKey({
+				backend: 'openai-compatible',
+				model: AGENT_MODEL,
+				maxArgChars: 4000
+			})
+		);
 	});
 
 	it('records the backend so rows from two backends cannot pool', async () => {
 		// The same model NAME served by two backends is not the same experiment:
 		// weights, system-prompt handling and structured-output support all
 		// differ, so `experiment_key` has to separate them.
-		const a = await makeHarness({ conversationBackend: 'copilot' });
-		await driveAndResolve(a, 'allow-once');
+		const a = await makeHarness();
+		a.observe()?.recordHuman('allow-once');
 		await a.waitForSettled();
 		const b = await makeHarness({ conversationBackend: 'openai-compatible' });
-		await driveAndResolve(b, 'allow-once');
+		b.observe()?.recordHuman('allow-once');
 		await b.waitForSettled();
 		expect(a.rows()[0]?.experimentKey).not.toBe(b.rows()[0]?.experimentKey);
 	});
 
-	it('dispatches through the real provider registry when no seam is injected', async () => {
-		// Guards the dynamic import in `completeVia`. A static import there
-		// creates the cycle providers/index → copilot-provider →
-		// interactive-adapter → shadow, which leaves the registry
-		// half-initialized and makes `getProvider` return undefined — a failure
-		// the injected test seam would hide completely.
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://reviewer.invalid/v1';
-		const fetchMock = vi.fn(async () =>
-			Response.json({
-				choices: [{ message: { content: '{"verdict":"deny","rationale":"Reaches outside."}' } }]
-			})
-		);
-		vi.stubGlobal('fetch', fetchMock);
-		try {
-			const harness = await makeHarness({
-				realDispatch: true,
-				conversationBackend: 'openai-compatible'
-			});
-			await driveAndResolve(harness, 'allow-once');
-			await harness.waitForSettled();
-			const rows = harness.rows();
-			expect(rows).toHaveLength(1);
-			expect(rows[0]?.status).toBe('verdict');
-			expect(rows[0]?.verdict).toBe('deny');
-			expect(fetchMock).toHaveBeenCalledTimes(1);
-		} finally {
-			vi.unstubAllGlobals();
-		}
-	});
-
-	it('forwards the per-user auth token to the reviewer backend', async () => {
-		// `copilot-provider.getClient` caches one CopilotClient per user, first
-		// caller wins, and applies `gitHubToken` only at construction. A
-		// token-less side call that ran before the user's first Copilot
-		// conversation would cache a client built from the machine's logged-in
-		// identity, and every later REAL turn for that user would silently
-		// inherit it — a no-authority experiment changing who real work runs as.
-		// Reachable in normal use: an openai-compatible conversation whose
-		// reviewer backend is copilot, which the settings picker offers.
-		const tokens = await import('../src/lib/server/db/repos/tokens');
-		const { getProvider } = await import('../src/lib/server/providers');
-		// Token storage is encrypted at rest; `setupLocalEnv` does not provide a
-		// key, so supply one before the harness resets cached config.
-		process.env.ENCRYPTION_KEY = Buffer.alloc(32, 3).toString('base64');
-		const harness = await makeHarness({
-			realDispatch: true,
-			conversationBackend: 'copilot'
-		});
-		tokens.setGithubToken(harness.user.id, 'gho_side_call_token');
-
-		const copilot = getProvider('copilot');
-		const original = copilot.complete!;
-		let seenToken: string | undefined | null = null;
-		copilot.complete = async (req) => {
-			seenToken = req.providerAuthToken;
-			return '{"verdict":"allow","rationale":"ok"}';
-		};
-		try {
-			await driveAndResolve(harness, 'allow-once');
-			await harness.waitForSettled();
-		} finally {
-			copilot.complete = original;
-		}
-		expect(seenToken).toBe('gho_side_call_token');
-	});
-
-	it('refuses an explicitly configured backend that is not a known provider', async () => {
-		// `normalizeBackendProvider` silently coerces an unknown id to the
-		// default, which would mislabel every row with a backend nobody chose.
-		const harness = await makeHarness({ conversationBackend: 'not-a-provider' });
-		expect(await driveAndResolve(harness, 'allow-once')).toEqual({ kind: 'approve-once' });
-		expect(harness.rows()).toHaveLength(0);
-		expect(harness.completeCalls()).toBe(0);
-	});
-
 	it('survives a failing shadow insert without touching the decision path', async () => {
-		// Foreign key violation: the conversation row does not exist.
+		// Foreign key violation: the conversation row does not exist. `observe`
+		// must swallow it and return null rather than throw — the measurement
+		// experiment can never break the permission path it is measuring.
 		const harness = await makeHarness({ brokenConversationId: true });
-		const resultPromise = harness.onPermissionRequest(URL_REQUEST);
-		for (let i = 0; i < 500; i++) {
-			const pending = harness.interactive.listForConversation('conversation-that-does-not-exist');
-			if (pending.length > 0) {
-				harness.interactive.resolve(
-					(pending[0] as { requestId: string }).requestId,
-					harness.user.id,
-					{ kind: 'permission', decision: 'allow-once' }
-				);
-				break;
-			}
-			await new Promise((r) => setTimeout(r, 1));
-		}
-		expect(await resultPromise).toEqual({ kind: 'approve-once' });
+		expect(harness.observe()).toBeNull();
 		expect(harness.completeCalls()).toBe(0);
 	});
 
@@ -572,8 +441,8 @@ describe('adversary shadow mode', () => {
 		// gate. Nobody is asked, so there is no human label and the scorer
 		// excludes them — they are collected anyway because the request cannot
 		// be recovered after the fact, and can be adjudicated later.
-		const harness = await makeHarness({ approvalMode: 'auto-approve' });
-		expect(await harness.onPermissionRequest(URL_REQUEST)).toEqual({ kind: 'approve-once' });
+		const harness = await makeHarness();
+		harness.observe({ resolutionSource: 'auto-approve' });
 		await harness.waitForSettled();
 
 		const rows = harness.rows();
@@ -601,25 +470,6 @@ describe('adversary shadow mode', () => {
 		});
 	});
 
-	it('records nothing in auto-deny conversations', async () => {
-		// `auto-deny` rejects before the hook, so there is nothing to observe:
-		// no human was asked and no action was permitted.
-		const harness = await makeHarness({ approvalMode: 'auto-deny' });
-		await harness.onPermissionRequest(URL_REQUEST);
-		expect(harness.rows()).toHaveLength(0);
-		expect(harness.completeCalls()).toBe(0);
-	});
-
-	it('does not shadow an auto-approve request that a grant already allowed', async () => {
-		// Only the approval MODE's allow is the veto population. A request a
-		// stored grant or the policy would have allowed anyway is not something
-		// a veto product would be gating, and counting it would pad the sample.
-		const harness = await makeHarness({ approvalMode: 'auto-approve', policy: 'allow-all' });
-		expect(await harness.onPermissionRequest(URL_REQUEST)).toEqual({ kind: 'approve-once' });
-		expect(harness.rows()).toHaveLength(0);
-		expect(harness.completeCalls()).toBe(0);
-	});
-
 	it('round-trips through the repo into the numbers the readout prints', async () => {
 		// Covers the exact data path `scripts/adversary-shadow-report.mjs` uses:
 		// repo read -> scoring, including stratification by (model, prompt
@@ -643,7 +493,6 @@ describe('adversary shadow mode', () => {
 				scopeKey: `cmd-${id}`,
 				argsHash: null,
 				adversaryModel: ADVERSARY_MODEL,
-				adversaryBackend: 'openai-compatible',
 				experimentKey: 'exp-1',
 				promptVersion: 1,
 				factsKey: `facts-${id}`,

@@ -5,11 +5,7 @@
  * extractor HTTP error. This is the layer that changes for provider quirks and
  * stream-format edge cases, independent of memory logic.
  */
-import {
-	fetchWithTimeout,
-	jsonRequestHeaders,
-	streamSseData
-} from '$lib/server/providers/provider-utils';
+import { fetchWithTimeout, jsonRequestHeaders, streamSseData } from '$lib/server/http';
 import {
 	redactEndpoint,
 	excerptResponseBody,

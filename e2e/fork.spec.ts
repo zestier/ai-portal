@@ -24,7 +24,7 @@ test('fork by editing a user message produces a new conversation with the edited
 	// Drive the first turn through the UI so the server captures the
 	// pre-snapshot (the POST /turns endpoint is what calls snapshot()).
 	await page.goto(`/conversations/${sourceId}`);
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('context seed');
 	await composer.press('Enter');
@@ -87,7 +87,7 @@ test('edit-fork while the source turn is running defers and prefills the new com
 	const sourceId = await createConversation(request, uniqueTitle('Busy Source'));
 
 	await page.goto(`/conversations/${sourceId}`);
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('first');
 	await composer.press('Enter');
@@ -126,15 +126,11 @@ test('edit-fork while the source turn is running defers and prefills the new com
 	// Navigating to the fork seeds the persisted draft into the composer so the
 	// user can press Send to start the turn themselves.
 	await page.goto(`/conversations/${newId}`);
-	await expect(page.getByPlaceholder(/Message GitHub Copilot/)).toHaveValue(
-		'first edited while busy'
-	);
+	await expect(page.getByPlaceholder(/Message…/)).toHaveValue('first edited while busy');
 
 	// And it survives a reload (the draft is persisted on the conversation row).
 	await page.reload();
-	await expect(page.getByPlaceholder(/Message GitHub Copilot/)).toHaveValue(
-		'first edited while busy'
-	);
+	await expect(page.getByPlaceholder(/Message…/)).toHaveValue('first edited while busy');
 });
 
 test('deferred edit-fork of a non-first message seeds the composer, then clears after Send', async ({
@@ -144,7 +140,7 @@ test('deferred edit-fork of a non-first message seeds the composer, then clears 
 	const sourceId = await createConversation(request, uniqueTitle('Busy Source Mid'));
 
 	await page.goto(`/conversations/${sourceId}`);
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('first');
 	await composer.press('Enter');
@@ -183,7 +179,7 @@ test('deferred edit-fork of a non-first message seeds the composer, then clears 
 	const newMsgs = await getConversation(request, newId);
 	expect((newMsgs.messages as unknown[]).length).toBeGreaterThan(0);
 
-	const forkComposer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const forkComposer = page.getByPlaceholder(/Message…/);
 	await page.goto(`/conversations/${newId}`);
 	await expect(forkComposer).toHaveValue('second edited while busy');
 
@@ -202,7 +198,7 @@ test('retry from an assistant message clones up to it without a new user prompt'
 	const sourceId = await createConversation(request, uniqueTitle('Source'));
 
 	await page.goto(`/conversations/${sourceId}`);
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('first');
 	await composer.press('Enter');
@@ -237,7 +233,7 @@ test('inline edit replaces a user message, truncates later messages, and reruns 
 	const sourceId = await createConversation(request, uniqueTitle('Inline Source'));
 
 	await page.goto(`/conversations/${sourceId}`);
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('first prompt');
 	await composer.press('Enter');
@@ -279,7 +275,7 @@ test('regenerate an assistant message re-runs in place from the unchanged user p
 	const sourceId = await createConversation(request, uniqueTitle('Regenerate Source'));
 
 	await page.goto(`/conversations/${sourceId}`);
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('first prompt');
 	await composer.press('Enter');

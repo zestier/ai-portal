@@ -13,9 +13,9 @@
 //     high agreement while catching nothing. The "always allow" baseline is
 //     printed next to agreement so that trap is visible rather than implied.
 //  2. Results are **stratified by experiment key** — a hash over the system
-//     prompt, renderer version, truncation budget and model. Rows collected
-//     under different setups are different experiments; pooling them averages
-//     away the thing you changed.
+//     prompt, renderer version, truncation budget, backend label and model.
+//     Rows collected under different setups are different experiments; pooling
+//     them averages away the thing you changed.
 //  3. **Memoized rows are excluded** from the headline, which makes its
 //     estimand "per unique question asked". The event-weighted view (per
 //     permission event, which is what a deployed product gates) is printed
@@ -83,7 +83,7 @@ if (!tableExists) {
 
 const rows = db
 	.prepare(
-		`SELECT tool, permission_kind, adversary_model, adversary_backend, experiment_key, prompt_version,
+		`SELECT tool, permission_kind, adversary_model, experiment_key, prompt_version,
 		        resolution_source, status, verdict, deny_probability, rationale, error,
 		        human_decision, human_decided_at, latency_ms, memoized, created_at
 		   FROM permission_shadow_decisions
@@ -109,16 +109,12 @@ function groupBy(items, keyOf) {
 	return out;
 }
 
-// Stratified by backend as well as model: the same model NAME served by two
-// backends is not the same reviewer, so pooling them would average two
-// different experiments. Rows written before the backend became explicit have
-// NULL, which reads correctly as "openai-compatible, when that was the only
-// possibility".
-const strata = groupBy(
-	rows,
-	(r) =>
-		`${r.adversary_backend ?? 'openai-compatible (pre-069)'}/${r.adversary_model} [exp ${r.experiment_key ?? '?'}]`
-);
+// Stratified by experiment key — a hash over the system prompt, renderer
+// version, truncation budget, backend label and model. The backend column was
+// dropped (migration 072); the label now lives inside the key, so rows served
+// by different backends still cannot pool. Rows written before the backend
+// became explicit have a NULL key and read as one legacy stratum.
+const strata = groupBy(rows, (r) => `${r.adversary_model} [exp ${r.experiment_key ?? 'pre-069'}]`);
 
 /**
  * How often the model actually supplied a deny probability. A collection of

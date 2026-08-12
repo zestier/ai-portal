@@ -39,23 +39,9 @@ const baseCfg: AppConfig = {
 	ALLOWED_GITHUB_LOGINS: ['alice', 'bob'],
 	REDEPLOY_ADMIN_GITHUB_LOGINS: ['alice'],
 	SHARED_SECRET: undefined,
-	COPILOT_GITHUB_TOKEN: undefined,
-	COPILOT_CONTEXT_TIER: 'default',
-	COPILOT_SDK_CALL_TIMEOUT_MS: 60_000,
-	DEFAULT_BACKEND_PROVIDER: 'copilot',
-	ZAP_PROVIDERS_JSON: [],
 	DEFAULT_MODEL: 'claude-sonnet-4.5',
-	CLAUDE_AGENT_MAX_TURNS: 50,
 	OPENAI_COMPATIBLE_BASE_URL: undefined,
 	OPENAI_COMPATIBLE_API_KEY: undefined,
-	OPENAI_COMPATIBLE_MAX_TOOL_ITERATIONS: 8,
-	OPENAI_COMPATIBLE_CONTEXT_RESTORE_MESSAGES: 20,
-	OPENAI_COMPATIBLE_TEMPERATURE: undefined,
-	OPENAI_COMPATIBLE_TOP_P: undefined,
-	OPENAI_COMPATIBLE_PRESENCE_PENALTY: undefined,
-	OPENAI_COMPATIBLE_FREQUENCY_PENALTY: undefined,
-	LMSTUDIO_BASE_URL: 'http://127.0.0.1:1234',
-	LMSTUDIO_API_KEY: undefined,
 	MEMORY_EXTRACTOR_BACKEND: 'heuristic',
 	MEMORY_EXTRACTOR_MODEL: undefined,
 	MEMORY_EXTRACTOR_TIMEOUT_MS: 20_000,
@@ -68,7 +54,6 @@ const baseCfg: AppConfig = {
 	MEMORY_OPEN_LOOP_MAX_IDLE_TURNS: 6,
 	MEMORY_LOG_RETENTION_MAX_EVENTS: 5000,
 	MEMORY_MAINTENANCE_INTERVAL_MIN: 720,
-	MEMORY_PRIME_MAIN_MODEL: true,
 	ADVERSARY_SHADOW_TIMEOUT_MS: 20_000,
 	ADVERSARY_SHADOW_MAX_ARG_CHARS: 4_000,
 	ADVERSARY_SHADOW_MAX_IN_FLIGHT: 4,
@@ -76,7 +61,6 @@ const baseCfg: AppConfig = {
 	MAX_CONCURRENT_SESSIONS: 4,
 	TURN_ABORT_FINALIZE_DEADLINE_MS: 5_000,
 	ENABLE_REDEPLOY: true,
-	COPILOT_STUB: false,
 	PI_STUB: false,
 	PI_MODEL: 'anthropic/claude-sonnet-4-5',
 	DB_MIGRATIONS_DIR: undefined
@@ -144,13 +128,13 @@ describe('redeploy log scrubbing', () => {
 	});
 
 	it('redacts short and broadly-named secrets', () => {
-		const scrubbed = scrubRedeployLog('COPILOT_GITHUB_TOKEN=ab12 SHARED_SECRET=wxyz', {
-			COPILOT_GITHUB_TOKEN: 'ab12',
+		const scrubbed = scrubRedeployLog('OPENAI_COMPATIBLE_API_KEY=ab12 SHARED_SECRET=wxyz', {
+			OPENAI_COMPATIBLE_API_KEY: 'ab12',
 			SHARED_SECRET: 'wxyz'
 		});
 		expect(scrubbed).not.toContain('ab12');
 		expect(scrubbed).not.toContain('wxyz');
-		expect(scrubbed).toContain('[redacted:COPILOT_GITHUB_TOKEN]');
+		expect(scrubbed).toContain('[redacted:OPENAI_COMPATIBLE_API_KEY]');
 		expect(scrubbed).toContain('[redacted:SHARED_SECRET]');
 	});
 

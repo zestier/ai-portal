@@ -10,12 +10,8 @@ import {
 } from '../global-singleton';
 import { hasPending, expireConversation } from './interactive-requests';
 import { log } from '../log';
-import {
-	getDefaultProviderId,
-	open,
-	type ProviderOpenOptions,
-	type ProviderSession
-} from '../providers';
+import { openPiSession } from '../pi';
+import type { ProviderOpenOptions, ProviderSession } from '../pi/session-contract';
 
 interface Entry {
 	session: ProviderSession;
@@ -112,7 +108,7 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 	const pending = inflight.get(opts.conversationId);
 	if (pending) return pending;
 
-	const requestedProvider = opts.provider ?? getDefaultProviderId();
+	const requestedProvider = opts.provider ?? 'pi';
 	const requestedProviderSessionId = opts.providerSessionId ?? opts.conversationId;
 
 	// Sessions to tear down once the new open is in flight. Map mutations
@@ -127,7 +123,7 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 
 	const existing = sessions.get(opts.conversationId);
 	if (existing) {
-		const cachedProvider = existing.session.provider ?? getDefaultProviderId();
+		const cachedProvider = existing.session.provider ?? 'pi';
 		const cachedProviderSessionId =
 			existing.session.providerSessionId ?? existing.session.conversationId;
 		if (
@@ -206,7 +202,7 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 			for (const { session, context } of toDispose) {
 				await disposeSession(session, context);
 			}
-			const session = await open(opts);
+			const session = await openPiSession(opts);
 			sessions.set(opts.conversationId, { session, lastUsed: Date.now() });
 			return session;
 		} finally {

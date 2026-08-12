@@ -1,7 +1,7 @@
 # 05 — Auth and security
 
 This portal grants its users the ability to run arbitrary code on the host
-(the Copilot agent can edit files and execute shell commands). Treat it
+(the agent can edit files and execute shell commands). Treat it
 accordingly: it is **never** safe to expose unauthenticated.
 
 ## Threat model
@@ -64,9 +64,8 @@ Standard GitHub OAuth App, web flow.
 3. `/auth/callback` exchanges code → access token → fetches `/user`.
 4. If `login` is in `ALLOWED_GITHUB_LOGINS`, mint a signed session cookie
    (JWT, 30-day expiry, `HttpOnly; Secure; SameSite=Lax`); else 403.
-5. The GitHub access token is stored encrypted in SQLite (AES-256-GCM with
-   `ENCRYPTION_KEY`) and is **separate** from the Copilot subscription
-   token — see below.
+5. The GitHub access token is used only to fetch `/user` and is **not**
+   persisted — see [Model credentials](#model-credentials) below.
 
 ### `shared-secret`
 
@@ -110,50 +109,27 @@ front.
 - The session cookie is `SameSite=Lax`, which blocks cross-site `POST` from
   classic forms and cross-site credentialed `fetch`.
 
-## Copilot token handling
+## Model credentials
 
-The Copilot subscription auth used by the SDK is distinct from the portal's
-login token.
+The portal stores **no** model-backend credential. The pi SDK resolves its
+own auth when a session opens — env-provided keys for the configured
+`PI_MODEL`'s provider, or whatever credential the SDK reads from the host.
+The GitHub OAuth access token is not persisted: with `scope=read:user` (set
+in `src/lib/server/auth/github.ts`) it grants no model access, and it is
+discarded after login.
 
-Two strategies, configurable per user:
+The `tokens` table (`getGithubToken`/`setGithubToken` in
+`src/lib/server/db/repos/tokens.ts`) remains as a generic encrypted key
+store, but nothing writes to it in the current code.
 
-1. **Pre-run `copilot auth login`** on the host — the SDK picks up the
-   stored CLI credentials. Recommended for single-user home installs and
-   the path that works out of the box.
-2. **BYOK** — user pastes an OpenAI/Anthropic key in `/settings`; stored
-   encrypted; forwarded as the appropriate env var. Limits model selection
-   accordingly.
-
-The portal stores **no** GitHub OAuth access token by default. With
-`scope=read:user` (set in `src/lib/server/auth/github.ts`) the token has
-no Copilot entitlement, so persisting it would just keep an
-encrypted-but-useless credential at rest. The SDK falls back to whatever
-the host's `copilot auth login` produced. If you've widened the OAuth
-scope and want the OAuth token forwarded to the SDK, re-add a
-`setGithubToken(user.id, token)` call in `src/routes/auth/callback/+server.ts`
-— the read paths in the bridge plumbing still consume it. The
-`getGithubToken`/`setGithubToken` helpers in `src/lib/server/db/repos/tokens.ts`
-remain available for that, and for BYOK key storage which uses the same
-table.
-
-The fallback chain the SDK sees, in order, is:
-`tokens.getGithubToken(userId)` → `COPILOT_GITHUB_TOKEN` env → undefined
-(host CLI creds via `useLoggedInUser`).
-
-Whatever token the SDK ends up using is never logged and never echoed
+Whatever credential the SDK ends up using is never logged and never echoed
 back to the client.
-
-The portal keeps one Copilot SDK subprocess per portal user (see
-`src/lib/server/copilot/copilot-provider.ts`). When `ALLOWED_GITHUB_LOGINS` lists
-multiple users, each gets their own client so Copilot API calls are
-attributed to the right GitHub identity instead of whoever logged in
-first after process boot.
 
 ## Working-directory containment
 
 - The authoritative workdir is the persisted `conversations.workdir`
   row. New conversations default to `PROJECT_ROOT` (env, defaulting to
-  the server process's cwd), but can override it; the Copilot SDK and
+  the server process's cwd), but can override it; the pi agent and
   the conversation-scoped file/git routes both resolve from that same
   row. Legacy stored paths under `DATA_DIR/workspaces/<id>/` still fold
   back to `PROJECT_ROOT` via `src/lib/server/workdir.ts`.
@@ -183,7 +159,7 @@ first after process boot.
   root's realpath; symlinks that resolve outside it are rejected, and
   `git` is spawned with `shell: false`, hard timeouts, and output
   size caps.
-- The Copilot CLI itself does additional containment within that
+- The agent session itself does additional containment within that
   directory; we don't try to second-guess it.
 
 ## Tool permissions
@@ -275,10 +251,9 @@ Constraints that hold even in shadow:
   otherwise inject lines into the section labelled trustworthy. Agent-authored
   argument values go in an explicitly-labelled untrusted block whose delimiters
   are stripped from both blocks, so they cannot be forged from inside.
-- **No tools for the reviewer**, or the permission problem recurses. This holds
-  on every backend: the Copilot path opens an ephemeral session with no portal
-  tools, a scratch working directory, and a permission callback that refuses
-  everything, so the runtime's own built-in tools stay out of reach too.
+- **No tools for the reviewer**, or the permission problem recurses. The
+  reviewer runs as a side completion with no portal tools, and its results are
+  recorded for adjudication only — never surfaced to the agent.
 - **A different model from the agent.** Shared weights mean shared blind spots;
   the shadow refuses to run when the reviewer is the same model on the same
   backend. The comparison is backend-qualified because a bare model id is only

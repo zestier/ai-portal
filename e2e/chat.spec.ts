@@ -8,7 +8,7 @@ test('streamed assistant reply (stubbed) appears and persists across reloads', a
 	const id = await createConversation(request, uniqueTitle('E2E chat'));
 	await page.goto(`/conversations/${id}`);
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('hello world');
 	await composer.press('Enter');
@@ -27,7 +27,7 @@ test('a worktree fork failure is visible on the assistant message', async ({ pag
 	const id = await createConversation(request, uniqueTitle('E2E worktree fork failure'));
 	await page.goto(`/conversations/${id}`);
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.fill('fork this reply');
 	await composer.press('Enter');
 	await waitForAssistantMessage(request, id, /Stubbed reply to: fork this reply/);
@@ -54,7 +54,7 @@ test('setup indicator renders inside the assistant turn bubble', async ({ page, 
 	const id = await createConversation(request, uniqueTitle('E2E setup'));
 	await page.goto(`/conversations/${id}`);
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	// @trigger-slow-start makes the stub hold before its first delta, so the
 	// assistant turn sits in the "setting up" state long enough to assert on.
@@ -104,7 +104,7 @@ test('a failed turn start rolls back its optimistic user bubble (no ghost duplic
 		await route.continue();
 	});
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('ghost message');
 	await composer.press('Enter');
@@ -130,7 +130,7 @@ test('a failed turn start does not corrupt the previous assistant reply', async 
 	await page.goto(`/conversations/${id}`);
 
 	// First send succeeds and yields a completed assistant reply.
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	await composer.fill('first message');
 	await composer.press('Enter');
@@ -169,7 +169,7 @@ test('an armed follow-up auto-sends after the active turn finishes', async ({ pa
 	const id = await createConversation(request, uniqueTitle('E2E arm'));
 	await page.goto(`/conversations/${id}`);
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	await composer.click();
 	// @trigger-slow-start holds the stub before its first delta, giving us a
 	// window to arm a follow-up while the first turn is still streaming.

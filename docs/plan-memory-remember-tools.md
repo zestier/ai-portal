@@ -4,7 +4,7 @@
 
 The memory extractor stores durable memory by calling a single `memory_propose_patch`
 tool whose `patch.facts[]` is a 5-way discriminated union on `kind`. Weak/local
-backends (LM Studio etc.) struggle to emit the correct structure, loop in
+models struggle to emit the correct structure, loop in
 unrecoverable error states, and the all-or-nothing batch parse discards a whole
 batch when one item is malformed. Earlier work (flatten schema, targeted errors,
 kind-as-key repair) treated the symptom. This plan removes the failure mode by
@@ -81,7 +81,7 @@ distinguished; per-issue hint; echo received; staged_totals on errors too.
 
 ## Constrained decoding (#1)
 
-Standard OpenAI `tools` (works in LM Studio). Flat per-tool schemas are the
+Standard OpenAI `tools`. Flat per-tool schemas are the
 load-bearing robustness win; grammar enforcement is a bonus we don't depend on.
 Add MEMORY_EXTRACTOR_TOOL_CHOICE (auto|required) + optional guided-param
 pass-through.

@@ -63,11 +63,10 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress }) =>
 		avatarUrl: profile.avatar_url
 	});
 	// We intentionally do NOT persist the OAuth access token. With the
-	// default scope=read:user it has no Copilot entitlement and the SDK
-	// falls back to host CLI creds anyway, so storing it would just keep
-	// an encrypted-but-useless credential at rest. Operators who widen
-	// the scope and want to forward the token to the SDK can plumb their
-	// own setGithubToken() call here.
+	// default scope=read:user it grants no model-backend access and the pi
+	// SDK resolves its own credentials at session open, so storing it would
+	// just keep an encrypted-but-useless credential at rest. The token is
+	// discarded after login.
 	issue(cookies, user.id, url.protocol === 'https:');
 	audit({
 		event_type: 'login',

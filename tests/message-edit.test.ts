@@ -22,7 +22,6 @@ describe('message-edit.inlineEditMessage', () => {
 		const { users, convs, messages, usage, edit, db } = await freshImports();
 		const u = users.ensureLocalUser();
 		const conv = convs.create(u.id, { title: 'src', workdir: '/tmp', model: null });
-		const originalProviderSessionId = conv.providerSessionId;
 
 		const u1 = messages.append(conv.id, { role: 'user', content: 'original' });
 		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply 1' });
@@ -64,7 +63,6 @@ describe('message-edit.inlineEditMessage', () => {
 		});
 
 		expect(result.userMessage).toMatchObject({ id: u1.id, content: 'edited', role: 'user' });
-		expect(result.conversation.providerSessionId).not.toBe(originalProviderSessionId);
 		expect(messages.listByConversation(conv.id)).toMatchObject([
 			{ id: u1.id, role: 'user', content: 'edited' }
 		]);
@@ -316,7 +314,6 @@ describe('message-edit.regenerateFromAssistant', () => {
 		const { users, convs, messages, usage, edit, db } = await freshImports();
 		const u = users.ensureLocalUser();
 		const conv = convs.create(u.id, { title: 'src', workdir: '/tmp', model: null });
-		const originalProviderSessionId = conv.providerSessionId;
 
 		const u1 = messages.append(conv.id, { role: 'user', content: 'prompt' });
 		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply 1' });
@@ -354,7 +351,6 @@ describe('message-edit.regenerateFromAssistant', () => {
 		// the only remaining message; the assistant reply and trailing user
 		// message are gone.
 		expect(result.userMessage).toMatchObject({ id: u1.id, content: 'prompt', role: 'user' });
-		expect(result.conversation.providerSessionId).not.toBe(originalProviderSessionId);
 		expect(messages.listByConversation(conv.id)).toMatchObject([
 			{ id: u1.id, role: 'user', content: 'prompt' }
 		]);

@@ -55,8 +55,7 @@ describe('turns POST idempotency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		let turnSeq = 0;
@@ -97,8 +96,7 @@ describe('turns POST idempotency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		startTurnMock.mockResolvedValue({ id: 'turn-1' });
@@ -118,8 +116,7 @@ describe('turns POST idempotency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		let turnSeq = 0;
@@ -141,8 +138,7 @@ describe('turns POST idempotency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		let turnSeq = 0;
@@ -161,8 +157,7 @@ describe('turns POST idempotency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		// The first request returns once the turn is started (the returned turn
@@ -188,8 +183,7 @@ describe('turns POST idempotency', () => {
 		const conv = convs.create(u.id, {
 			title: 'c',
 			workdir: '/tmp',
-			model: 'gpt-4',
-			provider: 'copilot'
+			model: 'gpt-4'
 		});
 
 		// Park the first request inside startTurn (before the idempotency row is

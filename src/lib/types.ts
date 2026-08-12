@@ -21,7 +21,6 @@ export interface Conversation {
 	userId: string;
 	title: string;
 	workdir: string;
-	provider: ProviderInstanceId;
 	model: string | null;
 	/**
 	 * Agent mode for this conversation. Mirrors the SDK's `SessionMode`
@@ -40,8 +39,8 @@ export interface Conversation {
 	mode: SessionMode;
 	/**
 	 * Optional portal-managed durable memory profile. When enabled, the
-	 * server starts each request from a fresh provider context assembled
-	 * from typed memory plus memory tools.
+	 * server starts each request from fresh context assembled from typed
+	 * memory plus memory tools.
 	 */
 	memoryMode: MemoryMode;
 	/**
@@ -50,39 +49,18 @@ export interface Conversation {
 	 */
 	memoryExtractorModel: string | null;
 	/**
-	 * Optional per-conversation override for the memory extractor backend.
-	 * Null means "use the server default backend" (env `MEMORY_EXTRACTOR_BACKEND`).
-	 * Seeded from the user's default at creation; existing rows stay NULL.
-	 */
-	memoryExtractorBackend: MemoryExtractorBackend | null;
-	/**
 	 * Optional per-conversation override for the Phase 0 adversary shadow's
 	 * reviewer model. NULL means "use the server default"
 	 * (env `ADVERSARY_SHADOW_MODEL`); unset there too means the shadow is off.
-	 *
-	 * Seeded from the user's default at creation and NOT re-read afterwards,
-	 * exactly like `memoryExtractorModel`: changing a user default never
-	 * retroactively alters existing conversations, and clearing this column is
-	 * a real "stop reviewing this conversation" rather than a silent
-	 * re-inherit. That matters here — the reviewer is sent tool arguments, so
+	 * Clearing this column is a real "stop reviewing this conversation" rather
+	 * than a silent re-inherit — the reviewer is sent tool arguments, so
 	 * per-conversation opt-out has to be reachable.
 	 *
 	 * Per-conversation rather than global because the shadow refuses to run when
-	 * this equals the conversation's agent model on the same backend — a single
-	 * global value is therefore guaranteed to silently disable itself for some
-	 * conversations.
+	 * this equals the conversation's agent model — a single global value is
+	 * therefore guaranteed to silently disable itself for some conversations.
 	 */
 	adversaryModel: string | null;
-	/**
-	 * Optional per-conversation override for the backend serving the reviewer.
-	 * NULL means "use `ADVERSARY_SHADOW_BACKEND`, else this conversation's own
-	 * backend" — the fallback that lets a single-backend deployment run the
-	 * shadow at all.
-	 *
-	 * Chosen independently of `adversaryModel` on purpose: reviewer independence
-	 * is a property of the model's weights, not of which endpoint serves them.
-	 */
-	adversaryBackend: string | null;
 	/**
 	 * Explicit opt-in for user-scoped global memory tools in this conversation.
 	 * Session memory remains per-conversation even when this is false.
@@ -96,7 +74,7 @@ export interface Conversation {
 	/**
 	 * Portal tool groups the user has disabled for this conversation. Empty =
 	 * all groups enabled (today's behaviour). Ids come from PORTAL_TOOL_GROUPS
-	 * in `$lib/tools/groups`; providers drop the matching tools when assembling
+	 * in `$lib/tools/groups`; the runtime drops the matching tools when assembling
 	 * the session's portal tools, and a change forces a session recreate.
 	 */
 	disabledToolGroups: PortalToolGroupId[];
@@ -107,8 +85,6 @@ export interface Conversation {
 	forkedFromConversationId: string | null;
 	/** The message in the source conversation whose edit produced this fork. */
 	forkedFromMessageId: string | null;
-	/** Backend runtime session id. May rotate when a conversation is destructively rewritten. */
-	providerSessionId: string;
 	/**
 	 * Pending composer draft seeded into the chat input on load. Set when an
 	 * edit-fork is created while the source has a running turn (the fork's
@@ -321,7 +297,7 @@ export interface ChatPromptTemplate {
 	/**
 	 * Optional model override applied when this template creates its
 	 * conversation. `null` means use the user's default model. A stale id (no
-	 * longer offered by the provider) is passed through unchanged.
+	 * longer offered by the runtime) is passed through unchanged.
 	 */
 	model: string | null;
 	/**
@@ -369,11 +345,11 @@ export function normalizeSessionMode(raw: string | null | undefined): SessionMod
  *
  *   - `ask` (default): raise the permission dialog and wait for the human.
  *   - `auto-approve`: settle every prompt-worthy request as an approval (an
- *     `auto-allow` audit row is still written). Mirrored to providers that
- *     support it so the model knows it runs less supervised.
+ *     `auto-allow` audit row is still written). Mirrored into the runtime so
+ *     the model knows it runs less supervised.
  *   - `auto-deny`: reject prompt-worthy requests with actionable feedback
  *     instead of blocking on a dialog the user may never see. Pure portal-side
- *     logic, so it works for every provider.
+ *     logic, so it works for every runtime.
  *
  * `request_permission_grant` and a valid `force_retry_tool` (one-shot token
  * from a denial) always reach a human regardless of this setting.
@@ -414,24 +390,6 @@ export function normalizeMemoryExtractorBackend(
 	return MEMORY_EXTRACTOR_BACKEND_IDS.includes(raw as MemoryExtractorBackend)
 		? (raw as MemoryExtractorBackend)
 		: null;
-}
-
-// Context window tier for Copilot sessions. `long_context` is the large (e.g.
-// 1M-token) window — a premium, separately-billed tier that newer Copilot CLIs
-// gate behind an explicit opt-in; `default` is the standard (~200k) window.
-// Single source of truth shared by the config zod enum, the settings save
-// schema, the repo normalizer, and the UI selector so the set can't drift.
-export const CONTEXT_TIER_IDS = ['default', 'long_context'] as const;
-export type ContextTier = (typeof CONTEXT_TIER_IDS)[number];
-
-/**
- * Normalizes a stored/posted context tier. NULL/unknown means "use the server
- * default" (env `COPILOT_CONTEXT_TIER`), so a user who never picks a tier
- * inherits the instance-wide setting. An explicit `default` lets a user pin the
- * standard window even when the server default is `long_context`.
- */
-export function normalizeContextTier(raw: string | null | undefined): ContextTier | null {
-	return raw === 'default' || raw === 'long_context' ? raw : null;
 }
 
 // Selectable accent palettes. Orthogonal to the dark/light/system *mode*:
@@ -482,156 +440,6 @@ export function faviconDataUri(accent: ThemeAccent): string {
 		`<path fill="#fff" d="M8 12c0-2 1.5-3 3-3h10c1.5 0 3 1 3 3v6c0 4-4 6-8 6s-8-2-8-6v-6Zm5 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"/>` +
 		`</svg>`;
 	return `data:image/svg+xml,${encodeURIComponent(svg)}`;
-}
-
-export const BACKEND_PROVIDER_IDS = [
-	'copilot',
-	'claude-agent',
-	'openai-compatible',
-	'lm-studio'
-] as const;
-export type BackendProviderId = (typeof BACKEND_PROVIDER_IDS)[number];
-
-export function normalizeBackendProvider(raw: string | null | undefined): BackendProviderId {
-	return BACKEND_PROVIDER_IDS.includes(raw as BackendProviderId)
-		? (raw as BackendProviderId)
-		: 'copilot';
-}
-
-/**
- * Identity of a configured provider instance. Conversations, settings and the
- * session pool store THIS, not the provider type: several instances of the same
- * type (e.g. two claude-agent backends) can then coexist, each with its own
- * endpoint and model list. The built-in instances reuse their type id as the
- * instance id, so `'claude-agent'` names both a type and that type's env-fed
- * default instance — which is what keeps legacy env-only deployments working.
- */
-export type ProviderInstanceId = string;
-
-/**
- * A configured backend instance. `id` is the identity stored on conversations;
- * `type` selects the implementation. Built-in instances (id === type id) carry
- * no endpoint fields and read their config from the environment at call time.
- */
-export interface ProviderInstance {
-	id: ProviderInstanceId;
-	type: BackendProviderId;
-	/** Optional display label; falls back to the type's display name. */
-	label?: string | undefined;
-	/** Optional endpoint override. Built-ins fall back to their env vars. */
-	baseUrl?: string | undefined;
-	apiKey?: string | undefined;
-	/**
-	 * Optional pinned model list. When present it wins over `/models` discovery
-	 * (and over the empty manual list) for this instance.
-	 */
-	models?: string[] | undefined;
-}
-
-export type ProviderRuntimeFeature =
-	| 'modes'
-	| 'approvalMode'
-	| 'contextUsage'
-	| 'subagents'
-	| 'mcpInfoEvents'
-	| 'planExit'
-	| 'elicitation';
-
-export type ProviderRuntimeFeatureBehavior =
-	| 'supported'
-	| 'portal-enforced'
-	| 'no-op'
-	| 'unsupported';
-
-export interface ProviderRuntimeFeatureStatus {
-	supported: boolean;
-	behavior: ProviderRuntimeFeatureBehavior;
-	label: string;
-	description: string;
-}
-
-export type ProviderRuntimeFeatureMap = Record<
-	ProviderRuntimeFeature,
-	ProviderRuntimeFeatureStatus
->;
-
-export interface ProviderCapabilities {
-	authStatus: boolean;
-	modelList: boolean;
-	session: {
-		open: true;
-		/** Resume by conversation id when the provider has durable session state. */
-		resume: boolean;
-		dispose: true;
-		abort: boolean;
-	};
-	stream: {
-		send: true;
-		/**
-		 * Providers must normalize their native streaming protocol into PortalEvent.
-		 * turn-runner consumes only this contract and should not depend on SDK-
-		 * specific event shapes.
-		 */
-		contract: 'PortalEvent';
-	};
-	controls: {
-		/** Supports live runtime modes such as plan/autopilot. */
-		mode: boolean;
-		/**
-		 * Supports mirroring the `auto-approve` approval mode into the runtime.
-		 * `ask` and `auto-deny` are enforced portal-side and need no provider
-		 * support, so only `auto-approve` is gated on this.
-		 */
-		approvalMode: boolean;
-		/** Supports clearing provider/session-scoped approval grants. */
-		resetSessionApprovals: boolean;
-	};
-	/**
-	 * User-facing runtime capability contract. Providers must mark unsupported
-	 * runtime features explicitly so API clients and UI copy do not imply
-	 * unavailable behavior is active.
-	 */
-	features: ProviderRuntimeFeatureMap;
-	/**
-	 * Optional event families the portal can consume when present. Providers may
-	 * leave these false and still satisfy the core PortalEvent stream contract.
-	 */
-	optionalRuntimeFeatures: {
-		infiniteSessionMetadata: boolean;
-		permissionCallbacks: boolean;
-		userInputCallbacks: boolean;
-		elicitationCallbacks: boolean;
-		exitPlanModeCallbacks: boolean;
-		autoModeSwitchCallbacks: boolean;
-		contextWindowEvents: boolean;
-		contextCompactionEvents: boolean;
-		fileEditEvents: boolean;
-		reasoningEvents: boolean;
-		subagentLifecycleEvents: boolean;
-	};
-	/**
-	 * Local load/unload inference backends (e.g. Ollama via openai-compatible,
-	 * LM Studio) keep one model resident and evict it when a *different* model
-	 * runs. When `primeAfterModelSwap` is true, the runtime may proactively
-	 * re-warm ("prime") the main chat model after background work — chiefly the
-	 * model-backed memory extractor loading a different model — so the next user
-	 * turn does not pay a cold model-load stall. Cloud providers report false:
-	 * they have no local load/unload (and thus no cold-load) to prime around.
-	 */
-	localModelLoad: {
-		primeAfterModelSwap: boolean;
-	};
-	/**
-	 * Whether the provider can serve a one-shot, tool-less, out-of-band
-	 * completion via `ModelBackendProvider.complete` — a model call that is not
-	 * a conversation turn and produces no portal events.
-	 *
-	 * Used by background reviewers (currently the adversary shadow) so they can
-	 * run on the conversation's OWN backend rather than requiring the operator
-	 * to stand up a second endpoint. Independence from the agent is a property
-	 * of choosing a different *model*, not a different *backend*.
-	 */
-	sideCompletion: boolean;
 }
 
 export interface Message {
@@ -748,7 +556,7 @@ export interface FileEditRecord {
 	parentToolCallId: string | null;
 }
 
-// Observability record of the *full input* the portal handed to the provider
+// Observability record of the *full input* the portal handed to the runtime
 // for the turn triggered by a given user message. Surfaced read-only in the UI
 // so the user can inspect the portal prelude + any memory / prior-message
 // context injected on top of their raw message — "the guts" of the turn.
@@ -756,28 +564,26 @@ export interface TurnInput {
 	messageId: string;
 	conversationId: string;
 	turnId: string | null;
-	// Exact string sent to the provider (prelude + body).
+	// Exact string sent to the runtime (prelude + body).
 	fullInput: string;
 	// Body without the auto-injected portal prelude.
 	promptBody: string;
 	// The portal prelude actually prepended (empty when none was applied).
 	prelude: string;
-	provider: string | null;
 	model: string | null;
 	mode: string | null;
 	memoryMode: string | null;
-	// Prior messages embedded for providers that can't resume a session.
-	initialMessages: ProviderInitialMessagePreview[] | null;
+	// Prior messages embedded when the session could not resume with history.
+	initialMessages: InitialMessagePreview[] | null;
 	createdAt: number;
 }
 
-export interface ProviderInitialMessagePreview {
+export interface InitialMessagePreview {
 	role: string;
 	content: string;
 }
 
 export interface UserSettings {
-	defaultProvider: ProviderInstanceId;
 	defaultModel: string | null;
 	defaultWorkdir: string | null;
 	defaultConversationMode: SessionMode;
@@ -786,36 +592,6 @@ export interface UserSettings {
 	theme: 'dark' | 'light' | 'system';
 	/** Accent palette, applied on top of the dark/light mode (see ThemeAccent). */
 	accent: ThemeAccent;
-	/**
-	 * Seed-only defaults for the memory extractor, copied onto each newly
-	 * created conversation. NULL = "use server default" (env). Changing these
-	 * never retroactively alters existing conversations.
-	 */
-	defaultMemoryExtractorModel: string | null;
-	defaultMemoryExtractorBackend: MemoryExtractorBackend | null;
-	/**
-	 * Seed-only default for the Phase 0 adversary shadow's reviewer model,
-	 * copied onto each newly created conversation (like the memory extractor
-	 * defaults). NULL = "use the server default" (env `ADVERSARY_SHADOW_MODEL`);
-	 * unset everywhere means the shadow never runs. Setting a model is what
-	 * enables it — there is deliberately no separate on/off flag to disagree
-	 * with. Changing this never retroactively alters existing conversations.
-	 */
-	defaultAdversaryModel: string | null;
-	/**
-	 * Seed-only default for the backend that serves the reviewer. NULL = "use
-	 * `ADVERSARY_SHADOW_BACKEND`, else the conversation's own backend". Chosen
-	 * independently of the model because reviewer independence is a property of
-	 * the weights, not of which endpoint serves them.
-	 */
-	defaultAdversaryBackend: string | null;
-	/**
-	 * Per-user context window tier, consumed live when a Copilot session opens.
-	 * NULL = "use the server default" (env `COPILOT_CONTEXT_TIER`). Unlike the
-	 * seed-only defaults above, changing this affects subsequent session opens
-	 * for existing conversations too (the tier is resolved at open/resume time).
-	 */
-	defaultContextTier: ContextTier | null;
 }
 
 // 'prompt' is the default: auto-approves `url` requests and file-system
@@ -1213,7 +989,7 @@ export type PortalEvent =
 			// is emitted to clients so the UI can target by id (like
 			// `message.delta`) instead of assuming the last message is the active
 			// assistant turn — which breaks across a reconnect gap. Optional
-			// because lower-level SDK/provider emitters dispatch before the
+			// because lower-level SDK event emitters dispatch before the
 			// assistant message is persisted.
 			messageId?: string | undefined;
 	  }

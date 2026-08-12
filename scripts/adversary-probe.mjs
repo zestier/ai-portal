@@ -11,13 +11,13 @@
 //
 // Writes nothing. Hits an OpenAI-compatible endpoint directly.
 //
-// NOTE: the probe only covers OpenAI-compatible backends. The shadow itself can
-// now run its reviewer on any backend that supports out-of-band completions
-// (including Copilot — see `ModelBackendProvider.complete`), but that dispatch
-// goes through the app's provider layer, which plain `node` cannot load. The
-// prompt and the verdict parser this probe exercises are backend-independent,
-// so a model's susceptibility to injection is still measurable here as long as
-// the same weights are reachable over an OpenAI-compatible endpoint.
+// NOTE: the probe only covers OpenAI-compatible backends. The shadow's own
+// completion was re-wired onto pi-ai in T5, so until the reviewer runs there
+// this probe is the only way to exercise the real prompt + verdict parser
+// against a live model. The prompt and the verdict parser are
+// backend-independent, so a model's susceptibility to injection is still
+// measurable here as long as the same weights are reachable over an
+// OpenAI-compatible endpoint.
 //
 // Usage:
 //   ADVERSARY_SHADOW_MODEL=... OPENAI_COMPATIBLE_BASE_URL=... pnpm run probe:adversary
@@ -41,10 +41,10 @@ const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY;
 const timeoutMs = Number(process.env.ADVERSARY_SHADOW_TIMEOUT_MS ?? 20000);
 
 // Deliberately a local fetch rather than a reuse of
-// `permissions/adversary/client.ts`: that module imports the provider utils
-// through the app's bundler-resolved paths, which plain `node` cannot load.
-// The prompt and the verdict parser — the parts whose behavior this probe is
-// actually exercising — are the real ones.
+// `permissions/adversary/client.ts`: that module routes through the pi
+// session completion, which plain `node` cannot load. The prompt and the
+// verdict parser — the parts whose behavior this probe is actually exercising
+// — are the real ones.
 async function review(facts) {
 	const startedAt = Date.now();
 	const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {

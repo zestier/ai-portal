@@ -106,7 +106,7 @@ test('unmerged indicators appear at turn end without a reload', async ({ page, r
 	await page.goto(`/conversations/${conversation.id}`);
 	await firstPoll;
 
-	const composer = page.getByPlaceholder(/Message GitHub Copilot/);
+	const composer = page.getByPlaceholder(/Message…/);
 	// Spend the auto-title turn first: it triggers `invalidateAll()`, which
 	// refreshes the indicators as a side effect and would mask the bug.
 	await composer.click();

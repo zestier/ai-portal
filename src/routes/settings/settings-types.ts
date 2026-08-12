@@ -11,31 +11,10 @@ export type FormResult = {
 export type SettingsTab = 'general' | 'prompts' | 'memory' | 'permissions' | 'activity' | 'update';
 
 export type SettingsData = PageData['settings'];
-export type ProviderStatus = PageData['providers'][number];
 export type PermissionGrant = PageData['grants'][number];
 export type PermissionDecision = PageData['recentDecisions'][number];
 export type PromptTemplate = PageData['promptTemplates'][number];
 export type CustomMemoryProfile = PageData['customMemoryProfiles'][number];
-
-export function formatContextWindow(tokens: number | undefined): string {
-	if (!tokens || !Number.isFinite(tokens)) return 'context size unknown';
-	if (tokens >= 1_000_000) {
-		const m = tokens / 1_000_000;
-		const str = m >= 10 ? m.toFixed(0) : m.toFixed(1).replace(/\.0$/, '');
-		return `${str}M ctx`;
-	}
-	if (tokens >= 1_000) {
-		return `${Math.round(tokens / 1_000)}K ctx`;
-	}
-	return `${tokens} ctx`;
-}
-
-export function authLabel(a: ProviderStatus['auth']): string {
-	if (!a.isAuthenticated) return 'Not signed in';
-	const who = a.login ? `@${a.login}` : 'signed in';
-	const via = a.authType ? ` via ${a.authType}` : '';
-	return `${who}${via}`;
-}
 
 export function formatTime(ms: number): string {
 	try {

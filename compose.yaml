@@ -37,18 +37,8 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
       SHARED_SECRET: ${SHARED_SECRET:-}
-      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
-      # Optional: connect to an externally-run `copilot --headless --port N`
-      # instead of spawning the bundled CLI. See docs/deployment.md.
-      COPILOT_CLI_URL: ${COPILOT_CLI_URL:-}
-      # Optional: token for a token-protected remote CLI. Must match the
-      # COPILOT_CONNECTION_TOKEN set on the `copilot --headless` server.
-      COPILOT_CONNECTION_TOKEN: ${COPILOT_CONNECTION_TOKEN:-}
-      DEFAULT_BACKEND_PROVIDER: ${DEFAULT_BACKEND_PROVIDER:-copilot}
+      PI_MODEL: ${PI_MODEL:-anthropic/claude-sonnet-4-5}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-claude-sonnet-4.5}
-      CLAUDE_AGENT_BASE_URL: ${CLAUDE_AGENT_BASE_URL:-}
-      CLAUDE_AGENT_API_KEY: ${CLAUDE_AGENT_API_KEY:-}
-      CLAUDE_AGENT_MAX_TURNS: ${CLAUDE_AGENT_MAX_TURNS:-50}
       OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
       OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
       # Durable memory extraction. Set MEMORY_EXTRACTOR_BACKEND to
@@ -83,7 +73,7 @@ services:
       - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
     networks:
       - appnet
-    # Cap memory/CPU so a runaway redeploy or copilot subprocess can't OOM the
+    # Cap memory/CPU so a runaway redeploy or agent session can't OOM the
     # host. Defaults budget ~1.5 GB peak for MAX_CONCURRENT_SESSIONS=4 (see
     # docs/deployment.md → Resource expectations); tune via .env if needed.
     mem_limit: ${PORTAL_MEM_LIMIT:-2g}

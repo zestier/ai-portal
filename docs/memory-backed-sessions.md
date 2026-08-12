@@ -1067,7 +1067,7 @@ memory.status committed | needs_review | skipped
 
 When the `openai-compatible-tools` extractor is active, its work is surfaced as
 a **subagent**, indistinguishable from a real one to the lower layers. The turn
-runner emits the same event vocabulary a Copilot `task` subagent produces — a
+runner emits the same event vocabulary a `task` subagent produces — a
 parent `task` tool call, a `subagent.lifecycle` (running → completed/failed)
 with an agent id, and threaded children via `parentToolCallId` — all routed
 through the normal dispatch/persistence path. Only the parent's
@@ -1103,7 +1103,7 @@ no card is created.
 
 ### Fully-featured nested agents
 
-Sub-agents (real Copilot `task` agents *and* the memory extractor) render as
+Sub-agents (real `task` agents *and* the memory extractor) render as
 fully-featured nested agents: their **spoken content interleaves** with their
 reasoning and tool calls inside the card, just like a top-level agent's body.
 
@@ -1145,9 +1145,9 @@ interface MemoryExtractionProvider {
 
 Initial provider options:
 
-1. Reuse the active backend provider when it supports non-streaming JSON calls.
-2. Fall back to the existing chat provider with a synthetic internal prompt.
-3. Fall back to heuristic extraction when no extraction backend is available.
+1. Reuse the configured OpenAI-compatible endpoint (`OPENAI_COMPATIBLE_BASE_URL`)
+   for non-streaming JSON calls.
+2. Fall back to heuristic extraction when no extraction backend is configured.
 
 The provider must run without exposing extraction prompts in the user transcript.
 It should still write audit rows to `memory_patches` and
@@ -1492,8 +1492,8 @@ Provider choices should be explicit:
 | hosted provider embeddings | Higher quality, explicit opt-in |
 | future SQLite extension model | Fully local vector generation |
 
-The embedding provider must be independent from chat model providers. A user may
-use Copilot for chat and a local embedding model for memory.
+The embedding provider must be independent from the chat model. A user may
+run chat on the pi path and a local embedding model for memory.
 
 ### Storage schema
 

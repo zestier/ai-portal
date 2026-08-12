@@ -1,16 +1,8 @@
-// Standing, portal-wide guidance for any agent driven through the portal,
-// regardless of backend provider. Unlike PORTAL_PRELUDE — which is prepended to
-// *every* user turn — this is delivered through each provider's native system
-// prompt channel: set once at session establishment, counted as system tokens
-// (cache-friendly), and carried at developer/system authority rather than
-// masquerading as user-turn content.
-//
-// Each provider injects it the native way for its backend:
-//   - Copilot SDK                   → createSession/resumeSession `systemMessage`
-//                                     in `append` mode (keeps the SDK's managed
-//                                     guardrail sections; just adds ours).
-//   - OpenAI-compatible / LM Studio → a single leading `{ role: 'system' }`
-//                                     message seeded once per session.
+// Standing, portal-wide guidance for any agent driven through the portal.
+// Unlike PORTAL_PRELUDE — which is prepended to *every* user turn — this is
+// delivered through the session's system prompt channel: set once at session
+// establishment, counted as system tokens (cache-friendly), and carried at
+// system authority rather than masquerading as user-turn content.
 //
 // Keep this provider-agnostic: no SDK- or HTTP-specific framing, and nothing
 // that has to be re-asserted on every turn. Genuinely per-turn, self-teaching
@@ -19,7 +11,7 @@
 //
 // IMPORTANT: nothing here is authoritative over the agent's own system/safety
 // instructions. Allow/deny decisions are still enforced by the permission
-// matcher in `interactive-adapter.ts`.
+// matcher in `permissions/matcher.ts`.
 //
 // The guidance is assembled from the tools a given session actually exposes so
 // it never pressures the agent toward tools that aren't available. A session

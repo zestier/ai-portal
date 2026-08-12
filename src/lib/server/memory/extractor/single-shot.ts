@@ -9,7 +9,7 @@ import {
 	MEMORY_PATCH_JSON_SCHEMA,
 	MemoryPatchProposalSchema
 } from '../engine';
-import { fetchWithTimeout, jsonRequestHeaders } from '$lib/server/providers/provider-utils';
+import { fetchWithTimeout, jsonRequestHeaders } from '$lib/server/http';
 import {
 	redactEndpoint,
 	excerptResponseBody,
@@ -33,8 +33,8 @@ interface OpenAICompatibleExtractorOptions {
 
 // JSON Schema mirroring the model envelope ({ patch, summary, confidence,
 // diagnostics }) and MemoryPatchProposalSchema. Sent via
-// `response_format: { type: 'json_schema' }` so backends like LM Studio that
-// reject the legacy `json_object` type still emit structured output. Kept
+// `response_format: { type: 'json_schema' }` so backends that reject the
+// legacy `json_object` type still emit structured output. Kept
 // non-strict (no `additionalProperties: false` / all-required) so the model
 // can omit optional sections; the Zod parse afterward remains the source of
 // truth.

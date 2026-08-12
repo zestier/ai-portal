@@ -1,11 +1,7 @@
 import { ulid } from '../ids';
 import { getDb } from '../index';
-import { loadConfig } from '../../config';
-import { normalizeProviderInstance } from '../../providers/registry';
 import {
 	normalizeApprovalMode,
-	normalizeContextTier,
-	normalizeMemoryExtractorBackend,
 	normalizeSessionMode,
 	normalizeThemeAccent,
 	type UserSettings,
@@ -14,7 +10,6 @@ import {
 
 interface SettingsRow {
 	user_id: string;
-	default_provider: string | null;
 	default_model: string | null;
 	default_workdir: string | null;
 	default_mode: string | null;
@@ -22,11 +17,6 @@ interface SettingsRow {
 	default_policy: string;
 	theme: string;
 	accent: string;
-	default_memory_extractor_model: string | null;
-	default_memory_extractor_backend: string | null;
-	default_adversary_model: string | null;
-	default_adversary_backend: string | null;
-	default_context_tier: string | null;
 	updated_at: number;
 }
 
@@ -37,21 +27,13 @@ function rowToSettings(r: SettingsRow): UserSettings {
 	// migration ran in dev HMR).
 	const policy: PermissionPolicy = raw === 'allow-all' || raw === 'deny-all' ? raw : 'prompt';
 	return {
-		defaultProvider: normalizeProviderInstance(r.default_provider),
 		defaultModel: r.default_model,
 		defaultWorkdir: r.default_workdir,
 		defaultConversationMode: normalizeSessionMode(r.default_mode),
 		defaultApprovalMode: normalizeApprovalMode(r.default_approval_mode),
 		defaultPolicy: policy,
 		theme: r.theme === 'light' ? 'light' : r.theme === 'system' ? 'system' : 'dark',
-		accent: normalizeThemeAccent(r.accent),
-		defaultMemoryExtractorModel: r.default_memory_extractor_model ?? null,
-		defaultMemoryExtractorBackend: normalizeMemoryExtractorBackend(
-			r.default_memory_extractor_backend
-		),
-		defaultAdversaryModel: r.default_adversary_model ?? null,
-		defaultAdversaryBackend: r.default_adversary_backend ?? null,
-		defaultContextTier: normalizeContextTier(r.default_context_tier)
+		accent: normalizeThemeAccent(r.accent)
 	};
 }
 
@@ -69,19 +51,13 @@ export function get(userId: string): UserSettings | null {
  */
 export function defaults(): UserSettings {
 	return {
-		defaultProvider: normalizeProviderInstance(loadConfig().DEFAULT_BACKEND_PROVIDER),
 		defaultModel: null,
 		defaultWorkdir: null,
 		defaultConversationMode: 'interactive',
 		defaultApprovalMode: 'ask',
 		defaultPolicy: 'prompt',
 		theme: 'system',
-		accent: 'default',
-		defaultMemoryExtractorModel: null,
-		defaultMemoryExtractorBackend: null,
-		defaultAdversaryModel: null,
-		defaultAdversaryBackend: null,
-		defaultContextTier: null
+		accent: 'default'
 	};
 }
 
@@ -89,12 +65,10 @@ export function save(userId: string, s: UserSettings) {
 	getDb()
 		.prepare(
 			`INSERT INTO user_settings(
-			   user_id, default_provider, default_model, default_workdir, default_mode, default_approval_mode, default_policy, theme, accent,
-			   default_memory_extractor_model, default_memory_extractor_backend, default_adversary_model, default_adversary_backend, default_context_tier, updated_at
+			   user_id, default_model, default_workdir, default_mode, default_approval_mode, default_policy, theme, accent, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
-			   default_provider = excluded.default_provider,
 			   default_model = excluded.default_model,
 			   default_workdir = excluded.default_workdir,
 			   default_mode = excluded.default_mode,
@@ -102,16 +76,10 @@ export function save(userId: string, s: UserSettings) {
 			   default_policy = excluded.default_policy,
 			   theme = excluded.theme,
 			   accent = excluded.accent,
-			   default_memory_extractor_model = excluded.default_memory_extractor_model,
-			   default_memory_extractor_backend = excluded.default_memory_extractor_backend,
-			   default_adversary_model = excluded.default_adversary_model,
-			   default_adversary_backend = excluded.default_adversary_backend,
-			   default_context_tier = excluded.default_context_tier,
 			   updated_at = excluded.updated_at`
 		)
 		.run(
 			userId,
-			s.defaultProvider,
 			s.defaultModel,
 			s.defaultWorkdir,
 			s.defaultConversationMode,
@@ -119,11 +87,6 @@ export function save(userId: string, s: UserSettings) {
 			s.defaultPolicy,
 			s.theme,
 			s.accent,
-			s.defaultMemoryExtractorModel,
-			s.defaultMemoryExtractorBackend,
-			s.defaultAdversaryModel,
-			s.defaultAdversaryBackend,
-			s.defaultContextTier,
 			Date.now()
 		);
 }

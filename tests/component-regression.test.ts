@@ -14,76 +14,18 @@ import TicketPage from '../src/routes/tickets/[id]/+page.svelte';
 import TicketsIndexPage from '../src/routes/tickets/+page.svelte';
 import { MAX_RENDERABLE_DIFF_CHARS } from '../src/lib/client/diff-parser';
 import { listBuiltInPromptTemplates } from '../src/lib/prompt-templates';
-import type {
-	Conversation,
-	InteractiveRequestView,
-	ProviderCapabilities,
-	ProviderRuntimeFeature,
-	ProviderRuntimeFeatureStatus
-} from '../src/lib/types';
-
-const feature = (
-	label: string,
-	description: string,
-	supported = true
-): ProviderRuntimeFeatureStatus => ({
-	supported,
-	behavior: supported ? 'supported' : 'unsupported',
-	label,
-	description
-});
-
-const providerCapabilities: ProviderCapabilities = {
-	authStatus: true,
-	modelList: true,
-	session: { open: true, resume: true, dispose: true, abort: true },
-	stream: { send: true, contract: 'PortalEvent' },
-	controls: {
-		mode: true,
-		approvalMode: true,
-		resetSessionApprovals: true
-	},
-	features: {
-		modes: feature('Modes', 'Runtime mode changes are supported.'),
-		approvalMode: feature('Approval mode', 'The runtime accepts approve-all toggles.'),
-		contextUsage: feature('Context usage', 'Context usage is available.'),
-		subagents: feature('Subagents', 'Subagents are available.'),
-		mcpInfoEvents: feature('MCP info events', 'MCP info events are available.'),
-		planExit: feature('Plan exit', 'Plan exit is available.'),
-		elicitation: feature('Elicitation', 'Elicitation is available.')
-	} satisfies Record<ProviderRuntimeFeature, ProviderRuntimeFeatureStatus>,
-	optionalRuntimeFeatures: {
-		infiniteSessionMetadata: true,
-		permissionCallbacks: true,
-		userInputCallbacks: true,
-		elicitationCallbacks: true,
-		exitPlanModeCallbacks: true,
-		autoModeSwitchCallbacks: true,
-		contextWindowEvents: true,
-		contextCompactionEvents: true,
-		fileEditEvents: true,
-		reasoningEvents: true,
-		subagentLifecycleEvents: true
-	},
-	localModelLoad: {
-		primeAfterModelSwap: false
-	},
-	sideCompletion: true
-};
+import type { Conversation, InteractiveRequestView } from '../src/lib/types';
 
 const conversation: Conversation = {
 	id: 'conv-1',
 	userId: 'user-1',
 	title: 'Regression chat',
 	workdir: '/workspaces/copilot-portal',
-	provider: 'copilot',
 	model: 'gpt-5.5',
 	mode: 'autopilot',
 	memoryMode: 'off',
 	memoryExtractorModel: null,
-	memoryExtractorBackend: null,
 	adversaryModel: null,
-	adversaryBackend: null,
 	globalMemoryEnabled: false,
 	approvalMode: 'auto-deny',
 	disabledToolGroups: [],
@@ -92,7 +34,6 @@ const conversation: Conversation = {
 	archivedAt: null,
 	forkedFromConversationId: null,
 	forkedFromMessageId: null,
-	providerSessionId: 'session-1',
 	draftPrompt: null,
 	workspaceKind: 'shared',
 	workspaceKey: '/workspaces/copilot-portal',
@@ -392,9 +333,6 @@ describe('Svelte component regression coverage', () => {
 				conversation,
 				initialMessages: [],
 				initialPendingInteractive: [pending],
-				providerCapabilities,
-				providerDisplayName: 'Copilot',
-				providerModels: [],
 				defaultModelPlaceholder: 'claude-sonnet-4.5',
 				effectiveModel: 'claude-sonnet-4.5',
 				chatPlaceholder: 'Ask Copilot'
