@@ -28,6 +28,11 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
 	const { content } = await parseBody(request, Body);
 
+	const conversationId = Number(params.id);
+	const messageId = Number(params.messageId);
+	if (!Number.isInteger(conversationId) || conversationId <= 0) throw error(404);
+	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
+
 	// Synchronously claim the turn slot before the busy-check + edit. In memory
 	// mode `startTurnFromUserMessage` awaits `pool.release(...)` before the turn
 	// registers, so a plain `getTurn` guard leaves a window where two concurrent
@@ -35,7 +40,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	// The reservation closes that window so the second request is rejected here
 	// as a clean 409, matching the turns route.
 	try {
-		reserveTurn(params.id!);
+		reserveTurn(conversationId);
 	} catch (e) {
 		if (e instanceof TurnAlreadyInProgressError) {
 			throw error(409, 'A turn is already in progress for this conversation.');
@@ -46,8 +51,8 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	try {
 		const { conversation, userMessage } = inlineEditMessage({
 			userId,
-			conversationId: params.id!,
-			messageId: params.messageId!,
+			conversationId,
+			messageId,
 			newContent: content
 		});
 		const turn = await startTurnFromUserMessage(conversation, userMessage, { rerun: true });
@@ -56,8 +61,15 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		if (e instanceof InlineEditRejected) {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
-		throwRerunFailure({ route: 'message_inline_edit', conversationId: params.id, userId }, e);
+		throwRerunFailure(
+			{
+				route: 'message_inline_edit',
+				conversationId: String(conversationId),
+				userId: String(userId)
+			},
+			e
+		);
 	} finally {
-		releaseTurnReservation(params.id!);
+		releaseTurnReservation(conversationId);
 	}
 };

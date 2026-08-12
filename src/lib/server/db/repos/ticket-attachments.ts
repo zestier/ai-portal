@@ -4,7 +4,6 @@
 // except the single authed byte-serving endpoint (`getForOwner`).
 
 import type Database from 'better-sqlite3';
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import type { TicketAttachmentMeta } from '$lib/types';
 
@@ -12,7 +11,7 @@ export const MAX_BYTE_SIZE = 10 * 1024 * 1024; // 10 MB
 export const MAX_PER_TICKET = 20;
 
 export interface InsertTicketAttachment {
-	ticketId: string;
+	ticketId: number;
 	filename: string;
 	mimeType: string;
 	byteSize: number;
@@ -21,15 +20,13 @@ export interface InsertTicketAttachment {
 }
 
 export function insert(input: InsertTicketAttachment): TicketAttachmentMeta {
-	const id = ulid();
 	const now = Date.now();
-	getDb()
+	const info = getDb()
 		.prepare(
-			`INSERT INTO ticket_attachments(id, ticket_id, filename, mime_type, byte_size, source_path, data, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO ticket_attachments(ticket_id, filename, mime_type, byte_size, source_path, data, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
-			id,
 			input.ticketId,
 			input.filename,
 			input.mimeType,
@@ -38,6 +35,7 @@ export function insert(input: InsertTicketAttachment): TicketAttachmentMeta {
 			input.data,
 			now
 		);
+	const id = Number(info.lastInsertRowid);
 	return {
 		id,
 		ticketId: input.ticketId,
@@ -49,8 +47,8 @@ export function insert(input: InsertTicketAttachment): TicketAttachmentMeta {
 }
 
 interface MetaRow {
-	id: string;
-	ticket_id: string;
+	id: number;
+	ticket_id: number;
 	filename: string;
 	mime_type: string;
 	byte_size: number;
@@ -69,7 +67,7 @@ function rowToMeta(r: MetaRow): TicketAttachmentMeta {
 }
 
 /** Metadata (no bytes) for all attachments on a ticket, oldest first. */
-export function listMetaForTicket(ticketId: string): TicketAttachmentMeta[] {
+export function listMetaForTicket(ticketId: number): TicketAttachmentMeta[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT id, ticket_id, filename, mime_type, byte_size, created_at
@@ -79,7 +77,7 @@ export function listMetaForTicket(ticketId: string): TicketAttachmentMeta[] {
 	return rows.map(rowToMeta);
 }
 
-export function countForTicket(ticketId: string): number {
+export function countForTicket(ticketId: number): number {
 	const r = getDb()
 		.prepare('SELECT COUNT(*) AS n FROM ticket_attachments WHERE ticket_id = ?')
 		.get(ticketId) as { n: number };
@@ -99,9 +97,9 @@ export interface AttachmentBytes {
  * without leaking existence.
  */
 export function getForOwner(
-	ticketId: string,
-	attachmentId: string,
-	userId: string
+	ticketId: number,
+	attachmentId: number,
+	userId: number
 ): AttachmentBytes | null {
 	const row = getDb()
 		.prepare(
@@ -128,7 +126,7 @@ export function getForOwner(
  * Remove one attachment. Returns true if deleted. Only removes if the owning
  * ticket belongs to `userId`.
  */
-export function remove(ticketId: string, attachmentId: string, userId: string): boolean {
+export function remove(ticketId: number, attachmentId: number, userId: number): boolean {
 	const r = getDb()
 		.prepare(
 			`DELETE FROM ticket_attachments
@@ -141,7 +139,7 @@ export function remove(ticketId: string, attachmentId: string, userId: string): 
 }
 
 // Test helper: count rows for a ticket (used to assert cascade cleanup).
-export function _countForTicket(db: Database.Database, ticketId: string): number {
+export function _countForTicket(db: Database.Database, ticketId: number): number {
 	const r = db
 		.prepare('SELECT COUNT(*) AS n FROM ticket_attachments WHERE ticket_id = ?')
 		.get(ticketId) as { n: number };

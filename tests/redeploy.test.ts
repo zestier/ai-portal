@@ -64,7 +64,7 @@ const baseCfg: AppConfig = {
 };
 
 function user(login: string): User {
-	return { id: `user-${login}`, githubLogin: login, displayName: null, avatarUrl: null };
+	return { id: 1, githubLogin: login, displayName: null, avatarUrl: null };
 }
 
 describe('redeploy build steps', () => {

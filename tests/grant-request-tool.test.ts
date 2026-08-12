@@ -14,8 +14,6 @@ const NUDGE_MARKER = 'force_retry_tool';
 // grant when the human approves. These tests drive the tool handler directly,
 // resolve the prompt it raises, and assert the grant is (or isn't) persisted.
 
-let convCounter = 0;
-
 async function makeHarness(approvalMode: ApprovalMode = 'ask') {
 	const interactive = await import('../src/lib/server/runtime/interactive-requests');
 	const { buildPermissionTools } = await import('../src/lib/server/tools/permissions');
@@ -23,13 +21,12 @@ async function makeHarness(approvalMode: ApprovalMode = 'ask') {
 	const settings = await import('../src/lib/server/db/repos/settings');
 	const convs = await import('../src/lib/server/db/repos/conversations');
 	const user = ensureLocalUser();
-	const conversationId = `conv-grant-${convCounter++}`;
-	convs.create(user.id, {
-		id: conversationId,
+	const conversation = convs.create(user.id, {
 		title: 'grant test',
 		workdir: '/tmp',
 		model: 'gpt-4'
 	});
+	const conversationId = conversation.id;
 	const events: PortalEvent[] = [];
 	const tools = buildPermissionTools({
 		userId: user.id,

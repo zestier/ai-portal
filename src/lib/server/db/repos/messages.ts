@@ -1,4 +1,3 @@
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import * as toolAttachmentsRepo from './tool-attachments';
 import type Database from 'better-sqlite3';
@@ -12,8 +11,8 @@ import type {
 } from '$lib/types';
 
 interface MsgRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	role: string;
 	content: string;
 	status: string;
@@ -24,8 +23,8 @@ interface MsgRow {
 }
 
 interface ToolRow {
-	id: string;
-	message_id: string;
+	id: number;
+	message_id: number;
 	tool: string;
 	args_json: string | null;
 	result_json: string | null;
@@ -35,11 +34,11 @@ interface ToolRow {
 	started_at: number;
 	ended_at: number | null;
 	text_offset: number | null;
-	parent_tool_call_id: string | null;
+	parent_tool_call_id: number | null;
 }
 
 interface BackgroundAgentLifecycleRow {
-	tool_call_id: string;
+	tool_call_id: number;
 	agent_id: string;
 	status: 'running' | 'completed' | 'failed';
 	started_at: number;
@@ -47,19 +46,19 @@ interface BackgroundAgentLifecycleRow {
 }
 
 interface EditRow {
-	id: string;
-	message_id: string;
+	id: number;
+	message_id: number;
 	path: string;
 	diff: string | null;
 	diff_bytes?: number;
 	created_at: number;
 	text_offset: number | null;
-	parent_tool_call_id: string | null;
+	parent_tool_call_id: number | null;
 }
 
 interface ReasoningRow {
-	id: string;
-	message_id: string;
+	id: number;
+	message_id: number;
 	segment_index: number;
 	text: string | null;
 	text_bytes?: number;
@@ -67,7 +66,7 @@ interface ReasoningRow {
 	text_offset: number | null;
 	started_at: number;
 	duration_ms: number | null;
-	parent_tool_call_id: string | null;
+	parent_tool_call_id: number | null;
 }
 
 // SQLite is built with a cap on bound parameters per statement
@@ -93,7 +92,7 @@ function batchIds<T>(ids: readonly T[], size = ID_BATCH_SIZE): T[][] {
 // relative order, since each id appears in exactly one batch.
 function selectInBatches<R>(
 	db: Database.Database,
-	ids: readonly string[],
+	ids: readonly number[],
 	buildSql: (placeholders: string) => string,
 	leadingParams: readonly (string | number)[] = []
 ): R[] {
@@ -112,7 +111,7 @@ function selectInBatches<R>(
 
 function runInBatches(
 	db: Database.Database,
-	ids: readonly string[],
+	ids: readonly number[],
 	buildSql: (placeholders: string) => string
 ): void {
 	for (const batch of batchIds(ids)) {
@@ -186,7 +185,7 @@ const ALWAYS_INLINE_ARGS_TOOLS = "tool <> 'task' AND ";
 const ALWAYS_INLINE_REASONING = "kind <> 'content' AND duration_ms IS NOT NULL AND ";
 
 export function listByConversation(
-	conversationId: string,
+	conversationId: number,
 	opts: ListByConversationOptions = {}
 ): Message[] {
 	const db = getDb();
@@ -245,7 +244,7 @@ export function listByConversation(
 		limits ? [limits.reasoning] : []
 	);
 
-	const byMsgT: Record<string, ToolCallRecord[]> = {};
+	const byMsgT: Record<number, ToolCallRecord[]> = {};
 	const attachmentsByTool = toolAttachmentsRepo.listMetaForToolCalls(toolIds);
 	for (const t of toolRows) {
 		const lifecycle = lifecycleByTool.get(t.id);
@@ -274,7 +273,7 @@ export function listByConversation(
 			...(attachments && attachments.length > 0 ? { attachments } : {})
 		});
 	}
-	const byMsgE: Record<string, FileEditRecord[]> = {};
+	const byMsgE: Record<number, FileEditRecord[]> = {};
 	for (const e of editRows) {
 		const diffTruncated = trim && e.diff === null && (e.diff_bytes ?? 0) > 0;
 		(byMsgE[e.message_id] ??= []).push({
@@ -288,7 +287,7 @@ export function listByConversation(
 			parentToolCallId: e.parent_tool_call_id
 		});
 	}
-	const byMsgR: Record<string, ReasoningBlockRecord[]> = {};
+	const byMsgR: Record<number, ReasoningBlockRecord[]> = {};
 	for (const r of reasoningRows) {
 		// `text` is NOT NULL in the schema, so a NULL here can only be the trim.
 		const textTruncated = trim && r.text === null;
@@ -324,7 +323,7 @@ function ftsPhrase(term: string): string | null {
 }
 
 export function searchConversation(
-	conversationId: string,
+	conversationId: number,
 	query: string,
 	opts: { limit?: number } = {}
 ): Message[] {
@@ -370,16 +369,14 @@ export interface AppendInput {
 	errorCode?: string | null;
 }
 
-export function append(conversationId: string, input: AppendInput): Message {
-	const id = ulid();
+export function append(conversationId: number, input: AppendInput): Message {
 	const now = Date.now();
-	getDb()
+	const info = getDb()
 		.prepare(
-			`INSERT INTO messages(id, conversation_id, role, content, status, error_code, created_at, reasoning, reasoning_duration_ms)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+			`INSERT INTO messages(conversation_id, role, content, status, error_code, created_at, reasoning, reasoning_duration_ms)
+			 VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`
 		)
 		.run(
-			id,
 			conversationId,
 			input.role,
 			input.content,
@@ -387,6 +384,7 @@ export function append(conversationId: string, input: AppendInput): Message {
 			input.errorCode ?? null,
 			now
 		);
+	const id = Number(info.lastInsertRowid);
 	return {
 		id,
 		conversationId,
@@ -398,14 +396,14 @@ export function append(conversationId: string, input: AppendInput): Message {
 	};
 }
 
-export function updateStatus(id: string, status: MessageStatus, errorCode?: string | null) {
+export function updateStatus(id: number, status: MessageStatus, errorCode?: string | null) {
 	getDb()
 		.prepare('UPDATE messages SET status = ?, error_code = ? WHERE id = ?')
 		.run(status, errorCode ?? null, id);
 }
 
 export function updateContent(
-	id: string,
+	id: number,
 	content: string,
 	status: MessageStatus,
 	errorCode?: string | null
@@ -415,13 +413,13 @@ export function updateContent(
 		.run(content, status, errorCode ?? null, id);
 }
 
-export function updateContentOnly(id: string, content: string) {
+export function updateContentOnly(id: number, content: string) {
 	getDb().prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, id);
 }
 
 export function truncateAfterAndUpdateUserMessage(
-	conversationId: string,
-	messageId: string,
+	conversationId: number,
+	messageId: number,
 	content: string
 ): Message | null {
 	const db = getDb();
@@ -451,14 +449,14 @@ export function truncateAfterAndUpdateUserMessage(
 	return tx();
 }
 
-function deleteMessagesAfter(db: Database.Database, conversationId: string, target: MsgRow): void {
+function deleteMessagesAfter(db: Database.Database, conversationId: number, target: MsgRow): void {
 	const later = db
 		.prepare(
 			`SELECT id FROM messages
 			  WHERE conversation_id = ?
 			    AND (created_at > ? OR (created_at = ? AND id > ?))`
 		)
-		.all(conversationId, target.created_at, target.created_at, target.id) as { id: string }[];
+		.all(conversationId, target.created_at, target.created_at, target.id) as { id: number }[];
 	const laterIds = later.map((r) => r.id);
 	if (laterIds.length === 0) return;
 	runInBatches(
@@ -486,7 +484,7 @@ function deleteMessagesAfter(db: Database.Database, conversationId: string, targ
 	);
 }
 
-export function truncateAfterMessage(conversationId: string, messageId: string): boolean {
+export function truncateAfterMessage(conversationId: number, messageId: number): boolean {
 	const db = getDb();
 	const tx = db.transaction(() => {
 		const target = db
@@ -506,7 +504,40 @@ export function truncateAfterMessage(conversationId: string, messageId: string):
 // compile error.
 type ToolCallInsert = Omit<ToolCallRecord, 'messageId'> & { argsJson: string };
 
-export function insertToolCall(messageId: string, t: ToolCallInsert) {
+/**
+ * Reserve the next numeric autoincrement id for `table` WITHOUT inserting a row.
+ *
+ * The id must be known before the insert (the turn runner fans a tool.call /
+ * reasoning event out to SSE subscribers before `upsertToolCall` /
+ * `upsertReasoningBlock` persists the row), so it can't come from
+ * `lastInsertRowid`. We bump the table's `sqlite_sequence` counter directly:
+ * AUTOINCREMENT guarantees the next real insert takes a strictly larger id, so
+ * reserved ids never collide with DB-minted ones, and a reserved-but-never-
+ * inserted id is just a harmless gap. Single-process, so no cross-instance race.
+ */
+function mintId(table: string): number {
+	const db = getDb();
+	const existing = db.prepare(`SELECT seq FROM sqlite_sequence WHERE name = ?`).get(table) as
+		| { seq: number }
+		| undefined;
+	const next = (existing?.seq ?? 0) + 1;
+	if (existing) {
+		db.prepare(`UPDATE sqlite_sequence SET seq = ? WHERE name = ?`).run(next, table);
+	} else {
+		db.prepare(`INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)`).run(table, next);
+	}
+	return next;
+}
+
+export function mintToolCallId(): number {
+	return mintId('tool_calls');
+}
+
+export function mintReasoningBlockId(): number {
+	return mintId('reasoning_blocks');
+}
+
+export function insertToolCall(messageId: number, t: ToolCallInsert) {
 	getDb()
 		.prepare(
 			`INSERT INTO tool_calls(
@@ -529,7 +560,7 @@ export function insertToolCall(messageId: string, t: ToolCallInsert) {
 		);
 }
 
-export function upsertToolCall(messageId: string, t: ToolCallInsert) {
+export function upsertToolCall(messageId: number, t: ToolCallInsert) {
 	getDb()
 		.prepare(
 			`INSERT INTO tool_calls(
@@ -562,7 +593,7 @@ export function upsertToolCall(messageId: string, t: ToolCallInsert) {
 		);
 }
 
-export function getToolCallArgs(id: string): unknown | null {
+export function getToolCallArgs(id: number): unknown | null {
 	const row = getDb().prepare('SELECT args_json FROM tool_calls WHERE id = ?').get(id) as
 		| { args_json: string }
 		| undefined;
@@ -575,7 +606,7 @@ export function getToolCallArgs(id: string): unknown | null {
 }
 
 export function updateToolCall(
-	id: string,
+	id: number,
 	patch: Partial<Pick<ToolCallRecord, 'resultJson' | 'status' | 'endedAt'>>
 ) {
 	const fields: string[] = [];
@@ -600,7 +631,7 @@ export function updateToolCall(
 }
 
 export function updateBackgroundAgentLifecycle(
-	toolCallId: string,
+	toolCallId: number,
 	agentId: string,
 	status: 'running' | 'completed' | 'failed',
 	now: number = Date.now()
@@ -628,14 +659,14 @@ export interface ToolCallWithConversation extends ToolCallRecord {
 	// the page payload's trimmed marker — narrow the type back to non-null for
 	// the rerun flow, which needs the exact original arguments.
 	argsJson: string;
-	conversationId: string;
-	conversationUserId: string;
+	conversationId: number;
+	conversationUserId: number;
 	messageRole: Role;
 }
 
 export function getToolCallForConversation(
-	conversationId: string,
-	toolCallId: string
+	conversationId: number,
+	toolCallId: number
 ): ToolCallWithConversation | null {
 	const db = getDb();
 	const row = db
@@ -656,8 +687,8 @@ export function getToolCallForConversation(
 		)
 		.get(toolCallId, conversationId) as
 		| (ToolRow & {
-				conversation_id: string;
-				conversation_user_id: string;
+				conversation_id: number;
+				conversation_user_id: number;
 				message_role: string;
 				background_agent_id: string | null;
 				background_agent_status: 'running' | 'completed' | 'failed' | null;
@@ -694,9 +725,9 @@ export function getToolCallForConversation(
 // conversation owner), so a mismatched user gets the same `null` an unknown id
 // does and the endpoint can 404 without leaking existence.
 export function getToolCallFieldForOwner(
-	conversationId: string,
-	toolCallId: string,
-	userId: string,
+	conversationId: number,
+	toolCallId: number,
+	userId: number,
 	field: 'args' | 'result'
 ): { value: string | null } | null {
 	const column = field === 'args' ? 'tc.args_json' : 'tc.result_json';
@@ -713,9 +744,9 @@ export function getToolCallFieldForOwner(
 }
 
 export function getFileEditDiffForOwner(
-	conversationId: string,
-	fileEditId: string,
-	userId: string
+	conversationId: number,
+	fileEditId: number,
+	userId: number
 ): { value: string | null } | null {
 	const row = getDb()
 		.prepare(
@@ -730,9 +761,9 @@ export function getFileEditDiffForOwner(
 }
 
 export function getReasoningTextForOwner(
-	conversationId: string,
-	reasoningBlockId: string,
-	userId: string
+	conversationId: number,
+	reasoningBlockId: number,
+	userId: number
 ): { value: string | null } | null {
 	const row = getDb()
 		.prepare(
@@ -747,26 +778,25 @@ export function getReasoningTextForOwner(
 }
 
 export function insertFileEdit(
-	messageId: string,
+	messageId: number,
 	path: string,
 	diff: string,
 	textOffset: number | null = null,
-	parentToolCallId: string | null = null
+	parentToolCallId: number | null = null
 ) {
-	const id = ulid();
 	getDb()
 		.prepare(
-			`INSERT INTO file_edits(id, message_id, path, diff, created_at, text_offset, parent_tool_call_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO file_edits(message_id, path, diff, created_at, text_offset, parent_tool_call_id)
+			 VALUES (?, ?, ?, ?, ?, ?)`
 		)
-		.run(id, messageId, path, diff, Date.now(), textOffset, parentToolCallId);
+		.run(messageId, path, diff, Date.now(), textOffset, parentToolCallId);
 }
 
 // Writes always carry real text: `reasoning_blocks.text` is NOT NULL, and only
 // a *trimmed read* (see `inlineMaxBytes`) ever hands back a null.
 type ReasoningBlockWrite = Omit<ReasoningBlockRecord, 'messageId' | 'text'> & { text: string };
 
-export function upsertReasoningBlock(messageId: string, r: ReasoningBlockWrite) {
+export function upsertReasoningBlock(messageId: number, r: ReasoningBlockWrite) {
 	getDb()
 		.prepare(
 			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
@@ -794,7 +824,7 @@ export function upsertReasoningBlock(messageId: string, r: ReasoningBlockWrite) 
 		);
 }
 
-export function insertReasoningBlock(messageId: string, r: ReasoningBlockWrite) {
+export function insertReasoningBlock(messageId: number, r: ReasoningBlockWrite) {
 	getDb()
 		.prepare(
 			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)

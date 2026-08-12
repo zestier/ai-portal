@@ -52,7 +52,7 @@ export interface AdversaryClientOptions {
 	timeoutMs: number;
 	maxArgChars?: number | undefined;
 	/** Per-user identity for backends whose auth/entitlements are per-user. */
-	userId?: string | undefined;
+	userId?: number | undefined;
 	/** Performs the actual completion. Injected so this module owns no transport. */
 	complete: (req: {
 		system: string;
@@ -60,7 +60,7 @@ export interface AdversaryClientOptions {
 		model: string;
 		timeoutMs: number;
 		responseSchema: { name: string; schema: unknown };
-		userId?: string | undefined;
+		userId?: number | undefined;
 	}) => Promise<string>;
 }
 

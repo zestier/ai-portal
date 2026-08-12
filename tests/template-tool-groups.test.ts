@@ -1,9 +1,34 @@
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { setupLocalEnv } from './helpers/env';
+import { resetServerSingletons, setupLocalEnv } from './helpers/env';
+import { makeTmpDir } from './helpers/tmp';
+
+function git(cwd: string, args: string[]): string {
+	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+// Managed-worktree creation derives the branch `portal/<conversationId>` from
+// the source repo. With integer ids those names reset to 1,2,3 per test, so a
+// real checkout as PROJECT_ROOT would leak colliding branches into the host
+// repo; point the route at an isolated committed repo instead.
+function committedRepository(): string {
+	const source = makeTmpDir('portal-tmpl-tg-source-');
+	git(source, ['init', '-q', '-b', 'main']);
+	git(source, ['config', 'user.name', 'Portal Test']);
+	git(source, ['config', 'user.email', 'portal-test@localhost']);
+	writeFileSync(join(source, 'README.md'), 'base\n');
+	git(source, ['add', 'README.md']);
+	git(source, ['commit', '-q', '-m', 'initial']);
+	return source;
+}
 
 describe('chat template tool-group presets', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-template-tool-groups-');
+		process.env.PROJECT_ROOT = committedRepository();
+		await resetServerSingletons();
 	});
 
 	describe('repo round-trip', () => {
@@ -58,7 +83,7 @@ describe('chat template tool-group presets', () => {
 	});
 
 	describe('template_create / template_update tools', () => {
-		async function buildTools(userId: string) {
+		async function buildTools(userId: number) {
 			const mod = await import('../src/lib/server/tools/prompt-templates');
 			return mod.buildPromptTemplateTools({ userId });
 		}
@@ -102,7 +127,7 @@ describe('chat template tool-group presets', () => {
 			const tpl = templates.create(user.id, { title: 'Story', prompt: 'Tell a story.' });
 			const tools = await buildTools(user.id);
 			const update = tools.find((t) => t.name === 'template_update');
-			const res = await update!.handler({ id: tpl.id, disabledToolGroups: ['memory'] });
+			const res = await update!.handler({ id: String(tpl.id), disabledToolGroups: ['memory'] });
 			expect(res.ok).toBe(true);
 			expect(templates.get(tpl.id, user.id)?.disabledToolGroups).toEqual(['memory']);
 		});

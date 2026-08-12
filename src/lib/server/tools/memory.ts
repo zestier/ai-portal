@@ -151,8 +151,8 @@ const CheckClaimsArgs = z.object({
 });
 
 export function buildMemoryTools(opts: {
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 	getTurnId?: () => string | null;
 	mode: MemoryMode;
 	globalMemoryEnabled?: boolean;
@@ -296,7 +296,10 @@ export function buildMemoryTools(opts: {
 			},
 			async handler(args) {
 				const parsed = RecentEventsArgs.parse(args);
-				const events = memoryRepo.listEvents(opts.conversationId, parsed);
+				const events = memoryRepo.listEvents(opts.conversationId, {
+					...parsed,
+					entityId: parsed.entityId ? Number(parsed.entityId) : undefined
+				});
 				const summary = `${events.length} event(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
@@ -363,8 +366,11 @@ export function buildMemoryTools(opts: {
 			async handler(args) {
 				const parsed = TimelineArgs.parse(args);
 				const events = memoryRepo
-					.listEvents(opts.conversationId, parsed)
-					.sort((a, b) => a.occurredAt - b.occurredAt || a.id.localeCompare(b.id));
+					.listEvents(opts.conversationId, {
+						...parsed,
+						entityId: parsed.entityId ? Number(parsed.entityId) : undefined
+					})
+					.sort((a, b) => a.occurredAt - b.occurredAt || a.id - b.id);
 				const summary = `${events.length} timeline event(s)`;
 				memoryRepo.recordToolCall(opts.conversationId, {
 					turnId: opts.getTurnId?.() ?? null,
@@ -668,7 +674,7 @@ export function buildMemoryTools(opts: {
 }
 
 function checkClaim(
-	conversationId: string,
+	conversationId: number,
 	claim: { entityKey?: string | undefined; predicate: string; value?: unknown }
 ) {
 	const entity = claim.entityKey ? memoryRepo.getEntity(conversationId, claim.entityKey) : null;

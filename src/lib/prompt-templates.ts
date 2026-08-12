@@ -15,7 +15,7 @@ export type PromptTemplateListItem = ChatPromptTemplate & {
 
 export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 	{
-		id: 'code-review',
+		id: -1,
 		userId: null,
 		type: 'chat',
 		title: 'Code review',
@@ -36,7 +36,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		archivedAt: null
 	},
 	{
-		id: 'debug-error',
+		id: -2,
 		userId: null,
 		type: 'chat',
 		title: 'Debug an error',
@@ -57,7 +57,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		archivedAt: null
 	},
 	{
-		id: 'plan-implementation',
+		id: -3,
 		userId: null,
 		type: 'chat',
 		title: 'Plan implementation',
@@ -78,7 +78,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		archivedAt: null
 	},
 	{
-		id: 'explain-code',
+		id: -4,
 		userId: null,
 		type: 'chat',
 		title: 'Explain code',
@@ -104,7 +104,7 @@ export function listBuiltInPromptTemplates(): PromptTemplateListItem[] {
 	return BUILT_IN_PROMPT_TEMPLATES.map((template) => ({ ...template, source: 'builtin' }));
 }
 
-export function getBuiltInPromptTemplate(id: string): ChatPromptTemplate | null {
+export function getBuiltInPromptTemplate(id: number): ChatPromptTemplate | null {
 	return BUILT_IN_PROMPT_TEMPLATES.find((template) => template.id === id) ?? null;
 }
 
@@ -349,18 +349,13 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 	}
 ];
 
-/** Deterministic id for a seeded ticket-action default, scoped per user. */
-export function ticketActionDefaultId(userId: string, key: TicketActionDefault['key']): string {
-	return `${userId}__tia_${key}`;
-}
-
 /** Placeholder values for interpolating a ticket-action prompt. */
 export function ticketPlaceholderValues(
 	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body' | 'plan'>
 ): Record<string, string> {
 	return {
 		'ticket.title': ticket.title,
-		'ticket.id': ticket.id,
+		'ticket.id': String(ticket.id),
 		'ticket.body': ticket.body.trim(),
 		'ticket.plan': ticket.plan.trim() || '(none)'
 	};

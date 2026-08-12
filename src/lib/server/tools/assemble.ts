@@ -37,8 +37,8 @@ import type { PortalTool } from './types';
 
 export interface AssemblePiToolsOptions {
 	cwd: string;
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 	workspaceKey?: string;
 	policy: PermissionPolicy;
 	/** Live session mode; the permission tools surface it in `permission_capabilities`. */

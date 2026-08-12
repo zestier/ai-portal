@@ -1,4 +1,5 @@
-import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '$lib/types';
+import type { ToolCallRecord } from '$lib/types';
+import type { DisplayFileEdit, DisplayReasoningBlock } from './display-message';
 
 /**
  * The tool name whose calls spawn a sub-agent and therefore render as a
@@ -24,14 +25,14 @@ export function isSubagentToolCall(toolCall: ToolCallRecord): boolean {
 /** The full per-message pools a sub-agent card filters its own children from. */
 export type SubagentChildPools = {
 	tools?: ToolCallRecord[];
-	reasoning?: ReasoningBlockRecord[];
-	edits?: FileEditRecord[];
+	reasoning?: DisplayReasoningBlock[];
+	edits?: DisplayFileEdit[];
 };
 
 export type SubagentChildren = {
 	tools: ToolCallRecord[];
-	reasoning: ReasoningBlockRecord[];
-	edits: FileEditRecord[];
+	reasoning: DisplayReasoningBlock[];
+	edits: DisplayFileEdit[];
 };
 
 /**
@@ -44,7 +45,7 @@ export type SubagentChildren = {
  */
 export function selectSubagentChildren(
 	pools: SubagentChildPools,
-	parentToolCallId: string
+	parentToolCallId: number
 ): SubagentChildren {
 	return {
 		tools: (pools.tools ?? []).filter(

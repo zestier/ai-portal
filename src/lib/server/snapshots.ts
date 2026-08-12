@@ -34,7 +34,7 @@ const SNAPSHOT_IDENTITY = {
 export type SnapshotKind = 'pre' | 'post';
 
 export interface SnapshotRow {
-	messageId: string;
+	messageId: number;
 	kind: SnapshotKind;
 	gitRef: string;
 	commitSha: string;
@@ -149,11 +149,12 @@ async function withLock<T>(workdir: string, fn: () => Promise<T>): Promise<T> {
 const REF_PREFIX = 'refs/portal/turns';
 const MESSAGE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-function refFor(messageId: string, kind: SnapshotKind): string {
-	if (!MESSAGE_ID_RE.test(messageId)) {
-		throw new Error(`invalid message id for snapshot ref: ${messageId}`);
+function refFor(messageId: number, kind: SnapshotKind): string {
+	const s = String(messageId);
+	if (!MESSAGE_ID_RE.test(s)) {
+		throw new Error(`invalid message id for snapshot ref: ${s}`);
 	}
-	return `${REF_PREFIX}/${kind}/${messageId}`;
+	return `${REF_PREFIX}/${kind}/${s}`;
 }
 
 async function isSnapshotRepo(workdir: string): Promise<boolean> {
@@ -173,7 +174,7 @@ async function isSnapshotRepo(workdir: string): Promise<boolean> {
  */
 export async function snapshot(
 	workdir: string,
-	messageId: string,
+	messageId: number,
 	kind: SnapshotKind
 ): Promise<SnapshotRow | null> {
 	const db = getDb();
@@ -187,7 +188,7 @@ export async function snapshot(
 			.prepare('SELECT * FROM turn_snapshots WHERE message_id = ? AND kind = ?')
 			.get(messageId, kind) as
 			| {
-					message_id: string;
+					message_id: number;
 					kind: SnapshotKind;
 					git_ref: string;
 					commit_sha: string;
@@ -284,12 +285,12 @@ export async function snapshot(
 /**
  * Look up a snapshot row.
  */
-export function getSnapshot(messageId: string, kind: SnapshotKind): SnapshotRow | null {
+export function getSnapshot(messageId: number, kind: SnapshotKind): SnapshotRow | null {
 	const r = getDb()
 		.prepare('SELECT * FROM turn_snapshots WHERE message_id = ? AND kind = ?')
 		.get(messageId, kind) as
 		| {
-				message_id: string;
+				message_id: number;
 				kind: SnapshotKind;
 				git_ref: string;
 				commit_sha: string;

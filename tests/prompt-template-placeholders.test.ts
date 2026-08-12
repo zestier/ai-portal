@@ -4,7 +4,6 @@ import {
 	findUnknownPlaceholders,
 	interpolatePrompt,
 	placeholdersForType,
-	ticketActionDefaultId,
 	ticketPlaceholderValues,
 	unknownPlaceholderMessage,
 	TICKET_ACTION_DEFAULTS
@@ -50,7 +49,7 @@ describe('placeholder registry', () => {
 
 describe('interpolatePrompt', () => {
 	const values = ticketPlaceholderValues({
-		id: 'ticket-1',
+		id: 1,
 		title: 'Fix it',
 		body: 'Some details.',
 		plan: 'Step 1. Step 2.'
@@ -62,12 +61,12 @@ describe('interpolatePrompt', () => {
 				'Do this: {{ticket.title}} ({{ticket.id}})\n\n{{ticket.body}}\n\n{{ticket.plan}}',
 				values
 			)
-		).toBe('Do this: Fix it (ticket-1)\n\nSome details.\n\nStep 1. Step 2.');
+		).toBe('Do this: Fix it (1)\n\nSome details.\n\nStep 1. Step 2.');
 	});
 
 	it('drops unknown placeholders and trims dangling blanks for an empty body', () => {
 		const empty = ticketPlaceholderValues({
-			id: 'ticket-1',
+			id: 1,
 			title: 'Fix it',
 			body: '   ',
 			plan: ''
@@ -77,17 +76,15 @@ describe('interpolatePrompt', () => {
 				'Do this: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
 				empty
 			)
-		).toBe('Do this: Fix it\n\nTicket ID: ticket-1');
+		).toBe('Do this: Fix it\n\nTicket ID: 1');
 	});
 
 	it('renders an empty plan as (none) and trims a non-empty plan', () => {
 		expect(
-			ticketPlaceholderValues({ id: 't', title: 'x', body: 'b', plan: '   ' })['ticket.plan']
+			ticketPlaceholderValues({ id: 1, title: 'x', body: 'b', plan: '   ' })['ticket.plan']
 		).toBe('(none)');
 		expect(
-			ticketPlaceholderValues({ id: 't', title: 'x', body: 'b', plan: '  Step 1.  ' })[
-				'ticket.plan'
-			]
+			ticketPlaceholderValues({ id: 1, title: 'x', body: 'b', plan: '  Step 1.  ' })['ticket.plan']
 		).toBe('Step 1.');
 	});
 
@@ -95,7 +92,7 @@ describe('interpolatePrompt', () => {
 		expect(
 			interpolatePrompt(
 				'{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
-				ticketPlaceholderValues({ id: 't', title: 'x', body: 'Body.', plan: 'Step 1. Step 2.' })
+				ticketPlaceholderValues({ id: 1, title: 'x', body: 'Body.', plan: 'Step 1. Step 2.' })
 			)
 		).toBe('Body.\n\nPlan:\nStep 1. Step 2.');
 	});
@@ -104,7 +101,7 @@ describe('interpolatePrompt', () => {
 		expect(
 			interpolatePrompt(
 				'{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
-				ticketPlaceholderValues({ id: 't', title: 'x', body: 'Body.', plan: '' })
+				ticketPlaceholderValues({ id: 1, title: 'x', body: 'Body.', plan: '' })
 			)
 		).toBe('Body.\n\nPlan:\n(none)');
 	});
@@ -130,9 +127,5 @@ describe('ticket action defaults', () => {
 		for (const def of TICKET_ACTION_DEFAULTS) {
 			expect(findUnknownPlaceholders(def.prompt, 'ticket-action')).toEqual([]);
 		}
-	});
-
-	it('builds deterministic per-user default ids', () => {
-		expect(ticketActionDefaultId('user-1', 'do')).toBe('user-1__tia_do');
 	});
 });

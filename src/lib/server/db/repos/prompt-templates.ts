@@ -1,9 +1,7 @@
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import {
 	TICKET_ACTION_DEFAULTS,
 	findUnknownPlaceholders,
-	ticketActionDefaultId,
 	unknownPlaceholderMessage,
 	type TicketActionDefault
 } from '$lib/prompt-templates';
@@ -24,8 +22,8 @@ import {
 import { sanitizeDisabledToolGroups, type PortalToolGroupId } from '$lib/tools/groups';
 
 interface PromptTemplateRow {
-	id: string;
-	user_id: string;
+	id: number;
+	user_id: number;
 	type: string;
 	title: string;
 	description: string;
@@ -102,7 +100,7 @@ export interface ListOptions {
 	limit?: number;
 }
 
-export function list(userId: string, opts: ListOptions = {}): ChatPromptTemplate[] {
+export function list(userId: number, opts: ListOptions = {}): ChatPromptTemplate[] {
 	const status = opts.status ?? 'open';
 	const limit = opts.limit ?? 100;
 	const filters: string[] = ['user_id = ?'];
@@ -131,7 +129,7 @@ export function list(userId: string, opts: ListOptions = {}): ChatPromptTemplate
 	return rows.map(rowToTemplate);
 }
 
-export function get(id: string, userId: string): ChatPromptTemplate | null {
+export function get(id: number, userId: number): ChatPromptTemplate | null {
 	const row = getDb()
 		.prepare('SELECT * FROM prompt_templates WHERE id = ? AND user_id = ?')
 		.get(id, userId) as PromptTemplateRow | undefined;
@@ -139,7 +137,6 @@ export function get(id: string, userId: string): ChatPromptTemplate | null {
 }
 
 export interface CreateInput {
-	id?: string;
 	type?: PromptTemplateType;
 	title: string;
 	description?: string;
@@ -154,7 +151,7 @@ export interface CreateInput {
 	orderIndex?: number;
 }
 
-export function create(userId: string, input: CreateInput): ChatPromptTemplate {
+export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 	const type = input.type ?? 'chat';
 	const title = input.title.trim();
 	const description = input.description?.trim() ?? '';
@@ -169,35 +166,35 @@ export function create(userId: string, input: CreateInput): ChatPromptTemplate {
 	const disabledToolGroups =
 		type === 'chat' ? sanitizeDisabledToolGroups(input.disabledToolGroups) : [];
 	const workspaceMode = normalizePromptTemplateWorkspaceMode(input.workspaceMode);
-	const id = input.id ?? ulid();
 	const now = Date.now();
 	const orderIndex = Number.isFinite(input.orderIndex) ? Math.trunc(input.orderIndex ?? 0) : 0;
-	getDb()
-		.prepare(
-			`INSERT INTO prompt_templates(
-			   id, user_id, type, title, description, prompt, launch_behavior, conversation_mode,
-			   approval_mode, model, disabled_tool_groups, workspace_mode, status, pinned, order_index,
-			   created_at, updated_at, archived_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
-		)
-		.run(
-			id,
-			userId,
-			type,
-			title,
-			description,
-			prompt,
-			launchBehavior,
-			conversationMode,
-			approvalMode,
-			model,
-			JSON.stringify(disabledToolGroups),
-			workspaceMode,
-			input.pinned ? 1 : 0,
-			orderIndex,
-			now,
-			now
-		);
+	const id = Number(
+		getDb()
+			.prepare(
+				`INSERT INTO prompt_templates(
+				   user_id, type, title, description, prompt, launch_behavior, conversation_mode,
+				   approval_mode, model, disabled_tool_groups, workspace_mode, status, pinned, order_index,
+				   created_at, updated_at, archived_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+			)
+			.run(
+				userId,
+				type,
+				title,
+				description,
+				prompt,
+				launchBehavior,
+				conversationMode,
+				approvalMode,
+				model,
+				JSON.stringify(disabledToolGroups),
+				workspaceMode,
+				input.pinned ? 1 : 0,
+				orderIndex,
+				now,
+				now
+			).lastInsertRowid
+	);
 	return {
 		id,
 		userId,
@@ -235,7 +232,7 @@ export interface UpdateInput {
 	orderIndex?: number;
 }
 
-export function update(id: string, userId: string, patch: UpdateInput): ChatPromptTemplate | null {
+export function update(id: number, userId: number, patch: UpdateInput): ChatPromptTemplate | null {
 	const current = get(id, userId);
 	if (!current) return null;
 
@@ -300,7 +297,7 @@ export function update(id: string, userId: string, patch: UpdateInput): ChatProm
 	return get(id, userId);
 }
 
-export function archive(id: string, userId: string): ChatPromptTemplate | null {
+export function archive(id: number, userId: number): ChatPromptTemplate | null {
 	return update(id, userId, { status: 'archived' });
 }
 
@@ -308,9 +305,8 @@ export function archive(id: string, userId: string): ChatPromptTemplate | null {
 // Ticket-action default seeding
 // ---------------------------------------------------------------------------
 
-function insertDefault(userId: string, def: TicketActionDefault): void {
+function insertDefault(userId: number, def: TicketActionDefault): void {
 	create(userId, {
-		id: ticketActionDefaultId(userId, def.key),
 		type: 'ticket-action',
 		title: def.title,
 		description: def.description,
@@ -324,7 +320,7 @@ function insertDefault(userId: string, def: TicketActionDefault): void {
 	});
 }
 
-function countTicketActions(userId: string): number {
+function countTicketActions(userId: number): number {
 	const row = getDb()
 		.prepare(
 			"SELECT COUNT(*) AS n FROM prompt_templates WHERE user_id = ? AND type = 'ticket-action'"
@@ -338,12 +334,27 @@ function countTicketActions(userId: string): number {
  * ticket-action templates (of any status). Archived defaults still count, so a
  * user who deliberately removed every action isn't re-seeded on the next load.
  */
-export function ensureTicketActionDefaults(userId: string): void {
+export function ensureTicketActionDefaults(userId: number): void {
 	if (countTicketActions(userId) > 0) return;
 	const tx = getDb().transaction(() => {
 		for (const def of TICKET_ACTION_DEFAULTS) insertDefault(userId, def);
 	});
 	tx();
+}
+
+// Seeded defaults are identified by their canonical title (Do/Draft/Refine are
+// distinct). Ids are now DB-minted integers, so the old deterministic id scheme
+// (`<userId>__tia_<key>`) no longer applies; a user who renames a default before
+// hitting "Restore defaults" gets a fresh copy rather than a field reset.
+function findDefaultByTitle(userId: number, title: string): ChatPromptTemplate | null {
+	const row = getDb()
+		.prepare(
+			`SELECT * FROM prompt_templates
+			  WHERE user_id = ? AND type = 'ticket-action' AND title = ?
+			  ORDER BY created_at ASC LIMIT 1`
+		)
+		.get(userId, title) as PromptTemplateRow | undefined;
+	return row ? rowToTemplate(row) : null;
 }
 
 /**
@@ -353,17 +364,16 @@ export function ensureTicketActionDefaults(userId: string): void {
  * of existing defaults to the current built-in values. Powers the "Restore
  * defaults" button. Returns the number of defaults (re)added or updated.
  */
-export function restoreTicketActionDefaults(userId: string): number {
+export function restoreTicketActionDefaults(userId: number): number {
 	let restored = 0;
 	const tx = getDb().transaction(() => {
 		for (const def of TICKET_ACTION_DEFAULTS) {
-			const id = ticketActionDefaultId(userId, def.key);
-			const existing = get(id, userId);
+			const existing = findDefaultByTitle(userId, def.title);
 			if (!existing) {
 				insertDefault(userId, def);
 				restored += 1;
 			} else {
-				update(id, userId, {
+				update(existing.id, userId, {
 					status: 'open',
 					title: def.title,
 					description: def.description,

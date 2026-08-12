@@ -3,6 +3,7 @@ import type { PortalEvent } from '../src/lib/types';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
 import { makeFakeSession } from './helpers/fake-session';
+import { appGlobalSymbols, clearGlobalSingletonValues } from '../src/lib/server/global-singleton';
 
 // Mock the session pool so turn-runner doesn't try to spin up the real SDK.
 const acquireMock = vi.fn();
@@ -13,6 +14,11 @@ vi.mock('../src/lib/server/runtime/pool', () => ({
 
 async function freshImports() {
 	vi.resetModules();
+	// The turn registry is a process-wide singleton (globalThis), so `resetModules`
+	// alone does not clear it. With integer conversation ids the same id (1, 2, …)
+	// is reused across tests, so a prior test's still-cached turn would otherwise
+	// trip "turn already in progress".
+	clearGlobalSingletonValues(appGlobalSymbols('turns'));
 	await setupLocalEnv();
 	const users = await import('../src/lib/server/db/repos/users');
 	const convs = await import('../src/lib/server/db/repos/conversations');
@@ -160,7 +166,7 @@ describe('turn-runner', () => {
 
 	it('reserveTurn throws a typed TurnAlreadyInProgressError on a second reservation', async () => {
 		const { turnRunner } = await freshImports();
-		const id = 'conv-reserve';
+		const id = 999999;
 
 		turnRunner.reserveTurn(id);
 		try {
@@ -239,8 +245,8 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'message.delta', messageId: 'm1', text: 'hi' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.delta', messageId: 1, text: 'hi' },
 				{ type: 'done' }
 			])
 		);
@@ -297,8 +303,8 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'message.delta', messageId: 'm1', text: 'hi' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.delta', messageId: 1, text: 'hi' },
 				{ type: 'done' }
 			])
 		);
@@ -338,8 +344,8 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'message.delta', messageId: 'm1', text: 'ok' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.delta', messageId: 1, text: 'ok' },
 				{ type: 'done' }
 			])
 		);
@@ -400,7 +406,7 @@ describe('turn-runner', () => {
 
 		// Nothing keyed to a user message means nothing to inspect; the table
 		// simply has no row for any id we'd look up.
-		expect(turnInputs.get(conv.id, 'nonexistent')).toBeNull();
+		expect(turnInputs.get(conv.id, 999999)).toBeNull();
 	});
 
 	it('assigns monotonic ids and replays from Last-Event-ID via sinceId', async () => {
@@ -415,10 +421,10 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'message.delta', messageId: 'm1', text: 'a' },
-				{ type: 'message.delta', messageId: 'm1', text: 'b' },
-				{ type: 'message.delta', messageId: 'm1', text: 'c' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.delta', messageId: 1, text: 'a' },
+				{ type: 'message.delta', messageId: 1, text: 'b' },
+				{ type: 'message.delta', messageId: 1, text: 'c' },
 				{ type: 'done' }
 			])
 		);
@@ -469,8 +475,8 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'message.delta', messageId: 'm1', text: 'hi' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.delta', messageId: 1, text: 'hi' },
 				{ type: 'done' }
 			])
 		);
@@ -512,7 +518,7 @@ describe('turn-runner', () => {
 			workingDirectory: wd,
 			model: 'test-model',
 			async *send(_prompt: string, signal?: AbortSignal): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+				yield { type: 'message.start', messageId: 1, role: 'assistant' };
 				await new Promise<void>((resolve) => {
 					if (signal?.aborted) return resolve();
 					signal?.addEventListener('abort', () => resolve(), { once: true });
@@ -571,8 +577,8 @@ describe('turn-runner', () => {
 			workingDirectory: wd,
 			model: 'test-model',
 			async *send(): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
-				yield { type: 'message.delta', messageId: 'm1', text: 'partial' };
+				yield { type: 'message.start', messageId: 1, role: 'assistant' };
+				yield { type: 'message.delta', messageId: 1, text: 'partial' };
 				throw new Error('provider exploded');
 			},
 			async abort() {},
@@ -642,7 +648,7 @@ describe('turn-runner', () => {
 			workingDirectory: wd,
 			model: 'test-model',
 			async *send(_prompt: string, signal?: AbortSignal): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+				yield { type: 'message.start', messageId: 1, role: 'assistant' };
 				await new Promise<void>((resolve) => {
 					if (signal?.aborted) return resolve();
 					signal?.addEventListener('abort', () => resolve(), { once: true });
@@ -797,21 +803,21 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'provider-message-id', role: 'assistant' },
-				{ type: 'message.delta', messageId: 'provider-message-id', text: 'hi' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.delta', messageId: 1, text: 'hi' },
 				{
 					type: 'message.reasoning',
-					messageId: 'provider-message-id',
+					messageId: 1,
 					segmentId: 'r1',
 					text: 'think'
 				},
 				{
 					type: 'message.reasoning.end',
-					messageId: 'provider-message-id',
+					messageId: 1,
 					segmentId: 'r1',
 					durationMs: 10
 				},
-				{ type: 'message.end', messageId: 'provider-message-id' },
+				{ type: 'message.end', messageId: 1 },
 				{ type: 'done' }
 			])
 		);
@@ -861,10 +867,10 @@ describe('turn-runner', () => {
 			conversationId: conv.id,
 			workingDirectory: wd,
 			async *send(): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
-				yield { type: 'message.delta', messageId: 'm1', text: 'a' };
+				yield { type: 'message.start', messageId: 1, role: 'assistant' };
+				yield { type: 'message.delta', messageId: 1, text: 'a' };
 				await gate;
-				yield { type: 'message.delta', messageId: 'm1', text: 'b' };
+				yield { type: 'message.delta', messageId: 1, text: 'b' };
 				yield { type: 'done' };
 			},
 			async abort() {},
@@ -919,8 +925,8 @@ describe('turn-runner', () => {
 		acquireMock.mockResolvedValue(
 			makeFakeSession(
 				[
-					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-					{ type: 'message.delta', messageId: 'm1', text: 'hi' },
+					{ type: 'message.start', messageId: 1, role: 'assistant' },
+					{ type: 'message.delta', messageId: 1, text: 'hi' },
 					{ type: 'done' }
 				],
 				conv.id,
@@ -983,7 +989,7 @@ describe('turn-runner', () => {
 
 		expect(turnRunner.getTurnById(conv.id, turn.id)).toBeTruthy();
 		expect(turnRunner.getTurnById(conv.id, 'nonexistent')).toBeNull();
-		expect(turnRunner.getTurnById('other-conversation', turn.id)).toBeNull();
+		expect(turnRunner.getTurnById(999999, turn.id)).toBeNull();
 	});
 
 	it('persists interleaved reasoning segments anchored to their text offsets', async () => {
@@ -1003,15 +1009,15 @@ describe('turn-runner', () => {
 		// here.
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'message.reasoning', messageId: 'm1', segmentId: 's1', text: 'plan ' },
-				{ type: 'message.reasoning', messageId: 'm1', segmentId: 's1', text: 'first' },
-				{ type: 'message.reasoning.end', messageId: 'm1', segmentId: 's1', durationMs: 100 },
-				{ type: 'message.delta', messageId: 'm1', text: 'hello' },
-				{ type: 'message.reasoning', messageId: 'm1', segmentId: 's2', text: 'second ' },
-				{ type: 'message.reasoning', messageId: 'm1', segmentId: 's2', text: 'thought' },
-				{ type: 'message.reasoning.end', messageId: 'm1', segmentId: 's2', durationMs: 200 },
-				{ type: 'message.delta', messageId: 'm1', text: ' world' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.reasoning', messageId: 1, segmentId: 's1', text: 'plan ' },
+				{ type: 'message.reasoning', messageId: 1, segmentId: 's1', text: 'first' },
+				{ type: 'message.reasoning.end', messageId: 1, segmentId: 's1', durationMs: 100 },
+				{ type: 'message.delta', messageId: 1, text: 'hello' },
+				{ type: 'message.reasoning', messageId: 1, segmentId: 's2', text: 'second ' },
+				{ type: 'message.reasoning', messageId: 1, segmentId: 's2', text: 'thought' },
+				{ type: 'message.reasoning.end', messageId: 1, segmentId: 's2', durationMs: 200 },
+				{ type: 'message.delta', messageId: 1, text: ' world' },
 				{ type: 'done' }
 			])
 		);
@@ -1067,18 +1073,18 @@ describe('turn-runner', () => {
 			conversationId: conv.id,
 			workingDirectory: wd,
 			async *send(): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
-				yield { type: 'message.delta', messageId: 'm1', text: 'partial' };
+				yield { type: 'message.start', messageId: 1, role: 'assistant' };
+				yield { type: 'message.delta', messageId: 1, text: 'partial' };
 				yield {
 					type: 'tool.call',
-					toolCallId: 'tool-1',
+					toolCallId: 1,
 					tool: 'bash',
 					args: { command: 'echo hi', timeoutMs: 30_000 }
 				};
 				await gate;
 				yield {
 					type: 'tool.result',
-					toolCallId: 'tool-1',
+					toolCallId: 1,
 					ok: true,
 					summary: 'ok',
 					output: 'hi\n'
@@ -1113,7 +1119,7 @@ describe('turn-runner', () => {
 		expect(midTurn?.status).toBe('streaming');
 		expect(midTurn?.content).toBe('partial');
 		expect(midTurn?.toolCalls?.[0]).toMatchObject({
-			id: 'tool-1',
+			id: expect.any(Number),
 			tool: 'bash',
 			status: 'pending'
 		});
@@ -1126,7 +1132,7 @@ describe('turn-runner', () => {
 		const done = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
 		expect(done?.status).toBe('complete');
 		expect(done?.toolCalls?.[0]).toMatchObject({
-			id: 'tool-1',
+			id: expect.any(Number),
 			status: 'ok',
 			resultJson: 'hi\n'
 		});
@@ -1149,7 +1155,7 @@ describe('turn-runner', () => {
 		};
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
 				edit,
 				edit,
 				{ type: 'done' }
@@ -1189,29 +1195,29 @@ describe('turn-runner', () => {
 		});
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
 				{
 					type: 'tool.call',
-					toolCallId: 'task-1',
+					toolCallId: 2,
 					tool: 'task',
 					args: { mode: 'background', prompt: 'do work' }
 				},
 				{
 					type: 'tool.result',
-					toolCallId: 'task-1',
+					toolCallId: 2,
 					ok: true,
 					summary: 'launched',
 					output: { agent_id: 'agent-1', content: 'launched' }
 				},
 				{
 					type: 'subagent.lifecycle',
-					toolCallId: 'task-1',
+					toolCallId: 2,
 					agentId: 'agent-1',
 					status: 'running'
 				},
 				{
 					type: 'subagent.lifecycle',
-					toolCallId: 'task-1',
+					toolCallId: 2,
 					agentId: 'agent-1',
 					status: 'completed'
 				},
@@ -1237,7 +1243,7 @@ describe('turn-runner', () => {
 
 		const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
 		expect(assistant?.toolCalls?.[0]).toMatchObject({
-			id: 'task-1',
+			id: expect.any(Number),
 			status: 'ok',
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-1',
@@ -1317,8 +1323,8 @@ describe('turn-runner', () => {
 
 			acquireMock.mockResolvedValue(
 				makeFakeSession([
-					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-					{ type: 'message.delta', messageId: 'm1', text: 'Done.' },
+					{ type: 'message.start', messageId: 1, role: 'assistant' },
+					{ type: 'message.delta', messageId: 1, text: 'Done.' },
 					{ type: 'done' }
 				])
 			);
@@ -1428,23 +1434,23 @@ describe('turn-runner', () => {
 					if (sendCount === 1) {
 						// First turn: only a memory recall tool, no user-facing text —
 						// the "checked memory then ended the turn" failure mode.
-						yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+						yield { type: 'message.start', messageId: 1, role: 'assistant' };
 						yield {
 							type: 'tool.call',
-							toolCallId: 'mem-1',
+							toolCallId: 3,
 							tool: 'memory_search',
 							args: { query: 'Mara' }
 						};
 						yield {
 							type: 'tool.result',
-							toolCallId: 'mem-1',
+							toolCallId: 3,
 							ok: true,
 							summary: 'found',
 							output: 'Mara is in the tower.'
 						};
 					} else {
 						// Continuation after the nudge: now actually answer.
-						yield { type: 'message.delta', messageId: 'm1', text: 'Mara is in the tower.' };
+						yield { type: 'message.delta', messageId: 1, text: 'Mara is in the tower.' };
 					}
 				},
 				async abort() {},
@@ -1478,7 +1484,10 @@ describe('turn-runner', () => {
 			// The assistant ultimately produced a substantive reply.
 			const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
 			expect(assistant?.content).toContain('Mara is in the tower.');
-			expect(assistant?.toolCalls?.[0]).toMatchObject({ id: 'mem-1', tool: 'memory_search' });
+			expect(assistant?.toolCalls?.[0]).toMatchObject({
+				id: expect.any(Number),
+				tool: 'memory_search'
+			});
 		} finally {
 			vi.doUnmock('../src/lib/server/memory/extractor');
 		}
@@ -1519,16 +1528,16 @@ describe('turn-runner', () => {
 					// A write tool (memory_global_record) with no user-facing
 					// text is NOT the recall-then-nothing failure mode, so the
 					// guard must leave it alone.
-					yield { type: 'message.start', messageId: 'm1', role: 'assistant' };
+					yield { type: 'message.start', messageId: 1, role: 'assistant' };
 					yield {
 						type: 'tool.call',
-						toolCallId: 'w-1',
+						toolCallId: 4,
 						tool: 'memory_global_record',
 						args: { text: 'user prefers metric units' }
 					};
 					yield {
 						type: 'tool.result',
-						toolCallId: 'w-1',
+						toolCallId: 4,
 						ok: true,
 						summary: 'stored',
 						output: 'ok'
@@ -1614,8 +1623,8 @@ describe('turn-runner', () => {
 
 			acquireMock.mockResolvedValue(
 				makeFakeSession([
-					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-					{ type: 'message.delta', messageId: 'm1', text: 'Done.' },
+					{ type: 'message.start', messageId: 1, role: 'assistant' },
+					{ type: 'message.delta', messageId: 1, text: 'Done.' },
 					{ type: 'done' }
 				])
 			);
@@ -1716,8 +1725,8 @@ describe('turn-runner', () => {
 
 			acquireMock.mockResolvedValue(
 				makeFakeSession([
-					{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-					{ type: 'message.delta', messageId: 'm1', text: 'Done.' },
+					{ type: 'message.start', messageId: 1, role: 'assistant' },
+					{ type: 'message.delta', messageId: 1, text: 'Done.' },
 					{ type: 'done' }
 				])
 			);
@@ -2237,7 +2246,7 @@ describe('turn-runner', () => {
 		const originalMsg = messages.append(conv.id, { role: 'assistant', content: '' });
 		const args = { command: 'echo approved' };
 		messages.insertToolCall(originalMsg.id, {
-			id: 'tc-original',
+			id: 1,
 			tool: 'bash',
 			argsJson: JSON.stringify(args),
 			resultJson: JSON.stringify('Permission denied'),
@@ -2249,9 +2258,9 @@ describe('turn-runner', () => {
 		});
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
-				{ type: 'tool.call', toolCallId: 'tc-rerun', tool: 'bash', args },
-				{ type: 'tool.result', toolCallId: 'tc-rerun', ok: true, summary: 'ok', output: 'ok' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'tool.call', toolCallId: 2, tool: 'bash', args },
+				{ type: 'tool.result', toolCallId: 2, ok: true, summary: 'ok', output: 'ok' },
 				{ type: 'done' }
 			])
 		);
@@ -2273,10 +2282,10 @@ describe('turn-runner', () => {
 		}
 
 		const toolCalls = messages.listByConversation(conv.id).flatMap((m) => m.toolCalls ?? []);
-		expect(toolCalls.find((t) => t.id === 'tc-original')).toMatchObject({
+		expect(toolCalls.find((t) => t.id === 1)).toMatchObject({
 			status: 'denied'
 		});
-		expect(toolCalls.find((t) => t.id === 'tc-rerun')).toMatchObject({
+		expect(toolCalls.find((t) => t.id === 2)).toMatchObject({
 			status: 'ok'
 		});
 	});

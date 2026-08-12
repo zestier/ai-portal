@@ -32,8 +32,8 @@ import { buildEditFileTools } from './edit-file';
 export type { PortalToolCatalogEntry };
 
 const STUB = {
-	userId: 'catalog',
-	conversationId: 'catalog',
+	userId: 1,
+	conversationId: 1,
 	workspaceKey: 'catalog',
 	cwd: '/'
 };

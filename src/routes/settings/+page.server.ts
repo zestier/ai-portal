@@ -104,7 +104,7 @@ const PromptTemplateSchema = z
 
 const UpdatePromptTemplateSchema = z
 	.object({
-		id: z.string().min(1),
+		id: z.coerce.number().int(),
 		type: z.enum(['chat', 'ticket-action']).optional().default('chat'),
 		title: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(500).optional(),
@@ -139,7 +139,7 @@ const MemoryProfileSchema = z.object({
 });
 
 const UpdateMemoryProfileSchema = MemoryProfileSchema.extend({
-	id: z.string().min(1)
+	id: z.coerce.number().int().positive()
 });
 
 export const actions: Actions = {
@@ -313,8 +313,8 @@ export const actions: Actions = {
 		if (!locals.userId)
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'archivePromptTemplate' });
 		const data = await request.formData();
-		const id = data.get('id');
-		if (typeof id !== 'string' || id.length === 0) {
+		const id = Number(data.get('id'));
+		if (!Number.isInteger(id)) {
 			return fail(400, {
 				ok: false,
 				error: 'Invalid prompt template id',
@@ -397,8 +397,8 @@ export const actions: Actions = {
 		if (!locals.userId)
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'archiveMemoryProfile' });
 		const data = await request.formData();
-		const id = data.get('id');
-		if (typeof id !== 'string' || id.length === 0) {
+		const id = Number(data.get('id'));
+		if (!Number.isInteger(id) || id <= 0) {
 			return fail(400, {
 				ok: false,
 				error: 'Invalid memory profile id',

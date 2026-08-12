@@ -27,11 +27,11 @@ describe('fetchHeadStatus', () => {
 			})
 		);
 
-		await expect(fetchHeadStatus('conv-123')).resolves.toMatchObject({
+		await expect(fetchHeadStatus(123)).resolves.toMatchObject({
 			initialized: true,
 			dirtyCount: 3
 		});
-		expect(fetch).toHaveBeenCalledWith('/api/conversations/conv-123/git/status');
+		expect(fetch).toHaveBeenCalledWith('/api/conversations/123/git/status');
 	});
 
 	it('throws the response body for non-ok responses', async () => {
@@ -44,6 +44,6 @@ describe('fetchHeadStatus', () => {
 			})
 		);
 
-		await expect(fetchHeadStatus('conv-123')).rejects.toThrow('boom');
+		await expect(fetchHeadStatus(123)).rejects.toThrow('boom');
 	});
 });

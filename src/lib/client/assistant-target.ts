@@ -1,4 +1,4 @@
-import type { Message } from '$lib/types';
+import type { DisplayMessage } from './display-message';
 
 /**
  * Where a `tool.call` / `file.edit` event should be applied.
@@ -22,8 +22,8 @@ export type AssistantTargetResult = { kind: 'found'; index: number } | { kind: '
  * the last message when that is an assistant turn.
  */
 export function resolveAssistantTarget(
-	messages: Pick<Message, 'id' | 'role'>[],
-	messageId: string | undefined
+	messages: Pick<DisplayMessage, 'id' | 'role'>[],
+	messageId: number | undefined
 ): AssistantTargetResult {
 	if (messageId) {
 		const index = messages.findIndex((m) => m.id === messageId);

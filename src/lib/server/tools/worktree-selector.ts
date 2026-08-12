@@ -57,8 +57,8 @@ export const WORKTREE_WRITE_PARAM = {
  * without it the selector is rejected rather than silently ignored.
  */
 export interface WorktreeToolContext {
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 }
 
 /** Either the directory to act in, or the error envelope to return instead. */
@@ -89,7 +89,7 @@ export function resolveWorktreeDir(
 	ctx: WorktreeToolContext | undefined
 ): string | null {
 	if (!ctx) return null;
-	const lease = getLease(leaseId, ctx.userId);
+	const lease = getLease(Number(leaseId), ctx.userId);
 	if (!lease || lease.heldByConversationId !== ctx.conversationId) return null;
 	try {
 		return resolveLeaseWorkspace(lease);
@@ -120,7 +120,7 @@ export function createTreeResolver(
 				})
 			};
 		}
-		const lease = getLease(leaseId, ctx.userId);
+		const lease = getLease(Number(leaseId), ctx.userId);
 		if (!lease || lease.heldByConversationId !== ctx.conversationId) {
 			return {
 				error: err(`no worktree with id ${leaseId} in this conversation`, {

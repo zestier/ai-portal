@@ -1,9 +1,16 @@
 -- 001_init.sql (re-baselined)
 -- Note: schema_migrations table is bootstrapped by the migration runner.
 -- Single live migration: cumulative schema of the former 001-075 chain (deleted).
+--
+-- Entity tables use SQLite-global INTEGER PRIMARY KEY AUTOINCREMENT ids. The pi
+-- agent echoes these ids through portal tool args/results every turn; int ids are
+-- cheaper to emit, robust to echo (no truncated-id retries), and order naturally.
+-- Opaque/external handles (agent_id, turn_id, session_file, workspace_key,
+-- entity_key, loop_key, hashes) and the memory_event_log's event-store handles
+-- (id/parent_id, its own seq counter) stay TEXT.
 
 CREATE TABLE users (
-  id              TEXT PRIMARY KEY,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
   github_login    TEXT UNIQUE NOT NULL,
   github_id       INTEGER UNIQUE,
   display_name    TEXT,
@@ -13,14 +20,14 @@ CREATE TABLE users (
 );
 
 CREATE TABLE user_tokens (
-  user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   github_token_ct BLOB,
   byok_keys_ct    BLOB,
   updated_at      INTEGER NOT NULL
 );
 
 CREATE TABLE user_settings (
-  user_id            TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  user_id            INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   default_model      TEXT,
   default_workdir    TEXT,
   default_policy     TEXT NOT NULL DEFAULT 'prompt',
@@ -29,23 +36,23 @@ CREATE TABLE user_settings (
 , default_mode TEXT NOT NULL DEFAULT 'interactive', accent TEXT NOT NULL DEFAULT 'default', default_approval_mode TEXT NOT NULL DEFAULT 'ask');
 
 CREATE TABLE conversations (
-  id              TEXT PRIMARY KEY,
-  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title           TEXT NOT NULL,
   workdir         TEXT NOT NULL,
   model           TEXT,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
   archived_at     INTEGER
-, forked_from_conversation_id TEXT, forked_from_message_id TEXT, mode TEXT NOT NULL DEFAULT 'interactive', memory_mode TEXT NOT NULL DEFAULT 'off', memory_extractor_model TEXT, global_memory_enabled INTEGER NOT NULL DEFAULT 0, draft_prompt TEXT, disabled_tool_groups TEXT NOT NULL DEFAULT '[]', workspace_kind TEXT NOT NULL DEFAULT 'shared'
+, forked_from_conversation_id INTEGER, forked_from_message_id INTEGER, mode TEXT NOT NULL DEFAULT 'interactive', memory_mode TEXT NOT NULL DEFAULT 'off', memory_extractor_model TEXT, global_memory_enabled INTEGER NOT NULL DEFAULT 0, draft_prompt TEXT, disabled_tool_groups TEXT NOT NULL DEFAULT '[]', workspace_kind TEXT NOT NULL DEFAULT 'shared'
   CHECK (workspace_kind IN ('shared', 'managed-worktree')), workspace_key TEXT, last_read_at INTEGER, approval_mode TEXT NOT NULL DEFAULT 'ask', adversary_model TEXT, session_file TEXT);
 
 CREATE INDEX idx_conversations_user_updated
   ON conversations(user_id, updated_at DESC);
 
 CREATE TABLE messages (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   role            TEXT NOT NULL,
   content         TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'complete',
@@ -57,31 +64,31 @@ CREATE INDEX idx_messages_conv_created
   ON messages(conversation_id, created_at);
 
 CREATE TABLE tool_calls (
-  id              TEXT PRIMARY KEY,
-  message_id      TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id      INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   tool            TEXT NOT NULL,
   args_json       TEXT NOT NULL,
   result_json     TEXT,
   status          TEXT NOT NULL,
   started_at      INTEGER NOT NULL,
   ended_at        INTEGER
-, text_offset INTEGER, parent_tool_call_id TEXT);
+, text_offset INTEGER, parent_tool_call_id INTEGER);
 
 CREATE INDEX idx_tool_calls_message ON tool_calls(message_id);
 
 CREATE TABLE file_edits (
-  id              TEXT PRIMARY KEY,
-  message_id      TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id      INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   path            TEXT NOT NULL,
   diff            TEXT NOT NULL,
   created_at      INTEGER NOT NULL
-, text_offset INTEGER, parent_tool_call_id TEXT);
+, text_offset INTEGER, parent_tool_call_id INTEGER);
 
 CREATE INDEX idx_file_edits_message ON file_edits(message_id);
 
 CREATE TABLE permission_decisions (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   tool            TEXT NOT NULL,
   args_summary    TEXT,
   decision        TEXT NOT NULL,
@@ -91,7 +98,7 @@ CREATE TABLE permission_decisions (
 CREATE INDEX idx_permission_decisions_conv ON permission_decisions(conversation_id, decided_at DESC);
 
 CREATE TABLE conversation_usage (
-  conversation_id          TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id          INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   current_tokens           INTEGER NOT NULL,
   token_limit              INTEGER NOT NULL,
   messages_length          INTEGER NOT NULL,
@@ -102,7 +109,7 @@ CREATE TABLE conversation_usage (
 );
 
 CREATE TABLE turn_snapshots (
-  message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  message_id   INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   kind         TEXT NOT NULL CHECK (kind IN ('pre', 'post')),
   git_ref      TEXT NOT NULL,
   commit_sha   TEXT NOT NULL,
@@ -114,14 +121,14 @@ CREATE TABLE turn_snapshots (
 CREATE INDEX idx_turn_snapshots_tree ON turn_snapshots(tree_sha);
 
 CREATE TABLE reasoning_blocks (
-  id              TEXT PRIMARY KEY,
-  message_id      TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id      INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   segment_index   INTEGER NOT NULL,
   text            TEXT NOT NULL,
   text_offset     INTEGER,
   started_at      INTEGER NOT NULL,
   duration_ms     INTEGER
-, parent_tool_call_id TEXT, kind TEXT NOT NULL DEFAULT 'reasoning');
+, parent_tool_call_id INTEGER, kind TEXT NOT NULL DEFAULT 'reasoning');
 
 CREATE INDEX idx_reasoning_blocks_message
   ON reasoning_blocks(message_id, segment_index);
@@ -133,8 +140,8 @@ CREATE INDEX idx_reasoning_blocks_parent ON reasoning_blocks(parent_tool_call_id
 CREATE INDEX idx_file_edits_parent       ON file_edits(parent_tool_call_id);
 
 CREATE TABLE "permission_grants" (
-  user_id         TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  conversation_id TEXT             REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER          REFERENCES conversations(id) ON DELETE CASCADE,
   tool            TEXT    NOT NULL,
   permission_kind TEXT,
   scope_pattern   TEXT,
@@ -147,14 +154,14 @@ CREATE INDEX idx_permission_grants_lookup
   ON permission_grants(user_id, conversation_id, tool);
 
 CREATE TABLE workspace_tickets (
-  id                     TEXT PRIMARY KEY,
-  user_id                TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id                INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   workspace_key          TEXT NOT NULL,
   title                  TEXT NOT NULL,
   body                   TEXT NOT NULL DEFAULT '',
   status                 TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'archived')),
-  source_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-  source_message_id      TEXT REFERENCES messages(id) ON DELETE SET NULL,
+  source_conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  source_message_id      INTEGER REFERENCES messages(id) ON DELETE SET NULL,
   created_at             INTEGER NOT NULL,
   updated_at             INTEGER NOT NULL,
   closed_at              INTEGER
@@ -165,8 +172,8 @@ CREATE INDEX idx_workspace_tickets_user_workspace_status_updated
   ON workspace_tickets(user_id, workspace_key, status, updated_at DESC);
 
 CREATE TABLE prompt_templates (
-  id          TEXT PRIMARY KEY,
-  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title       TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   prompt      TEXT NOT NULL,
@@ -182,8 +189,8 @@ CREATE INDEX idx_prompt_templates_user_status_order
   ON prompt_templates(user_id, status, pinned DESC, order_index ASC, updated_at DESC);
 
 CREATE TABLE memory_entities (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   entity_key      TEXT NOT NULL,
   entity_type     TEXT NOT NULL,
   display_name    TEXT NOT NULL,
@@ -199,19 +206,19 @@ CREATE INDEX idx_memory_entities_conv_type
   ON memory_entities(conversation_id, entity_type, status);
 
 CREATE TABLE memory_events (
-  id                 TEXT PRIMARY KEY,
-  conversation_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id    INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id            TEXT,
   event_type         TEXT NOT NULL,
   occurred_at        INTEGER NOT NULL,
-  actor_entity_id    TEXT REFERENCES memory_entities(id) ON DELETE SET NULL,
-  target_entity_id   TEXT REFERENCES memory_entities(id) ON DELETE SET NULL,
+  actor_entity_id    INTEGER REFERENCES memory_entities(id) ON DELETE SET NULL,
+  target_entity_id   INTEGER REFERENCES memory_entities(id) ON DELETE SET NULL,
   summary            TEXT NOT NULL,
   payload_json       TEXT NOT NULL DEFAULT '{}',
   visibility         TEXT NOT NULL DEFAULT 'session',
   confidence         REAL NOT NULL DEFAULT 1,
-  source_message_id  TEXT REFERENCES messages(id) ON DELETE SET NULL,
-  source_tool_call_id TEXT REFERENCES tool_calls(id) ON DELETE SET NULL,
+  source_message_id  INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  source_tool_call_id INTEGER REFERENCES tool_calls(id) ON DELETE SET NULL,
   created_at         INTEGER NOT NULL
 );
 
@@ -222,17 +229,17 @@ CREATE INDEX idx_memory_events_conv_target
   ON memory_events(conversation_id, target_entity_id, created_at DESC);
 
 CREATE TABLE memory_facts (
-  id                  TEXT PRIMARY KEY,
-  conversation_id     TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  entity_id           TEXT REFERENCES memory_entities(id) ON DELETE SET NULL,
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id     INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  entity_id           INTEGER REFERENCES memory_entities(id) ON DELETE SET NULL,
   predicate           TEXT NOT NULL,
   value_json          TEXT NOT NULL,
   status              TEXT NOT NULL DEFAULT 'active',
   visibility          TEXT NOT NULL DEFAULT 'session',
   confidence          REAL NOT NULL DEFAULT 1,
-  source_event_id     TEXT REFERENCES memory_events(id) ON DELETE SET NULL,
-  source_message_id   TEXT REFERENCES messages(id) ON DELETE SET NULL,
-  supersedes_fact_id  TEXT REFERENCES memory_facts(id) ON DELETE SET NULL,
+  source_event_id     INTEGER REFERENCES memory_events(id) ON DELETE SET NULL,
+  source_message_id   INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  supersedes_fact_id  INTEGER REFERENCES memory_facts(id) ON DELETE SET NULL,
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL
 , pinned INTEGER NOT NULL DEFAULT 0);
@@ -244,16 +251,16 @@ CREATE INDEX idx_memory_facts_conv_predicate
   ON memory_facts(conversation_id, predicate, status);
 
 CREATE TABLE memory_open_loops (
-  id                     TEXT PRIMARY KEY,
-  conversation_id        TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id        INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   loop_type              TEXT NOT NULL,
   title                  TEXT NOT NULL,
   description            TEXT NOT NULL DEFAULT '',
   status                 TEXT NOT NULL DEFAULT 'open',
   priority               INTEGER NOT NULL DEFAULT 0,
   related_entity_ids_json TEXT NOT NULL DEFAULT '[]',
-  source_event_id        TEXT REFERENCES memory_events(id) ON DELETE SET NULL,
-  source_message_id      TEXT REFERENCES messages(id) ON DELETE SET NULL,
+  source_event_id        INTEGER REFERENCES memory_events(id) ON DELETE SET NULL,
+  source_message_id      INTEGER REFERENCES messages(id) ON DELETE SET NULL,
   created_at             INTEGER NOT NULL,
   updated_at             INTEGER NOT NULL
 , idle_turns INTEGER NOT NULL DEFAULT 0, loop_key TEXT NOT NULL DEFAULT '');
@@ -262,8 +269,8 @@ CREATE INDEX idx_memory_open_loops_conv_status
   ON memory_open_loops(conversation_id, status, priority DESC, updated_at DESC);
 
 CREATE TABLE memory_patches (
-  id                    TEXT PRIMARY KEY,
-  conversation_id         TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id         INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id                 TEXT,
   status                  TEXT NOT NULL,
   summary                 TEXT NOT NULL DEFAULT '',
@@ -277,9 +284,9 @@ CREATE INDEX idx_memory_patches_conv_created
   ON memory_patches(conversation_id, created_at DESC);
 
 CREATE TABLE memory_validation_issues (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  patch_id        TEXT REFERENCES memory_patches(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  patch_id        INTEGER REFERENCES memory_patches(id) ON DELETE CASCADE,
   severity        TEXT NOT NULL,
   code            TEXT NOT NULL,
   message         TEXT NOT NULL,
@@ -292,8 +299,8 @@ CREATE INDEX idx_memory_validation_issues_conv_status
   ON memory_validation_issues(conversation_id, status, created_at DESC);
 
 CREATE TABLE memory_tool_calls (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id         TEXT,
   tool_name       TEXT NOT NULL,
   arguments_json  TEXT NOT NULL DEFAULT '{}',
@@ -313,11 +320,11 @@ CREATE VIRTUAL TABLE memory_search_index USING fts5(
 );
 
 CREATE TABLE memory_patch_items (
-  id              TEXT PRIMARY KEY,
-  patch_id        TEXT NOT NULL REFERENCES memory_patches(id) ON DELETE CASCADE,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  patch_id        INTEGER NOT NULL REFERENCES memory_patches(id) ON DELETE CASCADE,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   item_type       TEXT NOT NULL,
-  item_id         TEXT NOT NULL,
+  item_id         INTEGER NOT NULL,
   action          TEXT NOT NULL,
   created_at      INTEGER NOT NULL
 , review_status TEXT NOT NULL DEFAULT 'applied', reviewed_at INTEGER);
@@ -329,14 +336,14 @@ CREATE INDEX idx_memory_patch_items_conv_item
   ON memory_patch_items(conversation_id, item_type, item_id);
 
 CREATE TABLE global_memories (
-  id                     TEXT PRIMARY KEY,
-  user_id                TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id                INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   kind                   TEXT NOT NULL,
   memory_key             TEXT NOT NULL,
   value_json             TEXT NOT NULL,
   status                 TEXT NOT NULL DEFAULT 'active',
-  source_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-  source_message_id      TEXT REFERENCES messages(id) ON DELETE SET NULL,
+  source_conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  source_message_id      INTEGER REFERENCES messages(id) ON DELETE SET NULL,
   created_at             INTEGER NOT NULL,
   updated_at             INTEGER NOT NULL,
   UNIQUE(user_id, kind, memory_key)
@@ -352,12 +359,12 @@ CREATE VIRTUAL TABLE global_memory_search_index USING fts5(
 );
 
 CREATE TABLE memory_embeddings (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
-  user_id         TEXT REFERENCES users(id) ON DELETE CASCADE,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
   scope           TEXT NOT NULL,
   item_type       TEXT NOT NULL,
-  item_id         TEXT NOT NULL,
+  item_id         INTEGER NOT NULL,
   embedding_model TEXT NOT NULL,
   dimensions      INTEGER NOT NULL,
   text_hash       TEXT NOT NULL,
@@ -375,8 +382,8 @@ CREATE INDEX idx_memory_embeddings_global
   ON memory_embeddings(user_id, item_type);
 
 CREATE TABLE memory_custom_profiles (
-  id                TEXT PRIMARY KEY,
-  user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name              TEXT NOT NULL,
   description       TEXT NOT NULL DEFAULT '',
   instructions      TEXT NOT NULL,
@@ -395,11 +402,11 @@ CREATE TABLE memory_event_log (
   seq                INTEGER PRIMARY KEY AUTOINCREMENT,
   id                 TEXT NOT NULL UNIQUE,
   parent_id          TEXT,
-  conversation_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id    INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   event_kind         TEXT NOT NULL,
   item_type          TEXT NOT NULL,
-  item_id            TEXT NOT NULL,
-  source_message_id  TEXT,
+  item_id            INTEGER NOT NULL,
+  source_message_id  INTEGER,
   turn_id            TEXT,
   payload_json       TEXT NOT NULL DEFAULT '{}',
   created_at         INTEGER NOT NULL
@@ -415,14 +422,14 @@ CREATE INDEX idx_memory_event_log_parent
   ON memory_event_log(parent_id);
 
 CREATE TABLE memory_heads (
-  conversation_id     TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id     INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   projection_event_id TEXT,
   updated_at          INTEGER NOT NULL
 );
 
 CREATE TABLE memory_message_heads (
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  message_id      TEXT NOT NULL,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id      INTEGER NOT NULL,
   head_event_id   TEXT,
   updated_at      INTEGER NOT NULL,
   PRIMARY KEY(conversation_id, message_id)
@@ -432,7 +439,7 @@ CREATE INDEX idx_memory_message_heads_head
   ON memory_message_heads(head_event_id);
 
 CREATE TABLE memory_refs (
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   ref_kind        TEXT NOT NULL,
   source_key      TEXT NOT NULL,
   target_event_id TEXT NOT NULL,
@@ -445,8 +452,8 @@ CREATE INDEX idx_memory_refs_target ON memory_refs(target_event_id);
 CREATE INDEX idx_memory_refs_conv ON memory_refs(conversation_id);
 
 CREATE TABLE turn_inputs (
-  message_id       TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id       INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id          TEXT,
   -- Exact string sent to the provider (prelude + body).
   full_input       TEXT NOT NULL,
@@ -473,7 +480,7 @@ CREATE INDEX idx_prompt_templates_user_type_status
   ON prompt_templates(user_id, type, status, pinned DESC, order_index ASC, updated_at DESC);
 
 CREATE TABLE "background_agent_lifecycles" (
-  tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
+  tool_call_id INTEGER PRIMARY KEY REFERENCES tool_calls(id) ON DELETE CASCADE,
   agent_id     TEXT NOT NULL,
   status       TEXT NOT NULL,
   started_at   INTEGER NOT NULL,
@@ -484,15 +491,15 @@ CREATE INDEX idx_background_agent_lifecycles_agent
   ON background_agent_lifecycles(agent_id);
 
 CREATE TABLE memory_extraction_locks (
-  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   holder          TEXT NOT NULL,
   acquired_at     INTEGER NOT NULL,
   expires_at      INTEGER NOT NULL
 );
 
 CREATE TABLE ticket_deps (
-  ticket_id  TEXT NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
-  depends_on TEXT NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
+  ticket_id  INTEGER NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
+  depends_on INTEGER NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (ticket_id, depends_on),
   CHECK (ticket_id <> depends_on)
@@ -501,8 +508,8 @@ CREATE TABLE ticket_deps (
 CREATE INDEX idx_ticket_deps_depends_on ON ticket_deps(depends_on);
 
 CREATE TABLE tool_attachments (
-  id            TEXT PRIMARY KEY,
-  tool_call_id  TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool_call_id  INTEGER NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
   kind          TEXT NOT NULL DEFAULT 'image',
   mime_type     TEXT NOT NULL,
   byte_size     INTEGER NOT NULL,
@@ -514,8 +521,8 @@ CREATE TABLE tool_attachments (
 CREATE INDEX idx_tool_attachments_tool_call ON tool_attachments(tool_call_id);
 
 CREATE TABLE ticket_attachments (
-  id           TEXT PRIMARY KEY,
-  ticket_id    TEXT NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id    INTEGER NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
   filename     TEXT NOT NULL,
   mime_type    TEXT NOT NULL,
   byte_size    INTEGER NOT NULL,
@@ -527,9 +534,9 @@ CREATE TABLE ticket_attachments (
 CREATE INDEX idx_ticket_attachments_ticket ON ticket_attachments(ticket_id);
 
 CREATE TABLE turn_idempotency (
-  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   idempotency_key  TEXT NOT NULL,
-  message_id       TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  message_id       INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   turn_id          TEXT NOT NULL,
   title            TEXT,
   created_at       INTEGER NOT NULL,
@@ -568,7 +575,7 @@ CREATE TRIGGER messages_fts_au AFTER UPDATE OF content ON messages BEGIN
 END;
 
 CREATE TABLE managed_worktrees (
-  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   source_workdir   TEXT NOT NULL,
   path             TEXT NOT NULL UNIQUE,
   git_common_dir   TEXT NOT NULL,
@@ -579,9 +586,9 @@ CREATE TABLE managed_worktrees (
 );
 
 CREATE TABLE workspace_leases (
-  id                      TEXT PRIMARY KEY,
-  user_id                 TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  held_by_conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  held_by_conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
   label                   TEXT NOT NULL DEFAULT '',
   source_workdir          TEXT NOT NULL,
   git_common_dir          TEXT NOT NULL,
@@ -602,8 +609,8 @@ CREATE INDEX idx_workspace_leases_user_state
   ON workspace_leases(user_id, state);
 
 CREATE TABLE permission_shadow_decisions (
-  id               TEXT PRIMARY KEY,
-  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   tool             TEXT NOT NULL,
   permission_kind  TEXT NOT NULL,
   scope_key        TEXT,
@@ -673,11 +680,10 @@ CREATE INDEX idx_permission_shadow_decisions_conv
   ON permission_shadow_decisions(conversation_id, created_at DESC);
 
 CREATE TABLE workspace_permission_state (
-  user_id        TEXT NOT NULL,
+  user_id        INTEGER NOT NULL,
   workspace_root TEXT NOT NULL,
   snapshot_text  TEXT NOT NULL,
   content_hash   TEXT NOT NULL,
   updated_at     INTEGER NOT NULL,
   PRIMARY KEY (user_id, workspace_root)
 );
-

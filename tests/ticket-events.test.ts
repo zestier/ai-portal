@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
+import { appGlobalSymbols, clearGlobalSingletonValues } from '../src/lib/server/global-singleton';
 
 let workspace: string;
 
@@ -22,7 +23,7 @@ describe('ticket mutation notifier', () => {
 		const { onTicketMutation } = await import('../src/lib/server/db/ticket-mutations');
 		const user = users.ensureLocalUser();
 
-		const seen: string[] = [];
+		const seen: number[] = [];
 		const off = onTicketMutation((m) => seen.push(m.userId));
 
 		try {
@@ -49,13 +50,13 @@ describe('ticket mutation notifier', () => {
 		const user = users.ensureLocalUser();
 		const a = tickets.create(user.id, { workspaceKey: workspace, title: 'A' });
 
-		const seen: string[] = [];
+		const seen: number[] = [];
 		const off = onTicketMutation((m) => seen.push(m.userId));
 		try {
 			// Removing a non-existent edge and a non-existent ticket both change
 			// nothing, so neither should notify.
-			expect(tickets.removeDependency(user.id, a.id, 'missing')).toBe(false);
-			expect(tickets.remove('does-not-exist', user.id)).toBe(false);
+			expect(tickets.removeDependency(user.id, a.id, 999999)).toBe(false);
+			expect(tickets.remove(999999, user.id)).toBe(false);
 			expect(seen).toEqual([]);
 		} finally {
 			off();
@@ -66,6 +67,10 @@ describe('ticket mutation notifier', () => {
 describe('ticket event bridge', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-ticket-bridge-');
+		// The app-event bus is a process-wide singleton; with numeric user ids the
+		// same channel (user 1) is reused across tests, so a prior test's buffered
+		// replay would leak into this one's subscription.
+		clearGlobalSingletonValues(appGlobalSymbols('app-events.bus'));
 		workspace = mkdtempSync(join(tmpdir(), 'portal-ticket-bridge-ws-'));
 	});
 

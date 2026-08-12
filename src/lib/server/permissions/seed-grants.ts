@@ -748,7 +748,7 @@ export function defaultSeedGrants(): SeedSpec[] {
  * Re-running this function is a no-op when the user already has all
  * seeds. To restore a deleted seed, the user re-adds it from the UI.
  */
-export function ensureSeedGrantsForUser(userId: string): number {
+export function ensureSeedGrantsForUser(userId: number): number {
 	const existing = listGrantsForUser(userId);
 	const haveKey = new Set<string>();
 	for (const g of existing) {
@@ -790,7 +790,7 @@ export function ensureSeedGrantsForUser(userId: string): number {
  * so old seed shapes (for example hard-deny prompts that are now prompt rules) do not
  * keep winning by matcher precedence.
  */
-export function restoreSeedGrantsForUser(userId: string): { removed: number; inserted: number } {
+export function restoreSeedGrantsForUser(userId: number): { removed: number; inserted: number } {
 	const defaultKeys = restoreSeedKeys();
 	let removed = 0;
 	for (const grant of listGrantsForUser(userId)) {

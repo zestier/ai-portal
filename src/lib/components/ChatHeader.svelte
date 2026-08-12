@@ -35,9 +35,9 @@
 		model: string;
 		defaultModelPlaceholder: string;
 		parent?: {
-			id: string;
+			id: number;
 			title: string;
-			messageId: string | null;
+			messageId: number | null;
 			messageIndex: number | null;
 		} | null;
 		usage?: ConversationUsage | null;
@@ -334,7 +334,7 @@
 	let mergeFlash = $state<string | null>(null);
 	let mergeTimer: ReturnType<typeof setTimeout> | null = null;
 
-	async function loadWorktree(id: string) {
+	async function loadWorktree(id: number) {
 		try {
 			const res = await fetch(`/api/conversations/${id}/worktree`);
 			if (!res.ok) return;

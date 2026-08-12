@@ -33,7 +33,6 @@
 // Constraints:
 //  - System messages can never be the fork target.
 
-import { ulid } from './db/ids';
 import { getDb } from './db';
 import * as convs from './db/repos/conversations';
 import * as messages from './db/repos/messages';
@@ -68,9 +67,9 @@ export class ForkRejected extends Error {
 }
 
 export interface ForkInput {
-	userId: string;
-	sourceConversationId: string;
-	messageId: string;
+	userId: number;
+	sourceConversationId: number;
+	messageId: number;
 	/**
 	 * The replacement text for a user-message edit. Must be null/undefined
 	 * for an assistant-message retry.
@@ -157,8 +156,28 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		input.workspaceKind === 'managed-worktree' || source.workspaceKind === 'managed-worktree';
 	const deferred = mode === 'edit' && sourceBusy && !isolate;
 	const draftPrompt = deferred ? input.newContent! : null;
-	const newId = convs.newId();
 	let managedWorktree: ManagedWorktreeMetadata | null = null;
+	// Create the conversation row first: with integer PKs the id can no longer be
+	// minted ahead of the insert, and the worktree path/branch derive from it.
+	// The row is created with the source's workdir; if this is an isolating fork
+	// the managed-worktree metadata and real path are filled in below.
+	const newConv = convs.create(input.userId, {
+		title: source.title,
+		workdir: source.workdir,
+		workspaceKind: 'shared',
+		workspaceKey: source.workspaceKey,
+		model: source.model,
+		mode: source.mode,
+		approvalMode: source.approvalMode === 'auto-deny' ? 'auto-deny' : 'ask',
+		memoryMode: source.memoryMode,
+		memoryExtractorModel: source.memoryExtractorModel,
+		adversaryModel: source.adversaryModel,
+		globalMemoryEnabled: source.globalMemoryEnabled,
+		disabledToolGroups: source.disabledToolGroups,
+		forkedFromConversationId: source.id,
+		forkedFromMessageId: target.id,
+		draftPrompt
+	});
 	if (isolate) {
 		const snapshotKind = mode === 'edit' ? 'pre' : 'post';
 		const snapshot = getSnapshot(target.id, snapshotKind);
@@ -174,8 +193,8 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		}
 		managedWorktree = await createManagedWorktreeFromSnapshot({
 			sourceWorkdir,
-			userId: input.userId,
-			conversationId: newId,
+			userId: String(input.userId),
+			conversationId: String(newConv.id),
 			...(snapshot.baseCommitSha ? { baseCommitSha: snapshot.baseCommitSha } : {}),
 			treeSha: snapshot.treeSha
 		});
@@ -187,42 +206,21 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// other in-flight work. The per-turn snapshot ref is still in the repo
 	// (`refs/portal/turns/{pre,post}/<msgId>`) for manual `git diff` /
 	// inspection if the user wants to compare states.
-	// Wrap the entire clone — conversation row, message prefix, memory replay,
-	// and the trailing user append — in a single transaction so a throw in any
-	// later step rolls back the conversation row. Without this, a failure after
-	// `convs.create()` would leave an orphaned, empty fork visible to the user.
-	// All of these helpers are synchronous better-sqlite3 calls (no `await`),
-	// and better-sqlite3 promotes the nested `.transaction()` calls inside
-	// `cloneMessagePrefix` / the repos to SAVEPOINTs, so nesting is safe.
+	// Wrap the entire clone — managed-worktree metadata, message prefix, memory
+	// replay, and the trailing user append — in a single transaction so a throw
+	// in any later step rolls back the fork's new rows. The conversation row
+	// itself was committed above (its id was needed for the worktree path), so a
+	// failure here removes it in the catch below. All of these helpers are
+	// synchronous better-sqlite3 calls (no `await`), and better-sqlite3 promotes
+	// the nested `.transaction()` calls inside `cloneMessagePrefix` / the repos to
+	// SAVEPOINTs, so nesting is safe.
 	const tx = getDb().transaction((): ForkResult => {
-		const newConv = convs.create(input.userId, {
-			id: newId,
-			title: source.title,
-			workdir: managedWorktree?.path ?? source.workdir,
-			workspaceKind: managedWorktree ? 'managed-worktree' : source.workspaceKind,
-			workspaceKey: source.workspaceKey,
-			...(managedWorktree ? { managedWorktree } : {}),
-			model: source.model,
-			mode: source.mode,
-			// A fork inherits `auto-deny` but never `auto-approve`. This is the
-			// pre-split behavior stated on the new axis: auto-deny used to ride
-			// on `mode: 'best-effort'`, which forks copied, while the separate
-			// `approve_all_tools` boolean was deliberately NOT copied, so a fork
-			// of an auto-approving conversation started prompting again. Only
-			// the restrictive half carries over, which is also the safe default.
-			approvalMode: source.approvalMode === 'auto-deny' ? 'auto-deny' : 'ask',
-			memoryMode: source.memoryMode,
-			memoryExtractorModel: source.memoryExtractorModel,
-			// Carried over like the harvester settings: a fork continues the same
-			// measurement. Unlike `approvalMode` there is no safety asymmetry to
-			// worry about — the shadow reviewer has no authority either way.
-			adversaryModel: source.adversaryModel,
-			globalMemoryEnabled: source.globalMemoryEnabled,
-			disabledToolGroups: source.disabledToolGroups,
-			forkedFromConversationId: source.id,
-			forkedFromMessageId: target.id,
-			draftPrompt
-		});
+		if (managedWorktree) {
+			convs.setManagedWorktree(newConv.id, managedWorktree);
+			getDb()
+				.prepare(`UPDATE conversations SET workdir = ?, workspace_kind = ? WHERE id = ?`)
+				.run(managedWorktree.path, 'managed-worktree', newConv.id);
+		}
 
 		// Edit mode clones strictly before the target (so the new user message
 		// replaces it). Retry mode clones up to AND including the target
@@ -266,10 +264,14 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	try {
 		return tx();
 	} catch (cause) {
+		// The conversation row was committed before this transaction ran, so an
+		// isolation failure must clean it up explicitly — otherwise an empty fork
+		// stays visible. The checkout is rolled back too.
+		convs.remove(newConv.id, input.userId);
 		if (managedWorktree) {
 			await rollbackManagedWorktree(managedWorktree).catch((cleanupError) => {
 				log.warn('fork.worktree_cleanup_failed', {
-					conversationId: newId,
+					conversationId: newConv.id,
 					err: String(cleanupError)
 				});
 			});
@@ -278,56 +280,59 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	}
 }
 
-function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string, string> {
+function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number, number> {
 	const db = getDb();
 	const baseTs = Date.now() - prefix.length - 1;
-	const messageIdMap = new Map<string, string>();
+	const messageIdMap = new Map<number, number>();
 	const insertMsg = db.prepare(
-		`INSERT INTO messages(id, conversation_id, role, content, status, error_code, created_at, reasoning, reasoning_duration_ms)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+		`INSERT INTO messages(conversation_id, role, content, status, error_code, created_at, reasoning, reasoning_duration_ms)
+		 VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`
 	);
 	const insertTool = db.prepare(
-		`INSERT INTO tool_calls(id, message_id, tool, args_json, result_json, status, started_at, ended_at, text_offset, parent_tool_call_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO tool_calls(message_id, tool, args_json, result_json, status, started_at, ended_at, text_offset, parent_tool_call_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	);
+	const setToolParent = db.prepare(`UPDATE tool_calls SET parent_tool_call_id = ? WHERE id = ?`);
 	const insertLifecycle = db.prepare(
 		`INSERT INTO background_agent_lifecycles(tool_call_id, agent_id, status, started_at, ended_at)
 		 VALUES (?, ?, ?, ?, ?)`
 	);
 	const insertEdit = db.prepare(
-		`INSERT INTO file_edits(id, message_id, path, diff, created_at, text_offset, parent_tool_call_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO file_edits(message_id, path, diff, created_at, text_offset, parent_tool_call_id)
+		 VALUES (?, ?, ?, ?, ?, ?)`
 	);
 	const insertReasoning = db.prepare(
-		`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO reasoning_blocks(message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	);
 	const tx = db.transaction(() => {
 		prefix.forEach((m, i) => {
-			const newId = ulid();
-			messageIdMap.set(m.id, newId);
 			const ts = baseTs + i;
-			insertMsg.run(newId, targetConvId, m.role, m.content, m.status, m.errorCode, ts);
-			// Remap tool_call ids so parent_tool_call_id references stay
-			// internally consistent within the cloned message.
-			const toolIdRemap = new Map<string, string>();
+			const newMsgId = Number(
+				insertMsg.run(targetConvId, m.role, m.content, m.status, m.errorCode, ts).lastInsertRowid
+			);
+			messageIdMap.set(m.id, newMsgId);
+			// Tool_call ids are minted by the insert, so parent_tool_call_id
+			// references can't be filled in the same pass (a parent may appear
+			// anywhere in the message's call list). Insert with a NULL parent
+			// first, then patch the references once every id is known — keeping
+			// the cloned message internally consistent regardless of ordering.
+			const toolIdRemap = new Map<number, number>();
 			for (const t of m.toolCalls ?? []) {
-				toolIdRemap.set(t.id, ulid());
-			}
-			for (const t of m.toolCalls ?? []) {
-				const remappedToolId = toolIdRemap.get(t.id)!;
-				insertTool.run(
-					remappedToolId,
-					newId,
-					t.tool,
-					t.argsJson,
-					t.resultJson,
-					t.status,
-					t.startedAt,
-					t.endedAt,
-					t.textOffset,
-					t.parentToolCallId ? (toolIdRemap.get(t.parentToolCallId) ?? null) : null
+				const remappedToolId = Number(
+					insertTool.run(
+						newMsgId,
+						t.tool,
+						t.argsJson,
+						t.resultJson,
+						t.status,
+						t.startedAt,
+						t.endedAt,
+						t.textOffset,
+						null
+					).lastInsertRowid
 				);
+				toolIdRemap.set(t.id, remappedToolId);
 				if (t.backgroundAgentStatus && t.backgroundAgentId && t.backgroundAgentStartedAt != null) {
 					insertLifecycle.run(
 						remappedToolId,
@@ -338,10 +343,15 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string
 					);
 				}
 			}
+			for (const t of m.toolCalls ?? []) {
+				if (t.parentToolCallId) {
+					const parent = toolIdRemap.get(t.parentToolCallId);
+					if (parent !== undefined) setToolParent.run(parent, toolIdRemap.get(t.id)!);
+				}
+			}
 			for (const e of m.fileEdits ?? []) {
 				insertEdit.run(
-					ulid(),
-					newId,
+					newMsgId,
 					e.path,
 					e.diff,
 					ts,
@@ -351,8 +361,7 @@ function cloneMessagePrefix(targetConvId: string, prefix: Message[]): Map<string
 			}
 			for (const r of m.reasoningBlocks ?? []) {
 				insertReasoning.run(
-					ulid(),
-					newId,
+					newMsgId,
 					r.segmentIndex,
 					// Fork reads the transcript untrimmed, so `text` is always
 					// present; `?? ''` only satisfies the NOT NULL column typing.

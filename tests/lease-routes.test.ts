@@ -22,9 +22,9 @@ function committedRepository(): string {
 
 describe('lease-scoped conversation routes', () => {
 	let source: string;
-	let userId: string;
-	let conversationId: string;
-	let otherConversationId: string;
+	let userId: number;
+	let conversationId: number;
+	let otherConversationId: number;
 
 	async function makeLease(convId = conversationId, label = 'api') {
 		const convs = await import('../src/lib/server/db/repos/conversations');
@@ -33,7 +33,7 @@ describe('lease-scoped conversation routes', () => {
 		return createLease({ conversation, label });
 	}
 
-	function ctx(query = '', extraParams: Record<string, string> = {}) {
+	function ctx(query = '', extraParams: Record<string, string | number> = {}) {
 		return {
 			params: { id: conversationId, ...extraParams },
 			locals: {
@@ -62,8 +62,8 @@ describe('lease-scoped conversation routes', () => {
 			workspaceKind: 'shared' as const,
 			workspaceKey: source
 		};
-		conversationId = convs.create(userId, { id: convs.newId(), title: 'main', ...base }).id;
-		otherConversationId = convs.create(userId, { id: convs.newId(), title: 'other', ...base }).id;
+		conversationId = convs.create(userId, { title: 'main', ...base }).id;
+		otherConversationId = convs.create(userId, { title: 'other', ...base }).id;
 	});
 
 	it('lists held worktrees with dirty counts', async () => {
@@ -190,7 +190,7 @@ describe('lease-scoped conversation routes', () => {
 
 		it('404s an unknown lease id', async () => {
 			const { GET } = await import('../src/routes/api/conversations/[id]/fs/tree/+server');
-			await expect(GET(ctx('?worktree=01NOSUCHLEASE'))).rejects.toMatchObject({ status: 404 });
+			await expect(GET(ctx('?worktree=999999'))).rejects.toMatchObject({ status: 404 });
 		});
 
 		it('404s a lease belonging to another user', async () => {
@@ -198,7 +198,7 @@ describe('lease-scoped conversation routes', () => {
 			const { GET } = await import('../src/routes/api/conversations/[id]/fs/tree/+server');
 			const foreignCtx = {
 				params: { id: conversationId },
-				locals: { userId: 'someone-else' },
+				locals: { userId: 999999 },
 				url: new URL(`http://localhost/x?worktree=${lease.id}`)
 			} as never;
 

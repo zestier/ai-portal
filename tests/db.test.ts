@@ -695,7 +695,7 @@ describe('db migrations + repos', () => {
 			status: 'streaming'
 		});
 		messages.insertToolCall(assistant.id, {
-			id: 'tool-pending',
+			id: 1,
 			tool: 'bash',
 			argsJson: JSON.stringify({ command: 'sleep 10' }),
 			resultJson: null,
@@ -713,7 +713,7 @@ describe('db migrations + repos', () => {
 		expect(reloaded?.status).toBe('interrupted');
 		expect(reloaded?.errorCode).toBe('server_restarted');
 		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 'tool-pending',
+			id: 1,
 			status: 'error',
 			endedAt: 1234
 		});
@@ -728,7 +728,7 @@ describe('db migrations + repos', () => {
 			status: 'complete'
 		});
 		messages.insertToolCall(assistant.id, {
-			id: 'task-background',
+			id: 1,
 			tool: 'task',
 			argsJson: JSON.stringify({ mode: 'background' }),
 			resultJson: JSON.stringify({ agent_id: 'agent-1' }),
@@ -739,8 +739,8 @@ describe('db migrations + repos', () => {
 			parentToolCallId: null
 		});
 
-		messages.updateBackgroundAgentLifecycle('task-background', 'agent-1', 'running', 120);
-		messages.updateBackgroundAgentLifecycle('task-background', 'agent-1', 'completed', 130);
+		messages.updateBackgroundAgentLifecycle(1, 'agent-1', 'running', 120);
+		messages.updateBackgroundAgentLifecycle(1, 'agent-1', 'completed', 130);
 
 		const toolColumns = (
 			getDb().prepare(`PRAGMA table_info(tool_calls)`).all() as { name: string }[]
@@ -749,15 +749,15 @@ describe('db migrations + repos', () => {
 
 		const reloaded = messages.listByConversation(c.id).find((m) => m.id === assistant.id);
 		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 'task-background',
+			id: 1,
 			status: 'ok',
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-1',
 			backgroundAgentStartedAt: 120,
 			backgroundAgentEndedAt: 130
 		});
-		expect(messages.getToolCallForConversation(c.id, 'task-background')).toMatchObject({
-			id: 'task-background',
+		expect(messages.getToolCallForConversation(c.id, 1)).toMatchObject({
+			id: 1,
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-1',
 			backgroundAgentStartedAt: 120,
@@ -778,7 +778,7 @@ describe('db migrations + repos', () => {
 			status: 'complete'
 		});
 		messages.insertToolCall(assistant.id, {
-			id: 'task-race',
+			id: 1,
 			tool: 'task',
 			argsJson: JSON.stringify({ mode: 'background' }),
 			resultJson: null,
@@ -789,12 +789,12 @@ describe('db migrations + repos', () => {
 			parentToolCallId: null
 		});
 
-		messages.updateBackgroundAgentLifecycle('task-race', 'agent-race', 'completed', 130);
-		messages.updateBackgroundAgentLifecycle('task-race', 'agent-race', 'running', 120);
+		messages.updateBackgroundAgentLifecycle(1, 'agent-race', 'completed', 130);
+		messages.updateBackgroundAgentLifecycle(1, 'agent-race', 'running', 120);
 
 		const reloaded = messages.listByConversation(c.id).find((m) => m.id === assistant.id);
 		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 'task-race',
+			id: 1,
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-race',
 			backgroundAgentStartedAt: 120,
@@ -813,7 +813,7 @@ describe('db migrations + repos', () => {
 			model: null
 		});
 
-		const created: string[] = [];
+		const created: number[] = [];
 		for (let i = 0; i < total; i++) {
 			const m = messages.append(c.id, {
 				role: i % 2 === 0 ? 'user' : 'assistant',
@@ -822,7 +822,7 @@ describe('db migrations + repos', () => {
 			});
 			created.push(m.id);
 			messages.insertToolCall(m.id, {
-				id: `tool-${i}`,
+				id: i + 1,
 				tool: 'task',
 				argsJson: '{}',
 				resultJson: null,
@@ -833,7 +833,7 @@ describe('db migrations + repos', () => {
 				parentToolCallId: null
 			});
 			messages.insertReasoningBlock(m.id, {
-				id: `reason-${i}`,
+				id: i + 1,
 				segmentIndex: 0,
 				text: 'thinking',
 				kind: 'reasoning',

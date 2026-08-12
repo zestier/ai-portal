@@ -20,7 +20,7 @@ async function seed() {
 	const conv = convs.create(user.id, { title: 'fields', workdir: '/tmp', model: null });
 	const msg = messages.append(conv.id, { role: 'assistant', content: 'hi' });
 	messages.insertToolCall(msg.id, {
-		id: 'tc-1',
+		id: 1,
 		tool: 'bash',
 		argsJson: BIG_ARGS,
 		resultJson: BIG_RESULT,
@@ -31,7 +31,7 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertToolCall(msg.id, {
-		id: 'tc-pending',
+		id: 2,
 		tool: 'bash',
 		argsJson: '{}',
 		resultJson: null,
@@ -43,7 +43,7 @@ async function seed() {
 	});
 	messages.insertFileEdit(msg.id, 'big.ts', BIG_DIFF, 0, null);
 	messages.insertReasoningBlock(msg.id, {
-		id: 'rb-1',
+		id: 3,
 		segmentIndex: 0,
 		text: BIG_REASONING,
 		kind: 'reasoning',
@@ -57,7 +57,7 @@ async function seed() {
 	return { users, conv, user, fileEditId };
 }
 
-function makeEvent(convId: string, kind: string, recordId: string, userId: string | null) {
+function makeEvent(convId: number, kind: string, recordId: string, userId: number | null) {
 	const url = `http://127.0.0.1/api/conversations/${convId}/fields/${kind}/${recordId}`;
 	return {
 		params: { id: convId, kind, recordId },
@@ -67,7 +67,7 @@ function makeEvent(convId: string, kind: string, recordId: string, userId: strin
 	};
 }
 
-async function callGet(convId: string, kind: string, recordId: string, userId: string | null) {
+async function callGet(convId: number, kind: string, recordId: string, userId: number | null) {
 	const { GET } =
 		await import('../src/routes/api/conversations/[id]/fields/[kind]/[recordId]/+server');
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,28 +89,28 @@ describe('conversation field endpoint', () => {
 
 	it('serves tool args, tool results, file diffs and reasoning text verbatim', async () => {
 		const { conv, user, fileEditId } = await seed();
-		const args = await callGet(conv.id, 'tool-args', 'tc-1', user.id);
+		const args = await callGet(conv.id, 'tool-args', '1', user.id);
 		expect(await args.text()).toBe(BIG_ARGS);
 		expect(args.headers.get('content-type')).toContain('text/plain');
 
-		const result = await callGet(conv.id, 'tool-result', 'tc-1', user.id);
+		const result = await callGet(conv.id, 'tool-result', '1', user.id);
 		expect(await result.text()).toBe(BIG_RESULT);
 
-		const diff = await callGet(conv.id, 'file-diff', fileEditId, user.id);
+		const diff = await callGet(conv.id, 'file-diff', String(fileEditId), user.id);
 		expect(await diff.text()).toBe(BIG_DIFF);
 
-		const reasoning = await callGet(conv.id, 'reasoning-text', 'rb-1', user.id);
+		const reasoning = await callGet(conv.id, 'reasoning-text', '3', user.id);
 		expect(await reasoning.text()).toBe(BIG_REASONING);
 	});
 
 	it('404s an unknown field kind rather than guessing', async () => {
 		const { conv, user } = await seed();
-		expect(await status(callGet(conv.id, 'tool-secrets', 'tc-1', user.id))).toBe(404);
+		expect(await status(callGet(conv.id, 'tool-secrets', '1', user.id))).toBe(404);
 	});
 
 	it('404s a field that has no stored value', async () => {
 		const { conv, user } = await seed();
-		expect(await status(callGet(conv.id, 'tool-result', 'tc-pending', user.id))).toBe(404);
+		expect(await status(callGet(conv.id, 'tool-result', '2', user.id))).toBe(404);
 	});
 
 	it('404s (not 403) for another user, so ids stay non-enumerable', async () => {
@@ -121,18 +121,18 @@ describe('conversation field endpoint', () => {
 			displayName: null,
 			avatarUrl: null
 		});
-		expect(await status(callGet(conv.id, 'tool-args', 'tc-1', other.id))).toBe(404);
+		expect(await status(callGet(conv.id, 'tool-args', '1', other.id))).toBe(404);
 	});
 
 	it('rejects an unauthenticated caller', async () => {
 		const { conv } = await seed();
-		expect(await status(callGet(conv.id, 'tool-args', 'tc-1', null))).toBe(401);
+		expect(await status(callGet(conv.id, 'tool-args', '1', null))).toBe(401);
 	});
 
 	it('404s a real tool call requested through the wrong conversation', async () => {
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		const { user } = await seed();
 		const sibling = convs.create(user.id, { title: 'other', workdir: '/tmp', model: null });
-		expect(await status(callGet(sibling.id, 'tool-args', 'tc-1', user.id))).toBe(404);
+		expect(await status(callGet(sibling.id, 'tool-args', '1', user.id))).toBe(404);
 	});
 });

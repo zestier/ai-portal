@@ -22,8 +22,8 @@ import { log } from '../log';
  * that triggered it.
  */
 export function publishConversationActivity(
-	userId: string | undefined,
-	conversationId: string,
+	userId: number | undefined,
+	conversationId: number,
 	running: boolean
 ): void {
 	if (!userId) return;

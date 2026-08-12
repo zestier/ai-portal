@@ -26,7 +26,7 @@ describe('message-edit.inlineEditMessage', () => {
 		const u1 = messages.append(conv.id, { role: 'user', content: 'original' });
 		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply 1' });
 		messages.insertToolCall(a1.id, {
-			id: 'tool-later',
+			id: 1,
 			tool: 'task',
 			argsJson: '{}',
 			resultJson: null,
@@ -36,10 +36,10 @@ describe('message-edit.inlineEditMessage', () => {
 			textOffset: 0,
 			parentToolCallId: null
 		});
-		messages.updateBackgroundAgentLifecycle('tool-later', 'agent-later', 'running');
+		messages.updateBackgroundAgentLifecycle(1, 'agent-later', 'running');
 		messages.insertFileEdit(a1.id, 'file.txt', 'diff', 0);
 		messages.insertReasoningBlock(a1.id, {
-			id: 'reason-later',
+			id: 2,
 			segmentIndex: 0,
 			text: 'thinking',
 			kind: 'reasoning',
@@ -122,7 +122,7 @@ describe('message-edit.inlineEditMessage', () => {
 		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual(['topic.keep']);
 		expect(memory.listFacts(conv.id).map((fact) => fact.value)).toEqual(['kept']);
 		expect(messages.listByConversation(conv.id).map((message) => message.id)).toEqual([
-			expect.any(String),
+			expect.any(Number),
 			a1.id,
 			u2.id
 		]);
@@ -318,7 +318,7 @@ describe('message-edit.regenerateFromAssistant', () => {
 		const u1 = messages.append(conv.id, { role: 'user', content: 'prompt' });
 		const a1 = messages.append(conv.id, { role: 'assistant', content: 'reply 1' });
 		messages.insertToolCall(a1.id, {
-			id: 'tool-later',
+			id: 1,
 			tool: 'task',
 			argsJson: '{}',
 			resultJson: null,
@@ -329,7 +329,7 @@ describe('message-edit.regenerateFromAssistant', () => {
 			parentToolCallId: null
 		});
 		messages.insertReasoningBlock(a1.id, {
-			id: 'reason-later',
+			id: 2,
 			segmentIndex: 0,
 			text: 'thinking',
 			kind: 'reasoning',
@@ -403,7 +403,7 @@ describe('message-edit.regenerateFromAssistant', () => {
 		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual(['topic.keep']);
 		expect(memory.listFacts(conv.id).map((fact) => fact.value)).toEqual(['kept']);
 		expect(messages.listByConversation(conv.id).map((message) => message.id)).toEqual([
-			expect.any(String),
+			expect.any(Number),
 			a1.id,
 			u2.id
 		]);

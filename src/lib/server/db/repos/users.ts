@@ -1,10 +1,9 @@
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import type { User } from '$lib/types';
 import { ensureSeedGrantsForUser } from '../../permissions/seed-grants';
 
 interface UserRow {
-	id: string;
+	id: number;
 	github_login: string;
 	github_id: number | null;
 	display_name: string | null;
@@ -22,7 +21,7 @@ function rowToUser(r: UserRow): User {
 	};
 }
 
-export function getById(id: string): User | null {
+export function getById(id: number): User | null {
 	const r = getDb().prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
 	return r ? rowToUser(r) : null;
 }
@@ -72,11 +71,13 @@ export function upsertGithub(input: UpsertGithubInput): User {
 				last_login_at: now
 			});
 		}
-		const id = ulid();
-		db.prepare(
-			`INSERT INTO users(id, github_login, github_id, display_name, avatar_url, created_at, last_login_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run(id, input.githubLogin, input.githubId, input.displayName, input.avatarUrl, now, now);
+		const info = db
+			.prepare(
+				`INSERT INTO users(github_login, github_id, display_name, avatar_url, created_at, last_login_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+			)
+			.run(input.githubLogin, input.githubId, input.displayName, input.avatarUrl, now, now);
+		const id = Number(info.lastInsertRowid);
 		ensureSeedGrantsForUser(id);
 		return {
 			id,
@@ -106,12 +107,14 @@ export function ensureLocalUser(key = 'local'): User {
 			| UserRow
 			| undefined;
 		if (existing) return rowToUser(existing);
-		const id = ulid();
 		const now = Date.now();
-		db.prepare(
-			`INSERT INTO users(id, github_login, display_name, created_at, last_login_at)
-			 VALUES (?, ?, ?, ?, ?)`
-		).run(id, githubLogin, key === 'local' ? 'Local user' : `Local user (${key})`, now, now);
+		const info = db
+			.prepare(
+				`INSERT INTO users(github_login, display_name, created_at, last_login_at)
+			 VALUES (?, ?, ?, ?)`
+			)
+			.run(githubLogin, key === 'local' ? 'Local user' : `Local user (${key})`, now, now);
+		const id = Number(info.lastInsertRowid);
 		ensureSeedGrantsForUser(id);
 		return {
 			id,

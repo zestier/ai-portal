@@ -7,7 +7,7 @@ import type { Message, ToolCallRecord } from '$lib/types';
  */
 export function findToolCallRecord(
 	messages: Pick<Message, 'toolCalls'>[],
-	toolCallId: string
+	toolCallId: number
 ): ToolCallRecord | undefined {
 	for (let i = messages.length - 1; i >= 0; i -= 1) {
 		const toolCall = messages[i].toolCalls?.find((t) => t.id === toolCallId);

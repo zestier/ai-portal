@@ -1,7 +1,7 @@
 // Workspace leases: portal-owned checkouts an agent creates so parallel
 // sub-agents can work without colliding in one working tree.
 //
-// A lease is a linked Git worktree with its own ULID identity, held by a
+// A lease is a linked Git worktree with its own integer identity, held by a
 // conversation. It differs from the conversation's own (primary) managed
 // worktree in exactly two ways: its path/branch are derived from the lease id
 // instead of the conversation id, and its lifecycle is independent — an agent
@@ -18,7 +18,6 @@
 
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import { ulid } from './db/ids';
 import { loadConfig } from './config';
 import { log } from './log';
 import * as leaseRepo from './db/repos/leases';
@@ -61,7 +60,7 @@ function toMetadata(lease: Lease): ManagedWorktreeMetadata {
 }
 
 function leaseSlot(lease: Pick<Lease, 'userId' | 'id'>): WorktreeSlot {
-	return { kind: 'lease', userId: lease.userId, leaseId: lease.id };
+	return { kind: 'lease', userId: String(lease.userId), leaseId: String(lease.id) };
 }
 
 /**
@@ -109,61 +108,72 @@ export async function createLease(input: CreateLeaseInput): Promise<Lease> {
 	const label = sanitizeLeaseLabel(input.label);
 	const sourceWorkdir = leaseCounterpartWorkspace(conversation);
 	const cfg = loadConfig();
-	const id = ulid();
+	// Mint the lease id before the checkout exists: the checkout path/branch
+	// derive from it (`portal/lease/<id>`), so the DB row is created with stub
+	// values and completed once the worktree is on disk. The stub row lives only
+	// for the duration of the checkout creation below.
+	const id = leaseRepo.mintPlaceholder({
+		userId: conversation.userId,
+		heldByConversationId: conversation.id,
+		label
+	});
 
 	let created: Lease | null = null;
-	const metadata = await createWorktreeForSlot({
-		sourceWorkdir,
-		slot: { kind: 'lease', userId: conversation.userId, leaseId: id, label },
-		...(input.baseRef ? { baseRef: input.baseRef } : {}),
-		// Runs inside the repository lock. Quotas are enforced here (not before
-		// the lock) so two concurrent creates can't both observe "n-1 leases" and
-		// both succeed. A throw rolls the checkout back.
-		onCreated: (meta) => {
-			const perConversation = leaseRepo.countByConversation(conversation.id);
-			if (perConversation >= cfg.WORKTREE_MAX_LEASES_PER_CONVERSATION) {
-				throw new LeaseQuotaError(
-					`this conversation already holds ${perConversation} worktrees (limit ${cfg.WORKTREE_MAX_LEASES_PER_CONVERSATION}); remove one before creating another`
-				);
+	try {
+		const metadata = await createWorktreeForSlot({
+			sourceWorkdir,
+			slot: { kind: 'lease', userId: String(conversation.userId), leaseId: String(id), label },
+			...(input.baseRef ? { baseRef: input.baseRef } : {}),
+			// Runs inside the repository lock. Quotas are enforced here (not before
+			// the lock) so two concurrent creates can't both observe "n-1 leases" and
+			// both succeed. A throw rolls the checkout back.
+			onCreated: (meta) => {
+				const perConversation = leaseRepo.countByConversation(conversation.id);
+				if (perConversation >= cfg.WORKTREE_MAX_LEASES_PER_CONVERSATION) {
+					throw new LeaseQuotaError(
+						`this conversation already holds ${perConversation} worktrees (limit ${cfg.WORKTREE_MAX_LEASES_PER_CONVERSATION}); remove one before creating another`
+					);
+				}
+				const perUser = leaseRepo.countByUser(conversation.userId);
+				if (perUser >= cfg.WORKTREE_MAX_LEASES_PER_USER) {
+					throw new LeaseQuotaError(
+						`you already hold ${perUser} worktrees (limit ${cfg.WORKTREE_MAX_LEASES_PER_USER}); remove one before creating another`
+					);
+				}
+				created = leaseRepo.completePlaceholder(id, conversation.userId, {
+					sourceWorkdir: meta.sourceWorkdir,
+					gitCommonDir: meta.gitCommonDir,
+					path: meta.path,
+					branch: meta.branch,
+					baseSha: meta.baseSha
+				});
 			}
-			const perUser = leaseRepo.countByUser(conversation.userId);
-			if (perUser >= cfg.WORKTREE_MAX_LEASES_PER_USER) {
-				throw new LeaseQuotaError(
-					`you already hold ${perUser} worktrees (limit ${cfg.WORKTREE_MAX_LEASES_PER_USER}); remove one before creating another`
-				);
-			}
-			created = leaseRepo.insert({
-				id,
-				userId: conversation.userId,
-				heldByConversationId: conversation.id,
-				label,
-				sourceWorkdir: meta.sourceWorkdir,
-				gitCommonDir: meta.gitCommonDir,
-				path: meta.path,
-				branch: meta.branch,
-				baseSha: meta.baseSha
-			});
-		}
-	});
+		});
 
-	if (!created) throw new Error('lease creation did not persist');
-	log.info('lease.created', {
-		leaseId: id,
-		conversationId: conversation.id,
-		branch: metadata.branch
-	});
-	return created;
+		if (!created) throw new Error('lease creation did not persist');
+		log.info('lease.created', {
+			leaseId: id,
+			conversationId: conversation.id,
+			branch: metadata.branch
+		});
+		return created;
+	} catch (cause) {
+		// A checkout that never got created (or a failed onCreated) leaves the
+		// placeholder row behind — drop it so it doesn't count toward quota.
+		leaseRepo.remove(id);
+		throw cause;
+	}
 }
 
-export function getLease(leaseId: string, userId: string): Lease | null {
+export function getLease(leaseId: number, userId: number): Lease | null {
 	return leaseRepo.getById(leaseId, userId);
 }
 
-export function listLeases(conversationId: string, userId: string): Lease[] {
+export function listLeases(conversationId: number, userId: number): Lease[] {
 	return leaseRepo.listByConversation(conversationId, userId);
 }
 
-export function touchLease(leaseId: string): void {
+export function touchLease(leaseId: number): void {
 	leaseRepo.touch(leaseId);
 }
 
@@ -184,7 +194,7 @@ export function resolveLeaseWorkspace(lease: Lease): string {
 	try {
 		const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
 		const storedReal = realpathSync(stored);
-		const expectedReal = resolve(rootReal, lease.userId, 'leases', lease.id);
+		const expectedReal = resolve(rootReal, String(lease.userId), 'leases', String(lease.id));
 		if (
 			!statSync(stored).isDirectory() ||
 			storedReal !== expectedReal ||
@@ -248,7 +258,7 @@ export interface RetainedLease {
 }
 
 export interface RemoveLeasesResult {
-	removed: string[];
+	removed: number[];
 	/** Leases left in place because removing them would lose sight of work. */
 	retained: RetainedLease[];
 }
@@ -279,8 +289,8 @@ async function unmergedCommitCount(lease: Lease, conversation: Conversation): Pr
  *    conversation's own. Same reasoning as the primary worktree's guard.
  */
 export async function removeLeasesForConversation(
-	conversationId: string,
-	userId: string,
+	conversationId: number,
+	userId: number,
 	opts: { force?: boolean } = {}
 ): Promise<RemoveLeasesResult> {
 	const result: RemoveLeasesResult = { removed: [], retained: [] };
@@ -349,8 +359,8 @@ export function conversationWorkspaceRoots(conversation: Conversation): string[]
  * must be writable within that same turn.
  */
 export function workspaceRootsFor(
-	conversationId: string,
-	userId: string,
+	conversationId: number,
+	userId: number,
 	fallback: string
 ): string[] {
 	try {

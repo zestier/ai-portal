@@ -22,7 +22,7 @@ function committedRepository(): string {
 
 describe('managed worktree conversation routes', () => {
 	let source: string;
-	let userId: string;
+	let userId: number;
 
 	beforeEach(async () => {
 		const dataDir = await setupLocalEnv('portal-worktree-routes-');

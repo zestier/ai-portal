@@ -27,9 +27,10 @@ function isFieldKind(v: string | undefined): v is FieldKind {
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	const kind = params.kind;
-	const recordId = params.recordId;
+	const recordId = Number(params.recordId);
 	if (!isFieldKind(kind)) throw error(404);
-	if (!recordId) throw error(400, 'missing record id');
+	if (!params.recordId) throw error(400, 'missing record id');
+	if (!Number.isInteger(recordId) || recordId <= 0) throw error(404);
 
 	const row =
 		kind === 'file-diff'

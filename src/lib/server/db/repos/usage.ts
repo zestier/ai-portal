@@ -6,7 +6,7 @@ import { getDb } from '../index';
 import type { ConversationUsage } from '$lib/types';
 
 interface UsageRow {
-	conversation_id: string;
+	conversation_id: number;
 	current_tokens: number;
 	token_limit: number;
 	messages_length: number;
@@ -38,14 +38,14 @@ export interface UsageSnapshot {
 	toolDefinitionsTokens?: number | null;
 }
 
-export function get(conversationId: string): ConversationUsage | null {
+export function get(conversationId: number): ConversationUsage | null {
 	const r = getDb()
 		.prepare('SELECT * FROM conversation_usage WHERE conversation_id = ?')
 		.get(conversationId) as UsageRow | undefined;
 	return r ? rowToUsage(r) : null;
 }
 
-export function upsert(conversationId: string, s: UsageSnapshot): void {
+export function upsert(conversationId: number, s: UsageSnapshot): void {
 	getDb()
 		.prepare(
 			`INSERT INTO conversation_usage(
@@ -73,6 +73,6 @@ export function upsert(conversationId: string, s: UsageSnapshot): void {
 		);
 }
 
-export function remove(conversationId: string): void {
+export function remove(conversationId: number): void {
 	getDb().prepare('DELETE FROM conversation_usage WHERE conversation_id = ?').run(conversationId);
 }

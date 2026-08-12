@@ -17,26 +17,26 @@ const cache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string>>();
 
 export function lazyFieldUrl(
-	conversationId: string,
+	conversationId: number,
 	kind: LazyFieldKind,
-	recordId: string
+	recordId: number | string
 ): string {
 	return `/api/conversations/${encodeURIComponent(conversationId)}/fields/${kind}/${encodeURIComponent(recordId)}`;
 }
 
 /** Already-resolved value, if this field was fetched earlier on this page. */
 export function peekLazyField(
-	conversationId: string,
+	conversationId: number,
 	kind: LazyFieldKind,
-	recordId: string
+	recordId: number | string
 ): string | null {
 	return cache.get(lazyFieldUrl(conversationId, kind, recordId)) ?? null;
 }
 
 export async function fetchLazyField(
-	conversationId: string,
+	conversationId: number,
 	kind: LazyFieldKind,
-	recordId: string
+	recordId: number | string
 ): Promise<string> {
 	const url = lazyFieldUrl(conversationId, kind, recordId);
 	const cached = cache.get(url);

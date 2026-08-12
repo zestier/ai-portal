@@ -47,9 +47,9 @@ export interface ProviderStatusBehavior {
 export interface ProviderOpenOptions {
 	/** Instance id of the backend serving this conversation. */
 	provider?: string;
-	conversationId: string;
+	conversationId: number;
 	providerSessionId?: string;
-	userId: string;
+	userId: number;
 	workingDirectory: string;
 	/** Stable logical repository identity used to scope tickets across worktrees. */
 	workspaceKey?: string;
@@ -101,7 +101,7 @@ export interface ProviderConversationMessage {
 export interface ProviderSession {
 	/** Instance id of the backend serving this session. */
 	provider?: string;
-	conversationId: string;
+	conversationId: number;
 	providerSessionId: string;
 	workingDirectory: string;
 	model: string;
@@ -149,6 +149,6 @@ export interface ProviderCompletionRequest {
 	 */
 	responseSchema?: { name: string; schema: unknown } | undefined;
 	timeoutMs: number;
-	userId?: string | undefined;
+	userId?: number | undefined;
 	signal?: AbortSignal | undefined;
 }

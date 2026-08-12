@@ -22,13 +22,12 @@ function committedRepository(): string {
 
 describe('workspace leases', () => {
 	let source: string;
-	let userId: string;
+	let userId: number;
 	let worktreeRoot: string;
 
 	async function makeConversation() {
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		return convs.create(userId, {
-			id: convs.newId(),
 			title: 'orchestrator',
 			workdir: source,
 			model: 'test-model',
@@ -56,7 +55,7 @@ describe('workspace leases', () => {
 
 		const lease = await createLease({ conversation, label: 'api' });
 
-		expect(lease.path).toBe(join(worktreeRoot, userId, 'leases', lease.id));
+		expect(lease.path).toBe(join(worktreeRoot, String(userId), 'leases', String(lease.id)));
 		expect(lease.branch).toBe(`portal/lease/${lease.id}--api`);
 		expect(lease.heldByConversationId).toBe(conversation.id);
 		expect(resolveLeaseWorkspace(lease)).toBe(lease.path);
@@ -180,7 +179,7 @@ describe('workspace leases', () => {
 			const { createLease, getLease } = await import('../src/lib/server/leases');
 			const lease = await createLease({ conversation, label: 'mine' });
 
-			expect(getLease(lease.id, 'someone-else')).toBeNull();
+			expect(getLease(lease.id, 999999)).toBeNull();
 		});
 	});
 
@@ -231,7 +230,7 @@ describe('workspace leases', () => {
 			const { workspaceRootsFor } = await import('../src/lib/server/leases');
 			// Never narrower than pre-lease behavior: an unknown conversation still
 			// gets its working directory as a root rather than an empty set.
-			expect(workspaceRootsFor('missing-conversation', userId, source)).toEqual([source]);
+			expect(workspaceRootsFor(999999, userId, source)).toEqual([source]);
 		});
 	});
 
@@ -401,21 +400,26 @@ describe('workspace leases', () => {
 		async function makeWorktreeConversation() {
 			const convs = await import('../src/lib/server/db/repos/conversations');
 			const { createManagedWorktree } = await import('../src/lib/server/worktrees');
-			const id = convs.newId();
+			const { getDb } = await import('../src/lib/server/db');
+			const created = convs.create(userId, {
+				title: 'orchestrator',
+				workdir: source,
+				model: 'test-model',
+				workspaceKind: 'shared',
+				workspaceKey: source
+			});
 			const managedWorktree = await createManagedWorktree({
 				sourceWorkdir: source,
-				userId,
-				conversationId: id
+				userId: String(userId),
+				conversationId: String(created.id)
 			});
-			return convs.create(userId, {
-				id,
-				title: 'orchestrator',
-				workdir: managedWorktree.path,
-				model: 'test-model',
-				workspaceKind: 'managed-worktree',
-				workspaceKey: source,
-				managedWorktree
-			});
+			convs.setManagedWorktree(created.id, managedWorktree);
+			getDb()
+				.prepare(
+					`UPDATE conversations SET workdir = ?, workspace_kind = 'managed-worktree' WHERE id = ?`
+				)
+				.run(managedWorktree.path, created.id);
+			return convs.get(created.id, userId)!;
 		}
 
 		it('cuts a lease from the holding conversation, not the main checkout', async () => {

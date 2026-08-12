@@ -1,5 +1,4 @@
 import type { MemoryMode } from '$lib/types';
-import { ulid } from '$lib/server/db/ids';
 import { getDb } from '$lib/server/db';
 
 export interface MemoryProfileDefinition {
@@ -11,8 +10,8 @@ export interface MemoryProfileDefinition {
 }
 
 export interface CustomMemoryProfile {
-	id: string;
-	userId: string;
+	id: number;
+	userId: number;
 	name: string;
 	description: string;
 	instructions: string;
@@ -24,8 +23,8 @@ export interface CustomMemoryProfile {
 }
 
 interface CustomProfileRow {
-	id: string;
-	user_id: string;
+	id: number;
+	user_id: number;
 	name: string;
 	description: string;
 	instructions: string;
@@ -103,7 +102,7 @@ export function listMemoryProfiles(): MemoryProfileDefinition[] {
 }
 
 export function listCustomProfiles(
-	userId: string,
+	userId: number,
 	opts: { status?: 'open' | 'archived' | 'all' } = {}
 ): CustomMemoryProfile[] {
 	const status = opts.status ?? 'open';
@@ -127,7 +126,7 @@ export function listCustomProfiles(
 }
 
 export function createCustomProfile(
-	userId: string,
+	userId: number,
 	input: {
 		name: string;
 		description?: string;
@@ -136,16 +135,14 @@ export function createCustomProfile(
 	}
 ): CustomMemoryProfile {
 	const now = Date.now();
-	const id = ulid();
-	getDb()
+	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_custom_profiles(
-			   id, user_id, name, description, instructions, schema_json, status,
+			   user_id, name, description, instructions, schema_json, status,
 			   created_at, updated_at, archived_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL)`
+			 ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, NULL)`
 		)
 		.run(
-			id,
 			userId,
 			input.name,
 			input.description ?? '',
@@ -154,14 +151,15 @@ export function createCustomProfile(
 			now,
 			now
 		);
+	const id = Number(info.lastInsertRowid);
 	return rowToCustomProfile(
 		getDb().prepare('SELECT * FROM memory_custom_profiles WHERE id = ?').get(id) as CustomProfileRow
 	);
 }
 
 export function updateCustomProfile(
-	id: string,
-	userId: string,
+	id: number,
+	userId: number,
 	patch: {
 		name: string;
 		description?: string;
@@ -193,7 +191,7 @@ export function updateCustomProfile(
 	);
 }
 
-export function archiveCustomProfile(id: string, userId: string): boolean {
+export function archiveCustomProfile(id: number, userId: number): boolean {
 	const now = Date.now();
 	const result = getDb()
 		.prepare(

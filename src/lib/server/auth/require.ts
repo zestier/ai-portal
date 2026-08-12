@@ -11,7 +11,7 @@ import { error } from '@sveltejs/kit';
  * `if (!locals.userId) throw error(401)` boilerplate and operate on a
  * plain `string` userId.
  */
-export function requireUserId(locals: App.Locals): string {
+export function requireUserId(locals: App.Locals): number {
 	if (!locals.userId) throw error(401);
 	return locals.userId;
 }

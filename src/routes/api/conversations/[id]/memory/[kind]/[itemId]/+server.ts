@@ -59,7 +59,7 @@ const OpenLoopPatch = z
 		description: z.string().max(4000).optional(),
 		status: OpenLoopStatus.optional(),
 		priority: z.number().int().min(-100).max(100).optional(),
-		relatedEntityIds: z.array(z.string().trim().min(1).max(200)).max(100).optional()
+		relatedEntityIds: z.array(z.coerce.number().int().positive()).max(100).optional()
 	})
 	.strict();
 
@@ -74,8 +74,10 @@ const GlobalMemoryPatch = z
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	assertKnownKind(params.kind);
+	const itemId = Number(params.itemId);
+	if (!Number.isInteger(itemId) || itemId <= 0) throw error(404, 'Memory item not found.');
 	const body = await parseBody(request, RawPatchBody);
-	const updated = updateMemoryItem(conv.id, conv.userId, params.kind, params.itemId, body);
+	const updated = updateMemoryItem(conv.id, conv.userId, params.kind, itemId, body);
 	if (!updated) throw error(404, 'Memory item not found.');
 	return json({ item: updated, memory: memory.listSnapshot(conv.id, { userId: conv.userId }) });
 };
@@ -83,19 +85,21 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 export const DELETE: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	assertKnownKind(params.kind);
+	const itemId = Number(params.itemId);
+	if (!Number.isInteger(itemId) || itemId <= 0) throw error(404, 'Memory item not found.');
 	const deleted =
 		params.kind === 'globalMemories'
-			? memory.deleteGlobalMemory(conv.userId, params.itemId)
-			: memory.deleteItem(conv.id, params.kind, params.itemId);
+			? memory.deleteGlobalMemory(conv.userId, itemId)
+			: memory.deleteItem(conv.id, params.kind, itemId);
 	if (!deleted) throw error(404, 'Memory item not found.');
 	return json({ ok: true, memory: memory.listSnapshot(conv.id, { userId: conv.userId }) });
 };
 
 function updateMemoryItem(
-	conversationId: string,
-	userId: string,
+	conversationId: number,
+	userId: number,
 	kind: string,
-	itemId: string,
+	itemId: number,
 	body: unknown
 ) {
 	if (kind === 'globalMemories') {

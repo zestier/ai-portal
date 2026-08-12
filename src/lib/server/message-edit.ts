@@ -28,9 +28,9 @@ export class InlineEditRejected extends Error {
 }
 
 export interface InlineEditInput {
-	userId: string;
-	conversationId: string;
-	messageId: string;
+	userId: number;
+	conversationId: number;
+	messageId: number;
 	newContent: string;
 }
 
@@ -63,9 +63,9 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
 }
 
 export interface RegenerateInput {
-	userId: string;
-	conversationId: string;
-	messageId: string;
+	userId: number;
+	conversationId: number;
+	messageId: number;
 }
 
 /**
@@ -113,8 +113,8 @@ export function regenerateFromAssistant(input: RegenerateInput): InlineEditResul
 }
 
 function loadIdleConversation(
-	userId: string,
-	conversationId: string
+	userId: number,
+	conversationId: number
 ): { conv: Conversation; all: Message[] } {
 	const conv = convs.get(conversationId, userId);
 	if (!conv) throw new InlineEditRejected('conversation_not_found');
@@ -137,7 +137,7 @@ function loadIdleConversation(
  * rewrite starts a fresh branch instead of appending after the stale tail.
  */
 function rerunFromUserMessage(
-	userId: string,
+	userId: number,
 	conv: Conversation,
 	all: Message[],
 	userMessage: Message,

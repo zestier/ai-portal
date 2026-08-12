@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { getDb } from '$lib/server/db';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as settings from '$lib/server/db/repos/settings';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
@@ -10,11 +11,7 @@ import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
 import { audit } from '$lib/server/audit';
-import {
-	createManagedWorktree,
-	rollbackManagedWorktree,
-	WorktreeError
-} from '$lib/server/worktrees';
+import { createManagedWorktree, WorktreeError } from '$lib/server/worktrees';
 
 const WorkspaceInput = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('shared'), path: z.string().min(1).optional() }),
@@ -45,7 +42,7 @@ const CreateBody = z
 		 * resolves to one of the caller's own chat templates, its
 		 * `disabledToolGroups` preset is copied onto the new conversation.
 		 */
-		promptTemplateId: z.string().min(1).optional(),
+		promptTemplateId: z.number().int().positive().optional(),
 		workspace: WorkspaceInput.optional()
 	})
 	.refine((body) => !(body.workdir && body.workspace), {
@@ -74,7 +71,6 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 		}
 	}
 
-	const id = convs.newId();
 	// Precedence: explicit body.workdir > user's defaultWorkdir > PROJECT_ROOT.
 	const requested =
 		workspace?.kind === 'shared'
@@ -109,42 +105,16 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 		workdir = projectRoot();
 	}
 
-	let managedWorktree;
-	if (workspace?.kind === 'worktree') {
-		try {
-			managedWorktree = await createManagedWorktree({
-				sourceWorkdir: workdir,
-				userId,
-				conversationId: id,
-				...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
-			});
-		} catch (cause) {
-			if (cause instanceof WorktreeError) {
-				audit({
-					event_type: 'worktree_create',
-					actor_login: locals.user?.githubLogin ?? null,
-					actor_ip: getClientAddress(),
-					resource: workdir,
-					outcome: 'failure',
-					detail: { conversationId: id, code: cause.code }
-				});
-				throw error(cause.code === 'git_failed' ? 500 : 400, {
-					message: cause.message,
-					code: cause.code
-				});
-			}
-			throw cause;
-		}
-	}
-	let conv;
-	try {
-		conv = convs.create(userId, {
-			id,
+	// With integer PKs the conversation id can no longer be minted ahead of the
+	// insert, and the managed-worktree path/branch derive from it. So the row is
+	// created first against the source workdir; a worktree conversation is then
+	// built against its id and the row promoted to the checkout's path.
+	const createRow = (workdir: string) =>
+		convs.create(userId, {
 			title: body.title,
-			workdir: managedWorktree?.path ?? workdir,
-			workspaceKind: managedWorktree ? 'managed-worktree' : 'shared',
-			workspaceKey: managedWorktree?.sourceWorkdir ?? workdir,
-			...(managedWorktree ? { managedWorktree } : {}),
+			workdir,
+			workspaceKind: 'shared',
+			workspaceKey: workdir,
 			model,
 			mode: body.mode ?? userSettings.defaultConversationMode,
 			approvalMode: body.approvalMode ?? userSettings.defaultApprovalMode,
@@ -152,19 +122,54 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 			adversaryModel: body.adversaryModel ?? null,
 			disabledToolGroups
 		});
+
+	if (workspace?.kind !== 'worktree') {
+		return json({ ok: true, conversation: createRow(workdir) }, { status: 201 });
+	}
+
+	const conv = createRow(workdir);
+	let managedWorktree;
+	try {
+		managedWorktree = await createManagedWorktree({
+			sourceWorkdir: workdir,
+			userId: String(userId),
+			conversationId: String(conv.id),
+			...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
+		});
 	} catch (cause) {
-		if (managedWorktree) await rollbackManagedWorktree(managedWorktree).catch(() => undefined);
+		convs.remove(conv.id, userId);
+		if (cause instanceof WorktreeError) {
+			audit({
+				event_type: 'worktree_create',
+				actor_login: locals.user?.githubLogin ?? null,
+				actor_ip: getClientAddress(),
+				resource: workdir,
+				outcome: 'failure',
+				detail: { conversationId: conv.id, code: cause.code }
+			});
+			throw error(cause.code === 'git_failed' ? 500 : 400, {
+				message: cause.message,
+				code: cause.code
+			});
+		}
 		throw cause;
 	}
-	if (managedWorktree) {
-		audit({
-			event_type: 'worktree_create',
-			actor_login: locals.user?.githubLogin ?? null,
-			actor_ip: getClientAddress(),
-			resource: managedWorktree.path,
-			outcome: 'success',
-			detail: { conversationId: id, branch: managedWorktree.branch }
-		});
-	}
-	return json({ ok: true, conversation: conv }, { status: 201 });
+	getDb().transaction(() => {
+		convs.setManagedWorktree(conv.id, managedWorktree);
+		getDb()
+			.prepare(
+				`UPDATE conversations SET workdir = ?, workspace_kind = ?, workspace_key = ? WHERE id = ?`
+			)
+			.run(managedWorktree.path, 'managed-worktree', managedWorktree.sourceWorkdir, conv.id);
+	})();
+	const promoted = convs.get(conv.id, userId)!;
+	audit({
+		event_type: 'worktree_create',
+		actor_login: locals.user?.githubLogin ?? null,
+		actor_ip: getClientAddress(),
+		resource: managedWorktree.path,
+		outcome: 'success',
+		detail: { conversationId: conv.id, branch: managedWorktree.branch }
+	});
+	return json({ ok: true, conversation: promoted }, { status: 201 });
 };

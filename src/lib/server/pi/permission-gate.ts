@@ -48,8 +48,8 @@ import type { PortalTool } from '../tools/types';
 import type { PiPermissionResolver } from './session';
 
 export interface PiPermissionGateOptions {
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 	/** The session's working directory — the shell cwd AND the fs
 	 * session-workspace root for this conversation. */
 	workingDirectory: string;

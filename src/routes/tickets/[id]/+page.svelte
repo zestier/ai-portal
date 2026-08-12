@@ -228,7 +228,7 @@
 		}
 	}
 
-	async function deleteAttachment(attachmentId: string) {
+	async function deleteAttachment(attachmentId: number) {
 		if (busy) return;
 		busy = true;
 		errorMsg = null;

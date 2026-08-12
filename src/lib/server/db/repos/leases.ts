@@ -6,12 +6,13 @@
 // hands back is UNTRUSTED until `leases.ts` re-derives it from ids and verifies
 // it against the filesystem, mirroring how `managed_worktrees` rows are treated.
 
+import { randomUUID } from 'node:crypto';
 import { getDb } from '../index';
 
 export interface LeaseRow {
-	id: string;
-	userId: string;
-	heldByConversationId: string | null;
+	id: number;
+	userId: number;
+	heldByConversationId: number | null;
 	label: string;
 	sourceWorkdir: string;
 	gitCommonDir: string;
@@ -24,9 +25,9 @@ export interface LeaseRow {
 }
 
 interface RawLeaseRow {
-	id: string;
-	user_id: string;
-	held_by_conversation_id: string | null;
+	id: number;
+	user_id: number;
+	held_by_conversation_id: number | null;
 	label: string;
 	source_workdir: string;
 	git_common_dir: string;
@@ -56,9 +57,9 @@ function toLease(r: RawLeaseRow): LeaseRow {
 }
 
 export interface InsertLeaseInput {
-	id: string;
-	userId: string;
-	heldByConversationId: string;
+	id: number;
+	userId: number;
+	heldByConversationId: number;
 	label: string;
 	sourceWorkdir: string;
 	gitCommonDir: string;
@@ -94,14 +95,61 @@ export function insert(input: InsertLeaseInput): LeaseRow {
 	return row;
 }
 
-export function getById(id: string, userId: string): LeaseRow | null {
+/**
+ * Mint a lease id before its checkout exists. The checkout path/branch derive
+ * from the id (see `leases.ts`), so the row is created first with stub values
+ * that `completePlaceholder` overwrites once the worktree is on disk. The stub
+ * path/branch carry a random suffix because `path` and `(git_common_dir,
+ * branch)` are UNIQUE — concurrent mints must not collide.
+ */
+export function mintPlaceholder(input: {
+	userId: number;
+	heldByConversationId: number;
+	label: string;
+}): number {
+	const stub = `pending-${randomUUID()}`;
+	const now = Date.now();
+	const info = getDb()
+		.prepare(
+			`INSERT INTO workspace_leases(
+			   user_id, held_by_conversation_id, label, source_workdir,
+			   git_common_dir, path, branch, base_sha, state, created_at, last_used_at
+			 ) VALUES (?, ?, ?, '', '', ?, ?, '', 'active', ?, ?)`
+		)
+		.run(input.userId, input.heldByConversationId, input.label, stub, stub, now, now);
+	return Number(info.lastInsertRowid);
+}
+
+/** Fill in the real checkout metadata after the worktree exists. */
+export function completePlaceholder(
+	id: number,
+	userId: number,
+	meta: {
+		sourceWorkdir: string;
+		gitCommonDir: string;
+		path: string;
+		branch: string;
+		baseSha: string;
+	}
+): LeaseRow | null {
+	getDb()
+		.prepare(
+			`UPDATE workspace_leases
+			    SET source_workdir = ?, git_common_dir = ?, path = ?, branch = ?, base_sha = ?
+			  WHERE id = ?`
+		)
+		.run(meta.sourceWorkdir, meta.gitCommonDir, meta.path, meta.branch, meta.baseSha, id);
+	return getById(id, userId);
+}
+
+export function getById(id: number, userId: number): LeaseRow | null {
 	const row = getDb()
 		.prepare(`SELECT * FROM workspace_leases WHERE id = ? AND user_id = ?`)
 		.get(id, userId) as RawLeaseRow | undefined;
 	return row ? toLease(row) : null;
 }
 
-export function listByConversation(conversationId: string, userId: string): LeaseRow[] {
+export function listByConversation(conversationId: number, userId: number): LeaseRow[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM workspace_leases
@@ -112,18 +160,22 @@ export function listByConversation(conversationId: string, userId: string): Leas
 	return rows.map(toLease);
 }
 
-export function countByConversation(conversationId: string): number {
+export function countByConversation(conversationId: number): number {
 	const row = getDb()
 		.prepare(
-			`SELECT COUNT(*) AS n FROM workspace_leases WHERE held_by_conversation_id = ? AND state = 'active'`
+			`SELECT COUNT(*) AS n FROM workspace_leases
+			  WHERE held_by_conversation_id = ? AND state = 'active' AND base_sha != ''`
 		)
 		.get(conversationId) as { n: number };
 	return row.n;
 }
 
-export function countByUser(userId: string): number {
+export function countByUser(userId: number): number {
 	const row = getDb()
-		.prepare(`SELECT COUNT(*) AS n FROM workspace_leases WHERE user_id = ? AND state = 'active'`)
+		.prepare(
+			`SELECT COUNT(*) AS n FROM workspace_leases
+			  WHERE user_id = ? AND state = 'active' AND base_sha != ''`
+		)
 		.get(userId) as { n: number };
 	return row.n;
 }
@@ -152,14 +204,14 @@ export function listIdle(before: number): LeaseRow[] {
 	return rows.map(toLease);
 }
 
-export function touch(id: string, now = Date.now()): void {
+export function touch(id: number, now = Date.now()): void {
 	getDb().prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`).run(now, id);
 }
 
-export function setState(id: string, state: 'active' | 'releasing'): void {
+export function setState(id: number, state: 'active' | 'releasing'): void {
 	getDb().prepare(`UPDATE workspace_leases SET state = ? WHERE id = ?`).run(state, id);
 }
 
-export function remove(id: string): void {
+export function remove(id: number): void {
 	getDb().prepare(`DELETE FROM workspace_leases WHERE id = ?`).run(id);
 }

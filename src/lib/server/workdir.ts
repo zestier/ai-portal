@@ -70,7 +70,9 @@ export function resolveConversationWorkspace(conversation: Conversation): string
 	if (conversation.workspaceKind !== 'managed-worktree') {
 		return effectiveWorkdir(conversation.workdir);
 	}
-	const expected = resolve(expectedManagedWorktreePath(conversation.userId, conversation.id));
+	const expected = resolve(
+		expectedManagedWorktreePath(String(conversation.userId), String(conversation.id))
+	);
 	const stored = resolve(conversation.workdir);
 	if (stored !== expected || !existsSync(stored)) {
 		throw new WorkspaceUnavailableError('managed worktree path is unavailable');
@@ -78,7 +80,7 @@ export function resolveConversationWorkspace(conversation: Conversation): string
 	try {
 		const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
 		const storedReal = realpathSync(stored);
-		const expectedReal = resolve(rootReal, conversation.userId, conversation.id);
+		const expectedReal = resolve(rootReal, String(conversation.userId), String(conversation.id));
 		if (
 			!statSync(stored).isDirectory() ||
 			storedReal !== expectedReal ||

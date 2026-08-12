@@ -7,7 +7,9 @@ import { requireUserId } from '$lib/server/auth/require';
 
 export const load: PageServerLoad = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const ticket = tickets.get(params.id, userId);
+	const ticketId = Number(params.id);
+	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404, 'Ticket not found');
+	const ticket = tickets.get(ticketId, userId);
 	if (!ticket) throw error(404, 'Ticket not found');
 	// Match the layout's sidebar sourcing so the detail page's chat-launch buttons
 	// offer the same ticket-action templates (lazy-seeding defaults the first time).
@@ -20,6 +22,6 @@ export const load: PageServerLoad = ({ params, locals }) => {
 		dependsOn: tickets.dependencyRefs(ticket.id, userId),
 		dependents: tickets.dependentRefs(ticket.id, userId),
 		ticketActions: promptTemplates.list(userId, { type: 'ticket-action', status: 'open' }),
-		attachments: ticketAttachments.listMetaForTicket(params.id)
+		attachments: ticketAttachments.listMetaForTicket(ticketId)
 	};
 };

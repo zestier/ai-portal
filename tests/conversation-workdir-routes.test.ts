@@ -15,7 +15,7 @@ async function importRepos() {
 	return { users, convs };
 }
 
-function makeEvent(url: string, conversationId: string, userId: string) {
+function makeEvent(url: string, conversationId: number, userId: number) {
 	return {
 		params: { id: conversationId },
 		locals: { userId },

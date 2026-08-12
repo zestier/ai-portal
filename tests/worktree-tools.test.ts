@@ -28,8 +28,8 @@ function result(r: ToolResult): Record<string, unknown> {
 
 describe('worktree tools', () => {
 	let source: string;
-	let userId: string;
-	let conversationId: string;
+	let userId: number;
+	let conversationId: number;
 	let tools: Map<string, PortalTool>;
 
 	async function tool(name: string): Promise<PortalTool> {
@@ -50,7 +50,6 @@ describe('worktree tools', () => {
 		userId = users.ensureLocalUser().id;
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		const conv = convs.create(userId, {
-			id: convs.newId(),
 			title: 'orchestrator',
 			workdir: source,
 			model: 'test-model',
@@ -188,7 +187,6 @@ describe('worktree tools', () => {
 		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		const other = convs.create(userId, {
-			id: convs.newId(),
 			title: 'other',
 			workdir: source,
 			model: 'test-model',
@@ -342,7 +340,6 @@ describe('worktree tools', () => {
 			const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
 			const convs = await import('../src/lib/server/db/repos/conversations');
 			const other = convs.create(userId, {
-				id: convs.newId(),
 				title: 'other',
 				workdir: source,
 				model: 'test-model',

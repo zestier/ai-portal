@@ -24,7 +24,7 @@ import { parseWorkspaceGrantFile } from '../src/lib/server/permissions/workspace
 import { parseShellCommand } from '../src/lib/server/permissions/shell-parser';
 import type { PortalEvent } from '../src/lib/types';
 
-let userId: string;
+let userId: number;
 
 beforeEach(async () => {
 	await setupLocalEnv('portal-workspace-file-');
@@ -54,7 +54,7 @@ function makeEmitter() {
 
 function driveGate(
 	root: string,
-	conversationId = 'conv-wf',
+	conversationId = 1,
 	emitter: ReturnType<typeof makeEmitter> = makeEmitter()
 ) {
 	checkWorkspaceFileGate({
@@ -96,21 +96,21 @@ function shellCtx(command: string, workspaceRoot: string) {
 	};
 }
 function shellMatch(root: string, command: string) {
-	return settings.matchGrant(userId, 'conv-wf', 'shell', 'shell', command, shellCtx(command, root));
+	return settings.matchGrant(userId, 1, 'shell', 'shell', command, shellCtx(command, root));
 }
 function fsMatch(root: string, kind: 'read' | 'write' | 'edit', target: string) {
-	return settings.matchGrant(userId, 'conv-wf', kind, kind, target, {
+	return settings.matchGrant(userId, 1, kind, kind, target, {
 		target,
 		workspaceRoots: [root]
 	});
 }
 function toolMatch(root: string | null, tool: string) {
-	return settings.matchGrant(userId, 'conv-wf', tool, 'custom-tool', null, {
+	return settings.matchGrant(userId, 1, tool, 'custom-tool', null, {
 		workspaceRoots: root ? [root] : null
 	});
 }
 function urlMatch(root: string | null, url: string) {
-	return settings.matchGrant(userId, 'conv-wf', 'url', 'url', url, {
+	return settings.matchGrant(userId, 1, 'url', 'url', url, {
 		url,
 		workspaceRoots: root ? [root] : null
 	});
@@ -286,7 +286,7 @@ describe('gate — fail-closed hash-gated import', () => {
 		const root = makeWorkspace();
 		writeFile(root, REALISTIC_TOML);
 		const emitter = driveGate(root);
-		driveGate(root, 'conv-wf', emitter);
+		driveGate(root, 1, emitter);
 		expect(workspaceFileRequests(emitter.events).length).toBe(1);
 	});
 
@@ -432,16 +432,9 @@ describe('apply — workspace permissions', () => {
 			decision: 'allow',
 			source: 'settings'
 		});
-		const detailed = settings.matchGrantDetailed(
-			userId,
-			'conv-wf',
-			'git_commit',
-			'custom-tool',
-			null,
-			{
-				workspaceRoots: [root]
-			}
-		);
+		const detailed = settings.matchGrantDetailed(userId, 1, 'git_commit', 'custom-tool', null, {
+			workspaceRoots: [root]
+		});
 		expect(detailed.outcome).toBe('deny');
 		expect(detailed.feedback).toContain('policy');
 	});

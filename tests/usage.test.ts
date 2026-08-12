@@ -90,7 +90,7 @@ describe('turn-runner persists context.usage', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 'm1', role: 'assistant' },
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
 				{
 					type: 'context.usage',
 					currentTokens: 4242,
@@ -101,7 +101,7 @@ describe('turn-runner persists context.usage', () => {
 					toolDefinitionsTokens: 42,
 					isInitial: false
 				},
-				{ type: 'message.delta', messageId: 'm1', text: 'hello' },
+				{ type: 'message.delta', messageId: 1, text: 'hello' },
 				{ type: 'done' }
 			])
 		);

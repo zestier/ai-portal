@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { PiEventMapper } from '../src/lib/server/pi/events';
+import { setupLocalEnv } from './helpers/env';
 
-const MESSAGE_ID = 'msg-test-1';
+const MESSAGE_ID = 1;
 
 // Minimal structurally-typed AgentSessionEvent fixtures: the mapper only reads
 // the discriminated `type` and the fields asserted below.
@@ -11,6 +12,11 @@ function event(partial: unknown): AgentSessionEvent {
 }
 
 describe('PiEventMapper', () => {
+	// Minting numeric tool_call ids reads sqlite_sequence, so the DB must be
+	// reachable before a tool execution maps.
+	beforeEach(async () => {
+		await setupLocalEnv('portal-pi-events-');
+	});
 	it('maps message_start / text_delta / message_end to portal events', () => {
 		const mapper = new PiEventMapper(MESSAGE_ID);
 		expect(mapper.map(event({ type: 'message_start', message: { role: 'assistant' } }))).toEqual([
@@ -132,34 +138,33 @@ describe('PiEventMapper', () => {
 
 	it('maps tool executions to tool.call / tool.result', () => {
 		const mapper = new PiEventMapper(MESSAGE_ID);
-		expect(
-			mapper.map(
-				event({
-					type: 'tool_execution_start',
-					toolCallId: 't1',
-					toolName: 'read',
-					args: { path: 'a' }
-				})
-			)
-		).toEqual([
-			{
-				type: 'tool.call',
+		const call = mapper.map(
+			event({
+				type: 'tool_execution_start',
 				toolCallId: 't1',
-				tool: 'read',
-				args: { path: 'a' },
-				messageId: MESSAGE_ID
-			}
-		]);
-		expect(
-			mapper.map(
-				event({
-					type: 'tool_execution_end',
-					toolCallId: 't1',
-					toolName: 'read',
-					result: { content: [{ type: 'text', text: 'file body' }] },
-					isError: false
-				})
-			)
-		).toEqual([{ type: 'tool.result', toolCallId: 't1', ok: true, summary: 'file body' }]);
+				toolName: 'read',
+				args: { path: 'a' }
+			})
+		);
+		expect(call).toHaveLength(1);
+		const toolCallId = (call[0] as { type: 'tool.call'; toolCallId: number }).toolCallId;
+		expect(toolCallId).toEqual(expect.any(Number));
+		expect(call[0]).toMatchObject({
+			type: 'tool.call',
+			tool: 'read',
+			args: { path: 'a' },
+			messageId: MESSAGE_ID
+		});
+		const result = mapper.map(
+			event({
+				type: 'tool_execution_end',
+				toolCallId: 't1',
+				toolName: 'read',
+				result: { content: [{ type: 'text', text: 'file body' }] },
+				isError: false
+			})
+		);
+		// The start and end share the single minted portal id for the SDK call.
+		expect(result).toEqual([{ type: 'tool.result', toolCallId, ok: true, summary: 'file body' }]);
 	});
 });

@@ -1,4 +1,3 @@
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import { purgeSessionSearchIndex } from './memory';
 import {
@@ -30,8 +29,8 @@ function parseDisabledToolGroups(raw: string | null): PortalToolGroupId[] {
 }
 
 interface ConvRow {
-	id: string;
-	user_id: string;
+	id: number;
+	user_id: number;
 	title: string;
 	workdir: string;
 	model: string | null;
@@ -39,8 +38,8 @@ interface ConvRow {
 	created_at: number;
 	updated_at: number;
 	archived_at: number | null;
-	forked_from_conversation_id: string | null;
-	forked_from_message_id: string | null;
+	forked_from_conversation_id: number | null;
+	forked_from_message_id: number | null;
 	mode: string | null;
 	memory_mode: string | null;
 	memory_extractor_model: string | null;
@@ -105,7 +104,7 @@ function rowToConv(r: ConvRow): Conversation {
 	};
 }
 
-export function get(id: string, userId: string): Conversation | null {
+export function get(id: number, userId: number): Conversation | null {
 	const r = getDb()
 		.prepare(`${CONVERSATION_SELECT} WHERE conversations.id = ? AND conversations.user_id = ?`)
 		.get(id, userId) as ConvRow | undefined;
@@ -122,7 +121,7 @@ export interface ListOpts {
  * Scoped to `userId` so users only ever see their own forks; the source
  * conversation must also be theirs at the call site.
  */
-export function listChildren(userId: string, sourceId: string): Conversation[] {
+export function listChildren(userId: number, sourceId: number): Conversation[] {
 	const rows = getDb()
 		.prepare(
 			`${CONVERSATION_SELECT}
@@ -133,7 +132,7 @@ export function listChildren(userId: string, sourceId: string): Conversation[] {
 	return rows.map(rowToConv);
 }
 
-export function list(userId: string, opts: ListOpts = {}): Conversation[] {
+export function list(userId: number, opts: ListOpts = {}): Conversation[] {
 	const limit = opts.limit ?? 200;
 	const sql = opts.includeArchived
 		? `${CONVERSATION_SELECT} WHERE conversations.user_id = ? ORDER BY updated_at DESC LIMIT ?`
@@ -153,9 +152,8 @@ export interface CreateInput {
 	adversaryModel?: string | null;
 	globalMemoryEnabled?: boolean;
 	disabledToolGroups?: string[];
-	id?: string;
-	forkedFromConversationId?: string | null;
-	forkedFromMessageId?: string | null;
+	forkedFromConversationId?: number | null;
+	forkedFromMessageId?: number | null;
 	draftPrompt?: string | null;
 	workspaceKind?: WorkspaceKind;
 	workspaceKey?: string;
@@ -167,12 +165,7 @@ export interface CreateInput {
  * the caller needs the id to derive other state (e.g. workdir path) before
  * inserting the row.
  */
-export function newId(): string {
-	return ulid();
-}
-
-export function create(userId: string, input: CreateInput): Conversation {
-	const id = input.id ?? ulid();
+export function create(userId: number, input: CreateInput): Conversation {
 	const now = Date.now();
 	const forkConv = input.forkedFromConversationId ?? null;
 	const forkMsg = input.forkedFromMessageId ?? null;
@@ -187,35 +180,38 @@ export function create(userId: string, input: CreateInput): Conversation {
 	const workspaceKind = input.workspaceKind ?? 'shared';
 	const workspaceKey = input.workspaceKey ?? effectiveWorkdir(input.workdir);
 	const db = getDb();
+	let id = 0;
 	db.transaction(() => {
-		db.prepare(
-			`INSERT INTO conversations(
-			   id, user_id, title, workdir, model, mode, approval_mode, memory_mode, memory_extractor_model,
-			   adversary_model, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
-			   forked_from_conversation_id, forked_from_message_id, draft_prompt,
-			   workspace_kind, workspace_key
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		).run(
-			id,
-			userId,
-			input.title,
-			input.workdir,
-			input.model,
-			mode,
-			approvalMode,
-			memoryMode,
-			memoryExtractorModel,
-			adversaryModel,
-			globalMemoryEnabled ? 1 : 0,
-			JSON.stringify(disabledToolGroups),
-			now,
-			now,
-			forkConv,
-			forkMsg,
-			draftPrompt,
-			workspaceKind,
-			workspaceKey
-		);
+		const info = db
+			.prepare(
+				`INSERT INTO conversations(
+				   user_id, title, workdir, model, mode, approval_mode, memory_mode, memory_extractor_model,
+				   adversary_model, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
+				   forked_from_conversation_id, forked_from_message_id, draft_prompt,
+				   workspace_kind, workspace_key
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				userId,
+				input.title,
+				input.workdir,
+				input.model,
+				mode,
+				approvalMode,
+				memoryMode,
+				memoryExtractorModel,
+				adversaryModel,
+				globalMemoryEnabled ? 1 : 0,
+				JSON.stringify(disabledToolGroups),
+				now,
+				now,
+				forkConv,
+				forkMsg,
+				draftPrompt,
+				workspaceKind,
+				workspaceKey
+			);
+		id = Number(info.lastInsertRowid);
 		if (workspaceKind === 'managed-worktree') {
 			if (!input.managedWorktree) {
 				throw new Error('managed-worktree conversation requires managedWorktree metadata');
@@ -263,7 +259,36 @@ export function create(userId: string, input: CreateInput): Conversation {
 	};
 }
 
-export function getManagedWorktree(id: string, userId: string): ManagedWorktreeMetadata | null {
+/**
+ * Record (or replace) the managed-worktree row for a conversation. Used by the
+ * fork flow, which creates the conversation row before the worktree exists and
+ * fills in the metadata once the checkout is on disk. There is at most one such
+ * row per conversation (`conversation_id` is the primary key).
+ */
+export function setManagedWorktree(id: number, worktree: ManagedWorktreeMetadata): void {
+	getDb()
+		.prepare(
+			`INSERT INTO managed_worktrees(conversation_id, source_workdir, path, git_common_dir, branch, base_sha, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(conversation_id) DO UPDATE SET
+			   source_workdir = excluded.source_workdir,
+			   path = excluded.path,
+			   git_common_dir = excluded.git_common_dir,
+			   branch = excluded.branch,
+			   base_sha = excluded.base_sha`
+		)
+		.run(
+			id,
+			worktree.sourceWorkdir,
+			worktree.path,
+			worktree.gitCommonDir,
+			worktree.branch,
+			worktree.baseSha,
+			Date.now()
+		);
+}
+
+export function getManagedWorktree(id: number, userId: number): ManagedWorktreeMetadata | null {
 	const row = getDb()
 		.prepare(
 			`SELECT mw.source_workdir, mw.path, mw.git_common_dir, mw.branch, mw.base_sha
@@ -291,14 +316,14 @@ export function getManagedWorktree(id: string, userId: string): ManagedWorktreeM
 		: null;
 }
 
-export function rename(id: string, userId: string, title: string): boolean {
+export function rename(id: number, userId: number, title: string): boolean {
 	const r = getDb()
 		.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?')
 		.run(title, Date.now(), id, userId);
 	return r.changes > 0;
 }
 
-export function renameIfDefault(id: string, userId: string, title: string): boolean {
+export function renameIfDefault(id: number, userId: number, title: string): boolean {
 	const r = getDb()
 		.prepare(
 			`UPDATE conversations
@@ -317,8 +342,8 @@ export function renameIfDefault(id: string, userId: string, title: string): bool
  * via `session.setMode` / `session.setApprovalMode` when supported.
  */
 export function updateSessionSettings(
-	id: string,
-	userId: string,
+	id: number,
+	userId: number,
 	patch: {
 		model?: string;
 		mode?: SessionMode;
@@ -388,7 +413,7 @@ function normalizeOptionalModel(value: string | null | undefined): string | null
  * conversation as unseen. Deliberately does NOT touch `updated_at` — reading a
  * conversation must not reorder the sidebar.
  */
-export function markRead(id: string, userId: string, at: number = Date.now()): boolean {
+export function markRead(id: number, userId: number, at: number = Date.now()): boolean {
 	const r = getDb()
 		.prepare(
 			`UPDATE conversations
@@ -404,7 +429,7 @@ export function markRead(id: string, userId: string, at: number = Date.now()): b
  * than the last time the user looked at them — the "unseen response" half of the
  * sidebar's active indicator. See {@link HAS_UNSEEN_ASSISTANT}.
  */
-export function unreadConversationIds(userId: string): Set<string> {
+export function unreadConversationIds(userId: number): Set<number> {
 	const rows = getDb()
 		.prepare(
 			`SELECT c.id AS id
@@ -413,12 +438,12 @@ export function unreadConversationIds(userId: string): Set<string> {
 			    AND c.archived_at IS NULL
 			    AND ${HAS_UNSEEN_ASSISTANT}`
 		)
-		.all(userId) as Array<{ id: string }>;
+		.all(userId) as Array<{ id: number }>;
 	return new Set(rows.map((r) => r.id));
 }
 
 /** Single-conversation form of {@link unreadConversationIds}. */
-export function hasUnread(id: string, userId: string): boolean {
+export function hasUnread(id: number, userId: number): boolean {
 	const row = getDb()
 		.prepare(
 			`SELECT 1 AS hit
@@ -432,7 +457,7 @@ export function hasUnread(id: string, userId: string): boolean {
 	return row !== undefined;
 }
 
-export function touch(id: string) {
+export function touch(id: number) {
 	getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), id);
 }
 
@@ -442,7 +467,7 @@ export function touch(id: string) {
  * calls this when the session's file path differs from the stored one, and
  * re-writing the same path is a harmless no-op.
  */
-export function setSessionFile(id: string, userId: string, sessionFile: string): void {
+export function setSessionFile(id: number, userId: number, sessionFile: string): void {
 	getDb()
 		.prepare('UPDATE conversations SET session_file = ? WHERE id = ? AND user_id = ?')
 		.run(sessionFile, id, userId);
@@ -458,11 +483,11 @@ export function setSessionFile(id: string, userId: string, sessionFile: string):
  * turn-start path is ever added it must call this too, or a stale draft will
  * keep re-seeding the composer after the turn has already begun.
  */
-export function clearDraftPrompt(id: string) {
+export function clearDraftPrompt(id: number) {
 	getDb().prepare('UPDATE conversations SET draft_prompt = NULL WHERE id = ?').run(id);
 }
 
-export function archive(id: string, userId: string): boolean {
+export function archive(id: number, userId: number): boolean {
 	const r = getDb()
 		.prepare(
 			'UPDATE conversations SET archived_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL'
@@ -471,7 +496,7 @@ export function archive(id: string, userId: string): boolean {
 	return r.changes > 0;
 }
 
-export function unarchive(id: string, userId: string): boolean {
+export function unarchive(id: number, userId: number): boolean {
 	const r = getDb()
 		.prepare(
 			'UPDATE conversations SET archived_at = NULL WHERE id = ? AND user_id = ? AND archived_at IS NOT NULL'
@@ -480,7 +505,7 @@ export function unarchive(id: string, userId: string): boolean {
 	return r.changes > 0;
 }
 
-export function remove(id: string, userId: string): boolean {
+export function remove(id: number, userId: number): boolean {
 	const db = getDb();
 	return db.transaction(() => {
 		const r = db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(id, userId);

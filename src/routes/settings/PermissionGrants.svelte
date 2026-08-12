@@ -58,7 +58,7 @@
 	let newGrantDenyReason = $state('');
 	let editingGrantId = $state<number | null>(null);
 	let editingGrantMeta = $state<{
-		conversationId: string | null;
+		conversationId: number | null;
 		conversationTitle: string | null;
 	} | null>(null);
 	let detailsOpen = $state(false);

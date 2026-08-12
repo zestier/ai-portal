@@ -23,7 +23,7 @@ const TTL_MS = 15 * 60 * 1000;
 
 export interface ForcedRetryEntry {
 	token: string;
-	conversationId: string;
+	conversationId: number;
 	tool: string;
 	permissionKind: string;
 	scopeKey: string | null;
@@ -46,7 +46,7 @@ function prune(): void {
 }
 
 export function mintForcedRetry(input: {
-	conversationId: string;
+	conversationId: number;
 	tool: string;
 	permissionKind: string;
 	scopeKey: string | null;
@@ -124,7 +124,7 @@ export function takeForcedRetry(token: string): ForcedRetryEntry | null {
  * so callers can audit the approval.
  */
 export function consumeForcedRetryMatch(input: {
-	conversationId: string;
+	conversationId: number;
 	tool: string;
 	permissionKind: string;
 	scopeKey: string | null;

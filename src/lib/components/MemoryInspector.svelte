@@ -7,7 +7,7 @@
 	let {
 		conversationId,
 		initialMemory = null
-	}: { conversationId: string; initialMemory?: unknown } = $props();
+	}: { conversationId: number; initialMemory?: unknown } = $props();
 
 	let memory = $state<unknown>(untrack(() => initialMemory));
 	let loading = $state(false);

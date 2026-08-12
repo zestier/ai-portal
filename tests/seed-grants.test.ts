@@ -12,7 +12,7 @@ import {
 import { parseShellCommand } from '../src/lib/server/permissions/shell-parser';
 import { setupLocalEnv } from './helpers/env';
 
-let userId: string;
+let userId: number;
 
 beforeEach(async () => {
 	await setupLocalEnv('portal-seed-grants-');
@@ -83,7 +83,7 @@ describe('seed grants — installation', () => {
 		).toBe(true);
 		const parsed = parseShellCommand('cat README.md');
 		expect(
-			reSettings.matchGrant(userId, 'conv-x', 'shell', 'shell', 'cat README.md', {
+			reSettings.matchGrant(userId, 1, 'shell', 'shell', 'cat README.md', {
 				shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
 				workspaceRoots: ['/tmp'],
 				shellCwd: '/tmp'
@@ -138,7 +138,7 @@ describe('seed grants — runtime behaviour', () => {
 	) {
 		return settings.matchGrant(
 			userId,
-			'conv-x',
+			1,
 			'shell',
 			'shell',
 			command,
@@ -152,7 +152,7 @@ describe('seed grants — runtime behaviour', () => {
 	) {
 		return settings.matchGrantDetailed(
 			userId,
-			'conv-x',
+			1,
 			'shell',
 			'shell',
 			command,
@@ -160,10 +160,10 @@ describe('seed grants — runtime behaviour', () => {
 		);
 	}
 	function customToolMatch(tool: string) {
-		return settings.matchGrant(userId, 'conv-x', tool, 'custom-tool', null);
+		return settings.matchGrant(userId, 1, tool, 'custom-tool', null);
 	}
 	function fsMatch(kind: 'read' | 'write' | 'edit', target: string, sessionWorkspaceRoot: string) {
-		return settings.matchGrant(userId, 'conv-x', kind, kind, target, {
+		return settings.matchGrant(userId, 1, kind, kind, target, {
 			target,
 			sessionWorkspaceRoot
 		});
@@ -392,7 +392,7 @@ describe('seed grants — runtime behaviour', () => {
 
 		const parsed = parseShellCommand(`cat ${target}`);
 		const matchWithRoots = (roots: string[]) =>
-			settings.matchGrant(userId, 'conv-x', 'shell', 'shell', `cat ${target}`, {
+			settings.matchGrant(userId, 1, 'shell', 'shell', `cat ${target}`, {
 				shellSegments: parsed.kind === 'parsed' ? parsed.segments : null,
 				workspaceRoots: roots,
 				sessionWorkspaceRoot: null,

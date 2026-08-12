@@ -2,7 +2,7 @@
 declare global {
 	namespace App {
 		interface Locals {
-			userId: string | null;
+			userId: number | null;
 			user: import('$lib/types').User | null;
 			csrfToken: string;
 		}

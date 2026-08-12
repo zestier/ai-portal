@@ -8,19 +8,19 @@ import { getDb } from '../index';
 
 export interface TurnIdempotencyRecord {
 	turnId: string;
-	userMessageId: string;
+	userMessageId: number;
 	title: string | null;
 }
 
 interface TurnIdempotencyRow {
-	message_id: string;
+	message_id: number;
 	turn_id: string;
 	title: string | null;
 }
 
 // Look up the original result for a previously-seen key, or null if this key
 // hasn't been recorded for the conversation yet.
-export function lookup(conversationId: string, key: string): TurnIdempotencyRecord | null {
+export function lookup(conversationId: number, key: string): TurnIdempotencyRecord | null {
 	const row = getDb()
 		.prepare(
 			`SELECT message_id, turn_id, title
@@ -36,9 +36,9 @@ export function lookup(conversationId: string, key: string): TurnIdempotencyReco
 // INSERT OR IGNORE so a concurrent winner that already claimed the key is never
 // clobbered — the first write wins and later retries read it back via `lookup`.
 export function record(input: {
-	conversationId: string;
+	conversationId: number;
 	key: string;
-	messageId: string;
+	messageId: number;
 	turnId: string;
 	title?: string | null;
 }): void {

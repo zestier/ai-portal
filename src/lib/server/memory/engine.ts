@@ -6,7 +6,7 @@ import { getMemoryProfile } from './profiles';
 import type { MemoryMode, Message } from '$lib/types';
 
 export interface MemoryEntityIndexEntry {
-	entityId: string;
+	entityId: number;
 	entityKey: string;
 	entityType: string;
 	displayName: string;
@@ -16,7 +16,7 @@ export interface MemoryEntityIndexEntry {
 
 export interface MemoryAutoSearchHit {
 	itemType: string;
-	itemId: string;
+	itemId: number;
 	text: string;
 	score: number;
 }
@@ -43,7 +43,7 @@ export interface TurnMemoryPacket {
 	relevanceQuery: string | null;
 	/** id -> entityKey for every entity, so rendering preserves keys even when
 	 *  an entity's full summary is dropped from the budgeted packet. */
-	entityKeyById: Record<string, string>;
+	entityKeyById: Record<number, string>;
 	toolGuidance: {
 		mandatory: boolean;
 		availableTools: string[];
@@ -100,7 +100,7 @@ export interface MemoryPatchProposal {
 	 */
 	resolveOpenLoops?:
 		| Array<{
-				id: string;
+				id: string | number;
 				status: 'resolved' | 'dropped';
 				reason?: string | undefined;
 		  }>
@@ -113,7 +113,7 @@ export interface MemoryPatchProposal {
 	 * accrues idle turns and is eventually auto-dropped, so dead threads stop
 	 * accumulating without the model having to notice their absence.
 	 */
-	keepOpenLoops?: string[] | undefined;
+	keepOpenLoops?: Array<string | number> | undefined;
 	/**
 	 * Explicit retirements of existing *facts* (attributes or directives) the
 	 * extractor decided are stale and have no natural supersede — e.g. after
@@ -130,7 +130,7 @@ export interface MemoryPatchProposal {
 	 */
 	forgetFacts?:
 		| Array<{
-				factId?: string | undefined;
+				factId?: string | number | undefined;
 				entityKey?: string | undefined;
 				predicate?: string | undefined;
 		  }>
@@ -138,10 +138,10 @@ export interface MemoryPatchProposal {
 }
 
 export interface CommitMemoryPatchInput {
-	conversationId: string;
+	conversationId: number;
 	mode?: MemoryMode | undefined;
 	turnId?: string | null | undefined;
-	sourceMessageId?: string | null | undefined;
+	sourceMessageId?: number | null | undefined;
 	patch: MemoryPatchProposal;
 	summary?: string | undefined;
 	/**
@@ -210,15 +210,17 @@ export function isDirectivePredicate(predicate: string): boolean {
  * (memory_forget_attribute) additionally refuses a directive hit via `isDirective`.
  */
 export function resolveForgetTarget(
-	conversationId: string,
+	conversationId: number,
 	target: {
-		factId?: string | undefined;
+		factId?: string | number | undefined;
 		entityKey?: string | undefined;
 		predicate?: string | undefined;
 	}
-): { factId: string; isDirective: boolean } | null {
+): { factId: number; isDirective: boolean } | null {
 	if (target.factId) {
-		const fact = memoryRepo.getFact(conversationId, target.factId);
+		const factId = Number(target.factId);
+		if (!Number.isInteger(factId) || factId <= 0) return null; // stale/hallucinated handle
+		const fact = memoryRepo.getFact(conversationId, factId);
 		if (!fact || fact.status !== 'active') return null;
 		return { factId: fact.id, isDirective: isDirectivePredicate(fact.predicate) };
 	}
@@ -311,7 +313,7 @@ function relevanceRank(score: number | undefined, salience: number): number {
 }
 
 export function buildInitialPacket(
-	conversationId: string,
+	conversationId: number,
 	mode: MemoryMode,
 	opts: BuildInitialPacketOptions = {}
 ): TurnMemoryPacket {
@@ -350,9 +352,9 @@ export function buildInitialPacket(
 	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
 	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
 
-	const entityKeyById: Record<string, string> = {};
+	const entityKeyById: Record<number, string> = {};
 	for (const entity of entityPool) entityKeyById[entity.id] = entity.entityKey;
-	const keyOf = (id: string | null): string | null => (id ? (entityKeyById[id] ?? null) : null);
+	const keyOf = (id: number | null): string | null => (id ? (entityKeyById[id] ?? null) : null);
 	const factCounts = memoryRepo.entityFactCounts(conversationId);
 
 	// One search per turn powers both relevance ranking and the auto-search
@@ -360,7 +362,7 @@ export function buildInitialPacket(
 	const searchHits = query
 		? memoryRepo.search(conversationId, { query, limit: Math.max(AUTO_SEARCH_LIMIT, 300) })
 		: [];
-	const scores = new Map<string, number>();
+	const scores = new Map<number, number>();
 	for (const hit of searchHits) {
 		scores.set(hit.itemId, Math.max(scores.get(hit.itemId) ?? 0, hit.score ?? 0));
 	}
@@ -499,10 +501,10 @@ function isPacketEmpty(packet: TurnMemoryPacket): boolean {
 }
 
 export function buildPromptWithMemory(params: {
-	conversationId: string;
+	conversationId: number;
 	mode: MemoryMode;
 	userMsg: Message;
-	userId?: string | undefined;
+	userId?: number | undefined;
 	includeRecentTranscript?: boolean | undefined;
 	globalMemoryEnabled?: boolean | undefined;
 	extractorPresent?: boolean | undefined;
@@ -560,7 +562,7 @@ export function buildPromptWithMemory(params: {
 
 export function validatePatch(
 	patch: MemoryPatchProposal,
-	opts: { conversationId?: string | undefined; mode?: MemoryMode | undefined } = {}
+	opts: { conversationId?: number | undefined; mode?: MemoryMode | undefined } = {}
 ): {
 	ok: boolean;
 	issues: Array<{ severity: 'info' | 'warning' | 'error'; code: string; message: string }>;
@@ -597,7 +599,7 @@ export function validatePatch(
 		}
 	}
 	if (opts.conversationId) {
-		const seenResolutionIds = new Set<string>();
+		const seenResolutionIds = new Set<string | number>();
 		for (const resolution of patch.resolveOpenLoops ?? []) {
 			// A resolution may reference a loop by its stable key or its raw id;
 			// resolve to the canonical id so dedupe and existence checks agree
@@ -754,7 +756,7 @@ export function validatePatch(
 
 export function solveStrictContinuity(
 	patch: MemoryPatchProposal,
-	conversationId?: string
+	conversationId?: number
 ): Array<{ severity: 'warning' | 'error'; code: string; message: string }> {
 	const issues: Array<{ severity: 'warning' | 'error'; code: string; message: string }> = [];
 	const seen = new Map<string, { location: string; summary: string }>();
@@ -909,7 +911,7 @@ export function commitPatch(
 		// entity-key reuse operates on clean pre-turn state.
 		input.beforeCommit?.();
 
-		const entityIdsByKey = new Map<string, string>();
+		const entityIdsByKey = new Map<string, number>();
 		for (const entity of input.patch.entities ?? []) {
 			// entityType/displayName are independently optional. For a brand-new
 			// entity, fill whichever the caller omitted from the key (the single
@@ -950,7 +952,7 @@ export function commitPatch(
 		// Ids this patch itself created, so the concurrent-dedupe check below only
 		// suppresses events appended by a DIFFERENT (racing) patch and still lets a
 		// single patch intentionally carry repeats.
-		const createdEventIds = new Set<string>();
+		const createdEventIds = new Set<number>();
 		for (const event of input.patch.events ?? []) {
 			// Concurrent extractions for the same conversation can each snapshot the
 			// same pre-commit state and propose the identical event; `addEvent` is
@@ -993,7 +995,7 @@ export function commitPatch(
 		// undo/review just like an explicitly-declared entity. Pre-existing
 		// entities are reused silently and must NOT be recorded, or undoing this
 		// patch would delete an entity that other patches rely on.
-		const recordMintedEntity = (entityId: string) => {
+		const recordMintedEntity = (entityId: number) => {
 			memoryRepo.recordPatchItem(input.conversationId, {
 				patchId: patchRecord.id,
 				itemType: 'entity',
@@ -1001,8 +1003,8 @@ export function commitPatch(
 				action: 'create'
 			});
 		};
-		let sessionEntityId: string | null = null;
-		const ensureSessionEntity = (): string => {
+		let sessionEntityId: number | null = null;
+		const ensureSessionEntity = (): number => {
 			if (sessionEntityId) return sessionEntityId;
 			const cached = entityIdsByKey.get(SESSION_ENTITY_KEY);
 			if (cached) {
@@ -1028,7 +1030,7 @@ export function commitPatch(
 			recordMintedEntity(row.id);
 			return row.id;
 		};
-		const ensureEntityForKey = (key: string): string => {
+		const ensureEntityForKey = (key: string): number => {
 			const known = entityIdsByKey.get(key);
 			if (known) return known;
 			// Reaching here means the key was absent from input.patch.entities and
@@ -1053,7 +1055,7 @@ export function commitPatch(
 		// also re-asserted — supersede already retired the old value, leaving the
 		// fresh one active under that selector) must be skipped, otherwise the forget
 		// would tombstone the just-written value and wipe the predicate entirely.
-		const createdFactIds = new Set<string>();
+		const createdFactIds = new Set<number>();
 		for (const fact of input.patch.facts ?? []) {
 			const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
 			// Directives are always-on standing rules: force them pinned so they
@@ -1092,7 +1094,7 @@ export function commitPatch(
 		// Ids this patch created, so the concurrent-dedupe check only suppresses
 		// loops appended by a DIFFERENT (racing) patch — a single patch may still
 		// intentionally carry two same-title loops (they get distinct loop keys).
-		const createdOpenLoopIds = new Set<string>();
+		const createdOpenLoopIds = new Set<number>();
 		for (const loop of input.patch.openLoops ?? []) {
 			// Same concurrent-extraction hazard as events: `addOpenLoop` is
 			// append-only, so two racing commits would both append the identical
@@ -1113,7 +1115,7 @@ export function commitPatch(
 				priority: loop.priority,
 				relatedEntityIds: (loop.relatedEntityKeys ?? [])
 					.map((key) => entityIdsByKey.get(key))
-					.filter((id): id is string => !!id),
+					.filter((id): id is number => id !== undefined),
 				sourceMessageId: input.sourceMessageId ?? null
 			});
 			memoryRepo.recordPatchItem(input.conversationId, {
@@ -1203,7 +1205,7 @@ export function commitPatch(
 
 export interface AgeOpenLoopsResult {
 	/** Ids of loops auto-dropped this turn because they aged out. */
-	dropped: string[];
+	dropped: number[];
 }
 
 /**
@@ -1224,12 +1226,12 @@ export interface AgeOpenLoopsResult {
  * reversible like any other memory mutation.
  */
 export function ageOpenLoops(
-	conversationId: string,
+	conversationId: number,
 	opts: {
-		presentedLoopIds: Iterable<string>;
-		keptLoopIds?: Iterable<string> | undefined;
+		presentedLoopIds: Iterable<number>;
+		keptLoopIds?: Iterable<number> | undefined;
 		baseThreshold: number;
-		sourceMessageId?: string | null | undefined;
+		sourceMessageId?: number | null | undefined;
 		turnId?: string | null | undefined;
 	}
 ): AgeOpenLoopsResult {
@@ -1347,8 +1349,11 @@ const PatchFactItemSchema = z.discriminatedUnion('kind', [
 	})
 ]);
 
+// A loop may be referenced by its stable key or its raw integer id — both are
+// valid `[id=...]` handles now that loop PKs are integers.
+const LoopRefSchema = z.union([z.string().min(1).max(200), z.number().int().positive()]);
 const PatchCloseLoopSchema = z.object({
-	id: z.string().min(1).max(200),
+	id: LoopRefSchema,
 	status: z.enum(['resolved', 'dropped']),
 	reason: z.string().max(2000).optional()
 });
@@ -1359,7 +1364,7 @@ export interface MemoryPatchInput {
 	entities?: z.infer<typeof PatchEntitySchema>[] | undefined;
 	facts?: MemoryPatchFactItem[] | undefined;
 	closeLoops?: z.infer<typeof PatchCloseLoopSchema>[] | undefined;
-	keepOpenLoops?: string[] | undefined;
+	keepOpenLoops?: Array<string | number> | undefined;
 }
 
 /**
@@ -1431,7 +1436,7 @@ export const MemoryPatchInputSchema = z
 		entities: z.array(PatchEntitySchema).max(50).optional(),
 		facts: z.array(PatchFactItemSchema).max(300).optional(),
 		closeLoops: z.array(PatchCloseLoopSchema).max(50).optional(),
-		keepOpenLoops: z.array(z.string().min(1).max(200)).max(200).optional()
+		keepOpenLoops: z.array(LoopRefSchema).max(200).optional()
 	})
 	.strict();
 
@@ -1498,7 +1503,7 @@ export const MEMORY_FACT_KIND_SCHEMAS = {
 			relatedEntityKeys: {
 				type: 'array',
 				maxItems: 50,
-				items: { type: 'string', minLength: 1, maxLength: 200 }
+				items: { type: ['string', 'integer'], minLength: 1, maxLength: 200 }
 			}
 		}
 	},
@@ -1756,7 +1761,7 @@ export const MEMORY_PATCH_JSON_SCHEMA = {
 				required: ['id', 'status'],
 				properties: {
 					id: {
-						type: 'string',
+						type: ['string', 'integer'],
 						minLength: 1,
 						maxLength: 200,
 						description: 'The loop handle from its [id=...] in the packet (key or raw id).'
@@ -1820,7 +1825,7 @@ function entityIndexLine(entry: MemoryEntityIndexEntry, includeId = false): stri
 
 function factLine(
 	fact: memoryRepo.MemoryFact,
-	keyOf: (id: string | null) => string | null
+	keyOf: (id: number | null) => string | null
 ): string {
 	const key = keyOf(fact.entityId);
 	const subject = key ? `${key}.` : '';
@@ -1845,7 +1850,7 @@ function factDetail(fact: memoryRepo.MemoryFact, includeId = false): string {
 
 function loopLine(
 	loop: memoryRepo.MemoryOpenLoop,
-	keyOf: (id: string | null) => string | null,
+	keyOf: (id: number | null) => string | null,
 	opts: {
 		includeId?: boolean | undefined;
 		expiry?: { baseThreshold: number; warnWithin?: number | undefined } | undefined;
@@ -1882,7 +1887,7 @@ function loopLine(
 
 function eventLine(
 	event: memoryRepo.MemoryEvent,
-	keyOf: (id: string | null) => string | null,
+	keyOf: (id: number | null) => string | null,
 	includeId = false
 ): string {
 	const actor = keyOf(event.actorEntityId);
@@ -1949,7 +1954,7 @@ export function renderMemoryPacket(
 	options: RenderMemoryPacketOptions = {}
 ): string {
 	const includeIds = options.includeIds ?? false;
-	const keyOf = (id: string | null): string | null =>
+	const keyOf = (id: number | null): string | null =>
 		id ? (packet.entityKeyById[id] ?? null) : null;
 
 	const lines: string[] = [];
@@ -1994,9 +1999,9 @@ export function renderMemoryPacket(
 	// rather than a flat list of "entityKey.predicate = value" lines.
 	const entityById = new Map(packet.entities.map((entity) => [entity.id, entity]));
 	const indexById = new Map(packet.entityIndex.map((entry) => [entry.entityId, entry]));
-	const factsByEntity = new Map<string, memoryRepo.MemoryFact[]>();
+	const factsByEntity = new Map<number, memoryRepo.MemoryFact[]>();
 	const detachedFacts: memoryRepo.MemoryFact[] = [];
-	const blockOrder: string[] = [];
+	const blockOrder: number[] = [];
 	for (const fact of packet.facts) {
 		// Directives are rendered in their own always-on block above; never group
 		// them under an entity here even if one slipped into packet.facts.
@@ -2019,7 +2024,7 @@ export function renderMemoryPacket(
 		if (!factsByEntity.has(entity.id)) blockOrder.push(entity.id);
 	}
 
-	const entityHeader = (id: string): string => {
+	const entityHeader = (id: number): string => {
 		const entity = entityById.get(id);
 		if (entity) return entityLine(entity, includeIds);
 		const entry = indexById.get(id);
@@ -2032,27 +2037,34 @@ export function renderMemoryPacket(
 		return `- ${key ?? id}`;
 	};
 
-	// Track every item id rendered above so the auto-retrieved section below can
+	// Track every item rendered above so the auto-retrieved section below can
 	// suppress search hits that already appear verbatim in this packet. Search
-	// itemTypes are entity | fact | event | open_loop, all keyed by their row id.
+	// itemTypes are entity | fact | event | open_loop. Keys are itemType-qualified
+	// because entity/fact/event/loop rows each have their own INTEGER id space
+	// starting at 1, so a bare id would collide across tables and wrongly dedupe.
 	const shownIds = new Set<string>();
-	for (const directive of packet.directives) shownIds.add(directive.id);
+	const shown = (type: 'entity' | 'fact' | 'event' | 'open_loop', id: number): string => {
+		const key = `${type}:${id}`;
+		shownIds.add(key);
+		return key;
+	};
+	for (const directive of packet.directives) shown('fact', directive.id);
 
 	if (blockOrder.length || detachedFacts.length) {
 		const total = blockOrder.length + (detachedFacts.length ? 1 : 0);
 		lines.push('', `entities & facts (${total}):`);
 		for (const id of blockOrder) {
-			shownIds.add(id);
+			shown('entity', id);
 			lines.push(entityHeader(id));
 			for (const fact of factsByEntity.get(id) ?? []) {
-				shownIds.add(fact.id);
+				shown('fact', fact.id);
 				lines.push(`    ${factDetail(fact, includeIds)}`);
 			}
 		}
 		if (detachedFacts.length) {
 			lines.push('- (session-scoped):');
 			for (const fact of detachedFacts) {
-				shownIds.add(fact.id);
+				shown('fact', fact.id);
 				lines.push(`    ${factDetail(fact, includeIds)}`);
 			}
 		}
@@ -2063,11 +2075,13 @@ export function renderMemoryPacket(
 	// append only the indexed entities NOT already shown as a compact, name-only
 	// remainder — preserving the guarantee that every ranked entity stays
 	// queryable by name (detailed ∪ name-only == the full index set).
-	const remainingIndex = packet.entityIndex.filter((entry) => !shownIds.has(entry.entityId));
+	const remainingIndex = packet.entityIndex.filter(
+		(entry) => !shownIds.has(`entity:${entry.entityId}`)
+	);
 	if (remainingIndex.length) {
 		lines.push('', `also on record (${remainingIndex.length}) — queryable by name:`);
 		for (const entry of remainingIndex) {
-			shownIds.add(entry.entityId);
+			shown('entity', entry.entityId);
 			lines.push(entityIndexLine(entry, includeIds));
 		}
 	}
@@ -2075,7 +2089,7 @@ export function renderMemoryPacket(
 	if (packet.openLoops.length) {
 		lines.push('', `open loops (${packet.openLoops.length}):`);
 		for (const loop of packet.openLoops) {
-			shownIds.add(loop.id);
+			shown('open_loop', loop.id);
 			lines.push(loopLine(loop, keyOf, { includeId: includeIds, expiry: options.openLoopExpiry }));
 		}
 	}
@@ -2083,7 +2097,7 @@ export function renderMemoryPacket(
 	if (packet.recentEvents.length) {
 		lines.push('', `recent events (${packet.recentEvents.length}):`);
 		for (const event of packet.recentEvents) {
-			shownIds.add(event.id);
+			shown('event', event.id);
 			lines.push(eventLine(event, keyOf, includeIds));
 		}
 	}
@@ -2091,7 +2105,9 @@ export function renderMemoryPacket(
 	// Suppress auto-retrieved hits whose item already appears above: the same
 	// per-turn search ranks the pools, so the top hits are usually entities/facts/
 	// events already rendered. Re-printing their bodies just burns tokens.
-	const dedupedHits = packet.autoSearchHits.filter((hit) => !shownIds.has(hit.itemId));
+	const dedupedHits = packet.autoSearchHits.filter(
+		(hit) => !shownIds.has(`${hit.itemType}:${hit.itemId}`)
+	);
 	if (dedupedHits.length) {
 		lines.push('', `auto-retrieved for this turn (${dedupedHits.length}):`);
 		for (const hit of dedupedHits) {
@@ -2135,7 +2151,7 @@ function collectEntityKeys(patch: MemoryPatchProposal): Set<string> {
 	return keys;
 }
 
-function recentTranscript(conversationId: string, userMessageId: string, limit: number): string {
+function recentTranscript(conversationId: number, userMessageId: number, limit: number): string {
 	const transcript = messages.listByConversation(conversationId);
 	const targetIdx = transcript.findIndex((message) => message.id === userMessageId);
 	const prior = transcript

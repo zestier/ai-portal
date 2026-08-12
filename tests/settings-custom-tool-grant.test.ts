@@ -21,7 +21,7 @@ function formRequest(fields: Record<string, string>): Request {
 // The action only reads `request` and `locals`, so a minimal shim is enough.
 async function runAction(
 	name: 'createGrant' | 'updateGrant',
-	userId: string,
+	userId: number,
 	fields: Record<string, string>
 ) {
 	const actions = await loadActions();
@@ -41,7 +41,7 @@ const CUSTOM_TOOL_FIELDS = {
 };
 
 describe('settings createGrant — custom-tool grants', () => {
-	let userId: string;
+	let userId: number;
 
 	beforeEach(async () => {
 		await setupLocalEnv('portal-custom-tool-grant-');
@@ -65,13 +65,9 @@ describe('settings createGrant — custom-tool grants', () => {
 		expect(row?.conversationId).toBeNull();
 
 		// The payoff: the tool no longer prompts.
-		expect(settings.matchGrant(userId, 'conv-1', 'worktree_create', 'custom-tool', null)).toBe(
-			'allow'
-		);
+		expect(settings.matchGrant(userId, 1, 'worktree_create', 'custom-tool', null)).toBe('allow');
 		// ...and nothing else was widened.
-		expect(settings.matchGrant(userId, 'conv-1', 'worktree_remove', 'custom-tool', null)).toBe(
-			'none'
-		);
+		expect(settings.matchGrant(userId, 1, 'worktree_remove', 'custom-tool', null)).toBe('none');
 	});
 
 	it('supports a deny grant with agent-facing feedback', async () => {
@@ -82,13 +78,7 @@ describe('settings createGrant — custom-tool grants', () => {
 			denyReason: 'worktrees are off limits on this machine'
 		});
 
-		const detailed = settings.matchGrantDetailed(
-			userId,
-			'conv-1',
-			'worktree_create',
-			'custom-tool',
-			null
-		);
+		const detailed = settings.matchGrantDetailed(userId, 1, 'worktree_create', 'custom-tool', null);
 		expect(detailed.outcome).toBe('deny');
 		expect(detailed.feedback).toBe('worktrees are off limits on this machine');
 	});

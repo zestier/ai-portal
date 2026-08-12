@@ -26,8 +26,7 @@ export type ShadowStatus = 'pending' | 'verdict' | 'error';
 export type ShadowResolutionSource = 'prompt-grant' | 'prompt-policy' | 'auto-approve';
 
 export interface InsertPendingShadowOptions {
-	id: string;
-	conversationId: string;
+	conversationId: number;
 	tool: string;
 	permissionKind: string;
 	scopeKey: string | null;
@@ -39,17 +38,16 @@ export interface InsertPendingShadowOptions {
 	resolutionSource: ShadowResolutionSource | null;
 }
 
-export function insertPending(opts: InsertPendingShadowOptions): void {
-	getDb()
+export function insertPending(opts: InsertPendingShadowOptions): number {
+	const info = getDb()
 		.prepare(
 			`INSERT INTO permission_shadow_decisions(
-			   id, conversation_id, tool, permission_kind, scope_key, args_hash,
+			   conversation_id, tool, permission_kind, scope_key, args_hash,
 			   adversary_model, experiment_key, prompt_version, facts_key,
 			   resolution_source, status, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
 		)
 		.run(
-			opts.id,
 			opts.conversationId,
 			opts.tool,
 			opts.permissionKind,
@@ -62,10 +60,11 @@ export function insertPending(opts: InsertPendingShadowOptions): void {
 			opts.resolutionSource,
 			Date.now()
 		);
+	return Number(info.lastInsertRowid);
 }
 
 export function recordVerdict(
-	id: string,
+	id: number,
 	verdict: AdversaryVerdict,
 	rationale: string,
 	opts: {
@@ -94,7 +93,7 @@ export function recordVerdict(
 }
 
 export function recordError(
-	id: string,
+	id: number,
 	error: string,
 	opts: { latencyMs?: number | null; memoized?: boolean; promptSent?: string | null } = {}
 ): void {
@@ -114,7 +113,7 @@ export function recordError(
  * "no label" and excludes rather than counting as a denial.
  */
 export function recordHumanDecision(
-	id: string,
+	id: number,
 	decision: Exclude<HumanPermissionDecision, null>
 ): void {
 	getDb()
@@ -127,8 +126,8 @@ export function recordHumanDecision(
 }
 
 export interface ShadowDecisionRecord extends ShadowScoringRow {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	tool: string;
 	permissionKind: string;
 	scopeKey: string | null;
@@ -149,8 +148,8 @@ export interface ShadowDecisionRecord extends ShadowScoringRow {
 }
 
 interface ShadowDbRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	tool: string;
 	permission_kind: string;
 	scope_key: string | null;
@@ -224,7 +223,7 @@ function rowToRecord(r: ShadowDbRow): ShadowDecisionRecord {
 }
 
 /** Shadow rows across every conversation owned by `userId`, newest first. */
-export function listForUser(userId: string, limit = 500): ShadowDecisionRecord[] {
+export function listForUser(userId: number, limit = 500): ShadowDecisionRecord[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT sd.*
@@ -238,7 +237,7 @@ export function listForUser(userId: string, limit = 500): ShadowDecisionRecord[]
 	return rows.map(rowToRecord);
 }
 
-export function listForConversation(conversationId: string): ShadowDecisionRecord[] {
+export function listForConversation(conversationId: number): ShadowDecisionRecord[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM permission_shadow_decisions

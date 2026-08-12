@@ -14,7 +14,7 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 	const conversations = locals.userId ? convs.list(locals.userId, { includeArchived: true }) : [];
 	// Intersect the registry's awaiting set with this user's conversations so a
 	// single-instance indicator never leaks another user's pending state.
-	const awaiting = locals.userId ? awaitingInputConversationIds() : new Set<string>();
+	const awaiting = locals.userId ? awaitingInputConversationIds() : new Set<number>();
 	const awaitingConversationIds = conversations
 		.filter((c) => c.archivedAt == null && awaiting.has(c.id))
 		.map((c) => c.id);
@@ -23,7 +23,7 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 	// is process-global, so scoping it here keeps a single-instance deployment
 	// from leaking another user's running turns. `unreadConversationIds` is
 	// already user-scoped by its query.
-	const running = locals.userId ? runningConversationIds() : new Set<string>();
+	const running = locals.userId ? runningConversationIds() : new Set<number>();
 	const runningIds = conversations
 		.filter((c) => c.archivedAt == null && running.has(c.id))
 		.map((c) => c.id);
@@ -31,12 +31,14 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 		? // The conversation being viewed is seen by definition. Its own page
 			// `load` marks it read, but the two loads run concurrently, so filtering
 			// here is what makes the result deterministic rather than a race.
-			[...convs.unreadConversationIds(locals.userId)].filter((id) => id !== params.id)
-		: ([] as string[]);
+			[...convs.unreadConversationIds(locals.userId)].filter(
+				(id) => params.id === undefined || id !== Number(params.id)
+			)
+		: ([] as number[]);
 	let ticketWorkspace: string | null = null;
 	if (locals.userId) {
 		const activeConversation =
-			typeof params.id === 'string' ? convs.get(params.id, locals.userId) : null;
+			typeof params.id === 'string' ? convs.get(Number(params.id), locals.userId) : null;
 		ticketWorkspace = activeConversation
 			? ticketWorkspaceFromConversation(activeConversation)
 			: defaultTicketWorkspace(locals.userId);

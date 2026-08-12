@@ -11,17 +11,22 @@ import { ulid } from 'ulid';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { PortalEvent } from '$lib/types';
 import { serializeEnvelope, type ToolResult } from '../tools/types';
+import { mintToolCallId } from '../db/repos/messages';
 
 const TOOL_SUMMARY_MAX = 200;
 
 export class PiEventMapper {
-	readonly messageId: string;
+	readonly messageId: number;
 	// Open reasoning bursts keyed by pi's content index (one per thinking block).
 	private reasoningSegments = new Map<number, { segmentId: string; startedAt: number }>();
+	// pi tool calls carry SDK-string ids; the portal persists numeric tool_calls
+	// ids. Map each SDK id to a minted numeric id (stable across the call's
+	// start/update/end events so the client and DB correlate them as one call).
+	private toolCallIds = new Map<string, number>();
 	private messageEnded = false;
 	private emittedError = false;
 
-	constructor(messageId: string) {
+	constructor(messageId: number) {
 		this.messageId = messageId;
 	}
 
@@ -33,6 +38,15 @@ export class PiEventMapper {
 	/** True once pi's `message_end` for this turn has been seen. */
 	get ended(): boolean {
 		return this.messageEnded;
+	}
+
+	/** Mint-or-lookup the numeric portal tool-call id for an SDK tool call id. */
+	private toolCallIdFor(sdkId: string): number {
+		const existing = this.toolCallIds.get(sdkId);
+		if (existing !== undefined) return existing;
+		const minted = mintToolCallId();
+		this.toolCallIds.set(sdkId, minted);
+		return minted;
 	}
 
 	map(event: AgentSessionEvent): PortalEvent[] {
@@ -53,7 +67,7 @@ export class PiEventMapper {
 				return [
 					{
 						type: 'tool.call',
-						toolCallId: event.toolCallId,
+						toolCallId: this.toolCallIdFor(event.toolCallId),
 						tool: event.toolName,
 						args: event.args,
 						messageId: this.messageId
@@ -62,9 +76,9 @@ export class PiEventMapper {
 			case 'tool_execution_update':
 				// Live partial output from the portal tool's stream (see tools.ts):
 				// `partial()` → tool.partial_output, `progress()` → tool.progress.
-				return mapToolUpdate(event);
+				return mapToolUpdate(event, this.toolCallIdFor(event.toolCallId));
 			case 'tool_execution_end':
-				return mapToolResult(event);
+				return mapToolResult(event, this.toolCallIdFor(event.toolCallId));
 			default:
 				// agent_start / agent_end / turn_start / turn_end / queue_update
 				// etc. carry nothing the portal renders; agent_end terminates the
@@ -147,8 +161,11 @@ export class PiEventMapper {
 
 // Partial/progress deltas: a portal tool streams via `onUpdate` with details
 // `{ portalStream: 'progress' | 'partial' }` (see tools.ts); map by that.
-function mapToolUpdate(event: { toolCallId: string; partialResult: unknown }): PortalEvent[] {
-	const { toolCallId, partialResult } = event;
+function mapToolUpdate(
+	event: { toolCallId: string; partialResult: unknown },
+	toolCallId: number
+): PortalEvent[] {
+	const { partialResult } = event;
 	const details = isRecord(partialResult) ? partialResult.details : undefined;
 	if (isRecord(details) && details.portalStream === 'progress') {
 		return [{ type: 'tool.progress', toolCallId, message: contentText(partialResult) }];
@@ -160,12 +177,11 @@ function mapToolUpdate(event: { toolCallId: string; partialResult: unknown }): P
 // surface the serialized envelope as `output` for the client timeline and
 // derive `ok` from it; otherwise fall back to pi's error flag (denied / non
 // portal tools).
-function mapToolResult(event: {
-	toolCallId: string;
-	result: unknown;
-	isError: boolean;
-}): PortalEvent[] {
-	const { toolCallId, result } = event;
+function mapToolResult(
+	event: { toolCallId: string; result: unknown; isError: boolean },
+	toolCallId: number
+): PortalEvent[] {
+	const { result } = event;
 	const details = isRecord(result) ? result.details : undefined;
 	if (isRecord(details) && typeof details.ok === 'boolean') {
 		return [

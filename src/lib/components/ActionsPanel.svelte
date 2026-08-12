@@ -28,7 +28,7 @@
 		commands: string[];
 	};
 
-	let { conversationId }: { conversationId: string } = $props();
+	let { conversationId }: { conversationId: number } = $props();
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);

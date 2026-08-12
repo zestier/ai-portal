@@ -101,9 +101,9 @@ const KEEP_LOOPS_SCHEMA = {
 			type: 'array',
 			minItems: 1,
 			maxItems: 200,
-			items: { type: 'string', minLength: 1, maxLength: 200 },
+			items: { type: ['string', 'integer'], minLength: 1, maxLength: 200 },
 			description:
-				'Handles ([id=...] from the packet, e.g. loop.find_attic_key) of every presented open loop that is STILL live. Any presented loop you neither keep here nor close ages out and is auto-dropped.'
+				"Handles ([id=...] from the packet — each loop's stable key or its integer id) of every presented open loop that is STILL live. Any presented loop you neither keep here nor close ages out and is auto-dropped."
 		}
 	}
 } as const;
@@ -114,10 +114,11 @@ const CLOSE_LOOP_SCHEMA = {
 	required: ['handle', 'status'],
 	properties: {
 		handle: {
-			type: 'string',
+			type: ['string', 'integer'],
 			minLength: 1,
 			maxLength: 200,
-			description: 'Handle ([id=...] from the packet) of the existing loop to retire.'
+			description:
+				"Handle ([id=...] from the packet — the loop's stable key or integer id) of the existing loop to retire."
 		},
 		status: {
 			type: 'string',
@@ -143,11 +144,11 @@ const FORGET_ATTRIBUTE_SCHEMA = {
 	additionalProperties: false,
 	properties: {
 		handle: {
-			type: 'string',
+			type: ['string', 'integer'],
 			minLength: 1,
 			maxLength: 200,
 			description:
-				"The attribute fact's [id=...] handle from the packet/search. Provide this OR both entityKey and predicate."
+				"The attribute fact's [id=...] handle from the packet/search (its stable key or integer id). Provide this OR both entityKey and predicate."
 		},
 		entityKey: {
 			type: 'string',
@@ -172,11 +173,11 @@ const FORGET_DIRECTIVE_SCHEMA = {
 	required: ['handle'],
 	properties: {
 		handle: {
-			type: 'string',
+			type: ['string', 'integer'],
 			minLength: 1,
 			maxLength: 200,
 			description:
-				"The directive fact's [id=...] handle from the packet. Directives are global (no entityKey), so the handle is the only selector."
+				"The directive fact's [id=...] handle from the packet (its stable key or integer id). Directives are global (no entityKey), so the handle is the only selector."
 		}
 	}
 } as const;
@@ -663,10 +664,10 @@ export function buildWriteToolSpecs(): ExtractorToolSpec[] {
  * a giant method.
  */
 export interface WriteToolDeps {
-	conversationId: string;
+	conversationId: number;
 	mode: MemoryMode;
 	/** Open loops presented to the extractor this turn (for handle validation). */
-	presentedLoops: Array<{ id: string; loopKey: string }>;
+	presentedLoops: Array<{ id: number; loopKey: string }>;
 	/**
 	 * Signatures (entityKey+predicate+value) of attribute/directive facts already
 	 * active in the initial packet. Re-asserting one stores nothing new, so the
@@ -697,8 +698,10 @@ export function createWriteToolHandlers(
 	deps: WriteToolDeps
 ): Map<string, (args: unknown) => Promise<string>> {
 	const { conversationId, mode, presentedLoops, staged } = deps;
-	const isPresentedHandle = (handle: string): boolean =>
-		presentedLoops.some((loop) => loop.id === handle || loop.loopKey === handle);
+	const isPresentedHandle = (handle: string | number): boolean =>
+		presentedLoops.some(
+			(loop) => String(loop.id) === String(handle) || loop.loopKey === String(handle)
+		);
 
 	// memory_add_directive / memory_record_event / memory_open_loop. Each maps to a single
 	// fact kind: build a one-item fragment with the kind injected, validate it
@@ -1069,11 +1072,10 @@ export function createWriteToolHandlers(
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
 		const handles = args.handles;
-		if (
-			!Array.isArray(handles) ||
-			handles.length === 0 ||
-			!handles.every((handle) => typeof handle === 'string' && handle.length > 0)
-		) {
+		const isValidHandle = (handle: unknown): boolean =>
+			(typeof handle === 'string' && handle.length > 0) ||
+			(typeof handle === 'number' && Number.isInteger(handle) && handle > 0);
+		if (!Array.isArray(handles) || handles.length === 0 || !handles.every(isValidHandle)) {
 			deps.onReject();
 			return writeError(
 				'memory_keep_loops',
@@ -1092,10 +1094,9 @@ export function createWriteToolHandlers(
 				stagedTotals(staged)
 			);
 		}
-		const strHandles = handles as string[];
-		const known: string[] = [];
-		const unknown: string[] = [];
-		const results = strHandles.map((handle) => {
+		const known: Array<string | number> = [];
+		const unknown: Array<string | number> = [];
+		const results = (handles as Array<string | number>).map((handle) => {
 			const kept = isPresentedHandle(handle);
 			(kept ? known : unknown).push(handle);
 			return {
@@ -1111,7 +1112,7 @@ export function createWriteToolHandlers(
 				'memory_keep_loops',
 				'execution',
 				'unknown_handles',
-				`${unknown.length} of ${strHandles.length} handle(s) are not presented open loops.`,
+				`${unknown.length} of ${handles.length} handle(s) are not presented open loops.`,
 				unknown.map((handle) => ({
 					field: 'handles',
 					code: 'unknown_handle',
@@ -1214,8 +1215,12 @@ export function createWriteToolHandlers(
 	const handleForgetAttribute = async (rawArgs: unknown): Promise<string> => {
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
-		const handle =
-			typeof args.handle === 'string' && args.handle.trim() ? args.handle.trim() : undefined;
+		const handle: string | number | undefined =
+			typeof args.handle === 'string' && args.handle.trim()
+				? args.handle.trim()
+				: typeof args.handle === 'number' && Number.isInteger(args.handle) && args.handle > 0
+					? args.handle
+					: undefined;
 		const entityKey =
 			typeof args.entityKey === 'string' && args.entityKey.trim()
 				? args.entityKey.trim()
@@ -1322,8 +1327,12 @@ export function createWriteToolHandlers(
 	const handleForgetDirective = async (rawArgs: unknown): Promise<string> => {
 		deps.onProposeCall();
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
-		const handle =
-			typeof args.handle === 'string' && args.handle.trim() ? args.handle.trim() : undefined;
+		const handle: string | number | undefined =
+			typeof args.handle === 'string' && args.handle.trim()
+				? args.handle.trim()
+				: typeof args.handle === 'number' && Number.isInteger(args.handle) && args.handle > 0
+					? args.handle
+					: undefined;
 		if (!handle) {
 			deps.onReject();
 			return writeError(

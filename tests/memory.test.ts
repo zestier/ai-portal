@@ -53,7 +53,7 @@ function toolData<T>(r: ToolResult): T {
 // items the patch created (appending delete events to the log) and rebuild the
 // projection so consolidation is re-derived purely from the surviving
 // observations — the rebuild-based equivalent of the old whole-patch revert.
-function dropPatchAndRebuild(conversationId: string, patchId: string): void {
+function dropPatchAndRebuild(conversationId: number, patchId: number): void {
 	const items = memory.listPatchItems(conversationId, { patchId, limit: 1000 });
 	for (const item of items) {
 		if (item.action === 'create') {
@@ -64,14 +64,14 @@ function dropPatchAndRebuild(conversationId: string, patchId: string): void {
 }
 
 function routeEvent(
-	conversationId: string,
-	userId: string,
+	conversationId: number,
+	userId: number,
 	kind: string,
-	itemId: string,
+	itemId: number,
 	body: unknown
 ): Parameters<typeof patchMemoryItem>[0] {
 	return {
-		params: { id: conversationId, kind, itemId },
+		params: { id: String(conversationId), kind, itemId: String(itemId) },
 		locals: { userId },
 		request: new Request('http://local.test', {
 			method: 'PATCH',
@@ -317,9 +317,9 @@ describe('memory-backed sessions', () => {
 			conversationId: conv.id,
 			patch: {
 				resolveOpenLoops: [
-					{ id: chosen.id, status: 'resolved', reason: 'User chose to search the attic.' },
-					{ id: dropped[0].id, status: 'dropped' },
-					{ id: dropped[1].id, status: 'dropped' }
+					{ id: String(chosen.id), status: 'resolved', reason: 'User chose to search the attic.' },
+					{ id: String(dropped[0].id), status: 'dropped' },
+					{ id: String(dropped[1].id), status: 'dropped' }
 				]
 			}
 		});
@@ -581,7 +581,7 @@ describe('memory-backed sessions', () => {
 		// resolveOpenLoopId accepts either the key or the raw id.
 		const first = loops.find((l) => l.loopKey === 'loop.find_the_attic_key')!;
 		expect(memory.resolveOpenLoopId(conv.id, 'loop.find_the_attic_key')).toBe(first.id);
-		expect(memory.resolveOpenLoopId(conv.id, first.id)).toBe(first.id);
+		expect(memory.resolveOpenLoopId(conv.id, String(first.id))).toBe(first.id);
 		expect(memory.resolveOpenLoopId(conv.id, 'loop.nope')).toBeNull();
 
 		// Closing a loop by its key resolves to the right row and retires it.
@@ -614,7 +614,7 @@ describe('memory-backed sessions', () => {
 					   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
 					 ) VALUES (?, ?, ?, 'task', 'dup', 'open', ?, ?)`
 				)
-				.run('dup-id', conv.id, loop.loopKey, Date.now(), Date.now())
+				.run(900001, conv.id, loop.loopKey, Date.now(), Date.now())
 		).toThrow(/UNIQUE/i);
 
 		// The empty-key default is exempt, so legacy/pre-039 rows can coexist.
@@ -623,12 +623,12 @@ describe('memory-backed sessions', () => {
 				`INSERT INTO memory_open_loops(
 				   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
 				 ) VALUES (?, ?, '', 'task', 'legacy', 'open', ?, ?)`
-			).run('legacy-1', conv.id, Date.now(), Date.now());
+			).run(900002, conv.id, Date.now(), Date.now());
 			db.prepare(
 				`INSERT INTO memory_open_loops(
 				   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
 				 ) VALUES (?, ?, '', 'task', 'legacy', 'open', ?, ?)`
-			).run('legacy-2', conv.id, Date.now(), Date.now());
+			).run(900003, conv.id, Date.now(), Date.now());
 		}).not.toThrow();
 	});
 
@@ -774,7 +774,7 @@ describe('memory-backed sessions', () => {
 		const loop = memory.listOpenLoops(conv.id)[0];
 		const first = commitPatch({
 			conversationId: conv.id,
-			patch: { resolveOpenLoops: [{ id: loop.id, status: 'resolved', reason: 'Done.' }] }
+			patch: { resolveOpenLoops: [{ id: String(loop.id), status: 'resolved', reason: 'Done.' }] }
 		});
 		expect(first.counts.resolvedOpenLoops).toBe(1);
 		const afterFirst = memory.getOpenLoop(conv.id, loop.id);
@@ -785,7 +785,9 @@ describe('memory-backed sessions', () => {
 		// duplicate audit item, and the description doesn't grow.
 		const again = commitPatch({
 			conversationId: conv.id,
-			patch: { resolveOpenLoops: [{ id: loop.id, status: 'resolved', reason: 'Done again.' }] }
+			patch: {
+				resolveOpenLoops: [{ id: String(loop.id), status: 'resolved', reason: 'Done again.' }]
+			}
 		});
 		expect(again.counts.resolvedOpenLoops).toBe(0);
 		const afterSecond = memory.getOpenLoop(conv.id, loop.id);
@@ -4564,7 +4566,7 @@ describe('memory-backed sessions', () => {
 		const before = ftsRows();
 		expect(before).toBeGreaterThan(0);
 
-		expect(convs.remove(conv.id, 'someone-else')).toBe(false);
+		expect(convs.remove(conv.id, 999999)).toBe(false);
 
 		expect(ftsRows()).toBe(before);
 		expect(convs.get(conv.id, owner.id)).not.toBeNull();
@@ -4680,7 +4682,7 @@ describe('memory-backed sessions', () => {
 			)
 			.all(conv.id, 'message_head') as { source_key: string; target_event_id: string }[];
 		expect(headRefs).toHaveLength(1);
-		expect(headRefs[0].source_key).toBe(a1.id);
+		expect(headRefs[0].source_key).toBe(String(a1.id));
 		expect(headRefs[0].target_event_id).toBe(events[events.length - 1].id);
 	});
 
@@ -6145,7 +6147,7 @@ describe('memory_event_log retention + maintenance', () => {
 		vi.restoreAllMocks();
 	});
 
-	function eventCount(conversationId: string): number {
+	function eventCount(conversationId: number): number {
 		return (
 			getDb()
 				.prepare('SELECT COUNT(*) AS n FROM memory_event_log WHERE conversation_id = ?')
@@ -6153,7 +6155,7 @@ describe('memory_event_log retention + maintenance', () => {
 		).n;
 	}
 
-	function rootCount(conversationId: string): number {
+	function rootCount(conversationId: number): number {
 		return (
 			getDb()
 				.prepare(
@@ -6163,7 +6165,7 @@ describe('memory_event_log retention + maintenance', () => {
 		).n;
 	}
 
-	function seedCommits(conversationId: string, count: number): void {
+	function seedCommits(conversationId: number, count: number): void {
 		for (let i = 0; i < count; i++) {
 			const a = messages.append(conversationId, { role: 'assistant', content: `turn ${i}` });
 			commitPatch({
@@ -6178,7 +6180,7 @@ describe('memory_event_log retention + maintenance', () => {
 		}
 	}
 
-	function entityKeys(conversationId: string): string[] {
+	function entityKeys(conversationId: number): string[] {
 		return memory
 			.listEntities(conversationId)
 			.map((e) => e.entityKey)
@@ -6416,7 +6418,7 @@ describe('memory extractor model selection defaults + override resolution', () =
 
 async function callCreate(
 	post: typeof import('../src/routes/api/conversations/+server').POST,
-	userId: string,
+	userId: number,
 	body: Record<string, unknown>
 ): Promise<import('../src/lib/types').Conversation> {
 	const event = {

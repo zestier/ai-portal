@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { findToolCallRecord } from '../src/lib/client/tool-call-record';
 import type { Message, ToolCallRecord } from '../src/lib/types';
 
-function toolCall(id: string, tool: string): ToolCallRecord {
+function toolCall(id: number, tool: string): ToolCallRecord {
 	return {
 		id,
-		messageId: 'message-1',
+		messageId: 1,
 		tool,
 		argsJson: '{}',
 		resultJson: null,
@@ -17,23 +17,20 @@ function toolCall(id: string, tool: string): ToolCallRecord {
 	};
 }
 
-function message(id: string, toolCalls: ToolCallRecord[] = []): Pick<Message, 'toolCalls'> {
+function message(id: number, toolCalls: ToolCallRecord[] = []): Pick<Message, 'toolCalls'> {
 	return { toolCalls: toolCalls.map((tc) => ({ ...tc, messageId: id })) };
 }
 
 describe('findToolCallRecord', () => {
 	it('finds tool calls across prior messages', () => {
-		const ticketUpdate = toolCall('ticket-update-1', 'ticket_update');
-		const messages = [
-			message('message-1', [ticketUpdate]),
-			message('message-2', [toolCall('bash-1', 'bash')])
-		];
+		const ticketUpdate = toolCall(1, 'ticket_update');
+		const messages = [message(1, [ticketUpdate]), message(2, [toolCall(2, 'bash')])];
 
-		expect(findToolCallRecord(messages, 'ticket-update-1')?.tool).toBe('ticket_update');
+		expect(findToolCallRecord(messages, 1)?.tool).toBe('ticket_update');
 	});
 
 	it('returns undefined when no record matches', () => {
-		const messages = [message('message-1', [toolCall('bash-1', 'bash')])];
-		expect(findToolCallRecord(messages, 'missing')).toBeUndefined();
+		const messages = [message(1, [toolCall(2, 'bash')])];
+		expect(findToolCallRecord(messages, 999999)).toBeUndefined();
 	});
 });

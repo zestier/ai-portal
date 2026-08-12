@@ -26,8 +26,9 @@ const APPROVAL_TTL_MS = 2 * 60_000;
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	const body = await parseBody(request, Body, { allowEmpty: true });
-	const toolCallId = params.toolCallId;
-	if (!toolCallId) throw error(400, 'missing tool call id');
+	const toolCallId = Number(params.toolCallId);
+	if (!params.toolCallId) throw error(400, 'missing tool call id');
+	if (!Number.isInteger(toolCallId) || toolCallId <= 0) throw error(400, 'missing tool call id');
 
 	const current = getTurn(conv.id);
 	if (current && current.status === 'running') {

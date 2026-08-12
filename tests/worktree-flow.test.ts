@@ -43,8 +43,8 @@ function payload(r: ToolResult): Record<string, unknown> {
 
 describe('orchestrator worktree flow (acceptance)', () => {
 	let source: string;
-	let userId: string;
-	let conversationId: string;
+	let userId: number;
+	let conversationId: number;
 	let tools: Map<string, PortalTool>;
 	let gitTools: Map<string, PortalTool>;
 	let decide: typeof import('../src/lib/server/runtime/interactive-requests').decideByPolicy;
@@ -62,7 +62,6 @@ describe('orchestrator worktree flow (acceptance)', () => {
 		userId = users.ensureLocalUser().id;
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		conversationId = convs.create(userId, {
-			id: convs.newId(),
 			title: 'orchestrator',
 			workdir: source,
 			model: 'test-model',
@@ -201,7 +200,6 @@ describe('orchestrator worktree flow (acceptance)', () => {
 			const created = payload(await tools.get('worktree_create')!.handler({ label: 'api' }));
 			const convs = await import('../src/lib/server/db/repos/conversations');
 			const other = convs.create(userId, {
-				id: convs.newId(),
 				title: 'other',
 				workdir: source,
 				model: 'test-model',
@@ -299,7 +297,6 @@ describe('orchestrator worktree flow (acceptance)', () => {
 			writeFileSync(join(created.path as string, 'feature.ts'), 'export const x = 1;\n');
 			const convs = await import('../src/lib/server/db/repos/conversations');
 			const other = convs.create(userId, {
-				id: convs.newId(),
 				title: 'other',
 				workdir: source,
 				model: 'test-model',

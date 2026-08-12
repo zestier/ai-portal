@@ -108,7 +108,7 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 				event_type: 'worktree_create',
 				actor_login: locals.user?.githubLogin ?? null,
 				actor_ip: getClientAddress(),
-				resource: conversation.id,
+				resource: String(conversation.id),
 				outcome: 'failure',
 				detail: { conversationId: conversation.id, code }
 			});

@@ -11,6 +11,7 @@
 		InteractiveRequestView,
 		InteractiveResponse
 	} from '$lib/types';
+	import type { DisplayMessage } from '$lib/client/display-message';
 	import Message_ from './Message.svelte';
 	import InteractiveRequestDialog from './InteractiveRequestDialog.svelte';
 	import ChatHeader from './ChatHeader.svelte';
@@ -68,9 +69,9 @@
 		initialMessages: Message[];
 		initialUsage?: ConversationUsage | null;
 		parent?: {
-			id: string;
+			id: number;
 			title: string;
-			messageId: string | null;
+			messageId: number | null;
 			messageIndex: number | null;
 		} | null;
 		initialActiveTurnId?: string | null;
@@ -78,7 +79,7 @@
 		initialComposer?: string;
 	} = $props();
 
-	let messages = $state<Message[]>([]);
+	let messages = $state<DisplayMessage[]>([]);
 
 	// The full provider input is captured per turn and keyed to the user
 	// message that triggered it, but the inspector affordance reads more
@@ -86,13 +87,13 @@
 	// message to its triggering user message (the nearest preceding persisted
 	// user message) so the assistant header can offer the "Input" button.
 	const inputMessageIdByAssistant = $derived.by(() => {
-		const map: Record<string, string> = {};
-		let lastUserId: string | null = null;
+		const map: Record<string, number> = {};
+		let lastUserId: number | null = null;
 		for (const m of renderedMessages) {
 			if (m.role === 'user') {
-				lastUserId = !m.id.startsWith('local-') && !m.id.startsWith('err-') ? m.id : null;
+				lastUserId = typeof m.id === 'number' ? m.id : null;
 			} else if (m.role === 'assistant' && lastUserId) {
-				map[m.id] = lastUserId;
+				map[String(m.id)] = lastUserId;
 			}
 		}
 		return map;
@@ -116,9 +117,9 @@
 	// Child forks of this conversation, keyed by the source message id so
 	// the corresponding <Message_> can render a "Forked → ..." badge.
 	type ForkInfo = {
-		id: string;
+		id: number;
 		title: string;
-		sourceMessageId: string | null;
+		sourceMessageId: number | null;
 		createdAt: number;
 		archivedAt: number | null;
 	};
@@ -132,7 +133,7 @@
 			const map: Record<string, ForkInfo[]> = {};
 			for (const f of data.forks) {
 				if (!f.sourceMessageId) continue;
-				(map[f.sourceMessageId] ??= []).push(f);
+				(map[String(f.sourceMessageId)] ??= []).push(f);
 			}
 			forksByMessage = map;
 		} catch {
@@ -675,7 +676,7 @@
 		if (!eventSource) attachStream(turnId, { replay: false });
 	}
 
-	function handleInlineEdited(messageId: string, content: string, turnId: string) {
+	function handleInlineEdited(messageId: number, content: string, turnId: string) {
 		const idx = messages.findIndex((m) => m.id === messageId);
 		if (idx >= 0) {
 			messages = messages.slice(0, idx + 1);
@@ -699,7 +700,7 @@
 	// the rendered thread to that user message and attach to the new turn's
 	// stream so the fresh response renders in place. Mirrors handleInlineEdited
 	// but the user message's content is unchanged.
-	function handleRegenerated(userMessageId: string, turnId: string) {
+	function handleRegenerated(userMessageId: number, turnId: string) {
 		const idx = messages.findIndex((m) => m.id === userMessageId);
 		if (idx >= 0) {
 			messages = messages.slice(0, idx + 1);
@@ -741,7 +742,7 @@
 					if (!seg) {
 						seg = {
 							id: ev.segmentId,
-							messageId: m.id,
+							messageId: ev.messageId,
 							segmentIndex: blocks.length,
 							text: '',
 							kind: 'content',
@@ -784,7 +785,7 @@
 					const isChild = !!ev.parentToolCallId;
 					seg = {
 						id: ev.segmentId,
-						messageId: m.id,
+						messageId: ev.messageId,
 						segmentIndex: blocks.length,
 						text: '',
 						kind: 'reasoning',
@@ -821,7 +822,12 @@
 				const isChild = !!ev.parentToolCallId;
 				(m.toolCalls ??= []).push({
 					id: ev.toolCallId,
-					messageId: m.id,
+					// Streaming cards only ever attach to server-persisted assistant
+					// messages, whose id is always a number — the ephemeral string-id
+					// bubbles (local-/err-/thinking-placeholder) never receive tool
+					// calls. `ev.messageId` is absent for low-level SDK emitters, so
+					// fall back to the resolved message's id.
+					messageId: typeof m.id === 'number' ? m.id : (ev.messageId ?? 0),
 					tool: ev.tool,
 					argsJson: safeJson(ev.args),
 					resultJson: null,
@@ -900,7 +906,9 @@
 				const isChild = !!ev.parentToolCallId;
 				(m.fileEdits ??= []).push({
 					id: `${m.id}-${(m.fileEdits ?? []).length}`,
-					messageId: m.id,
+					// See the note on `tool.call`: streaming cards only attach to
+					// number-id assistant messages.
+					messageId: typeof m.id === 'number' ? m.id : (ev.messageId ?? 0),
 					path: ev.path,
 					diff: ev.diff,
 					createdAt: Date.now(),
@@ -1176,7 +1184,7 @@
 				title: updatedTitle
 			} = (await r.json()) as {
 				turnId: string;
-				userMessageId: string;
+				userMessageId: number;
 				title?: string | null;
 			};
 			messages = messages.map((m) => (m.id === localMessageId ? { ...m, id: userMessageId } : m));
@@ -1306,7 +1314,7 @@
 		}
 		return null;
 	});
-	const thinkingPlaceholder = $derived<Message>({
+	const thinkingPlaceholder = $derived<DisplayMessage>({
 		id: 'thinking-placeholder',
 		conversationId: conversation.id,
 		role: 'assistant',

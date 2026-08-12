@@ -12,8 +12,8 @@ import type { MemoryPatchProposal, TurnMemoryPacket } from '../engine';
  */
 export type ExtractorActivity =
 	| { type: 'input'; text: string }
-	| { type: 'tool.call'; toolCallId: string; tool: string; args: unknown }
-	| { type: 'tool.result'; toolCallId: string; ok: boolean; summary: string; output: string }
+	| { type: 'tool.call'; toolCallId: number; tool: string; args: unknown }
+	| { type: 'tool.result'; toolCallId: number; ok: boolean; summary: string; output: string }
 	| { type: 'reasoning'; segmentId: string; text: string }
 	| { type: 'reasoning.end'; segmentId: string; durationMs: number }
 	| { type: 'content'; segmentId: string; text: string };
@@ -21,8 +21,8 @@ export type ExtractorActivity =
 export type ExtractorActivityEmitter = (activity: ExtractorActivity) => void;
 
 export interface ExtractPatchInput {
-	conversationId: string;
-	userId: string;
+	conversationId: number;
+	userId: number;
 	mode: MemoryMode;
 	turnId: string;
 	userMessage: Message;
@@ -62,7 +62,7 @@ export interface ExtractPatchInput {
 	 * live state — see `readMemoryAtTurnStart` for the why and how. Ignored when
 	 * the caller supplies its own `initialPacket`.
 	 */
-	priorPatchId?: string | null | undefined;
+	priorPatchId?: number | null | undefined;
 }
 
 export interface ExtractPatchResult {

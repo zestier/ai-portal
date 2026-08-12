@@ -67,7 +67,7 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress }) =>
 	// SDK resolves its own credentials at session open, so storing it would
 	// just keep an encrypted-but-useless credential at rest. The token is
 	// discarded after login.
-	issue(cookies, user.id, url.protocol === 'https:');
+	issue(cookies, String(user.id), url.protocol === 'https:');
 	audit({
 		event_type: 'login',
 		actor_login: user.githubLogin,

@@ -10,15 +10,15 @@ export type MessageStatus = 'complete' | 'streaming' | 'interrupted' | 'error';
 export type WorkspaceKind = 'shared' | 'managed-worktree';
 
 export interface User {
-	id: string;
+	id: number;
 	githubLogin: string;
 	displayName: string | null;
 	avatarUrl: string | null;
 }
 
 export interface Conversation {
-	id: string;
-	userId: string;
+	id: number;
+	userId: number;
 	title: string;
 	workdir: string;
 	model: string | null;
@@ -89,9 +89,9 @@ export interface Conversation {
 	updatedAt: number;
 	archivedAt: number | null;
 	/** Set when this conversation was created by forking another one. */
-	forkedFromConversationId: string | null;
+	forkedFromConversationId: number | null;
 	/** The message in the source conversation whose edit produced this fork. */
-	forkedFromMessageId: string | null;
+	forkedFromMessageId: number | null;
 	/**
 	 * Pending composer draft seeded into the chat input on load. Set when an
 	 * edit-fork is created while the source has a running turn (the fork's
@@ -131,7 +131,7 @@ export interface WorktreeIntegration {
 
 /** One row of `GET /api/worktrees/status`, the sidebar's unmerged-work badge feed. */
 export interface WorktreeStatusSummary {
-	conversationId: string;
+	conversationId: number;
 	/** False when the checkout is missing or unreadable; every other field is then absent. */
 	available: boolean;
 	unmerged: boolean;
@@ -159,8 +159,8 @@ export const DEFAULT_TICKET_PRIORITY: WorkspaceTicketPriority = 'P2';
 export const TICKET_PRIORITIES: readonly WorkspaceTicketPriority[] = ['P0', 'P1', 'P2', 'P3'];
 
 export interface WorkspaceTicket {
-	id: string;
-	userId: string;
+	id: number;
+	userId: number;
 	workspaceKey: string;
 	title: string;
 	body: string;
@@ -173,8 +173,8 @@ export interface WorkspaceTicket {
 	 */
 	plan: string;
 	status: WorkspaceTicketStatus;
-	sourceConversationId: string | null;
-	sourceMessageId: string | null;
+	sourceConversationId: number | null;
+	sourceMessageId: number | null;
 	createdAt: number;
 	updatedAt: number;
 	closedAt: number | null;
@@ -186,14 +186,14 @@ export interface WorkspaceTicket {
  * row. Used by the ticket detail page's dependency display.
  */
 export interface TicketDependencyRef {
-	id: string;
+	id: number;
 	title: string;
 	status: WorkspaceTicketStatus;
 }
 
 export interface TicketAttachmentMeta {
-	id: string;
-	ticketId: string;
+	id: number;
+	ticketId: number;
 	filename: string;
 	mimeType: string;
 	byteSize: number;
@@ -279,9 +279,9 @@ export function normalizePromptTemplateWorkspaceMode(
 }
 
 export interface ChatPromptTemplate {
-	id: string;
+	id: number;
 	/** Built-in templates are static and not owned by a user. */
-	userId: string | null;
+	userId: number | null;
 	type: PromptTemplateType;
 	title: string;
 	description: string;
@@ -428,8 +428,8 @@ export function faviconDataUri(accent: ThemeAccent): string {
 }
 
 export interface Message {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	role: Role;
 	content: string;
 	status: MessageStatus;
@@ -445,8 +445,8 @@ export interface Message {
 }
 
 export interface ReasoningBlockRecord {
-	id: string;
-	messageId: string;
+	id: number;
+	messageId: number;
 	segmentIndex: number;
 	// Null only on a trimmed conversation-open payload (see `textTruncated`) —
 	// never for a live/streamed or untrimmed record.
@@ -470,12 +470,12 @@ export interface ReasoningBlockRecord {
 	// When set, this block was emitted by a sub-agent spawned by the outer
 	// `task` tool call with this id. Such blocks are rendered inside the
 	// SubagentCall component, not at the message level.
-	parentToolCallId: string | null;
+	parentToolCallId: number | null;
 }
 
 export interface ToolCallRecord {
-	id: string;
-	messageId: string;
+	id: number;
+	messageId: number;
 	tool: string;
 	// NULL when the field was omitted from a trimmed page payload (see
 	// `argsTruncated`) — never for a live/streamed or untrimmed record.
@@ -499,7 +499,7 @@ export interface ToolCallRecord {
 	// so this points at the `task` call that *immediately* spawned the emitting
 	// agent, not the outermost one. The chain can therefore be several levels
 	// deep and is rendered recursively by SubagentCall.
-	parentToolCallId: string | null;
+	parentToolCallId: number | null;
 	// For background `task` calls, these fields track the spawned agent's
 	// lifecycle separately from the launch tool-call status.
 	backgroundAgentStatus?: 'running' | 'completed' | 'failed' | null;
@@ -519,16 +519,16 @@ export interface ToolCallRecord {
 }
 
 export interface ToolAttachmentMeta {
-	id: string;
-	toolCallId: string;
+	id: number;
+	toolCallId: number;
 	kind: 'image';
 	mimeType: string;
 	byteSize: number;
 }
 
 export interface FileEditRecord {
-	id: string;
-	messageId: string;
+	id: number;
+	messageId: number;
 	path: string;
 	// NULL when omitted from a trimmed page payload; see
 	// ToolCallRecord.argsTruncated.
@@ -538,7 +538,7 @@ export interface FileEditRecord {
 	createdAt: number;
 	textOffset: number | null;
 	// See ReasoningBlockRecord.parentToolCallId.
-	parentToolCallId: string | null;
+	parentToolCallId: number | null;
 }
 
 // Observability record of the *full input* the portal handed to the runtime
@@ -546,8 +546,8 @@ export interface FileEditRecord {
 // so the user can inspect the portal prelude + any memory / prior-message
 // context injected on top of their raw message — "the guts" of the turn.
 export interface TurnInput {
-	messageId: string;
-	conversationId: string;
+	messageId: number;
+	conversationId: number;
 	turnId: string | null;
 	// Exact string sent to the runtime (prelude + body).
 	fullInput: string;
@@ -911,56 +911,56 @@ export type ElicitationSchemaField =
 // --- Normalized streaming protocol (server -> client over SSE) ---
 
 export type PortalEvent =
-	| { type: 'message.start'; messageId: string; role: 'assistant' }
+	| { type: 'message.start'; messageId: number; role: 'assistant' }
 	| {
 			type: 'message.delta';
-			messageId: string;
+			messageId: number;
 			text: string;
 			// When set, this content originated inside the sub-agent spawned by
 			// the outer `task` tool call with this id, and (with segmentId) is
 			// rendered as a threaded content block inside the SubagentCall card
 			// rather than appended to the outer assistant message body.
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 			// Groups consecutive child content deltas into one block. Only set
 			// for sub-agent content (alongside parentToolCallId).
 			segmentId?: string;
 	  }
 	| {
 			type: 'message.reasoning';
-			messageId: string;
+			messageId: number;
 			segmentId: string;
 			text: string;
 			// When set, this reasoning burst originated inside the sub-agent
 			// spawned by the outer `task` tool call with this id.
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 	  }
 	| {
 			type: 'message.reasoning.end';
-			messageId: string;
+			messageId: number;
 			segmentId: string;
 			durationMs: number;
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 	  }
-	| { type: 'message.end'; messageId: string }
+	| { type: 'message.end'; messageId: number }
 	| {
 			type: 'subagent.lifecycle';
-			toolCallId: string;
+			toolCallId: number;
 			agentId: string;
 			status: 'running' | 'completed' | 'failed';
 	  }
 	| {
 			type: 'tool.call';
-			toolCallId: string;
+			toolCallId: number;
 			tool: string;
 			args: unknown;
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 			// The assistant message this call is anchored to. Set when the event
 			// is emitted to clients so the UI can target by id (like
 			// `message.delta`) instead of assuming the last message is the active
 			// assistant turn — which breaks across a reconnect gap. Optional
 			// because lower-level SDK event emitters dispatch before the
 			// assistant message is persisted.
-			messageId?: string | undefined;
+			messageId?: number | undefined;
 	  }
 	| { type: 'interactive.request'; request: InteractiveRequestView }
 	| {
@@ -982,11 +982,11 @@ export type PortalEvent =
 	  }
 	| {
 			type: 'tool.result';
-			toolCallId: string;
+			toolCallId: number;
 			ok: boolean;
 			summary: string;
 			output?: unknown;
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 			attachments?: ToolAttachmentMeta[];
 	  }
 	// Ephemeral live-streaming events from the SDK during a tool's execution.
@@ -995,28 +995,28 @@ export type PortalEvent =
 	// `tool.result` and don't need to replay stale partial chunks.
 	| {
 			type: 'tool.partial_output';
-			toolCallId: string;
+			toolCallId: number;
 			output: string;
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 	  }
 	| {
 			type: 'tool.progress';
-			toolCallId: string;
+			toolCallId: number;
 			message: string;
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 	  }
 	| {
 			type: 'file.edit';
 			path: string;
 			diff: string;
-			parentToolCallId?: string | undefined;
+			parentToolCallId?: number | undefined;
 			// Assistant message anchor; see the note on `tool.call`.
-			messageId?: string | undefined;
+			messageId?: number | undefined;
 	  }
-	| { type: 'conversation.update'; conversationId: string; title?: string }
+	| { type: 'conversation.update'; conversationId: number; title?: string }
 	| {
 			type: 'session.settings';
-			conversationId: string;
+			conversationId: number;
 			mode?: SessionMode;
 			memoryMode?: MemoryMode;
 			approvalMode?: ApprovalMode;
@@ -1028,10 +1028,10 @@ export type PortalEvent =
 	| { type: 'reasoning.summary'; text: string }
 	| {
 			type: 'memory.status';
-			conversationId: string;
+			conversationId: number;
 			phase: 'checking' | 'extracting' | 'validating' | 'committed' | 'needs_review' | 'skipped';
 			summary?: string;
-			patchId?: string;
+			patchId?: number;
 			counts?: {
 				events?: number;
 				facts?: number;
@@ -1085,7 +1085,7 @@ export type PortalEvent =
 export type AppEvent =
 	| {
 			type: 'awaiting.changed';
-			conversationId: string;
+			conversationId: number;
 			awaiting: boolean;
 	  }
 	// Content-free: it carries no ticket/workspace id because the client refresh
@@ -1100,7 +1100,7 @@ export type AppEvent =
 	// finalizes, and when a conversation is marked read.
 	| {
 			type: 'activity.changed';
-			conversationId: string;
+			conversationId: number;
 			running: boolean;
 			unread: boolean;
 	  };
@@ -1127,7 +1127,7 @@ export interface ContextUsageGridRow {
 }
 
 export interface ConversationUsage {
-	conversationId: string;
+	conversationId: number;
 	currentTokens: number;
 	tokenLimit: number;
 	messagesLength: number;

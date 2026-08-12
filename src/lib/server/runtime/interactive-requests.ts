@@ -101,14 +101,14 @@ export function isInteractivePromptCancelledError(
 
 export interface PendingInteractive {
 	requestId: string;
-	conversationId: string;
+	conversationId: number;
 	/**
 	 * Owner of the conversation. Needed to publish awaiting-input transitions
 	 * to the right per-user global feed when this prompt is registered or
 	 * cleared. Optional because some non-user-facing call sites (and older
 	 * tests) register without it; transitions are simply not published then.
 	 */
-	userId?: string | undefined;
+	userId?: number | undefined;
 	kind: InteractiveKind;
 	view: InteractiveRequestView;
 	resolve: (response: InteractiveResponse) => void;
@@ -150,9 +150,9 @@ export function newRequestId(): string {
 
 export interface RegisterOptions {
 	requestId: string;
-	conversationId: string;
+	conversationId: number;
 	/** Conversation owner; enables awaiting-input feed transitions (see above). */
-	userId?: string | undefined;
+	userId?: number | undefined;
 	kind: InteractiveKind;
 	view: InteractiveRequestView;
 	resolve: (response: InteractiveResponse) => void;
@@ -167,7 +167,7 @@ export interface RegisterOptions {
  * we only publish `awaiting.changed` when this answer flips for a
  * conversation, not once per prompt.
  */
-function conversationHasBlocking(conversationId: string): boolean {
+function conversationHasBlocking(conversationId: number): boolean {
 	for (const p of pending.values()) {
 		if (p.conversationId === conversationId && isBlockingKind(p.kind)) return true;
 	}
@@ -181,8 +181,8 @@ function conversationHasBlocking(conversationId: string): boolean {
  * hiccup must never break prompt registration/resolution.
  */
 function publishAwaitingChanged(
-	userId: string | undefined,
-	conversationId: string,
+	userId: number | undefined,
+	conversationId: number,
 	awaiting: boolean
 ): void {
 	if (!userId) return;
@@ -251,7 +251,7 @@ export function get(requestId: string): PendingInteractive | undefined {
  * after a blip) can rehydrate `pendingInteractive` without waiting for
  * the original `interactive.request` event to be re-emitted.
  */
-export function listForConversation(conversationId: string): InteractiveRequestView[] {
+export function listForConversation(conversationId: number): InteractiveRequestView[] {
 	const out: InteractiveRequestView[] = [];
 	for (const p of pending.values()) {
 		if (p.conversationId === conversationId) out.push(p.view);
@@ -270,7 +270,7 @@ export function listForConversation(conversationId: string): InteractiveRequestV
  * session backing an open prompt (which would strand the deferred: the dialog
  * stays answerable and the resolve POST 200s, but the tool can never run).
  */
-export function hasPending(conversationId: string): boolean {
+export function hasPending(conversationId: number): boolean {
 	for (const p of pending.values()) {
 		if (p.conversationId === conversationId) return true;
 	}
@@ -288,15 +288,15 @@ export function hasPending(conversationId: string): boolean {
  * the `pending` map and {@link hasPending}); a resolve landing on another
  * process won't be reflected here.
  */
-export function awaitingInputConversationIds(): Set<string> {
-	const out = new Set<string>();
+export function awaitingInputConversationIds(): Set<number> {
+	const out = new Set<number>();
 	for (const p of pending.values()) {
 		if (isBlockingKind(p.kind)) out.add(p.conversationId);
 	}
 	return out;
 }
 
-export function resolve(requestId: string, userId: string, response: InteractiveResponse): boolean {
+export function resolve(requestId: string, userId: number, response: InteractiveResponse): boolean {
 	const p = pending.get(requestId);
 	if (!p) return false;
 	if (p.kind !== response.kind) {
@@ -461,7 +461,7 @@ export function cancel(requestId: string, reason: string = 'cancelled') {
  * runner when a turn is aborted so the SDK doesn't hang waiting on
  * deferreds we've abandoned.
  */
-export function cancelConversation(conversationId: string, reason: string = 'turn_aborted') {
+export function cancelConversation(conversationId: number, reason: string = 'turn_aborted') {
 	for (const [id, p] of pending) {
 		if (p.conversationId === conversationId) cancel(id, reason);
 	}
@@ -485,7 +485,7 @@ const SESSION_EXPIRED_FEEDBACK =
  * outstanding work entirely — "a leak is better than a silent deny"); only
  * the capacity-pressure escape hatch in the pool does.
  */
-export function expireConversation(conversationId: string, reason: string = 'session_expired') {
+export function expireConversation(conversationId: number, reason: string = 'session_expired') {
 	for (const [id, p] of pending) {
 		if (p.conversationId === conversationId) expire(id, reason);
 	}

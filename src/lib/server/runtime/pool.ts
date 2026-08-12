@@ -23,11 +23,11 @@ interface Entry {
 // matching comment in turn-runner.ts.
 const SESSIONS_KEYS = appGlobalSymbols('pool.sessions');
 const REAPER_KEYS = appGlobalSymbols('pool.reaper');
-type SessionsMap = Map<string, Entry>;
-type InflightMap = Map<string, Promise<ProviderSession>>;
+type SessionsMap = Map<number, Entry>;
+type InflightMap = Map<number, Promise<ProviderSession>>;
 const sessions: SessionsMap = getOrCreateGlobalSingleton(
 	SESSIONS_KEYS,
-	() => new Map<string, Entry>()
+	() => new Map<number, Entry>()
 );
 // In-flight `open()` promises, keyed by conversationId. Concurrent
 // acquire() calls for the same conversation share one open(), avoiding
@@ -36,7 +36,7 @@ const sessions: SessionsMap = getOrCreateGlobalSingleton(
 const INFLIGHT_KEYS = appGlobalSymbols('pool.inflight');
 const inflight: InflightMap = getOrCreateGlobalSingleton(
 	INFLIGHT_KEYS,
-	() => new Map<string, Promise<ProviderSession>>()
+	() => new Map<number, Promise<ProviderSession>>()
 );
 function getReaperTimer(): NodeJS.Timeout | null {
 	return getGlobalSingletonValue<NodeJS.Timeout>(REAPER_KEYS);
@@ -53,7 +53,7 @@ function setReaperTimer(t: NodeJS.Timeout | null) {
 // Vite HMR re-import re-registering its predicate replaces rather than
 // duplicates the entry. Stashed on globalThis for the same HMR reason as the
 // session map.
-type KeepAlivePredicate = (conversationId: string) => boolean;
+type KeepAlivePredicate = (conversationId: number) => boolean;
 const KEEPALIVE_KEYS = appGlobalSymbols('pool.keepAlive');
 const keepAlive: Map<string, KeepAlivePredicate> = getOrCreateGlobalSingleton(
 	KEEPALIVE_KEYS,
@@ -68,7 +68,7 @@ export function registerKeepAlive(id: string, fn: KeepAlivePredicate) {
  * True if the conversation's session has work outstanding (an open interactive
  * prompt or an active turn) and therefore must not be reaped/evicted silently.
  */
-function isProtected(conversationId: string): boolean {
+function isProtected(conversationId: number): boolean {
 	if (hasPending(conversationId)) return true;
 	for (const fn of keepAlive.values()) {
 		try {
@@ -85,7 +85,7 @@ function isProtected(conversationId: string): boolean {
 
 async function disposeSession(
 	session: ProviderSession,
-	context: { conversationId: string; reason: string }
+	context: { conversationId: number; reason: string }
 ): Promise<void> {
 	try {
 		await session.dispose();
@@ -118,7 +118,7 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 	// the coalesced open promise.
 	const toDispose: Array<{
 		session: ProviderSession;
-		context: { conversationId: string; reason: string };
+		context: { conversationId: number; reason: string };
 	}> = [];
 
 	const existing = sessions.get(opts.conversationId);
@@ -219,16 +219,16 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
  * running SDK session without spinning a fresh one (which would require
  * an auth token, working directory, etc. the endpoint doesn't have at hand).
  */
-export function getActive(conversationId: string): ProviderSession | null {
+export function getActive(conversationId: number): ProviderSession | null {
 	return sessions.get(conversationId)?.session ?? null;
 }
 
-export function touch(conversationId: string) {
+export function touch(conversationId: number) {
 	const e = sessions.get(conversationId);
 	if (e) e.lastUsed = Date.now();
 }
 
-export async function release(conversationId: string) {
+export async function release(conversationId: number) {
 	const e = sessions.get(conversationId);
 	if (!e) return;
 	sessions.delete(conversationId);

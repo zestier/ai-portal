@@ -28,9 +28,9 @@ export interface LazyFieldState {
 const IDLE: LazyFieldState = { value: null, loading: false, error: null };
 
 export function lazyFieldState(
-	conversationId: string | undefined,
+	conversationId: number | undefined,
 	kind: LazyFieldKind,
-	recordId: string
+	recordId: number | string
 ): LazyFieldState {
 	if (!conversationId) return IDLE;
 	const key = lazyFieldUrl(conversationId, kind, recordId);
@@ -45,9 +45,9 @@ export function lazyFieldState(
 }
 
 export async function loadLazyField(
-	conversationId: string | undefined,
+	conversationId: number | undefined,
 	kind: LazyFieldKind,
-	recordId: string
+	recordId: number | string
 ): Promise<void> {
 	if (!conversationId) return;
 	const key = lazyFieldUrl(conversationId, kind, recordId);
@@ -74,9 +74,9 @@ export async function loadLazyField(
  * silent request loop.
  */
 export function ensureLazyField(
-	conversationId: string | undefined,
+	conversationId: number | undefined,
 	kind: LazyFieldKind,
-	recordId: string
+	recordId: number | string
 ): void {
 	const state = lazyFieldState(conversationId, kind, recordId);
 	if (state.value !== null || state.loading || state.error !== null) return;

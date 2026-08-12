@@ -34,7 +34,7 @@ async function seed() {
 	const smallResult = JSON.stringify({ ok: true, result: 'short' });
 
 	messages.insertToolCall(msg.id, {
-		id: 'tc-small',
+		id: 1,
 		tool: 'view',
 		argsJson: smallArgs,
 		resultJson: smallResult,
@@ -45,7 +45,7 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertToolCall(msg.id, {
-		id: 'tc-big',
+		id: 2,
 		tool: 'bash',
 		argsJson: bigArgs,
 		resultJson: bigResult,
@@ -56,7 +56,7 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertToolCall(msg.id, {
-		id: 'tc-pending',
+		id: 3,
 		tool: 'bash',
 		argsJson: smallArgs,
 		resultJson: null,
@@ -67,7 +67,7 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertToolCall(msg.id, {
-		id: 'tc-task',
+		id: 4,
 		tool: 'task',
 		argsJson: JSON.stringify({
 			agent_type: 'memory-extractor',
@@ -88,7 +88,7 @@ async function seed() {
 	const smallReasoning = 'thinking briefly';
 	const bigSpoken = 'S'.repeat(INLINE_REASONING_MAX_BYTES + 100);
 	messages.insertReasoningBlock(msg.id, {
-		id: 'rb-small',
+		id: 5,
 		segmentIndex: 0,
 		text: smallReasoning,
 		kind: 'reasoning',
@@ -98,7 +98,7 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertReasoningBlock(msg.id, {
-		id: 'rb-big',
+		id: 6,
 		segmentIndex: 1,
 		text: bigReasoning,
 		kind: 'reasoning',
@@ -108,18 +108,18 @@ async function seed() {
 		parentToolCallId: null
 	});
 	messages.insertReasoningBlock(msg.id, {
-		id: 'rb-spoken',
+		id: 7,
 		segmentIndex: 2,
 		text: bigSpoken,
 		kind: 'content',
 		textOffset: null,
 		startedAt: 3,
 		durationMs: null,
-		parentToolCallId: 'tc-task'
+		parentToolCallId: 4
 	});
 
 	messages.insertReasoningBlock(msg.id, {
-		id: 'rb-open',
+		id: 8,
 		segmentIndex: 3,
 		text: 'O'.repeat(INLINE_REASONING_MAX_BYTES + 100),
 		kind: 'reasoning',
@@ -152,7 +152,7 @@ describe('listByConversation payload trim', () => {
 	it('leaves every field inline when no trim is requested', async () => {
 		const { conv, bigArgs, bigResult, bigReasoning, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id);
-		const big = m.toolCalls!.find((t) => t.id === 'tc-big')!;
+		const big = m.toolCalls!.find((t) => t.id === 2)!;
 		expect(big.argsJson).toBe(bigArgs);
 		expect(big.resultJson).toBe(bigResult);
 		expect(big.argsTruncated).toBeUndefined();
@@ -160,7 +160,7 @@ describe('listByConversation payload trim', () => {
 		const bigEdit = m.fileEdits!.find((e) => e.path === 'big.ts')!;
 		expect(bigEdit.diff).toHaveLength(INLINE_DIFF_MAX_BYTES + 100);
 		expect(bigEdit.diffTruncated).toBeUndefined();
-		const bigBlock = m.reasoningBlocks!.find((r) => r.id === 'rb-big')!;
+		const bigBlock = m.reasoningBlocks!.find((r) => r.id === 6)!;
 		expect(bigBlock.text).toBe(bigReasoning);
 		expect(bigBlock.textTruncated).toBeUndefined();
 	});
@@ -169,7 +169,7 @@ describe('listByConversation payload trim', () => {
 		const { conv, bigArgs, bigResult, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
 
-		const big = m.toolCalls!.find((t) => t.id === 'tc-big')!;
+		const big = m.toolCalls!.find((t) => t.id === 2)!;
 		expect(big.argsJson).toBeNull();
 		expect(big.argsTruncated).toBe(true);
 		expect(big.argsBytes).toBe(Buffer.byteLength(bigArgs, 'utf8'));
@@ -182,7 +182,7 @@ describe('listByConversation payload trim', () => {
 		expect(bigEdit.diffTruncated).toBe(true);
 		expect(bigEdit.diffBytes).toBe(INLINE_DIFF_MAX_BYTES + 100);
 
-		const bigBlock = m.reasoningBlocks!.find((r) => r.id === 'rb-big')!;
+		const bigBlock = m.reasoningBlocks!.find((r) => r.id === 6)!;
 		expect(bigBlock.text).toBeNull();
 		expect(bigBlock.textTruncated).toBe(true);
 		expect(bigBlock.textBytes).toBe(INLINE_REASONING_MAX_BYTES + 100);
@@ -197,7 +197,7 @@ describe('listByConversation payload trim', () => {
 		const { conv, smallArgs, smallResult, smallReasoning, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
 
-		const small = m.toolCalls!.find((t) => t.id === 'tc-small')!;
+		const small = m.toolCalls!.find((t) => t.id === 1)!;
 		expect(small.argsJson).toBe(smallArgs);
 		expect(small.resultJson).toBe(smallResult);
 		expect(small.argsTruncated).toBeUndefined();
@@ -208,7 +208,7 @@ describe('listByConversation payload trim', () => {
 		expect(smallEdit.diff).toBe('d'.repeat(10));
 		expect(smallEdit.diffTruncated).toBeUndefined();
 
-		const smallBlock = m.reasoningBlocks!.find((r) => r.id === 'rb-small')!;
+		const smallBlock = m.reasoningBlocks!.find((r) => r.id === 5)!;
 		expect(smallBlock.text).toBe(smallReasoning);
 		expect(smallBlock.textTruncated).toBeUndefined();
 		expect(smallBlock.textBytes).toBeUndefined();
@@ -220,7 +220,7 @@ describe('listByConversation payload trim', () => {
 		// has. Trimming it would drop the streamed prefix on a mid-turn reload.
 		const { conv, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
-		const open = m.reasoningBlocks!.find((r) => r.id === 'rb-open')!;
+		const open = m.reasoningBlocks!.find((r) => r.id === 8)!;
 		expect(open.durationMs).toBeNull();
 		expect(open.text).toBe('O'.repeat(INLINE_REASONING_MAX_BYTES + 100));
 		expect(open.textTruncated).toBeUndefined();
@@ -232,7 +232,7 @@ describe('listByConversation payload trim', () => {
 		// would blank out the response on reload.
 		const { conv, bigSpoken, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
-		const spoken = m.reasoningBlocks!.find((r) => r.id === 'rb-spoken')!;
+		const spoken = m.reasoningBlocks!.find((r) => r.id === 7)!;
 		expect(spoken.kind).toBe('content');
 		expect(spoken.text).toBe(bigSpoken);
 		expect(spoken.textTruncated).toBeUndefined();
@@ -245,7 +245,7 @@ describe('listByConversation payload trim', () => {
 		// unlabelled, un-retryable rows. Its result is still trimmed.
 		const { conv, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
-		const task = m.toolCalls!.find((t) => t.id === 'tc-task')!;
+		const task = m.toolCalls!.find((t) => t.id === 4)!;
 		expect(task.argsJson).not.toBeNull();
 		expect(JSON.parse(task.argsJson!).agent_type).toBe('memory-extractor');
 		expect(task.argsTruncated).toBeUndefined();
@@ -258,7 +258,7 @@ describe('listByConversation payload trim', () => {
 		// the client must not offer to "load" something that does not exist.
 		const { conv, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
-		const pending = m.toolCalls!.find((t) => t.id === 'tc-pending')!;
+		const pending = m.toolCalls!.find((t) => t.id === 3)!;
 		expect(pending.resultJson).toBeNull();
 		expect(pending.resultTruncated).toBeUndefined();
 		expect(pending.resultBytes).toBeUndefined();
@@ -313,12 +313,8 @@ describe('lazy field lookups', () => {
 
 	it('returns the full stored text for the owner', async () => {
 		const { conv, user, bigArgs, bigResult, messages } = await seed();
-		expect(messages.getToolCallFieldForOwner(conv.id, 'tc-big', user.id, 'args')?.value).toBe(
-			bigArgs
-		);
-		expect(messages.getToolCallFieldForOwner(conv.id, 'tc-big', user.id, 'result')?.value).toBe(
-			bigResult
-		);
+		expect(messages.getToolCallFieldForOwner(conv.id, 2, user.id, 'args')?.value).toBe(bigArgs);
+		expect(messages.getToolCallFieldForOwner(conv.id, 2, user.id, 'result')?.value).toBe(bigResult);
 	});
 
 	it('denies a different user, an unknown id, and a foreign conversation alike', async () => {
@@ -330,11 +326,9 @@ describe('lazy field lookups', () => {
 			displayName: null,
 			avatarUrl: null
 		});
-		expect(messages.getToolCallFieldForOwner(conv.id, 'tc-big', other.id, 'args')).toBeNull();
-		expect(messages.getToolCallFieldForOwner(conv.id, 'nope', conv.userId, 'args')).toBeNull();
-		expect(
-			messages.getToolCallFieldForOwner('other-conversation', 'tc-big', conv.userId, 'args')
-		).toBeNull();
+		expect(messages.getToolCallFieldForOwner(conv.id, 2, other.id, 'args')).toBeNull();
+		expect(messages.getToolCallFieldForOwner(conv.id, 999999, conv.userId, 'args')).toBeNull();
+		expect(messages.getToolCallFieldForOwner(999999, 2, conv.userId, 'args')).toBeNull();
 	});
 
 	it('resolves a file edit diff by id, scoped to the conversation owner', async () => {
@@ -344,25 +338,21 @@ describe('lazy field lookups', () => {
 		expect(messages.getFileEditDiffForOwner(conv.id, bigEdit.id, conv.userId)?.value).toBe(
 			'D'.repeat(INLINE_DIFF_MAX_BYTES + 100)
 		);
-		expect(messages.getFileEditDiffForOwner(conv.id, 'missing', conv.userId)).toBeNull();
+		expect(messages.getFileEditDiffForOwner(conv.id, 999999, conv.userId)).toBeNull();
 	});
 
 	it('resolves reasoning text by id, scoped to the conversation owner', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const { conv, bigReasoning, messages } = await seed();
-		expect(messages.getReasoningTextForOwner(conv.id, 'rb-big', conv.userId)?.value).toBe(
-			bigReasoning
-		);
+		expect(messages.getReasoningTextForOwner(conv.id, 6, conv.userId)?.value).toBe(bigReasoning);
 		const other = users.upsertGithub({
 			githubLogin: 'reasoning-intruder',
 			githubId: 4343,
 			displayName: null,
 			avatarUrl: null
 		});
-		expect(messages.getReasoningTextForOwner(conv.id, 'rb-big', other.id)).toBeNull();
-		expect(messages.getReasoningTextForOwner(conv.id, 'missing', conv.userId)).toBeNull();
-		expect(
-			messages.getReasoningTextForOwner('other-conversation', 'rb-big', conv.userId)
-		).toBeNull();
+		expect(messages.getReasoningTextForOwner(conv.id, 6, other.id)).toBeNull();
+		expect(messages.getReasoningTextForOwner(conv.id, 999999, conv.userId)).toBeNull();
+		expect(messages.getReasoningTextForOwner(999999, 6, conv.userId)).toBeNull();
 	});
 });

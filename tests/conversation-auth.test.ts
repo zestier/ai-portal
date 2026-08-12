@@ -35,7 +35,7 @@ describe('authorizeConversationWorkdir', () => {
 		await resetServerSingletons();
 		const conv = convs.create(user.id, { title: 't', workdir, model: null });
 
-		const out = authorizeConversationWorkdir(conv.id, user.id);
+		const out = authorizeConversationWorkdir(String(conv.id), user.id);
 		expect(out.conversation.id).toBe(conv.id);
 		expect(out.workdir).toBe(workdir);
 	});
@@ -50,7 +50,7 @@ describe('authorizeConversationWorkdir', () => {
 		mkdirSync(legacy, { recursive: true });
 		const conv = convs.create(user.id, { title: 'legacy', workdir: legacy, model: null });
 
-		const out = authorizeConversationWorkdir(conv.id, user.id);
+		const out = authorizeConversationWorkdir(String(conv.id), user.id);
 		expect(out.workdir).toBe(projectRoot);
 	});
 });

@@ -190,9 +190,9 @@ const ViewAttachmentArgs = z.object({
 });
 
 export function buildTicketTools(opts: {
-	userId: string;
+	userId: number;
 	workspaceKey: string;
-	conversationId: string;
+	conversationId: number;
 }): PortalTool[] {
 	return [
 		{
@@ -242,8 +242,8 @@ export function buildTicketTools(opts: {
 						...(parsed.body !== undefined ? { body: parsed.body } : {}),
 						...(parsed.plan !== undefined ? { plan: parsed.plan } : {}),
 						...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
-						...(parsed.blockedBy !== undefined ? { blockedBy: parsed.blockedBy } : {}),
-						...(parsed.blocks !== undefined ? { blocks: parsed.blocks } : {}),
+						...(parsed.blockedBy !== undefined ? { blockedBy: parsed.blockedBy.map(Number) } : {}),
+						...(parsed.blocks !== undefined ? { blocks: parsed.blocks.map(Number) } : {}),
 						sourceConversationId: opts.conversationId
 					});
 					return ok(
@@ -330,14 +330,18 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, fields: rawFields } = GetArgs.parse(args);
-				const ticket = tickets.get(id, opts.userId);
+				const ticket = tickets.get(Number(id), opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const attachments = ticketAttachments.listMetaForTicket(id);
+				const attachments = ticketAttachments.listMetaForTicket(Number(id));
 				const fields = normalizeFieldSelector(rawFields);
+				// The tool id is a string (it round-trips into ticket_update/ticket_block's
+				// `z.string()` id param), so the result echoes it in that form. Edge lists
+				// stay numeric ids — they are display-only on this read.
 				const ticketWithAttachments = {
 					...withDeps(ticket),
+					id: String(ticket.id),
 					...(attachments.length > 0 ? { attachments } : {})
 				};
 				const projected = project(ticketWithAttachments, {
@@ -398,12 +402,18 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, ...patch } = UpdateArgs.parse(args);
-				const current = tickets.get(id, opts.userId);
+				const current = tickets.get(Number(id), opts.userId);
 				if (!current || current.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
 				try {
-					const updated = tickets.update(id, opts.userId, patch as UpdateInput);
+					const updated = tickets.update(Number(id), opts.userId, {
+						...patch,
+						...(patch.blockedBy !== undefined
+							? { blockedBy: patch.blockedBy.map((x) => Number(x)) }
+							: {}),
+						...(patch.blocks !== undefined ? { blocks: patch.blocks.map((x) => Number(x)) } : {})
+					} as UpdateInput);
 					if (!updated) return err(`Ticket not found: ${id}`);
 					return ok(
 						{
@@ -438,16 +448,16 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, blockedBy } = BlockArgs.parse(args);
-				const dependent = tickets.get(id, opts.userId);
+				const dependent = tickets.get(Number(id), opts.userId);
 				if (!dependent || dependent.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const prereq = tickets.get(blockedBy, opts.userId);
+				const prereq = tickets.get(Number(blockedBy), opts.userId);
 				if (!prereq || prereq.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${blockedBy}`);
 				}
 				try {
-					const result = tickets.addDependency(opts.userId, id, blockedBy);
+					const result = tickets.addDependency(opts.userId, Number(id), Number(blockedBy));
 					const verb = result === 'added' ? 'now blocked by' : 'already blocked by';
 					return ok({ id, blockedBy, result }, `Ticket ${id} ${verb} ${blockedBy}.`);
 				} catch (e) {
@@ -471,11 +481,11 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, blockedBy } = UnblockArgs.parse(args);
-				const dependent = tickets.get(id, opts.userId);
+				const dependent = tickets.get(Number(id), opts.userId);
 				if (!dependent || dependent.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const removed = tickets.removeDependency(opts.userId, id, blockedBy);
+				const removed = tickets.removeDependency(opts.userId, Number(id), Number(blockedBy));
 				return removed
 					? ok(
 							{ id, blockedBy, result: 'removed' },
@@ -517,7 +527,7 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const parsed = AttachArgs.parse(args);
-				const ticket = tickets.get(parsed.ticketId, opts.userId);
+				const ticket = tickets.get(Number(parsed.ticketId), opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${parsed.ticketId}`);
 				}
@@ -545,7 +555,7 @@ export function buildTicketTools(opts: {
 					);
 				}
 				// Check count
-				const count = ticketAttachments.countForTicket(parsed.ticketId);
+				const count = ticketAttachments.countForTicket(Number(parsed.ticketId));
 				if (count >= ticketAttachments.MAX_PER_TICKET) {
 					return err(
 						`Ticket already has ${count} attachment(s); the per-ticket limit is ${ticketAttachments.MAX_PER_TICKET}.`,
@@ -568,7 +578,7 @@ export function buildTicketTools(opts: {
 					data = Buffer.from(clean, 'utf-8');
 				}
 				const meta = ticketAttachments.insert({
-					ticketId: parsed.ticketId,
+					ticketId: Number(parsed.ticketId),
 					filename,
 					mimeType,
 					byteSize: data.length,
@@ -596,11 +606,15 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const parsed = DetachArgs.parse(args);
-				const ticket = tickets.get(parsed.ticketId, opts.userId);
+				const ticket = tickets.get(Number(parsed.ticketId), opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${parsed.ticketId}`);
 				}
-				const removed = ticketAttachments.remove(parsed.ticketId, parsed.attachmentId, opts.userId);
+				const removed = ticketAttachments.remove(
+					Number(parsed.ticketId),
+					Number(parsed.attachmentId),
+					opts.userId
+				);
 				if (!removed)
 					return err(`Attachment not found: ${parsed.attachmentId}`, { code: 'not_found' });
 				return ok(
@@ -626,13 +640,13 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const parsed = ViewAttachmentArgs.parse(args);
-				const ticket = tickets.get(parsed.ticketId, opts.userId);
+				const ticket = tickets.get(Number(parsed.ticketId), opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${parsed.ticketId}`);
 				}
 				const att = ticketAttachments.getForOwner(
-					parsed.ticketId,
-					parsed.attachmentId,
+					Number(parsed.ticketId),
+					Number(parsed.attachmentId),
 					opts.userId
 				);
 				if (!att) return err(`Attachment not found: ${parsed.attachmentId}`, { code: 'not_found' });

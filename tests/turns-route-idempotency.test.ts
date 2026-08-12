@@ -30,8 +30,8 @@ function jsonRequest(body: unknown, headers: Record<string, string> = {}): Reque
 
 async function post(
 	route: Awaited<ReturnType<typeof freshImports>>['route'],
-	convId: string,
-	userId: string,
+	convId: number,
+	userId: number,
 	body: unknown,
 	headers: Record<string, string> = {}
 ): Promise<{ status: number; json: Record<string, unknown> }> {

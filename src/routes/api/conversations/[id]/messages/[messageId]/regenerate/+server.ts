@@ -32,12 +32,17 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	authorizeConversation(params.id, locals.userId);
 	const userId = requireUserId(locals);
 
+	const conversationId = Number(params.id);
+	const messageId = Number(params.messageId);
+	if (!Number.isInteger(conversationId) || conversationId <= 0) throw error(404);
+	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
+
 	// Claim the turn slot synchronously to close the same memory-mode race as
 	// the inline-edit route: a plain `getTurn` busy-check leaves a window where
 	// two concurrent reruns both pass and race into `startTurn`. The loser is
 	// rejected here as a clean 409 instead of a 502.
 	try {
-		reserveTurn(params.id!);
+		reserveTurn(conversationId);
 	} catch (e) {
 		if (e instanceof TurnAlreadyInProgressError) {
 			throw error(409, 'A turn is already in progress for this conversation.');
@@ -48,8 +53,8 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	try {
 		const { conversation, userMessage } = regenerateFromAssistant({
 			userId,
-			conversationId: params.id!,
-			messageId: params.messageId!
+			conversationId,
+			messageId
 		});
 		const turn = await startTurnFromUserMessage(conversation, userMessage, { rerun: true });
 		return json({ ok: true, turnId: turn.id, userMessageId: userMessage.id });
@@ -57,8 +62,15 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		if (e instanceof InlineEditRejected) {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
-		throwRerunFailure({ route: 'message_regenerate', conversationId: params.id, userId }, e);
+		throwRerunFailure(
+			{
+				route: 'message_regenerate',
+				conversationId: String(conversationId),
+				userId: String(userId)
+			},
+			e
+		);
 	} finally {
-		releaseTurnReservation(params.id!);
+		releaseTurnReservation(conversationId);
 	}
 };

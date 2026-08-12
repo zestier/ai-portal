@@ -11,18 +11,20 @@ import type { Conversation } from '$lib/types';
 
 export function authorizeConversation(
 	convId: string | undefined,
-	userId: string | null | undefined
+	userId: number | null | undefined
 ): Conversation {
 	if (!userId) throw error(401);
 	if (!convId) throw error(400, 'missing conversation id');
-	const conv = convs.get(convId, userId);
+	const id = Number(convId);
+	if (!Number.isInteger(id) || id <= 0) throw error(404);
+	const conv = convs.get(id, userId);
 	if (!conv) throw error(404);
 	return conv;
 }
 
 export function authorizeConversationWorkdir(
 	convId: string | undefined,
-	userId: string | null | undefined
+	userId: number | null | undefined
 ): { conversation: Conversation; workdir: string } {
 	const conversation = authorizeConversation(convId, userId);
 	return { conversation, workdir: resolveWorkspace(conversation) };
@@ -42,14 +44,14 @@ export function authorizeConversationWorkdir(
  */
 export function authorizeConversationWorkspace(
 	convId: string | undefined,
-	userId: string | null | undefined,
+	userId: number | null | undefined,
 	leaseId?: string | null
 ): { conversation: Conversation; workdir: string; lease: Lease | null } {
 	const conversation = authorizeConversation(convId, userId);
 	if (!leaseId) {
 		return { conversation, workdir: resolveWorkspace(conversation), lease: null };
 	}
-	const lease = getLease(leaseId, conversation.userId);
+	const lease = getLease(Number(leaseId), conversation.userId);
 	if (!lease || lease.heldByConversationId !== conversation.id) throw error(404);
 	let workdir: string;
 	try {

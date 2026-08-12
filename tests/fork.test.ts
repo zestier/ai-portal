@@ -8,8 +8,8 @@ import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../src/lib/server/
 // Register a fake "running" turn for `conversationId` in the shared turn
 // registry so `getTurn()` reports the source as busy, without spinning up a
 // real provider turn. Returns a cleanup that removes it again.
-function markConversationBusy(conversationId: string): () => void {
-	const registry = getOrCreateGlobalSingleton<Map<string, { status: string }>>(
+function markConversationBusy(conversationId: number): () => void {
+	const registry = getOrCreateGlobalSingleton<Map<number, { status: string }>>(
 		appGlobalSymbols('turns'),
 		() => new Map()
 	);
@@ -261,7 +261,7 @@ describe('fork.forkAtMessage', () => {
 	});
 
 	it('gives a managed-source fork an independent worktree with a stable repository source', async () => {
-		const { users, convs, messages, snapshots, fork } = await freshImports();
+		const { users, convs, messages, snapshots, fork, db } = await freshImports();
 		const { createManagedWorktree, removeManagedWorktree } =
 			await import('../src/lib/server/worktrees');
 		const u = users.ensureLocalUser();
@@ -272,21 +272,27 @@ describe('fork.forkAtMessage', () => {
 		writeFileSync(join(repository, 'state.txt'), 'base\n');
 		execFileSync('git', ['add', 'state.txt'], { cwd: repository });
 		execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repository });
-		const parentId = convs.newId();
-		const parentWorktree = await createManagedWorktree({
-			sourceWorkdir: repository,
-			userId: u.id,
-			conversationId: parentId
-		});
 		const parent = convs.create(u.id, {
-			id: parentId,
 			title: 'managed parent',
-			workdir: parentWorktree.path,
-			workspaceKind: 'managed-worktree',
+			workdir: repository,
+			workspaceKind: 'shared',
 			workspaceKey: repository,
-			managedWorktree: parentWorktree,
 			model: null
 		});
+		const parentWorktree = await createManagedWorktree({
+			sourceWorkdir: repository,
+			userId: String(u.id),
+			conversationId: String(parent.id)
+		});
+		// Mirror the conversations route: a managed worktree conversation's row
+		// carries workspace_kind='managed-worktree' and a managed_worktrees row
+		// (the fork below keys off both).
+		db.getDb().transaction(() => {
+			convs.setManagedWorktree(parent.id, parentWorktree);
+			db.getDb()
+				.prepare('UPDATE conversations SET workspace_kind = ? WHERE id = ?')
+				.run('managed-worktree', parent.id);
+		})();
 		const target = messages.append(parent.id, { role: 'user', content: 'change it' });
 		await snapshots.snapshot(parent.workdir, target.id, 'pre');
 

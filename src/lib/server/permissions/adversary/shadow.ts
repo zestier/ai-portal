@@ -24,7 +24,6 @@
 
 import { loadConfig } from '../../config';
 import { log } from '../../log';
-import { ulid } from '../../db/ids';
 import * as shadowRepo from '../../db/repos/shadow-decisions';
 import type { ShadowResolutionSource } from '../../db/repos/shadow-decisions';
 import { BoundedTtlCache } from '../../cache';
@@ -53,7 +52,7 @@ const SLOT_RELEASE_GRACE_MS = 5_000;
 export const SKIPPED_PREFIX = 'skipped: ';
 
 export interface ShadowObserveInput extends BuildAdversaryFactsInput {
-	conversationId: string;
+	conversationId: number;
 	argsHash: string | null;
 	/** Why this request needed a human. Recorded to characterize the sample. */
 	resolutionSource?: ShadowResolutionSource | undefined;
@@ -101,7 +100,7 @@ export interface CreateShadowRecorderOptions {
 	 */
 	getModel?: (() => string | null | undefined) | undefined;
 	/** User whose credentials/entitlements the reviewer call runs under. */
-	userId?: string | undefined;
+	userId?: number | undefined;
 	/** Test seam: replaces the provider call with a canned completion. */
 	complete?: ((system: string, user: string) => Promise<string>) | undefined;
 	/** Test seam: notified once a shadow row has been fully written. */
@@ -168,10 +167,9 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 		const key = createHash('sha256')
 			.update(JSON.stringify({ model: cfg.model, facts }))
 			.digest('hex');
-		const id = ulid();
+		let id: number;
 		try {
-			shadowRepo.insertPending({
-				id,
+			id = shadowRepo.insertPending({
 				conversationId: input.conversationId,
 				tool: input.tool,
 				permissionKind: input.permissionKind,
@@ -294,7 +292,7 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 	};
 }
 
-function persistOutcome(id: string, outcome: AdversaryOutcome, memoized: boolean): void {
+function persistOutcome(id: number, outcome: AdversaryOutcome, memoized: boolean): void {
 	// An empty prompt means we never got as far as building one (only the
 	// defensive rejection normalizer produces that). Store NULL rather than an
 	// empty string so "no evidence" is not mistaken for "the model was sent

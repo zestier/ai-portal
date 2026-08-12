@@ -15,7 +15,7 @@
 		onselect,
 		onrefresh
 	}: {
-		conversationId: string;
+		conversationId: number;
 		worktree?: string | null;
 		selectedPath?: string | null;
 		showIgnored?: boolean;

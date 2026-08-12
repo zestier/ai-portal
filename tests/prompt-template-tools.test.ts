@@ -47,27 +47,33 @@ describe('prompt-template tools', () => {
 			prompt: 'Do the thing carefully.'
 		});
 		expect(created.ok).toBe(true);
-		const id = created.ok && (created.result as { id: string }).id;
+		const id = created.ok && (created.result as { id: number }).id;
 		expect(id).toBeTruthy();
 
 		const listed = await byName('template_list').handler({ type: 'chat' });
-		const rows = listed.ok && (listed.result as { templates: { id: string }[] }).templates;
-		expect((rows as { id: string }[]).some((t) => t.id === id)).toBe(true);
+		const rows = listed.ok && (listed.result as { templates: { id: number }[] }).templates;
+		expect((rows as { id: number }[]).some((t) => t.id === id)).toBe(true);
 
-		const got = await byName('template_get').handler({ id });
+		const got = await byName('template_get').handler({ id: String(id) });
 		expect(got.ok && (got.result as { title: string }).title).toBe('My preset');
 
-		const updated = await byName('template_update').handler({ id, title: 'Renamed preset' });
+		const updated = await byName('template_update').handler({
+			id: String(id),
+			title: 'Renamed preset'
+		});
 		expect(updated.ok && (updated.result as { title: string }).title).toBe('Renamed preset');
 
-		const archived = await byName('template_update').handler({ id, status: 'archived' });
+		const archived = await byName('template_update').handler({
+			id: String(id),
+			status: 'archived'
+		});
 		expect(archived.ok && (archived.result as { status: string }).status).toBe('archived');
 		const openList = await byName('template_list').handler({});
-		const openRows = openList.ok && (openList.result as { templates: { id: string }[] }).templates;
-		expect((openRows as { id: string }[]).some((t) => t.id === id)).toBe(false);
+		const openRows = openList.ok && (openList.result as { templates: { id: number }[] }).templates;
+		expect((openRows as { id: number }[]).some((t) => t.id === id)).toBe(false);
 
 		// Archive is reversible via template_update status -> open.
-		const reopened = await byName('template_update').handler({ id, status: 'open' });
+		const reopened = await byName('template_update').handler({ id: String(id), status: 'open' });
 		expect(reopened.ok && (reopened.result as { status: string }).status).toBe('open');
 	});
 
@@ -116,21 +122,21 @@ describe('prompt-template tools', () => {
 		const { byName, other } = await setup();
 		const { buildPromptTemplateTools } = await import('../src/lib/server/tools/prompt-templates');
 		const created = await byName('template_create').handler({ title: 'mine', prompt: 'x' });
-		const id = created.ok && (created.result as { id: string }).id;
+		const id = created.ok && (created.result as { id: number }).id;
 
 		const otherTools = buildPromptTemplateTools({ userId: other.id });
 		const get = otherTools.find((t) => t.name === 'template_get')!;
-		const res = await get.handler({ id });
+		const res = await get.handler({ id: String(id) });
 		expect(res.ok).toBe(false);
 		expect(!res.ok && res.error.message).toMatch(/not found/i);
 
 		// Writes are scoped too: another user can neither update nor archive it.
 		const update = otherTools.find((t) => t.name === 'template_update')!;
-		const updRes = await update.handler({ id, title: 'hijacked' });
+		const updRes = await update.handler({ id: String(id), title: 'hijacked' });
 		expect(updRes.ok).toBe(false);
 		expect(!updRes.ok && updRes.error.message).toMatch(/not found/i);
 		// And the original is untouched.
-		const stillMine = await byName('template_get').handler({ id });
+		const stillMine = await byName('template_get').handler({ id: String(id) });
 		expect(stillMine.ok && (stillMine.result as { title: string }).title).toBe('mine');
 	});
 });

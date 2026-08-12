@@ -1,5 +1,10 @@
 <script lang="ts">
-	import type { Message, ToolCallRecord, FileEditRecord, ReasoningBlockRecord } from '$lib/types';
+	import type { ToolCallRecord } from '$lib/types';
+	import type {
+		DisplayFileEdit,
+		DisplayMessage,
+		DisplayReasoningBlock
+	} from '$lib/client/display-message';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 	import { zoomableImages } from '$lib/client/zoomable-images';
@@ -29,10 +34,10 @@
 		onToolRerunStarted,
 		onMemoryRetryStarted
 	}: {
-		message: Message;
-		conversationId?: string;
-		inputMessageId?: string | null;
-		forks?: Array<{ id: string; title: string; archivedAt: number | null }>;
+		message: DisplayMessage;
+		conversationId?: number;
+		inputMessageId?: number | null;
+		forks?: Array<{ id: number; title: string; archivedAt: number | null }>;
 		isInFlightTurnUser?: boolean;
 		thinking?: boolean;
 		// True when this is the latest assistant message and the conversation is
@@ -43,8 +48,8 @@
 		// side with `conversation_busy`. Forking is still allowed while busy.
 		busy?: boolean;
 		onForked?: () => void;
-		onInlineEdited?: (messageId: string, content: string, turnId: string) => void;
-		onRegenerated?: (userMessageId: string, turnId: string) => void;
+		onInlineEdited?: (messageId: number, content: string, turnId: string) => void;
+		onRegenerated?: (userMessageId: number, turnId: string) => void;
 		onToolRerunStarted?: (turnId: string) => void;
 		onMemoryRetryStarted?: (turnId: string) => void;
 	} = $props();
@@ -65,8 +70,8 @@
 		message.role === 'assistant' && !!conversationId && !!inputMessageId
 	);
 
-	// Editing is only possible for persisted user messages (a temporary
-	// id like `local-1234` is created optimistically before the server
+	// Editing is only possible for persisted user messages (an ephemeral
+	// string id like `local-1234` is created optimistically before the server
 	// confirms; we can't fork from those). It also requires the parent to
 	// pass the conversation id. Forking is allowed while the source is busy,
 	// but NOT on the user message that triggered the in-flight turn — that
@@ -75,8 +80,7 @@
 		message.role === 'user' &&
 			!!conversationId &&
 			!isInFlightTurnUser &&
-			!message.id.startsWith('local-') &&
-			!message.id.startsWith('err-')
+			typeof message.id === 'number'
 	);
 
 	// Assistant-message actions: regenerate the reply in place, or fork the
@@ -86,7 +90,7 @@
 		message.role === 'assistant' &&
 			message.status === 'complete' &&
 			!!conversationId &&
-			!message.id.startsWith('local-')
+			typeof message.id === 'number'
 	);
 
 	const liveForks = $derived(forks.filter((f) => f.archivedAt == null));
@@ -119,7 +123,7 @@
 				return;
 			}
 			const data = (await r.json()) as {
-				conversationId: string;
+				conversationId: number;
 				turnId?: string;
 				deferred?: boolean;
 			};
@@ -156,7 +160,7 @@
 				errorMsg = body || `Inline edit failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { turnId: string; userMessageId: string };
+			const data = (await r.json()) as { turnId: string; userMessageId: number };
 			editing = false;
 			onInlineEdited?.(data.userMessageId, text, data.turnId);
 		} catch (e) {
@@ -188,7 +192,7 @@
 				errorMsg = body || `Regenerate failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { turnId: string; userMessageId: string };
+			const data = (await r.json()) as { turnId: string; userMessageId: number };
 			onRegenerated?.(data.userMessageId, data.turnId);
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : String(e);
@@ -212,7 +216,7 @@
 				errorMsg = body || `Continue failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { conversationId: string };
+			const data = (await r.json()) as { conversationId: number };
 			onForked?.();
 			await goto(`/conversations/${data.conversationId}`);
 		} catch (e) {
@@ -229,8 +233,8 @@
 	type Part =
 		| { kind: 'text'; html: string }
 		| { kind: 'tool'; tool: ToolCallRecord }
-		| { kind: 'edit'; edit: FileEditRecord }
-		| { kind: 'reasoning'; block: ReasoningBlockRecord; streaming: boolean };
+		| { kind: 'edit'; edit: DisplayFileEdit }
+		| { kind: 'reasoning'; block: DisplayReasoningBlock; streaming: boolean };
 
 	const parts = $derived.by<Part[]>(() => {
 		if (message.role !== 'assistant') return [];
@@ -257,17 +261,17 @@
 		// Anything without an explicit offset is rendered after all text
 		// (legacy rows persisted before interleaving was tracked).
 		const trailingTools: ToolCallRecord[] = [];
-		const trailingEdits: FileEditRecord[] = [];
-		const trailingReasoning: ReasoningBlockRecord[] = [];
+		const trailingEdits: DisplayFileEdit[] = [];
+		const trailingReasoning: DisplayReasoningBlock[] = [];
 
 		type Anchor =
 			| { offset: number; ts: number; kind: 'tool'; tool: ToolCallRecord }
-			| { offset: number; ts: number; kind: 'edit'; edit: FileEditRecord }
+			| { offset: number; ts: number; kind: 'edit'; edit: DisplayFileEdit }
 			| {
 					offset: number;
 					ts: number;
 					kind: 'reasoning';
-					block: ReasoningBlockRecord;
+					block: DisplayReasoningBlock;
 			  };
 		const anchors: Anchor[] = [];
 		// Sort tiebreaker at the same textOffset is the wall-clock timestamp

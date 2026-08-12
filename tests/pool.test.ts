@@ -25,7 +25,7 @@ describe('session pool', () => {
 
 	it('reuses a live session when the requested workdir matches', async () => {
 		const session = {
-			conversationId: 'conv-1',
+			conversationId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			lastUsed: Date.now(),
@@ -40,15 +40,15 @@ describe('session pool', () => {
 		const pool = await importPool();
 
 		const first = await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
 		const second = await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -61,7 +61,7 @@ describe('session pool', () => {
 
 	it('recreates a live session when the requested workdir changes', async () => {
 		const firstSession = {
-			conversationId: 'conv-1',
+			conversationId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			lastUsed: Date.now(),
@@ -81,15 +81,15 @@ describe('session pool', () => {
 		const pool = await importPool();
 
 		const first = await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
 		const second = await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-b',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -106,7 +106,7 @@ describe('session pool', () => {
 		// treated as `pi`, so a later acquire for a different label is a
 		// mismatch and the old session is torn down.
 		const piSession = {
-			conversationId: 'conv-1',
+			conversationId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			lastUsed: Date.now(),
@@ -126,16 +126,16 @@ describe('session pool', () => {
 		const pool = await importPool();
 
 		const first = await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
 		const second = await pool.acquire({
 			provider: 'openai-compatible',
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -149,7 +149,7 @@ describe('session pool', () => {
 
 	it('coalesces concurrent acquires for the same conversation into one open()', async () => {
 		const session = {
-			conversationId: 'conv-1',
+			conversationId: 1,
 			workingDirectory: '/tmp/work-a',
 			lastUsed: Date.now(),
 			send: vi.fn(),
@@ -169,15 +169,15 @@ describe('session pool', () => {
 		const pool = await importPool();
 
 		const a = pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
 		const b = pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -194,7 +194,7 @@ describe('session pool', () => {
 		const err = new Error('boom');
 		openMock.mockRejectedValueOnce(err);
 		const session = {
-			conversationId: 'conv-1',
+			conversationId: 1,
 			workingDirectory: '/tmp/work-a',
 			lastUsed: Date.now(),
 			send: vi.fn(),
@@ -209,16 +209,16 @@ describe('session pool', () => {
 
 		await expect(
 			pool.acquire({
-				conversationId: 'conv-1',
-				userId: 'user-1',
+				conversationId: 1,
+				userId: 1,
 				workingDirectory: '/tmp/work-a',
 				model: 'gpt-4',
 				policy: 'prompt'
 			})
 		).rejects.toBe(err);
 		const ok = await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'

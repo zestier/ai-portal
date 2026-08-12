@@ -19,7 +19,7 @@
 		onselect,
 		onmerged
 	}: {
-		conversationId: string;
+		conversationId: number;
 		selected?: string | null;
 		onselect?: (leaseId: string | null) => void;
 		/** Fired after a successful merge so the panes re-read both trees. */
@@ -48,7 +48,9 @@
 		});
 	});
 
-	const active = $derived(worktrees.find((w) => w.id === selected) ?? null);
+	// The lease id is an INTEGER rowid surfaced by the API; the URL selection is
+	// its string form (the server parses `Number()`), so compare across forms.
+	const active = $derived(worktrees.find((w) => String(w.id) === selected) ?? null);
 
 	// A selected lease that has disappeared (reaped, or removed by the agent
 	// mid-view) must not silently show the primary workspace's contents under
@@ -109,7 +111,7 @@
 		}
 	}
 
-	function postMerge(leaseId: string, allowMergeCommit: boolean) {
+	function postMerge(leaseId: number, allowMergeCommit: boolean) {
 		return fetch(`/api/conversations/${conversationId}/worktrees/${leaseId}/merge`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },

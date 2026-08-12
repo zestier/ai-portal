@@ -17,8 +17,8 @@ import { listBuiltInPromptTemplates } from '../src/lib/prompt-templates';
 import type { Conversation, InteractiveRequestView } from '../src/lib/types';
 
 const conversation: Conversation = {
-	id: 'conv-1',
-	userId: 'user-1',
+	id: 1,
+	userId: 1,
 	title: 'Regression chat',
 	workdir: '/workspaces/zap',
 	model: 'gpt-5.5',
@@ -424,8 +424,8 @@ describe('Svelte component regression coverage', () => {
 
 	test('ToolCall surfaces a generic followUpHint for non-git tools', () => {
 		const toolCall = {
-			id: 'tc-1',
-			messageId: 'm-1',
+			id: 1,
+			messageId: 1,
 			tool: 'ticket_add',
 			argsJson: '{}',
 			resultJson: JSON.stringify({
@@ -455,8 +455,8 @@ describe('Svelte component regression coverage', () => {
 
 	test('ToolCall injects <wbr> break points after slashes in a long path summary', () => {
 		const toolCall = {
-			id: 'tc-wrap',
-			messageId: 'm-1',
+			id: 2,
+			messageId: 1,
 			tool: 'view',
 			argsJson: JSON.stringify({
 				path: '/workspaces/zap/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
@@ -481,7 +481,7 @@ describe('Svelte component regression coverage', () => {
 
 	test('FileBrowser renders safe empty states without client fetch data', () => {
 		const body = render(FileBrowser, {
-			props: { conversationId: 'conv-1', pane: 'changes' }
+			props: { conversationId: 1, pane: 'changes' }
 		}).body;
 
 		expect(body).toContain('aria-label="Git status"');
@@ -641,8 +641,8 @@ describe('Svelte component regression coverage', () => {
 				builtInTemplates: listBuiltInPromptTemplates(),
 				promptTemplates: [
 					{
-						id: 'tmpl-1',
-						userId: 'user-1',
+						id: 1,
+						userId: 1,
 						type: 'chat',
 						title: 'Weekly review',
 						description: 'Summarize changes',
@@ -661,8 +661,8 @@ describe('Svelte component regression coverage', () => {
 						archivedAt: null
 					},
 					{
-						id: 'tmpl-do',
-						userId: 'user-1',
+						id: 2,
+						userId: 1,
 						type: 'ticket-action',
 						title: 'Do',
 						description: 'Implement the ticket',

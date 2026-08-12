@@ -21,7 +21,9 @@ import {
 
 export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (!locals.userId) throw error(401);
-	const conv = convs.get(params.id, locals.userId);
+	const conversationId = Number(params.id);
+	if (!Number.isInteger(conversationId) || conversationId <= 0) throw error(404);
+	const conv = convs.get(conversationId, locals.userId);
 	if (!conv) throw error(404);
 	const msgs = messages.listByConversation(conv.id, {
 		// Oversized tool args/results, file diffs and reasoning text are collapsed
@@ -44,12 +46,12 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	let initialComposer = '';
 	const draftTicketId = url.searchParams.get('draftTicketId');
 	if (draftTicketId && msgs.length === 0) {
-		const ticket = tickets.get(draftTicketId, locals.userId);
+		const ticket = tickets.get(Number(draftTicketId), locals.userId);
 		if (!ticket || ticket.workspaceKey !== ticketWorkspaceFromConversation(conv)) {
 			throw error(404);
 		}
 		const actionId = url.searchParams.get('ticketActionId');
-		const action = actionId ? promptTemplates.get(actionId, locals.userId) : null;
+		const action = actionId ? promptTemplates.get(Number(actionId), locals.userId) : null;
 		if (!action || action.type !== 'ticket-action' || action.status !== 'open') {
 			throw error(404);
 		}
@@ -60,16 +62,16 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		const source = url.searchParams.get('promptTemplateSource');
 		const template =
 			source === 'builtin'
-				? getBuiltInPromptTemplate(promptTemplateId)
+				? getBuiltInPromptTemplate(Number(promptTemplateId))
 				: source === 'custom'
-					? promptTemplates.get(promptTemplateId, locals.userId)
+					? promptTemplates.get(Number(promptTemplateId), locals.userId)
 					: null;
 		if (!template || template.status !== 'open') throw error(404);
 		initialComposer = template.prompt;
 	}
 	const refinePromptTemplateId = url.searchParams.get('refinePromptTemplateId');
 	if (!initialComposer && refinePromptTemplateId && msgs.length === 0) {
-		const template = promptTemplates.get(refinePromptTemplateId, locals.userId);
+		const template = promptTemplates.get(Number(refinePromptTemplateId), locals.userId);
 		if (!template || template.status !== 'open') throw error(404);
 		initialComposer = buildRefinePromptSeed(template);
 	}
@@ -100,9 +102,9 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// breadcrumb. Resolves silently to null if the parent was deleted or
 	// belongs to a different user.
 	let parent: {
-		id: string;
+		id: number;
 		title: string;
-		messageId: string | null;
+		messageId: number | null;
 		messageIndex: number | null;
 	} | null = null;
 	if (conv.forkedFromConversationId) {

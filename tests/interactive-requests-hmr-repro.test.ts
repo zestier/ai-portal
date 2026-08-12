@@ -19,7 +19,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 type IR = typeof import('../src/lib/server/runtime/interactive-requests');
 
-const CONV = 'conv-repro';
+const CONV = 1;
 
 function makeView(requestId: string) {
 	return {
@@ -73,7 +73,7 @@ describe('interactive pending map survives module reload (HMR)', () => {
 
 		// ...and resolving through the new module settles the ORIGINAL deferred,
 		// so the parked turn unblocks instead of hanging forever.
-		const ok = modB.resolve(requestId, 'user', { kind: 'permission', decision: 'allow-once' });
+		const ok = modB.resolve(requestId, 1, { kind: 'permission', decision: 'allow-once' });
 		expect(ok).toBe(true);
 		await promise;
 		expect(settled).toBe(true);

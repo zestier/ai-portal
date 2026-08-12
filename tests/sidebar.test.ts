@@ -43,59 +43,53 @@ describe('resolveInitialSidebarOpen', () => {
 
 describe('isAwaitingInput', () => {
 	it('falls back to the server set when there is no live override', () => {
-		const server = new Set(['a', 'b']);
-		expect(isAwaitingInput('a', server, {})).toBe(true);
-		expect(isAwaitingInput('c', server, {})).toBe(false);
+		const server = new Set([1, 2]);
+		expect(isAwaitingInput(1, server, {})).toBe(true);
+		expect(isAwaitingInput(3, server, {})).toBe(false);
 	});
 
 	it('lets a live override win over the server set in both directions', () => {
-		const server = new Set(['a']);
+		const server = new Set([1]);
 		// Override clears an indicator the server still reports (open conv just resolved).
-		expect(isAwaitingInput('a', server, { a: false })).toBe(false);
+		expect(isAwaitingInput(1, server, { 1: false })).toBe(false);
 		// Override raises an indicator the server has not caught up on yet.
-		expect(isAwaitingInput('b', server, { b: true })).toBe(true);
+		expect(isAwaitingInput(2, server, { 2: true })).toBe(true);
 	});
 
 	it('treats only own-key overrides as authoritative', () => {
-		const server = new Set<string>();
-		expect(isAwaitingInput('a', server, { b: true })).toBe(false);
+		const server = new Set<number>();
+		expect(isAwaitingInput(1, server, { 2: true })).toBe(false);
 	});
 });
 
 describe('orderSidebarTickets', () => {
 	const t = (
-		id: string,
-		blockerIds: string[] = [],
+		id: number,
+		blockerIds: number[] = [],
 		priority: 'P0' | 'P1' | 'P2' | 'P3' = 'P2'
 	) => ({
 		id,
 		priority,
-		blockers: blockerIds.map((bid) => ({ id: bid, title: bid, status: 'open' as const }))
+		blockers: blockerIds.map((bid) => ({ id: bid, title: String(bid), status: 'open' as const }))
 	});
 
 	it('sorts ready (unblocked) tickets ahead of blocked ones', () => {
-		const ordered = orderSidebarTickets([t('a', ['x']), t('b'), t('c', ['y']), t('d')]);
-		expect(ordered.map((o) => o.id)).toEqual(['b', 'd', 'a', 'c']);
+		const ordered = orderSidebarTickets([t(1, [10]), t(2), t(3, [11]), t(4)]);
+		expect(ordered.map((o) => o.id)).toEqual([2, 4, 1, 3]);
 	});
 
 	it('preserves the incoming order within each group (stable partition)', () => {
-		const ordered = orderSidebarTickets([
-			t('a'),
-			t('b', ['x']),
-			t('c'),
-			t('d', ['y']),
-			t('e', ['z'])
-		]);
-		expect(ordered.map((o) => o.id)).toEqual(['a', 'c', 'b', 'd', 'e']);
+		const ordered = orderSidebarTickets([t(1), t(2, [10]), t(3), t(4, [11]), t(5, [12])]);
+		expect(ordered.map((o) => o.id)).toEqual([1, 3, 2, 4, 5]);
 	});
 
 	it('returns tickets unchanged when none are blocked', () => {
-		const ordered = orderSidebarTickets([t('a'), t('b'), t('c')]);
-		expect(ordered.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+		const ordered = orderSidebarTickets([t(1), t(2), t(3)]);
+		expect(ordered.map((o) => o.id)).toEqual([1, 2, 3]);
 	});
 
 	it('does not mutate the input array', () => {
-		const input = [t('a', ['x']), t('b')];
+		const input = [t(1, [10]), t(2)];
 		const snapshot = input.map((o) => o.id);
 		orderSidebarTickets(input);
 		expect(input.map((o) => o.id)).toEqual(snapshot);
@@ -105,26 +99,17 @@ describe('orderSidebarTickets', () => {
 		// A blocked P0 must still sort after every ready ticket (ready-before-blocked
 		// dominates), while priority orders within each group (P0 ahead of P3).
 		const ordered = orderSidebarTickets([
-			t('ready-low', [], 'P3'),
-			t('blocked-top', ['x'], 'P0'),
-			t('ready-top', [], 'P0'),
-			t('blocked-low', ['y'], 'P3')
+			t(1, [], 'P3'),
+			t(2, [10], 'P0'),
+			t(3, [], 'P0'),
+			t(4, [11], 'P3')
 		]);
-		expect(ordered.map((o) => o.id)).toEqual([
-			'ready-top',
-			'ready-low',
-			'blocked-top',
-			'blocked-low'
-		]);
+		expect(ordered.map((o) => o.id)).toEqual([3, 1, 2, 4]);
 	});
 
 	it('keeps recency order within a shared priority (stable sort)', () => {
-		const ordered = orderSidebarTickets([
-			t('first', [], 'P2'),
-			t('second', [], 'P2'),
-			t('urgent', [], 'P1')
-		]);
-		expect(ordered.map((o) => o.id)).toEqual(['urgent', 'first', 'second']);
+		const ordered = orderSidebarTickets([t(1, [], 'P2'), t(2, [], 'P2'), t(3, [], 'P1')]);
+		expect(ordered.map((o) => o.id)).toEqual([3, 1, 2]);
 	});
 });
 
@@ -147,10 +132,10 @@ describe('ticket action helpers', () => {
 		expect(
 			interpolateTicketPrompt(
 				{ prompt: doPrompt },
-				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
+				{ id: 1, title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)'
+			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: 1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		);
 	});
 
@@ -158,10 +143,10 @@ describe('ticket action helpers', () => {
 		expect(
 			interpolateTicketPrompt(
 				{ prompt: refinePrompt },
-				{ id: 'ticket-1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
+				{ id: 1, title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			"Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)"
+			"Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: 1\n\nAdd a launch button.\n\nPlan:\n(none)"
 		);
 	});
 
@@ -169,15 +154,13 @@ describe('ticket action helpers', () => {
 		expect(
 			interpolateTicketPrompt(
 				{ prompt: doPrompt },
-				{ id: 'ticket-1', title: 'Fix sidebar actions', body: '  ', plan: '' }
+				{ id: 1, title: 'Fix sidebar actions', body: '  ', plan: '' }
 			)
-		).toBe('Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nPlan:\n(none)');
+		).toBe('Do this workspace ticket: Fix sidebar actions\n\nTicket ID: 1\n\nPlan:\n(none)');
 	});
 
 	it('builds encoded draft chat URLs that carry the action id', () => {
-		expect(ticketActionDraftUrl('conv-1', 'ticket-1', 'action-1')).toBe(
-			'/conversations/conv-1?draftTicketId=ticket-1&ticketActionId=action-1'
-		);
+		expect(ticketActionDraftUrl(1, 1, 1)).toBe('/conversations/1?draftTicketId=1&ticketActionId=1');
 	});
 });
 
@@ -185,7 +168,7 @@ describe('ticket archive helper', () => {
 	it('archives a ticket with workspace scoping', async () => {
 		const calls: Array<[string, RequestInit]> = [];
 		const result = await archiveWorkspaceTicket({
-			ticketId: 'ticket/1',
+			ticketId: 1,
 			workspace: '/workspace with spaces',
 			fetcher: async (url, init) => {
 				calls.push([url, init]);
@@ -196,7 +179,7 @@ describe('ticket archive helper', () => {
 		expect(result).toEqual({ ok: true });
 		expect(calls).toEqual([
 			[
-				'/api/tickets/ticket%2F1?workspace=%2Fworkspace+with+spaces',
+				'/api/tickets/1?workspace=%2Fworkspace+with+spaces',
 				{
 					method: 'DELETE'
 				}
@@ -206,7 +189,7 @@ describe('ticket archive helper', () => {
 
 	it('returns the failed archive status', async () => {
 		const result = await archiveWorkspaceTicket({
-			ticketId: 'ticket-1',
+			ticketId: 1,
 			fetcher: async () => new Response(null, { status: 404 })
 		});
 
@@ -235,10 +218,10 @@ describe('ticket list pagination helper', () => {
 			offset: 0,
 			fetcher: async (url) => {
 				expect(url).toBe('/api/tickets?status=open&workspace=%2Fws&limit=2&offset=0');
-				return Response.json({ tickets: [{ id: 'a' }, { id: 'b' }] });
+				return Response.json({ tickets: [{ id: 1 }, { id: 2 }] });
 			}
 		});
-		expect(page.tickets.map((t) => t.id)).toEqual(['a', 'b']);
+		expect(page.tickets.map((t) => t.id)).toEqual([1, 2]);
 		expect(page.hasMore).toBe(true);
 	});
 
@@ -247,7 +230,7 @@ describe('ticket list pagination helper', () => {
 			status: 'all',
 			limit: 5,
 			offset: 5,
-			fetcher: async () => Response.json({ tickets: [{ id: 'z' }] })
+			fetcher: async () => Response.json({ tickets: [{ id: 26 }] })
 		});
 		expect(page.hasMore).toBe(false);
 	});

@@ -29,12 +29,12 @@ import { makeTmpDir } from './helpers/tmp';
 // (prompt / deny-all / auto-deny); `ticket_list` IS seeded and only used where
 // a success envelope is asserted.
 
-let USER = 'local';
+let USER = 1;
 let convSeq = 0;
 
 async function openSession(
 	wd: string,
-	conversationId: string,
+	conversationId: number,
 	opts: Partial<ProviderOpenOptions> = {}
 ) {
 	const { openPiSession } = await import('../src/lib/server/pi');
@@ -51,7 +51,7 @@ async function openSession(
 
 // A fresh conversation row whose workdir is the test's tmpdir: grants can be
 // seeded against it (FK), and the gate's workspaceRootsFor resolves to [wd].
-async function createConversation(wd: string): Promise<string> {
+async function createConversation(wd: string): Promise<number> {
 	const { create } = await import('../src/lib/server/db/repos/conversations');
 	const conv = create(USER, { title: `pi-gate-${convSeq++}`, workdir: wd, model: null });
 	return conv.id;

@@ -10,7 +10,7 @@
 		selectedSha = null,
 		onselect
 	}: {
-		conversationId: string;
+		conversationId: number;
 		worktree?: string | null;
 		selectedSha?: string | null;
 		onselect?: (sha: string) => void;

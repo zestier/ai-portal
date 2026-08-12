@@ -26,7 +26,7 @@ describe('tool-call rerun endpoint', () => {
 		getTurnMock.mockReturnValue(null);
 		startTurnMock.mockResolvedValue({
 			id: 'turn-rerun',
-			conversationId: 'conv',
+			conversationId: 1,
 			startedAt: Date.now(),
 			endedAt: null,
 			status: 'running',
@@ -44,7 +44,7 @@ describe('tool-call rerun endpoint', () => {
 		const msg = messages.append(conv.id, { role: 'assistant', content: '' });
 		const args = { command: 'echo approved' };
 		messages.insertToolCall(msg.id, {
-			id: 'tc-denied',
+			id: 1,
 			tool: 'bash',
 			argsJson: JSON.stringify(args),
 			resultJson: JSON.stringify('Permission denied'),
@@ -63,7 +63,7 @@ describe('tool-call rerun endpoint', () => {
 			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
 
 		const response = await POST({
-			params: { id: conv.id, toolCallId: 'tc-denied' },
+			params: { id: conv.id, toolCallId: 1 },
 			locals: { userId: user.id },
 			request: request({ confirmed: true })
 		} as never);
@@ -102,7 +102,7 @@ describe('tool-call rerun endpoint', () => {
 		const msg = messages.append(conv.id, { role: 'assistant', content: '' });
 		const args = { path: 'src/missing.ts' };
 		messages.insertToolCall(msg.id, {
-			id: 'tc-error',
+			id: 2,
 			tool: 'view',
 			argsJson: JSON.stringify(args),
 			resultJson: JSON.stringify('File not found'),
@@ -116,7 +116,7 @@ describe('tool-call rerun endpoint', () => {
 			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
 
 		const response = await POST({
-			params: { id: conv.id, toolCallId: 'tc-error' },
+			params: { id: conv.id, toolCallId: 2 },
 			locals: { userId: user.id },
 			request: request({ confirmed: true })
 		} as never);
@@ -139,9 +139,9 @@ describe('tool-call rerun endpoint', () => {
 			messages
 				.listByConversation(conv.id)
 				.flatMap((m) => m.toolCalls ?? [])
-				.find((t) => t.id === 'tc-error')
+				.find((t) => t.id === 2)
 		).toMatchObject({
-			id: 'tc-error',
+			id: 2,
 			status: 'error',
 			resultJson: JSON.stringify('File not found')
 		});
@@ -165,7 +165,7 @@ describe('tool-call rerun endpoint', () => {
 			content: 'failed tool'
 		});
 		messages.insertToolCall(originalAssistant.id, {
-			id: 'tc-denied-memory',
+			id: 3,
 			tool: 'bash',
 			argsJson: JSON.stringify({ command: 'echo retry' }),
 			resultJson: JSON.stringify('Permission denied'),
@@ -199,7 +199,7 @@ describe('tool-call rerun endpoint', () => {
 			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
 
 		const response = await POST({
-			params: { id: conv.id, toolCallId: 'tc-denied-memory' },
+			params: { id: conv.id, toolCallId: 3 },
 			locals: { userId: user.id },
 			request: request({ confirmed: true })
 		} as never);

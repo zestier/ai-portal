@@ -3,8 +3,8 @@ import { createTicketDraftChat } from '../src/lib/client/ticket-chat-launch';
 import type { ChatPromptTemplate, WorkspaceTicket } from '../src/lib/types';
 
 const ticket: WorkspaceTicket = {
-	id: 'ticket-1',
-	userId: 'user-1',
+	id: 1,
+	userId: 1,
 	workspaceKey: '/workspace',
 	title: 'Fix sidebar actions',
 	body: 'Add a launch button.',
@@ -20,8 +20,8 @@ const ticket: WorkspaceTicket = {
 
 function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate {
 	return {
-		id: 'action-do',
-		userId: 'user-1',
+		id: 100,
+		userId: 1,
 		type: 'ticket-action',
 		title: 'Do',
 		description: '',
@@ -60,9 +60,9 @@ describe('createTicketDraftChat', () => {
 
 		expect(result).toEqual({
 			ok: true,
-			href: '/conversations/conv-1?draftTicketId=ticket-1&ticketActionId=action-do',
+			href: '/conversations/conv-1?draftTicketId=1&ticketActionId=100',
 			prompt:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)'
+				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: 1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const [url, init] = fetcher.mock.calls[0];
@@ -83,16 +83,14 @@ describe('createTicketDraftChat', () => {
 
 		const result = await createTicketDraftChat({
 			ticket,
-			template: action({ id: 'action-refine', conversationMode: 'interactive' }),
+			template: action({ id: 101, conversationMode: 'interactive' }),
 			workdir: '/workspace',
 			fetcher
 		});
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.href).toBe(
-				'/conversations/conv-2?draftTicketId=ticket-1&ticketActionId=action-refine'
-			);
+			expect(result.href).toBe('/conversations/conv-2?draftTicketId=1&ticketActionId=101');
 		}
 		const [, init] = fetcher.mock.calls[0];
 		expect(JSON.parse(init?.body as string)).toEqual({

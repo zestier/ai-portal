@@ -43,9 +43,9 @@
 		onnavigate
 	}: {
 		conversations: Conversation[];
-		awaitingConversationIds?: string[];
-		runningConversationIds?: string[];
-		unreadConversationIds?: string[];
+		awaitingConversationIds?: number[];
+		runningConversationIds?: number[];
+		unreadConversationIds?: number[];
 		tickets: SidebarTicket[];
 		ticketCount: number;
 		ticketWorkspace: string | null;
@@ -54,28 +54,28 @@
 		onnavigate?: () => void;
 	} = $props();
 
-	let openMenuId = $state<string | null>(null);
-	let renamingId = $state<string | null>(null);
+	let openMenuId = $state<number | null>(null);
+	let renamingId = $state<number | null>(null);
 	let renameValue = $state('');
 	let archivedOpen = $state(false);
 	let selectMode = $state(false);
-	let selected = $state(new Set<string>());
+	let selected = $state(new Set<number>());
 	let bulkBusy = $state(false);
 	let ticketsOpen = $state(false);
 	let ticketDraftOpen = $state(false);
 	let ticketTitle = $state('');
 	let ticketBusy = $state(false);
-	let ticketLaunchId = $state<string | null>(null);
-	let ticketArchiveId = $state<string | null>(null);
+	let ticketLaunchId = $state<number | null>(null);
+	let ticketArchiveId = $state<number | null>(null);
 	// Ticket action awaiting confirmation in the review dialog.
 	let reviewing = $state<{ ticket: WorkspaceTicket; action: ChatPromptTemplate } | null>(null);
-	let expandedTicketIds = $state(new Set<string>());
+	let expandedTicketIds = $state(new Set<number>());
 	let errorMsg = $state<string | null>(null);
 	let mounted = $state(false);
 	// Unmerged-work state for managed-worktree sessions, keyed by conversation id.
 	// Fetched client-side (see the route comment) and refreshed on a slow poll —
 	// the answer only changes when an agent commits or someone merges.
-	let worktreeStatuses = $state(new Map<string, WorktreeStatusSummary>());
+	let worktreeStatuses = $state(new Map<number, WorktreeStatusSummary>());
 	const WORKTREE_POLL_MS = 30_000;
 	let worktreeTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -121,12 +121,15 @@
 	const active = $derived(conversations.filter((c) => c.archivedAt == null));
 	const archived = $derived(conversations.filter((c) => c.archivedAt != null));
 	const serverAwaiting = $derived(new Set(awaitingConversationIds));
-	const awaiting = (id: string) => isAwaitingInput(id, serverAwaiting, $awaitingInputOverrides);
+	const awaiting = (id: number) => isAwaitingInput(id, serverAwaiting, $awaitingInputOverrides);
 	const serverRunning = $derived(new Set(runningConversationIds));
 	const serverUnread = $derived(new Set(unreadConversationIds));
-	const openConversationId = $derived(
-		$page.url.pathname.match(/^\/conversations\/([^/]+)/)?.[1] ?? null
-	);
+	const openConversationId = $derived.by(() => {
+		const raw = $page.url.pathname.match(/^\/conversations\/([^/]+)/)?.[1];
+		if (raw === undefined) return null;
+		const parsed = Number(raw);
+		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+	});
 
 	type ActivityIndicator = {
 		kind: 'awaiting' | 'running' | 'unseen';
@@ -143,7 +146,7 @@
 	 * user's attention (a prompt is blocked on them, an agent is working, there's
 	 * something new to read), and stacking dots would just add noise.
 	 */
-	function indicatorFor(id: string): ActivityIndicator | null {
+	function indicatorFor(id: number): ActivityIndicator | null {
 		if (awaiting(id)) {
 			return {
 				kind: 'awaiting',
@@ -186,7 +189,7 @@
 	 * attention right now?" and is exclusive, whereas unmerged work is a durable
 	 * property of the session's checkout and can coexist with any of them.
 	 */
-	function unmergedLabelFor(id: string): string | null {
+	function unmergedLabelFor(id: number): string | null {
 		const status = worktreeStatuses.get(id);
 		if (!status?.unmerged) return null;
 		const parts: string[] = [];
@@ -262,11 +265,11 @@
 		ticketDraftOpen = !ticketDraftOpen;
 	}
 
-	function isTicketExpanded(ticketId: string): boolean {
+	function isTicketExpanded(ticketId: number): boolean {
 		return expandedTicketIds.has(ticketId);
 	}
 
-	function toggleTicketExpanded(ticketId: string) {
+	function toggleTicketExpanded(ticketId: number) {
 		const next = new Set(expandedTicketIds);
 		if (next.has(ticketId)) {
 			next.delete(ticketId);
@@ -276,7 +279,7 @@
 		expandedTicketIds = next;
 	}
 
-	function collapseTicket(ticketId: string) {
+	function collapseTicket(ticketId: number) {
 		const next = new Set(expandedTicketIds);
 		next.delete(ticketId);
 		expandedTicketIds = next;
@@ -392,7 +395,7 @@
 		}
 	}
 
-	async function openMenu(id: string) {
+	async function openMenu(id: number) {
 		openMenuId = id;
 		await tick();
 		firstMenuItem?.focus();
@@ -402,7 +405,7 @@
 		openMenuId = null;
 	}
 
-	function toggleMenu(id: string, ev: Event) {
+	function toggleMenu(id: number, ev: Event) {
 		ev.preventDefault();
 		ev.stopPropagation();
 		if (openMenuId === id) closeMenu();
@@ -439,7 +442,7 @@
 		renamingId = null;
 	}
 
-	async function setArchived(id: string, archived: boolean) {
+	async function setArchived(id: number, archived: boolean) {
 		closeMenu();
 		const ok = await api(
 			`/api/conversations/${id}`,
@@ -486,7 +489,7 @@
 		return null;
 	}
 
-	async function deleteConv(id: string) {
+	async function deleteConv(id: number) {
 		closeMenu();
 		if (!confirm('Delete this conversation? This cannot be undone.')) return;
 		let res: Response;
@@ -521,7 +524,7 @@
 		selected = new Set();
 	}
 
-	function toggleSelected(id: string) {
+	function toggleSelected(id: number) {
 		const next = new Set(selected);
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
@@ -594,7 +597,11 @@
 			await invalidateAll();
 			if (action === 'delete') {
 				const currentId = location.pathname.match(/^\/conversations\/([^/]+)/)?.[1];
-				if (currentId && results.some((result) => result.id === currentId && result.ok)) {
+				const currentIdNum = currentId === undefined ? undefined : Number(currentId);
+				if (
+					currentIdNum !== undefined &&
+					results.some((result) => result.id === currentIdNum && result.ok)
+				) {
 					location.href = '/';
 				}
 			}

@@ -9,9 +9,9 @@ import { setupLocalEnv } from './helpers/env';
 // only reach the matcher because the candidate pre-filter is widened for shell
 // requests. A unit test of the matcher can't catch a regression in that SQL.
 
-const CONVERSATION = 'conv-fs-deferred';
+const CONVERSATION = 1;
 
-async function matchShell(userId: string, command: string, roots: { ws: string }) {
+async function matchShell(userId: number, command: string, roots: { ws: string }) {
 	const settings = await import('../src/lib/server/db/repos/settings');
 	const { parseShellCommand } = await import('../src/lib/server/permissions/shell-parser');
 	const parsed = parseShellCommand(command);
@@ -24,7 +24,7 @@ async function matchShell(userId: string, command: string, roots: { ws: string }
 }
 
 describe('shell grants that defer their positionals to the fs grants', () => {
-	let userId: string;
+	let userId: number;
 	let base: string;
 	let ws: string;
 	let corpus: string;

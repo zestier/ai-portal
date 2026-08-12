@@ -1,4 +1,3 @@
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import {
 	normalizeApprovalMode,
@@ -9,7 +8,7 @@ import {
 } from '$lib/types';
 
 interface SettingsRow {
-	user_id: string;
+	user_id: number;
 	default_model: string | null;
 	default_workdir: string | null;
 	default_mode: string | null;
@@ -37,7 +36,7 @@ function rowToSettings(r: SettingsRow): UserSettings {
 	};
 }
 
-export function get(userId: string): UserSettings | null {
+export function get(userId: number): UserSettings | null {
 	const r = getDb().prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId) as
 		| SettingsRow
 		| undefined;
@@ -61,7 +60,7 @@ export function defaults(): UserSettings {
 	};
 }
 
-export function save(userId: string, s: UserSettings) {
+export function save(userId: number, s: UserSettings) {
 	getDb()
 		.prepare(
 			`INSERT INTO user_settings(
@@ -115,8 +114,8 @@ import type { WorkspaceFileGrant } from '../../permissions/workspace-file-format
 export type GrantSource = 'seed' | 'prompt' | 'settings' | 'legacy' | 'workspace-file';
 
 interface GrantDbRow {
-	user_id: string;
-	conversation_id: string | null;
+	user_id: number;
+	conversation_id: number | null;
 	tool: string;
 	permission_kind: string | null;
 	scope_pattern: string | null;
@@ -178,8 +177,8 @@ function normalizeGrantDecision(decision: string): GrantDecision {
  * file rows are excluded entirely — fail closed, never matched globally.
  */
 function loadCandidateGrants(
-	userId: string,
-	conversationId: string,
+	userId: number,
+	conversationId: number,
 	tool: string,
 	alsoTools: readonly string[] = [],
 	workspaceRoots: readonly string[] | null = null
@@ -235,8 +234,8 @@ export interface MatchGrantContext {
  * callers that need it should use `matchGrantDetailed`.
  */
 export function matchGrant(
-	userId: string,
-	conversationId: string,
+	userId: number,
+	conversationId: number,
 	tool: string,
 	permissionKind: string,
 	scopeKey: string | null,
@@ -254,8 +253,8 @@ export function matchGrant(
  * prompt-required request without human escalation.
  */
 export function matchGrantDetailed(
-	userId: string,
-	conversationId: string,
+	userId: number,
+	conversationId: number,
 	tool: string,
 	permissionKind: string,
 	scopeKey: string | null,
@@ -300,16 +299,16 @@ export function matchGrantDetailed(
  * "allow this tool for anything" grant exists. New code should call
  * `matchGrant` with the runtime kind + scopeKey.
  */
-export function hasGrant(userId: string, conversationId: string, tool: string): boolean {
+export function hasGrant(userId: number, conversationId: number, tool: string): boolean {
 	// Legacy callers don't know about kinds/patterns; pretend the request
 	// is for whatever the grant covers by passing a wildcard scope.
 	return matchGrant(userId, conversationId, tool, '*', null) === 'allow';
 }
 
 export interface AddGrantOptions {
-	userId: string;
+	userId: number;
 	/** NULL = user-global. */
-	conversationId: string | null;
+	conversationId: number | null;
 	tool: string;
 	/** NULL = any kind. */
 	permissionKind?: string | null;
@@ -375,7 +374,7 @@ export interface UpdateGrantOptions {
  * edit their own rows; `conversation_id` and `granted_at` are preserved
  * (this is an edit, not a re-grant). Returns true iff a row matched.
  */
-export function updateGrant(userId: string, id: number, opts: UpdateGrantOptions): boolean {
+export function updateGrant(userId: number, id: number, opts: UpdateGrantOptions): boolean {
 	// Workspace-file rows are owned by the `.zap/permissions.toml` lifecycle,
 	// not the user: editing one through Settings would flip its source to
 	// 'settings' and silently promote a root-scoped checked-in grant to a
@@ -405,7 +404,7 @@ export function updateGrant(userId: string, id: number, opts: UpdateGrantOptions
 
 export interface GrantSummary {
 	id: number;
-	conversationId: string | null;
+	conversationId: number | null;
 	conversationTitle: string | null;
 	tool: string;
 	permissionKind: string | null;
@@ -430,7 +429,7 @@ export interface GrantSummary {
  * (the table has no other unique key — two identical-shape grants are
  * legal, just redundant).
  */
-export function listGrantsForUser(userId: string): GrantSummary[] {
+export function listGrantsForUser(userId: number): GrantSummary[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT pg.rowid AS id, pg.conversation_id, c.title AS conversation_title,
@@ -444,7 +443,7 @@ export function listGrantsForUser(userId: string): GrantSummary[] {
 		)
 		.all(userId) as Array<{
 		id: number;
-		conversation_id: string | null;
+		conversation_id: number | null;
 		conversation_title: string | null;
 		tool: string;
 		permission_kind: string | null;
@@ -485,7 +484,7 @@ export interface WorkspacePermissionState {
 }
 
 export function getWorkspacePermissionState(
-	userId: string,
+	userId: number,
 	workspaceRoot: string
 ): WorkspacePermissionState | null {
 	const row = getDb()
@@ -504,13 +503,13 @@ export function getWorkspacePermissionState(
 	};
 }
 
-export function clearWorkspacePermissionState(userId: string, workspaceRoot: string): void {
+export function clearWorkspacePermissionState(userId: number, workspaceRoot: string): void {
 	getDb()
 		.prepare(`DELETE FROM workspace_permission_state WHERE user_id = ? AND workspace_root = ?`)
 		.run(userId, workspaceRoot);
 }
 
-export function clearWorkspacePermissionStateForUser(userId: string): void {
+export function clearWorkspacePermissionStateForUser(userId: number): void {
 	getDb().prepare(`DELETE FROM workspace_permission_state WHERE user_id = ?`).run(userId);
 }
 
@@ -519,7 +518,7 @@ export function clearWorkspacePermissionStateForUser(userId: string): void {
  * grants and drop the approval state in one transaction, so a crash can't
  * leave active rows with no snapshot (or a snapshot with no rows).
  */
-export function clearWorkspaceFileState(userId: string, workspaceRoot: string): number {
+export function clearWorkspaceFileState(userId: number, workspaceRoot: string): number {
 	let removed = 0;
 	getDb().transaction(() => {
 		removed = revokeWorkspaceFileGrants(userId, workspaceRoot);
@@ -528,7 +527,7 @@ export function clearWorkspaceFileState(userId: string, workspaceRoot: string): 
 	return removed;
 }
 
-export function countWorkspaceFileGrants(userId: string, workspaceRoot: string): number {
+export function countWorkspaceFileGrants(userId: number, workspaceRoot: string): number {
 	const row = getDb()
 		.prepare(
 			`SELECT COUNT(*) AS n FROM permission_grants
@@ -538,7 +537,7 @@ export function countWorkspaceFileGrants(userId: string, workspaceRoot: string):
 	return row.n;
 }
 
-export function revokeWorkspaceFileGrants(userId: string, workspaceRoot: string): number {
+export function revokeWorkspaceFileGrants(userId: number, workspaceRoot: string): number {
 	const r = getDb()
 		.prepare(
 			`DELETE FROM permission_grants WHERE user_id = ? AND source = 'workspace-file' AND workspace_root = ?`
@@ -554,7 +553,7 @@ export function revokeWorkspaceFileGrants(userId: string, workspaceRoot: string)
  * number of grants materialized.
  */
 export function replaceWorkspaceFileGrants(
-	userId: string,
+	userId: number,
 	workspaceRoot: string,
 	grants: WorkspaceFileGrant[],
 	snapshotText: string,
@@ -621,7 +620,7 @@ function normalizeGrantDenyReason(
  * Delete a single grant by rowid. Scoped to `userId` so users can only
  * revoke their own. Returns true iff a row was removed.
  */
-export function revokeGrant(userId: string, id: number): boolean {
+export function revokeGrant(userId: number, id: number): boolean {
 	// Same ownership rule as `updateGrant`: a single workspace-file row is not
 	// individually revocable — the whole `.zap/permissions.toml` snapshot is
 	// (deletion of the file, or a re-approval). Refusing the row keeps the
@@ -641,7 +640,7 @@ export function revokeGrant(userId: string, id: number): boolean {
  * the defaults return only via the "Restore default seed grants" action
  * (`restoreSeedGrantsForUser`). See the rollout note in `permissions/seed-grants.ts`.
  */
-export function revokeAllGrantsForUser(userId: string): number {
+export function revokeAllGrantsForUser(userId: number): number {
 	// Also drop the workspace-file approval state: without this, revoking all
 	// would silently remove the materialized file grants while the gate still
 	// believed the last approved snapshot was live — the file would never
@@ -664,23 +663,22 @@ export function pruneExpiredGrants(now: number = Date.now()): number {
 }
 
 export function recordDecision(
-	conversationId: string,
+	conversationId: number,
 	tool: string,
 	argsSummary: string,
 	decision: PermissionDecisionRecord['decision']
 ) {
-	const id = ulid();
 	getDb()
 		.prepare(
-			`INSERT INTO permission_decisions(id, conversation_id, tool, args_summary, decision, decided_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO permission_decisions(conversation_id, tool, args_summary, decision, decided_at)
+			 VALUES (?, ?, ?, ?, ?)`
 		)
-		.run(id, conversationId, tool, argsSummary, decision, Date.now());
+		.run(conversationId, tool, argsSummary, decision, Date.now());
 }
 
 export interface PermissionDecisionRecord {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	conversationTitle: string | null;
 	tool: string;
 	argsSummary: string | null;
@@ -702,7 +700,7 @@ export interface PermissionDecisionRecord {
  * `userId`. Used by the settings page audit panel so users can see what
  * tools they've been approving (or denying) without spelunking SQLite.
  */
-export function listRecentDecisionsForUser(userId: string, limit = 50): PermissionDecisionRecord[] {
+export function listRecentDecisionsForUser(userId: number, limit = 50): PermissionDecisionRecord[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT pd.id, pd.conversation_id, c.title AS conversation_title,
@@ -714,8 +712,8 @@ export function listRecentDecisionsForUser(userId: string, limit = 50): Permissi
 			 LIMIT ?`
 		)
 		.all(userId, limit) as Array<{
-		id: string;
-		conversation_id: string;
+		id: number;
+		conversation_id: number;
 		conversation_title: string | null;
 		tool: string;
 		args_summary: string | null;

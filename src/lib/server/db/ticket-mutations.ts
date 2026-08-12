@@ -23,9 +23,9 @@ import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleto
  * only needs `userId`.
  */
 export interface TicketMutation {
-	userId: string;
+	userId: number;
 	workspaceKey?: string | undefined;
-	ticketId?: string | undefined;
+	ticketId?: number | undefined;
 }
 
 export type TicketMutationListener = (mutation: TicketMutation) => void;

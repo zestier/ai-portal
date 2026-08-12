@@ -54,8 +54,8 @@ const CreateBody = z.object({
 	plan: z.string().trim().max(100000).optional(),
 	priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
 	workspace: z.string().min(1).optional(),
-	sourceConversationId: z.string().min(1).optional(),
-	sourceMessageId: z.string().min(1).optional()
+	sourceConversationId: z.number().int().positive().optional(),
+	sourceMessageId: z.number().int().positive().optional()
 });
 
 export const POST: RequestHandler = async ({ locals, request }) => {

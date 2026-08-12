@@ -86,7 +86,7 @@ export const actions: Actions = {
 		const { ensureLocalUser } = await import('$lib/server/db/repos/users');
 		const user = ensureLocalUser();
 		locals.userId = user.id;
-		issue(cookies, user.id, url.protocol === 'https:');
+		issue(cookies, String(user.id), url.protocol === 'https:');
 		audit({
 			event_type: 'login',
 			actor_login: user.githubLogin,

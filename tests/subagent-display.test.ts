@@ -7,10 +7,10 @@ import {
 } from '../src/lib/client/subagent-display';
 import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '../src/lib/types';
 
-function tool(id: string, parentToolCallId: string | null, name = 'bash'): ToolCallRecord {
+function tool(id: number, parentToolCallId: number | null, name = 'bash'): ToolCallRecord {
 	return {
 		id,
-		messageId: 'm1',
+		messageId: 1,
 		tool: name,
 		argsJson: '{}',
 		resultJson: null,
@@ -22,10 +22,10 @@ function tool(id: string, parentToolCallId: string | null, name = 'bash'): ToolC
 	};
 }
 
-function reasoning(id: string, parentToolCallId: string | null): ReasoningBlockRecord {
+function reasoning(id: number, parentToolCallId: number | null): ReasoningBlockRecord {
 	return {
 		id,
-		messageId: 'm1',
+		messageId: 1,
 		segmentIndex: 0,
 		text: 'thinking',
 		kind: 'reasoning',
@@ -36,10 +36,10 @@ function reasoning(id: string, parentToolCallId: string | null): ReasoningBlockR
 	};
 }
 
-function edit(id: string, parentToolCallId: string | null): FileEditRecord {
+function edit(id: number, parentToolCallId: number | null): FileEditRecord {
 	return {
 		id,
-		messageId: 'm1',
+		messageId: 1,
 		path: 'a.ts',
 		diff: '',
 		createdAt: 0,
@@ -50,59 +50,55 @@ function edit(id: string, parentToolCallId: string | null): FileEditRecord {
 
 describe('isSubagentToolCall', () => {
 	it('identifies task calls, which render as sub-agent cards', () => {
-		expect(isSubagentToolCall(tool('t1', null, SUBAGENT_TOOL))).toBe(true);
+		expect(isSubagentToolCall(tool(1, null, SUBAGENT_TOOL))).toBe(true);
 	});
 
 	it('rejects ordinary tool calls', () => {
-		expect(isSubagentToolCall(tool('t1', null, 'bash'))).toBe(false);
+		expect(isSubagentToolCall(tool(1, null, 'bash'))).toBe(false);
 		// Near-miss names must not be treated as sub-agents.
-		expect(isSubagentToolCall(tool('t2', null, 'tasks'))).toBe(false);
+		expect(isSubagentToolCall(tool(2, null, 'tasks'))).toBe(false);
 	});
 });
 
 describe('selectSubagentChildren', () => {
 	it('selects only direct children across all three pools', () => {
 		const pools = {
-			tools: [tool('a', 'outer'), tool('b', 'other'), tool('c', null)],
-			reasoning: [reasoning('r1', 'outer'), reasoning('r2', null)],
-			edits: [edit('e1', 'outer'), edit('e2', 'other')]
+			tools: [tool(1, 100), tool(2, 101), tool(3, null)],
+			reasoning: [reasoning(1, 100), reasoning(2, null)],
+			edits: [edit(1, 100), edit(2, 101)]
 		};
-		const children = selectSubagentChildren(pools, 'outer');
-		expect(children.tools.map((t) => t.id)).toEqual(['a']);
-		expect(children.reasoning.map((r) => r.id)).toEqual(['r1']);
-		expect(children.edits.map((e) => e.id)).toEqual(['e1']);
+		const children = selectSubagentChildren(pools, 100);
+		expect(children.tools.map((t) => t.id)).toEqual([1]);
+		expect(children.reasoning.map((r) => r.id)).toEqual([1]);
+		expect(children.edits.map((e) => e.id)).toEqual([1]);
 	});
 
 	it('excludes grandchildren, which belong to the nested task call instead', () => {
-		// outer -> inner(task) -> grandchild
+		// outer(100) -> inner(10, task) -> grandchild(11)
 		const pools = {
-			tools: [
-				tool('inner', 'outer', SUBAGENT_TOOL),
-				tool('grandchild', 'inner'),
-				tool('sibling', 'outer')
-			]
+			tools: [tool(10, 100, SUBAGENT_TOOL), tool(11, 10), tool(12, 100)]
 		};
-		const outer = selectSubagentChildren(pools, 'outer');
-		expect(outer.tools.map((t) => t.id)).toEqual(['inner', 'sibling']);
+		const outer = selectSubagentChildren(pools, 100);
+		expect(outer.tools.map((t) => t.id)).toEqual([10, 12]);
 
 		// The grandchild is reachable one level down — the regression this
 		// guards is it being dropped from the UI entirely.
-		const inner = selectSubagentChildren(pools, 'inner');
-		expect(inner.tools.map((t) => t.id)).toEqual(['grandchild']);
+		const inner = selectSubagentChildren(pools, 10);
+		expect(inner.tools.map((t) => t.id)).toEqual([11]);
 	});
 
 	it('drops a self-referential row so a card cannot contain itself', () => {
-		const pools = { tools: [tool('loop', 'loop')] };
-		expect(selectSubagentChildren(pools, 'loop').tools).toEqual([]);
+		const pools = { tools: [tool(99, 99)] };
+		expect(selectSubagentChildren(pools, 99).tools).toEqual([]);
 	});
 
 	it('treats missing pools as empty rather than throwing', () => {
-		expect(selectSubagentChildren({}, 'outer')).toEqual({ tools: [], reasoning: [], edits: [] });
+		expect(selectSubagentChildren({}, 100)).toEqual({ tools: [], reasoning: [], edits: [] });
 	});
 
 	it('returns nothing for an id with no children', () => {
-		const pools = { tools: [tool('a', 'outer')] };
-		expect(selectSubagentChildren(pools, 'nobody').tools).toEqual([]);
+		const pools = { tools: [tool(1, 100)] };
+		expect(selectSubagentChildren(pools, 999).tools).toEqual([]);
 	});
 });
 

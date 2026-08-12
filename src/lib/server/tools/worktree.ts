@@ -107,7 +107,7 @@ function leaseView(
 ) {
 	const unavailable = dirtyCount === null || counts === undefined;
 	return {
-		leaseId: lease.id,
+		leaseId: String(lease.id),
 		label: lease.label,
 		path: lease.path,
 		branch: lease.branch,
@@ -175,7 +175,7 @@ function mergeErrorMessage(
 	return described.message;
 }
 
-export function buildWorktreeTools(ctx: { userId: string; conversationId: string }): PortalTool[] {
+export function buildWorktreeTools(ctx: { userId: number; conversationId: number }): PortalTool[] {
 	// Re-read the conversation per call rather than capturing it: a lease may be
 	// created many turns after the session was established.
 	const conversation = () => convs.get(ctx.conversationId, ctx.userId);
@@ -287,7 +287,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 				const { leaseId } = StatusArgs.parse(args);
 				const conv = conversation();
 				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
-				const lease = getLease(leaseId, ctx.userId);
+				const lease = getLease(Number(leaseId), ctx.userId);
 				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
 					return err(`no worktree with id ${leaseId} in this conversation`, {
 						code: 'lease_not_found'
@@ -355,7 +355,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 				const parsed = MergeArgs.parse(args);
 				const conv = conversation();
 				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
-				const lease = getLease(parsed.leaseId, ctx.userId);
+				const lease = getLease(Number(parsed.leaseId), ctx.userId);
 				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
 					return err(`no worktree with id ${parsed.leaseId} in this conversation`, {
 						code: 'lease_not_found'
@@ -437,7 +437,7 @@ export function buildWorktreeTools(ctx: { userId: string; conversationId: string
 			},
 			async handler(args) {
 				const parsed = RemoveArgs.parse(args);
-				const lease = getLease(parsed.leaseId, ctx.userId);
+				const lease = getLease(Number(parsed.leaseId), ctx.userId);
 				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
 					return err(`no worktree with id ${parsed.leaseId} in this conversation`, {
 						code: 'lease_not_found'

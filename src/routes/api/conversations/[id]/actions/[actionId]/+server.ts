@@ -95,7 +95,7 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 		throw error(400, resolved.error);
 	}
 
-	if (!claimActionRun(conversation.id, actionId)) {
+	if (!claimActionRun(String(conversation.id), actionId)) {
 		// Distinct from the gating denials above — this is a benign concurrency
 		// collision, not an authz failure, so don't write a `denied` audit row.
 		throw error(409, 'This action is already running for this conversation.');
@@ -138,7 +138,7 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 					yield ev;
 				}
 			} finally {
-				releaseActionRun(conversation.id, actionId);
+				releaseActionRun(String(conversation.id), actionId);
 				// "end" row reflecting the real outcome. A null terminal means the
 				// stream was torn down before a `done` event (client disconnect /
 				// abort) — record that as a failure so an incomplete run is visible.
@@ -164,7 +164,7 @@ export const POST: RequestHandler = async ({ params, locals, request, getClientA
 	} catch (err) {
 		// Release the guard if anything throws before the generator starts
 		// iterating, otherwise the flag would stick until restart.
-		releaseActionRun(conversation.id, actionId);
+		releaseActionRun(String(conversation.id), actionId);
 		throw err;
 	}
 };

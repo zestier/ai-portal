@@ -209,11 +209,11 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
-		const result = await attach.handler({ ticketId: ticket.id, path: bigFile });
+		const result = await attach.handler({ ticketId: String(ticket.id), path: bigFile });
 		expect(result.ok).toBe(false);
 		expect(!result.ok && result.error.code).toBe('file_too_large');
 	});
@@ -241,11 +241,11 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
-		const result = await attach.handler({ ticketId: ticket.id, path: smallFile });
+		const result = await attach.handler({ ticketId: String(ticket.id), path: smallFile });
 		expect(result.ok).toBe(false);
 		expect(!result.ok && result.error.code).toBe('attachment_limit');
 	});
@@ -262,11 +262,11 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
-		const result = await attach.handler({ ticketId: ticket.id, path: pngFile });
+		const result = await attach.handler({ ticketId: String(ticket.id), path: pngFile });
 		expect(result.ok).toBe(true);
 		expect(result.ok && (result.result as { mimeType: string }).mimeType).toBe('image/png');
 		expect(repo.countForTicket(ticket.id)).toBe(1);
@@ -289,11 +289,11 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
-		const result = await attach.handler({ ticketId: ticket.id, path: svgFile });
+		const result = await attach.handler({ ticketId: String(ticket.id), path: svgFile });
 		expect(result.ok).toBe(true);
 		expect(result.ok && (result.result as { mimeType: string }).mimeType).toBe('image/svg+xml');
 		const [meta] = repo.listMetaForTicket(ticket.id);
@@ -313,12 +313,12 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
 		const result = await attach.handler({
-			ticketId: ticket.id,
+			ticketId: String(ticket.id),
 			path: join(workspace, 'nonexistent.png')
 		});
 		expect(result.ok).toBe(false);
@@ -337,11 +337,11 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
-		const req = attach.derivePermissionRequest!({ ticketId: ticket.id, path: pngFile });
+		const req = attach.derivePermissionRequest!({ ticketId: String(ticket.id), path: pngFile });
 		expect(req).not.toBeNull();
 		expect(req!.permissionKind).toBe('read');
 		expect(req!.path).toBe(pngFile);
@@ -356,12 +356,12 @@ describe('ticket_attach tool cap enforcement', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const attach = tools.find((t) => t.name === 'ticket_attach')!;
 
 		const req = attach.derivePermissionRequest!({
-			ticketId: ticket.id,
+			ticketId: String(ticket.id),
 			path: join(workspace, 'missing.png')
 		});
 		expect(req).not.toBeNull();
@@ -395,11 +395,14 @@ describe('ticket_detach and ticket_view_attachment tools', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const detach = tools.find((t) => t.name === 'ticket_detach')!;
 
-		const result = await detach.handler({ ticketId: ticket.id, attachmentId: meta.id });
+		const result = await detach.handler({
+			ticketId: String(ticket.id),
+			attachmentId: String(meta.id)
+		});
 		expect(result.ok).toBe(true);
 		expect(repo.listMetaForTicket(ticket.id)).toHaveLength(0);
 	});
@@ -413,11 +416,11 @@ describe('ticket_detach and ticket_view_attachment tools', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const detach = tools.find((t) => t.name === 'ticket_detach')!;
 
-		const result = await detach.handler({ ticketId: ticket.id, attachmentId: 'nonexistent' });
+		const result = await detach.handler({ ticketId: String(ticket.id), attachmentId: '999999' });
 		expect(result.ok).toBe(false);
 		expect(!result.ok && result.error.code).toBe('not_found');
 	});
@@ -440,11 +443,14 @@ describe('ticket_detach and ticket_view_attachment tools', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const view = tools.find((t) => t.name === 'ticket_view_attachment')!;
 
-		const result = await view.handler({ ticketId: ticket.id, attachmentId: meta.id });
+		const result = await view.handler({
+			ticketId: String(ticket.id),
+			attachmentId: String(meta.id)
+		});
 		expect(result.ok).toBe(true);
 		expect(result.ok && result.result).toBe('hello world\n');
 	});
@@ -467,11 +473,14 @@ describe('ticket_detach and ticket_view_attachment tools', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const view = tools.find((t) => t.name === 'ticket_view_attachment')!;
 
-		const result = await view.handler({ ticketId: ticket.id, attachmentId: meta.id });
+		const result = await view.handler({
+			ticketId: String(ticket.id),
+			attachmentId: String(meta.id)
+		});
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.binary).toBeDefined();
@@ -506,11 +515,14 @@ describe('ticket_detach and ticket_view_attachment tools', () => {
 		const tools = buildTicketTools({
 			userId: other.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const view = tools.find((t) => t.name === 'ticket_view_attachment')!;
 
-		const result = await view.handler({ ticketId: ticket.id, attachmentId: meta.id });
+		const result = await view.handler({
+			ticketId: String(ticket.id),
+			attachmentId: String(meta.id)
+		});
 		expect(result.ok).toBe(false);
 	});
 
@@ -521,7 +533,7 @@ describe('ticket_detach and ticket_view_attachment tools', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const view = tools.find((t) => t.name === 'ticket_view_attachment')!;
 		expect(view.permissionBehavior).toBe('never-prompt');
@@ -554,10 +566,10 @@ describe('ticket_get includes attachments metadata', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const get = tools.find((t) => t.name === 'ticket_get')!;
-		const result = await get.handler({ id: ticket.id });
+		const result = await get.handler({ id: String(ticket.id) });
 		expect(result.ok).toBe(true);
 		const data = result.ok && (result.result as Record<string, unknown>);
 		expect(data).toHaveProperty('attachments');
@@ -575,10 +587,10 @@ describe('ticket_get includes attachments metadata', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: 'conv-1'
+			conversationId: 1
 		});
 		const get = tools.find((t) => t.name === 'ticket_get')!;
-		const result = await get.handler({ id: ticket.id });
+		const result = await get.handler({ id: String(ticket.id) });
 		expect(result.ok).toBe(true);
 		const data = result.ok && (result.result as Record<string, unknown>);
 		expect(data).not.toHaveProperty('attachments');

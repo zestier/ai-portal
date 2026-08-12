@@ -6,8 +6,8 @@ import { getDb } from '../index';
 import type { InitialMessagePreview, TurnInput } from '$lib/types';
 
 interface TurnInputRow {
-	message_id: string;
-	conversation_id: string;
+	message_id: number;
+	conversation_id: number;
 	turn_id: string | null;
 	full_input: string;
 	prompt_body: string;
@@ -20,8 +20,8 @@ interface TurnInputRow {
 }
 
 export interface RecordTurnInput {
-	messageId: string;
-	conversationId: string;
+	messageId: number;
+	conversationId: number;
 	turnId?: string | null;
 	fullInput: string;
 	promptBody: string;
@@ -66,7 +66,7 @@ export function record(input: RecordTurnInput): void {
 	);
 }
 
-export function get(conversationId: string, messageId: string): TurnInput | null {
+export function get(conversationId: number, messageId: number): TurnInput | null {
 	const db = getDb();
 	const row = db
 		.prepare('SELECT * FROM turn_inputs WHERE conversation_id = ? AND message_id = ?')

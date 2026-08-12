@@ -154,9 +154,8 @@ describe('rerun routes: error surfacing', () => {
 		const { users, convs, messages, editRoute, regenRoute } = await freshImports();
 		const user = users.ensureLocalUser();
 		const conversationId = 'MISSINGWORKTREE';
-		const worktreePath = join(dataDir, 'worktrees', user.id, conversationId);
+		const worktreePath = join(dataDir, 'worktrees', String(user.id), conversationId);
 		const conversation = convs.create(user.id, {
-			id: conversationId,
 			title: 'managed',
 			workdir: worktreePath,
 			workspaceKind: 'managed-worktree',
@@ -238,7 +237,7 @@ describe('rerun routes: error surfacing', () => {
 		expect(isHttpError(thrown)).toBe(true);
 		expect((thrown as { status: number }).status).toBe(502);
 		expect(convs.listChildren(user.id, conversation.id)).toEqual([]);
-		const userRoot = join(worktreeRoot, user.id);
+		const userRoot = join(worktreeRoot, String(user.id));
 		expect(existsSync(userRoot) ? readdirSync(userRoot) : []).toEqual([]);
 		expect(git(source, ['branch', '--list', 'portal/*'])).toBe('');
 	});

@@ -4,7 +4,7 @@ import { conversationWorkspaceRoot, resolveWorkspaceRoot } from '$lib/server/fil
 import { resolveAndValidate } from '$lib/server/workdir';
 import type { Conversation } from '$lib/types';
 
-export function defaultTicketWorkspace(userId: string): string {
+export function defaultTicketWorkspace(userId: number): string {
 	const userSettings = settings.get(userId) ?? settings.defaults();
 	// Route the stored per-user default through conversationWorkspaceRoot so a
 	// stale/out-of-allowlist defaultWorkdir folds back to PROJECT_ROOT (same
@@ -20,7 +20,7 @@ export function ticketWorkspaceFromConversation(
 		: conversationOrWorkdir.workspaceKey;
 }
 
-export function ticketWorkspaceFromInput(input: string | undefined, userId: string): string {
+export function ticketWorkspaceFromInput(input: string | undefined, userId: number): string {
 	if (!input) return defaultTicketWorkspace(userId);
 	const resolved = resolveAndValidate(input);
 	if (!resolved.ok) throw error(400, resolved.reason);

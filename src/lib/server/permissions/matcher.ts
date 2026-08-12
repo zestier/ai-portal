@@ -52,7 +52,7 @@ export interface GrantRow {
 	 * NULL = user-global grant. Used by callers that mix conversation-scoped
 	 * and user-global rows; matchGrants does not itself filter on this.
 	 */
-	conversationId: string | null;
+	conversationId: number | null;
 }
 
 export interface MatchQuery {

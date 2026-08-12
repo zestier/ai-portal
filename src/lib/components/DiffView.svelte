@@ -39,7 +39,11 @@
 		 * How to fetch a trimmed diff on demand. Supplying this turns a null
 		 * `diff` into an explicit "load diff" affordance rather than an error.
 		 */
-		lazy?: { conversationId: string; fileEditId: string; bytes?: number | undefined } | null;
+		lazy?: {
+			conversationId: number;
+			fileEditId: number | string;
+			bytes?: number | undefined;
+		} | null;
 		showLineNumbers?: boolean;
 		collapsible?: boolean;
 		/** When true, each code line gets an affordance to attach a review comment. */

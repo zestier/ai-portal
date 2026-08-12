@@ -9,7 +9,7 @@ async function freshImports() {
 	return { users, convs, messages, db };
 }
 
-function ftsCount(db: { getDb: () => import('better-sqlite3').Database }, convId: string): number {
+function ftsCount(db: { getDb: () => import('better-sqlite3').Database }, convId: number): number {
 	const row = db
 		.getDb()
 		.prepare('SELECT COUNT(*) AS n FROM messages_fts WHERE conversation_id = ?')

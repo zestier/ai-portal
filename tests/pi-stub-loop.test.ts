@@ -16,8 +16,8 @@ describe('pi stub loop', () => {
 
 		const { openPiSession } = await import('../src/lib/server/pi');
 		const bridge: ProviderOpenOptions = {
-			conversationId: 'conv-pi-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: wd,
 			model: 'stub',
 			policy: 'prompt'

@@ -44,8 +44,10 @@ const REJECT_STATUS: Record<string, number> = {
  */
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
-	const sourceId = params.id!;
-	const messageId = params.messageId!;
+	const sourceId = Number(params.id);
+	const messageId = Number(params.messageId);
+	if (!Number.isInteger(sourceId) || sourceId <= 0) throw error(404);
+	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
 	// Accept an empty body for retry-from-assistant.
 	const parsed = await parseBody(request, Body, { allowEmpty: true });
 
@@ -84,6 +86,9 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		if (e instanceof ForkRejected) {
 			throw error(REJECT_STATUS[e.reason] ?? 400, e.message);
 		}
-		throwRerunFailure({ route: 'message_fork', conversationId: sourceId, userId }, e);
+		throwRerunFailure(
+			{ route: 'message_fork', conversationId: String(sourceId), userId: String(userId) },
+			e
+		);
 	}
 };

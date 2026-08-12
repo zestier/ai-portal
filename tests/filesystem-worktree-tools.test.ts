@@ -47,12 +47,12 @@ function expectErr(result: ToolResult): { message: string; code?: string } {
 
 describe('filesystem tools inside a worktree lease', () => {
 	let source: string;
-	let userId: string;
-	let conversationId: string;
+	let userId: number;
+	let conversationId: number;
 	let leasePath: string;
 	let leaseId: string;
 	let tools: Map<string, PortalTool>;
-	let newConversation: () => string;
+	let newConversation: () => number;
 
 	beforeEach(async () => {
 		const dataDir = await setupLocalEnv('portal-fs-worktree-');
@@ -67,7 +67,6 @@ describe('filesystem tools inside a worktree lease', () => {
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		newConversation = () =>
 			convs.create(userId, {
-				id: convs.newId(),
 				title: 'orchestrator',
 				workdir: source,
 				model: 'test-model',

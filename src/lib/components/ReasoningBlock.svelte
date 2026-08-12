@@ -22,7 +22,11 @@
 		 * the first time it is expanded; the collapsed header is unaffected, since
 		 * it is drawn entirely from `durationMs`.
 		 */
-		lazy?: { conversationId: string; reasoningBlockId: string; bytes?: number | undefined } | null;
+		lazy?: {
+			conversationId: number;
+			reasoningBlockId: number | string;
+			bytes?: number | undefined;
+		} | null;
 	} = $props();
 
 	// Lazily-fetched text for a trimmed block. Keyed by record in a shared store,

@@ -26,7 +26,7 @@
 	let busy = $state(false);
 	let pickerOpen = $state(false);
 	let loadingTemplates = $state(false);
-	let launchingTemplateId = $state<string | null>(null);
+	let launchingTemplateId = $state<number | null>(null);
 	let launchController: AbortController | null = null;
 	let templates = $state<PromptTemplateListItem[] | null>(null);
 	let localError = $state<string | null>(null);

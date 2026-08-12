@@ -168,7 +168,7 @@ describe('snapshots', () => {
 		// a FK to messages(id) (foreign_keys = ON), so the INSERT will fail
 		// after the ref has been created — exercising the cleanup path.
 		convs.create(u.id, { title: 't', workdir, model: null });
-		const orphanId = 'no-such-message-id';
+		const orphanId = 999999;
 
 		initGitRepo(workdir);
 		writeFileSync(join(workdir, 'a.txt'), 'one\n');

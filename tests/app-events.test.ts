@@ -9,7 +9,7 @@ import {
 } from '../src/lib/server/runtime/app-events';
 import type { AppEvent } from '../src/lib/types';
 
-function awaiting(conversationId: string, awaiting: boolean): AppEvent {
+function awaiting(conversationId: number, awaiting: boolean): AppEvent {
 	return { type: 'awaiting.changed', conversationId, awaiting };
 }
 
@@ -20,7 +20,7 @@ function awaiting(conversationId: string, awaiting: boolean): AppEvent {
  */
 async function take(
 	bus: AppEventBus,
-	userId: string,
+	userId: number,
 	count: number,
 	opts: { sinceId?: string; timeoutMs?: number } = {},
 	produce?: () => void
@@ -53,12 +53,12 @@ async function take(
 describe('app event bus', () => {
 	it('delivers live published events to a subscriber', async () => {
 		const bus = getAppEventBus();
-		const userId = `u-${Math.random()}`;
+		const userId = Math.floor(Math.random() * 1e9);
 		const got = await take(bus, userId, 2, {}, () => {
-			bus.publish(userId, awaiting('c1', true));
-			bus.publish(userId, awaiting('c2', true));
+			bus.publish(userId, awaiting(1, true));
+			bus.publish(userId, awaiting(2, true));
 		});
-		expect(got.map((e) => e.event)).toEqual([awaiting('c1', true), awaiting('c2', true)]);
+		expect(got.map((e) => e.event)).toEqual([awaiting(1, true), awaiting(2, true)]);
 		// Ids are monotonically-increasing ULID cursors.
 		expect(typeof got[0].id).toBe('string');
 		expect(got[1].id > got[0].id).toBe(true);
@@ -66,7 +66,7 @@ describe('app event bus', () => {
 
 	it('replays buffered events newer than Last-Event-ID on reconnect', async () => {
 		const bus = getAppEventBus();
-		const userId = `u-${Math.random()}`;
+		const userId = Math.floor(Math.random() * 1e9);
 
 		// Keep one subscriber open so the channel (and its replay buffer) isn't
 		// GC'd, then publish three events and capture the first id from it.
@@ -78,15 +78,15 @@ describe('app event bus', () => {
 			}
 		})();
 		await Promise.resolve();
-		bus.publish(userId, awaiting('c1', true));
-		bus.publish(userId, awaiting('c1', false));
-		bus.publish(userId, awaiting('c2', true));
+		bus.publish(userId, awaiting(1, true));
+		bus.publish(userId, awaiting(1, false));
+		bus.publish(userId, awaiting(2, true));
 		while (seen.length < 3) await new Promise((r) => setTimeout(r, 0));
 		const firstId = seen[0].id;
 
 		// Reconnect from the first id: only the two strictly-newer events replay.
 		const got = await take(bus, userId, 2, { sinceId: firstId });
-		expect(got.map((e) => e.event)).toEqual([awaiting('c1', false), awaiting('c2', true)]);
+		expect(got.map((e) => e.event)).toEqual([awaiting(1, false), awaiting(2, true)]);
 		expect(got.every((e) => e.id > firstId)).toBe(true);
 
 		keepAlive.abort();
@@ -95,28 +95,28 @@ describe('app event bus', () => {
 
 	it('replay then live is gap- and duplicate-free', async () => {
 		const bus = getAppEventBus();
-		const userId = `u-${Math.random()}`;
-		bus.publish(userId, awaiting('c1', true)); // buffered
+		const userId = Math.floor(Math.random() * 1e9);
+		bus.publish(userId, awaiting(1, true)); // buffered
 
 		const got = await take(bus, userId, 2, {}, () => {
 			// Published after subscribe registered: arrives live, not via replay.
-			bus.publish(userId, awaiting('c1', false));
+			bus.publish(userId, awaiting(1, false));
 		});
-		expect(got.map((e) => e.event)).toEqual([awaiting('c1', true), awaiting('c1', false)]);
+		expect(got.map((e) => e.event)).toEqual([awaiting(1, true), awaiting(1, false)]);
 		expect(got[1].id > got[0].id).toBe(true);
 	});
 
 	it('keeps live events flowing after an idle-GC reconnect with Last-Event-ID', async () => {
 		const bus = getAppEventBus();
-		const userId = `u-${Math.random()}`;
+		const userId = Math.floor(Math.random() * 1e9);
 
 		// First connection mints several ids, then fully disconnects so the idle
 		// channel is GC'd — exactly what happens on a proxy/idle drop before the
 		// browser auto-reconnects.
 		const first = await take(bus, userId, 3, {}, () => {
-			bus.publish(userId, awaiting('c1', true));
-			bus.publish(userId, awaiting('c1', false));
-			bus.publish(userId, awaiting('c2', true));
+			bus.publish(userId, awaiting(1, true));
+			bus.publish(userId, awaiting(1, false));
+			bus.publish(userId, awaiting(2, true));
 		});
 		const lastSeen = first[first.length - 1].id;
 
@@ -124,67 +124,67 @@ describe('app event bus', () => {
 		// channel recreation, so the fresh event still out-ranks `lastSeen` and
 		// is delivered (a per-user counter would have reset and dropped it).
 		const resumed = await take(bus, userId, 1, { sinceId: lastSeen }, () => {
-			bus.publish(userId, awaiting('c3', true));
+			bus.publish(userId, awaiting(3, true));
 		});
-		expect(resumed.map((e) => e.event)).toEqual([awaiting('c3', true)]);
+		expect(resumed.map((e) => e.event)).toEqual([awaiting(3, true)]);
 		expect(resumed[0].id > lastSeen).toBe(true);
 	});
 
 	it('isolates events per user', async () => {
 		const bus = getAppEventBus();
-		const a = `a-${Math.random()}`;
-		const b = `b-${Math.random()}`;
+		const a = 1001 + Math.floor(Math.random() * 1e6);
+		const b = 2001 + Math.floor(Math.random() * 1e6);
 		const got = await take(bus, a, 1, {}, () => {
-			bus.publish(b, awaiting('other', true));
-			bus.publish(a, awaiting('mine', true));
+			bus.publish(b, awaiting(9, true));
+			bus.publish(a, awaiting(7, true));
 		});
-		expect(got.map((e) => e.event)).toEqual([awaiting('mine', true)]);
+		expect(got.map((e) => e.event)).toEqual([awaiting(7, true)]);
 	});
 
 	it('publishAppEvent routes through the shared singleton bus', async () => {
 		const bus = getAppEventBus();
-		const userId = `u-${Math.random()}`;
+		const userId = Math.floor(Math.random() * 1e9);
 		const got = await take(bus, userId, 1, {}, () => {
-			publishAppEvent(userId, awaiting('c1', true));
+			publishAppEvent(userId, awaiting(1, true));
 		});
-		expect(got.map((e) => e.event)).toEqual([awaiting('c1', true)]);
+		expect(got.map((e) => e.event)).toEqual([awaiting(1, true)]);
 	});
 
 	it('reaps subscriber-less channels after the idle TTL (no unbounded growth)', async () => {
 		const bus = getAppEventBus();
-		const stale = `stale-${Math.random()}`;
-		const other = `other-${Math.random()}`;
+		const stale = 3001 + Math.floor(Math.random() * 1e6);
+		const other = 4001 + Math.floor(Math.random() * 1e6);
 		const base = Date.now();
 		const nowSpy = vi.spyOn(Date, 'now');
 
 		// A user publishes a transition while never connected -> buffered.
 		nowSpy.mockReturnValue(base);
-		bus.publish(stale, awaiting('c1', true));
+		bus.publish(stale, awaiting(1, true));
 
 		// Within the TTL the buffer is still there: a (re)connect replays it.
 		nowSpy.mockReturnValue(base + 60_000);
 		const fresh = await take(bus, stale, 1, { sinceId: '' });
-		expect(fresh.map((e) => e.event)).toEqual([awaiting('c1', true)]);
+		expect(fresh.map((e) => e.event)).toEqual([awaiting(1, true)]);
 
 		// Long past the TTL, any publish (here for a different user) sweeps the
 		// idle channel. The stale user's buffer is gone: a later subscribe is a
 		// fresh empty channel and replays nothing.
 		nowSpy.mockReturnValue(base + 10 * 60_000);
-		bus.publish(other, awaiting('x', true));
+		bus.publish(other, awaiting(9, true));
 
 		const afterReap = await take(bus, stale, 1, { sinceId: '', timeoutMs: 150 }, () => {
 			// Only a freshly-published live event should arrive — no replay of c1.
-			bus.publish(stale, awaiting('c2', false));
+			bus.publish(stale, awaiting(2, false));
 		});
-		expect(afterReap.map((e) => e.event)).toEqual([awaiting('c2', false)]);
+		expect(afterReap.map((e) => e.event)).toEqual([awaiting(2, false)]);
 
 		nowSpy.mockRestore();
 	});
 
 	it('reaps a subscriber-less channel past TTL on the next unrelated disconnect (no publish)', async () => {
 		const bus = getAppEventBus();
-		const stale = `stale-${Math.random()}`;
-		const other = `other-${Math.random()}`;
+		const stale = 3001 + Math.floor(Math.random() * 1e6);
+		const other = 4001 + Math.floor(Math.random() * 1e6);
 		const base = Date.now();
 		const nowSpy = vi.spyOn(Date, 'now');
 
@@ -192,7 +192,7 @@ describe('app event bus', () => {
 		// channel sitting in the map, awaiting reaping. No publish ever follows.
 		nowSpy.mockReturnValue(base);
 		await take(bus, stale, 1, { timeoutMs: 50 }, () => {
-			bus.publish(stale, awaiting('c1', true));
+			bus.publish(stale, awaiting(1, true));
 		});
 
 		// Long past the TTL, a *different* user merely connects and disconnects
@@ -206,9 +206,9 @@ describe('app event bus', () => {
 		// replays nothing — only the freshly-published live event arrives.
 		nowSpy.mockReturnValue(base + 10 * 60_000);
 		const afterReap = await take(bus, stale, 1, { sinceId: '', timeoutMs: 150 }, () => {
-			bus.publish(stale, awaiting('c2', false));
+			bus.publish(stale, awaiting(2, false));
 		});
-		expect(afterReap.map((e) => e.event)).toEqual([awaiting('c2', false)]);
+		expect(afterReap.map((e) => e.event)).toEqual([awaiting(2, false)]);
 
 		nowSpy.mockRestore();
 	});
@@ -217,11 +217,11 @@ describe('app event bus', () => {
 		vi.useFakeTimers();
 		try {
 			const bus = getAppEventBus();
-			const stale = `stale-${Math.random()}`;
+			const stale = 3001 + Math.floor(Math.random() * 1e6);
 
 			// Buffer an event for a never-connected user, then leave the process
 			// idle: no further publish, no further subscribe.
-			bus.publish(stale, awaiting('c1', true));
+			bus.publish(stale, awaiting(1, true));
 
 			startAppEventReaper();
 			// Advance past two sweeps: the interval period equals the TTL, so the
@@ -241,9 +241,9 @@ describe('app event bus', () => {
 				}
 			})();
 			await Promise.resolve();
-			bus.publish(stale, awaiting('c2', false));
+			bus.publish(stale, awaiting(2, false));
 			await iter;
-			expect(out.map((e) => e.event)).toEqual([awaiting('c2', false)]);
+			expect(out.map((e) => e.event)).toEqual([awaiting(2, false)]);
 		} finally {
 			stopAppEventReaper();
 			vi.useRealTimers();

@@ -15,8 +15,8 @@ type EventOverrides = { request?: Request };
 
 function makeEvent(
 	url: string,
-	params: Record<string, string>,
-	userId: string,
+	params: Record<string, string | number>,
+	userId: number,
 	user: unknown,
 	overrides: EventOverrides = {}
 ) {

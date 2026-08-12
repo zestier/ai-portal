@@ -4,8 +4,8 @@ import { patchTicketStatus } from '../src/lib/client/ticket-status';
 import type { ChatPromptTemplate, WorkspaceTicket } from '../src/lib/types';
 
 const ticket: WorkspaceTicket = {
-	id: 'ticket-1',
-	userId: 'user-1',
+	id: 1,
+	userId: 1,
 	workspaceKey: '/workspace',
 	title: 'Fix sidebar actions',
 	body: 'Add a launch button.',
@@ -21,8 +21,8 @@ const ticket: WorkspaceTicket = {
 
 function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate {
 	return {
-		id: 'action-do',
-		userId: 'user-1',
+		id: 100,
+		userId: 1,
 		type: 'ticket-action',
 		title: 'Do',
 		description: '',
@@ -75,7 +75,7 @@ describe('createTicketLaunchChat', () => {
 		expect(calls[1].url).toBe('/api/conversations/conv-1/turns');
 		expect(JSON.parse(calls[1].init.body as string)).toEqual({
 			content:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ticket-1\n\nAdd a launch button.\n\nPlan:\n(none)'
+				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: 1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 	});
 
@@ -187,11 +187,11 @@ describe('patchTicketStatus', () => {
 			return Response.json({ ok: true }, { status: 200 });
 		});
 
-		const result = await patchTicketStatus({ ticketId: 'ticket-1', status: 'done', fetcher });
+		const result = await patchTicketStatus({ ticketId: 1, status: 'done', fetcher });
 
 		expect(result).toEqual({ ok: true });
 		const [url, init] = fetcher.mock.calls[0];
-		expect(url).toBe('/api/tickets/ticket-1');
+		expect(url).toBe('/api/tickets/1');
 		expect(init.method).toBe('PATCH');
 		expect(JSON.parse(init.body as string)).toEqual({ status: 'done' });
 	});
@@ -203,20 +203,20 @@ describe('patchTicketStatus', () => {
 			return new Response(null, { status: 404 });
 		});
 
-		const result = await patchTicketStatus({ ticketId: 'ticket-1', status: 'archived', fetcher });
+		const result = await patchTicketStatus({ ticketId: 1, status: 'archived', fetcher });
 
 		expect(result).toEqual({ ok: false, status: 404 });
 	});
 
-	it('encodes the ticket id in the URL', async () => {
+	it('passes the numeric ticket id through to the URL', async () => {
 		const fetcher = vi.fn(async (url: string, init: RequestInit) => {
 			void url;
 			void init;
 			return Response.json({ ok: true }, { status: 200 });
 		});
 
-		await patchTicketStatus({ ticketId: 'a/b', status: 'open', fetcher });
+		await patchTicketStatus({ ticketId: 12345, status: 'open', fetcher });
 
-		expect(fetcher.mock.calls[0][0]).toBe('/api/tickets/a%2Fb');
+		expect(fetcher.mock.calls[0][0]).toBe('/api/tickets/12345');
 	});
 });

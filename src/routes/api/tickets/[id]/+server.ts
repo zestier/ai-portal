@@ -30,22 +30,26 @@ const PatchBody = z
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const ticket = tickets.get(params.id, userId);
+	const ticketId = Number(params.id);
+	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
+	const ticket = tickets.get(ticketId, userId);
 	if (!ticket) throw error(404);
-	const attachments = ticketAttachments.listMetaForTicket(params.id);
+	const attachments = ticketAttachments.listMetaForTicket(ticketId);
 	return json({ ticket, attachments });
 };
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
 	const body = await parseBody(request, PatchBody);
-	const current = tickets.get(params.id, userId);
+	const ticketId = Number(params.id);
+	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
+	const current = tickets.get(ticketId, userId);
 	if (!current) throw error(404);
 	if (body.workspace) {
 		const workspace = ticketWorkspaceFromInput(body.workspace, userId);
 		if (current.workspaceKey !== workspace) throw error(404);
 	}
-	const ticket = tickets.update(params.id, userId, {
+	const ticket = tickets.update(ticketId, userId, {
 		...(body.title !== undefined ? { title: body.title } : {}),
 		...(body.body !== undefined ? { body: body.body } : {}),
 		...(body.plan !== undefined ? { plan: body.plan } : {}),
@@ -58,7 +62,9 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 
 export const DELETE: RequestHandler = ({ params, locals, url }) => {
 	const userId = requireUserId(locals);
-	const current = tickets.get(params.id, userId);
+	const ticketId = Number(params.id);
+	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
+	const current = tickets.get(ticketId, userId);
 	if (!current) throw error(404);
 	const requestedWorkspace = url.searchParams.get('workspace');
 	if (requestedWorkspace) {
@@ -70,11 +76,11 @@ export const DELETE: RequestHandler = ({ params, locals, url }) => {
 	// keeps the historical soft-delete behavior, archiving the ticket so it can
 	// still be reopened.
 	if (url.searchParams.get('purge') === 'true') {
-		const deleted = tickets.remove(params.id, userId);
+		const deleted = tickets.remove(ticketId, userId);
 		if (!deleted) throw error(404);
 		return json({ ok: true, deleted: true });
 	}
-	const ticket = tickets.update(params.id, userId, { status: 'archived' });
+	const ticket = tickets.update(ticketId, userId, { status: 'archived' });
 	if (!ticket) throw error(404);
 	return json({ ok: true, ticket });
 };

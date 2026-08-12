@@ -31,12 +31,13 @@ import { extractAndCommitMemory } from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
 import type { MemoryMode } from '$lib/types';
 import { ModelCompletionError } from '../pi/complete';
+import { mintReasoningBlockId, mintToolCallId } from '../db/repos/messages';
 import type { ProviderOpenOptions, ProviderSession } from '../pi/session-contract';
 import { isPiMode } from '../pi';
 import type { PortalEvent } from '$lib/types';
 
 interface PendingTool {
-	toolCallId: string;
+	toolCallId: number;
 	tool: string;
 	argsJson: string;
 	resultJson: string | null;
@@ -44,18 +45,18 @@ interface PendingTool {
 	startedAt: number;
 	endedAt: number | null;
 	textOffset: number | null;
-	parentToolCallId: string | null;
+	parentToolCallId: number | null;
 }
 
 interface PendingReasoning {
-	id: string;
+	id: number;
 	segmentIndex: number;
 	text: string;
 	kind: 'reasoning' | 'content';
 	textOffset: number | null;
 	startedAt: number;
 	durationMs: number | null;
-	parentToolCallId: string | null;
+	parentToolCallId: number | null;
 }
 
 // Nudge used by the memory-mode continuation guard. Some models treat a single
@@ -88,7 +89,7 @@ const MEMORY_RECALL_TOOLS = new Set([
 // model made was a memory recall — the "checked memory then ended the turn"
 // failure mode. Sub-agent (child) tool calls are ignored: they belong to a
 // non-memory parent tool, which represents real work, not the failure mode.
-function isMemoryOnlyEmptyTurn(assistantText: string, tools: Map<string, PendingTool>): boolean {
+function isMemoryOnlyEmptyTurn(assistantText: string, tools: Map<number, PendingTool>): boolean {
 	if (assistantText.trim().length > 0) return false;
 	let sawTopLevelRecall = false;
 	for (const t of tools.values()) {
@@ -121,7 +122,7 @@ export interface SubscribeOptions {
 
 export interface Turn {
 	id: string;
-	conversationId: string;
+	conversationId: number;
 	startedAt: number;
 	endedAt: number | null;
 	status: 'running' | 'complete' | 'interrupted' | 'error';
@@ -143,7 +144,7 @@ interface InternalTurn extends Turn {
 // with no assistant response while the orphaned turn quietly persisted to
 // the DB minutes later. Same rationale as keeping the DB handle pinned.
 const TURNS_KEYS = appGlobalSymbols('turns');
-type TurnRegistry = Map<string, InternalTurn>;
+type TurnRegistry = Map<number, InternalTurn>;
 const turns: TurnRegistry = getOrCreateGlobalSingleton(TURNS_KEYS, () => new Map());
 
 // Tell the session pool that a conversation with a running turn is alive, so
@@ -169,16 +170,16 @@ pool.registerKeepAlive?.('turns.active', (conversationId) => {
 // rejected immediately and deterministically. Stashed on globalThis for the
 // same HMR-survival reason as the turn registry.
 const RESERVATIONS_KEYS = appGlobalSymbols('turn-reservations');
-const reservations: Set<string> = getOrCreateGlobalSingleton(
+const reservations: Set<number> = getOrCreateGlobalSingleton(
 	RESERVATIONS_KEYS,
-	() => new Set<string>()
+	() => new Set<number>()
 );
 
 // Thrown when a turn is already running or reserved for a conversation. Typed
 // so HTTP handlers can map it to a 409 (Conflict) instead of leaking a bare 500.
 export class TurnAlreadyInProgressError extends Error {
-	readonly conversationId: string;
-	constructor(conversationId: string) {
+	readonly conversationId: number;
+	constructor(conversationId: number) {
 		super('turn already in progress for this conversation');
 		this.name = 'TurnAlreadyInProgressError';
 		this.conversationId = conversationId;
@@ -188,7 +189,7 @@ export class TurnAlreadyInProgressError extends Error {
 // True when a turn is actively running OR a synchronous reservation is held for
 // the conversation. A finished-but-still-cached turn (grace window) does not
 // count as active.
-function isTurnActiveOrReserved(conversationId: string): boolean {
+function isTurnActiveOrReserved(conversationId: number): boolean {
 	return turns.get(conversationId)?.status === 'running' || reservations.has(conversationId);
 }
 
@@ -197,7 +198,7 @@ function isTurnActiveOrReserved(conversationId: string): boolean {
 // async setup that precedes `startTurn`. Throws `TurnAlreadyInProgressError` if
 // a turn is already running or reserved. Pair every successful call with
 // `releaseTurnReservation` in a `finally`.
-export function reserveTurn(conversationId: string): void {
+export function reserveTurn(conversationId: number): void {
 	if (isTurnActiveOrReserved(conversationId)) {
 		throw new TurnAlreadyInProgressError(conversationId);
 	}
@@ -206,7 +207,7 @@ export function reserveTurn(conversationId: string): void {
 
 // Release a reservation taken by `reserveTurn`. Safe to call even if no
 // reservation is held (idempotent), so it can live in a `finally`.
-export function releaseTurnReservation(conversationId: string): void {
+export function releaseTurnReservation(conversationId: number): void {
 	reservations.delete(conversationId);
 }
 
@@ -215,7 +216,7 @@ export function releaseTurnReservation(conversationId: string): void {
 // still replay the full event log instead of missing it.
 const FINISHED_GRACE_MS = 60_000;
 
-export function getTurn(conversationId: string): Turn | null {
+export function getTurn(conversationId: number): Turn | null {
 	return turns.get(conversationId) ?? null;
 }
 
@@ -227,8 +228,8 @@ export function getTurn(conversationId: string): Turn | null {
  *
  * SINGLE-INSTANCE, like every other consumer of this registry.
  */
-export function runningConversationIds(): Set<string> {
-	const out = new Set<string>();
+export function runningConversationIds(): Set<number> {
+	const out = new Set<number>();
 	for (const [conversationId, turn] of turns) {
 		if (turn.status === 'running') out.add(conversationId);
 	}
@@ -239,7 +240,7 @@ export function runningConversationIds(): Set<string> {
 // conversation. Used by the streaming endpoint, which keys URLs by
 // `turnId` so reconnects always land on the same logical stream even
 // if a new turn replaced the registry slot.
-export function getTurnById(conversationId: string, turnId: string): Turn | null {
+export function getTurnById(conversationId: number, turnId: string): Turn | null {
 	const t = turns.get(conversationId);
 	return t && t.id === turnId ? t : null;
 }
@@ -247,17 +248,17 @@ export function getTurnById(conversationId: string, turnId: string): Turn | null
 export interface StartTurnOptions {
 	bridge: ProviderOpenOptions;
 	prompt: string;
-	conversationId: string;
+	conversationId: number;
 	// The user message that triggered this turn. When provided, the full
 	// assembled provider input (prelude + prompt) is captured against it so the
 	// UI can inspect "the guts" of the turn later.
-	userMessageId?: string | undefined;
+	userMessageId?: number | undefined;
 	beforeSend?: (() => Promise<void>) | undefined;
 	initialEvents?: PortalEvent[] | undefined;
 	memory?:
 		| {
 				mode: MemoryMode;
-				userMessageId: string;
+				userMessageId: number;
 				userContent: string;
 				extractorModel?: string | null | undefined;
 		  }
@@ -273,7 +274,7 @@ export interface StartTurnOptions {
 // paths only log.
 async function abortSessionWithDeadline(
 	session: Pick<ProviderSession, 'abort' | 'dispose'>,
-	conversationId: string
+	conversationId: number
 ): Promise<void> {
 	const deadlineMs = loadConfig().TURN_ABORT_FINALIZE_DEADLINE_MS;
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -382,21 +383,21 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 
 	// Accumulators for persistence.
 	let assistantBuf = '';
-	let assistantId: string | null = null;
-	let persistedAssistantId: string | null = null;
+	let assistantId: number | null = null;
+	let persistedAssistantId: number | null = null;
 	// Set to an error code when the stream fails for a non-abort reason
 	// (network drop, SDK crash, rate-limit). Drives the terminal `status` to
 	// `'error'` so the failed turn is persisted and reported as such rather
 	// than a false `'complete'`. `null` means no stream failure.
 	let streamErrorCode: string | null = null;
-	const pendingTools = new Map<string, PendingTool>();
+	const pendingTools = new Map<number, PendingTool>();
 	// Reasoning segments keyed by the segmentId minted in the bridge. Order
 	// of insertion matches stream order, which is what we persist.
 	const pendingReasoning = new Map<string, PendingReasoning>();
 	const persistedFileEditKeys = new Set<string>();
 	let nextReasoningIndex = 0;
 
-	function ensurePersistedAssistant(): string {
+	function ensurePersistedAssistant(): number {
 		if (persistedAssistantId) return persistedAssistantId;
 		const persisted = messages.append(opts.conversationId, {
 			role: 'assistant',
@@ -425,7 +426,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				let seg = pendingReasoning.get(ev.segmentId);
 				if (!seg) {
 					seg = {
-						id: ev.segmentId,
+						id: mintReasoningBlockId(),
 						segmentIndex: nextReasoningIndex++,
 						text: '',
 						kind: 'content',
@@ -450,7 +451,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			if (!seg) {
 				const isChild = !!ev.parentToolCallId;
 				seg = {
-					id: ev.segmentId,
+					id: mintReasoningBlockId(),
 					segmentIndex: nextReasoningIndex++,
 					text: '',
 					kind: 'reasoning',
@@ -963,7 +964,7 @@ function memoryFailureLogFields(err: unknown): Record<string, unknown> {
 // retry card survives reloads and appears in history just like a post-turn one.
 function makeExtractorCardDispatch(
 	emit: (ev: PortalEvent) => void,
-	assistantMessageId: string
+	assistantMessageId: number
 ): (ev: PortalEvent) => void {
 	const pendingReasoning = new Map<string, PendingReasoning>();
 	let nextReasoningIndex = 0;
@@ -995,7 +996,7 @@ function makeExtractorCardDispatch(
 			let seg = pendingReasoning.get(ev.segmentId);
 			if (!seg) {
 				seg = {
-					id: ev.segmentId,
+					id: mintReasoningBlockId(),
 					segmentIndex: nextReasoningIndex++,
 					text: '',
 					kind: 'reasoning',
@@ -1020,7 +1021,7 @@ function makeExtractorCardDispatch(
 			let seg = pendingReasoning.get(ev.segmentId);
 			if (!seg) {
 				seg = {
-					id: ev.segmentId,
+					id: mintReasoningBlockId(),
 					segmentIndex: nextReasoningIndex++,
 					text: '',
 					kind: 'content',
@@ -1050,13 +1051,13 @@ interface MemoryExtractionCardOptions {
 	// signal that also fires on a watchdog trip.
 	turnAc: AbortController;
 	cfg: ReturnType<typeof loadConfig>;
-	conversationId: string;
-	userId: string;
+	conversationId: number;
+	userId: number;
 	// The assistant message the extractor card is attached to; its content is the
 	// turn's assistant response (reused verbatim — never regenerated here).
-	assistantMessageId: string;
+	assistantMessageId: number;
 	assistantContent: string;
-	userMessageId: string;
+	userMessageId: number;
 	userContent: string;
 	mode: MemoryMode;
 	extractorModel?: string | null | undefined;
@@ -1076,7 +1077,7 @@ interface MemoryExtractionCardOptions {
 	// Retry path only: the prior committed patch from this turn, forwarded to the
 	// extractor so it builds its initial packet against the turn-start projection
 	// rather than the live state. See `ExtractPatchInput.priorPatchId`.
-	priorPatchId?: string | null | undefined;
+	priorPatchId?: number | null | undefined;
 }
 
 /**
@@ -1096,7 +1097,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 	// Created lazily on the first activity event so extractors that emit nothing
 	// (heuristic / single-shot JSON) never spawn an empty card. Declared out here
 	// so the catch below can close the card if extraction throws.
-	let extractorParentId: string | null = null;
+	let extractorParentId: number | null = null;
 	let extractorAgentId: string | null = null;
 	// `extractionAc` is the signal actually handed to the extractor: it fires on
 	// a user Stop (linked from the turn signal) and on a watchdog trip, so both
@@ -1110,9 +1111,9 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 	// callback must become a no-op: the turn is being finalized. Guarded at the
 	// single `onActivity` entry point.
 	let abandoned = false;
-	const ensureExtractorParent = (prompt?: string): string => {
+	const ensureExtractorParent = (prompt?: string): number => {
 		if (extractorParentId) return extractorParentId;
-		extractorParentId = `mem_parent_${ulid()}`;
+		extractorParentId = mintToolCallId();
 		extractorAgentId = `mem_agent_${ulid()}`;
 		// Emit the same event shape as a real subagent: a `task` tool call plus a
 		// `subagent.lifecycle` start. The `agent_type` arg lets the UI label it
@@ -1337,15 +1338,15 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 }
 
 export interface StartExtractionRetryOptions {
-	conversationId: string;
-	userId: string;
+	conversationId: number;
+	userId: number;
 	// The existing assistant message whose extraction is being re-run. Its
 	// content is reused verbatim — the assistant response is NOT regenerated.
-	assistantMessageId: string;
+	assistantMessageId: number;
 	assistantContent: string;
 	memory: {
 		mode: MemoryMode;
-		userMessageId: string;
+		userMessageId: number;
 		userContent: string;
 		extractorModel?: string | null;
 		// Stable turn id used for the committed patch so repeated retries of the
@@ -1356,7 +1357,7 @@ export interface StartExtractionRetryOptions {
 		// deferred until extraction succeeds (see `beforeCommit`), so a
 		// failed/timed-out/aborted retry preserves the existing memory. Null
 		// when the prior turn committed nothing to undo.
-		priorPatchId?: string | null;
+		priorPatchId?: number | null;
 	};
 }
 

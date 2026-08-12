@@ -7,9 +7,13 @@ import { sanitizeSvg } from '$lib/server/svg-sanitize';
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const ticket = tickets.get(params.id, userId);
+	const ticketId = Number(params.id);
+	const attachmentId = Number(params.attachmentId);
+	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
+	if (!Number.isInteger(attachmentId) || attachmentId <= 0) throw error(404);
+	const ticket = tickets.get(ticketId, userId);
 	if (!ticket) throw error(404);
-	const att = ticketAttachments.getForOwner(params.id, params.attachmentId, userId);
+	const att = ticketAttachments.getForOwner(ticketId, attachmentId, userId);
 	if (!att) throw error(404);
 	// Raster images and SVG are safe to render inline from our origin: SVG is
 	// sanitized at upload and re-sanitized here (so legacy rows stored before
@@ -45,9 +49,13 @@ function contentDisposition(kind: 'inline' | 'attachment', filename: string): st
 
 export const DELETE: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const ticket = tickets.get(params.id, userId);
+	const ticketId = Number(params.id);
+	const attachmentId = Number(params.attachmentId);
+	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
+	if (!Number.isInteger(attachmentId) || attachmentId <= 0) throw error(404);
+	const ticket = tickets.get(ticketId, userId);
 	if (!ticket) throw error(404);
-	const removed = ticketAttachments.remove(params.id, params.attachmentId, userId);
+	const removed = ticketAttachments.remove(ticketId, attachmentId, userId);
 	if (!removed) throw error(404);
 	return new Response(null, { status: 204 });
 };

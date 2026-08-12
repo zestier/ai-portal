@@ -87,7 +87,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	} else {
 		const claims = readSession(event.cookies, secure);
 		if (claims) {
-			const u = users.getById(claims.sub);
+			const u = users.getById(Number(claims.sub));
 			if (u) {
 				event.locals.userId = u.id;
 				event.locals.user = u;

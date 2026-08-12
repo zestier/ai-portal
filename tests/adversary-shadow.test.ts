@@ -19,8 +19,6 @@ import type {
 const ADVERSARY_MODEL = 'reviewer-model';
 const AGENT_MODEL = 'agent-model';
 
-let convCounter = 0;
-
 interface HarnessOptions {
 	/** Adversary completion seam. Omit for a canned deny. */
 	complete?: (system: string, user: string) => Promise<string>;
@@ -49,13 +47,11 @@ async function makeHarness(options: HarnessOptions = {}) {
 	const convs = await import('../src/lib/server/db/repos/conversations');
 
 	const user = ensureLocalUser();
-	const conversationId = `conv-shadow-${convCounter++}`;
-	convs.create(user.id, {
-		id: conversationId,
+	const conversationId = convs.create(user.id, {
 		title: 'shadow test',
 		workdir: '/tmp',
 		model: AGENT_MODEL
-	});
+	}).id;
 
 	let completeCalls = 0;
 	const settled: AdversaryOutcome[] = [];
@@ -81,9 +77,7 @@ async function makeHarness(options: HarnessOptions = {}) {
 	// portal-derived facts of the request under review.
 	const observe = (overrides: Partial<ShadowObserveInput> = {}): ShadowHandle | null =>
 		shadowRecorder.observe({
-			conversationId: options.brokenConversationId
-				? 'conversation-that-does-not-exist'
-				: conversationId,
+			conversationId: options.brokenConversationId ? 999999 : conversationId,
 			argsHash: null,
 			resolutionSource: 'prompt-policy',
 			agentModel: AGENT_MODEL,
@@ -427,8 +421,7 @@ describe('adversary shadow mode', () => {
 			human: 'allow-once' | 'deny' | null,
 			opts: { memoized?: boolean } = {}
 		) => {
-			repo.insertPending({
-				id,
+			const rowId = repo.insertPending({
 				conversationId: harness.conversationId,
 				tool: 'shell',
 				permissionKind: 'shell',
@@ -440,12 +433,12 @@ describe('adversary shadow mode', () => {
 				factsKey: `facts-${id}`,
 				resolutionSource: 'prompt-policy'
 			});
-			repo.recordVerdict(id, verdict, 'because', {
+			repo.recordVerdict(rowId, verdict, 'because', {
 				denyProbability: 0.7,
 				memoized: opts.memoized ?? false,
 				promptSent: 'PERMISSION REQUEST ...'
 			});
-			if (human) repo.recordHumanDecision(id, human);
+			if (human) repo.recordHumanDecision(rowId, human);
 		};
 
 		seed('s1', 'deny', 'deny');

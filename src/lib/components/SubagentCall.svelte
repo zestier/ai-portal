@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '$lib/types';
+	import type { ToolCallRecord } from '$lib/types';
+	import type { DisplayFileEdit, DisplayReasoningBlock } from '$lib/client/display-message';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
 	import {
@@ -34,18 +35,18 @@
 	}: {
 		toolCall: ToolCallRecord;
 		childTools?: ToolCallRecord[];
-		childReasoning?: ReasoningBlockRecord[];
-		childEdits?: FileEditRecord[];
+		childReasoning?: DisplayReasoningBlock[];
+		childEdits?: DisplayFileEdit[];
 		// The message's full pools. A sub-agent can spawn its own sub-agent, and
 		// the grandchild's rows hang off that *inner* `task` call — so each level
 		// needs the whole set to select its own children from, not just the
 		// slice its parent computed.
 		allTools?: ToolCallRecord[];
-		allReasoning?: ReasoningBlockRecord[];
-		allEdits?: FileEditRecord[];
+		allReasoning?: DisplayReasoningBlock[];
+		allEdits?: DisplayFileEdit[];
 		/** 0 for a card anchored to the message; +1 per nesting level. */
 		depth?: number;
-		conversationId?: string | undefined;
+		conversationId?: number | undefined;
 		// True only for the latest assistant turn's extractor card while the
 		// conversation is idle; older turns' cards and a busy conversation
 		// disable the affordance (enforced server-side too).
@@ -186,10 +187,10 @@
 	// Sub-agent activity timeline: child content, reasoning bursts, tool calls,
 	// and edits in the order they happened, sorted purely by start timestamp.
 	type ActivityItem =
-		| { kind: 'reasoning'; ts: number; block: ReasoningBlockRecord }
-		| { kind: 'content'; ts: number; block: ReasoningBlockRecord; html: string }
+		| { kind: 'reasoning'; ts: number; block: DisplayReasoningBlock }
+		| { kind: 'content'; ts: number; block: DisplayReasoningBlock; html: string }
 		| { kind: 'tool'; ts: number; tool: ToolCallRecord }
-		| { kind: 'edit'; ts: number; edit: FileEditRecord };
+		| { kind: 'edit'; ts: number; edit: DisplayFileEdit };
 
 	const activity = $derived.by<ActivityItem[]>(() => {
 		const items: ActivityItem[] = [];

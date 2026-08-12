@@ -12,8 +12,8 @@ export type MemoryPatchStatus =
 	| 'needs_review';
 
 export interface MemoryEntity {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	entityKey: string;
 	entityType: string;
 	displayName: string;
@@ -25,42 +25,42 @@ export interface MemoryEntity {
 }
 
 export interface MemoryEvent {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	turnId: string | null;
 	eventType: string;
 	occurredAt: number;
-	actorEntityId: string | null;
-	targetEntityId: string | null;
+	actorEntityId: number | null;
+	targetEntityId: number | null;
 	summary: string;
 	payload: unknown;
 	visibility: string;
 	confidence: number;
-	sourceMessageId: string | null;
-	sourceToolCallId: string | null;
+	sourceMessageId: number | null;
+	sourceToolCallId: number | null;
 	createdAt: number;
 }
 
 export interface MemoryFact {
-	id: string;
-	conversationId: string;
-	entityId: string | null;
+	id: number;
+	conversationId: number;
+	entityId: number | null;
 	predicate: string;
 	value: unknown;
 	status: string;
 	visibility: string;
 	confidence: number;
-	sourceEventId: string | null;
-	sourceMessageId: string | null;
-	supersedesFactId: string | null;
+	sourceEventId: number | null;
+	sourceMessageId: number | null;
+	supersedesFactId: number | null;
 	pinned: boolean;
 	createdAt: number;
 	updatedAt: number;
 }
 
 export interface MemoryOpenLoop {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	/**
 	 * Stable, human-legible handle (slug of the title, e.g. `loop.find_attic_key`),
 	 * unique within a conversation. This is what the extractor sees and references
@@ -73,17 +73,17 @@ export interface MemoryOpenLoop {
 	description: string;
 	status: string;
 	priority: number;
-	relatedEntityIds: string[];
-	sourceEventId: string | null;
-	sourceMessageId: string | null;
+	relatedEntityIds: number[];
+	sourceEventId: number | null;
+	sourceMessageId: number | null;
 	idleTurns: number;
 	createdAt: number;
 	updatedAt: number;
 }
 
 export interface MemoryPatch {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	turnId: string | null;
 	status: MemoryPatchStatus;
 	summary: string;
@@ -98,9 +98,9 @@ export interface MemoryPatch {
 }
 
 export interface MemoryValidationIssue {
-	id: string;
-	conversationId: string;
-	patchId: string | null;
+	id: number;
+	conversationId: number;
+	patchId: number | null;
 	severity: 'info' | 'warning' | 'error';
 	code: string;
 	message: string;
@@ -110,22 +110,22 @@ export interface MemoryValidationIssue {
 }
 
 export interface MemoryToolCall {
-	id: string;
-	conversationId: string;
+	id: number;
+	conversationId: number;
 	turnId: string | null;
 	toolName: string;
 	arguments: unknown;
 	resultSummary: string;
-	resultIds: string[];
+	resultIds: number[];
 	createdAt: number;
 }
 
 export interface MemoryPatchItem {
-	id: string;
-	patchId: string;
-	conversationId: string;
+	id: number;
+	patchId: number;
+	conversationId: number;
 	itemType: string;
-	itemId: string;
+	itemId: number;
 	action: string;
 	reviewStatus: string;
 	reviewedAt: number | null;
@@ -136,11 +136,11 @@ interface MemoryLogRow {
 	seq: number;
 	id: string;
 	parent_id: string | null;
-	conversation_id: string;
+	conversation_id: number;
 	event_kind: string;
 	item_type: SessionMemoryLogItemType;
-	item_id: string;
-	source_message_id: string | null;
+	item_id: number;
+	source_message_id: number | null;
 	turn_id: string | null;
 	payload_json: string;
 	created_at: number;
@@ -158,21 +158,21 @@ type SessionMemoryLogItemType =
 	| 'tool_call';
 
 export interface GlobalMemory {
-	id: string;
-	userId: string;
+	id: number;
+	userId: number;
 	kind: string;
 	memoryKey: string;
 	value: unknown;
 	status: string;
-	sourceConversationId: string | null;
-	sourceMessageId: string | null;
+	sourceConversationId: number | null;
+	sourceMessageId: number | null;
 	createdAt: number;
 	updatedAt: number;
 }
 
 interface EntityRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	entity_key: string;
 	entity_type: string;
 	display_name: string;
@@ -184,42 +184,42 @@ interface EntityRow {
 }
 
 interface EventRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	turn_id: string | null;
 	event_type: string;
 	occurred_at: number;
-	actor_entity_id: string | null;
-	target_entity_id: string | null;
+	actor_entity_id: number | null;
+	target_entity_id: number | null;
 	summary: string;
 	payload_json: string;
 	visibility: string;
 	confidence: number;
-	source_message_id: string | null;
-	source_tool_call_id: string | null;
+	source_message_id: number | null;
+	source_tool_call_id: number | null;
 	created_at: number;
 }
 
 interface FactRow {
-	id: string;
-	conversation_id: string;
-	entity_id: string | null;
+	id: number;
+	conversation_id: number;
+	entity_id: number | null;
 	predicate: string;
 	value_json: string;
 	status: string;
 	visibility: string;
 	confidence: number;
-	source_event_id: string | null;
-	source_message_id: string | null;
-	supersedes_fact_id: string | null;
+	source_event_id: number | null;
+	source_message_id: number | null;
+	supersedes_fact_id: number | null;
 	pinned: number;
 	created_at: number;
 	updated_at: number;
 }
 
 interface OpenLoopRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	loop_key: string;
 	loop_type: string;
 	title: string;
@@ -227,16 +227,16 @@ interface OpenLoopRow {
 	status: string;
 	priority: number;
 	related_entity_ids_json: string;
-	source_event_id: string | null;
-	source_message_id: string | null;
+	source_event_id: number | null;
+	source_message_id: number | null;
 	idle_turns: number;
 	created_at: number;
 	updated_at: number;
 }
 
 interface PatchRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	turn_id: string | null;
 	status: MemoryPatchStatus;
 	summary: string;
@@ -251,9 +251,9 @@ interface PatchRow {
 }
 
 interface IssueRow {
-	id: string;
-	conversation_id: string;
-	patch_id: string | null;
+	id: number;
+	conversation_id: number;
+	patch_id: number | null;
 	severity: 'info' | 'warning' | 'error';
 	code: string;
 	message: string;
@@ -263,8 +263,8 @@ interface IssueRow {
 }
 
 interface ToolCallRow {
-	id: string;
-	conversation_id: string;
+	id: number;
+	conversation_id: number;
 	turn_id: string | null;
 	tool_name: string;
 	arguments_json: string;
@@ -274,11 +274,11 @@ interface ToolCallRow {
 }
 
 interface PatchItemRow {
-	id: string;
-	patch_id: string;
-	conversation_id: string;
+	id: number;
+	patch_id: number;
+	conversation_id: number;
 	item_type: string;
-	item_id: string;
+	item_id: number;
 	action: string;
 	review_status: string;
 	reviewed_at: number | null;
@@ -286,14 +286,14 @@ interface PatchItemRow {
 }
 
 interface GlobalMemoryRow {
-	id: string;
-	user_id: string;
+	id: number;
+	user_id: number;
 	kind: string;
 	memory_key: string;
 	value_json: string;
 	status: string;
-	source_conversation_id: string | null;
-	source_message_id: string | null;
+	source_conversation_id: number | null;
+	source_message_id: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -317,7 +317,7 @@ export interface UpsertEntityInput {
 	displayName?: string | undefined;
 	summary?: string | undefined;
 	metadata?: unknown;
-	sourceMessageId?: string | null | undefined;
+	sourceMessageId?: number | null | undefined;
 	turnId?: string | null | undefined;
 }
 
@@ -328,20 +328,20 @@ export interface AddEventInput {
 	payload?: unknown;
 	visibility?: string | undefined;
 	confidence?: number | undefined;
-	sourceMessageId?: string | null | undefined;
-	actorEntityId?: string | null | undefined;
-	targetEntityId?: string | null | undefined;
+	sourceMessageId?: number | null | undefined;
+	actorEntityId?: number | null | undefined;
+	targetEntityId?: number | null | undefined;
 }
 
 export interface AddFactInput {
-	entityId?: string | null | undefined;
+	entityId?: number | null | undefined;
 	predicate: string;
 	value: unknown;
 	visibility?: string | undefined;
 	confidence?: number | undefined;
-	sourceEventId?: string | null | undefined;
-	sourceMessageId?: string | null | undefined;
-	supersedesFactId?: string | null | undefined;
+	sourceEventId?: number | null | undefined;
+	sourceMessageId?: number | null | undefined;
+	supersedesFactId?: number | null | undefined;
 	pinned?: boolean | undefined;
 }
 
@@ -394,14 +394,14 @@ export interface AddOpenLoopInput {
 	title: string;
 	description?: string | undefined;
 	priority?: number | undefined;
-	relatedEntityIds?: string[] | undefined;
-	sourceEventId?: string | null | undefined;
-	sourceMessageId?: string | null | undefined;
+	relatedEntityIds?: number[] | undefined;
+	sourceEventId?: number | null | undefined;
+	sourceMessageId?: number | null | undefined;
 }
 
 export interface CreatePatchInput {
 	turnId?: string | null | undefined;
-	sourceMessageId?: string | null | undefined;
+	sourceMessageId?: number | null | undefined;
 	status: MemoryPatchStatus;
 	summary?: string | undefined;
 	rawPatch?: unknown;
@@ -413,7 +413,7 @@ export interface CreatePatchInput {
 	committedAt?: number | null | undefined;
 }
 
-export function getMode(conversationId: string): MemoryMode {
+export function getMode(conversationId: number): MemoryMode {
 	const row = getDb()
 		.prepare('SELECT memory_mode FROM conversations WHERE id = ?')
 		.get(conversationId) as { memory_mode: string | null } | undefined;
@@ -421,8 +421,8 @@ export function getMode(conversationId: string): MemoryMode {
 }
 
 export function listSnapshot(
-	conversationId: string,
-	opts: { userId?: string } = {}
+	conversationId: number,
+	opts: { userId?: number } = {}
 ): MemorySnapshot {
 	return {
 		mode: getMode(conversationId),
@@ -438,7 +438,7 @@ export function listSnapshot(
 	};
 }
 
-export function upsertEntity(conversationId: string, input: UpsertEntityInput): MemoryEntity {
+export function upsertEntity(conversationId: number, input: UpsertEntityInput): MemoryEntity {
 	const db = getDb();
 	const now = Date.now();
 	// Read + write must live in the SAME transaction: a read outside the write
@@ -457,7 +457,6 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 		// legitimate new entities always arrive with both fields populated. On
 		// UPDATE we fall back to the existing row's values when the input omits a
 		// field, preserving the prior SELECT-then-UPDATE semantics.
-		const id = existing?.id ?? ulid();
 		const entityType = input.entityType ?? existing?.entity_type ?? '';
 		const displayName = input.displayName ?? existing?.display_name ?? '';
 		const summary = input.summary ?? existing?.summary ?? '';
@@ -466,9 +465,9 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 		);
 		db.prepare(
 			`INSERT INTO memory_entities(
-			   id, conversation_id, entity_key, entity_type, display_name, summary, status,
+			   conversation_id, entity_key, entity_type, display_name, summary, status,
 			   metadata_json, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+			 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
 			 ON CONFLICT(conversation_id, entity_key) DO UPDATE SET
 			   entity_type = excluded.entity_type,
 			   display_name = excluded.display_name,
@@ -476,7 +475,6 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 			   metadata_json = excluded.metadata_json,
 			   updated_at = excluded.updated_at`
 		).run(
-			id,
 			conversationId,
 			input.entityKey,
 			entityType,
@@ -503,7 +501,10 @@ export function upsertEntity(conversationId: string, input: UpsertEntityInput): 
 	return tx();
 }
 
-export function getEntity(conversationId: string, entityKeyOrId: string): MemoryEntity | null {
+export function getEntity(
+	conversationId: number,
+	entityKeyOrId: string | number
+): MemoryEntity | null {
 	const row = getDb()
 		.prepare(
 			`SELECT * FROM memory_entities
@@ -515,7 +516,7 @@ export function getEntity(conversationId: string, entityKeyOrId: string): Memory
 }
 
 export function listEntities(
-	conversationId: string,
+	conversationId: number,
 	opts: {
 		limit?: number | undefined;
 		entityType?: string | undefined;
@@ -542,36 +543,37 @@ export function listEntities(
 	return rows.map(rowToEntity);
 }
 
-export function addEvent(conversationId: string, input: AddEventInput): MemoryEvent {
+export function addEvent(conversationId: number, input: AddEventInput): MemoryEvent {
 	const db = getDb();
-	const id = ulid();
 	const now = Date.now();
 	// The projection INSERT, the FTS index write, and the event-log append must
 	// commit atomically: the event log is the rebuild source of truth, so a crash
 	// between these writes would either lose the log entry (unrecoverable) or
 	// diverge the FTS index from the projection row. Wrap all three in one tx.
 	const tx = db.transaction((): MemoryEvent => {
-		db.prepare(
-			`INSERT INTO memory_events(
-			   id, conversation_id, turn_id, event_type, occurred_at, actor_entity_id,
+		const info = db
+			.prepare(
+				`INSERT INTO memory_events(
+			   conversation_id, turn_id, event_type, occurred_at, actor_entity_id,
 			   target_entity_id, summary, payload_json, visibility, confidence,
 			   source_message_id, source_tool_call_id, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
-		).run(
-			id,
-			conversationId,
-			input.turnId ?? null,
-			input.eventType,
-			now,
-			input.actorEntityId ?? null,
-			input.targetEntityId ?? null,
-			input.summary,
-			safeJson(input.payload ?? {}),
-			input.visibility ?? 'session',
-			input.confidence ?? 1,
-			input.sourceMessageId ?? null,
-			now
-		);
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+			)
+			.run(
+				conversationId,
+				input.turnId ?? null,
+				input.eventType,
+				now,
+				input.actorEntityId ?? null,
+				input.targetEntityId ?? null,
+				input.summary,
+				safeJson(input.payload ?? {}),
+				input.visibility ?? 'session',
+				input.confidence ?? 1,
+				input.sourceMessageId ?? null,
+				now
+			);
+		const id = Number(info.lastInsertRowid);
 		const row = db.prepare('SELECT * FROM memory_events WHERE id = ?').get(id) as EventRow;
 		indexItem(db, conversationId, 'event', id, eventIndexText(row));
 		appendSessionMemoryLog(db, conversationId, {
@@ -600,7 +602,7 @@ export function addEvent(conversationId: string, input: AddEventInput): MemoryEv
  * distinct.
  */
 export function findDuplicateEvent(
-	conversationId: string,
+	conversationId: number,
 	key: { turnId: string | null; eventType: string; summary: string }
 ): MemoryEvent | null {
 	const turnId = key.turnId ?? null;
@@ -618,10 +620,10 @@ export function findDuplicateEvent(
 }
 
 export function listEvents(
-	conversationId: string,
+	conversationId: number,
 	opts: {
 		limit?: number | undefined;
-		entityId?: string | undefined;
+		entityId?: number | undefined;
 		eventType?: string | undefined;
 	} = {}
 ): MemoryEvent[] {
@@ -655,37 +657,38 @@ export function listEvents(
 	return rows.map(rowToEvent);
 }
 
-export function addFact(conversationId: string, input: AddFactInput): MemoryFact {
+export function addFact(conversationId: number, input: AddFactInput): MemoryFact {
 	const db = getDb();
 	const tx = db.transaction(() => {
 		const now = Date.now();
-		const id = ulid();
 		// Append the raw observation as a `fact.create` event + projection row.
 		// Supersession and dedupe are NOT decided here; they are derived from the
 		// event stream by consolidateFactGroup (below), which is replayed on every
 		// projection rebuild. That keeps a rebuild correct "for free": rebuilding
 		// from the surviving observations re-derives the active set.
-		db.prepare(
-			`INSERT INTO memory_facts(
-			   id, conversation_id, entity_id, predicate, value_json, status, visibility,
+		const info = db
+			.prepare(
+				`INSERT INTO memory_facts(
+			   conversation_id, entity_id, predicate, value_json, status, visibility,
 			   confidence, source_event_id, source_message_id, supersedes_fact_id,
 			   pinned, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`
-		).run(
-			id,
-			conversationId,
-			input.entityId ?? null,
-			input.predicate,
-			safeJson(input.value),
-			input.visibility ?? 'session',
-			input.confidence ?? 1,
-			input.sourceEventId ?? null,
-			input.sourceMessageId ?? null,
-			input.supersedesFactId ?? null,
-			input.pinned ? 1 : 0,
-			now,
-			now
-		);
+			 ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				conversationId,
+				input.entityId ?? null,
+				input.predicate,
+				safeJson(input.value),
+				input.visibility ?? 'session',
+				input.confidence ?? 1,
+				input.sourceEventId ?? null,
+				input.sourceMessageId ?? null,
+				input.supersedesFactId ?? null,
+				input.pinned ? 1 : 0,
+				now,
+				now
+			);
+		const id = Number(info.lastInsertRowid);
 		const row = db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
 		indexItem(db, conversationId, 'fact', id, factIndexText(row));
 		appendSessionMemoryLog(db, conversationId, {
@@ -721,8 +724,8 @@ export function addFact(conversationId: string, input: AddFactInput): MemoryFact
  */
 function consolidateFactGroup(
 	db: Database.Database,
-	conversationId: string,
-	entityId: string | null,
+	conversationId: number,
+	entityId: number | null,
 	predicate: string
 ): void {
 	const rows = db
@@ -735,10 +738,10 @@ function consolidateFactGroup(
 		.all(conversationId, predicate, entityId, entityId) as FactRow[];
 	if (rows.length === 0) return;
 
-	const activeIds = new Set<string>();
+	const activeIds = new Set<number>();
 	if (isMultiValuedPredicate(predicate)) {
 		// Newest row wins per distinct value (later rows overwrite the map entry).
-		const newestByValue = new Map<string, string>();
+		const newestByValue = new Map<string, number>();
 		for (const row of rows) newestByValue.set(row.value_json, row.id);
 		for (const id of newestByValue.values()) activeIds.add(id);
 	} else {
@@ -759,10 +762,10 @@ function consolidateFactGroup(
 }
 
 export function listFacts(
-	conversationId: string,
+	conversationId: number,
 	opts: {
 		limit?: number | undefined;
-		entityId?: string | undefined;
+		entityId?: number | undefined;
 		status?: string | undefined;
 		predicate?: string | undefined;
 	} = {}
@@ -800,7 +803,7 @@ export function listFacts(
  * conversation. Used by the forget path to resolve a packet `[id=...]` handle to
  * a concrete fact and check its current status/kind before tombstoning it.
  */
-export function getFact(conversationId: string, id: string): MemoryFact | null {
+export function getFact(conversationId: number, id: number): MemoryFact | null {
 	if (!id) return null;
 	const row = getDb()
 		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
@@ -808,7 +811,7 @@ export function getFact(conversationId: string, id: string): MemoryFact | null {
 	return row ? rowToFact(row) : null;
 }
 
-export function entityFactCounts(conversationId: string): Map<string, number> {
+export function entityFactCounts(conversationId: number): Map<number, number> {
 	const rows = getDb()
 		.prepare(
 			`SELECT entity_id AS entityId, COUNT(*) AS count
@@ -816,8 +819,8 @@ export function entityFactCounts(conversationId: string): Map<string, number> {
 			  WHERE conversation_id = ? AND status = 'active' AND entity_id IS NOT NULL
 			  GROUP BY entity_id`
 		)
-		.all(conversationId) as Array<{ entityId: string; count: number }>;
-	const counts = new Map<string, number>();
+		.all(conversationId) as Array<{ entityId: number; count: number }>;
+	const counts = new Map<number, number>();
 	for (const row of rows) counts.set(row.entityId, row.count);
 	return counts;
 }
@@ -841,7 +844,7 @@ function slugifyLoopKey(title: string): string {
  * collision. Generated once at creation and persisted in the create event, so
  * replay restores it rather than regenerating (keeping event-sourcing faithful).
  */
-function allocateLoopKey(db: Database.Database, conversationId: string, title: string): string {
+function allocateLoopKey(db: Database.Database, conversationId: number, title: string): string {
 	const base = slugifyLoopKey(title);
 	const taken = db.prepare(
 		'SELECT 1 FROM memory_open_loops WHERE conversation_id = ? AND loop_key = ?'
@@ -859,18 +862,18 @@ function allocateLoopKey(db: Database.Database, conversationId: string, title: s
  * non-empty key, so both addressing forms work and id-based internal callers are
  * unaffected.
  */
-export function resolveOpenLoopId(conversationId: string, ref: string): string | null {
-	if (!ref) return null;
+export function resolveOpenLoopId(conversationId: number, ref: string | number): number | null {
+	if (ref === '' || ref === undefined || ref === null) return null;
 	const db = getDb();
 	const byId = db
 		.prepare('SELECT id FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
-		.get(ref, conversationId) as { id: string } | undefined;
+		.get(ref, conversationId) as { id: number } | undefined;
 	if (byId) return byId.id;
 	const byKey = db
 		.prepare(
 			"SELECT id FROM memory_open_loops WHERE loop_key = ? AND conversation_id = ? AND loop_key != ''"
 		)
-		.get(ref, conversationId) as { id: string } | undefined;
+		.get(ref, conversationId) as { id: number } | undefined;
 	return byKey ? byKey.id : null;
 }
 
@@ -889,7 +892,7 @@ function isLoopKeyUniqueViolation(err: unknown): boolean {
 	);
 }
 
-export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): MemoryOpenLoop {
+export function addOpenLoop(conversationId: number, input: AddOpenLoopInput): MemoryOpenLoop {
 	const db = getDb();
 	const now = Date.now();
 	// allocateLoopKey reads-then-inserts, so two concurrent extractions (separate
@@ -900,7 +903,6 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 	// unrelated constraint failure can't spin forever.
 	const maxAttempts = 5;
 	for (let attempt = 1; ; attempt++) {
-		const id = ulid();
 		// Key allocation, the projection INSERT, the FTS index write, and the
 		// event-log append must commit atomically: the event log is the rebuild
 		// source of truth, so a crash between these writes would either lose the
@@ -908,25 +910,27 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
 		// row.
 		const tx = db.transaction((): MemoryOpenLoop => {
 			const loopKey = allocateLoopKey(db, conversationId, input.title);
-			db.prepare(
-				`INSERT INTO memory_open_loops(
-				   id, conversation_id, loop_key, loop_type, title, description, status, priority,
+			const info = db
+				.prepare(
+					`INSERT INTO memory_open_loops(
+				   conversation_id, loop_key, loop_type, title, description, status, priority,
 				   related_entity_ids_json, source_event_id, source_message_id, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
-			).run(
-				id,
-				conversationId,
-				loopKey,
-				input.loopType,
-				input.title,
-				input.description ?? '',
-				input.priority ?? 0,
-				safeJson(input.relatedEntityIds ?? []),
-				input.sourceEventId ?? null,
-				input.sourceMessageId ?? null,
-				now,
-				now
-			);
+				 ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					conversationId,
+					loopKey,
+					input.loopType,
+					input.title,
+					input.description ?? '',
+					input.priority ?? 0,
+					safeJson(input.relatedEntityIds ?? []),
+					input.sourceEventId ?? null,
+					input.sourceMessageId ?? null,
+					now,
+					now
+				);
+			const id = Number(info.lastInsertRowid);
 			const row = db.prepare('SELECT * FROM memory_open_loops WHERE id = ?').get(id) as OpenLoopRow;
 			indexItem(db, conversationId, 'open_loop', id, openLoopIndexText(row));
 			appendSessionMemoryLog(db, conversationId, {
@@ -957,7 +961,7 @@ export function addOpenLoop(conversationId: string, input: AddOpenLoopInput): Me
  * dropped is not silently suppressed.
  */
 export function findDuplicateOpenLoop(
-	conversationId: string,
+	conversationId: number,
 	key: { loopType: string; title: string }
 ): MemoryOpenLoop | null {
 	const row = getDb()
@@ -970,7 +974,7 @@ export function findDuplicateOpenLoop(
 	return row ? rowToOpenLoop(row) : null;
 }
 
-export function getOpenLoop(conversationId: string, id: string): MemoryOpenLoop | null {
+export function getOpenLoop(conversationId: number, id: number): MemoryOpenLoop | null {
 	const row = getDb()
 		.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
 		.get(id, conversationId) as OpenLoopRow | undefined;
@@ -978,7 +982,7 @@ export function getOpenLoop(conversationId: string, id: string): MemoryOpenLoop 
 }
 
 export function listOpenLoops(
-	conversationId: string,
+	conversationId: number,
 	opts: {
 		limit?: number | undefined;
 		status?: string | undefined;
@@ -1037,7 +1041,7 @@ export function listOpenLoops(
  * can never deadlock forever.
  */
 export function tryAcquireExtractionLock(
-	conversationId: string,
+	conversationId: number,
 	holder: string,
 	opts: { ttlMs: number; now?: number }
 ): boolean {
@@ -1064,25 +1068,23 @@ export function tryAcquireExtractionLock(
  * to the holder token so a caller can never drop a lock another holder took
  * over after its own row expired.
  */
-export function releaseExtractionLock(conversationId: string, holder: string): void {
+export function releaseExtractionLock(conversationId: number, holder: string): void {
 	getDb()
 		.prepare('DELETE FROM memory_extraction_locks WHERE conversation_id = ? AND holder = ?')
 		.run(conversationId, holder);
 }
 
-export function createPatch(conversationId: string, input: CreatePatchInput): MemoryPatch {
-	const id = ulid();
+export function createPatch(conversationId: number, input: CreatePatchInput): MemoryPatch {
 	const now = Date.now();
-	getDb()
+	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_patches(
-			   id, conversation_id, turn_id, status, summary, raw_patch_json,
+			   conversation_id, turn_id, status, summary, raw_patch_json,
 			   validation_result_json, extractor_kind, extractor_model, extractor_confidence,
 			   extractor_diagnostics_json, created_at, committed_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
-			id,
 			conversationId,
 			input.turnId ?? null,
 			input.status,
@@ -1096,6 +1098,7 @@ export function createPatch(conversationId: string, input: CreatePatchInput): Me
 			now,
 			input.committedAt ?? null
 		);
+	const id = Number(info.lastInsertRowid);
 	const row = getDb().prepare('SELECT * FROM memory_patches WHERE id = ?').get(id) as PatchRow;
 	appendSessionMemoryLog(getDb(), conversationId, {
 		eventKind: 'patch.create',
@@ -1108,7 +1111,7 @@ export function createPatch(conversationId: string, input: CreatePatchInput): Me
 	return rowToPatch(row);
 }
 
-export function listPatches(conversationId: string, opts: { limit?: number } = {}): MemoryPatch[] {
+export function listPatches(conversationId: number, opts: { limit?: number } = {}): MemoryPatch[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM memory_patches
@@ -1120,8 +1123,8 @@ export function listPatches(conversationId: string, opts: { limit?: number } = {
 }
 
 export function updatePatchStatus(
-	conversationId: string,
-	patchId: string,
+	conversationId: number,
+	patchId: number,
 	status: MemoryPatchStatus,
 	validationResult?: unknown
 ): MemoryPatch | null {
@@ -1157,17 +1160,17 @@ export function updatePatchStatus(
 }
 
 export function recordPatchItem(
-	conversationId: string,
-	input: { patchId: string; itemType: string; itemId: string; action: string }
+	conversationId: number,
+	input: { patchId: number; itemType: string; itemId: number; action: string }
 ): MemoryPatchItem {
-	const id = ulid();
 	const now = Date.now();
-	getDb()
+	const info = getDb()
 		.prepare(
-			`INSERT INTO memory_patch_items(id, patch_id, conversation_id, item_type, item_id, action, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO memory_patch_items(patch_id, conversation_id, item_type, item_id, action, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
 		)
-		.run(id, input.patchId, conversationId, input.itemType, input.itemId, input.action, now);
+		.run(input.patchId, conversationId, input.itemType, input.itemId, input.action, now);
+	const id = Number(info.lastInsertRowid);
 	const row = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ?')
 		.get(id) as PatchItemRow;
@@ -1181,8 +1184,8 @@ export function recordPatchItem(
 }
 
 export function listPatchItems(
-	conversationId: string,
-	opts: { patchId?: string; limit?: number } = {}
+	conversationId: number,
+	opts: { patchId?: number; limit?: number } = {}
 ): MemoryPatchItem[] {
 	const rows = opts.patchId
 		? (getDb()
@@ -1203,8 +1206,8 @@ export function listPatchItems(
 }
 
 export function reviewPatchItem(
-	conversationId: string,
-	patchItemId: string,
+	conversationId: number,
+	patchItemId: number,
 	decision: 'approve' | 'reject'
 ): { item: MemoryPatchItem | null; affected: boolean } {
 	const current = getDb()
@@ -1240,8 +1243,8 @@ export function reviewPatchItem(
 }
 
 export function updateEntity(
-	conversationId: string,
-	id: string,
+	conversationId: number,
+	id: number,
 	patch: Partial<Pick<MemoryEntity, 'displayName' | 'summary' | 'status'>> & {
 		entityType?: string;
 		metadata?: unknown;
@@ -1311,7 +1314,7 @@ export interface MergeEntitiesResult {
  * told to.
  */
 export function mergeEntities(
-	conversationId: string,
+	conversationId: number,
 	opts: { fromKeyOrId: string; intoKeyOrId: string }
 ): MergeEntitiesResult {
 	const db = getDb();
@@ -1421,7 +1424,7 @@ export function mergeEntities(
 			.prepare(`SELECT * FROM memory_open_loops WHERE conversation_id = ? AND status != 'deleted'`)
 			.all(conversationId) as OpenLoopRow[];
 		for (const loopRow of loopRows) {
-			const related = parseJson(loopRow.related_entity_ids_json, []) as string[];
+			const related = parseJson(loopRow.related_entity_ids_json, []) as number[];
 			if (!related.includes(from.id)) continue;
 			const next = related.map((id) => (id === from.id ? into.id : id));
 			const deduped = [...new Set(next)];
@@ -1455,8 +1458,8 @@ export function mergeEntities(
 }
 
 export function updateFact(
-	conversationId: string,
-	id: string,
+	conversationId: number,
+	id: number,
 	patch: Partial<Pick<MemoryFact, 'predicate' | 'value' | 'status' | 'visibility' | 'confidence'>>
 ): MemoryFact | null {
 	const db = getDb();
@@ -1503,8 +1506,8 @@ export function updateFact(
 }
 
 export function updateOpenLoop(
-	conversationId: string,
-	id: string,
+	conversationId: number,
+	id: number,
 	patch: Partial<
 		Pick<
 			MemoryOpenLoop,
@@ -1565,21 +1568,21 @@ export function updateOpenLoop(
  * historical decay. Returns the ids dropped by this pass.
  */
 export function recordOpenLoopLiveness(
-	conversationId: string,
+	conversationId: number,
 	input: {
-		presentedLoopIds: string[];
-		keptLoopIds?: string[] | undefined;
+		presentedLoopIds: number[];
+		keptLoopIds?: number[] | undefined;
 		baseThreshold: number;
-		sourceMessageId?: string | null | undefined;
+		sourceMessageId?: number | null | undefined;
 		turnId?: string | null | undefined;
 	}
-): { dropped: string[] } {
+): { dropped: number[] } {
 	const presented = [...new Set(input.presentedLoopIds)].filter(Boolean);
 	if (presented.length === 0 || !(input.baseThreshold > 0)) return { dropped: [] };
 	const kept = [...new Set(input.keptLoopIds ?? [])].filter(Boolean);
 	const payload = { presented, kept, baseThreshold: input.baseThreshold };
 	const db = getDb();
-	let dropped: string[] = [];
+	let dropped: number[] = [];
 	const tx = db.transaction(() => {
 		// Mutate the live projection directly (mirroring addOpenLoop et al.,
 		// which upsert then log), then append the event so a later rebuild
@@ -1588,7 +1591,7 @@ export function recordOpenLoopLiveness(
 		appendSessionMemoryLog(db, conversationId, {
 			eventKind: 'open_loop.liveness',
 			itemType: 'open_loop_liveness',
-			itemId: ulid(),
+			itemId: Date.now(),
 			sourceMessageId: input.sourceMessageId ?? null,
 			turnId: input.turnId ?? null,
 			payload
@@ -1613,14 +1616,14 @@ interface OpenLoopLivenessPayload {
  */
 function applyOpenLoopLivenessProjection(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	payload: OpenLoopLivenessPayload
-): string[] {
-	const presented = Array.isArray(payload.presented) ? (payload.presented as string[]) : [];
+): number[] {
+	const presented = Array.isArray(payload.presented) ? (payload.presented as number[]) : [];
 	const baseThreshold = typeof payload.baseThreshold === 'number' ? payload.baseThreshold : 0;
 	if (presented.length === 0 || baseThreshold <= 0) return [];
-	const kept = new Set(Array.isArray(payload.kept) ? (payload.kept as string[]) : []);
-	const dropped: string[] = [];
+	const kept = new Set(Array.isArray(payload.kept) ? (payload.kept as number[]) : []);
+	const dropped: number[] = [];
 	for (const id of presented) {
 		const row = db
 			.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
@@ -1661,7 +1664,7 @@ function applyOpenLoopLivenessProjection(
 	return dropped;
 }
 
-export function deleteItem(conversationId: string, kind: string, id: string): boolean {
+export function deleteItem(conversationId: number, kind: string, id: number): boolean {
 	const normalized = normalizeKind(kind);
 	if (!normalized) return false;
 	if (normalized === 'entity')
@@ -1682,7 +1685,7 @@ export function deleteItem(conversationId: string, kind: string, id: string): bo
  * once a replacement patch validates, so a failed/aborted/needs_review retry
  * never reaches it. Mutates durable state.
  */
-export function revertCommittedPatch(conversationId: string, patchId: string): void {
+export function revertCommittedPatch(conversationId: number, patchId: number): void {
 	const items = listPatchItems(conversationId, { patchId, limit: 1000 });
 	const db = getDb();
 	// Apply every item AND rebuild the projection inside one transaction so a
@@ -1714,8 +1717,8 @@ export function revertCommittedPatch(conversationId: string, patchId: string): v
  */
 function headBeforeMessage(
 	db: Database.Database,
-	conversationId: string,
-	messageId: string
+	conversationId: number,
+	messageId: number
 ): string | null {
 	const row = db
 		.prepare(
@@ -1757,8 +1760,8 @@ function headBeforeMessage(
  */
 let turnStartViewSavepointSeq = 0;
 export function readMemoryAtTurnStart<T>(
-	conversationId: string,
-	assistantMessageId: string,
+	conversationId: number,
+	assistantMessageId: number,
 	read: () => T
 ): T {
 	const db = getDb();
@@ -1777,13 +1780,13 @@ export function readMemoryAtTurnStart<T>(
 }
 
 export function upsertGlobalMemory(
-	userId: string,
+	userId: number,
 	input: {
 		kind: string;
 		memoryKey: string;
 		value: unknown;
-		sourceConversationId?: string | null | undefined;
-		sourceMessageId?: string | null | undefined;
+		sourceConversationId?: number | null | undefined;
+		sourceMessageId?: number | null | undefined;
 	}
 ): GlobalMemory {
 	const db = getDb();
@@ -1821,23 +1824,24 @@ export function upsertGlobalMemory(
 			indexGlobalMemory(db, userId, updated.id, globalMemoryIndexText(updated));
 			return rowToGlobalMemory(updated);
 		}
-		const id = ulid();
-		db.prepare(
-			`INSERT INTO global_memories(
-		   id, user_id, kind, memory_key, value_json, status, source_conversation_id,
+		const info = db
+			.prepare(
+				`INSERT INTO global_memories(
+		   user_id, kind, memory_key, value_json, status, source_conversation_id,
 		   source_message_id, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
-		).run(
-			id,
-			userId,
-			input.kind,
-			input.memoryKey,
-			safeJson(input.value),
-			input.sourceConversationId ?? null,
-			input.sourceMessageId ?? null,
-			now,
-			now
-		);
+		 ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`
+			)
+			.run(
+				userId,
+				input.kind,
+				input.memoryKey,
+				safeJson(input.value),
+				input.sourceConversationId ?? null,
+				input.sourceMessageId ?? null,
+				now,
+				now
+			);
+		const id = Number(info.lastInsertRowid);
 		const row = db.prepare('SELECT * FROM global_memories WHERE id = ?').get(id) as GlobalMemoryRow;
 		indexGlobalMemory(db, userId, id, globalMemoryIndexText(row));
 		return rowToGlobalMemory(row);
@@ -1851,14 +1855,14 @@ export type UpdateGlobalMemoryResult =
 	| { status: 'conflict' };
 
 export function updateGlobalMemory(
-	userId: string,
-	id: string,
+	userId: number,
+	id: number,
 	input: {
 		kind: string;
 		memoryKey: string;
 		value: unknown;
-		sourceConversationId?: string | null | undefined;
-		sourceMessageId?: string | null | undefined;
+		sourceConversationId?: number | null | undefined;
+		sourceMessageId?: number | null | undefined;
 	}
 ): UpdateGlobalMemoryResult {
 	const db = getDb();
@@ -1879,7 +1883,7 @@ export function updateGlobalMemory(
 				`SELECT id FROM global_memories
 			  WHERE user_id = ? AND kind = ? AND memory_key = ? AND id != ?`
 			)
-			.get(userId, input.kind, input.memoryKey, id) as { id: string } | undefined;
+			.get(userId, input.kind, input.memoryKey, id) as { id: number } | undefined;
 		if (conflict) return { status: 'conflict' };
 		const now = Date.now();
 		db.prepare(
@@ -1907,7 +1911,7 @@ export function updateGlobalMemory(
 }
 
 export function listGlobalMemories(
-	userId: string,
+	userId: number,
 	opts: { kind?: string; status?: string; limit?: number } = {}
 ): GlobalMemory[] {
 	const status = opts.status ?? 'active';
@@ -1930,9 +1934,9 @@ export function listGlobalMemories(
 }
 
 export function searchGlobalMemories(
-	userId: string,
+	userId: number,
 	opts: { query: string; limit?: number }
-): Array<{ itemId: string; text: string }> {
+): Array<{ itemId: number; text: string }> {
 	const query = opts.query.trim();
 	if (!query) return [];
 	const rows = getDb()
@@ -1944,11 +1948,11 @@ export function searchGlobalMemories(
 			  ORDER BY rank
 			  LIMIT ?`
 		)
-		.all(userId, ftsQuery(query), opts.limit ?? 20) as { item_id: string; text: string }[];
+		.all(userId, ftsQuery(query), opts.limit ?? 20) as { item_id: number; text: string }[];
 	return rows.map((row) => ({ itemId: row.item_id, text: row.text }));
 }
 
-export function deleteGlobalMemory(userId: string, id: string): boolean {
+export function deleteGlobalMemory(userId: number, id: number): boolean {
 	const db = getDb();
 	const result = db
 		.prepare(
@@ -1964,23 +1968,23 @@ export function deleteGlobalMemory(userId: string, id: string): boolean {
 }
 
 export function addIssue(
-	conversationId: string,
+	conversationId: number,
 	input: {
-		patchId?: string | null;
+		patchId?: number | null;
 		severity: 'info' | 'warning' | 'error';
 		code: string;
 		message: string;
 	}
 ): MemoryValidationIssue {
-	const id = ulid();
 	const now = Date.now();
-	getDb()
+	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_validation_issues(
-			   id, conversation_id, patch_id, severity, code, message, status, created_at, resolved_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, NULL)`
+			   conversation_id, patch_id, severity, code, message, status, created_at, resolved_at
+			 ) VALUES (?, ?, ?, ?, ?, 'open', ?, NULL)`
 		)
-		.run(id, conversationId, input.patchId ?? null, input.severity, input.code, input.message, now);
+		.run(conversationId, input.patchId ?? null, input.severity, input.code, input.message, now);
+	const id = Number(info.lastInsertRowid);
 	const row = getDb()
 		.prepare('SELECT * FROM memory_validation_issues WHERE id = ?')
 		.get(id) as IssueRow;
@@ -1994,7 +1998,7 @@ export function addIssue(
 }
 
 export function listIssues(
-	conversationId: string,
+	conversationId: number,
 	opts: { limit?: number; status?: string } = {}
 ): MemoryValidationIssue[] {
 	const rows = getDb()
@@ -2008,26 +2012,24 @@ export function listIssues(
 }
 
 export function recordToolCall(
-	conversationId: string,
+	conversationId: number,
 	input: {
 		turnId?: string | null | undefined;
 		toolName: string;
 		arguments: unknown;
 		resultSummary: string;
-		resultIds?: string[] | undefined;
+		resultIds?: number[] | undefined;
 	}
 ): MemoryToolCall {
-	const id = ulid();
 	const now = Date.now();
-	getDb()
+	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_tool_calls(
-			   id, conversation_id, turn_id, tool_name, arguments_json, result_summary,
+			   conversation_id, turn_id, tool_name, arguments_json, result_summary,
 			   result_ids_json, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
-			id,
 			conversationId,
 			input.turnId ?? null,
 			input.toolName,
@@ -2036,6 +2038,7 @@ export function recordToolCall(
 			safeJson(input.resultIds ?? []),
 			now
 		);
+	const id = Number(info.lastInsertRowid);
 	const row = getDb()
 		.prepare('SELECT * FROM memory_tool_calls WHERE id = ?')
 		.get(id) as ToolCallRow;
@@ -2050,7 +2053,7 @@ export function recordToolCall(
 }
 
 export function listToolCalls(
-	conversationId: string,
+	conversationId: number,
 	opts: { limit?: number } = {}
 ): MemoryToolCall[] {
 	const rows = getDb()
@@ -2064,9 +2067,9 @@ export function listToolCalls(
 }
 
 export function search(
-	conversationId: string,
+	conversationId: number,
 	opts: { query: string; types?: string[] | undefined; limit?: number | undefined }
-): Array<{ itemType: string; itemId: string; text: string; score?: number; sources?: string[] }> {
+): Array<{ itemType: string; itemId: number; text: string; score?: number; sources?: string[] }> {
 	const query = opts.query.trim();
 	if (!query) return [];
 	const limit = opts.limit ?? 20;
@@ -2087,7 +2090,7 @@ export function search(
 		)
 		.all(conversationId, ftsQuery(query), ...types, limit) as {
 		item_type: string;
-		item_id: string;
+		item_id: number;
 		text: string;
 	}[];
 	return rows.map((row, index) => ({
@@ -2109,11 +2112,11 @@ export function search(
  * this in the SAME transaction as the delete (see `conversations.remove`). Pass
  * the active db handle so the purge participates in the caller's transaction.
  */
-export function purgeSessionSearchIndex(db: Database.Database, conversationId: string): void {
+export function purgeSessionSearchIndex(db: Database.Database, conversationId: number): void {
 	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
 }
 
-export function wipe(conversationId: string): void {
+export function wipe(conversationId: number): void {
 	const db = getDb();
 	const tx = db.transaction(() => {
 		clearSessionMemoryProjection(db, conversationId);
@@ -2135,7 +2138,7 @@ export function wipe(conversationId: string): void {
 // that still reconstructs every surviving item's latest state — the only thing
 // lost is "cold" history (items whose sole observation aged out), which is
 // exactly the intent of a retention sweep. Returns the number of events trimmed.
-export function compactSessionMemoryLog(conversationId: string, maxEvents: number): number {
+export function compactSessionMemoryLog(conversationId: number, maxEvents: number): number {
 	if (!Number.isFinite(maxEvents) || maxEvents <= 0) return 0;
 	const cap = Math.floor(maxEvents);
 	const db = getDb();
@@ -2200,7 +2203,7 @@ export function runMemoryRetention(opts: { maxEvents: number }): {
 			  GROUP BY conversation_id
 			 HAVING COUNT(*) > ?`
 		)
-		.all(cap) as { id: string }[];
+		.all(cap) as { id: number }[];
 	let conversations = 0;
 	let trimmed = 0;
 	for (const row of rows) {
@@ -2222,14 +2225,14 @@ export function vacuumMemoryDatabase(): void {
 }
 
 export function replaySessionMemoryLogForFork(
-	sourceConversationId: string,
-	targetConversationId: string,
-	opts: { messageIdMap: Map<string, string>; createdBefore?: number | undefined }
+	sourceConversationId: number,
+	targetConversationId: number,
+	opts: { messageIdMap: Map<number, number>; createdBefore?: number | undefined }
 ): { entities: number; events: number; facts: number; openLoops: number } {
 	const db = getDb();
 	const included = new Set<string>();
-	const isIncluded = (type: string, id: string) => included.has(`${type}:${id}`);
-	const markIncluded = (type: string, id: string) => included.add(`${type}:${id}`);
+	const isIncluded = (type: string, id: number) => included.has(`${type}:${id}`);
+	const markIncluded = (type: string, id: number) => included.add(`${type}:${id}`);
 	const counts = { entities: 0, events: 0, facts: 0, openLoops: 0 };
 	const tx = db.transaction(() => {
 		clearSessionMemoryProjection(db, targetConversationId);
@@ -2284,8 +2287,8 @@ export function replaySessionMemoryLogForFork(
 }
 
 export function rewindSessionMemoryLogToMessagePrefix(
-	conversationId: string,
-	opts: { messageIds: Set<string>; createdBefore?: number | undefined }
+	conversationId: number,
+	opts: { messageIds: Set<number>; createdBefore?: number | undefined }
 ): { kept: number; removed: number } {
 	const db = getDb();
 	let kept = 0;
@@ -2303,7 +2306,7 @@ export function rewindSessionMemoryLogToMessagePrefix(
 		const keptMessageIds = new Set(opts.messageIds);
 		const headRows = db
 			.prepare('SELECT message_id FROM memory_message_heads WHERE conversation_id = ?')
-			.all(conversationId) as { message_id: string }[];
+			.all(conversationId) as { message_id: number }[];
 		for (const row of headRows) {
 			if (!keptMessageIds.has(row.message_id)) {
 				dropMemoryMessageHead(db, conversationId, row.message_id);
@@ -2328,7 +2331,7 @@ type SessionProjectionTable =
 function countSessionProjectionRows(
 	db: Database.Database,
 	table: SessionProjectionTable,
-	conversationId: string,
+	conversationId: number,
 	status: string | null
 ): number {
 	const row = (
@@ -2343,7 +2346,7 @@ function countSessionProjectionRows(
 	return row.n;
 }
 
-function getCurrentMemoryHead(db: Database.Database, conversationId: string): string | null {
+function getCurrentMemoryHead(db: Database.Database, conversationId: number): string | null {
 	const row = db
 		.prepare(
 			`SELECT h.head_event_id
@@ -2363,14 +2366,14 @@ function getCurrentMemoryHead(db: Database.Database, conversationId: string): st
 	return getProjectionMemoryHead(db, conversationId);
 }
 
-function getProjectionMemoryHead(db: Database.Database, conversationId: string): string | null {
+function getProjectionMemoryHead(db: Database.Database, conversationId: number): string | null {
 	const row = db
 		.prepare('SELECT projection_event_id FROM memory_heads WHERE conversation_id = ?')
 		.get(conversationId) as { projection_event_id: string | null } | undefined;
 	return row?.projection_event_id ?? null;
 }
 
-function getLatestMessageId(db: Database.Database, conversationId: string): string | null {
+function getLatestMessageId(db: Database.Database, conversationId: number): number | null {
 	const row = db
 		.prepare(
 			`SELECT id
@@ -2379,14 +2382,14 @@ function getLatestMessageId(db: Database.Database, conversationId: string): stri
 			  ORDER BY created_at DESC, id DESC
 			  LIMIT 1`
 		)
-		.get(conversationId) as { id: string } | undefined;
+		.get(conversationId) as { id: number } | undefined;
 	return row?.id ?? null;
 }
 
 function getAppendParentMemoryHead(
 	db: Database.Database,
-	conversationId: string,
-	sourceMessageId: string | null | undefined
+	conversationId: number,
+	sourceMessageId: number | null | undefined
 ): string | null {
 	if (sourceMessageId) {
 		const row = db
@@ -2410,7 +2413,7 @@ function getAppendParentMemoryHead(
 
 function setProjectionMemoryHead(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	headEventId: string | null
 ): void {
 	db.prepare(
@@ -2429,14 +2432,17 @@ type MemoryRefKind = 'memory_parent' | 'message_head';
 // the event that just lost this reference. Returns null when unchanged.
 function setMemoryRef(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	kind: MemoryRefKind,
-	sourceKey: string,
+	sourceKey: string | number,
 	targetEventId: string
 ): string | null {
+	// source_key is TEXT (message ids and event ids share the column); store a
+	// canonical string so integer ids never surface as the "1.0" REAL artifact.
+	const key = String(sourceKey);
 	const prev = db
 		.prepare('SELECT target_event_id FROM memory_refs WHERE ref_kind = ? AND source_key = ?')
-		.get(kind, sourceKey) as { target_event_id: string } | undefined;
+		.get(kind, key) as { target_event_id: string } | undefined;
 	db.prepare(
 		`INSERT INTO memory_refs(conversation_id, ref_kind, source_key, target_event_id, created_at)
 		 VALUES (?, ?, ?, ?, ?)
@@ -2444,7 +2450,7 @@ function setMemoryRef(
 		   conversation_id = excluded.conversation_id,
 		   target_event_id = excluded.target_event_id,
 		   created_at = excluded.created_at`
-	).run(conversationId, kind, sourceKey, targetEventId, Date.now());
+	).run(conversationId, kind, key, targetEventId, Date.now());
 	return prev && prev.target_event_id !== targetEventId ? prev.target_event_id : null;
 }
 
@@ -2453,12 +2459,13 @@ function setMemoryRef(
 function dropMemoryRef(
 	db: Database.Database,
 	kind: MemoryRefKind,
-	sourceKey: string
+	sourceKey: string | number
 ): string | null {
+	const key = String(sourceKey);
 	const prev = db
 		.prepare('SELECT target_event_id FROM memory_refs WHERE ref_kind = ? AND source_key = ?')
-		.get(kind, sourceKey) as { target_event_id: string } | undefined;
-	db.prepare('DELETE FROM memory_refs WHERE ref_kind = ? AND source_key = ?').run(kind, sourceKey);
+		.get(kind, key) as { target_event_id: string } | undefined;
+	db.prepare('DELETE FROM memory_refs WHERE ref_kind = ? AND source_key = ?').run(kind, key);
 	return prev?.target_event_id ?? null;
 }
 
@@ -2476,7 +2483,7 @@ function memoryEventIsReferenced(db: Database.Database, eventId: string): boolea
 // chain from looping forever.
 function gcMemoryEventChain(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	startEventId: string | null
 ): void {
 	let id: string | null = startEventId;
@@ -2498,8 +2505,8 @@ function gcMemoryEventChain(
 
 function recordMemoryMessageHead(
 	db: Database.Database,
-	conversationId: string,
-	messageId: string,
+	conversationId: number,
+	messageId: number,
 	headEventId: string
 ): void {
 	db.prepare(
@@ -2519,8 +2526,8 @@ function recordMemoryMessageHead(
 // rerun truncation), then GC whatever its reference was pinning.
 function dropMemoryMessageHead(
 	db: Database.Database,
-	conversationId: string,
-	messageId: string
+	conversationId: number,
+	messageId: number
 ): void {
 	db.prepare('DELETE FROM memory_message_heads WHERE conversation_id = ? AND message_id = ?').run(
 		conversationId,
@@ -2532,8 +2539,8 @@ function dropMemoryMessageHead(
 
 function headForMessagePrefix(
 	db: Database.Database,
-	conversationId: string,
-	messageIds: Iterable<string>,
+	conversationId: number,
+	messageIds: Iterable<number>,
 	opts: { createdBefore?: number | undefined } = {}
 ): string | null {
 	const ids = new Set(messageIds);
@@ -2567,7 +2574,7 @@ function headForMessagePrefix(
 
 function chainRowsForHead(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	headId: string | null
 ): MemoryLogRow[] {
 	const rows: MemoryLogRow[] = [];
@@ -2585,12 +2592,12 @@ function chainRowsForHead(
 
 function appendSessionMemoryLog(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	input: {
 		eventKind: string;
 		itemType: SessionMemoryLogItemType;
-		itemId: string;
-		sourceMessageId?: string | null | undefined;
+		itemId: number;
+		sourceMessageId?: number | null | undefined;
 		turnId?: string | null | undefined;
 		payload: unknown;
 		createdAt?: number | undefined;
@@ -2658,8 +2665,8 @@ function appendSessionMemoryLog(
 
 function messageBelongsToConversation(
 	db: Database.Database,
-	conversationId: string,
-	messageId: string
+	conversationId: number,
+	messageId: number
 ): boolean {
 	const row = db
 		.prepare('SELECT 1 AS ok FROM messages WHERE conversation_id = ? AND id = ?')
@@ -2667,7 +2674,7 @@ function messageBelongsToConversation(
 	return row !== undefined;
 }
 
-function clearSessionMemoryProjection(db: Database.Database, conversationId: string): void {
+function clearSessionMemoryProjection(db: Database.Database, conversationId: number): void {
 	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_patch_items WHERE conversation_id = ?').run(conversationId);
 	db.prepare('DELETE FROM memory_tool_calls WHERE conversation_id = ?').run(conversationId);
@@ -2679,7 +2686,7 @@ function clearSessionMemoryProjection(db: Database.Database, conversationId: str
 	db.prepare('DELETE FROM memory_entities WHERE conversation_id = ?').run(conversationId);
 }
 
-export function rebuildSessionMemoryProjection(conversationId: string): void {
+export function rebuildSessionMemoryProjection(conversationId: number): void {
 	const db = getDb();
 	const tx = db.transaction(() => rebuildSessionMemoryProjectionInTransaction(db, conversationId));
 	tx();
@@ -2687,7 +2694,7 @@ export function rebuildSessionMemoryProjection(conversationId: string): void {
 
 function rebuildSessionMemoryProjectionInTransaction(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	headId: string | null = getCurrentMemoryHead(db, conversationId)
 ): void {
 	clearSessionMemoryProjection(db, conversationId);
@@ -2742,7 +2749,7 @@ function applySessionMemoryLogProjection(
 	}
 }
 
-function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: string): void {
+function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: number): void {
 	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
 	for (const row of db
 		.prepare(`SELECT * FROM memory_entities WHERE conversation_id = ?`)
@@ -2942,24 +2949,56 @@ function payloadObject(payload: unknown): Record<string, unknown> {
 	return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
 }
 
+// Table that backs each session-memory item type, for the fork remapper's
+// MAX(id)+1 seed. Restricted to a fixed Record so the interpolated table name
+// can never be user-controlled (mirrors the SessionProjectionTable pattern).
+const REMAPPER_TABLES: Record<string, string> = {
+	entity: 'memory_entities',
+	event: 'memory_events',
+	fact: 'memory_facts',
+	open_loop: 'memory_open_loops',
+	patch: 'memory_patches',
+	patch_item: 'memory_patch_items',
+	issue: 'memory_validation_issues',
+	tool_call: 'memory_tool_calls'
+};
+
+function getMaxRemapperId(db: Database.Database, type: string): number | undefined {
+	const table = REMAPPER_TABLES[type];
+	if (!table) return undefined;
+	const row = db.prepare(`SELECT MAX(id) AS m FROM ${table}`).get() as { m: number | null };
+	return row?.m ?? undefined;
+}
+
 function createForkMemoryRemapper(
-	targetConversationId: string,
-	messageIdMap: Map<string, string>,
-	isCopied: (type: string, id: string) => boolean
+	targetConversationId: number,
+	messageIdMap: Map<number, number>,
+	isCopied: (type: string, id: number) => boolean
 ): (itemType: SessionMemoryLogItemType, payload: unknown) => unknown {
-	const idMaps = new Map<string, Map<string, string>>();
+	const db = getDb();
+	// Fork-local id minting. Projection tables (memory_entities & co) have
+	// GLOBALLY-unique primary keys shared by every conversation, so a fork's ids
+	// must clear every other conversation's ids: seed each type's counter from
+	// MAX(id)+1 across the whole table, then hand out ascending ids. AUTOINCREMENT
+	// continues above the highest explicitly-inserted id, so a fork can never
+	// collide with (or shadow) a future insert. better-sqlite3 is single-connection
+	// and this runs inside a transaction, so there are no races.
+	const idMaps = new Map<string, Map<number, number>>();
+	const nextId = new Map<string, number>();
 	// Mint (or reuse) the fork-local id for an item that IS being copied. Used
 	// for each row's own primary id.
-	const mintId = (type: string, id: string | null | undefined): string | null => {
+	const mintId = (type: string, id: number | null | undefined): number | null => {
 		if (!id) return null;
 		let typeMap = idMaps.get(type);
 		if (!typeMap) {
 			typeMap = new Map();
 			idMaps.set(type, typeMap);
+			nextId.set(type, (getMaxRemapperId(db, type) ?? 0) + 1);
 		}
 		let next = typeMap.get(id);
-		if (!next) {
-			next = ulid();
+		if (next === undefined) {
+			next = nextId.get(type)!;
+			nextId.set(type, next + 1);
 			typeMap.set(id, next);
 		}
 		return next;
@@ -2967,9 +3006,9 @@ function createForkMemoryRemapper(
 	// Resolve a reference to another item. Returns the fork-local id only when
 	// the referenced item was itself copied; otherwise null, so links to rows
 	// left behind by the fork never dangle at a non-existent id.
-	const refId = (type: string, id: string | null | undefined): string | null =>
+	const refId = (type: string, id: number | null | undefined): number | null =>
 		id && isCopied(type, id) ? mintId(type, id) : null;
-	const mapMessage = (id: string | null | undefined): string | null =>
+	const mapMessage = (id: number | null | undefined): number | null =>
 		id ? (messageIdMap.get(id) ?? null) : null;
 	const remapItem = (itemType: SessionMemoryLogItemType, value: unknown): unknown => {
 		if (!value || typeof value !== 'object') return value;
@@ -3010,7 +3049,7 @@ function createForkMemoryRemapper(
 				conversationId: targetConversationId,
 				relatedEntityIds: item.relatedEntityIds
 					.map((id) => refId('entity', id))
-					.filter((id): id is string => !!id),
+					.filter((id): id is number => !!id),
 				sourceEventId: refId('event', item.sourceEventId),
 				sourceMessageId: mapMessage(item.sourceMessageId)
 			};
@@ -3069,11 +3108,11 @@ function createForkMemoryRemapper(
 		// arrays; remap them to the fork-local loop ids and drop any whose loop
 		// was not copied, so the replayed decay still targets the right rows.
 		if (itemType === 'open_loop_liveness') {
-			const remapLoopIds = (value: unknown): string[] =>
+			const remapLoopIds = (value: unknown): number[] =>
 				Array.isArray(value)
 					? value
-							.map((id) => (typeof id === 'string' ? refId('open_loop', id) : null))
-							.filter((id): id is string => !!id)
+							.map((id) => (typeof id === 'number' ? refId('open_loop', id) : null))
+							.filter((id): id is number => !!id)
 					: [];
 			result.presented = remapLoopIds(result.presented);
 			result.kept = remapLoopIds(result.kept);
@@ -3082,19 +3121,19 @@ function createForkMemoryRemapper(
 	};
 }
 
-function remapIdForPayload(sourceItemId: string, payload: unknown): string {
+function remapIdForPayload(sourceItemId: number, payload: unknown): number {
 	const record = payloadObject(payload);
 	const value = (record.item ?? record.patch ?? record.issue ?? record.toolCall) as
 		| { id?: unknown }
 		| undefined;
-	return typeof value?.id === 'string' ? value.id : sourceItemId;
+	return typeof value?.id === 'number' ? value.id : sourceItemId;
 }
 
 function indexItem(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	itemType: string,
-	itemId: string,
+	itemId: number,
 	text: string
 ) {
 	db.prepare(
@@ -3108,9 +3147,9 @@ function indexItem(
 
 function syncSessionIndex(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	itemType: string,
-	itemId: string,
+	itemId: number,
 	status: string,
 	text: string
 ) {
@@ -3127,16 +3166,16 @@ function shouldIndexSessionItem(itemType: string, status: string): boolean {
 
 function deleteSessionIndex(
 	db: Database.Database,
-	conversationId: string,
+	conversationId: number,
 	itemType: string,
-	itemId: string
+	itemId: number
 ) {
 	db.prepare(
 		'DELETE FROM memory_search_index WHERE conversation_id = ? AND item_type = ? AND item_id = ?'
 	).run(conversationId, itemType, itemId);
 }
 
-function indexGlobalMemory(db: Database.Database, userId: string, itemId: string, text: string) {
+function indexGlobalMemory(db: Database.Database, userId: number, itemId: number, text: string) {
 	db.prepare('DELETE FROM global_memory_search_index WHERE user_id = ? AND item_id = ?').run(
 		userId,
 		itemId
@@ -3147,7 +3186,7 @@ function indexGlobalMemory(db: Database.Database, userId: string, itemId: string
 	).run(userId, itemId, text);
 }
 
-function deleteGlobalIndex(db: Database.Database, userId: string, itemId: string) {
+function deleteGlobalIndex(db: Database.Database, userId: number, itemId: number) {
 	db.prepare('DELETE FROM global_memory_search_index WHERE user_id = ? AND item_id = ?').run(
 		userId,
 		itemId
@@ -3217,7 +3256,7 @@ function rowToOpenLoop(row: OpenLoopRow): MemoryOpenLoop {
 		description: row.description,
 		status: row.status,
 		priority: row.priority,
-		relatedEntityIds: parseStringArray(row.related_entity_ids_json),
+		relatedEntityIds: parseNumberArray(row.related_entity_ids_json),
 		sourceEventId: row.source_event_id,
 		sourceMessageId: row.source_message_id,
 		idleTurns: row.idle_turns ?? 0,
@@ -3266,7 +3305,7 @@ function rowToToolCall(row: ToolCallRow): MemoryToolCall {
 		toolName: row.tool_name,
 		arguments: parseJson(row.arguments_json, {}),
 		resultSummary: row.result_summary,
-		resultIds: parseStringArray(row.result_ids_json),
+		resultIds: parseNumberArray(row.result_ids_json),
 		createdAt: row.created_at
 	};
 }
@@ -3315,10 +3354,10 @@ function parseJson(raw: string, fallback: unknown): unknown {
 	}
 }
 
-function parseStringArray(raw: string): string[] {
+function parseNumberArray(raw: string): number[] {
 	const parsed = parseJson(raw, []);
 	return Array.isArray(parsed)
-		? parsed.filter((item): item is string => typeof item === 'string')
+		? parsed.filter((item): item is number => typeof item === 'number')
 		: [];
 }
 

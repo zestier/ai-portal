@@ -15,10 +15,10 @@ import { writable } from 'svelte/store';
  * its own `pendingInteractive` (filtered to blocking kinds), so the sidebar and
  * the chat can never disagree about the open conversation.
  */
-export const awaitingInputOverrides = writable<Record<string, boolean>>({});
+export const awaitingInputOverrides = writable<Record<number, boolean>>({});
 
 /** Record (or update) the open conversation's live awaiting-input state. */
-export function setAwaitingInput(conversationId: string, awaiting: boolean): void {
+export function setAwaitingInput(conversationId: number, awaiting: boolean): void {
 	awaitingInputOverrides.update((current) => {
 		if (current[conversationId] === awaiting) return current;
 		return { ...current, [conversationId]: awaiting };
@@ -29,7 +29,7 @@ export function setAwaitingInput(conversationId: string, awaiting: boolean): voi
  * Drop a conversation's live override (e.g. when its chat unmounts) so the
  * sidebar falls back to the server `load` value for it.
  */
-export function clearAwaitingInput(conversationId: string): void {
+export function clearAwaitingInput(conversationId: number): void {
 	awaitingInputOverrides.update((current) => {
 		if (!(conversationId in current)) return current;
 		const next = { ...current };
@@ -43,9 +43,9 @@ export function clearAwaitingInput(conversationId: string): void {
  * override wins when present, otherwise fall back to the server `load` set.
  */
 export function isAwaitingInput(
-	conversationId: string,
-	serverAwaiting: Set<string>,
-	overrides: Record<string, boolean>
+	conversationId: number,
+	serverAwaiting: Set<number>,
+	overrides: Record<number, boolean>
 ): boolean {
 	if (conversationId in overrides) return overrides[conversationId];
 	return serverAwaiting.has(conversationId);

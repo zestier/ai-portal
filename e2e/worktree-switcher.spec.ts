@@ -56,7 +56,7 @@ test('the workspace switcher browses a lease without disturbing the main workspa
 	// The main workspace does not contain the lease's file.
 	await expect(page.getByText('only-in-lease.txt')).toHaveCount(0);
 
-	await switcher.selectOption(lease.id);
+	await switcher.selectOption(String(lease.id));
 
 	// Switching re-reads the tree, and the URL carries the selection so a reload
 	// lands on the same workspace.

@@ -6,12 +6,11 @@
 // only so the hot message/tool-call queries stay light.
 
 import type Database from 'better-sqlite3';
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import type { ToolAttachmentMeta } from '$lib/types';
 
 export interface InsertToolAttachment {
-	toolCallId: string;
+	toolCallId: number;
 	kind: 'image';
 	mimeType: string;
 	byteSize: number;
@@ -19,16 +18,14 @@ export interface InsertToolAttachment {
 	data: Buffer;
 }
 
-export function insert(input: InsertToolAttachment): string {
-	const id = ulid();
-	getDb()
+export function insert(input: InsertToolAttachment): number {
+	const info = getDb()
 		.prepare(
 			`INSERT INTO tool_attachments(
-			   id, tool_call_id, kind, mime_type, byte_size, source_path, data, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			   tool_call_id, kind, mime_type, byte_size, source_path, data, created_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
-			id,
 			input.toolCallId,
 			input.kind,
 			input.mimeType,
@@ -37,12 +34,12 @@ export function insert(input: InsertToolAttachment): string {
 			input.data,
 			Date.now()
 		);
-	return id;
+	return Number(info.lastInsertRowid);
 }
 
 interface MetaRow {
-	id: string;
-	tool_call_id: string;
+	id: number;
+	tool_call_id: number;
 	kind: string;
 	mime_type: string;
 	byte_size: number;
@@ -59,7 +56,7 @@ function rowToMeta(r: MetaRow): ToolAttachmentMeta {
 }
 
 /** Metadata (no bytes) for a single tool call's attachments, oldest first. */
-export function listMetaForToolCall(toolCallId: string): ToolAttachmentMeta[] {
+export function listMetaForToolCall(toolCallId: number): ToolAttachmentMeta[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT id, tool_call_id, kind, mime_type, byte_size
@@ -74,9 +71,9 @@ export function listMetaForToolCall(toolCallId: string): ToolAttachmentMeta[] {
  * Batches the IN-list to stay under SQLite's bound-parameter cap.
  */
 export function listMetaForToolCalls(
-	toolCallIds: readonly string[]
-): Map<string, ToolAttachmentMeta[]> {
-	const out = new Map<string, ToolAttachmentMeta[]>();
+	toolCallIds: readonly number[]
+): Map<number, ToolAttachmentMeta[]> {
+	const out = new Map<number, ToolAttachmentMeta[]>();
 	if (toolCallIds.length === 0) return out;
 	const db = getDb();
 	const BATCH = 500;
@@ -110,10 +107,10 @@ export interface AttachmentBytes {
  * on any mismatch so the endpoint can 404 without leaking existence.
  */
 export function getForOwner(
-	conversationId: string,
-	toolCallId: string,
-	attachmentId: string,
-	userId: string
+	conversationId: number,
+	toolCallId: number,
+	attachmentId: number,
+	userId: number
 ): AttachmentBytes | null {
 	const row = getDb()
 		.prepare(
@@ -135,7 +132,7 @@ export function getForOwner(
 }
 
 // Test helper: count rows for a tool call (used to assert cascade cleanup).
-export function _countForToolCall(db: Database.Database, toolCallId: string): number {
+export function _countForToolCall(db: Database.Database, toolCallId: number): number {
 	const r = db
 		.prepare('SELECT COUNT(*) AS n FROM tool_attachments WHERE tool_call_id = ?')
 		.get(toolCallId) as { n: number };

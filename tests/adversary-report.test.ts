@@ -17,8 +17,6 @@ import { setupLocalEnv } from './helpers/env';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = resolve(repoRoot, 'scripts/adversary-shadow-report.mjs');
 
-let convCounter = 0;
-
 async function seed() {
 	const dataDir = await setupLocalEnv('portal-report-test-');
 	const repo = await import('../src/lib/server/db/repos/shadow-decisions');
@@ -26,34 +24,30 @@ async function seed() {
 	const convs = await import('../src/lib/server/db/repos/conversations');
 
 	const user = ensureLocalUser();
-	const conversationId = `conv-report-${convCounter++}`;
-	convs.create(user.id, {
-		id: conversationId,
+	const conversationId = convs.create(user.id, {
 		title: 'report test',
 		workdir: '/tmp',
 		model: 'agent-model'
-	});
+	}).id;
 
 	let n = 0;
 	const insert = (
 		resolutionSource: 'prompt-policy' | 'prompt-grant' | 'auto-approve',
 		experimentKey = 'exp-a'
 	) => {
-		const id = `row-${conversationId}-${n++}`;
-		repo.insertPending({
-			id,
+		const label = `row-${conversationId}-${n++}`;
+		return repo.insertPending({
 			conversationId,
 			tool: 'shell',
 			permissionKind: 'shell',
-			scopeKey: `cmd-${id}`,
+			scopeKey: `cmd-${label}`,
 			argsHash: null,
 			adversaryModel: 'reviewer-model',
 			experimentKey,
 			promptVersion: 1,
-			factsKey: `facts-${id}`,
+			factsKey: `facts-${label}`,
 			resolutionSource
 		});
-		return id;
 	};
 
 	return { dataDir, repo, insert };

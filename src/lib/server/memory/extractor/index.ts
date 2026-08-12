@@ -22,6 +22,7 @@ import { resolveModelSelection, piChat } from '$lib/server/pi/complete';
 import { buildMemoryTools } from '$lib/server/tools/memory';
 import * as conversationsRepo from '$lib/server/db/repos/conversations';
 import * as memoryRepo from '$lib/server/db/repos/memory';
+import { mintToolCallId } from '$lib/server/db/repos/messages';
 import {
 	type ExtractPatchInput,
 	type ExtractPatchResult,
@@ -502,7 +503,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					for (const id of parseAcknowledgedFailures(call.arguments))
 						outstandingFailures.delete(id);
 					const remaining = [...outstandingFailures];
-					const finishActivityId = `mem_${ulid()}`;
+					const finishActivityId = mintToolCallId();
 					input.onActivity?.({
 						type: 'tool.call',
 						toolCallId: finishActivityId,
@@ -549,7 +550,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 					finishAccepted = true;
 					continue;
 				}
-				const activityId = `mem_${ulid()}`;
+				const activityId = mintToolCallId();
 				input.onActivity?.({
 					type: 'tool.call',
 					toolCallId: activityId,
@@ -868,7 +869,7 @@ function activityResultSummary(toolName: string, result: string): string {
 
 function mergePatchProposals(
 	patches: MemoryPatchProposal[],
-	conversationId?: string
+	conversationId?: number
 ): MemoryPatchProposal {
 	const merged: MemoryPatchProposal = {};
 	const entities = patches.flatMap((patch) => patch.entities ?? []);
@@ -881,7 +882,7 @@ function mergePatchProposals(
 	// resolve each to the canonical id (mirroring validatePatch) so both forms
 	// collapse to one entry instead of emitting an open_loop_resolution_duplicate.
 	const resolutionById = new Map<
-		string,
+		string | number,
 		NonNullable<MemoryPatchProposal['resolveOpenLoops']>[number]
 	>();
 	for (const patch of patches) {
@@ -971,7 +972,7 @@ export function isModelBackedExtractorConfigured(
  * is logged rather than fatal.
  */
 async function acquireExtractionLock(
-	conversationId: string,
+	conversationId: number,
 	holder: string,
 	opts: {
 		ttlMs: number;
@@ -1115,7 +1116,7 @@ async function runExtractionAndCommit(
 			...(extraction.patch.resolveOpenLoops ?? []).map((resolution) => resolution.id)
 		]
 			.map((ref) => memoryRepo.resolveOpenLoopId(input.conversationId, ref))
-			.filter((id): id is string => !!id);
+			.filter((id): id is number => id !== undefined);
 		const aged = ageOpenLoops(input.conversationId, {
 			presentedLoopIds,
 			keptLoopIds,

@@ -139,8 +139,8 @@ describe('pi session persistence', () => {
 			const wd = makeTmpDir('pi-rewind-wd-');
 			const { openPiSession } = await import('../src/lib/server/pi');
 			const session = await openPiSession({
-				conversationId: 'rewind-conv-1',
-				userId: 'u-rewind',
+				conversationId: 1,
+				userId: 1,
 				workingDirectory: wd,
 				model: 'stub',
 				policy: 'prompt',

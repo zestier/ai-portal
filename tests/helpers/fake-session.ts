@@ -8,13 +8,13 @@ import type { ProviderSession } from '../../src/lib/server/pi/session-contract';
  */
 export function makeFakeSession(
 	events: PortalEvent[],
-	conversationId = 'conv-x',
+	conversationId = 1,
 	workingDirectory = '/tmp'
 ): ProviderSession {
 	return {
 		provider: 'pi',
 		conversationId,
-		providerSessionId: conversationId,
+		providerSessionId: String(conversationId),
 		workingDirectory,
 		model: 'test-model',
 		lastUsed: Date.now(),

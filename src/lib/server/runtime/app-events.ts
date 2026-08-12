@@ -61,8 +61,8 @@ export interface SubscribeAppEventsOptions {
  * the in-process implementation below can later be swapped for a clustered one.
  */
 export interface AppEventBus {
-	publish(userId: string, event: AppEvent): void;
-	subscribe(userId: string, opts?: SubscribeAppEventsOptions): AsyncIterable<IdentifiedAppEvent>;
+	publish(userId: number, event: AppEvent): void;
+	subscribe(userId: number, opts?: SubscribeAppEventsOptions): AsyncIterable<IdentifiedAppEvent>;
 }
 
 // How many recent events to retain per user for reconnect replay. A handful is
@@ -86,9 +86,9 @@ interface UserChannel {
 }
 
 class InProcessAppEventBus implements AppEventBus {
-	private channels = new Map<string, UserChannel>();
+	private channels = new Map<number, UserChannel>();
 
-	private channel(userId: string): UserChannel {
+	private channel(userId: number): UserChannel {
 		let ch = this.channels.get(userId);
 		if (!ch) {
 			ch = { buffer: [], subscribers: new Set(), lastActivityAt: Date.now() };
@@ -126,7 +126,7 @@ class InProcessAppEventBus implements AppEventBus {
 		setGlobalSingletonValue(APP_EVENT_REAPER_KEYS, timer);
 	}
 
-	publish(userId: string, event: AppEvent): void {
+	publish(userId: number, event: AppEvent): void {
 		const now = Date.now();
 		this.reapIdle(now);
 		const ch = this.channel(userId);
@@ -138,7 +138,7 @@ class InProcessAppEventBus implements AppEventBus {
 	}
 
 	async *subscribe(
-		userId: string,
+		userId: number,
 		opts: SubscribeAppEventsOptions = {}
 	): AsyncIterable<IdentifiedAppEvent> {
 		const { signal, sinceId } = opts;
@@ -232,6 +232,6 @@ export function stopAppEventReaper(): void {
 }
 
 /** Convenience: publish an `AppEvent` to a user's global feed. */
-export function publishAppEvent(userId: string, event: AppEvent): void {
+export function publishAppEvent(userId: number, event: AppEvent): void {
 	getAppEventBus().publish(userId, event);
 }

@@ -28,9 +28,9 @@ async function createConversation(
 	title: string,
 	fetcher: TemplateFetch,
 	signal?: AbortSignal,
-	promptTemplateId?: string,
+	promptTemplateId?: number,
 	options?: Pick<TemplateLaunchOptions, 'workspace' | 'conversationMode' | 'approvalMode' | 'model'>
-): Promise<{ ok: true; id: string } | { ok: false; status?: number }> {
+): Promise<{ ok: true; id: number } | { ok: false; status?: number }> {
 	const convRes = await fetcher('/api/conversations', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
@@ -50,14 +50,14 @@ async function createConversation(
 }
 
 export function promptTemplateDraftUrl(
-	conversationId: string,
-	template: { id: string; source: PromptTemplateSource }
+	conversationId: number,
+	template: { id: number; source: PromptTemplateSource }
 ): string {
 	const params = new URLSearchParams({
 		promptTemplateSource: template.source,
-		promptTemplateId: template.id
+		promptTemplateId: String(template.id)
 	});
-	return `/conversations/${encodeURIComponent(conversationId)}?${params.toString()}`;
+	return `/conversations/${conversationId}?${params.toString()}`;
 }
 
 export async function createPromptTemplateDraftChat({
@@ -116,9 +116,9 @@ export async function createPromptTemplateLaunchChat({
 	return { ok: true, href: `/conversations/${conv.id}` };
 }
 
-export function promptTemplateRefineUrl(conversationId: string, templateId: string): string {
-	const params = new URLSearchParams({ refinePromptTemplateId: templateId });
-	return `/conversations/${encodeURIComponent(conversationId)}?${params.toString()}`;
+export function promptTemplateRefineUrl(conversationId: number, templateId: number): string {
+	const params = new URLSearchParams({ refinePromptTemplateId: String(templateId) });
+	return `/conversations/${conversationId}?${params.toString()}`;
 }
 
 export async function createPromptTemplateRefineChat({

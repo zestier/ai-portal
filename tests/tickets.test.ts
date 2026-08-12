@@ -8,9 +8,9 @@ let workspace: string;
 
 function event(opts: {
 	url?: string;
-	userId: string | null;
+	userId: number | null;
 	body?: unknown;
-	params?: Record<string, string>;
+	params?: Record<string, string | number>;
 }) {
 	return {
 		locals: { userId: opts.userId },
@@ -71,7 +71,7 @@ describe('workspace tickets', () => {
 				.prepare(
 					`INSERT INTO workspace_tickets(
 					   id, user_id, workspace_key, title, body, status, created_at, updated_at
-					 ) VALUES ('bad-status', ?, ?, 'bad', '', 'invalid', 1, 1)`
+					 ) VALUES (999997, ?, ?, 'bad', '', 'invalid', 1, 1)`
 				)
 				.run(user.id, workspace)
 		).toThrow();
@@ -102,7 +102,7 @@ describe('workspace tickets', () => {
 			}) as never
 		);
 		const listed = await listResponse.json();
-		expect(listed.tickets.map((t: { id: string }) => t.id)).toEqual([created.ticket.id]);
+		expect(listed.tickets.map((t: { id: number }) => t.id)).toEqual([created.ticket.id]);
 
 		const patchResponse = await PATCH(
 			event({
@@ -214,7 +214,6 @@ describe('workspace tickets', () => {
 		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, {
-			id: 'conv-ticket-test',
 			title: 'Ticket tools',
 			workdir: workspace,
 			model: null
@@ -233,8 +232,8 @@ describe('workspace tickets', () => {
 		await add.handler({ title: 'Remember this' });
 		const [ticket] = tickets.list(user.id, workspace);
 		expect(ticket.title).toBe('Remember this');
-		expect(ticket.sourceConversationId).toBe('conv-ticket-test');
-		await update.handler({ id: ticket.id, status: 'done' });
+		expect(ticket.sourceConversationId).toBe(conv.id);
+		await update.handler({ id: String(ticket.id), status: 'done' });
 		const listed = await list.handler({ status: 'all' });
 		expect(listed.ok).toBe(true);
 		expect(listed.ok && listed.result).toContain('[done] Remember this');
@@ -254,30 +253,30 @@ describe('workspace tickets', () => {
 
 		// ticket_get: compact default drops provenance/timestamps but lists them in
 		// _omitted; an explicit `fields` request recovers exactly what was asked for.
-		const compact = await get.handler({ id: ticket.id });
+		const compact = await get.handler({ id: String(ticket.id) });
 		const compactData = compact.ok && (compact.result as Record<string, unknown>);
-		expect(compactData).toMatchObject({ id: ticket.id, title: 'Remember this' });
+		expect(compactData).toMatchObject({ id: String(ticket.id), title: 'Remember this' });
 		expect(compactData).not.toHaveProperty('createdAt');
 		expect((compactData as { _omitted?: string[] })._omitted).toContain('createdAt');
 
-		const picked = await get.handler({ id: ticket.id, fields: ['createdAt'] });
+		const picked = await get.handler({ id: String(ticket.id), fields: ['createdAt'] });
 		const pickedData = picked.ok && (picked.result as Record<string, unknown>);
 		expect(pickedData).toHaveProperty('createdAt');
 		expect(pickedData).not.toHaveProperty('title');
 		expect(pickedData).not.toHaveProperty('_omitted');
 
-		const workspaceOnly = await get.handler({ id: ticket.id, fields: ['workspaceKey'] });
+		const workspaceOnly = await get.handler({ id: String(ticket.id), fields: ['workspaceKey'] });
 		const workspaceData = workspaceOnly.ok && (workspaceOnly.result as Record<string, unknown>);
 		expect(workspaceData).toEqual({ workspaceKey: workspace });
 
 		// plan: settable via ticket_update, omitted from the compact view, and
 		// fetched on demand through the fields selector (the showcase use case).
-		await update.handler({ id: ticket.id, plan: '1. wire it\n2. test it' });
-		const compactNoPlan = await get.handler({ id: ticket.id });
+		await update.handler({ id: String(ticket.id), plan: '1. wire it\n2. test it' });
+		const compactNoPlan = await get.handler({ id: String(ticket.id) });
 		expect(
 			compactNoPlan.ok && (compactNoPlan.result as Record<string, unknown>)
 		).not.toHaveProperty('plan');
-		const planOnly = await get.handler({ id: ticket.id, fields: ['plan'] });
+		const planOnly = await get.handler({ id: String(ticket.id), fields: ['plan'] });
 		const planData = planOnly.ok && (planOnly.result as Record<string, unknown>);
 		expect(planData).toEqual({ plan: '1. wire it\n2. test it' });
 	});
@@ -289,7 +288,6 @@ describe('workspace tickets', () => {
 		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, {
-			id: 'conv-deps-test',
 			title: 'Deps',
 			workdir: workspace,
 			model: null
@@ -310,41 +308,43 @@ describe('workspace tickets', () => {
 		const foreign = tickets.create(user.id, { workspaceKey: otherWorkspace, title: 'Elsewhere' });
 
 		// UI depends on API: UI is blocked, API is not.
-		const blocked = await block.handler({ id: ui.id, blockedBy: api.id });
+		const blocked = await block.handler({ id: String(ui.id), blockedBy: String(api.id) });
 		expect(blocked.ok).toBe(true);
 		expect(tickets.openBlockers(ui.id)).toEqual([api.id]);
 		expect(tickets.listDependents(api.id)).toEqual([ui.id]);
 
 		// Re-blocking is an idempotent no-op.
-		const again = await block.handler({ id: ui.id, blockedBy: api.id });
+		const again = await block.handler({ id: String(ui.id), blockedBy: String(api.id) });
 		expect(again.ok && (again.result as { result: string }).result).toBe('exists');
 
 		// Self-edge and cycle are rejected.
-		expect((await block.handler({ id: ui.id, blockedBy: ui.id })).ok).toBe(false);
-		const cycle = await block.handler({ id: api.id, blockedBy: ui.id });
+		expect((await block.handler({ id: String(ui.id), blockedBy: String(ui.id) })).ok).toBe(false);
+		const cycle = await block.handler({ id: String(api.id), blockedBy: String(ui.id) });
 		expect(cycle.ok).toBe(false);
 		expect(!cycle.ok && cycle.error.message).toMatch(/cycle/i);
 
 		// Cross-workspace pairing is rejected (foreign ticket isn't in this workspace).
-		expect((await block.handler({ id: ui.id, blockedBy: foreign.id })).ok).toBe(false);
+		expect((await block.handler({ id: String(ui.id), blockedBy: String(foreign.id) })).ok).toBe(
+			false
+		);
 
 		// Dense ticket_list flags the blocked ticket inline.
 		const listed = await list.handler({});
 		expect(listed.ok && (listed.result as string)).toContain(`(blocked by: ${api.id})`);
 
 		// ticket_get exposes blockedBy/blocks via the fields selector.
-		const uiBlockers = await get.handler({ id: ui.id, fields: ['blockedBy'] });
+		const uiBlockers = await get.handler({ id: String(ui.id), fields: ['blockedBy'] });
 		expect(uiBlockers.ok && (uiBlockers.result as { blockedBy: string[] }).blockedBy).toEqual([
 			api.id
 		]);
 
 		// The compact ticket_get view shows blockers/dependents inline (no fields
 		// needed) when present: UI is blocked by API; API blocks UI.
-		const uiCompact = await get.handler({ id: ui.id });
+		const uiCompact = await get.handler({ id: String(ui.id) });
 		expect(uiCompact.ok && (uiCompact.result as { blockedBy?: string[] }).blockedBy).toEqual([
 			api.id
 		]);
-		const apiCompact = await get.handler({ id: api.id });
+		const apiCompact = await get.handler({ id: String(api.id) });
 		expect(apiCompact.ok && (apiCompact.result as { blocks?: string[] }).blocks).toEqual([ui.id]);
 		// A ticket with no open blockers omits the empty list rather than showing [].
 		expect(apiCompact.ok && (apiCompact.result as Record<string, unknown>)).not.toHaveProperty(
@@ -357,15 +357,17 @@ describe('workspace tickets', () => {
 		const readyList = await list.handler({});
 		expect(readyList.ok && (readyList.result as string)).not.toContain('blocked by');
 		// UI now renders without a blockedBy entry in the compact view.
-		const uiReady = await get.handler({ id: ui.id });
+		const uiReady = await get.handler({ id: String(ui.id) });
 		expect(uiReady.ok && (uiReady.result as Record<string, unknown>)).not.toHaveProperty(
 			'blockedBy'
 		);
 
 		// Unblock removes the edge; a second unblock reports nothing to remove.
-		expect((await unblock.handler({ id: ui.id, blockedBy: api.id })).ok).toBe(true);
+		expect((await unblock.handler({ id: String(ui.id), blockedBy: String(api.id) })).ok).toBe(true);
 		expect(tickets.listDependencies(ui.id)).toEqual([]);
-		expect((await unblock.handler({ id: ui.id, blockedBy: api.id })).ok).toBe(false);
+		expect((await unblock.handler({ id: String(ui.id), blockedBy: String(api.id) })).ok).toBe(
+			false
+		);
 
 		rmSync(otherWorkspace, { recursive: true, force: true });
 	});
@@ -377,7 +379,6 @@ describe('workspace tickets', () => {
 		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, {
-			id: 'conv-edge-tools',
 			title: 'Edge tools',
 			workdir: workspace,
 			model: null
@@ -393,13 +394,13 @@ describe('workspace tickets', () => {
 		const api = tickets.create(user.id, { workspaceKey: workspace, title: 'API' });
 
 		// ticket_add with blockedBy creates the ticket and its edge in one call.
-		const added = await add.handler({ title: 'UI', blockedBy: [api.id] });
+		const added = await add.handler({ title: 'UI', blockedBy: [String(api.id)] });
 		expect(added.ok).toBe(true);
-		const uiId = (added.ok && (added.result as { id: string }).id) as string;
+		const uiId = (added.ok && (added.result as { id: number }).id) as number;
 		expect(tickets.openBlockers(uiId)).toEqual([api.id]);
 
 		// ticket_update replaces the blocker set declaratively (here, clear it).
-		const cleared = await update.handler({ id: uiId, blockedBy: [] });
+		const cleared = await update.handler({ id: String(uiId), blockedBy: [] });
 		expect(cleared.ok).toBe(true);
 		expect(tickets.openBlockers(uiId)).toEqual([]);
 
@@ -502,9 +503,7 @@ describe('workspace tickets', () => {
 		expect(tickets.list(user.id, workspace, { status: 'all' }).length).toBe(before);
 
 		// A bad edge id on update throws and leaves edges unchanged.
-		expect(() => tickets.update(ui.id, user.id, { blockedBy: ['does-not-exist'] })).toThrow(
-			/not found/i
-		);
+		expect(() => tickets.update(ui.id, user.id, { blockedBy: [999999] })).toThrow(/not found/i);
 		expect(
 			tickets
 				.dependencyRefs(ui.id, user.id)
@@ -528,7 +527,7 @@ describe('workspace tickets', () => {
 		tickets.addDependency(user.id, ui.id, api.id);
 
 		const data = (await load({
-			params: { id: ui.id },
+			params: { id: String(ui.id) },
 			locals: { userId: user.id }
 		} as never)) as {
 			ticket: { id: string; plan: string };
@@ -541,7 +540,7 @@ describe('workspace tickets', () => {
 
 		// The prerequisite's own page sees the dependent and carries its plan.
 		const apiData = (await load({
-			params: { id: api.id },
+			params: { id: String(api.id) },
 			locals: { userId: user.id }
 		} as never)) as { ticket: { plan: string }; dependents: { id: string }[] };
 		expect(apiData.ticket.plan).toBe('1. design\n2. implement');
@@ -557,7 +556,7 @@ describe('workspace tickets', () => {
 		});
 		let status = 0;
 		try {
-			load({ params: { id: ui.id }, locals: { userId: other.id } } as never);
+			load({ params: { id: String(ui.id) }, locals: { userId: other.id } } as never);
 		} catch (e) {
 			status = (e as { status?: number }).status ?? 0;
 		}
@@ -737,7 +736,7 @@ describe('workspace tickets', () => {
 		// A ready ticket created early, so it falls outside the 10 most-recent rows.
 		const ready = tickets.create(user.id, { workspaceKey: workspace, title: 'Ready' });
 		// Ten newer tickets, each blocked by the still-open prerequisite.
-		const blocked: string[] = [];
+		const blocked: number[] = [];
 		for (let i = 0; i < 10; i++) {
 			const b = tickets.create(user.id, { workspaceKey: workspace, title: `Blocked ${i}` });
 			tickets.addDependency(user.id, b.id, prereq.id);
@@ -861,7 +860,7 @@ describe('workspace tickets', () => {
 				.prepare(
 					`INSERT INTO workspace_tickets(
 					   id, user_id, workspace_key, title, body, priority, status, created_at, updated_at
-					 ) VALUES ('bad-priority', ?, ?, 'bad', '', 'P9', 'open', 1, 1)`
+					 ) VALUES (999996, ?, ?, 'bad', '', 'P9', 'open', 1, 1)`
 				)
 				.run(user.id, workspace)
 		).toThrow();
@@ -909,7 +908,6 @@ describe('workspace tickets', () => {
 		const { buildTicketTools } = await import('../src/lib/server/tools/tickets');
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, {
-			id: 'conv-priority-test',
 			title: 'Priority tools',
 			workdir: workspace,
 			model: null
@@ -940,12 +938,12 @@ describe('workspace tickets', () => {
 		await expect(add.handler({ title: 'Bad', priority: 'P9' })).rejects.toThrow();
 
 		// ticket_update changes priority.
-		const updated = await update.handler({ id: created.id, priority: 'P2' });
+		const updated = await update.handler({ id: String(created.id), priority: 'P2' });
 		expect(updated.ok && (updated.result as { priority?: string }).priority).toBe('P2');
 		expect(tickets.get(created.id, user.id)?.priority).toBe('P2');
 
 		// ticket_get returns priority in the compact view.
-		const got = await get.handler({ id: created.id });
+		const got = await get.handler({ id: String(created.id) });
 		expect(got.ok && (got.result as { priority?: string }).priority).toBe('P2');
 
 		// The dense ticket_list output tags every line with its priority.

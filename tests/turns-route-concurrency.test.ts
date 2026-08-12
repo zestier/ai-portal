@@ -142,9 +142,8 @@ describe('turns POST concurrency', () => {
 		const { users, convs, messages, route } = await freshImports();
 		const user = users.ensureLocalUser();
 		const conversationId = 'MISSINGSENDWORKTREE';
-		const worktreePath = join(dataDir, 'worktrees', user.id, conversationId);
+		const worktreePath = join(dataDir, 'worktrees', String(user.id), conversationId);
 		const conversation = convs.create(user.id, {
-			id: conversationId,
 			title: 'New chat',
 			workdir: worktreePath,
 			workspaceKind: 'managed-worktree',

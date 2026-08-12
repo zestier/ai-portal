@@ -22,7 +22,6 @@
 //    `PiEventMapper`.
 
 import { join } from 'node:path';
-import { ulid } from 'ulid';
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -82,7 +81,7 @@ export interface CreatePiSessionOptions {
 	 * the tree yet) so fork/legacy conversations keep their context and the
 	 * edit/regenerate rewind stays ordinal-aligned with SQLite.
 	 */
-	conversationId?: string;
+	conversationId?: number;
 	/**
 	 * Durable session file to resume, or `null` to create a new persistent one.
 	 * `undefined` keeps the session in-memory (no file) — used by one-shot opens
@@ -123,7 +122,7 @@ function buildPiSessionManager(opts: CreatePiSessionOptions): SessionManager {
  */
 function seedSessionFromMessages(
 	manager: SessionManager,
-	conversationId: string,
+	conversationId: number,
 	model: PiModel
 ): void {
 	const modelId = model.id ?? 'pi';
@@ -201,9 +200,9 @@ export interface PiProviderSessionOptions {
 	runtime: ModelRuntime;
 	provider: string;
 	providerLabel: string;
-	conversationId: string;
+	conversationId: number;
 	providerSessionId: string;
-	userId: string;
+	userId: number;
 	policy: import('$lib/types').PermissionPolicy;
 	mode?: SessionMode;
 	approvalMode?: ApprovalMode;
@@ -334,7 +333,7 @@ function makePiProviderSession(
 		async *send(prompt: string, signal: AbortSignal): AsyncIterable<PortalEvent> {
 			if (active) throw new Error('session busy: a turn is already in progress');
 			if (disposed) throw new Error('session disposed');
-			const messageId = ulid();
+			const messageId = 0; // sentinel — the turn-runner overwrites it via `ensurePersistedAssistant`
 			const queue = new AsyncQueue<PortalEvent>();
 			const mapper = new PiEventMapper(messageId);
 			const unsub = piSession.subscribe((ev) => {
@@ -393,8 +392,8 @@ async function runPrompt(
 	piSession: AgentSession,
 	mapper: PiEventMapper,
 	queue: AsyncQueue<PortalEvent>,
-	messageId: string,
-	conversationId: string
+	messageId: number,
+	conversationId: number
 ): Promise<void> {
 	try {
 		await piSession.prompt(prompt, { streamingBehavior: 'steer' });

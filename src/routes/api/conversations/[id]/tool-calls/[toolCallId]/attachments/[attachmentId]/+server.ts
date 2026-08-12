@@ -9,9 +9,17 @@ import * as toolAttachments from '$lib/server/db/repos/tool-attachments';
 // rather than leaking the bytes or the attachment's existence.
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
-	const toolCallId = params.toolCallId;
-	const attachmentId = params.attachmentId;
-	if (!toolCallId || !attachmentId) throw error(400, 'missing id');
+	const toolCallId = Number(params.toolCallId);
+	const attachmentId = Number(params.attachmentId);
+	if (!params.toolCallId || !params.attachmentId) throw error(400, 'missing id');
+	if (
+		!Number.isInteger(toolCallId) ||
+		toolCallId <= 0 ||
+		!Number.isInteger(attachmentId) ||
+		attachmentId <= 0
+	) {
+		throw error(400, 'missing id');
+	}
 
 	const att = toolAttachments.getForOwner(conv.id, toolCallId, attachmentId, conv.userId);
 	if (!att) throw error(404);

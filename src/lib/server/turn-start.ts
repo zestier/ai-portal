@@ -105,7 +105,7 @@ export async function startTurnFromUserMessage(
  * to this entry. Returns undefined when the message can't be located — the turn
  * then runs without a rewind (a fresh/legacy conversation with no tree yet).
  */
-function userMessageOrdinal(conversationId: string, userMessageId: string): number | undefined {
+function userMessageOrdinal(conversationId: number, userMessageId: number): number | undefined {
 	const all = messages.listByConversation(conversationId);
 	const idx = all.findIndex((m) => m.id === userMessageId);
 	if (idx < 0) return undefined;

@@ -50,9 +50,9 @@ describe('validatePortalToolArgs', () => {
 
 	it('rejects a JSON-encoded ticket fields array with copyable corrected arguments', () => {
 		const ticketList = buildTicketTools({
-			userId: 'u1',
+			userId: 1,
 			workspaceKey: '/workspace',
-			conversationId: 'c1'
+			conversationId: 1
 		}).find((tool) => tool.name === 'ticket_list')!;
 		expect(validatePortalToolArgs(ticketList, { fields: ['id', 'title'] })).toEqual({ ok: true });
 
@@ -65,9 +65,9 @@ describe('validatePortalToolArgs', () => {
 
 	it('rejects an empty ticket fields array', () => {
 		const ticketList = buildTicketTools({
-			userId: 'u1',
+			userId: 1,
 			workspaceKey: '/workspace',
-			conversationId: 'c1'
+			conversationId: 1
 		}).find((tool) => tool.name === 'ticket_list')!;
 
 		const result = validatePortalToolArgs(ticketList, { fields: [] });
@@ -98,8 +98,8 @@ describe('validatePortalToolArgs', () => {
 		// Durable writes are owned by the background extractor's per-kind
 		// remember_* tools; the main model has no direct memory write tool.
 		const proposePatch = buildMemoryTools({
-			userId: 'u1',
-			conversationId: 'c1',
+			userId: 1,
+			conversationId: 1,
 			mode: 'project'
 		}).find((t) => t.name === 'memory_propose_patch');
 		expect(proposePatch).toBeUndefined();

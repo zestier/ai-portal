@@ -65,8 +65,8 @@ interface Capability {
 }
 
 export function buildPermissionTools(opts: {
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 	policy: PermissionPolicy;
 	getMode: () => SessionMode;
 	getApprovalMode: () => ApprovalMode;
@@ -164,8 +164,8 @@ const GrantRequestArgs = z
 // there is no code path that records a grant without a human decision, so it
 // behaves like a forced prompt even under `allow-all` / session approve-all.
 function buildGrantRequestTool(opts: {
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 	policy: PermissionPolicy;
 	emit: (ev: PortalEvent) => void;
 }): PortalTool {
@@ -339,7 +339,7 @@ const ForceRetryArgs = z
 // `consumeForcedRetryMatch` and the SDK executes it natively. The token is
 // one-shot in both paths, so a further request is denied again.
 function buildForceRetryTool(opts: {
-	conversationId: string;
+	conversationId: number;
 	policy: PermissionPolicy;
 	emit: (ev: PortalEvent) => void;
 	resolvePortalTool?: (name: string) => PortalTool | null;
@@ -496,8 +496,8 @@ function buildForceRetryTool(opts: {
 }
 
 function permissionCapabilities(opts: {
-	userId: string;
-	conversationId: string;
+	userId: number;
+	conversationId: number;
 	mode: SessionMode;
 	approvalMode: ApprovalMode;
 	policy: PermissionPolicy;

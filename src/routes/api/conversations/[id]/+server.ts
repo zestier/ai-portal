@@ -78,7 +78,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 			event_type: 'worktree_remove',
 			actor_login: locals.user?.githubLogin ?? null,
 			actor_ip: getClientAddress(),
-			resource: leaseId,
+			resource: String(leaseId),
 			outcome: 'success',
 			detail: { conversationId: conv.id, leaseId, forced }
 		});
@@ -93,7 +93,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 				event_type: 'worktree_remove',
 				actor_login: locals.user?.githubLogin ?? null,
 				actor_ip: getClientAddress(),
-				resource: retained.lease.id,
+				resource: String(retained.lease.id),
 				outcome: 'denied',
 				detail: {
 					conversationId: conv.id,
@@ -148,7 +148,11 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 		try {
 			await removeManagedWorktree(managed, {
 				force: forced,
-				owner: { kind: 'conversation', userId: conv.userId, conversationId: conv.id }
+				owner: {
+					kind: 'conversation',
+					userId: String(conv.userId),
+					conversationId: String(conv.id)
+				}
 			});
 		} catch (cause) {
 			if (cause instanceof WorktreeError) {

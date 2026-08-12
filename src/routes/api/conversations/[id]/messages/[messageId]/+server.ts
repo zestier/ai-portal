@@ -16,6 +16,8 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	if (!params.messageId) throw error(400, 'missing message id');
-	const input = turnInputs.get(conv.id, params.messageId);
+	const messageId = Number(params.messageId);
+	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
+	const input = turnInputs.get(conv.id, messageId);
 	return json({ input });
 };

@@ -36,7 +36,7 @@ async function importModules() {
 	return { pool, interactive };
 }
 
-function makeStubSession(conversationId: string) {
+function makeStubSession(conversationId: number) {
 	return {
 		conversationId,
 		workingDirectory: '/tmp/work-a',
@@ -53,11 +53,11 @@ function makeStubSession(conversationId: string) {
 
 type InteractiveModule = typeof import('../src/lib/server/runtime/interactive-requests');
 
-const usedConvs = new Set<string>();
+const usedConvs = new Set<number>();
 
 function registerPrompt(
 	interactive: InteractiveModule,
-	conversationId: string,
+	conversationId: number,
 	requestId: string,
 	kind: 'permission' | 'user_input' = 'permission'
 ) {
@@ -126,21 +126,21 @@ describe('pool does not strand sessions with outstanding work', () => {
 	});
 
 	it('idle reaper skips a session with a pending permission prompt, then reaps it after resolve', async () => {
-		const session = makeStubSession('conv-1');
+		const session = makeStubSession(1);
 		openMock.mockResolvedValue(session);
 		const { pool, interactive } = await importModules();
 
 		await pool.acquire({
-			conversationId: 'conv-1',
-			userId: 'user-1',
+			conversationId: 1,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
 
 		// The turn parks on a permission prompt (SDK callback awaiting the deferred).
-		const result = registerPrompt(interactive, 'conv-1', 'REQ_IDLE_1');
-		expect(interactive.hasPending('conv-1')).toBe(true);
+		const result = registerPrompt(interactive, 1, 'REQ_IDLE_1');
+		expect(interactive.hasPending(1)).toBe(true);
 
 		// User walks away well past the idle window. lastUsed never advanced.
 		pool.startIdleReaper();
@@ -148,33 +148,33 @@ describe('pool does not strand sessions with outstanding work', () => {
 
 		// FIX: the session backing the open prompt is NOT disposed.
 		expect(session.dispose).not.toHaveBeenCalled();
-		expect(pool.getActive('conv-1')).toBe(session);
+		expect(pool.getActive(1)).toBe(session);
 
 		// User comes back and approves: the SAME live session is still there to
 		// run the tool, so the turn can progress.
-		const ok = interactive.resolve('REQ_IDLE_1', 'user-1', {
+		const ok = interactive.resolve('REQ_IDLE_1', 1, {
 			kind: 'permission',
 			decision: 'allow-once'
 		});
 		expect(ok).toBe(true);
 		expect(result.settled).toBe(true);
-		expect(pool.getActive('conv-1')).toBe(session);
+		expect(pool.getActive(1)).toBe(session);
 
 		// With no work outstanding, the next reaper tick is free to reclaim it.
-		expect(interactive.hasPending('conv-1')).toBe(false);
+		expect(interactive.hasPending(1)).toBe(false);
 		await vi.advanceTimersByTimeAsync(60 * 1000);
 		expect(session.dispose).toHaveBeenCalledTimes(1);
-		expect(pool.getActive('conv-1')).toBeNull();
+		expect(pool.getActive(1)).toBeNull();
 	});
 
 	it('idle reaper skips a session with an active turn (keep-alive predicate)', async () => {
-		const session = makeStubSession('conv-turn');
+		const session = makeStubSession(2);
 		openMock.mockResolvedValue(session);
 		const { pool } = await importModules();
 
 		await pool.acquire({
-			conversationId: 'conv-turn',
-			userId: 'user-1',
+			conversationId: 2,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -183,7 +183,7 @@ describe('pool does not strand sessions with outstanding work', () => {
 		// Simulate the turn registry reporting an active turn (turn-runner
 		// registers exactly this predicate against the live registry).
 		let turnRunning = true;
-		pool.registerKeepAlive('test.active-turn', (id) => id === 'conv-turn' && turnRunning);
+		pool.registerKeepAlive('test.active-turn', (id) => id === 2 && turnRunning);
 
 		pool.startIdleReaper();
 		await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
@@ -200,25 +200,25 @@ describe('pool does not strand sessions with outstanding work', () => {
 
 	it('capacity eviction prefers an idle, unprotected session over a busy one', async () => {
 		process.env.MAX_CONCURRENT_SESSIONS = '2';
-		const busy = makeStubSession('conv-busy');
-		const idle = makeStubSession('conv-idle');
-		const fresh = makeStubSession('conv-fresh');
+		const busy = makeStubSession(3);
+		const idle = makeStubSession(4);
+		const fresh = makeStubSession(5);
 		openMock.mockResolvedValueOnce(busy).mockResolvedValueOnce(idle).mockResolvedValueOnce(fresh);
 		const { pool, interactive } = await importModules();
 
 		// conv-busy acquired first (oldest), but it has an open prompt.
 		await pool.acquire({
-			conversationId: 'conv-busy',
-			userId: 'user-1',
+			conversationId: 3,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
-		registerPrompt(interactive, 'conv-busy', 'REQ_BUSY');
+		registerPrompt(interactive, 3, 'REQ_BUSY');
 
 		await pool.acquire({
-			conversationId: 'conv-idle',
-			userId: 'user-1',
+			conversationId: 4,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -227,8 +227,8 @@ describe('pool does not strand sessions with outstanding work', () => {
 		// Third acquire is over capacity. conv-busy is the oldest, but it's
 		// protected -> the unprotected conv-idle is evicted instead.
 		await pool.acquire({
-			conversationId: 'conv-fresh',
-			userId: 'user-1',
+			conversationId: 5,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
@@ -236,40 +236,40 @@ describe('pool does not strand sessions with outstanding work', () => {
 
 		expect(idle.dispose).toHaveBeenCalledTimes(1);
 		expect(busy.dispose).not.toHaveBeenCalled();
-		expect(pool.getActive('conv-busy')).toBe(busy);
-		expect(pool.getActive('conv-fresh')).toBe(fresh);
-		expect(interactive.hasPending('conv-busy')).toBe(true);
+		expect(pool.getActive(3)).toBe(busy);
+		expect(pool.getActive(5)).toBe(fresh);
+		expect(interactive.hasPending(3)).toBe(true);
 	});
 
 	it('forced eviction (all sessions busy) expires the prompt with a non-deny re-issue outcome', async () => {
 		process.env.MAX_CONCURRENT_SESSIONS = '1';
-		const busy = makeStubSession('conv-only');
-		const fresh = makeStubSession('conv-next');
+		const busy = makeStubSession(6);
+		const fresh = makeStubSession(7);
 		openMock.mockResolvedValueOnce(busy).mockResolvedValueOnce(fresh);
 		const { pool, interactive } = await importModules();
 
 		await pool.acquire({
-			conversationId: 'conv-only',
-			userId: 'user-1',
+			conversationId: 6,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
-		const result = registerPrompt(interactive, 'conv-only', 'REQ_ONLY');
+		const result = registerPrompt(interactive, 6, 'REQ_ONLY');
 
 		// Over capacity and the ONLY session is busy -> forced eviction. The
 		// parked prompt is expired (not denied) so the agent unblocks.
 		await pool.acquire({
-			conversationId: 'conv-next',
-			userId: 'user-1',
+			conversationId: 7,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
 
 		expect(busy.dispose).toHaveBeenCalledTimes(1);
-		expect(pool.getActive('conv-only')).toBeNull();
-		expect(pool.getActive('conv-next')).toBe(fresh);
+		expect(pool.getActive(6)).toBeNull();
+		expect(pool.getActive(7)).toBe(fresh);
 
 		// The deferred settled by REJECTION (agent no longer hangs; the SDK maps
 		// this to `user-not-available`, not a user denial).
@@ -290,22 +290,22 @@ describe('pool does not strand sessions with outstanding work', () => {
 		expect(resolvedEvent?.outcome?.feedback ?? '').not.toMatch(/denied/i);
 		// And the request is cleared from the pending map.
 		expect(interactive.get('REQ_ONLY')).toBeUndefined();
-		expect(interactive.hasPending('conv-only')).toBe(false);
+		expect(interactive.hasPending(6)).toBe(false);
 	});
 
 	it('protects non-permission prompt kinds too (user_input)', async () => {
-		const session = makeStubSession('conv-input');
+		const session = makeStubSession(8);
 		openMock.mockResolvedValue(session);
 		const { pool, interactive } = await importModules();
 
 		await pool.acquire({
-			conversationId: 'conv-input',
-			userId: 'user-1',
+			conversationId: 8,
+			userId: 1,
 			workingDirectory: '/tmp/work-a',
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
-		registerPrompt(interactive, 'conv-input', 'REQ_INPUT', 'user_input');
+		registerPrompt(interactive, 8, 'REQ_INPUT', 'user_input');
 
 		pool.startIdleReaper();
 		await vi.advanceTimersByTimeAsync(16 * 60 * 1000);

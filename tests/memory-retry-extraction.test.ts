@@ -26,7 +26,7 @@ async function loadPost() {
 	return POST;
 }
 
-function call(convId: string, userId: string) {
+function call(convId: number, userId: number) {
 	return loadPost().then((POST) =>
 		POST({
 			params: { id: convId },
@@ -187,7 +187,7 @@ describe('memory retry-extraction endpoint', () => {
 		messages.append(conv.id, { role: 'user', content: 'q' });
 		messages.append(conv.id, { role: 'assistant', content: 'a' });
 
-		await expect(call(conv.id, 'someone-else')).rejects.toMatchObject({
+		await expect(call(conv.id, 999999)).rejects.toMatchObject({
 			status: expect.any(Number)
 		});
 		expect(startExtractionRetryTurnMock).not.toHaveBeenCalled();

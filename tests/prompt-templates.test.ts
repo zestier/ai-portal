@@ -3,7 +3,7 @@ import { setupLocalEnv } from './helpers/env';
 
 function event(opts: {
 	url?: string;
-	userId: string | null;
+	userId: number | null;
 	body?: unknown;
 	params?: Record<string, string>;
 }) {
@@ -338,7 +338,7 @@ describe('prompt templates', () => {
 			params: { id: conv.id },
 			locals: { userId: user.id },
 			url: new URL(
-				`http://localhost/conversations/${conv.id}?promptTemplateSource=builtin&promptTemplateId=debug-error`
+				`http://localhost/conversations/${conv.id}?promptTemplateSource=builtin&promptTemplateId=-2`
 			)
 		} as never);
 		expect((builtInData as { initialComposer: string }).initialComposer).toContain(

@@ -1,4 +1,3 @@
-import { ulid } from '../ids';
 import { getDb } from '../index';
 import { notifyTicketMutation } from '../ticket-mutations';
 import type {
@@ -10,8 +9,8 @@ import type {
 import { DEFAULT_TICKET_PRIORITY } from '$lib/types';
 
 interface TicketRow {
-	id: string;
-	user_id: string;
+	id: number;
+	user_id: number;
 	workspace_key: string;
 	title: string;
 	body: string;
@@ -22,8 +21,8 @@ interface TicketRow {
 	// defensive coercion in `rowToTicket`).
 	priority: string | undefined;
 	status: string;
-	source_conversation_id: string | null;
-	source_message_id: string | null;
+	source_conversation_id: number | null;
+	source_message_id: number | null;
 	created_at: number;
 	updated_at: number;
 	closed_at: number | null;
@@ -87,7 +86,7 @@ export interface ListOptions {
 }
 
 export function list(
-	userId: string,
+	userId: number,
 	workspaceKey: string,
 	opts: ListOptions = {}
 ): WorkspaceTicket[] {
@@ -149,7 +148,7 @@ export function list(
  * `updated_at DESC, created_at DESC, id DESC`, mirroring `list()`.
  */
 export function listForSidebar(
-	userId: string,
+	userId: number,
 	workspaceKey: string,
 	limit = 10
 ): WorkspaceTicket[] {
@@ -172,7 +171,7 @@ export function listForSidebar(
 }
 
 export function count(
-	userId: string,
+	userId: number,
 	workspaceKey: string,
 	status: WorkspaceTicketStatus = 'open'
 ): number {
@@ -185,7 +184,7 @@ export function count(
 	return row?.count ?? 0;
 }
 
-export function get(id: string, userId: string): WorkspaceTicket | null {
+export function get(id: number, userId: number): WorkspaceTicket | null {
 	const row = getDb()
 		.prepare('SELECT * FROM workspace_tickets WHERE id = ? AND user_id = ?')
 		.get(id, userId) as TicketRow | undefined;
@@ -200,15 +199,14 @@ export interface CreateInput {
 	/** Relative urgency P0 (highest) … P3 (lowest). Defaults to P2 when omitted. */
 	priority?: WorkspaceTicketPriority;
 	/** Ticket ids this new ticket is blocked by — blocking edges added on insert. */
-	blockedBy?: string[];
+	blockedBy?: number[];
 	/** Ticket ids this new ticket blocks — blocking edges added on insert. */
-	blocks?: string[];
-	sourceConversationId?: string | null;
-	sourceMessageId?: string | null;
+	blocks?: number[];
+	sourceConversationId?: number | null;
+	sourceMessageId?: number | null;
 }
 
-export function create(userId: string, input: CreateInput): WorkspaceTicket {
-	const id = ulid();
+export function create(userId: number, input: CreateInput): WorkspaceTicket {
 	const now = Date.now();
 	const title = input.title.trim();
 	const body = input.body?.trim() ?? '';
@@ -219,16 +217,16 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 	// the row exists (so addDependency's existence/same-workspace/cycle checks see
 	// the new ticket), and any bad edge — unknown id, cross-workspace, or a cycle —
 	// throws and rolls the whole create back, so a ticket is never half-created.
+	let id = 0;
 	getDb().transaction(() => {
-		getDb()
+		const info = getDb()
 			.prepare(
 				`INSERT INTO workspace_tickets(
-				   id, user_id, workspace_key, title, body, plan, priority, status,
+				   user_id, workspace_key, title, body, plan, priority, status,
 				   source_conversation_id, source_message_id, created_at, updated_at, closed_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+				 ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 			)
 			.run(
-				id,
 				userId,
 				input.workspaceKey,
 				title,
@@ -240,6 +238,7 @@ export function create(userId: string, input: CreateInput): WorkspaceTicket {
 				now,
 				now
 			);
+		id = Number(info.lastInsertRowid);
 		for (const blockerId of new Set(input.blockedBy ?? []))
 			addDependencyUnnotified(userId, id, blockerId);
 		for (const blockedId of new Set(input.blocks ?? []))
@@ -278,12 +277,12 @@ export interface UpdateInput {
 	 * desired-state set (edges not listed are removed, new ones added). Omit to
 	 * leave blocking edges unchanged; pass `[]` to clear them.
 	 */
-	blockedBy?: string[];
+	blockedBy?: number[];
 	/** Replace the complete set of tickets this one blocks (see `blockedBy`). */
-	blocks?: string[];
+	blocks?: number[];
 }
 
-export function update(id: string, userId: string, patch: UpdateInput): WorkspaceTicket | null {
+export function update(id: number, userId: number, patch: UpdateInput): WorkspaceTicket | null {
 	const current = get(id, userId);
 	if (!current) return null;
 
@@ -327,9 +326,9 @@ export function update(id: string, userId: string, patch: UpdateInput): Workspac
 // `blocks` edges have it as the blocker. addDependency enforces existence /
 // same-workspace / no-cycle on each added edge.
 function reconcileEdges(
-	userId: string,
-	id: string,
-	desiredRaw: string[],
+	userId: number,
+	id: number,
+	desiredRaw: number[],
 	side: 'blockedBy' | 'blocks'
 ): void {
 	const desired = new Set(desiredRaw);
@@ -347,7 +346,7 @@ function reconcileEdges(
 	}
 }
 
-export function remove(id: string, userId: string): boolean {
+export function remove(id: number, userId: number): boolean {
 	const existing = get(id, userId);
 	const r = getDb()
 		.prepare('DELETE FROM workspace_tickets WHERE id = ? AND user_id = ?')
@@ -365,24 +364,24 @@ export function remove(id: string, userId: string): boolean {
 // are plain lookups.
 
 /** depends_on ids for a ticket (its prerequisites), newest edge first. */
-export function listDependencies(ticketId: string): string[] {
+export function listDependencies(ticketId: number): number[] {
 	return (
 		getDb()
 			.prepare(
 				`SELECT depends_on FROM ticket_deps WHERE ticket_id = ? ORDER BY created_at DESC, depends_on`
 			)
-			.all(ticketId) as { depends_on: string }[]
+			.all(ticketId) as { depends_on: number }[]
 	).map((r) => r.depends_on);
 }
 
 /** ids of tickets that depend on this ticket (its dependents). */
-export function listDependents(ticketId: string): string[] {
+export function listDependents(ticketId: number): number[] {
 	return (
 		getDb()
 			.prepare(
 				`SELECT ticket_id FROM ticket_deps WHERE depends_on = ? ORDER BY created_at DESC, ticket_id`
 			)
-			.all(ticketId) as { ticket_id: string }[]
+			.all(ticketId) as { ticket_id: number }[]
 	).map((r) => r.ticket_id);
 }
 
@@ -391,7 +390,7 @@ export function listDependents(ticketId: string): string[] {
  * that actively block it. A ticket with an empty list is "ready". Done/archived
  * prerequisites are satisfied and excluded.
  */
-export function openBlockers(ticketId: string): string[] {
+export function openBlockers(ticketId: number): number[] {
 	return (
 		getDb()
 			.prepare(
@@ -400,7 +399,7 @@ export function openBlockers(ticketId: string): string[] {
 				 WHERE d.ticket_id = ? AND t.status = 'open'
 				 ORDER BY d.created_at DESC, d.depends_on`
 			)
-			.all(ticketId) as { depends_on: string }[]
+			.all(ticketId) as { depends_on: number }[]
 	).map((r) => r.depends_on);
 }
 
@@ -410,7 +409,7 @@ export function openBlockers(ticketId: string): string[] {
 // `toId` is reachable, instead of issuing one SELECT per visited node. The CTE
 // is UNION (not UNION ALL), so already-visited nodes are deduplicated and any
 // pre-existing cycle in the data terminates the walk.
-function dependencyPathExists(fromId: string, toId: string): boolean {
+function dependencyPathExists(fromId: number, toId: number): boolean {
 	if (fromId === toId) return true;
 	const row = getDb()
 		.prepare(
@@ -434,7 +433,7 @@ export type AddDepResult = 'added' | 'exists';
  * cross-workspace pairing, a self-edge, or a cycle. Returns 'exists' (no-op) if
  * the edge is already present.
  */
-export function addDependency(userId: string, ticketId: string, dependsOn: string): AddDepResult {
+export function addDependency(userId: number, ticketId: number, dependsOn: number): AddDepResult {
 	const result = addDependencyUnnotified(userId, ticketId, dependsOn);
 	// Only an actually-added edge changes the sidebar (badges / ordering); an
 	// 'exists' no-op leaves the graph untouched, so don't fan out a signal.
@@ -448,9 +447,9 @@ export function addDependency(userId: string, ticketId: string, dependsOn: strin
  * mutation once their transaction commits.
  */
 function addDependencyUnnotified(
-	userId: string,
-	ticketId: string,
-	dependsOn: string
+	userId: number,
+	ticketId: number,
+	dependsOn: number
 ): AddDepResult {
 	if (ticketId === dependsOn) throw new Error('a ticket cannot depend on itself');
 	const ticket = get(ticketId, userId);
@@ -476,14 +475,14 @@ function addDependencyUnnotified(
 }
 
 /** Remove a dependency edge. Returns false when no such edge existed. */
-export function removeDependency(userId: string, ticketId: string, dependsOn: string): boolean {
+export function removeDependency(userId: number, ticketId: number, dependsOn: number): boolean {
 	const removed = removeDependencyUnnotified(userId, ticketId, dependsOn);
 	if (removed) notifyTicketMutation({ userId, ticketId });
 	return removed;
 }
 
 /** Edge delete without the mutation notification (see `addDependencyUnnotified`). */
-function removeDependencyUnnotified(userId: string, ticketId: string, dependsOn: string): boolean {
+function removeDependencyUnnotified(userId: number, ticketId: number, dependsOn: number): boolean {
 	// Scope the delete to edges whose dependent ticket belongs to the user.
 	const owns = get(ticketId, userId);
 	if (!owns) return false;
@@ -504,7 +503,7 @@ function removeDependencyUnnotified(userId: string, ticketId: string, dependsOn:
  * `addDependency`, so this is belt-and-suspenders, but it means a read can never
  * surface another user's title even if an edge were ever created off that path.
  */
-export function dependencyRefs(ticketId: string, userId: string): TicketDependencyRef[] {
+export function dependencyRefs(ticketId: number, userId: number): TicketDependencyRef[] {
 	return getDb()
 		.prepare(
 			`SELECT t.id, t.title, t.status FROM ticket_deps d
@@ -516,7 +515,7 @@ export function dependencyRefs(ticketId: string, userId: string): TicketDependen
 }
 
 /** Dependents of a ticket (tickets it blocks), as display refs, any status. Scoped by `userId` (see `dependencyRefs`). */
-export function dependentRefs(ticketId: string, userId: string): TicketDependencyRef[] {
+export function dependentRefs(ticketId: number, userId: number): TicketDependencyRef[] {
 	return getDb()
 		.prepare(
 			`SELECT t.id, t.title, t.status FROM ticket_deps d

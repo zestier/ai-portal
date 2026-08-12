@@ -126,7 +126,7 @@ function placeholderHint(): string {
 	return `Allowed placeholders by type — ${lines.join('; ')}.`;
 }
 
-export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[] {
+export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[] {
 	return [
 		{
 			name: 'template_list',
@@ -192,7 +192,7 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 			async handler(args) {
 				const { id, fields: rawFields } = GetArgs.parse(args);
 				templates.ensureTicketActionDefaults(opts.userId);
-				const tpl = templates.get(id, opts.userId);
+				const tpl = templates.get(Number(id), opts.userId);
 				if (!tpl) return err(`Template not found: ${id}`);
 				const fields = normalizeFieldSelector(rawFields);
 				const projected = project(tpl, {
@@ -375,9 +375,9 @@ export function buildPromptTemplateTools(opts: { userId: string }): PortalTool[]
 			},
 			async handler(args) {
 				const { id, ...patch } = UpdateArgs.parse(args);
-				if (!templates.get(id, opts.userId)) return err(`Template not found: ${id}`);
+				if (!templates.get(Number(id), opts.userId)) return err(`Template not found: ${id}`);
 				try {
-					const updated = templates.update(id, opts.userId, patch as templates.UpdateInput);
+					const updated = templates.update(Number(id), opts.userId, patch as templates.UpdateInput);
 					if (!updated) return err(`Template not found: ${id}`);
 					return ok(summarize(updated), `Updated template ${updated.id}: ${updated.title}`);
 				} catch (e) {

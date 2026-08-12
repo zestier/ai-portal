@@ -42,7 +42,7 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
 		runtime,
 		provider: opts.provider ?? 'pi',
 		conversationId: opts.conversationId,
-		providerSessionId: opts.providerSessionId ?? opts.conversationId,
+		providerSessionId: opts.providerSessionId ?? String(opts.conversationId),
 		userId: opts.userId,
 		policy: opts.policy,
 		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {}),
