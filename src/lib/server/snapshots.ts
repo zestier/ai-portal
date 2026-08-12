@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, existsSync, realpathSync, rmSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { isolatedChildEnv } from './child-env';
 import { getDb } from './db';
 
 const SNAP_TIMEOUT_MS = 30_000;
@@ -61,15 +62,14 @@ function run(args: string[], opts: RunOpts): Promise<RunResult> {
 		const child = spawn('git', args, {
 			cwd: opts.cwd,
 			shell: false,
-			env: {
-				...process.env,
+			env: isolatedChildEnv(process.env, {
 				GIT_TERMINAL_PROMPT: '0',
 				GIT_PAGER: 'cat',
 				PAGER: 'cat',
 				GIT_OPTIONAL_LOCKS: '0',
 				LC_ALL: 'C',
 				...(opts.env ?? {})
-			}
+			})
 		});
 		let stdout = Buffer.alloc(0);
 		let stderr = Buffer.alloc(0);

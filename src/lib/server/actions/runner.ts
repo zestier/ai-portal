@@ -20,6 +20,7 @@
 //     opt in (`inheritEnv` defaulting to true preserves redeploy's behavior).
 
 import { spawn } from 'node:child_process';
+import { isolatedChildEnv } from '../child-env';
 import { log } from '../log';
 
 export type Step = {
@@ -60,36 +61,6 @@ const SCRUB_TAIL = 1024;
 // the request that authorized it (and, via never resolving, wedge the
 // per-action in-flight guard).
 export const ABORT_KILL_GRACE_MS = 2000;
-
-// Env var NAMES always passed to a default-deny ("project action") child so a
-// plain `pnpm`/`git`/`node` invocation can still find its toolchain, locale,
-// and a home dir — none of these are secret-shaped. Everything else
-// (the portal's tokens, session secret, OAuth creds) is withheld unless an
-// action explicitly allowlists the name in `.zap/actions.json`.
-const SAFE_BASE_ENV_NAMES = [
-	'PATH',
-	'HOME',
-	'USER',
-	'LOGNAME',
-	'SHELL',
-	'LANG',
-	'LANGUAGE',
-	'LC_ALL',
-	'LC_CTYPE',
-	'TZ',
-	'TERM',
-	'TMPDIR',
-	'PWD',
-	'COLORTERM',
-	'HOSTNAME',
-	'NODE',
-	'NODE_PATH',
-	'NVM_DIR',
-	'PNPM_HOME',
-	'XDG_CACHE_HOME',
-	'XDG_CONFIG_HOME',
-	'XDG_DATA_HOME'
-] as const;
 
 // The portal's OWN secret-bearing config env vars (see src/lib/server/config.ts).
 // A project action's `env` allowlist can name an operator-provisioned project
@@ -132,11 +103,7 @@ export function buildActionEnv(
 	allowlist: readonly string[] = [],
 	source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = {};
-	for (const name of SAFE_BASE_ENV_NAMES) {
-		const value = source[name];
-		if (value !== undefined) env[name] = value;
-	}
+	const env = isolatedChildEnv(source);
 	for (const name of allowlist) {
 		if (isPortalSecretEnvName(name)) continue;
 		const value = source[name];

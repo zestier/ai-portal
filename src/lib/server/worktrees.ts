@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { isolatedChildEnv } from './child-env';
 import { loadConfig } from './config';
 import { withRepositoryLock } from './repo-lock';
 
@@ -102,13 +103,12 @@ function runGit(cwd: string, args: string[], timeoutMs?: number): Promise<GitRes
 		const child = spawn('git', args, {
 			cwd,
 			shell: false,
-			env: {
-				...process.env,
+			env: isolatedChildEnv(process.env, {
 				GIT_TERMINAL_PROMPT: '0',
 				GIT_PAGER: 'cat',
 				PAGER: 'cat',
 				LC_ALL: 'C'
-			}
+			})
 		});
 		let stdout = Buffer.alloc(0);
 		let stderr = Buffer.alloc(0);

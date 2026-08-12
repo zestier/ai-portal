@@ -20,6 +20,22 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 }
 
 describe('shell_exec', () => {
+	it('does not expose portal configuration to commands', async () => {
+		await withWorkspace(async (workspace) => {
+			process.env.DATA_DIR = '/live/portal/data';
+			process.env.DB_MIGRATIONS_DIR = '/live/portal/migrations';
+			process.env.SESSION_SECRET = 'portal-session-secret-that-must-not-leak';
+			const result = await buildShellTools(workspace)[0].handler({
+				command:
+					'printf "%s|%s|%s" "${DATA_DIR-unset}" "${DB_MIGRATIONS_DIR-unset}" "${SESSION_SECRET-unset}"'
+			});
+			expect(result).toMatchObject({
+				ok: true,
+				result: { stdout: 'unset|unset|unset' }
+			});
+		});
+	});
+
 	it('runs Bash in the workspace and returns structured output with SDK field names', async () => {
 		await withWorkspace(async (workspace) => {
 			const result = await buildShellTools(workspace)[0].handler({
