@@ -123,7 +123,9 @@ export async function getClient(
 					})
 				: new CopilotClient({
 						connection: RuntimeConnection.forStdio({
-							env: isolatedChildEnv() as Record<string, string>
+							env: isolatedChildEnv(process.env, {
+								COPILOT_NO_AUTO_UPDATE: process.env.COPILOT_NO_AUTO_UPDATE
+							}) as Record<string, string>
 						}),
 						useLoggedInUser: true,
 						...(providerAuthToken !== undefined ? { gitHubToken: providerAuthToken } : {})

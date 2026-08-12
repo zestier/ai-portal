@@ -70,7 +70,11 @@ vi.mock('@github/copilot-sdk', () => {
 		}
 	}
 	const RuntimeConnection = {
-		forStdio: (opts?: { path?: string; args?: readonly string[] }) => ({
+		forStdio: (opts?: {
+			path?: string;
+			args?: readonly string[];
+			env?: Record<string, string>;
+		}) => ({
 			kind: 'stdio' as const,
 			...opts
 		}),
@@ -1295,6 +1299,27 @@ describe('bridge.open() tool live-streaming events', () => {
 });
 
 describe('bridge.open() per-user CopilotClient caching', () => {
+	it('starts the local CLI with a default-deny environment', async () => {
+		expect(process.env.DATA_DIR).toBeTruthy();
+		process.env.SESSION_SECRET = 'portal-secret-that-must-not-leak';
+		process.env.ARBITRARY_AMBIENT_VALUE = 'not-allowed';
+		process.env.COPILOT_NO_AUTO_UPDATE = '1';
+		const { open } = await importBridge();
+
+		await open(baseOpts);
+
+		const args = clientCtor.mock.calls[0][0] as {
+			connection?: { env?: Record<string, string> };
+		};
+		expect(args.connection?.env).toMatchObject({
+			PATH: process.env.PATH,
+			COPILOT_NO_AUTO_UPDATE: '1'
+		});
+		expect(args.connection?.env).not.toHaveProperty('DATA_DIR');
+		expect(args.connection?.env).not.toHaveProperty('SESSION_SECRET');
+		expect(args.connection?.env).not.toHaveProperty('ARBITRARY_AMBIENT_VALUE');
+	});
+
 	it('reuses one CopilotClient when the same userId opens multiple sessions', async () => {
 		const { open } = await importBridge();
 
