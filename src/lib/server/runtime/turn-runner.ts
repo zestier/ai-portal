@@ -36,6 +36,7 @@ import {
 import type { ExtractorActivity } from '../memory/extractor';
 import type { MemoryExtractorBackend, MemoryMode } from '$lib/types';
 import { getProvider, type ProviderOpenOptions, type ProviderSession } from '../providers';
+import { isPiMode, openPiSession } from '../pi';
 import type { PortalEvent } from '$lib/types';
 
 interface PendingTool {
@@ -585,7 +586,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	// receives, so dumping the prelude into its reply breaks tests that
 	// assert on the literal user prompt and wastes tokens against a
 	// fixed-string responder that wouldn't act on the guidance anyway.
-	const prelude = loadConfig().COPILOT_STUB ? '' : PORTAL_PRELUDE;
+	const prelude = loadConfig().COPILOT_STUB || isPiMode() ? '' : PORTAL_PRELUDE;
 	const promptToSend = prelude ? `${prelude}\n\n${opts.prompt}` : opts.prompt;
 
 	// Capture the exact provider input for this turn so the UI can surface it
@@ -621,7 +622,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	turn.finishedPromise = (async () => {
 		try {
 			await opts.beforeSend?.();
-			session = await pool.acquire(opts.bridge);
+			// pi path bypasses the provider pool: a fresh pi session per turn
+			// (in-memory, no SDK subprocess) until pooling/reuse is wired (T2).
+			session = isPiMode() ? await openPiSession(opts.bridge) : await pool.acquire(opts.bridge);
 			if (turnAc.signal.aborted) {
 				// Same wedge hazard as turn.abort(): a bare `await session.abort()`
 				// would hang `finishedPromise` (and thus turn cleanup) forever if the

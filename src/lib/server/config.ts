@@ -342,6 +342,19 @@ const Schema = z
 			.optional()
 			.transform((v) => v === '1' || v === 'true'),
 
+		// --- pi SDK session plumbing (T1) ---
+		// When "1", the turn-runner swaps the provider layer for an in-process
+		// pi `createAgentSession` backed by a tiny OpenAI-compatible stub model
+		// (`stub-server.ts`). Used by e2e tests; mirrors COPILOT_STUB.
+		PI_STUB: z
+			.string()
+			.optional()
+			.transform((v) => v === '1' || v === 'true'),
+		// Default model id (providerId/modelId) for pi sessions. Only consulted
+		// when the conversation has no pi-specific model; the stub overrides it
+		// with the registered `pi-stub` model regardless.
+		PI_MODEL: z.string().trim().default('anthropic/claude-sonnet-4-5'),
+
 		// Explicit override for the SQLite migrations directory. Useful for
 		// tests / non-standard layouts where cwd isn't the repo root.
 		DB_MIGRATIONS_DIR: z.string().optional()

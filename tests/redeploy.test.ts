@@ -77,6 +77,8 @@ const baseCfg: AppConfig = {
 	TURN_ABORT_FINALIZE_DEADLINE_MS: 5_000,
 	ENABLE_REDEPLOY: true,
 	COPILOT_STUB: false,
+	PI_STUB: false,
+	PI_MODEL: 'anthropic/claude-sonnet-4-5',
 	DB_MIGRATIONS_DIR: undefined
 };
 
