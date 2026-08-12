@@ -73,7 +73,7 @@ describe('adversary shadow report script', () => {
 		// runtime config, so there is nothing to reset — but the seeding helper
 		// runs migrations, so keep the env clean of a stray reviewer model that
 		// could make a stale process-cached config leak between files.
-		delete process.env.ADVERSARY_SHADOW_MODEL;
+		delete process.env.ADVERSARY_SHADOW_BACKEND;
 	});
 
 	it('reads every column it uses, including the ones only the skip logic needs', async () => {

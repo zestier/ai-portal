@@ -12,7 +12,7 @@ const FACTS = buildAdversaryFacts({
 	args: { command: 'rm -rf /' }
 });
 
-const OPTS = { backend: 'openai-compatible', model: 'reviewer-1', timeoutMs: 1000 };
+const OPTS = { model: 'reviewer-1', timeoutMs: 1000 };
 
 describe('parseVerdict', () => {
 	it('accepts a bare JSON object', () => {

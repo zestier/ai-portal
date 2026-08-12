@@ -47,8 +47,7 @@ export type AdversaryOutcome =
 	  };
 
 export interface AdversaryClientOptions {
-	/** Backend that serves the reviewer; recorded so rows cannot pool across backends. */
-	backend: string;
+	/** The pi model selection (`providerId/modelId`) serving the reviewer. */
 	model: string;
 	timeoutMs: number;
 	maxArgChars?: number | undefined;
@@ -86,29 +85,26 @@ export const ADVERSARY_JSON_SCHEMA = {
 /**
  * Identity of the experiment a row belongs to. Computed from everything that
  * changes what the model was asked — system prompt text, renderer version,
- * truncation budget, backend, model name — so rows from different setups can
- * never be pooled by accident. Deliberately not the hand-maintained
+ * truncation budget, model selection — so rows from different setups can never
+ * be pooled by accident. Deliberately not the hand-maintained
  * `ADVERSARY_PROMPT_VERSION`, which only works if someone remembers to bump it.
  *
- * The backend is part of the identity, not decoration: the same model *name*
- * served by two backends differs in weights, system-prompt handling and
- * structured-output support, so those are different experiments.
+ * The model selection is provider-qualified (`providerId/modelId`), so the
+ * backend separation that used to be an explicit part of the key is embedded
+ * in the model string: the same model *name* served by two providers differs
+ * in weights, system-prompt handling and structured-output support, so those
+ * are different experiments.
  *
  * Still imperfect: a model *name* can point at mutable weights, so a
  * provider-side upgrade is invisible here.
  */
-export function adversaryExperimentKey(opts: {
-	backend: string;
-	model: string;
-	maxArgChars: number;
-}): string {
+export function adversaryExperimentKey(opts: { model: string; maxArgChars: number }): string {
 	return createHash('sha256')
 		.update(
 			JSON.stringify({
 				systemPrompt: ADVERSARY_SYSTEM_PROMPT,
 				promptVersion: ADVERSARY_PROMPT_VERSION,
 				maxArgChars: opts.maxArgChars,
-				backend: opts.backend,
 				model: opts.model
 			})
 		)

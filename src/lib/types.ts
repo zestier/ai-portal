@@ -51,7 +51,8 @@ export interface Conversation {
 	/**
 	 * Optional per-conversation override for the Phase 0 adversary shadow's
 	 * reviewer model. NULL means "use the server default"
-	 * (env `ADVERSARY_SHADOW_MODEL`); unset there too means the shadow is off.
+	 * (env `ADVERSARY_SHADOW_BACKEND`, now a pi model selection); unset there
+	 * too means the shadow is off.
 	 * Clearing this column is a real "stop reviewing this conversation" rather
 	 * than a silent re-inherit — the reviewer is sent tool arguments, so
 	 * per-conversation opt-out has to be reachable.
@@ -367,29 +368,6 @@ export function normalizeMemoryMode(raw: string | null | undefined): MemoryMode 
 	return raw === 'lightweight' || raw === 'project' || raw === 'story' || raw === 'strict'
 		? raw
 		: 'off';
-}
-
-// Single source of truth for the model-backed memory extractor backends.
-// Reused by the config zod enum, the settings save schema, the conversation
-// row normalizer, and the UI selectors so the set can't drift.
-export const MEMORY_EXTRACTOR_BACKEND_IDS = [
-	'heuristic',
-	'openai-compatible',
-	'openai-compatible-tools'
-] as const;
-export type MemoryExtractorBackend = (typeof MEMORY_EXTRACTOR_BACKEND_IDS)[number];
-
-/**
- * Normalizes a stored/posted extractor backend. NULL/unknown means "use the
- * server default" (env `MEMORY_EXTRACTOR_BACKEND`), preserving behaviour for
- * every existing conversation whose column is NULL.
- */
-export function normalizeMemoryExtractorBackend(
-	raw: string | null | undefined
-): MemoryExtractorBackend | null {
-	return MEMORY_EXTRACTOR_BACKEND_IDS.includes(raw as MemoryExtractorBackend)
-		? (raw as MemoryExtractorBackend)
-		: null;
 }
 
 // Selectable accent palettes. Orthogonal to the dark/light/system *mode*:

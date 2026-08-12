@@ -39,24 +39,18 @@ services:
       SHARED_SECRET: ${SHARED_SECRET:-}
       PI_MODEL: ${PI_MODEL:-anthropic/claude-sonnet-4-5}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-claude-sonnet-4.5}
-      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
-      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
-      # Durable memory extraction. Set MEMORY_EXTRACTOR_BACKEND to
-      # `openai-compatible` (single-shot JSON) or `openai-compatible-tools`
-      # (tool-calling background agent) to harvest memories with a model;
-      # both require OPENAI_COMPATIBLE_BASE_URL + a model. Defaults to the
-      # local heuristic extractor when unset.
+      # Durable memory extraction. Set MEMORY_EXTRACTOR_BACKEND to a pi model
+      # selection (`providerId/modelId`, e.g. `anthropic/claude-sonnet-4-5`) to
+      # harvest memories with a model-backed tool-calling extractor. Defaults to
+      # the local heuristic extractor when unset.
       MEMORY_EXTRACTOR_BACKEND: ${MEMORY_EXTRACTOR_BACKEND:-heuristic}
-      MEMORY_EXTRACTOR_MODEL: ${MEMORY_EXTRACTOR_MODEL:-}
       MEMORY_EXTRACTOR_TIMEOUT_MS: ${MEMORY_EXTRACTOR_TIMEOUT_MS:-20000}
       MEMORY_EXTRACTOR_MAX_INPUT_CHARS: ${MEMORY_EXTRACTOR_MAX_INPUT_CHARS:-12000}
       MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: ${MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS:-6}
       MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS: ${MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS:-60000}
       # Experimental adversarial approval mode, Phase 0 (shadow measurement).
-      # Off unless a reviewer model is set. The reviewer runs on the
-      # conversation's own backend unless ADVERSARY_SHADOW_BACKEND routes it
-      # elsewhere. A user/per-conversation setting overrides these defaults.
-      ADVERSARY_SHADOW_MODEL: ${ADVERSARY_SHADOW_MODEL:-}
+      # Off unless a reviewer model selection is set. A user/per-conversation
+      # setting overrides these defaults.
       ADVERSARY_SHADOW_BACKEND: ${ADVERSARY_SHADOW_BACKEND:-}
       ADVERSARY_SHADOW_TIMEOUT_MS: ${ADVERSARY_SHADOW_TIMEOUT_MS:-20000}
       ADVERSARY_SHADOW_MAX_ARG_CHARS: ${ADVERSARY_SHADOW_MAX_ARG_CHARS:-4000}

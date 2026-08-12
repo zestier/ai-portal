@@ -1,6 +1,5 @@
 import { ulid } from 'ulid';
 import { log } from '$lib/server/log';
-import type { MemoryExtractorBackend } from '$lib/types';
 import {
 	commitPatch,
 	extractHeuristicPatch,
@@ -9,7 +8,7 @@ import {
 	type CommitMemoryPatchInput,
 	type MemoryPatchProposal
 } from '../engine';
-import { loadConfig, type AppConfig } from '$lib/server/config';
+import { loadConfig } from '$lib/server/config';
 import { redactSensitiveText, truncate } from './utils';
 import {
 	buildWriteToolSpecs,
@@ -18,8 +17,8 @@ import {
 } from './write-tools';
 import { sanitizePatch } from './sanitize';
 import { buildToolExtractorSystemPrompt, toolExtractorContextSections } from './prompts';
-import { makeThinkStream, requestOpenAICompatibleChat } from './streaming';
-import { OpenAICompatibleMemoryExtractor } from './single-shot';
+import { makeThinkStream } from './streaming';
+import { resolveModelSelection, piChat } from '$lib/server/pi/complete';
 import { buildMemoryTools } from '$lib/server/tools/memory';
 import * as conversationsRepo from '$lib/server/db/repos/conversations';
 import * as memoryRepo from '$lib/server/db/repos/memory';
@@ -47,7 +46,7 @@ export type {
 } from './types';
 // Re-export the public transport surface so external importers (turn-runner,
 // think-stream tests) keep importing from the barrel.
-export { MemoryExtractorHttpError, makeThinkStream } from './streaming';
+export { makeThinkStream } from './streaming';
 export { OpenAICompatibleMemoryExtractor } from './single-shot';
 
 /**
@@ -84,9 +83,7 @@ export class HeuristicMemoryExtractor implements MemoryExtractor {
 }
 
 interface ToolCallingExtractorOptions {
-	baseUrl: string;
-	apiKey?: string | null | undefined;
-	model: string;
+	modelSelection: string;
 	timeoutMs: number;
 	maxInputChars: number;
 	maxToolIterations: number;
@@ -215,13 +212,42 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 	readonly kind = 'openai-compatible-tools';
 	readonly model: string;
 	private readonly opts: ToolCallingExtractorOptions;
+	/** The bound chat transport, resolved lazily once per extractor. */
+	private chat: ExtractorChatComplete | null = null;
 
 	constructor(opts: ToolCallingExtractorOptions) {
 		this.opts = opts;
-		this.model = opts.model;
+		this.model = opts.modelSelection;
 	}
 
 	async extractPatch(input: ExtractPatchInput): Promise<ExtractPatchResult> {
+		// Resolve the pi model selection once, then drive the whole loop over it.
+		// An unresolvable selection (typo, unconfigured provider) falls back to
+		// the heuristic extractor for THIS turn rather than failing the turn —
+		// mirroring the old "model-backed backend requested but prerequisites
+		// missing" behaviour, and preserving memory when the main model was told
+		// not to write it.
+		if (!this.chat) {
+			if (this.opts.chatComplete) {
+				this.chat = this.opts.chatComplete;
+			} else {
+				try {
+					const { model, runtime } = await resolveModelSelection(this.opts.modelSelection);
+					this.chat = piChat.bind(null, {
+						model,
+						runtime,
+						timeoutMs: this.opts.timeoutMs,
+						toolChoice: this.opts.toolChoice
+					});
+				} catch (error) {
+					log.warn('memory.extractor.fallback_heuristic', {
+						model: this.opts.modelSelection,
+						reason: error instanceof Error ? error.message : String(error)
+					});
+					return new HeuristicMemoryExtractor().extractPatch(input);
+				}
+			}
+		}
 		const staged: MemoryPatchProposal[] = [];
 		const diagnostics: Diagnostic[] = [];
 		let proposeCalls = 0;
@@ -309,7 +335,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			}
 		];
 
-		const chat = this.opts.chatComplete ?? requestOpenAICompatibleChat.bind(null, this.opts);
+		const chat = this.chat;
 		let finalContent = '';
 		let voluntaryStop = false;
 		let hitWallClockBudget = false;
@@ -894,75 +920,34 @@ function mergePatchProposals(
 }
 
 /**
- * Selects the configured memory extractor for a turn. Returns a model-backed
- * extractor (tool-calling or single-shot) when the backend and its
- * prerequisites are configured, otherwise falls back to the heuristic
- * extractor (logging why, so misconfiguration is diagnosable).
+ * Selects the configured memory extractor for a turn. `MEMORY_EXTRACTOR_BACKEND`
+ * is a pi model selection (`providerId/modelId`, e.g.
+ * `anthropic/claude-sonnet-4-5`) resolved lazily against the shared
+ * ModelRuntime; `heuristic` (the default) is the local, offline extractor. A
+ * per-conversation `memory_extractor_model` override wins over the env value.
+ * The single-shot extractor is not selectable here — the tool-calling extractor
+ * is the model-backed default, and the single-shot class stays available
+ * programmatically for callers that want its JSON parsing.
  */
 export function createMemoryExtractor(
 	opts: {
 		model?: string | null | undefined;
-		backend?: MemoryExtractorBackend | null | undefined;
 	} = {}
 ): MemoryExtractor {
 	const cfg = loadConfig();
-	// Precedence: per-conversation backend override → server default env backend.
-	const backend = opts.backend ?? cfg.MEMORY_EXTRACTOR_BACKEND;
-	const wantsModel = backend === 'openai-compatible' || backend === 'openai-compatible-tools';
-	if (wantsModel) {
-		const model = opts.model?.trim() || cfg.MEMORY_EXTRACTOR_MODEL;
-		const { baseUrl, apiKey } = openAICompatibleExtractorConfig(cfg);
-		if (baseUrl && model) {
-			if (backend === 'openai-compatible-tools') {
-				return new ToolCallingMemoryExtractor({
-					baseUrl,
-					apiKey,
-					model,
-					timeoutMs: cfg.MEMORY_EXTRACTOR_TIMEOUT_MS,
-					maxInputChars: cfg.MEMORY_EXTRACTOR_MAX_INPUT_CHARS,
-					maxToolIterations: cfg.MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS,
-					maxWallClockMs: cfg.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS,
-					maxFailedCallNudges: cfg.MEMORY_EXTRACTOR_MAX_FAILED_CALL_NUDGES,
-					toolChoice: cfg.MEMORY_EXTRACTOR_TOOL_CHOICE
-				});
-			}
-			return new OpenAICompatibleMemoryExtractor({
-				baseUrl,
-				apiKey,
-				model,
-				timeoutMs: cfg.MEMORY_EXTRACTOR_TIMEOUT_MS,
-				maxInputChars: cfg.MEMORY_EXTRACTOR_MAX_INPUT_CHARS
-			});
-		}
-		// A model-backed backend was requested but the prerequisites are
-		// missing, so we silently fall back to heuristic — historically a
-		// confusing "extraction runs but nothing model-driven happens"
-		// failure. Surface it so misconfiguration is diagnosable.
-		log.warn('memory.extractor.fallback_heuristic', {
-			backend,
-			hasBaseUrl: Boolean(baseUrl),
-			hasModel: Boolean(model),
-			reason: !baseUrl
-				? 'no OpenAI-compatible base URL configured (OPENAI_COMPATIBLE_BASE_URL)'
-				: 'no extractor model configured (set MEMORY_EXTRACTOR_MODEL or a per-conversation extractor model)'
+	const selection = opts.model?.trim() || cfg.MEMORY_EXTRACTOR_BACKEND?.trim();
+	if (selection && selection !== 'heuristic') {
+		return new ToolCallingMemoryExtractor({
+			modelSelection: selection,
+			timeoutMs: cfg.MEMORY_EXTRACTOR_TIMEOUT_MS,
+			maxInputChars: cfg.MEMORY_EXTRACTOR_MAX_INPUT_CHARS,
+			maxToolIterations: cfg.MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS,
+			maxWallClockMs: cfg.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS,
+			maxFailedCallNudges: cfg.MEMORY_EXTRACTOR_MAX_FAILED_CALL_NUDGES,
+			toolChoice: cfg.MEMORY_EXTRACTOR_TOOL_CHOICE
 		});
 	}
 	return new HeuristicMemoryExtractor();
-}
-
-/**
- * The endpoint for the model-backed extractor. Served by the env-fed
- * `OPENAI_COMPATIBLE_BASE_URL`/`OPENAI_COMPATIBLE_API_KEY` (the provider layer
- * that used to feed these via the default provider instance was deleted in T2).
- */
-function openAICompatibleExtractorConfig(cfg: AppConfig): {
-	baseUrl: string | null;
-	apiKey: string | null;
-} {
-	return {
-		baseUrl: cfg.OPENAI_COMPATIBLE_BASE_URL ?? null,
-		apiKey: cfg.OPENAI_COMPATIBLE_API_KEY ?? null
-	};
 }
 
 /**
@@ -973,7 +958,6 @@ function openAICompatibleExtractorConfig(cfg: AppConfig): {
 export function isModelBackedExtractorConfigured(
 	opts: {
 		model?: string | null | undefined;
-		backend?: MemoryExtractorBackend | null | undefined;
 	} = {}
 ): boolean {
 	return createMemoryExtractor(opts).kind !== 'heuristic';
@@ -1014,8 +998,7 @@ export async function extractAndCommitMemory(
 	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
 > {
 	const extractor = createMemoryExtractor({
-		model: input.extractorModel,
-		backend: input.extractorBackend
+		model: input.extractorModel
 	});
 	// Always record which extractor actually ran. This is the definitive
 	// signal when diagnosing "extraction happens but no subagent card": only

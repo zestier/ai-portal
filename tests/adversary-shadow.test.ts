@@ -6,22 +6,18 @@ import type {
 	ShadowObserveInput,
 	ShadowRecorder
 } from '../src/lib/server/permissions/adversary/shadow';
-import { adversaryExperimentKey } from '../src/lib/server/permissions/adversary/client';
 
 // Phase 0's whole safety story in one file: the adversary observes and records,
 // and NOTHING it does — succeeding, failing, hanging, or babbling — may change
 // what the permission path returns or what the human is shown.
 //
-// The provider layer that used to sit in front of the recorder was deleted (T2),
-// so the harness drives `createShadowRecorder.observe()` directly. The backend
-// is now a label only — it groups rows via `experiment_key` but serves nothing
-// until the completion is re-wired onto pi-ai (T5).
+// The provider layer that used to sit in front of the recorder was deleted (T2);
+// the reviewer's completion is re-wired onto the shared pi runtime (T5), but the
+// harness still drives `createShadowRecorder.observe()` directly with the
+// injected `complete` seam so these tests never touch a provider.
 
 const ADVERSARY_MODEL = 'reviewer-model';
 const AGENT_MODEL = 'agent-model';
-// The conversation's own backend label; matches the shadow's default so the
-// same-model guard can actually trip.
-const AGENT_BACKEND = 'pi';
 
 let convCounter = 0;
 
@@ -34,10 +30,6 @@ interface HarnessOptions {
 	sameModel?: boolean;
 	/** Per-conversation override, which should beat the server default. */
 	conversationModel?: string;
-	/** Per-conversation reviewer backend label override. */
-	conversationBackend?: string;
-	/** The backend label serving the conversation's own agent. */
-	agentBackend?: string;
 	/** Point the recorder at a conversation id that does not exist in the DB. */
 	brokenConversationId?: boolean;
 }
@@ -45,9 +37,9 @@ interface HarnessOptions {
 async function makeHarness(options: HarnessOptions = {}) {
 	// A configured model IS the enablement — there is no separate on/off flag.
 	if (options.disabled) {
-		delete process.env.ADVERSARY_SHADOW_MODEL;
+		delete process.env.ADVERSARY_SHADOW_BACKEND;
 	} else {
-		process.env.ADVERSARY_SHADOW_MODEL = options.sameModel ? AGENT_MODEL : ADVERSARY_MODEL;
+		process.env.ADVERSARY_SHADOW_BACKEND = options.sameModel ? AGENT_MODEL : ADVERSARY_MODEL;
 	}
 	await setupLocalEnv(`portal-shadow-test-`);
 
@@ -71,7 +63,6 @@ async function makeHarness(options: HarnessOptions = {}) {
 
 	const shadowRecorder: ShadowRecorder = createShadowRecorder({
 		getModel: () => options.conversationModel ?? null,
-		getBackend: () => options.conversationBackend ?? null,
 		userId: user.id,
 		complete: async (system: string, user: string) => {
 			completeCalls++;
@@ -86,8 +77,8 @@ async function makeHarness(options: HarnessOptions = {}) {
 	});
 
 	// Mirrors what the (deleted) permission adapter passed into `observe`:
-	// conversation id, the agent's own model/backend for the same-model guard,
-	// and the portal-derived facts of the request under review.
+	// conversation id, the agent's own model for the same-model guard, and the
+	// portal-derived facts of the request under review.
 	const observe = (overrides: Partial<ShadowObserveInput> = {}): ShadowHandle | null =>
 		shadowRecorder.observe({
 			conversationId: options.brokenConversationId
@@ -96,7 +87,6 @@ async function makeHarness(options: HarnessOptions = {}) {
 			argsHash: null,
 			resolutionSource: 'prompt-policy',
 			agentModel: AGENT_MODEL,
-			agentBackend: options.agentBackend ?? AGENT_BACKEND,
 			...URL_REQUEST_FACTS,
 			...overrides
 		});
@@ -134,7 +124,6 @@ const URL_REQUEST_FACTS = {
 
 describe('adversary shadow mode', () => {
 	beforeEach(() => {
-		delete process.env.ADVERSARY_SHADOW_MODEL;
 		delete process.env.ADVERSARY_SHADOW_BACKEND;
 		delete process.env.ADVERSARY_SHADOW_MAX_IN_FLIGHT;
 	});
@@ -372,59 +361,12 @@ describe('adversary shadow mode', () => {
 
 	it('refuses to run when the adversary model equals the agent model', async () => {
 		// Shared weights means shared blind spots: the run would measure
-		// self-agreement, not oversight.
+		// self-agreement, not oversight. Both model strings are
+		// provider-qualified, so an equal string IS the same reviewer.
 		const harness = await makeHarness({ sameModel: true });
 		expect(harness.observe()).toBeNull();
 		expect(harness.rows()).toHaveLength(0);
 		expect(harness.completeCalls()).toBe(0);
-	});
-
-	it('defaults the backend label to the conversation backend when unset', async () => {
-		// The label is what groups rows into experiments, so it has to resolve
-		// even when the operator configured no backend at all: fall back to the
-		// conversation's own backend label, then to `pi`.
-		const harness = await makeHarness();
-		harness.observe()?.recordHuman('allow-once');
-		await harness.waitForSettled();
-		const rows = harness.rows();
-		expect(rows).toHaveLength(1);
-		expect(rows[0]?.experimentKey).toBe(
-			adversaryExperimentKey({ backend: AGENT_BACKEND, model: ADVERSARY_MODEL, maxArgChars: 4000 })
-		);
-	});
-
-	it('still runs when the model name matches but the backend differs', async () => {
-		// The guard compares a model id within one backend's namespace, so a
-		// coincidental name collision across labels (a `gpt-5` on each side)
-		// must not silently disable the shadow — the weights are unrelated.
-		const harness = await makeHarness({
-			sameModel: true,
-			conversationBackend: 'openai-compatible'
-		});
-		harness.observe()?.recordHuman('allow-once');
-		await harness.waitForSettled();
-		const rows = harness.rows();
-		expect(rows).toHaveLength(1);
-		expect(rows[0]?.experimentKey).toBe(
-			adversaryExperimentKey({
-				backend: 'openai-compatible',
-				model: AGENT_MODEL,
-				maxArgChars: 4000
-			})
-		);
-	});
-
-	it('records the backend so rows from two backends cannot pool', async () => {
-		// The same model NAME served by two backends is not the same experiment:
-		// weights, system-prompt handling and structured-output support all
-		// differ, so `experiment_key` has to separate them.
-		const a = await makeHarness();
-		a.observe()?.recordHuman('allow-once');
-		await a.waitForSettled();
-		const b = await makeHarness({ conversationBackend: 'openai-compatible' });
-		b.observe()?.recordHuman('allow-once');
-		await b.waitForSettled();
-		expect(a.rows()[0]?.experimentKey).not.toBe(b.rows()[0]?.experimentKey);
 	});
 
 	it('survives a failing shadow insert without touching the decision path', async () => {

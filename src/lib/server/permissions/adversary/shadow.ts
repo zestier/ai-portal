@@ -30,6 +30,7 @@ import type { ShadowResolutionSource } from '../../db/repos/shadow-decisions';
 import { BoundedTtlCache } from '../../cache';
 import { withTimeout } from '../../runtime/with-timeout';
 import type { ProviderCompletionRequest } from '../../pi/session-contract';
+import { completeSimpleSelection } from '../../pi/complete';
 import { reviewPermissionRequest, adversaryExperimentKey, type AdversaryOutcome } from './client';
 import {
 	buildAdversaryFacts,
@@ -57,13 +58,13 @@ export interface ShadowObserveInput extends BuildAdversaryFactsInput {
 	/** Why this request needed a human. Recorded to characterize the sample. */
 	resolutionSource?: ShadowResolutionSource | undefined;
 	/**
-	 * The conversation's agent model, and the backend serving it. Used to refuse
-	 * running the adversary on the same model on the same backend, and as the
-	 * default backend for the reviewer itself. `null` means "unknown", which we
-	 * treat as safe to proceed since the shadow has no authority either way.
+	 * The conversation's agent model. Used to refuse running the adversary on
+	 * the same model; provider-qualified (`providerId/modelId`), so a
+	 * shared-weights reviewer on the same provider is detected. `null` means
+	 * "unknown", which we treat as safe to proceed since the shadow has no
+	 * authority either way.
 	 */
 	agentModel?: string | null | undefined;
-	agentBackend?: string | null | undefined;
 }
 
 /** Returned per observed request so the caller can attach the human's answer. */
@@ -81,7 +82,6 @@ export interface ShadowRecorder {
 }
 
 interface ResolvedShadowConfig {
-	backend: string;
 	model: string;
 	timeoutMs: number;
 	maxArgChars: number;
@@ -93,20 +93,13 @@ export interface CreateShadowRecorderOptions {
 	/**
 	 * The conversation's effective adversary model (per-conversation override,
 	 * else the user's default). Returning null/undefined falls back to the
-	 * server default (`ADVERSARY_SHADOW_MODEL`); unset everywhere means the
+	 * server default (`ADVERSARY_SHADOW_BACKEND`); unset everywhere means the
 	 * shadow is off.
 	 *
 	 * A getter rather than a value so a mid-session change takes effect on the
 	 * next request, matching how the adapter reads approval mode.
 	 */
 	getModel?: (() => string | null | undefined) | undefined;
-	/**
-	 * The backend that should serve the reviewer. Null/undefined falls back to
-	 * `ADVERSARY_SHADOW_BACKEND` and then to the conversation's OWN backend —
-	 * the fallback that lets the default single-backend deployment collect data
-	 * at all.
-	 */
-	getBackend?: (() => string | null | undefined) | undefined;
 	/** User whose credentials/entitlements the reviewer call runs under. */
 	userId?: string | undefined;
 	/** Test seam: replaces the provider call with a canned completion. */
@@ -143,26 +136,20 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 	let inFlight = 0;
 
 	const observe = (input: ShadowObserveInput): ShadowHandle | null => {
-		const cfg = resolveConfig(opts.getModel?.(), opts.getBackend?.());
+		const cfg = resolveConfig(opts.getModel?.());
 		if (!cfg) return null;
-		// Backend-qualified, because a bare model id is only meaningful within
-		// one backend's namespace. Comparing raw strings across namespaces was
-		// both too weak (a Copilot chat and an openai-compatible reviewer rarely
+		// Provider-qualified: a bare model id is only meaningful within one
+		// provider's namespace. Comparing raw strings across providers was both
+		// too weak (a Copilot chat and an openai-compatible reviewer rarely
 		// collide, so genuinely shared weights went undetected) and too strong
 		// (a coincidental `gpt-5` on both sides silently disabled the shadow).
-		if (
-			input.agentModel &&
-			input.agentBackend &&
-			input.agentBackend === cfg.backend &&
-			input.agentModel === cfg.model
-		) {
+		if (input.agentModel && input.agentModel === cfg.model) {
 			if (!warnedDisabled) {
 				warnedDisabled = true;
 				log.warn('adversary.shadow_skipped_same_model', {
-					backend: cfg.backend,
 					model: cfg.model,
 					reason:
-						'adversary model equals the agent model on the same backend; a shared-weights reviewer measures self-agreement, not oversight'
+						'adversary model equals the agent model; a shared-weights reviewer measures self-agreement, not oversight'
 				});
 			}
 			return null;
@@ -175,11 +162,11 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 		// once the call settles, so the copy at rest is bounded by the same
 		// truncation budget as the network payload.
 		//
-		// Scoped by backend and model: the cache lives on a recorder that
-		// outlives a mid-session config change, so an unscoped key would replay
-		// one reviewer's verdict as if a different one had produced it.
+		// Scoped by model: the cache lives on a recorder that outlives a
+		// mid-session config change, so an unscoped key would replay one
+		// reviewer's verdict as if a different one had produced it.
 		const key = createHash('sha256')
-			.update(JSON.stringify({ backend: cfg.backend, model: cfg.model, facts }))
+			.update(JSON.stringify({ model: cfg.model, facts }))
 			.digest('hex');
 		const id = ulid();
 		try {
@@ -192,7 +179,6 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 				argsHash: input.argsHash,
 				adversaryModel: cfg.model,
 				experimentKey: adversaryExperimentKey({
-					backend: cfg.backend,
 					model: cfg.model,
 					maxArgChars: cfg.maxArgChars
 				}),
@@ -232,24 +218,15 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 			inFlight++;
 			pending = withTimeout(
 				reviewPermissionRequest(facts, {
-					backend: cfg.backend,
 					model: cfg.model,
 					timeoutMs: cfg.timeoutMs,
 					maxArgChars: cfg.maxArgChars,
 					userId: opts.userId,
-					// The test seam takes precedence over the resolved backend so
+					// The test seam takes precedence over the resolved transport so
 					// unit tests never depend on a provider being reachable.
 					complete: opts.complete
 						? (req) => opts.complete!(req.system, req.user)
-						: (req) =>
-								cfg.complete({
-									model: req.model,
-									system: req.system,
-									user: req.user,
-									responseSchema: req.responseSchema,
-									timeoutMs: req.timeoutMs,
-									userId: req.userId
-								})
+						: (req) => cfg.complete(req)
 				}),
 				// Belt and braces over the client's own budget. The client bounds
 				// its HTTP call, but this guarantees the in-flight slot is
@@ -351,35 +328,25 @@ function persistOutcome(id: string, outcome: AdversaryOutcome, memoized: boolean
  * server default. A configured model IS the enablement — no model anywhere
  * means the shadow simply never runs, which is the default.
  *
- * The BACKEND is now a label only: the provider layer that used to serve
- * out-of-band completions was deleted (T2), so the reviewer's completion is
- * re-wired onto pi-ai in T5. Until then `complete` rejects unless a test seam
- * is injected. The label still lands in `experiment_key` so rows stay grouped
- * by the endpoint that would have served them.
+ * The selection is a pi model selection (`providerId/modelId`), so the old
+ * separate backend concept is gone: the reviewer completes through the shared
+ * pi runtime via `completeSimpleSelection`, which fails loudly (throwing
+ * `ModelCompletionError`) rather than silently degrading when the selection
+ * cannot be resolved.
  */
-function resolveConfig(
-	conversationModel: string | null | undefined,
-	conversationBackend: string | null | undefined
-): ResolvedShadowConfig | null {
+function resolveConfig(conversationModel: string | null | undefined): ResolvedShadowConfig | null {
 	const cfg = loadConfig();
-	const model = conversationModel?.trim() || cfg.ADVERSARY_SHADOW_MODEL?.trim();
+	const model = conversationModel?.trim() || cfg.ADVERSARY_SHADOW_BACKEND?.trim();
 	// No model configured anywhere is the OFF state, not a misconfiguration:
 	// it is the default for every deployment that never opts in, so warning
 	// about it would be noise.
 	if (!model) return null;
 
-	const backend: string =
-		conversationBackend?.trim() || cfg.ADVERSARY_SHADOW_BACKEND?.trim() || 'pi';
-
 	return {
-		backend,
 		model,
 		timeoutMs: cfg.ADVERSARY_SHADOW_TIMEOUT_MS,
 		maxArgChars: cfg.ADVERSARY_SHADOW_MAX_ARG_CHARS,
 		maxInFlight: cfg.ADVERSARY_SHADOW_MAX_IN_FLIGHT,
-		complete: () =>
-			Promise.reject(
-				new Error('adversary shadow completion is not wired; re-wire onto pi-ai in T5')
-			)
+		complete: (req) => completeSimpleSelection(model, req)
 	};
 }

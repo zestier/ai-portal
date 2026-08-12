@@ -195,24 +195,20 @@ An exploration of whether a second LLM could review permission requests instead
 of the human. **Phase 0 deliberately grants it no authority.**
 
 Configure it like any other model-backed background feature: set an **Adversary
-review model** in Settings (or `ADVERSARY_SHADOW_MODEL` as the server default,
-or per conversation). A configured model is what turns it on — there is no
-separate switch, so nothing can disagree about whether it is running. Unset
-everywhere, which is the default, means it never runs.
+review model** in Settings (or `ADVERSARY_SHADOW_BACKEND` as the server default,
+or per conversation). A configured model selection is what turns it on — there
+is no separate switch, so nothing can disagree about whether it is running.
+Unset everywhere, which is the default, means it never runs.
 
-The **backend** that serves the reviewer is chosen independently of the model
-(`ADVERSARY_SHADOW_BACKEND`, or the matching Settings control), and defaults to
-the conversation's own. That default is deliberate. An earlier version required
-`OPENAI_COMPATIBLE_BASE_URL`, which conflated two unrelated things: the reviewer
-needs to be a different *model* from the agent, which says nothing about needing
-a different *backend*. The coupling confined every measurement to deployments
-that had stood a second endpoint up, and it added a data-egress destination that
-the chat backend — which already receives the whole conversation, tool calls and
-arguments included — did not need. Any backend advertising
-`capabilities.sideCompletion` can host the reviewer; routing it elsewhere
-remains a one-line setting for anyone who wants that.
+The reviewer runs on the pi provider named in the selection (`providerId/modelId`).
+An earlier version had a separate `ADVERSARY_SHADOW_MODEL` plus an independent
+backend axis (`OPENAI_COMPATIBLE_BASE_URL`), letting the model and its serving
+endpoint disagree about what "the same reviewer" meant. Folding the backend into
+the model selection makes the provider-qualified string the only identity: the
+same model served by two providers is two selections, and each is reviewed and
+recorded independently.
 
-Model precedence is conversation → server default (`ADVERSARY_SHADOW_MODEL`),
+Model precedence is conversation → server default (`ADVERSARY_SHADOW_BACKEND`),
 matching the memory extractor. The user setting is **seed-only**: it is copied
 onto each newly created conversation and never re-read, so changing it does not
 retroactively alter existing conversations, and clearing a conversation's model
@@ -222,10 +218,10 @@ so opting one sensitive conversation out has to work even for a user who set a
 default.
 
 It is per-conversation rather than global because the reviewer is skipped when
-it is the same model on the same backend as the conversation's agent (shared
-weights mean shared blind spots) — with one global value that guard would
-silently disable the shadow for anyone whose conversation happened to use the
-same model, with no way to resolve it.
+it matches the conversation's own model selection (shared weights mean shared
+blind spots) — with one global value that guard would silently disable the
+shadow for anyone whose conversation happened to use the same model, with no way
+to resolve it.
 
 When it is on, each request that reaches a human dialog in an `ask`
 conversation is also shown to the reviewer, whose verdict is recorded next to

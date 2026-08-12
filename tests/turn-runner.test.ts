@@ -20,6 +20,34 @@ async function freshImports() {
 	return { users, convs, turnRunner };
 }
 
+// The memory extractor resolves its model selection against the shared pi
+// ModelRuntime, so tests that drive the real transport register a throwaway
+// provider pointing at the (mocked) fetch. Must run after `freshImports()` /
+// `vi.resetModules()` so it lands on the same runtime instance the extractor
+// will resolve against.
+async function registerExtractorTestProvider(): Promise<void> {
+	const { getModelRuntime } = await import('../src/lib/server/pi');
+	const runtime = await getModelRuntime();
+	runtime.registerProvider('test-provider', {
+		name: 'test provider',
+		api: 'openai-completions',
+		baseUrl: 'http://127.0.0.1:9/v1',
+		apiKey: 'test-key',
+		authHeader: true,
+		models: [
+			{
+				id: 'tool-extractor',
+				name: 'Tool Extractor',
+				reasoning: false,
+				input: ['text'],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 200_000,
+				maxTokens: 4096
+			}
+		]
+	});
+}
+
 describe('turn-runner', () => {
 	beforeEach(() => {
 		acquireMock.mockReset();
@@ -1219,9 +1247,7 @@ describe('turn-runner', () => {
 	});
 
 	it('surfaces tool-calling memory extraction as a persisted subagent card', async () => {
-		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'test-provider/tool-extractor';
 		// SSE chunk streams (the extractor requests stream: true). First step
 		// streams reasoning + a staging tool call; second step streams the
 		// closing message with no tool calls.
@@ -1252,12 +1278,17 @@ describe('turn-runner', () => {
 										}
 									}
 								]
-							}
+							},
+							finish_reason: 'stop'
 						}
 					]
 				}
 			],
-			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+			[
+				{
+					choices: [{ delta: { content: 'Stored the migration decision.' }, finish_reason: 'stop' }]
+				}
+			]
 		];
 		let chatCall = 0;
 		const fetchMock = vi.fn(async () => {
@@ -1274,6 +1305,7 @@ describe('turn-runner', () => {
 
 		try {
 			const { users, convs, turnRunner } = await freshImports();
+			await registerExtractorTestProvider();
 			const messages = await import('../src/lib/server/db/repos/messages');
 			const user = users.ensureLocalUser();
 			const wd = makeTmpDir('portal-wd-');
@@ -1354,8 +1386,6 @@ describe('turn-runner', () => {
 			expect(parent?.resultJson ?? '').toContain('Stored the migration decision.');
 		} finally {
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
-			delete process.env.MEMORY_EXTRACTOR_MODEL;
-			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 			vi.unstubAllGlobals();
 		}
 	});
@@ -1541,9 +1571,7 @@ describe('turn-runner', () => {
 	});
 
 	it('frees the turn and marks memory skipped when Stop hits during extraction', async () => {
-		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'test-provider/tool-extractor';
 		// Short post-abort deadline; keep the absolute ceiling huge so only the
 		// post-abort path can finalize this turn.
 		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '50';
@@ -1646,8 +1674,6 @@ describe('turn-runner', () => {
 		} finally {
 			vi.doUnmock('../src/lib/server/memory/extractor');
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
-			delete process.env.MEMORY_EXTRACTOR_MODEL;
-			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 			delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
 			delete process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS;
 			delete process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS;
@@ -1655,9 +1681,7 @@ describe('turn-runner', () => {
 	});
 
 	it('finalizes via the watchdog ceiling when extraction ignores abort and overruns', async () => {
-		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'test-provider/tool-extractor';
 		// No user Stop in this case: only the absolute extraction-phase ceiling
 		// can free the turn, so keep it small.
 		process.env.TURN_ABORT_FINALIZE_DEADLINE_MS = '5000';
@@ -1732,8 +1756,6 @@ describe('turn-runner', () => {
 		} finally {
 			vi.doUnmock('../src/lib/server/memory/extractor');
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
-			delete process.env.MEMORY_EXTRACTOR_MODEL;
-			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 			delete process.env.TURN_ABORT_FINALIZE_DEADLINE_MS;
 			delete process.env.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS;
 			delete process.env.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS;
@@ -1741,9 +1763,7 @@ describe('turn-runner', () => {
 	});
 
 	it('re-runs extraction for an existing assistant message via startExtractionRetryTurn', async () => {
-		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'test-provider/tool-extractor';
 		const sseChunks = [
 			[
 				{ choices: [{ delta: { reasoning: 'Re-extracting the migration decision.' } }] },
@@ -1766,12 +1786,17 @@ describe('turn-runner', () => {
 										}
 									}
 								]
-							}
+							},
+							finish_reason: 'stop'
 						}
 					]
 				}
 			],
-			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+			[
+				{
+					choices: [{ delta: { content: 'Stored the migration decision.' }, finish_reason: 'stop' }]
+				}
+			]
 		];
 		let chatCall = 0;
 		const fetchMock = vi.fn(async () => {
@@ -1788,6 +1813,7 @@ describe('turn-runner', () => {
 
 		try {
 			const { users, convs, turnRunner } = await freshImports();
+			await registerExtractorTestProvider();
 			const messages = await import('../src/lib/server/db/repos/messages');
 			const memory = await import('../src/lib/server/db/repos/memory');
 			const user = users.ensureLocalUser();
@@ -1857,16 +1883,12 @@ describe('turn-runner', () => {
 			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
 		} finally {
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
-			delete process.env.MEMORY_EXTRACTOR_MODEL;
-			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 			vi.unstubAllGlobals();
 		}
 	});
 
 	it('undoes the prior committed patch only after a successful re-extraction', async () => {
-		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'test-provider/tool-extractor';
 		const sseChunks = [
 			[
 				{
@@ -1888,12 +1910,17 @@ describe('turn-runner', () => {
 										}
 									}
 								]
-							}
+							},
+							finish_reason: 'stop'
 						}
 					]
 				}
 			],
-			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+			[
+				{
+					choices: [{ delta: { content: 'Stored the migration decision.' }, finish_reason: 'stop' }]
+				}
+			]
 		];
 		let chatCall = 0;
 		const fetchMock = vi.fn(async () => {
@@ -1910,6 +1937,7 @@ describe('turn-runner', () => {
 
 		try {
 			const { users, convs, turnRunner } = await freshImports();
+			await registerExtractorTestProvider();
 			const messages = await import('../src/lib/server/db/repos/messages');
 			const memory = await import('../src/lib/server/db/repos/memory');
 			const { commitPatch } = await import('../src/lib/server/memory/engine');
@@ -1972,16 +2000,12 @@ describe('turn-runner', () => {
 			expect(facts).not.toContain('Stale decision.');
 		} finally {
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
-			delete process.env.MEMORY_EXTRACTOR_MODEL;
-			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 			vi.unstubAllGlobals();
 		}
 	});
 
 	it('feeds the re-extractor memory as of turn start, not its own prior committed output', async () => {
-		process.env.MEMORY_EXTRACTOR_BACKEND = 'openai-compatible-tools';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'tool-extractor';
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'test-provider/tool-extractor';
 		const sseChunks = [
 			[
 				{
@@ -2003,12 +2027,17 @@ describe('turn-runner', () => {
 										}
 									}
 								]
-							}
+							},
+							finish_reason: 'stop'
 						}
 					]
 				}
 			],
-			[{ choices: [{ delta: { content: 'Stored the migration decision.' } }] }]
+			[
+				{
+					choices: [{ delta: { content: 'Stored the migration decision.' }, finish_reason: 'stop' }]
+				}
+			]
 		];
 		// Capture every request body sent to the model so we can inspect the
 		// rendered packet the extractor was actually handed.
@@ -2029,6 +2058,7 @@ describe('turn-runner', () => {
 
 		try {
 			const { users, convs, turnRunner } = await freshImports();
+			await registerExtractorTestProvider();
 			const messages = await import('../src/lib/server/db/repos/messages');
 			const memory = await import('../src/lib/server/db/repos/memory');
 			const { commitPatch } = await import('../src/lib/server/memory/engine');
@@ -2095,8 +2125,6 @@ describe('turn-runner', () => {
 			);
 		} finally {
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
-			delete process.env.MEMORY_EXTRACTOR_MODEL;
-			delete process.env.OPENAI_COMPATIBLE_BASE_URL;
 			vi.unstubAllGlobals();
 		}
 	});

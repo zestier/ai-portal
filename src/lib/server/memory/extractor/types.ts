@@ -1,4 +1,4 @@
-import type { MemoryExtractorBackend, MemoryMode, Message, ToolCallRecord } from '$lib/types';
+import type { MemoryMode, Message, ToolCallRecord } from '$lib/types';
 import type { MemoryToolCall } from '$lib/server/db/repos/memory';
 import type { MemoryPatchProposal, TurnMemoryPacket } from '../engine';
 
@@ -32,11 +32,6 @@ export interface ExtractPatchInput {
 	regularToolCalls?: ToolCallRecord[] | undefined;
 	recentTranscript?: Message[] | undefined;
 	extractorModel?: string | null | undefined;
-	/**
-	 * Optional per-conversation override for the extractor backend. When unset
-	 * (NULL/undefined) the server default (`MEMORY_EXTRACTOR_BACKEND`) is used.
-	 */
-	extractorBackend?: MemoryExtractorBackend | null | undefined;
 	/**
 	 * Optional sink for live tool-calling extractor activity, so a caller can
 	 * render the background agent running. Only the tool-calling extractor

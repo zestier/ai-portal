@@ -1305,8 +1305,7 @@ describe('memory-backed sessions', () => {
 			content: 'Decision noted. token=abcdefghijklmnopqrstuvwxyz should not be stored.'
 		});
 		const extractor = new OpenAICompatibleMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'test-extractor',
+			modelSelection: 'test-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 4_000,
 			completeJson: async () => ({
@@ -1389,8 +1388,7 @@ describe('memory-backed sessions', () => {
 		});
 		let prompt = '';
 		const extractor = new OpenAICompatibleMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'test-extractor',
+			modelSelection: 'test-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			completeJson: async (inputPrompt) => {
@@ -1511,8 +1509,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 4,
@@ -1674,8 +1671,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 4,
@@ -1736,8 +1732,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 8,
@@ -1819,8 +1814,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -1894,8 +1888,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 10,
@@ -1955,8 +1948,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 10,
@@ -2032,8 +2024,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 10,
@@ -2095,8 +2086,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 10,
@@ -2157,8 +2147,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2231,8 +2220,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2288,8 +2276,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2361,8 +2348,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2420,8 +2406,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2476,8 +2461,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2527,8 +2511,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2632,8 +2615,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2694,8 +2676,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 6,
@@ -2773,8 +2754,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2852,8 +2832,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2923,8 +2902,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -2991,8 +2969,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3057,8 +3034,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3135,8 +3111,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3222,8 +3197,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 10,
@@ -3271,8 +3245,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3333,8 +3306,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3400,8 +3372,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3457,8 +3428,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3540,8 +3510,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 4,
@@ -3616,8 +3585,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 4,
@@ -3678,8 +3646,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 4,
@@ -3750,8 +3717,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3795,8 +3761,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3888,8 +3853,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -3970,8 +3934,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -4041,8 +4004,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -4101,8 +4063,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -4280,8 +4241,7 @@ describe('memory-backed sessions', () => {
 		};
 
 		const extractor = new ToolCallingMemoryExtractor({
-			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			modelSelection: 'tool-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 5,
@@ -4362,7 +4322,8 @@ describe('memory-backed sessions', () => {
 										}
 									}
 								]
-							}
+							},
+							finish_reason: 'stop'
 						}
 					]
 				}
@@ -4380,7 +4341,8 @@ describe('memory-backed sessions', () => {
 										function: { name: 'memory_end_extraction', arguments: '{}' }
 									}
 								]
-							}
+							},
+							finish_reason: 'stop'
 						}
 					]
 				}
@@ -4392,9 +4354,31 @@ describe('memory-backed sessions', () => {
 			vi.fn(async () => responses[Math.min(call++, responses.length - 1)])
 		);
 
-		const extractor = new ToolCallingMemoryExtractor({
+		// The extractor resolves its selection against the shared pi ModelRuntime,
+		// so register a throwaway provider serving the streamed model first.
+		const { getModelRuntime } = await import('../src/lib/server/pi');
+		const runtime = await getModelRuntime();
+		runtime.registerProvider('test-provider', {
+			name: 'test provider',
+			api: 'openai-completions',
 			baseUrl: 'http://127.0.0.1:9/v1',
-			model: 'tool-extractor',
+			apiKey: 'test-key',
+			authHeader: true,
+			models: [
+				{
+					id: 'tool-extractor',
+					name: 'Tool Extractor',
+					reasoning: false,
+					input: ['text'],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 200_000,
+					maxTokens: 4096
+				}
+			]
+		});
+
+		const extractor = new ToolCallingMemoryExtractor({
+			modelSelection: 'test-provider/tool-extractor',
 			timeoutMs: 2_000,
 			maxInputChars: 8_000,
 			maxToolIterations: 4
@@ -4437,7 +4421,7 @@ describe('memory-backed sessions', () => {
 		expect(extraction.response).toBe('Stored the migration decision.');
 	});
 
-	it('includes provider response details when model-backed extraction fails', async () => {
+	it('attributes a failed completion to the model selection', async () => {
 		const user = users.ensureLocalUser();
 		const conv = convs.create(user.id, { title: 'memory', workdir: '/tmp', model: null });
 		const userMessage = messages.append(conv.id, {
@@ -4448,26 +4432,12 @@ describe('memory-backed sessions', () => {
 			role: 'assistant',
 			content: 'I will remember the key discovery.'
 		});
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => {
-				return new Response(
-					JSON.stringify({
-						error: {
-							message: 'response_format json_object is not supported by this model'
-						}
-					}),
-					{
-						status: 400,
-						statusText: 'Bad Request',
-						headers: { 'content-type': 'application/json' }
-					}
-				);
-			})
-		);
+		// No `completeJson` seam: the extractor resolves the selection against the
+		// shared pi runtime, and a selection naming no provider is a hard
+		// `ModelCompletionError` carrying the offending string — not a heuristic
+		// fallback (that is the tool-calling extractor's contract, not this one's).
 		const extractor = new OpenAICompatibleMemoryExtractor({
-			baseUrl: 'http://extractor.test/v1',
-			model: 'story-extractor',
+			modelSelection: 'story-extractor',
 			timeoutMs: 1_000,
 			maxInputChars: 4_000
 		});
@@ -4481,9 +4451,7 @@ describe('memory-backed sessions', () => {
 				userMessage,
 				assistantMessage
 			})
-		).rejects.toThrow(
-			'Memory extractor request failed with HTTP 400 Bad Request for model "story-extractor" at http://extractor.test/v1/chat/completions: response_format json_object is not supported by this model'
-		);
+		).rejects.toThrow('expected "providerId/modelId"');
 	});
 
 	it('indexes committed memory for full-text search', () => {
@@ -6372,42 +6340,51 @@ describe('extractor prompt directive guidance', () => {
 	});
 });
 
-describe('memory extractor backend defaults + override resolution', () => {
+describe('memory extractor model selection defaults + override resolution', () => {
 	beforeEach(async () => {
 		await setupLocalEnv();
-		process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1';
-		process.env.MEMORY_EXTRACTOR_MODEL = 'env-harvester';
-		delete process.env.MEMORY_EXTRACTOR_BACKEND;
+		process.env.MEMORY_EXTRACTOR_BACKEND = 'env-provider/env-harvester';
 		const { resetConfigForTests } = await import('../src/lib/server/config');
 		resetConfigForTests();
 	});
 
 	afterEach(() => {
-		delete process.env.OPENAI_COMPATIBLE_BASE_URL;
-		delete process.env.MEMORY_EXTRACTOR_MODEL;
 		delete process.env.MEMORY_EXTRACTOR_BACKEND;
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 	});
 
-	it('uses the env backend when no per-conversation backend is given (NULL)', () => {
-		// Default env backend is heuristic.
+	it('uses the env model selection when no per-conversation override is given', () => {
+		// `MEMORY_EXTRACTOR_BACKEND` is now a pi model selection
+		// (`providerId/modelId`); any non-`heuristic` value enables the
+		// model-backed (tool-calling) extractor.
+		const extractor = createMemoryExtractor({});
+		expect(extractor.kind).toBe('openai-compatible-tools');
+		expect(extractor.model).toBe('env-provider/env-harvester');
+		expect(isModelBackedExtractorConfigured({})).toBe(true);
+	});
+
+	it('honours a per-conversation model override (precedence over env)', () => {
+		const extractor = createMemoryExtractor({ model: 'other-provider/other-harvester' });
+		expect(extractor.kind).toBe('openai-compatible-tools');
+		expect(extractor.model).toBe('other-provider/other-harvester');
+		expect(isModelBackedExtractorConfigured({ model: 'other-provider/other-harvester' })).toBe(
+			true
+		);
+	});
+
+	it('treats the literal heuristic as the local extractor even when overridden', () => {
+		const extractor = createMemoryExtractor({ model: 'heuristic' });
+		expect(extractor.kind).toBe('heuristic');
+		expect(isModelBackedExtractorConfigured({ model: 'heuristic' })).toBe(false);
+	});
+
+	it('defaults to heuristic when the env is unset', async () => {
+		delete process.env.MEMORY_EXTRACTOR_BACKEND;
+		const { resetConfigForTests } = await import('../src/lib/server/config');
+		resetConfigForTests();
 		expect(createMemoryExtractor({}).kind).toBe('heuristic');
 		expect(isModelBackedExtractorConfigured({})).toBe(false);
-	});
-
-	it('honours a per-conversation backend override (precedence over env)', () => {
-		const tools = createMemoryExtractor({ backend: 'openai-compatible-tools' });
-		expect(tools.kind).toBe('openai-compatible-tools');
-		const single = createMemoryExtractor({ backend: 'openai-compatible' });
-		expect(single.kind).toBe('openai-compatible');
-		expect(isModelBackedExtractorConfigured({ backend: 'openai-compatible-tools' })).toBe(true);
-	});
-
-	it('falls back to heuristic when an override backend lacks prerequisites', () => {
-		delete process.env.OPENAI_COMPATIBLE_BASE_URL;
-		const extractor = createMemoryExtractor({ backend: 'openai-compatible-tools' });
-		expect(extractor.kind).toBe('heuristic');
 	});
 
 	it('seeds the memory extractor model from the create body only', async () => {

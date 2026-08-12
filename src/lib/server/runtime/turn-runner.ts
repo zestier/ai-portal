@@ -27,9 +27,10 @@ import { snapshot as takeSnapshot } from '../snapshots';
 import * as toolAttachments from '../db/repos/tool-attachments';
 import { isEnabled } from '../memory/engine';
 import { loadConfig } from '../config';
-import { extractAndCommitMemory, MemoryExtractorHttpError } from '../memory/extractor';
+import { extractAndCommitMemory } from '../memory/extractor';
 import type { ExtractorActivity } from '../memory/extractor';
-import type { MemoryExtractorBackend, MemoryMode } from '$lib/types';
+import type { MemoryMode } from '$lib/types';
+import { ModelCompletionError } from '../pi/complete';
 import type { ProviderOpenOptions, ProviderSession } from '../pi/session-contract';
 import { isPiMode } from '../pi';
 import type { PortalEvent } from '$lib/types';
@@ -259,7 +260,6 @@ export interface StartTurnOptions {
 				userMessageId: string;
 				userContent: string;
 				extractorModel?: string | null | undefined;
-				extractorBackend?: MemoryExtractorBackend | null | undefined;
 		  }
 		| undefined;
 }
@@ -726,7 +726,6 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					userContent: opts.memory.userContent,
 					mode: opts.memory.mode,
 					extractorModel: opts.memory.extractorModel,
-					extractorBackend: opts.memory.extractorBackend,
 					turnId: turn.id,
 					cardDescription: 'Memory extraction',
 					extractingSummary: 'Extracting durable memory updates.',
@@ -932,15 +931,8 @@ function memoryFailureSummary(err: unknown): string {
 }
 
 function memoryFailureLogFields(err: unknown): Record<string, unknown> {
-	if (!(err instanceof MemoryExtractorHttpError)) return {};
-	return {
-		extractorStatus: err.status,
-		extractorStatusText: err.statusText,
-		extractorEndpoint: err.endpoint,
-		extractorModel: err.model,
-		extractorProviderMessage: err.providerMessage,
-		extractorResponseBodyExcerpt: err.responseBodyExcerpt
-	};
+	if (err instanceof ModelCompletionError) return { extractorModel: err.model };
+	return {};
 }
 
 // A compact `dispatch` for the memory-extraction retry path. Unlike the full
@@ -1049,7 +1041,6 @@ interface MemoryExtractionCardOptions {
 	userContent: string;
 	mode: MemoryMode;
 	extractorModel?: string | null | undefined;
-	extractorBackend?: MemoryExtractorBackend | null | undefined;
 	turnId: string;
 	// Card label + "extracting" status copy — the only user-visible difference
 	// between a normal post-turn extraction and an explicit retry.
@@ -1236,7 +1227,6 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 				assistantMessage,
 				onActivity,
 				...(o.extractorModel !== undefined ? { extractorModel: o.extractorModel } : {}),
-				...(o.extractorBackend !== undefined ? { extractorBackend: o.extractorBackend } : {}),
 				...(o.beforeCommit !== undefined ? { beforeCommit: o.beforeCommit } : {}),
 				...(o.priorPatchId !== undefined ? { priorPatchId: o.priorPatchId } : {}),
 				signal: extractionAc.signal
@@ -1339,7 +1329,6 @@ export interface StartExtractionRetryOptions {
 		userMessageId: string;
 		userContent: string;
 		extractorModel?: string | null;
-		extractorBackend?: MemoryExtractorBackend | null;
 		// Stable turn id used for the committed patch so repeated retries of the
 		// same logical turn keep grouping under one turn id (the prior-patch
 		// lookup keys off it). Defaults to the retry turn's own id when absent.
@@ -1444,7 +1433,6 @@ export async function startExtractionRetryTurn(opts: StartExtractionRetryOptions
 				userContent: opts.memory.userContent,
 				mode: opts.memory.mode,
 				extractorModel: opts.memory.extractorModel,
-				extractorBackend: opts.memory.extractorBackend,
 				turnId: opts.memory.patchTurnId ?? turn.id,
 				cardDescription: 'Memory extraction (retry)',
 				extractingSummary: 'Re-extracting durable memory updates.',

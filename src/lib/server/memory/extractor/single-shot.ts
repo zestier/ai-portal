@@ -1,31 +1,26 @@
 /**
  * The single-shot JSON memory extractor: one model call that returns the whole
  * patch as structured JSON (response_format json_schema), plus the envelope/JSON
- * parsing and the HTTP request it needs. A separate backend from the agentic
- * tool-calling extractor; the two change independently.
+ * parsing it needs. A separate path from the agentic tool-calling extractor;
+ * kept programmatic-only (constructed directly, not env-selectable) so its
+ * parsing logic stays covered without a second config surface.
+ *
+ * The completion runs over the shared pi `ModelRuntime` via
+ * `piCompleteSimple`; the model is a `providerId/modelId` selection.
  */
 import {
 	coerceMemoryPatchInput,
 	MEMORY_PATCH_JSON_SCHEMA,
 	MemoryPatchProposalSchema
 } from '../engine';
-import { fetchWithTimeout, jsonRequestHeaders } from '$lib/server/http';
-import {
-	redactEndpoint,
-	excerptResponseBody,
-	extractProviderErrorMessage,
-	stringifyUnknown
-} from './utils';
-import { MemoryExtractorHttpError, readJsonResponse } from './streaming';
+import { resolveModelSelection, piCompleteSimple } from '$lib/server/pi/complete';
 import { sanitizePatch } from './sanitize';
 import { buildExtractorPrompt } from './prompts';
 import { log } from '$lib/server/log';
 import type { ExtractPatchInput, ExtractPatchResult, Diagnostic, MemoryExtractor } from './types';
 
 interface OpenAICompatibleExtractorOptions {
-	baseUrl: string;
-	apiKey?: string | null | undefined;
-	model: string;
+	modelSelection: string;
 	timeoutMs: number;
 	maxInputChars: number;
 	completeJson?: ((prompt: string) => Promise<unknown>) | undefined;
@@ -64,6 +59,9 @@ const MEMORY_EXTRACTOR_JSON_SCHEMA = {
 	}
 } as const;
 
+const SINGLE_SHOT_SYSTEM_PROMPT =
+	'Extract durable memory as strict JSON only. Do not include prose outside JSON.';
+
 export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 	readonly kind = 'openai-compatible';
 	readonly model: string;
@@ -71,14 +69,14 @@ export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 
 	constructor(opts: OpenAICompatibleExtractorOptions) {
 		this.opts = opts;
-		this.model = opts.model;
+		this.model = opts.modelSelection;
 	}
 
 	async extractPatch(input: ExtractPatchInput): Promise<ExtractPatchResult> {
 		const prompt = buildExtractorPrompt(input, this.opts.maxInputChars);
 		const raw = this.opts.completeJson
 			? await this.opts.completeJson(prompt)
-			: await requestOpenAICompatibleJson(this.opts, prompt, input.signal);
+			: await requestModelCompletion(this.opts, prompt, input.signal);
 		const parsed = parseModelPatch(raw);
 		const diagnostics: Diagnostic[] = [...parsed.diagnostics];
 		const sanitized = sanitizePatch(parsed.patch, input.initialPacket);
@@ -91,6 +89,23 @@ export class OpenAICompatibleMemoryExtractor implements MemoryExtractor {
 			rawModelOutput: raw
 		};
 	}
+}
+
+async function requestModelCompletion(
+	opts: OpenAICompatibleExtractorOptions,
+	prompt: string,
+	signal?: AbortSignal
+): Promise<unknown> {
+	const { model, runtime } = await resolveModelSelection(opts.modelSelection);
+	return piCompleteSimple({
+		model,
+		runtime,
+		system: SINGLE_SHOT_SYSTEM_PROMPT,
+		user: prompt,
+		timeoutMs: opts.timeoutMs,
+		...(signal !== undefined ? { signal } : {}),
+		responseSchema: MEMORY_EXTRACTOR_JSON_SCHEMA
+	});
 }
 
 interface ModelEnvelope {
@@ -201,53 +216,4 @@ function extractJsonObject(text: string): string | null {
 		}
 	}
 	return null;
-}
-
-async function requestOpenAICompatibleJson(
-	opts: OpenAICompatibleExtractorOptions,
-	prompt: string,
-	signal?: AbortSignal
-): Promise<unknown> {
-	const endpoint = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-	const diagnosticEndpoint = redactEndpoint(endpoint);
-	const res = await fetchWithTimeout(
-		endpoint,
-		{
-			method: 'POST',
-			headers: jsonRequestHeaders(opts.apiKey),
-			body: JSON.stringify({
-				model: opts.model,
-				messages: [
-					{
-						role: 'system',
-						content:
-							'Extract durable memory as strict JSON only. Do not include prose outside JSON.'
-					},
-					{ role: 'user', content: prompt }
-				],
-				response_format: { type: 'json_schema', json_schema: MEMORY_EXTRACTOR_JSON_SCHEMA },
-				temperature: 0,
-				stream: false
-			}),
-			...(signal !== undefined ? { signal } : {})
-		},
-		opts.timeoutMs
-	);
-	const { body, rawText } = await readJsonResponse(res);
-	const typedBody = body as {
-		choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
-		error?: { message?: string };
-	};
-	if (!res.ok) {
-		throw new MemoryExtractorHttpError({
-			status: res.status,
-			statusText: res.statusText,
-			endpoint: diagnosticEndpoint,
-			model: opts.model,
-			providerMessage: extractProviderErrorMessage(body),
-			responseBodyExcerpt: excerptResponseBody(rawText || stringifyUnknown(body))
-		});
-	}
-	const content = typedBody.choices?.[0]?.message?.content ?? typedBody.choices?.[0]?.text;
-	return typeof content === 'string' ? content : (content ?? {});
 }

@@ -1127,27 +1127,23 @@ Strict mode is the exception. If the assistant makes continuity-sensitive claims
 and did not call `memory_check_claims`, the turn runner may run extraction and
 validation before emitting final completion.
 
-### Provider abstraction
+### Model selection
 
-Add a small server-side provider-independent service:
-
-```ts
-interface MemoryExtractionProvider {
-  completeJson(input: {
-    model: string;
-    system: string;
-    prompt: string;
-    schemaName: "MemoryPatchProposal";
-    signal?: AbortSignal;
-  }): Promise<unknown>;
-}
-```
+Extraction is chosen by a pi model selection (`providerId/modelId`, e.g.
+`anthropic/claude-sonnet-4-5`), resolved against the shared ModelRuntime through
+the adapter in `src/lib/server/pi/complete.ts`. `MEMORY_EXTRACTOR_BACKEND` holds
+the server default (`heuristic` when unset); a per-conversation
+`memory_extractor_model` override wins. `heuristic` runs the local, offline
+extractor; any other value runs the tool-calling background extractor, whose
+work surfaces as a subagent card.
 
 Initial provider options:
 
-1. Reuse the configured OpenAI-compatible endpoint (`OPENAI_COMPATIBLE_BASE_URL`)
-   for non-streaming JSON calls.
-2. Fall back to heuristic extraction when no extraction backend is configured.
+1. Resolve the selection against the configured pi providers
+   (`src/lib/server/pi/complete.ts`).
+2. Fall back to heuristic extraction when no model-backed selection is
+   configured — an unresolvable selection logs
+   `memory.extractor.fallback_heuristic` for that turn rather than failing it.
 
 The provider must run without exposing extraction prompts in the user transcript.
 It should still write audit rows to `memory_patches` and
@@ -1256,29 +1252,20 @@ Suggested copy:
 - **Strict**: "Use detailed memory tools and validation for timelines, clues,
   secrets, and fine-grained continuity."
 
-#### Extractor backend + harvester model
+#### Harvester model
 
-Two further per-conversation controls live in the chat header alongside the
-memory mode selector (shown only when memory is enabled):
+One per-conversation control lives in the chat header alongside the memory mode
+selector (shown only when memory is enabled): the **harvester model**, a pi
+model selection (`providerId/modelId`, e.g. `anthropic/claude-sonnet-4-5`) that
+overrides the server default. It persists to `conversations.memory_extractor_model`;
+NULL (the default, "Server default harvester") resolves to the server env
+`MEMORY_EXTRACTOR_BACKEND` at runtime. That env is itself a model selection,
+`heuristic` when unset. The choice flows into `isModelBackedExtractorConfigured`:
+a `heuristic` resolution keeps the main model owning memory writes, while a
+model-backed resolution hands writes to the background tool-calling extractor.
 
-- **Backend** — `Server default backend` (NULL) / `Heuristic (local)` /
-  `OpenAI-compatible (single-shot)` / `OpenAI-compatible (tools)`. Persisted to
-  `conversations.memory_extractor_backend`. NULL resolves to the server env
-  `MEMORY_EXTRACTOR_BACKEND` at runtime. The choice flows into
-  `isModelBackedExtractorConfigured`: a `heuristic` backend keeps the main model
-  owning memory writes, while an OpenAI-compatible backend hands writes to the
-  background extractor.
-- **Harvester** — the per-conversation extractor model override
-  (`conversations.memory_extractor_model`); NULL means "use the server default
-  model".
-
-Both controls have **user-level seed defaults** in Settings → General
-(`default_memory_extractor_backend` / `default_memory_extractor_model`). Like
-the other General defaults (provider/model/mode), they are **seed-only**: copied
-onto each conversation at creation and never retroactively applied. Resolution
-precedence is therefore: per-conversation column → (seeded from) user default →
-server env. An OpenAI-compatible backend without `OPENAI_COMPATIBLE_BASE_URL`
-and a model still degrades to the heuristic extractor (logged as
+An unresolvable selection (typo, unconfigured provider) still degrades to the
+heuristic extractor for that turn (logged as
 `memory.extractor.fallback_heuristic`); the UI surfaces a non-blocking hint but
 does not prevent saving.
 

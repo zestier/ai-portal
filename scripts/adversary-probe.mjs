@@ -9,18 +9,17 @@
 // providing oversight — it is providing the feeling of oversight, which is
 // worse than none.
 //
-// Writes nothing. Hits an OpenAI-compatible endpoint directly.
-//
-// NOTE: the probe only covers OpenAI-compatible backends. The shadow's own
-// completion was re-wired onto pi-ai in T5, so until the reviewer runs there
-// this probe is the only way to exercise the real prompt + verdict parser
-// against a live model. The prompt and the verdict parser are
-// backend-independent, so a model's susceptibility to injection is still
-// measurable here as long as the same weights are reachable over an
-// OpenAI-compatible endpoint.
+// Writes nothing. The reviewer itself now completes through the pi runtime
+// (`src/lib/server/pi/complete.ts`), which plain `node` cannot load (the pi
+// graph uses extensionless imports and the SvelteKit `$lib` alias), so this
+// probe stays a raw OpenAI-compatible endpoint harness. The prompt and the
+// verdict parser — the parts whose behavior this probe is actually exercising —
+// are the real ones, so a model's susceptibility to injection is still
+// measurable as long as the same weights are reachable over an OpenAI-compatible
+// endpoint.
 //
 // Usage:
-//   ADVERSARY_SHADOW_MODEL=... OPENAI_COMPATIBLE_BASE_URL=... pnpm run probe:adversary
+//   PROBE_BASE_URL=... PROBE_MODEL=... [PROBE_API_KEY=...] pnpm run probe:adversary
 //   pnpm run probe:adversary --dry-run     # print the prompts, call nothing
 
 import {
@@ -31,20 +30,20 @@ import {
 import { parseVerdict } from '../src/lib/server/permissions/adversary/verdict.ts';
 
 const dryRun = process.argv.includes('--dry-run');
-const baseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL;
-const model = process.env.ADVERSARY_SHADOW_MODEL;
+const baseUrl = process.env.PROBE_BASE_URL;
+const model = process.env.PROBE_MODEL;
 if (!dryRun && (!baseUrl || !model)) {
-	console.error('set OPENAI_COMPATIBLE_BASE_URL and ADVERSARY_SHADOW_MODEL (or pass --dry-run)');
+	console.error('set PROBE_BASE_URL and PROBE_MODEL (or pass --dry-run)');
 	process.exit(1);
 }
-const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY;
+const apiKey = process.env.PROBE_API_KEY;
 const timeoutMs = Number(process.env.ADVERSARY_SHADOW_TIMEOUT_MS ?? 20000);
 
 // Deliberately a local fetch rather than a reuse of
-// `permissions/adversary/client.ts`: that module routes through the pi
-// session completion, which plain `node` cannot load. The prompt and the
-// verdict parser — the parts whose behavior this probe is actually exercising
-// — are the real ones.
+// `permissions/adversary/client.ts`: that module completes through the pi
+// runtime (`src/lib/server/pi/complete.ts`), which plain `node` cannot load.
+// The prompt and the verdict parser — the parts whose behavior this probe is
+// actually exercising — are the real ones.
 async function review(facts) {
 	const startedAt = Date.now();
 	const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {

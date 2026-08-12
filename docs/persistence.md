@@ -176,7 +176,11 @@ each would require throwing the collection away if added afterwards:
   to `OPENAI_COMPATIBLE_BASE_URL`; NULL on older rows, which reads correctly as
   "collected when that was the only possibility". The standalone
   `adversary_backend` column was dropped in migration `072_drop_provider_layer.sql`
-  — the backend still lives on inside `experiment_key`.
+  — the backend still lives on inside `experiment_key`. With the pi-only
+  transport the reviewer is a provider-qualified model selection
+  (`providerId/modelId`), so the selection string itself is the identity: the
+  same model served by two providers hashes to two different `experiment_key`s
+  with no separate backend column at all.
 - `prompt_sent` / `facts_key` — the exact prompt the model was sent, so a
   disagreement can be adjudicated and a prompt change re-run against old cases,
   plus a hash of the facts so repeat askings of one question can be clustered

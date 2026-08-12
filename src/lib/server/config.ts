@@ -1,13 +1,5 @@
 import { z } from 'zod';
 import { resolve } from 'node:path';
-import { MEMORY_EXTRACTOR_BACKEND_IDS } from '$lib/types';
-
-const optionalUrl = z
-	.string()
-	.trim()
-	.optional()
-	.transform((v) => (v ? v : undefined))
-	.pipe(z.string().url().optional());
 
 const commaList = z
 	.string()
@@ -110,13 +102,12 @@ const Schema = z
 
 		// Default model id when a conversation has no model of its own.
 		DEFAULT_MODEL: z.string().default('claude-sonnet-4.5'),
-		// Endpoint for the memory extractor's model-backed completion. Kept until
-		// T5 re-wires the extractor onto pi-ai `complete`; the chat openai-compatible
-		// provider that shared these keys was deleted.
-		OPENAI_COMPATIBLE_BASE_URL: optionalUrl,
-		OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
-		MEMORY_EXTRACTOR_BACKEND: z.enum(MEMORY_EXTRACTOR_BACKEND_IDS).default('heuristic'),
-		MEMORY_EXTRACTOR_MODEL: z.string().trim().optional(),
+		// Model-backed memory extraction. This is a pi model selection
+		// (`providerId/modelId`, e.g. `anthropic/claude-sonnet-4-5`), resolved
+		// against the shared ModelRuntime; the per-conversation
+		// `memory_extractor_model` override wins over this env value. `heuristic`
+		// (the default) is the local, offline extractor.
+		MEMORY_EXTRACTOR_BACKEND: z.string().trim().default('heuristic'),
 		MEMORY_EXTRACTOR_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 		MEMORY_EXTRACTOR_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12_000),
 		MEMORY_EXTRACTOR_MAX_TOOL_ITERATIONS: z.coerce.number().int().positive().default(6),
@@ -163,25 +154,20 @@ const Schema = z
 		// number for adversary denials before the idea is allowed to gate
 		// anything.
 		//
-		// This is the SERVER DEFAULT only. The effective model is resolved
-		// per conversation: conversation override -> user default -> this.
-		// Unset everywhere (the default) means the shadow never runs.
+		// This is the SERVER DEFAULT only. The effective reviewer is resolved
+		// per conversation: conversation override (`conversations.adversary_model`)
+		// -> user default -> this. Unset everywhere (the default) means the
+		// shadow never runs.
 		//
 		// There is deliberately no separate on/off switch: a configured model
 		// IS the enablement, mirroring the model-backed memory extractor. Two
 		// switches that can disagree is a bug surface, not a feature.
-		ADVERSARY_SHADOW_MODEL: z.string().trim().optional(),
-		// Which backend serves the reviewer, resolved independently of the
-		// model: conversation override -> user default -> this -> the
-		// conversation's OWN backend.
 		//
-		// That last fallback is deliberate. Requiring a separate endpoint
-		// conflated two unrelated things — the reviewer needs to be a different
-		// MODEL from the agent, which says nothing about needing a different
-		// BACKEND — and confined the experiment to deployments that had stood a
-		// second one up. It also added a data-egress destination the chat
-		// backend, which already receives every tool call and its arguments,
-		// did not need.
+		// The reviewer model is a pi model selection (`providerId/modelId`,
+		// e.g. `anthropic/claude-sonnet-4-5`), resolved against the shared
+		// ModelRuntime like the memory extractor. The separate backend concept
+		// is gone: the provider layer that served out-of-band completions was
+		// deleted, and model identity is now provider-qualified anyway.
 		ADVERSARY_SHADOW_BACKEND: z.string().trim().optional(),
 		ADVERSARY_SHADOW_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 		ADVERSARY_SHADOW_MAX_ARG_CHARS: z.coerce.number().int().positive().default(4_000),
