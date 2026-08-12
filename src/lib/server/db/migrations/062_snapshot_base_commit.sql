@@ -1,1 +1,0 @@
-ALTER TABLE turn_snapshots ADD COLUMN base_commit_sha TEXT;

@@ -62,7 +62,7 @@ describe('permission grant source migration', () => {
 
 		db.exec(
 			readFileSync(
-				resolve(process.cwd(), 'src/lib/server/db/migrations/022_permission_grant_source.sql'),
+				resolve(process.cwd(), 'tests/fixtures/migrations/022_permission_grant_source.sql'),
 				'utf8'
 			)
 		);

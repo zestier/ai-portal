@@ -74,7 +74,7 @@ function isProtected(conversationId: string): boolean {
 		try {
 			if (fn(conversationId)) return true;
 		} catch (err) {
-			log.warn('copilot.pool.keepalive_predicate_failed', {
+			log.warn('pi.pool.keepalive_predicate_failed', {
 				conversationId,
 				err: err instanceof Error ? err.message : String(err)
 			});
@@ -90,7 +90,7 @@ async function disposeSession(
 	try {
 		await session.dispose();
 	} catch (err) {
-		log.warn('copilot.pool.dispose_failed', {
+		log.warn('pi.pool.dispose_failed', {
 			...context,
 			provider: session.provider,
 			err: err instanceof Error ? (err.stack ?? err.message) : String(err)
@@ -135,7 +135,7 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 			existing.lastUsed = Date.now();
 			return existing.session;
 		}
-		log.warn('copilot.pool.session_mismatch_recreate', {
+		log.warn('pi.pool.session_mismatch_recreate', {
 			conversationId: opts.conversationId,
 			cachedProvider,
 			requestedProvider,
@@ -178,9 +178,9 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 			// pick the same oldest session and double-dispose it.
 			sessions.delete(oldestId);
 			if (unprotected) {
-				log.info('copilot.pool.evict', { conversationId: oldestId });
+				log.info('pi.pool.evict', { conversationId: oldestId });
 			} else {
-				log.warn('copilot.pool.evict_forced', { conversationId: oldestId });
+				log.warn('pi.pool.evict_forced', { conversationId: oldestId });
 				// Settle the parked deferreds BEFORE disposing so the resolved
 				// event lands and the SDK callback's promise can't leak.
 				expireConversation(oldestId, 'capacity_evict');
@@ -257,10 +257,10 @@ export function startIdleReaper() {
 				// silent deny"). Capacity pressure still has an escape hatch
 				// via the forced eviction in `acquire`.
 				if (isProtected(id)) {
-					log.info('copilot.pool.reap_skip_busy', { conversationId: id });
+					log.info('pi.pool.reap_skip_busy', { conversationId: id });
 					continue;
 				}
-				log.info('copilot.pool.reap', { conversationId: id });
+				log.info('pi.pool.reap', { conversationId: id });
 				sessions.delete(id);
 				await disposeSession(entry.session, { conversationId: id, reason: 'idle_reap' });
 			}

@@ -1,4 +1,4 @@
-const APP_GLOBAL_PREFIXES = ['zap', 'command-deck', 'agent-portal', 'copilot-portal'] as const;
+const APP_GLOBAL_PREFIXES = ['zap', 'command-deck', 'agent-portal'] as const;
 
 type GlobalSlot = Record<symbol, unknown>;
 

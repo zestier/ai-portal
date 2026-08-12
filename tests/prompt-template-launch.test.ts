@@ -143,7 +143,7 @@ describe('prompt template send/review launcher', () => {
 	const options = {
 		prompt: 'Reviewed prompt',
 		workspace: 'worktree' as const,
-		conversationMode: 'plan' as const,
+		conversationMode: 'autopilot' as const,
 		approvalMode: 'auto-deny' as const,
 		model: 'claude-sonnet-4.6'
 	};
@@ -165,7 +165,7 @@ describe('prompt template send/review launcher', () => {
 			title: 'Weekly review',
 			promptTemplateId: 'tmpl-1',
 			workspace: { kind: 'worktree' },
-			mode: 'plan',
+			mode: 'autopilot',
 			approvalMode: 'auto-deny',
 			model: 'claude-sonnet-4.6'
 		});
@@ -220,7 +220,7 @@ describe('templateLaunchDefaults', () => {
 			templateLaunchDefaults(
 				{
 					workspaceMode: 'worktree',
-					conversationMode: 'plan',
+					conversationMode: 'autopilot',
 					approvalMode: 'auto-deny',
 					model: 'gpt-5.5'
 				},
@@ -229,7 +229,7 @@ describe('templateLaunchDefaults', () => {
 		).toEqual({
 			prompt: 'Prompt',
 			workspace: 'worktree',
-			conversationMode: 'plan',
+			conversationMode: 'autopilot',
 			approvalMode: 'auto-deny',
 			model: 'gpt-5.5'
 		});

@@ -85,7 +85,7 @@ describe('interactive pending map survives module reload (HMR)', () => {
 
 	it('a globalThis-backed map (the pool/turns pattern) survives the same reload', async () => {
 		// Control: this is exactly why turns/sessions DON'T leak across HMR.
-		const KEY = Symbol.for('copilot-portal.repro.control-map');
+		const KEY = Symbol.for('zap.repro.control-map');
 		type Slot = Record<symbol, unknown>;
 		const g = globalThis as unknown as Slot;
 

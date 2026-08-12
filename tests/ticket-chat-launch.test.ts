@@ -135,7 +135,7 @@ describe('createTicketDraftChat', () => {
 		// This is what a confirmed review dialog produces: edited prompt + options.
 		const result = await createTicketDraftChat({
 			ticket,
-			template: action({ workspaceMode: 'worktree', conversationMode: 'plan' }),
+			template: action({ workspaceMode: 'worktree', conversationMode: 'autopilot' }),
 			workdir: '/workspace',
 			options: {
 				prompt: 'Edited prompt',

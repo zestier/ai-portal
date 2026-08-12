@@ -4630,7 +4630,7 @@ describe('memory-backed sessions', () => {
 		// Re-run the actual migration SQL (the runner already applied it at open;
 		// the DELETEs are safe to replay) and assert it only removes orphans.
 		const migration = readFileSync(
-			resolve(process.cwd(), 'src/lib/server/db/migrations/055_purge_orphaned_memory_fts.sql'),
+			resolve(process.cwd(), 'tests/fixtures/migrations/055_purge_orphaned_memory_fts.sql'),
 			'utf8'
 		);
 		db.exec(migration);

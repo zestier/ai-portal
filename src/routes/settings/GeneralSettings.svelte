@@ -11,11 +11,6 @@
 			hint: 'Normal chat; tools prompt for permission.'
 		},
 		{
-			value: 'plan',
-			label: 'Plan',
-			hint: 'Plan-only; destructive tools stay blocked until the agent exits plan mode.'
-		},
-		{
 			value: 'autopilot',
 			label: 'Autopilot',
 			hint: 'The agent can work for longer stretches with less supervision.'

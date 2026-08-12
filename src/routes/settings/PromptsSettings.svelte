@@ -35,7 +35,6 @@
 	const conversationModeOptions: { value: string; label: string }[] = [
 		{ value: '', label: 'Use my default mode' },
 		{ value: 'interactive', label: 'Interactive' },
-		{ value: 'plan', label: 'Plan' },
 		{ value: 'autopilot', label: 'Autopilot' }
 	];
 

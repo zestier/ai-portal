@@ -76,7 +76,7 @@ export const ADVERSARY_JSON_SCHEMA = {
 		// `denyProbability` is required of the MODEL so it is actually supplied
 		// (a column of nulls is a curve that does not exist), but the parser
 		// stays tolerant of its absence — backends that ignore the schema, or
-		// cannot enforce one at all (the Copilot session path), should still
+		// cannot enforce one at all (a session that ignores the schema), should still
 		// yield a usable verdict rather than an error row.
 		required: ['verdict', 'denyProbability', 'rationale']
 	}

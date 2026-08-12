@@ -1,7 +1,7 @@
 // Resolve a conversation's workdir to an absolute path.
 //
-// The "workdir" is the directory the Copilot SDK runs against (its
-// `workingDirectory`) — i.e. the real project tree the agent reads and
+// The "workdir" is the directory the pi agent session runs against (its
+// workspace) — i.e. the real project tree the agent reads and
 // edits. Earlier versions of the portal kept a private, per-conversation
 // directory under `DATA_DIR/workspaces/<id>/` and tried to snapshot it
 // per turn, but the SDK was never actually pointed at those dirs — the

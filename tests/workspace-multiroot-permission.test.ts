@@ -2,8 +2,8 @@
 // a worktree lease without prompting, WITHOUT widening what "inside the
 // workspace" means for any individual root.
 //
-// The Phase 0 spike (docs/plan-orchestrator-worktrees.md §12) showed why this
-// matters in practice: when a lease path is not an allowed root, an
+// The Phase 0 spike (see "Worktree leases" in docs/architecture.md) showed why
+// this matters in practice: when a lease path is not an allowed root, an
 // out-of-root write is auto-denied under best-effort/autopilot, and the
 // observed sub-agent fallback was a STRAY WRITE into the shared workspace —
 // exactly the collision leases exist to prevent. Hence the stray-write

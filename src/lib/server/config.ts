@@ -36,7 +36,7 @@ const Schema = z
 		HOST: z.string().default('127.0.0.1'),
 		PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 		DATA_DIR: z.string().default('./data'),
-		// Default working directory the Copilot SDK operates inside. This
+		// Default working directory the pi agent session operates inside. This
 		// is the actual project tree the agent reads and edits — not a
 		// per-conversation sandbox. Falls back to the server's cwd when
 		// unset, which for a `pnpm dev`/`pnpm serve` run is the portal

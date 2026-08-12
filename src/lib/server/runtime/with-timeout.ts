@@ -1,6 +1,6 @@
 // Reject a promise that never settles within `timeoutMs`. The underlying work
 // keeps running (we don't get an interrupt for free), but the caller stops
-// `await`-ing it — which is the point: a hung Copilot CLI subprocess must not
+// `await`-ing it — which is the point: a hung agent subprocess must not
 // pin a request (or the per-user `starting` dedupe lock) open forever. A
 // timeoutMs of 0 disables the guard.
 

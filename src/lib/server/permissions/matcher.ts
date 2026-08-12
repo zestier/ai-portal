@@ -79,8 +79,8 @@ export interface MatchQuery {
 	 * Used only by the `readable-paths` / `writable-paths` positional kinds.
 	 *
 	 * NOT interchangeable with `sessionWorkspaceRoot`. That one is the SDK's
-	 * infinite-session state directory (`~/.copilot/session-state/<id>`), which
-	 * is a different place from the checkout shell commands actually run in.
+	 * long-lived session-state directory, which is a different place from the
+	 * checkout shell commands actually run in.
 	 * Resolving a relative operand against it would ask about a file the shell
 	 * will never open — and could approve it, since that directory is readable
 	 * under its own seed. Fails closed when absent.

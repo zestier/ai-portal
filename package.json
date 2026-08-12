@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"description": "Self-hosted web portal for the GitHub Copilot agent SDK.",
+	"description": "Self-hosted web portal for the pi coding agent SDK.",
 	"files": [
 		"build",
 		"src/lib/server/db/migrations",

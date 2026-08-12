@@ -78,7 +78,7 @@ describe('rerun routes: error surfacing', () => {
 		const u1 = messages.append(conv.id, { role: 'user', content: 'original' });
 
 		startTurnMock.mockRejectedValue(
-			new Error('Failed to open a GitHub Copilot session for conversation ' + conv.id)
+			new Error('Failed to open the agent session for conversation ' + conv.id)
 		);
 
 		const { thrown } = await callAndCapture(() =>
@@ -94,7 +94,7 @@ describe('rerun routes: error surfacing', () => {
 		// A bare 500 would carry SvelteKit's generic "Internal server error".
 		expect(httpErr.status).toBe(502);
 		expect(httpErr.body.message).toContain("Couldn't start the rerun");
-		expect(httpErr.body.message).toContain('GitHub Copilot session');
+		expect(httpErr.body.message).toContain('agent session');
 	});
 
 	it('/edit still maps InlineEditRejected to its specific 4xx status', async () => {

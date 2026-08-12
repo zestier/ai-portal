@@ -20,7 +20,7 @@ const conversation: Conversation = {
 	id: 'conv-1',
 	userId: 'user-1',
 	title: 'Regression chat',
-	workdir: '/workspaces/copilot-portal',
+	workdir: '/workspaces/zap',
 	model: 'gpt-5.5',
 	sessionFile: null,
 	mode: 'autopilot',
@@ -37,7 +37,7 @@ const conversation: Conversation = {
 	forkedFromMessageId: null,
 	draftPrompt: null,
 	workspaceKind: 'shared',
-	workspaceKey: '/workspaces/copilot-portal',
+	workspaceKey: '/workspaces/zap',
 	worktreeBranch: null,
 	worktreeBaseSha: null
 };
@@ -275,16 +275,6 @@ describe('Svelte component regression coverage', () => {
 				['Agent needs information', 'Provide deploy target', 'Target']
 			],
 			[
-				{
-					requestId: 'plan-1',
-					kind: 'exit_plan_mode',
-					summary: 'Ready to implement',
-					actions: ['autopilot'],
-					recommendedAction: 'autopilot'
-				},
-				['Ready to exit plan mode?', 'Ready to implement', 'autopilot']
-			],
-			[
 				{ requestId: 'sampling-1', kind: 'sampling', summary: 'Sampling requested' },
 				['MCP sampling request', 'Sampling requested', 'Dismiss']
 			],
@@ -336,14 +326,14 @@ describe('Svelte component regression coverage', () => {
 				initialPendingInteractive: [pending],
 				defaultModelPlaceholder: 'claude-sonnet-4.5',
 				effectiveModel: 'claude-sonnet-4.5',
-				chatPlaceholder: 'Ask Copilot'
+				chatPlaceholder: 'Ask the agent'
 			}
 		}).body;
 
 		expect(body).toMatch(/<h2 class="[^"]+">Regression chat<\/h2>/);
 		expect(body).toContain('Permission required');
 		expect(body).not.toContain('Allow always');
-		expect(body).toContain('placeholder="Ask Copilot"');
+		expect(body).toContain('placeholder="Ask the agent"');
 		// Streamed/optimistic content lives in a polite live region so screen
 		// readers announce assistant tokens and new messages.
 		expect(body).toContain('role="log"');
@@ -357,7 +347,7 @@ describe('Svelte component regression coverage', () => {
 		const body = render(Composer, {
 			props: {
 				value: '',
-				placeholder: 'Message GitHub Copilot…',
+				placeholder: 'Message the agent…',
 				onSend: () => undefined,
 				onStop: () => undefined
 			}
@@ -365,7 +355,7 @@ describe('Svelte component regression coverage', () => {
 
 		// A placeholder is not a programmatic label (WCAG 1.3.1) and vanishes
 		// once typing starts, so the textarea carries a real aria-label.
-		expect(body).toContain('aria-label="Message GitHub Copilot…"');
+		expect(body).toContain('aria-label="Message the agent…"');
 	});
 
 	test('Composer keeps Send visible while streaming and shows an armed state', () => {
@@ -469,7 +459,7 @@ describe('Svelte component regression coverage', () => {
 			messageId: 'm-1',
 			tool: 'view',
 			argsJson: JSON.stringify({
-				path: '/workspaces/copilot-portal/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
+				path: '/workspaces/zap/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
 			}),
 			resultJson: null,
 			status: 'pending' as const,
@@ -486,7 +476,7 @@ describe('Svelte component regression coverage', () => {
 		expect(cleaned).toMatch(/\[messageId\]\/<wbr[^>]*>/);
 		expect(cleaned).toMatch(/edit\/<wbr[^>]*>/);
 		// No stray break opportunity mid-segment.
-		expect(cleaned).not.toMatch(/copilot-<wbr/);
+		expect(cleaned).not.toMatch(/zap-<wbr/);
 	});
 
 	test('FileBrowser renders safe empty states without client fetch data', () => {
@@ -717,7 +707,7 @@ describe('Svelte component regression coverage', () => {
 				defaults: {
 					prompt: 'Review this week of work.',
 					workspace: 'worktree',
-					conversationMode: 'plan',
+					conversationMode: 'autopilot',
 					approvalMode: 'auto-deny',
 					model: 'gpt-5.5'
 				},

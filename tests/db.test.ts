@@ -9,6 +9,7 @@ import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
 import * as settings from '../src/lib/server/db/repos/settings';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
+import type { SessionMode } from '../src/lib/types';
 
 describe('db migrations + repos', () => {
 	// Own PROJECT_ROOT so the workspace-key normalization assertion doesn't
@@ -103,11 +104,17 @@ describe('db migrations + repos', () => {
 		expect(convs.get(c.id, u.id)?.approvalMode).toBe('ask');
 		expect(convs.updateSessionSettings(c.id, u.id, { approvalMode: 'auto-deny' })).toBe(true);
 		expect(convs.get(c.id, u.id)).toMatchObject({ mode: 'autopilot', approvalMode: 'auto-deny' });
-		// Newly reachable combination: plan + auto-deny (unattended exploration
-		// that never blocks on a dialog), impossible while auto-deny rode on
-		// `best-effort`, which force-forwarded autopilot.
-		expect(convs.updateSessionSettings(c.id, u.id, { mode: 'plan' })).toBe(true);
-		expect(convs.get(c.id, u.id)).toMatchObject({ mode: 'plan', approvalMode: 'auto-deny' });
+		// The axes are orthogonal: autopilot + auto-deny (unattended exploration
+		// that never blocks on a dialog) is expressible since auto-deny stopped
+		// riding on `best-effort`, which force-forwarded autopilot. The retired
+		// `plan` mode value reads back as `interactive` rather than persisting.
+		expect(
+			convs.updateSessionSettings(c.id, u.id, { mode: 'plan' as unknown as SessionMode })
+		).toBe(true);
+		expect(convs.get(c.id, u.id)).toMatchObject({
+			mode: 'interactive',
+			approvalMode: 'auto-deny'
+		});
 	});
 
 	it('seeds the approval mode at creation and normalizes a bogus value', () => {
@@ -257,7 +264,7 @@ describe('db migrations + repos', () => {
 			insert.run('01ID00000000000000000000L2', 'conv', '');
 
 			const sql = readFileSync(
-				resolve('src/lib/server/db/migrations/057_memory_open_loop_key_unique.sql'),
+				resolve('tests/fixtures/migrations/057_memory_open_loop_key_unique.sql'),
 				'utf8'
 			);
 			expect(() => db.exec(sql)).not.toThrow();
@@ -324,10 +331,7 @@ describe('db migrations + repos', () => {
 				null
 			);
 
-			const sql = readFileSync(
-				resolve('src/lib/server/db/migrations/066_approval_mode.sql'),
-				'utf8'
-			);
+			const sql = readFileSync(resolve('tests/fixtures/migrations/066_approval_mode.sql'), 'utf8');
 			expect(() => db.exec(sql)).not.toThrow();
 
 			const rows = Object.fromEntries(

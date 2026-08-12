@@ -159,7 +159,7 @@ describe('permission grant command-path migration', () => {
 
 		db.exec(
 			readFileSync(
-				resolve(process.cwd(), 'src/lib/server/db/migrations/023_shell_command_path_scopes.sql'),
+				resolve(process.cwd(), 'tests/fixtures/migrations/023_shell_command_path_scopes.sql'),
 				'utf8'
 			)
 		);

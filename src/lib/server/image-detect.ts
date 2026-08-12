@@ -7,9 +7,9 @@
 // it is ever served — never inlined raw. The buffer-taking helpers are pure so
 // they can be unit-tested without touching the filesystem.
 //
-// Used both by the `view`-tool attachment capture (copilot/image-attachment.ts)
-// and the file browser's image preview (server/files.ts), so it lives in a
-// neutral location neither feature owns.
+// Used both by the `view`-tool attachment capture and the file browser's
+// image preview (server/files.ts), so it lives in a neutral location neither
+// feature owns.
 
 import { statSync, readFileSync } from 'node:fs';
 import { extname } from 'node:path';

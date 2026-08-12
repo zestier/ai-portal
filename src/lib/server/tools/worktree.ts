@@ -25,8 +25,8 @@
 // that tool), and one that should not be paid for by folding N destructive
 // approvals into one. A force-less batch limited to clean, fully-merged leases
 // is the variant NOT ruled out; it belongs with a future collect tool. Reasoning
-// in full: docs/plan-orchestrator-worktrees.md §5, "Why these tools stay
-// singular".
+// in full: docs/architecture.md, "Worktree leases (parallel sub-agent work)" —
+// the tools stay singular.
 
 import { z } from 'zod';
 import { err, ok, type PortalTool } from './types';

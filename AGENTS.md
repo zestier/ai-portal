@@ -4,10 +4,8 @@ Notes for AI coding agents (Claude Code, etc.) working in this repo.
 
 ## Repo skills
 
-Repo-local skills formerly shipped in `agent-plugins/zap-skills/` as a Claude
-Agent SDK plugin, loaded by the claude-agent provider. With that provider
-removed, skills are no longer loaded from the repo; the guidance lives in
-this file.
+Repo-local skills formerly shipped in `agent-plugins/zap-skills/`; the runtime
+no longer loads repo skill files, so the guidance lives in this file.
 
 ## Ticket-first workflow
 

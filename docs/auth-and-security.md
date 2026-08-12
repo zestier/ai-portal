@@ -111,7 +111,7 @@ front.
 
 ## Model credentials
 
-The portal stores **no** model-backend credential. The pi SDK resolves its
+The portal stores **no** model credential. The pi SDK resolves its
 own auth when a session opens — env-provided keys for the configured
 `PI_MODEL`'s provider, or whatever credential the SDK reads from the host.
 The GitHub OAuth access token is not persisted: with `scope=read:user` (set
@@ -201,12 +201,12 @@ is no separate switch, so nothing can disagree about whether it is running.
 Unset everywhere, which is the default, means it never runs.
 
 The reviewer runs on the pi provider named in the selection (`providerId/modelId`).
-An earlier version had a separate `ADVERSARY_SHADOW_MODEL` plus an independent
-backend axis (`OPENAI_COMPATIBLE_BASE_URL`), letting the model and its serving
-endpoint disagree about what "the same reviewer" meant. Folding the backend into
-the model selection makes the provider-qualified string the only identity: the
+The provider-qualified selection string is the reviewer's only identity: the
 same model served by two providers is two selections, and each is reviewed and
-recorded independently.
+recorded independently. (An earlier design kept a separate
+`ADVERSARY_SHADOW_MODEL` plus an independent backend axis, which let the model
+and its serving endpoint disagree about what "the same reviewer" meant; folding
+the backend into the model selection removed that ambiguity.)
 
 Model precedence is conversation → server default (`ADVERSARY_SHADOW_BACKEND`),
 matching the memory extractor. The user setting is **seed-only**: it is copied
@@ -252,8 +252,8 @@ Constraints that hold even in shadow:
   recorded for adjudication only — never surfaced to the agent.
 - **A different model from the agent.** Shared weights mean shared blind spots;
   the shadow refuses to run when the reviewer is the same model on the same
-  backend. The comparison is backend-qualified because a bare model id is only
-  meaningful inside one backend's namespace.
+  provider. The comparison is provider-qualified because a bare model id is only
+  meaningful inside one provider's namespace.
 - **Errors are errors.** Unparseable output is never coerced into a verdict.
 
 Read the results with `pnpm run report:adversary-shadow`. Two limitations are
@@ -275,9 +275,9 @@ which argue for their own approval, against the configured reviewer;
 `--dry-run` prints the prompts without calling anything.
 
 Note that enabling this ships tool arguments — which can include file contents —
-to whichever backend serves the reviewer, and stores the same (already-truncated)
+to whichever provider serves the reviewer, and stores the same (already-truncated)
 prompt locally in `prompt_sent` for later adjudication, so the copy at rest is
-never larger than what was sent. On the default (the conversation's own backend)
+never larger than what was sent. On the default (the conversation's own provider)
 that is a party which already sees every tool call, so it adds no new
 destination; routing the reviewer elsewhere does, which is the trade-off that
 setting makes explicit. A user turning it on only exposes their own

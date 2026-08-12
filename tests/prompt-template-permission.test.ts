@@ -56,7 +56,7 @@ describe('templatePermissionPreview', () => {
 			prompt: 'line one\nline two\nline three',
 			description: 'A handy preset',
 			launchBehavior: 'draft',
-			conversationMode: 'plan',
+			conversationMode: 'autopilot',
 			model: 'claude',
 			pinned: true,
 			type: 'ticket-action'
@@ -272,7 +272,7 @@ describe('templatePermissionPreview merged before→after view', () => {
 		};
 		const merged = templatePermissionPreview(
 			'template_update',
-			{ id: 'tpl_1', model: 'gpt-5', launchBehavior: 'draft', conversationMode: 'plan' },
+			{ id: 'tpl_1', model: 'gpt-5', launchBehavior: 'draft', conversationMode: 'autopilot' },
 			chatBefore
 		)?.merged;
 		const labels = merged?.fields.map((f) => f.label);

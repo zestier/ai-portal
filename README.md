@@ -147,6 +147,8 @@ host-sandbox guarantee. See [docs/auth-and-security.md](docs/auth-and-security.m
 5. [docs/persistence.md](docs/persistence.md) — SQLite schema, conversation storage.
 6. [docs/deployment.md](docs/deployment.md) — Dockerfile, compose, Cloudflare Tunnel.
 7. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
+8. [docs/memory-backed-sessions.md](docs/memory-backed-sessions.md) — Persistent memory
+   and the memory extractor.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md) for testing, style, and the quality
 gate, and [AGENTS.md](AGENTS.md) for agent-specific guidance.

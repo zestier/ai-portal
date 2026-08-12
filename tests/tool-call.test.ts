@@ -111,7 +111,7 @@ describe('summarizeToolCall', () => {
 					subject: 'Add feature',
 					paths: ['src/a.ts', 'src/b.ts'],
 					body: 'Details',
-					trailers: [{ token: 'Co-authored-by', value: 'Copilot <copilot@example.com>' }]
+					trailers: [{ token: 'Co-authored-by', value: 'Ada Lovelace <ada@example.com>' }]
 				})
 			)
 		).toBe('Add feature · src/a.ts +1 more · body · 1 trailers');
@@ -164,12 +164,12 @@ describe('splitSummaryForWrap', () => {
 	it('breaks a deep path into chunks that each end at a slash', () => {
 		expect(
 			splitSummaryForWrap(
-				'/workspaces/copilot-portal/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
+				'/workspaces/zap/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
 			)
 		).toEqual([
 			'/',
 			'workspaces/',
-			'copilot-portal/',
+			'zap/',
 			'src/',
 			'routes/',
 			'api/',
@@ -499,13 +499,7 @@ describe('decodeToolResult', () => {
 
 describe('shouldRenderToolResultAsMarkdown', () => {
 	it('uses markdown for human-facing prose tools', () => {
-		for (const tool of [
-			'ask_user',
-			'exit_plan_mode',
-			'read_agent',
-			'report_intent',
-			'task_complete'
-		]) {
+		for (const tool of ['ask_user', 'read_agent', 'report_intent', 'task_complete']) {
 			expect(shouldRenderToolResultAsMarkdown(tool)).toBe(true);
 			expect(shouldRenderToolResultAsMarkdown(tool.toUpperCase())).toBe(true);
 		}

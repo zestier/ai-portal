@@ -84,11 +84,6 @@
 			hint: 'Normal chat; tools prompt for permission.'
 		},
 		{
-			value: 'plan',
-			label: 'Plan',
-			hint: 'Plan-only; destructive tools blocked until you exit plan mode.'
-		},
-		{
 			value: 'autopilot',
 			label: 'Autopilot',
 			hint: 'Agent decides when to switch into less-supervised execution.'

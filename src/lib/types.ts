@@ -34,14 +34,13 @@ export interface Conversation {
 	 * exactly:
 	 *   - `interactive` (default): regular chat; the agent prompts for
 	 *     permission and can call tools freely.
-	 *   - `plan`: the agent plans without executing destructive tools and
-	 *     surfaces an `exit_plan_mode` request before switching to execute.
 	 *   - `autopilot`: less-supervised mode hint — the agent is expected to
 	 *     work for long stretches with minimal user interaction.
 	 *
 	 * The mode is forwarded to the runtime each time the session is opened.
 	 * How permission requests are settled is the orthogonal `approvalMode`
-	 * axis, not a mode value.
+	 * axis, not a mode value. The retired `plan` mode is gone; persisted
+	 * `plan` rows read back as `interactive` (see `normalizeSessionMode`).
 	 */
 	mode: SessionMode;
 	/**
@@ -332,8 +331,9 @@ export interface ChatPromptTemplate {
 
 // Portal session modes — exactly the runtime's set. There is no portal-only
 // extension: the auto-deny behaviour that used to ride on `best-effort` lives
-// on the orthogonal `ApprovalMode` axis.
-export const SESSION_MODES = ['interactive', 'plan', 'autopilot'] as const;
+// on the orthogonal `ApprovalMode` axis. The `plan` mode was retired
+// (2026-08-12); a persisted `plan` row reads back as `interactive`.
+export const SESSION_MODES = ['interactive', 'autopilot'] as const;
 export type SessionMode = (typeof SESSION_MODES)[number];
 
 export function normalizeSessionMode(raw: string | null | undefined): SessionMode {
@@ -342,7 +342,7 @@ export function normalizeSessionMode(raw: string | null | undefined): SessionMod
 	// the SDK saw it), so that is the honest landing spot; the auto-deny half is
 	// carried by `approval_mode` (see migration 066).
 	if (raw === 'best-effort') return 'autopilot';
-	return raw === 'plan' || raw === 'autopilot' ? raw : 'interactive';
+	return raw === 'autopilot' ? 'autopilot' : 'interactive';
 }
 
 /**
@@ -590,8 +590,8 @@ export type PermissionPolicy = 'prompt' | 'allow-all' | 'deny-all';
 // --- Interactive requests ---
 //
 // The SDK can pause a turn to ask the host (us) for input: permission to run
-// a tool, free-form text, structured form fields, approval to leave plan
-// mode, etc. We normalize all of them into a single discriminated union so
+// a tool, free-form text, structured form fields, etc. We normalize all of
+// them into a single discriminated union so
 // the UI has one event channel + one dialog component to switch on.
 
 export type InteractiveKind =
@@ -599,7 +599,6 @@ export type InteractiveKind =
 	| 'auto_mode_switch'
 	| 'user_input'
 	| 'elicitation'
-	| 'exit_plan_mode'
 	// "info" kinds: the SDK fires these but does not expose a public
 	// responder. We surface them so the user knows what's happening; the
 	// turn proceeds whenever the SDK resolves the request on its own.
@@ -728,14 +727,6 @@ export interface InteractiveElicitationView {
 	elicitationSource?: string | undefined;
 }
 
-export interface InteractiveExitPlanModeView {
-	kind: 'exit_plan_mode';
-	summary: string;
-	planContent?: string | undefined;
-	actions: string[];
-	recommendedAction: string;
-}
-
 export interface InteractiveSamplingView {
 	kind: 'sampling';
 	mcpServerName?: string;
@@ -796,7 +787,6 @@ export type InteractiveRequestViewBody =
 	| InteractiveAutoModeSwitchView
 	| InteractiveUserInputView
 	| InteractiveElicitationView
-	| InteractiveExitPlanModeView
 	| InteractiveSamplingView
 	| InteractiveMcpOauthView
 	| InteractiveExternalToolView
@@ -837,12 +827,6 @@ export type InteractiveResponse =
 			kind: 'elicitation';
 			action: 'accept' | 'decline' | 'cancel';
 			content?: Record<string, string | number | boolean | string[]>;
-	  }
-	| {
-			kind: 'exit_plan_mode';
-			approved: boolean;
-			selectedAction?: string;
-			feedback?: string;
 	  }
 	// "info" kinds: client can only acknowledge / dismiss. Always 'ack'.
 	| { kind: 'sampling'; action: 'ack' }

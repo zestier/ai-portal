@@ -29,8 +29,7 @@ interface GoldenCaseFile {
 
 /**
  * The exact projection a portal tool implementation must emit for a
- * tool_result (the contract the former claude-agent provider fed the model,
- * now the contract for the pi path). Mirrored here so the integrity test can
+ * tool_result (the contract the pi path feeds the model). Mirrored here so the integrity test can
  * verify each golden `.text` is exactly the projection of its `.json`
  * content.
  */

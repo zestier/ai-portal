@@ -5,7 +5,6 @@ const interactiveKindDescriptors = {
 	auto_mode_switch: () => ({ kind: 'auto_mode_switch', decision: 'no' }),
 	user_input: () => ({ kind: 'user_input', answer: '', wasFreeform: true }),
 	elicitation: () => ({ kind: 'elicitation', action: 'cancel' }),
-	exit_plan_mode: () => ({ kind: 'exit_plan_mode', approved: false }),
 	sampling: () => ({ kind: 'sampling', action: 'ack' }),
 	mcp_oauth: () => ({ kind: 'mcp_oauth', action: 'ack' }),
 	external_tool: () => ({ kind: 'external_tool', action: 'ack' }),
@@ -34,7 +33,6 @@ export const BLOCKING_INTERACTIVE_KINDS = new Set<InteractiveKind>([
 	'permission',
 	'user_input',
 	'auto_mode_switch',
-	'exit_plan_mode',
 	'elicitation'
 ]);
 

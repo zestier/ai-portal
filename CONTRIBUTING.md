@@ -60,7 +60,7 @@ What "add a test" means in practice here:
   runs) or `pnpm run test:e2e:run` if `build/` is already current.
   `pnpm run test:e2e:ui` opens the Playwright UI.
 - The e2e server runs the **production build** with `PI_STUB=1`, so tests
-  never hit a real model backend — assert against the stub's deterministic
+  never hit a real model provider — assert against the stub's deterministic
   behavior rather than live model output.
 - Each run gets an isolated `DATA_DIR` (`e2e/.tmp-data`) and `AUTH_MODE=none`; the
   config in [`playwright.config.ts`](playwright.config.ts) documents the

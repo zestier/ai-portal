@@ -1,5 +1,6 @@
 // Persistence for workspace leases — portal-owned checkouts an agent creates
-// for parallel sub-agent work. See `docs/plan-orchestrator-worktrees.md`.
+// for parallel sub-agent work. See `docs/architecture.md` — "Worktree leases
+// (parallel sub-agent work)".
 //
 // This repo is deliberately dumb: it stores and returns rows. Every path it
 // hands back is UNTRUSTED until `leases.ts` re-derives it from ids and verifies

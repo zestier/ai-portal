@@ -940,8 +940,8 @@
 				break;
 			}
 			case 'session.settings': {
-				// Server-driven settings change (typically the agent flipping
-				// itself out of plan mode via exit-plan-mode). Mirror it into
+				// Server-driven settings change (e.g. the runtime flipping approval
+				// mode). Mirror it into
 				// our local state so the header reflects reality without a
 				// page refresh.
 				if (ev.mode !== undefined) sessionMode = ev.mode;

@@ -72,13 +72,6 @@ const ElicitationBody = z.object({
 	content: ElicitationContent.optional()
 });
 
-const ExitPlanModeBody = z.object({
-	kind: z.literal('exit_plan_mode'),
-	approved: z.boolean(),
-	selectedAction: z.string().optional(),
-	feedback: z.string().optional()
-});
-
 const InfoAckBody = z.object({
 	kind: z.enum(['sampling', 'mcp_oauth', 'external_tool']),
 	action: z.literal('ack')
@@ -94,7 +87,6 @@ export const Body = z.discriminatedUnion('kind', [
 	AutoModeSwitchBody,
 	UserInputBody,
 	ElicitationBody,
-	ExitPlanModeBody,
 	InfoAckBody,
 	WorkspaceFileBody
 ]);

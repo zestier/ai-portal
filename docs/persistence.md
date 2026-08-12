@@ -11,12 +11,24 @@ Everything goes in a single SQLite database (`$DATA_DIR/portal.db`).
 
 ## Migrations
 
-Plain `.sql` files in `src/lib/server/db/migrations/`, numbered:
-`001_init.sql`, `002_add_tool_calls.sql`, etc. Applied in order at startup
-inside a transaction; tracked in a `schema_migrations(version, applied_at)`
-table. No ORM, no migration framework.
+A single `001_init.sql` in `src/lib/server/db/migrations/` carries the full
+current schema — fresh installs start from the final shape directly. Applied at
+startup inside a transaction; tracked in a `schema_migrations(version,
+applied_at)` table. No ORM, no migration framework.
 
-## Schema (initial)
+The pi rebuild rebaselined the schema: the former per-step chain (`002`…`075`),
+which grew the schema one feature at a time, was **deleted rather than
+archived** (it lives on in git history). This is a hard break — a database whose
+`schema_migrations` does not already carry every version `1`–`75` (any DB that
+never ran the full chain) is stranded and must be recreated. Databases that
+fully applied the old chain are unaffected: the runner sees `1` already applied,
+skips `001`, and leaves the on-disk schema untouched. The only old-chain SQL that
+survives is what the migration-behavior unit tests still exercise, relocated to
+`tests/fixtures/migrations/`. Migration file names referenced in later sections
+(`067_permission_shadow_decisions.sql`, `005_turn_snapshots.sql`, …) refer to
+that deleted chain; the schema they introduced is folded into `001_init.sql`.
+
+## Schema (representative excerpt)
 
 ```sql
 -- 001_init.sql
@@ -137,7 +149,7 @@ CREATE TABLE permission_shadow_decisions (
   scope_key        TEXT,
   args_hash        TEXT,
   adversary_model  TEXT NOT NULL,
-  experiment_key   TEXT NOT NULL,   -- hash of prompt + renderer + truncation + backend + model
+  experiment_key   TEXT NOT NULL,   -- hash of prompt + renderer + truncation + provider + model
   prompt_version   INTEGER NOT NULL DEFAULT 1,
   facts_key        TEXT,            -- hash of the exact facts; also the memo key
   prompt_sent      TEXT,            -- the exact prompt sent, for later adjudication
@@ -169,18 +181,16 @@ each would require throwing the collection away if added afterwards:
   Computed, not hand-maintained, because a version constant someone must
   remember to bump is a trap; `prompt_version` is kept as its human-readable
   label.
-- `adversary_backend` — the same model *name* served by two backends is not the
-  same reviewer (weights, system-prompt handling and structured-output support
-  all differ), so it is recorded and folded into `experiment_key`. Added in
-  migration `069_adversary_backend.sql`, when the reviewer stopped being pinned
-  to `OPENAI_COMPATIBLE_BASE_URL`; NULL on older rows, which reads correctly as
-  "collected when that was the only possibility". The standalone
-  `adversary_backend` column was dropped in migration `072_drop_provider_layer.sql`
-  — the backend still lives on inside `experiment_key`. With the pi-only
-  transport the reviewer is a provider-qualified model selection
-  (`providerId/modelId`), so the selection string itself is the identity: the
-  same model served by two providers hashes to two different `experiment_key`s
-  with no separate backend column at all.
+- `adversary_model` / `experiment_key` — the same model *name* served by two
+  providers is not the same reviewer (weights, system-prompt handling and
+  structured-output support all differ), so the reviewer's identity is folded
+  into `experiment_key`. The reviewer is a provider-qualified model selection
+  (`providerId/modelId`, the `ADVERSARY_SHADOW_BACKEND` default or the
+  per-conversation override), so the selection string itself is the identity:
+  the same model served by two providers hashes to two different
+  `experiment_key`s with no separate backend column at all. (A standalone
+  `adversary_backend` column existed briefly in the provider-layer era (migration
+  `069_adversary_backend.sql`) and was dropped when that layer went away.)
 - `prompt_sent` / `facts_key` — the exact prompt the model was sent, so a
   disagreement can be adjudicated and a prompt change re-run against old cases,
   plus a hash of the facts so repeat askings of one question can be clustered
@@ -316,16 +326,17 @@ they launch are created with:
 Two orthogonal per-conversation axes, split apart by migration
 `066_approval_mode.sql`:
 
-- `conversations.mode` — the runtime's agent mode, exactly the SDK's set:
-  `interactive` | `plan` | `autopilot`. Forwarded to the runtime on every
-  session open.
+- `conversations.mode` — the portal's agent mode: `interactive` (every
+  permission-worthy request raises a dialog) or `autopilot` (non-interactive,
+  best-effort style). It is a portal-side policy that shapes how the
+  interactive-request registry settles requests; it is not forwarded to the pi
+  runtime. (A `plan` mode existed in earlier releases and was removed.)
 - `conversations.approval_mode` — how the portal settles a permission request
   that neither a grant nor the user's policy already decided: `ask` (raise the
   dialog), `auto-approve` (settle as an approval, still audited `auto-allow`),
   or `auto-deny` (reject with actionable feedback, audited
-  `auto-prompt-required`). Only `auto-approve` is mirrored into a provider
-  runtime; the other two are pure portal logic and therefore work for every
-  provider.
+  `auto-prompt-required`). Only `auto-approve` is mirrored into the runtime;
+  the other two are pure portal logic and therefore work for every provider.
 
 Before `066` these were tangled: the boolean `approve_all_tools` column carried
 auto-approve, while auto-deny rode on a portal-only `best-effort` value of
@@ -336,8 +347,7 @@ backfills `approve_all_tools = 1 -> 'auto-approve'` and
 `autopilot`), then drops `approve_all_tools`. The same split is applied to
 `user_settings.default_mode` / the new `default_approval_mode`. Because it is
 one enum, the two settings are now mutually exclusive by construction, and
-combinations that were unreachable before — `plan` + `auto-deny`,
-`interactive` + `auto-deny` — are expressible.
+combinations that were unreachable before are expressible.
 
 `request_permission_grant` always reaches a human dialog regardless of the
 approval mode, and a denial in any mode mints a one-shot `force_retry_tool`

@@ -3,7 +3,7 @@ import { parseApplyPatch } from './apply-patch';
 
 // Synthesize a unified-diff string from the arguments of file-mutation tool
 // calls (create, edit, write_file, etc.) so the existing DiffView component
-// can render the change. The Copilot SDK doesn't always emit a structured
+// can render the change. The pi SDK doesn't always emit a structured
 // diff in the tool result; the args themselves contain enough information
 // to reconstruct one.
 //

@@ -8,7 +8,7 @@ Svelte 5, SvelteKit file-based routing. Mobile-first responsive layout.
 |------------------------------|--------------------------------------------------------|
 | `/`                          | Conversation list + "New chat" CTA.                    |
 | `/conversations/[id]`        | Chat view for a single conversation.                   |
-| `/settings`                  | User settings, backend status, model defaults, default workdir, etc. |
+| `/settings`                  | User settings, provider status, model defaults, default workdir, etc. |
 | `/login`                     | OAuth entry point.                                     |
 | `/auth/callback`             | OAuth callback target.                                 |
 
@@ -157,8 +157,8 @@ transcript card (see below), not a page-blocking overlay.
 Inline transcript card (not a backdrop modal) that handles every interactive-request kind the
 agent runtime can ask for: tool permission (Allow once / Allow always /
 Deny), auto-mode-switch on rate limit, user_input (choices + freeform),
-elicitation (schema-driven form or url mode), exit_plan_mode (per-action
-buttons), and informational sampling / mcp_oauth / external_tool surfaces.
+elicitation (schema-driven form or url mode), and informational sampling /
+mcp_oauth / external_tool surfaces.
 Switches on `request.kind` and posts an `InteractiveResponse` to
 `POST /api/conversations/:id/interactive/:requestId`.
 

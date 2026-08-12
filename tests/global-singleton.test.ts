@@ -25,8 +25,7 @@ describe('global singleton fallback keys', () => {
 		expect(appGlobalSymbols('db')).toEqual([
 			Symbol.for('zap.db'),
 			Symbol.for('command-deck.db'),
-			Symbol.for('agent-portal.db'),
-			Symbol.for('copilot-portal.db')
+			Symbol.for('agent-portal.db')
 		]);
 	});
 

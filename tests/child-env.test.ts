@@ -12,7 +12,7 @@ describe('isolatedChildEnv', () => {
 			DATA_DIR: '/live/data',
 			DB_MIGRATIONS_DIR: '/live/migrations',
 			ENCRYPTION_KEY: 'secret',
-			COPILOT_GITHUB_TOKEN: 'token',
+			GITHUB_TOKEN: 'token',
 			PI_MODEL: 'deepseek/deepseek-v4-pro',
 			DEEPSEEK_API_KEY: 'deepseek-secret'
 		});
@@ -27,7 +27,7 @@ describe('isolatedChildEnv', () => {
 
 	it('allows deliberate provider-specific child configuration', () => {
 		const env = isolatedChildEnv(
-			{ PATH: '/usr/bin', CLAUDE_AGENT_API_KEY: 'portal-key' },
+			{ PATH: '/usr/bin', PI_API_KEY: 'portal-key' },
 			{ ANTHROPIC_API_KEY: 'child-key' }
 		);
 

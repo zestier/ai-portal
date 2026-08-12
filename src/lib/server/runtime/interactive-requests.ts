@@ -1,8 +1,8 @@
 // Generic interactive-request registry.
 //
 // Bridges the SDK's interactive callbacks (onPermissionRequest,
-// onAutoModeSwitch, onUserInputRequest, onElicitationRequest,
-// onExitPlanMode) and information-only events (sampling.requested,
+// onAutoModeSwitch, onUserInputRequest, onElicitationRequest)
+// and information-only events (sampling.requested,
 // mcp_oauth.required, external_tool.requested) to deferreds resolved by an
 // HTTP endpoint. The flow is:
 //
@@ -55,7 +55,7 @@ const DEFAULT_TIMEOUT_MS = 0;
  * `vi.resetModules()`), where a plain `instanceof` would fail because each
  * evaluation produces a distinct class identity.
  */
-const CANCELLED_BRAND = Symbol.for('copilot-portal.interactive.prompt-cancelled');
+const CANCELLED_BRAND = Symbol.for('zap.interactive.prompt-cancelled');
 
 /**
  * Thrown to settle a pending interactive deferred when the prompt is

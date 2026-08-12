@@ -4,8 +4,8 @@
 //
 // The mapper carries the per-turn reasoning-segment state: pi streams thinking
 // as one block per content index, and we keep each burst a single segment
-// closed at `thinking_end` / `message_end`, mirroring the claude-agent
-// provider's burst-close semantics so think/text interleaving survives.
+// closed at `thinking_end` / `message_end`, mirroring the pi provider's
+// burst-close semantics so think/text interleaving survives.
 
 import { ulid } from 'ulid';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';

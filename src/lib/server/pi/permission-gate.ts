@@ -1,10 +1,10 @@
 // The portal permission gateway for pi tool calls.
 //
 // Hangs off the pi `tool_call` extension bridge (see session.ts): for every
-// tool call the resolver decides allow/block, mirroring the deleted claude-agent
-// provider's PreToolUse evaluation (interactive-adapter.ts) without the
-// shadow-reviewer / forced-retry / shell-misuse / image-capture machinery those
-// tickets layered on. Every decision funnels through the SAME machinery the
+// tool call the resolver decides allow/block, mirroring the native session's
+// PreToolUse evaluation without the shadow-reviewer / forced-retry /
+// shell-misuse / image-capture machinery those tickets layered on. Every
+// decision funnels through the SAME machinery the
 // non-pi path uses — `matchGrantDetailed` against the user's grants, the
 // conversation's permission policy, and the interactive-request registry for
 // human prompts — so a pi session and a native session see identical

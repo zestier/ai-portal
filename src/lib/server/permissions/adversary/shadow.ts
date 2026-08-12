@@ -140,9 +140,9 @@ export function createShadowRecorder(opts: CreateShadowRecorderOptions = {}): Sh
 		if (!cfg) return null;
 		// Provider-qualified: a bare model id is only meaningful within one
 		// provider's namespace. Comparing raw strings across providers was both
-		// too weak (a Copilot chat and an openai-compatible reviewer rarely
-		// collide, so genuinely shared weights went undetected) and too strong
-		// (a coincidental `gpt-5` on both sides silently disabled the shadow).
+		// too weak (two unrelated sessions rarely collide, so genuinely shared
+		// weights went undetected) and too strong (a coincidental `gpt-5` on
+		// both sides silently disabled the shadow).
 		if (input.agentModel && input.agentModel === cfg.model) {
 			if (!warnedDisabled) {
 				warnedDisabled = true;

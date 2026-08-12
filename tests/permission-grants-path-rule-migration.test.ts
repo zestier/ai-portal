@@ -24,7 +24,7 @@ describe('permission grant path-rule migration', () => {
 
 		db.exec(
 			readFileSync(
-				resolve(process.cwd(), 'src/lib/server/db/migrations/017_permission_grants_path_rules.sql'),
+				resolve(process.cwd(), 'tests/fixtures/migrations/017_permission_grants_path_rules.sql'),
 				'utf8'
 			)
 		);

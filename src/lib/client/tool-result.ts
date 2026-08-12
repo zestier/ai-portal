@@ -4,7 +4,7 @@
 //   - Portal tools: the serialized `{ ok, summary?, result? | error }`
 //     envelope (persisted as the boundary's `fullContent`). `decodeEnvelope`
 //     unwraps it and surfaces the inner payload as raw text/JSON.
-//   - Native SDK tools: the Copilot runtime's `tool.execution_complete`
+//   - Native SDK tools: the pi runtime's `tool.execution_complete`
 //     `result` object, shape `{ content, detailedContent?, contents?:
 //     ContentBlock[] }`, where ContentBlock is a typed union (text / terminal
 //     / image / audio / resource_link / resource).
@@ -32,13 +32,7 @@ export interface DecodedResult {
 	followUpHint?: string | undefined;
 }
 
-const markdownResultTools = new Set([
-	'ask_user',
-	'exit_plan_mode',
-	'read_agent',
-	'report_intent',
-	'task_complete'
-]);
+const markdownResultTools = new Set(['ask_user', 'read_agent', 'report_intent', 'task_complete']);
 
 export function shouldRenderToolResultAsMarkdown(tool: string): boolean {
 	return markdownResultTools.has(tool.toLowerCase());

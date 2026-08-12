@@ -57,11 +57,7 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     DATA_DIR=/data \
-    PROJECT_ROOT=/workspace \
-    # The bundled Copilot CLI tries to self-update from npm by default.
-    # That fails in a container with a read-only node_modules tree and
-    # would spam errors; disable it.
-    COPILOT_NO_AUTO_UPDATE=1
+    PROJECT_ROOT=/workspace
 
 # Ordered least- to most-frequently-changing so a code edit doesn't bust the
 # (large) node_modules layer. Docker invalidates every layer after the first

@@ -253,7 +253,7 @@ Server → client SSE events, one JSON object per `data:` line:
 | `done`                | `{}`                                                 |
 
 Interactive acknowledgements (permission, auto-mode-switch, user-input,
-elicitation, exit-plan-mode, plus info-only sampling/mcp_oauth/external_tool)
+elicitation, plus info-only sampling/mcp_oauth/external_tool)
 all flow through one endpoint:
 `POST /api/conversations/:id/interactive/:requestId` with a
 discriminated `{ kind, ... }` body. The legacy
@@ -286,7 +286,7 @@ discriminated `{ kind, ... }` body. The legacy
 - **SDK session failure** — surfaces as an error; the session is marked dead
   and disposed, a system message is persisted in the conversation, and the
   next user message respawns it.
-- **Network error to the model backend** — surfaced as a normal `error` event;
+- **Network error to the model provider** — surfaced as a normal `error` event;
   user can retry without losing conversation state.
 - **Server restart** — conversations are durable in SQLite. SDK sessions
   are ephemeral and recreated on demand. Any in-flight assistant turn that was
