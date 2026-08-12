@@ -98,10 +98,49 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 		return;
 	}
 	const userText = lastUserText(body.messages);
+	// Stateless termination guard: once the model has emitted a tool call, the
+	// follow-up request (assistant tool_calls + tool result in history) replies
+	// with plain text — the directive isn't re-triggered, so the loop ends.
+	const toolCall = hasAssistantToolCalls(body.messages) ? null : parseToolCallDirective(userText);
 	const reply = `Stubbed reply to: ${userText}`;
 	const id = `chatcmpl-stub-${Date.now()}`;
 	const created = Math.floor(Date.now() / 1000);
 	const model = typeof body.model === 'string' ? body.model : STUB_MODEL_ID;
+
+	if (toolCall) {
+		if (body.stream === true) {
+			writeSseToolCallReply(res, { id, created, model, ...toolCall });
+		} else {
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(
+				JSON.stringify({
+					id,
+					object: 'chat.completion',
+					created,
+					model,
+					choices: [
+						{
+							index: 0,
+							message: {
+								role: 'assistant',
+								content: null,
+								tool_calls: [
+									{
+										id: `call-stub-${Date.now()}`,
+										type: 'function',
+										function: { name: toolCall.name, arguments: toolCall.args }
+									}
+								]
+							},
+							finish_reason: 'tool_calls'
+						}
+					],
+					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+				})
+			);
+		}
+		return;
+	}
 
 	if (body.stream === true) {
 		writeSseReply(res, {
@@ -180,6 +219,64 @@ function writeSseReply(
 	};
 	if (opts.slowStart) setTimeout(emit, SLOW_START_HOLD_MS);
 	else emit();
+}
+
+// `PI_TEST_TOOLCALL <toolName> <jsonArgs>` as the entire user prompt makes the
+// model emit a single tool call with those args — lets e2e tests drive the
+// permission gate without a real model.
+const TOOLCALL_RE = /^PI_TEST_TOOLCALL\s+([A-Za-z0-9_.-]+)\s+(\{[\s\S]*\})\s*$/;
+function parseToolCallDirective(text: string): { name: string; args: string } | null {
+	const m = TOOLCALL_RE.exec(text);
+	if (!m) return null;
+	return { name: m[1], args: m[2] };
+}
+
+function hasAssistantToolCalls(messages: unknown[]): boolean {
+	return messages.some(
+		(message) =>
+			!!message &&
+			typeof message === 'object' &&
+			(message as { role?: unknown }).role === 'assistant' &&
+			Array.isArray((message as { tool_calls?: unknown }).tool_calls) &&
+			(message as { tool_calls: unknown[] }).tool_calls.length > 0
+	);
+}
+
+// Stream an OpenAI-style tool_calls delta sequence (name chunk, then the JSON
+// arguments chunk, then finish) so pi's openai-completions provider assembles
+// the call from real stream deltas.
+function writeSseToolCallReply(
+	res: ServerResponse,
+	opts: {
+		id: string;
+		created: number;
+		model: string;
+		name: string;
+		args: string;
+	}
+): void {
+	res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+	const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
+		`data: ${JSON.stringify({
+			id: opts.id,
+			object: 'chat.completion.chunk',
+			created: opts.created,
+			model: opts.model,
+			choices: [{ index: 0, delta, finish_reason: finishReason }]
+		})}\n\n`;
+	const tcId = `call-stub-${Date.now()}`;
+	res.write(
+		chunk(
+			{ tool_calls: [{ index: 0, id: tcId, type: 'function', function: { name: opts.name } }] },
+			null
+		)
+	);
+	res.write(chunk({ tool_calls: [{ index: 0, function: { arguments: opts.args } }] }, null));
+	res.write(chunk({}, 'tool_calls'));
+	setTimeout(() => {
+		res.write('data: [DONE]\n\n');
+		res.end();
+	}, 10);
 }
 
 function lastUserText(messages: unknown[]): string {

@@ -10,6 +10,7 @@
 import { ulid } from 'ulid';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { PortalEvent } from '$lib/types';
+import { serializeEnvelope, type ToolResult } from '../tools/types';
 
 const TOOL_SUMMARY_MAX = 200;
 
@@ -58,15 +59,12 @@ export class PiEventMapper {
 						messageId: this.messageId
 					}
 				];
+			case 'tool_execution_update':
+				// Live partial output from the portal tool's stream (see tools.ts):
+				// `partial()` → tool.partial_output, `progress()` → tool.progress.
+				return mapToolUpdate(event);
 			case 'tool_execution_end':
-				return [
-					{
-						type: 'tool.result',
-						toolCallId: event.toolCallId,
-						ok: !event.isError,
-						summary: toolResultSummary(event.result)
-					}
-				];
+				return mapToolResult(event);
 			default:
 				// agent_start / agent_end / turn_start / turn_end / queue_update
 				// etc. carry nothing the portal renders; agent_end terminates the
@@ -145,6 +143,60 @@ export class PiEventMapper {
 				return [];
 		}
 	}
+}
+
+// Partial/progress deltas: a portal tool streams via `onUpdate` with details
+// `{ portalStream: 'progress' | 'partial' }` (see tools.ts); map by that.
+function mapToolUpdate(event: { toolCallId: string; partialResult: unknown }): PortalEvent[] {
+	const { toolCallId, partialResult } = event;
+	const details = isRecord(partialResult) ? partialResult.details : undefined;
+	if (isRecord(details) && details.portalStream === 'progress') {
+		return [{ type: 'tool.progress', toolCallId, message: contentText(partialResult) }];
+	}
+	return [{ type: 'tool.partial_output', toolCallId, output: contentText(partialResult) }];
+}
+
+// Final result: when the tool returned a portal envelope (details.ok boolean),
+// surface the serialized envelope as `output` for the client timeline and
+// derive `ok` from it; otherwise fall back to pi's error flag (denied / non
+// portal tools).
+function mapToolResult(event: {
+	toolCallId: string;
+	result: unknown;
+	isError: boolean;
+}): PortalEvent[] {
+	const { toolCallId, result } = event;
+	const details = isRecord(result) ? result.details : undefined;
+	if (isRecord(details) && typeof details.ok === 'boolean') {
+		return [
+			{
+				type: 'tool.result',
+				toolCallId,
+				ok: details.ok,
+				summary: toolResultSummary(result),
+				output: serializeEnvelope(details as unknown as ToolResult)
+			}
+		];
+	}
+	return [
+		{
+			type: 'tool.result',
+			toolCallId,
+			ok: !event.isError,
+			summary: toolResultSummary(result)
+		}
+	];
+}
+
+// Concatenated text of an AgentToolResult's content parts (the portal adapter
+// always puts the streamed text first), for partial/progress events.
+function contentText(result: unknown): string {
+	const content = isRecord(result) ? result.content : undefined;
+	if (!Array.isArray(content)) return '';
+	return content
+		.map((part) => (isRecord(part) && typeof part.text === 'string' ? part.text : ''))
+		.join('')
+		.trim();
 }
 
 function toolResultSummary(result: unknown): string {

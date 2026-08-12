@@ -5,12 +5,18 @@
 // Design:
 //  - a shared `ModelRuntime` (created once in index.ts) supplies the model and
 //    auth; each turn builds a fresh pi session with `SessionManager.inMemory()`
-//    (no session files) and `noTools: 'all'` (the tool/permission surface is
-//    wired in a later ticket).
-//  - the portal permission bridge is registered as an inline extension via
-//    `DefaultResourceLoader.extensionFactories`; with no tools enabled the
-//    `tool_call` handler never fires, so for now it blocks every call with a
-//    fixed reason (the real portal gateway slots in behind `onPermission`).
+//    (no session files) and `noTools: 'builtin'` — the portal tools are
+//    registered as pi `customTools` (override, not wrap) and the pi built-ins
+//    (read/bash/edit/write) are disabled.
+//  - every tool call is gated by the portal permission gateway: the resolver
+//    (see permission-gate.ts) runs inside a `tool_call` extension registered on
+//    the resource loader. A `{block: true}` return makes pi produce an
+//    immediate error tool result, so a denied call still emits the normal
+//    tool.call / tool.result pair on the portal timeline.
+//  - the permission tools (request_permission_grant / force_retry_tool /
+//    permission_capabilities) and the gate share one `emit` that routes
+//    `interactive.request` events into the active turn's stream, so the human
+//    permission dialogs work exactly as on the non-pi path.
 //  - `send()` adapts pi's callback-style `session.subscribe` to the portal's
 //    async-iterator contract via `AsyncQueue`, mapping events through
 //    `PiEventMapper`.
@@ -25,9 +31,14 @@ import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
 	type InlineExtension,
-	type ModelRuntime
+	type ModelRuntime,
+	type ToolDefinition
 } from '@earendil-works/pi-coding-agent';
-import type { PortalEvent } from '$lib/types';
+import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
+import type { PortalTool } from '../tools/types';
+import { assemblePiTools } from '../tools/assemble';
+import { createPiPermissionResolver } from './permission-gate';
+import { workspaceRootsFor } from '../leases';
 import type { ProviderSession } from './session-contract';
 import { AsyncQueue } from '../runtime/async-queue';
 import { log } from '../log';
@@ -37,8 +48,9 @@ export type PiModel = NonNullable<CreateAgentSessionOptions['model']>;
 
 /**
  * Decides whether a pi tool call may run. `allow: true` lets it through;
- * otherwise the call is blocked with `reason`. T1's resolver blocks everything
- * (no tools are enabled anyway); the portal permission gateway is the T2 seam.
+ * otherwise the call is blocked with `reason`. Wired to the portal permission
+ * gateway (permission-gate.ts), which routes every request through the user's
+ * grants, policy, and interactive-request dialogs.
  */
 export interface PiPermissionResolver {
 	(
@@ -55,7 +67,12 @@ export interface CreatePiSessionOptions {
 	cwd: string;
 	model: PiModel;
 	runtime: ModelRuntime;
-	onPermission: PiPermissionResolver;
+	/** The portal tool set, adapted for pi (from assemblePiTools). */
+	customTools: ToolDefinition[];
+	/** Portal tools by name — the permission gate's lookup index. */
+	portalToolsByName: ReadonlyMap<string, PortalTool>;
+	/** The portal permission gateway resolver. */
+	permissionResolver: PiPermissionResolver;
 }
 
 /** Create a pi `AgentSession` over the shared runtime with in-memory session state. */
@@ -64,7 +81,7 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 	const loader = new DefaultResourceLoader({
 		cwd: opts.cwd,
 		agentDir,
-		extensionFactories: [createPiPermissionBridge(opts.onPermission)],
+		extensionFactories: [createPiPermissionBridge(opts.permissionResolver)],
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
@@ -77,7 +94,8 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		agentDir,
 		modelRuntime: opts.runtime,
 		model: opts.model,
-		noTools: 'all',
+		noTools: 'builtin',
+		customTools: opts.customTools,
 		resourceLoader: loader,
 		sessionManager: SessionManager.inMemory(opts.cwd),
 		settingsManager: SettingsManager.inMemory()
@@ -85,11 +103,22 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 	return session;
 }
 
-export interface PiProviderSessionOptions extends CreatePiSessionOptions {
+export interface PiProviderSessionOptions {
+	cwd: string;
+	model: PiModel;
+	runtime: ModelRuntime;
 	provider: string;
 	providerLabel: string;
 	conversationId: string;
 	providerSessionId: string;
+	userId: string;
+	policy: import('$lib/types').PermissionPolicy;
+	mode?: SessionMode;
+	approvalMode?: ApprovalMode;
+	disabledToolGroups?: string[];
+	workspaceKey?: string;
+	memoryMode?: import('$lib/types').MemoryMode;
+	globalMemoryEnabled?: boolean;
 	onEvent?: (e: PortalEvent) => void;
 }
 
@@ -97,13 +126,77 @@ export interface PiProviderSessionOptions extends CreatePiSessionOptions {
 export async function createPiProviderSession(
 	opts: PiProviderSessionOptions
 ): Promise<ProviderSession> {
-	const piSession = await createPiSession(opts);
-	return makePiProviderSession(piSession, opts);
+	// Live, mutable session state the getters below read (so a mid-turn PATCH
+	// via setApprovalMode takes effect on the next tool call, not the next
+	// session open).
+	const state = {
+		mode: opts.mode ?? 'interactive',
+		approvalMode: opts.approvalMode ?? 'ask'
+	};
+	let activeQueue: AsyncQueue<PortalEvent> | null = null;
+	// Shared emit: the permission tools and the permission gate push
+	// `interactive.request` events into the active turn's stream.
+	const emit = (ev: PortalEvent): void => {
+		activeQueue?.push(ev);
+	};
+	const getWorkspaceRoots = (): string[] =>
+		workspaceRootsFor(opts.conversationId, opts.userId, opts.cwd);
+
+	const { customTools, portalToolsByName } = assemblePiTools({
+		cwd: opts.cwd,
+		userId: opts.userId,
+		conversationId: opts.conversationId,
+		policy: opts.policy,
+		getMode: () => state.mode,
+		getApprovalMode: () => state.approvalMode,
+		emit,
+		...(opts.workspaceKey !== undefined ? { workspaceKey: opts.workspaceKey } : {}),
+		...(opts.disabledToolGroups !== undefined
+			? { disabledToolGroups: opts.disabledToolGroups }
+			: {}),
+		...(opts.memoryMode !== undefined ? { memoryMode: opts.memoryMode } : {}),
+		...(opts.globalMemoryEnabled !== undefined
+			? { globalMemoryEnabled: opts.globalMemoryEnabled }
+			: {})
+	});
+	const permissionResolver = createPiPermissionResolver({
+		userId: opts.userId,
+		conversationId: opts.conversationId,
+		workingDirectory: opts.cwd,
+		policy: opts.policy,
+		portalToolsByName,
+		getApprovalMode: () => state.approvalMode,
+		getWorkspaceRoots,
+		emit
+	});
+
+	const piSession = await createPiSession({
+		cwd: opts.cwd,
+		model: opts.model,
+		runtime: opts.runtime,
+		customTools,
+		portalToolsByName,
+		permissionResolver
+	});
+	return makePiProviderSession(piSession, opts, {
+		state,
+		getActiveQueue: () => activeQueue,
+		setActiveQueue: (queue: AsyncQueue<PortalEvent> | null) => {
+			activeQueue = queue;
+		}
+	});
+}
+
+interface ProviderSessionRuntime {
+	state: { mode: SessionMode; approvalMode: ApprovalMode };
+	getActiveQueue: () => AsyncQueue<PortalEvent> | null;
+	setActiveQueue: (queue: AsyncQueue<PortalEvent> | null) => void;
 }
 
 function makePiProviderSession(
 	piSession: AgentSession,
-	opts: PiProviderSessionOptions
+	opts: PiProviderSessionOptions,
+	runtime: ProviderSessionRuntime
 ): ProviderSession {
 	let active: { queue: AsyncQueue<PortalEvent>; unsub: () => void } | null = null;
 	let disposed = false;
@@ -128,6 +221,7 @@ function makePiProviderSession(
 				if (ev.type === 'agent_end') queue.end();
 			});
 			active = { queue, unsub };
+			runtime.setActiveQueue(queue);
 			const onAbort = () => void piSession.abort().catch(() => {});
 			signal.addEventListener('abort', onAbort, { once: true });
 			if (signal.aborted) onAbort();
@@ -141,6 +235,7 @@ function makePiProviderSession(
 				signal.removeEventListener('abort', onAbort);
 				unsub();
 				active = null;
+				runtime.setActiveQueue(null);
 				session.lastUsed = Date.now();
 			}
 		},
@@ -159,6 +254,12 @@ function makePiProviderSession(
 					err: err instanceof Error ? err.message : String(err)
 				});
 			}
+		},
+		async setMode(mode: SessionMode) {
+			runtime.state.mode = mode;
+		},
+		async setApprovalMode(mode: ApprovalMode) {
+			runtime.state.approvalMode = mode;
 		}
 	};
 	return session;
@@ -194,9 +295,9 @@ async function runPrompt(
 }
 
 // Portal permission bridge: a hidden inline extension intercepting pi tool
-// calls before they execute. With `noTools: 'all'` no call ever reaches it in
-// T1; the resolver is the seam the portal interactive-request gateway plugs
-// into (block/allow + reason, mirroring the claude-agent canUseTool flow).
+// calls before they execute. The resolver decides allow/block; `block` makes
+// pi produce an immediate error tool result (never a thrown handler error,
+// which would abort the turn).
 function createPiPermissionBridge(onPermission: PiPermissionResolver): InlineExtension {
 	return {
 		name: 'portal-permission-bridge',

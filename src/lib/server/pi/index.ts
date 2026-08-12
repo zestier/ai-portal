@@ -11,7 +11,7 @@
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { loadConfig } from '../config';
 import type { ProviderOpenOptions, ProviderSession } from './session-contract';
-import { createPiProviderSession, type PiPermissionResolver, type PiModel } from './session';
+import { createPiProviderSession, type PiModel } from './session';
 import { getStubModel, isPiStubMode } from './stub-server';
 
 let runtimePromise: Promise<ModelRuntime> | null = null;
@@ -40,10 +40,21 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
 		model,
 		providerLabel: `${model.provider}/${model.id}`,
 		runtime,
-		onPermission: piPermissionResolver,
 		provider: opts.provider ?? 'pi',
 		conversationId: opts.conversationId,
 		providerSessionId: opts.providerSessionId ?? opts.conversationId,
+		userId: opts.userId,
+		policy: opts.policy,
+		...(opts.mode !== undefined ? { mode: opts.mode } : {}),
+		...(opts.approvalMode !== undefined ? { approvalMode: opts.approvalMode } : {}),
+		...(opts.disabledToolGroups !== undefined
+			? { disabledToolGroups: opts.disabledToolGroups }
+			: {}),
+		...(opts.workspaceKey !== undefined ? { workspaceKey: opts.workspaceKey } : {}),
+		...(opts.memoryMode !== undefined ? { memoryMode: opts.memoryMode } : {}),
+		...(opts.globalMemoryEnabled !== undefined
+			? { globalMemoryEnabled: opts.globalMemoryEnabled }
+			: {}),
 		...(opts.onEvent ? { onEvent: opts.onEvent } : {})
 	});
 }
@@ -65,11 +76,3 @@ async function resolvePiModel(runtime: ModelRuntime): Promise<PiModel> {
 	}
 	return model;
 }
-
-// T1 resolver: no pi tools are enabled, so this never runs — but block
-// everything if it ever does. The portal interactive-request gateway replaces
-// it when tools are wired (T2).
-const piPermissionResolver: PiPermissionResolver = async () => ({
-	allow: false,
-	reason: 'pi tools are not wired to the portal permission gateway yet'
-});
