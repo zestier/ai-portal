@@ -608,6 +608,25 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 		try {
 			await opts.beforeSend?.();
 			session = await pool.acquire(opts.bridge);
+			// First time this conversation runs with persistence, record the
+			// created session file so later acquires resume the same tree.
+			const sessionFile = session.sessionFile;
+			if (sessionFile && sessionFile !== opts.bridge.sessionFilePath) {
+				try {
+					convs.setSessionFile(opts.conversationId, opts.bridge.userId, sessionFile);
+				} catch (err) {
+					log.warn('turn.session_file_persist_failed', {
+						conversationId: opts.conversationId,
+						err: err instanceof Error ? err.message : String(err)
+					});
+				}
+			}
+			// Edit/regenerate rewind: rewind the persistent tree to the target user
+			// message before prompting so the turn starts a fresh branch (matching
+			// the SQLite truncation) instead of appending to the tail.
+			if (opts.bridge.rewindToUserMessageOrdinal !== undefined) {
+				await session.rewindToUserMessageOrdinal?.(opts.bridge.rewindToUserMessageOrdinal);
+			}
 			if (turnAc.signal.aborted) {
 				// Same wedge hazard as turn.abort(): a bare `await session.abort()`
 				// would hang `finishedPromise` (and thus turn cleanup) forever if the

@@ -69,6 +69,20 @@ export interface ProviderOpenOptions {
 	/** Explicit opt-in for user-scoped global memory tools. */
 	globalMemoryEnabled?: boolean;
 	/**
+	 * Durable pi session file for this conversation, or `null` when the
+	 * conversation has none yet (a fresh one is created and stored on the
+	 * conversation row once the turn runs). `undefined` means "don't persist" —
+	 * the session is in-memory only (one-shot opens, memory-mode turns).
+	 */
+	sessionFilePath?: string | null;
+	/**
+	 * 0-based index of the user message (among user messages, oldest first) the
+	 * session should rewind to before sending the prompt — the edit/regenerate
+	 * path. The pi tree rewinds so the prompt starts a new branch from that
+	 * message's parent, matching the SQLite truncation. Absent for normal turns.
+	 */
+	rewindToUserMessageOrdinal?: number;
+	/**
 	 * Persisted conversation prefix for providers without durable resume. The
 	 * runtime passes only messages before the current user prompt, so providers
 	 * can hydrate fresh sessions without seeing portal database ids.
@@ -91,10 +105,24 @@ export interface ProviderSession {
 	providerSessionId: string;
 	workingDirectory: string;
 	model: string;
+	/**
+	 * Absolute path to the durable pi session file backing this session, when
+	 * one exists. Absent for in-memory sessions (one-shot opens, memory-mode).
+	 * The runtime writes it back to the conversation row so later acquires
+	 * resume the same tree.
+	 */
+	sessionFile?: string;
 	lastUsed: number;
 	send(prompt: string, signal: AbortSignal): AsyncIterable<PortalEvent>;
 	abort(): Promise<void>;
 	dispose(): Promise<void>;
+	/**
+	 * Rewind the session tree to the given user-message ordinal (0-based among
+	 * user messages on the active path) so the next `send` starts a fresh branch
+	 * from that message's parent — the edit/regenerate semantics. Sessions that
+	 * cannot rewind (in-memory, no tree) leave the implementation to no-op.
+	 */
+	rewindToUserMessageOrdinal?(ordinal: number): Promise<void>;
 	/** Optional live mode control. Persisting settings is caller-owned. */
 	setMode?(mode: SessionMode): Promise<void>;
 	/** Optional live approval-mode control. Persisting settings is caller-owned. */

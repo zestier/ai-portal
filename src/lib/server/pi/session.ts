@@ -21,6 +21,7 @@
 //    async-iterator contract via `AsyncQueue`, mapping events through
 //    `PiEventMapper`.
 
+import { join } from 'node:path';
 import { ulid } from 'ulid';
 import {
 	createAgentSession,
@@ -43,6 +44,8 @@ import type { ProviderSession } from './session-contract';
 import { AsyncQueue } from '../runtime/async-queue';
 import { log } from '../log';
 import { PiEventMapper } from './events';
+import { loadConfig } from '../config';
+import * as messagesRepo from '../db/repos/messages';
 
 export type PiModel = NonNullable<CreateAgentSessionOptions['model']>;
 
@@ -73,9 +76,97 @@ export interface CreatePiSessionOptions {
 	portalToolsByName: ReadonlyMap<string, PortalTool>;
 	/** The portal permission gateway resolver. */
 	permissionResolver: PiPermissionResolver;
+	/**
+	 * Conversation whose portal messages seed a freshly-created session tree.
+	 * Only used when a new persistent session file is created (no history in
+	 * the tree yet) so fork/legacy conversations keep their context and the
+	 * edit/regenerate rewind stays ordinal-aligned with SQLite.
+	 */
+	conversationId?: string;
+	/**
+	 * Durable session file to resume, or `null` to create a new persistent one.
+	 * `undefined` keeps the session in-memory (no file) — used by one-shot opens
+	 * and memory-mode turns.
+	 */
+	sessionFilePath?: string | null;
 }
 
-/** Create a pi `AgentSession` over the shared runtime with in-memory session state. */
+/**
+ * Build the `SessionManager` for a conversation: resume its durable session
+ * file, create a new one, or stay in-memory. `undefined` path (no persistence
+ * requested) maps to in-memory; `null` creates a file under DATA_DIR/sessions
+ * and seeds it from the conversation's portal history; a path resumes it.
+ */
+function buildPiSessionManager(opts: CreatePiSessionOptions): SessionManager {
+	if (opts.sessionFilePath === undefined) {
+		return SessionManager.inMemory(opts.cwd);
+	}
+	const sessionDir = join(loadConfig().DATA_DIR, 'sessions');
+	if (opts.sessionFilePath) {
+		return SessionManager.open(opts.sessionFilePath, sessionDir, opts.cwd);
+	}
+	const manager = SessionManager.create(opts.cwd, sessionDir);
+	if (opts.conversationId) {
+		seedSessionFromMessages(manager, opts.conversationId, opts.model);
+	}
+	return manager;
+}
+
+/**
+ * Replay a conversation's complete portal messages into a fresh session tree as
+ * user/assistant text entries. Used only when a new session file is created for
+ * a conversation that already has SQLite history (a fork, or a legacy
+ * conversation first resumed under persistence): it gives the resumed agent the
+ * prior context and keeps the tree's user-message ordinals aligned with SQLite
+ * so edit/regenerate rewind targets the right entry. Tool calls are not
+ * replayed — the transcript text is enough as prior context.
+ */
+function seedSessionFromMessages(
+	manager: SessionManager,
+	conversationId: string,
+	model: PiModel
+): void {
+	const modelId = model.id ?? 'pi';
+	const all = messagesRepo.listByConversation(conversationId);
+	// The current user prompt is the last row (the route appends it before the
+	// turn starts) and has no assistant reply yet — the turn appends it itself,
+	// so seeding it too would duplicate it on the tree and desync the rewind
+	// ordinals. Skip only that trailing user message; prior history stays.
+	const tail = all[all.length - 1];
+	const rows = tail && tail.role === 'user' ? all.slice(0, -1) : all;
+	for (const m of rows) {
+		if (m.status !== 'complete') continue;
+		const text = m.content.trim();
+		if (!text) continue;
+		if (m.role === 'user') {
+			manager.appendMessage({
+				role: 'user',
+				content: [{ type: 'text', text }],
+				timestamp: m.createdAt
+			});
+		} else if (m.role === 'assistant') {
+			manager.appendMessage({
+				role: 'assistant',
+				content: [{ type: 'text', text }],
+				api: 'pi',
+				provider: 'pi',
+				model: modelId,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+				},
+				stopReason: 'stop',
+				timestamp: m.createdAt
+			});
+		}
+	}
+}
+
+/** Create a pi `AgentSession` over the shared runtime with session state. */
 export async function createPiSession(opts: CreatePiSessionOptions): Promise<AgentSession> {
 	const agentDir = getAgentDir();
 	const loader = new DefaultResourceLoader({
@@ -89,6 +180,7 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		noContextFiles: true
 	});
 	await loader.reload();
+	const sessionManager = buildPiSessionManager(opts);
 	const { session } = await createAgentSession({
 		cwd: opts.cwd,
 		agentDir,
@@ -97,7 +189,7 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		noTools: 'builtin',
 		customTools: opts.customTools,
 		resourceLoader: loader,
-		sessionManager: SessionManager.inMemory(opts.cwd),
+		sessionManager,
 		settingsManager: SettingsManager.inMemory()
 	});
 	return session;
@@ -119,6 +211,8 @@ export interface PiProviderSessionOptions {
 	workspaceKey?: string;
 	memoryMode?: import('$lib/types').MemoryMode;
 	globalMemoryEnabled?: boolean;
+	/** Durable session file to resume, or `null` to create one; see `CreatePiSessionOptions`. */
+	sessionFilePath?: string | null;
 	onEvent?: (e: PortalEvent) => void;
 }
 
@@ -176,7 +270,9 @@ export async function createPiProviderSession(
 		runtime: opts.runtime,
 		customTools,
 		portalToolsByName,
-		permissionResolver
+		permissionResolver,
+		conversationId: opts.conversationId,
+		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {})
 	});
 	return makePiProviderSession(piSession, opts, {
 		state,
@@ -201,13 +297,40 @@ function makePiProviderSession(
 	let active: { queue: AsyncQueue<PortalEvent>; unsub: () => void } | null = null;
 	let disposed = false;
 
+	const sessionFile = piSession.sessionManager.getSessionFile();
 	const session: ProviderSession = {
 		provider: opts.provider,
 		conversationId: opts.conversationId,
 		providerSessionId: opts.providerSessionId,
 		workingDirectory: opts.cwd,
 		model: opts.providerLabel,
+		...(sessionFile ? { sessionFile } : {}),
 		lastUsed: Date.now(),
+		async rewindToUserMessageOrdinal(ordinal: number) {
+			// The portal stream ends on `agent_end`, but pi clears its streaming
+			// flag in the run's settle a tick later — a rewind issued right after a
+			// turn can still land mid-teardown. Wait for idle so `navigateTree`
+			// never throws "current response not finished".
+			await piSession.waitForIdle();
+			// Rewind to the ordinal-th user message on the session's active path.
+			// `navigateTree` on a user entry sets the leaf to its parent — exactly
+			// the "reply to this user message again" position the turn-runner then
+			// prompts from, appending a fresh branch (the edit/regenerate flow).
+			let seen = -1;
+			for (const entry of piSession.sessionManager.buildContextEntries()) {
+				if (entry.type !== 'message' || entry.message.role !== 'user') continue;
+				seen++;
+				if (seen === ordinal) {
+					await piSession.navigateTree(entry.id);
+					return;
+				}
+			}
+			log.warn('pi.session.rewind_target_missing', {
+				conversationId: opts.conversationId,
+				ordinal,
+				userEntries: seen + 1
+			});
+		},
 		async *send(prompt: string, signal: AbortSignal): AsyncIterable<PortalEvent> {
 			if (active) throw new Error('session busy: a turn is already in progress');
 			if (disposed) throw new Error('session disposed');

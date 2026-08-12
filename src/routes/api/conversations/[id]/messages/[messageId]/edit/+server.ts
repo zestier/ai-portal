@@ -50,9 +50,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 			messageId: params.messageId!,
 			newContent: content
 		});
-		const turn = await startTurnFromUserMessage(conversation, userMessage, {
-			includePriorMessages: true
-		});
+		const turn = await startTurnFromUserMessage(conversation, userMessage, { rerun: true });
 		return json({ ok: true, turnId: turn.id, userMessageId: userMessage.id });
 	} catch (e) {
 		if (e instanceof InlineEditRejected) {

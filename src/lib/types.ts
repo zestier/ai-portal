@@ -23,6 +23,13 @@ export interface Conversation {
 	workdir: string;
 	model: string | null;
 	/**
+	 * Absolute path to this conversation's durable pi session file
+	 * (DATA_DIR/sessions/<...>.jsonl), NULL until the first turn creates one.
+	 * The pi tree inside the file is the session's persistent context; the
+	 * conversation resumes it on reopen and rewinds it for edit/regenerate.
+	 */
+	sessionFile: string | null;
+	/**
 	 * Agent mode for this conversation. Mirrors the SDK's `SessionMode`
 	 * exactly:
 	 *   - `interactive` (default): regular chat; the agent prompts for

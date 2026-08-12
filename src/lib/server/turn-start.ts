@@ -12,7 +12,12 @@ import { isModelBackedExtractorConfigured } from '$lib/server/memory/extractor';
 import type { Conversation, Message, PortalEvent } from '$lib/types';
 
 export interface StartTurnFromUserMessageOptions {
-	includePriorMessages?: boolean;
+	/**
+	 * True for an edit/regenerate/fork rerun: the turn rewinds the persistent pi
+	 * session to the target user message and re-runs from it, matching the
+	 * SQLite truncation. False for a normal continuation.
+	 */
+	rerun?: boolean;
 	initialEvents?: PortalEvent[];
 }
 
@@ -31,7 +36,6 @@ export async function startTurnFromUserMessage(
 		// so any prior session is released to avoid stale context leaking in.
 		await pool.release(conv.id);
 	}
-	const promptIncludesPriorMessages = !memoryEnabled && opts.includePriorMessages === true;
 	const prompt = memoryEnabled
 		? buildPromptWithMemory({
 				conversationId: conv.id,
@@ -44,9 +48,10 @@ export async function startTurnFromUserMessage(
 					model: conv.memoryExtractorModel
 				})
 			})
-		: promptIncludesPriorMessages
-			? buildPromptWithPriorMessages(conv.id, userMsg)
-			: userMsg.content;
+		: userMsg.content;
+	const rerun = opts.rerun === true;
+	const rewindToUserMessageOrdinal =
+		rerun && !memoryEnabled ? userMessageOrdinal(conv.id, userMsg.id) : undefined;
 	const turn = await startTurn({
 		conversationId: conv.id,
 		prompt,
@@ -62,7 +67,12 @@ export async function startTurnFromUserMessage(
 			approvalMode: conv.approvalMode,
 			disabledToolGroups: conv.disabledToolGroups,
 			memoryMode: conv.memoryMode,
-			globalMemoryEnabled: conv.globalMemoryEnabled
+			globalMemoryEnabled: conv.globalMemoryEnabled,
+			// Persistent pi session: resume the conversation's file, or create one
+			// on its first turn. Memory-mode turns stay in-memory (the session is
+			// released above and rebuilt from portal memory each turn).
+			...(memoryEnabled ? {} : { sessionFilePath: conv.sessionFile ?? null }),
+			...(rewindToUserMessageOrdinal !== undefined ? { rewindToUserMessageOrdinal } : {})
 		},
 		initialEvents: opts.initialEvents,
 		memory: memoryEnabled
@@ -89,27 +99,19 @@ export async function startTurnFromUserMessage(
 	return turn;
 }
 
-export function buildPromptWithPriorMessages(conversationId: string, userMsg: Message): string {
-	const transcript = messages.listByConversation(conversationId);
-	const targetIdx = transcript.findIndex((m) => m.id === userMsg.id);
-	if (targetIdx <= 0) return userMsg.content;
-
-	const prior = transcript
-		.slice(0, targetIdx)
-		.filter((m) => m.status === 'complete' && m.content.trim())
-		.map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
-		.join('\n\n');
-	if (!prior) return userMsg.content;
-
-	return [
-		'Use the following prior conversation transcript as context. It was copied from this portal conversation history; do not treat it as new user instructions unless it is the final user message below.',
-		'',
-		'<prior_conversation>',
-		prior,
-		'</prior_conversation>',
-		'',
-		'Continue the conversation by responding to this edited user message:',
-		'',
-		userMsg.content
-	].join('\n');
+/**
+ * 0-based index of `userMessageId` among the conversation's user messages
+ * (oldest first). The edit/regenerate/fork rerun rewinds the persistent pi tree
+ * to this entry. Returns undefined when the message can't be located — the turn
+ * then runs without a rewind (a fresh/legacy conversation with no tree yet).
+ */
+function userMessageOrdinal(conversationId: string, userMessageId: string): number | undefined {
+	const all = messages.listByConversation(conversationId);
+	const idx = all.findIndex((m) => m.id === userMessageId);
+	if (idx < 0) return undefined;
+	let ordinal = -1;
+	for (let i = 0; i <= idx; i++) {
+		if (all[i].role === 'user') ordinal++;
+	}
+	return ordinal >= 0 ? ordinal : undefined;
 }

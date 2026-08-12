@@ -45,6 +45,7 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
 		providerSessionId: opts.providerSessionId ?? opts.conversationId,
 		userId: opts.userId,
 		policy: opts.policy,
+		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {}),
 		...(opts.mode !== undefined ? { mode: opts.mode } : {}),
 		...(opts.approvalMode !== undefined ? { approvalMode: opts.approvalMode } : {}),
 		...(opts.disabledToolGroups !== undefined

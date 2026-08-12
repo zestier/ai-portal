@@ -60,15 +60,15 @@ test('fork by editing a user message produces a new conversation with the edited
 	const contents = (newMsgs.messages as Array<{ role: string; content: string }>).map(
 		(m) => `${m.role}:${m.content}`
 	);
+	// The fork clones the prefix (context seed + its reply) and appends the
+	// edited prompt, then auto-runs a fresh turn.
 	expect(contents).toContain('user:context seed');
 	expect(contents).toContain('assistant:Stubbed reply to: context seed');
 	expect(contents).toContain('user:edited prompt');
-	const assistantReply = contents.find(
-		(m) => m.startsWith('assistant:Stubbed reply to:') && m.includes('edited prompt')
-	);
-	expect(assistantReply).toContain('context seed');
-	expect(assistantReply).toContain('Stubbed reply to: context seed');
-	expect(assistantReply).toContain('edited prompt');
+	// The rerun prompts with the raw edited content (no injected prior
+	// transcript — prior context rides the forked conversation's history and the
+	// pi session tree), so the stub echoes exactly the edited prompt.
+	expect(contents).toContain('assistant:Stubbed reply to: edited prompt');
 	expect(contents).not.toContain('user:original prompt');
 
 	// Source conversation still has the original turn intact.

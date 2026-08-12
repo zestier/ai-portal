@@ -35,6 +35,7 @@ interface ConvRow {
 	title: string;
 	workdir: string;
 	model: string | null;
+	session_file: string | null;
 	created_at: number;
 	updated_at: number;
 	archived_at: number | null;
@@ -83,6 +84,7 @@ function rowToConv(r: ConvRow): Conversation {
 		title: r.title,
 		workdir: r.workdir,
 		model: r.model,
+		sessionFile: r.session_file ?? null,
 		mode,
 		memoryMode: normalizeMemoryMode(r.memory_mode),
 		memoryExtractorModel: r.memory_extractor_model ?? null,
@@ -240,6 +242,7 @@ export function create(userId: string, input: CreateInput): Conversation {
 		title: input.title,
 		workdir: input.workdir,
 		model: input.model,
+		sessionFile: null,
 		mode,
 		memoryMode,
 		memoryExtractorModel,
@@ -431,6 +434,18 @@ export function hasUnread(id: string, userId: string): boolean {
 
 export function touch(id: string) {
 	getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), id);
+}
+
+/**
+ * Record the durable pi session file created for a conversation (the first time
+ * its session is opened with persistence). Idempotent: the turn-runner only
+ * calls this when the session's file path differs from the stored one, and
+ * re-writing the same path is a harmless no-op.
+ */
+export function setSessionFile(id: string, userId: string, sessionFile: string): void {
+	getDb()
+		.prepare('UPDATE conversations SET session_file = ? WHERE id = ? AND user_id = ?')
+		.run(sessionFile, id, userId);
 }
 
 /**

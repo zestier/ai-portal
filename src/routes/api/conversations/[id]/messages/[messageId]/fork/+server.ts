@@ -62,9 +62,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		}
 		let turn;
 		try {
-			turn = await startTurnFromUserMessage(conversation, userMessage, {
-				includePriorMessages: true
-			});
+			turn = await startTurnFromUserMessage(conversation, userMessage, { rerun: true });
 		} catch (cause) {
 			if (!getTurn(conversation.id)) {
 				try {

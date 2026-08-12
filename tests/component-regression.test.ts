@@ -22,6 +22,7 @@ const conversation: Conversation = {
 	title: 'Regression chat',
 	workdir: '/workspaces/copilot-portal',
 	model: 'gpt-5.5',
+	sessionFile: null,
 	mode: 'autopilot',
 	memoryMode: 'off',
 	memoryExtractorModel: null,

@@ -15,7 +15,7 @@ async function freshImports() {
 	return { users, convs, messages, turnStart };
 }
 
-describe('turn-start context prompts', () => {
+describe('turn-start bridge options', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-turn-start-test-');
 		startTurnMock.mockReset();
@@ -30,7 +30,22 @@ describe('turn-start context prompts', () => {
 		});
 	});
 
-	it('injects prior complete conversation messages before an edited prompt', async () => {
+	it('sends the raw user prompt and no rewind for a normal continuation', async () => {
+		const { users, convs, messages, turnStart } = await freshImports();
+		const u = users.ensureLocalUser();
+		const conv = convs.create(u.id, { title: 'ctx', workdir: '/tmp', model: null });
+		const msg = messages.append(conv.id, { role: 'user', content: 'plain question' });
+
+		await turnStart.startTurnFromUserMessage(conv, msg);
+
+		const { prompt, bridge } = startTurnMock.mock.calls[0][0];
+		expect(prompt).toBe('plain question');
+		// A fresh conversation gets a persistent session file (null = create one).
+		expect(bridge.sessionFilePath).toBeNull();
+		expect(bridge.rewindToUserMessageOrdinal).toBeUndefined();
+	});
+
+	it('rewinds to the edited user message ordinal on a rerun', async () => {
 		const { users, convs, messages, turnStart } = await freshImports();
 		const u = users.ensureLocalUser();
 		const conv = convs.create(u.id, { title: 'ctx', workdir: '/tmp', model: null });
@@ -38,23 +53,27 @@ describe('turn-start context prompts', () => {
 		messages.append(conv.id, { role: 'assistant', content: 'first answer' });
 		const edited = messages.append(conv.id, { role: 'user', content: 'edited follow-up' });
 
-		const prompt = turnStart.buildPromptWithPriorMessages(conv.id, edited);
+		await turnStart.startTurnFromUserMessage(conv, edited, { rerun: true });
 
-		expect(prompt).toContain('<prior_conversation>');
-		expect(prompt).toContain('USER:\nfirst question');
-		expect(prompt).toContain('ASSISTANT:\nfirst answer');
-		expect(prompt).toContain(
-			'Continue the conversation by responding to this edited user message:'
-		);
-		expect(prompt.endsWith('edited follow-up')).toBe(true);
+		const { prompt, bridge } = startTurnMock.mock.calls[0][0];
+		// Rerun prompts the raw edited text and rewinds the session tree to the
+		// second user message (0-based ordinal 1), not injecting the transcript.
+		expect(prompt).toBe('edited follow-up');
+		expect(prompt).not.toContain('<prior_conversation>');
+		expect(bridge.rewindToUserMessageOrdinal).toBe(1);
 	});
 
-	it('uses the raw prompt when there is no prior context', async () => {
+	it('resumes the persisted session file when one exists', async () => {
 		const { users, convs, messages, turnStart } = await freshImports();
 		const u = users.ensureLocalUser();
 		const conv = convs.create(u.id, { title: 'ctx', workdir: '/tmp', model: null });
-		const first = messages.append(conv.id, { role: 'user', content: 'first question' });
+		convs.setSessionFile(conv.id, u.id, '/tmp/data/sessions/abc.jsonl');
+		const msg = messages.append(conv.id, { role: 'user', content: 'continue here' });
 
-		expect(turnStart.buildPromptWithPriorMessages(conv.id, first)).toBe('first question');
+		const resumed = convs.get(conv.id, u.id)!;
+		await turnStart.startTurnFromUserMessage(resumed, msg);
+
+		const { bridge } = startTurnMock.mock.calls[0][0];
+		expect(bridge.sessionFilePath).toBe('/tmp/data/sessions/abc.jsonl');
 	});
 });
