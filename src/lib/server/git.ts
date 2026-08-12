@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isolatedChildEnv } from './child-env';
 import { safeResolve } from './files';
 import { log as logger } from './log';
 
@@ -64,15 +65,14 @@ function runGit(args: string[], opts: RunOptions): Promise<GitRunResult> {
 		const child = spawn('git', args, {
 			cwd: opts.cwd,
 			shell: false,
-			env: {
-				...process.env,
+			env: isolatedChildEnv(process.env, {
 				// Disable interactive prompts and pagers. Git hooks still run for commits.
 				GIT_TERMINAL_PROMPT: '0',
 				GIT_PAGER: 'cat',
 				PAGER: 'cat',
 				GIT_OPTIONAL_LOCKS: '0',
 				LC_ALL: 'C'
-			}
+			})
 		});
 		let stdout = Buffer.alloc(0);
 		let stderr = Buffer.alloc(0);

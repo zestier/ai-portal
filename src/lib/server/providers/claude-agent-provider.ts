@@ -6,6 +6,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { ulid } from 'ulid';
 import type { ApprovalMode, PortalEvent, SessionMode, ProviderInstance } from '$lib/types';
+import { isolatedChildEnv } from '../child-env';
 import { loadConfig } from '../config';
 import { log } from '../log';
 import { workspaceRootsFor } from '../leases';
@@ -229,8 +230,7 @@ async function probeAnthropicModels(cfg: ClaudeAgentConfig): Promise<ProviderMod
 }
 
 function queryEnvironment(cfg: ClaudeAgentConfig): Record<string, string | undefined> {
-	return {
-		...process.env,
+	return isolatedChildEnv(process.env, {
 		CLAUDE_AGENT_SDK_CLIENT_APP: 'zap',
 		...(cfg.baseUrl
 			? {
@@ -239,7 +239,7 @@ function queryEnvironment(cfg: ClaudeAgentConfig): Record<string, string | undef
 					ANTHROPIC_API_KEY: undefined
 				}
 			: { ANTHROPIC_API_KEY: cfg.apiKey, ANTHROPIC_AUTH_TOKEN: undefined })
-	};
+	});
 }
 
 function permissionMode(mode: SessionMode): NonNullable<Options['permissionMode']> {

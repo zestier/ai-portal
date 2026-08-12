@@ -134,9 +134,11 @@ describe('claudeAgentProvider', () => {
 		]);
 		expect(options.env).toMatchObject({
 			ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
-			ANTHROPIC_AUTH_TOKEN: 'deepseek-key',
-			ANTHROPIC_API_KEY: undefined
+			ANTHROPIC_AUTH_TOKEN: 'deepseek-key'
 		});
+		expect(options.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+		expect(options.env).not.toHaveProperty('DATA_DIR');
+		expect(options.env).not.toHaveProperty('DB_MIGRATIONS_DIR');
 	});
 
 	it('loads agent-plugins folders as local plugins with MCP discovery enabled', async () => {
@@ -608,24 +610,28 @@ describe('claudeAgentProvider', () => {
 		});
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		const settings = await import('../src/lib/server/db/repos/settings');
-		// The conversation's workspace root derives from its own workdir
-		// (effectiveWorkdir resolves /tmp to /workspace here), so the read must
-		// target a path inside that root or it would raise a dialog and block.
+		const workspace = process.cwd();
+		// Keep the persisted, provider, and requested paths aligned so this test
+		// exercises the auto-allow audit path on every host.
 		convs.create('user-1', {
 			id: 'conv-claude-agent',
 			title: 'gate test',
-			workdir: '/workspace',
+			workdir: workspace,
 			model: null
 		});
+		expect(convs.get('conv-claude-agent', 'user-1')).not.toBeNull();
 		const { claudeAgentProvider } =
 			await import('../src/lib/server/providers/claude-agent-provider');
-		const session = await claudeAgentProvider.openSession(baseOpts);
+		const session = await claudeAgentProvider.openSession({
+			...baseOpts,
+			workingDirectory: workspace
+		});
 
 		await collect(session.send('inspect files', new AbortController().signal));
 		await preToolUse!({
 			hook_event_name: 'PreToolUse',
 			tool_name: 'mcp__portal__read',
-			tool_input: { file_path: '/workspace/example.ts' },
+			tool_input: { file_path: `${workspace}/example.ts` },
 			tool_use_id: 'tool-read-3'
 		});
 

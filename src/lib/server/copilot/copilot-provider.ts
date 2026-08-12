@@ -13,6 +13,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
+import { isolatedChildEnv } from '../child-env';
 import { AsyncQueue } from '../runtime/async-queue';
 import { withTimeout } from '../runtime/with-timeout';
 import { buildPortalSystemGuidance } from '../runtime/system-guidance';
@@ -121,7 +122,9 @@ export async function getClient(
 						)
 					})
 				: new CopilotClient({
-						connection: RuntimeConnection.forStdio(),
+						connection: RuntimeConnection.forStdio({
+							env: isolatedChildEnv() as Record<string, string>
+						}),
 						useLoggedInUser: true,
 						...(providerAuthToken !== undefined ? { gitHubToken: providerAuthToken } : {})
 					});

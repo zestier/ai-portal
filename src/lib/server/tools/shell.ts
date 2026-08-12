@@ -3,6 +3,7 @@ import { createWriteStream, mkdirSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { isolatedChildEnv } from '../child-env';
 import { ulid } from '../db/ids';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { ensureZapGitignore, scratchSubdir } from './zap-dir';
@@ -156,6 +157,7 @@ function runShell(
 	return new Promise((resolveResult) => {
 		const child = spawn('/bin/bash', ['-lc', command], {
 			cwd,
+			env: isolatedChildEnv(),
 			detached: true,
 			stdio: ['ignore', 'pipe', 'pipe']
 		});
