@@ -27,7 +27,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 	const body = await request.json().catch(() => null);
 	const parsed = KeySchema.safeParse(body ?? {});
 	if (!parsed.success) throw error(400, 'Expected { apiKey: string }.');
-	await saveProviderKey(params.providerId, parsed.data.apiKey);
+	try {
+		await saveProviderKey(params.providerId, parsed.data.apiKey);
+	} catch (e) {
+		throw error(400, e instanceof Error ? e.message : String(e));
+	}
 	return json({ ok: true });
 };
 

@@ -52,7 +52,19 @@ export async function deleteProvider(id: string): Promise<void> {
 /** Set or clear (empty string) a provider's API key, then reload the runtime. */
 export async function saveProviderKey(id: string, apiKey: string): Promise<void> {
 	if (!apiKey) providersRepo.clearApiKey(id);
-	else providersRepo.setApiKey(id, apiKey);
+	else {
+		try {
+			providersRepo.setApiKey(id, apiKey);
+		} catch (e) {
+			if (e instanceof Error && e.message.includes('ENCRYPTION_KEY')) {
+				throw new Error(
+					'Cannot store an API key: ENCRYPTION_KEY is not configured. Add ENCRYPTION_KEY ' +
+						'to the server environment (e.g. `openssl rand -base64 32`).'
+				);
+			}
+			throw e;
+		}
+	}
 	await syncModelRuntime();
 }
 
