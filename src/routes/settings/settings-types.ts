@@ -8,7 +8,14 @@ export type FormResult = {
 	duplicate?: boolean;
 };
 
-export type SettingsTab = 'general' | 'prompts' | 'memory' | 'permissions' | 'activity' | 'update';
+export type SettingsTab =
+	| 'general'
+	| 'prompts'
+	| 'memory'
+	| 'permissions'
+	| 'models'
+	| 'activity'
+	| 'update';
 
 export type SettingsData = PageData['settings'];
 export type PermissionGrant = PageData['grants'][number];

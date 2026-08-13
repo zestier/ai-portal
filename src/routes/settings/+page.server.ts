@@ -12,6 +12,7 @@ import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
+import { listEnabledModelOptions } from '$lib/server/models/catalog-service';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import {
 	normalizeThemeAccent,
@@ -59,6 +60,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		builtInPromptTemplates: listBuiltInPromptTemplates(),
 		promptTemplates: promptTemplates.list(userId, { status: 'all' }),
 		customMemoryProfiles: memoryProfiles.listCustomProfiles(userId, { status: 'all' }),
+		modelOptions: listEnabledModelOptions(),
 		enableRedeploy: cfg.ENABLE_REDEPLOY && canRedeployUser(locals.user, cfg),
 		deploy: getDeployMetadata()
 	};

@@ -23,6 +23,8 @@
 				return 'Memory';
 			case 'permissions':
 				return `Permissions (${grantCount})`;
+			case 'models':
+				return 'Models';
 			case 'activity':
 				return 'Activity';
 			case 'update':

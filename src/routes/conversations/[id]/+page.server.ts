@@ -10,6 +10,7 @@ import { getBuiltInPromptTemplate, buildRefinePromptSeed } from '$lib/prompt-tem
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
 import { loadConfig } from '$lib/server/config';
+import { listEnabledModelOptions } from '$lib/server/models/catalog-service';
 import { ticketWorkspaceFromConversation } from '$lib/server/ticket-workspace';
 import { interpolateTicketPrompt } from '$lib/tickets/chat';
 import {
@@ -129,6 +130,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		conversation: conv,
 		effectiveModel: conv.model ?? cfg.DEFAULT_MODEL,
 		defaultModelPlaceholder: cfg.PI_MODEL ?? 'provider/model',
+		modelOptions: listEnabledModelOptions(),
 		chatPlaceholder: 'Message…',
 		messages: msgs,
 		contextUsage,

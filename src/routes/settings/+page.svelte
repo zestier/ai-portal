@@ -6,6 +6,7 @@
 	import ActivityPanel from './ActivityPanel.svelte';
 	import GeneralSettings from './GeneralSettings.svelte';
 	import MemoryProfilesSettings from './MemoryProfilesSettings.svelte';
+	import ModelsSettings from './ModelsSettings.svelte';
 	import PermissionGrants from './PermissionGrants.svelte';
 	import PromptsSettings from './PromptsSettings.svelte';
 	import SettingsTabs from './SettingsTabs.svelte';
@@ -15,8 +16,8 @@
 
 	const visibleTabs = $derived<SettingsTab[]>(
 		data.enableRedeploy
-			? ['general', 'prompts', 'memory', 'permissions', 'activity', 'update']
-			: ['general', 'prompts', 'memory', 'permissions', 'activity']
+			? ['general', 'prompts', 'memory', 'permissions', 'models', 'activity', 'update']
+			: ['general', 'prompts', 'memory', 'permissions', 'models', 'activity']
 	);
 
 	function readTab(value: string | null, allowedTabs: SettingsTab[]): SettingsTab {
@@ -77,7 +78,7 @@
 		<PromptsSettings
 			builtInTemplates={data.builtInPromptTemplates}
 			promptTemplates={data.promptTemplates}
-			modelOptions={[]}
+			modelOptions={data.modelOptions}
 			{form}
 		/>
 	{:else if activeTab === 'memory'}
@@ -89,6 +90,8 @@
 			workspaceFile={data.workspaceFile}
 			{form}
 		/>
+	{:else if activeTab === 'models'}
+		<ModelsSettings />
 	{:else if activeTab === 'activity'}
 		<ActivityPanel decisions={data.recentDecisions} />
 	{:else if activeTab === 'update' && data.enableRedeploy}

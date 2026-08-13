@@ -10,16 +10,41 @@
 
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { loadConfig } from '../config';
+import { PortalCredentialStore } from '../models/credential-store';
+import { modelsJsonPath, writeModelsJsonFile } from '../models/models-json';
 import type { ProviderOpenOptions, ProviderSession } from './session-contract';
 import { createPiProviderSession, type PiModel } from './session';
 import { getStubModel, isPiStubMode } from './stub-server';
 
 let runtimePromise: Promise<ModelRuntime> | null = null;
 
-/** Process-wide pi `ModelRuntime` (env auth; no models.json — static snapshot). */
+/**
+ * Process-wide pi `ModelRuntime` over the portal-managed catalog.
+ *
+ * Providers/models come from DATA_DIR/models.json (serialized from the portal
+ * DB by `syncModelRuntime`); provider API keys are served from the encrypted
+ * portal DB via PortalCredentialStore — no env keys required. In stub mode
+ * the e2e stub model is additionally registered on this same runtime.
+ */
 export function getModelRuntime(): Promise<ModelRuntime> {
-	runtimePromise ??= ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
+	runtimePromise ??= ModelRuntime.create({
+		modelsPath: modelsJsonPath(loadConfig()),
+		credentials: new PortalCredentialStore(),
+		refreshOnCreate: false
+	});
 	return runtimePromise;
+}
+
+/**
+ * Persist the portal's current provider/model configuration to models.json and
+ * reload it into the shared runtime (pi re-reads the file on `refresh()`), so
+ * edits from the Models settings UI take effect without a restart. Idempotent;
+ * call after any provider/model/key mutation.
+ */
+export async function syncModelRuntime(): Promise<void> {
+	writeModelsJsonFile();
+	const runtime = await getModelRuntime();
+	await runtime.refresh({ allowNetwork: false });
 }
 
 /** Whether this turn should run on the pi SDK path. T1 gates on the stub only. */

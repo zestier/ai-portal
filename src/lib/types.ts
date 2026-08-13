@@ -1195,3 +1195,74 @@ export interface ChangesResponse {
 	initialized: boolean;
 	entries: ChangeEntry[];
 }
+
+// --- Portal-managed model/provider configuration (ticket #3) ---
+//
+// The portal stores providers + models in its own tables and serializes them
+// into a pi models.json loaded by the shared ModelRuntime. These types mirror
+// the DB rows (keys are never returned to the client — only `hasKey`).
+
+export type ProviderApi =
+	| 'anthropic-messages'
+	| 'openai-completions'
+	| 'openai-responses'
+	| 'google-generative-ai';
+
+export interface ModelCostTier {
+	inputTokensAbove: number;
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
+/** Per-million-token rates, in the same shape pi's models.json `cost` accepts. */
+export interface ModelCost {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	tiers?: ModelCostTier[];
+}
+
+export interface ManagedProvider {
+	id: string;
+	name: string;
+	api: ProviderApi;
+	baseUrl: string | null;
+	/** Whether an API key is stored (the key itself is never serialized out). */
+	hasKey: boolean;
+	headers: Record<string, string>;
+	authHeader: boolean;
+	/** pi bundled provider — its baseUrl/model defaults come from pi's catalog. */
+	builtin: boolean;
+	enabled: boolean;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface ManagedModel {
+	providerId: string;
+	id: string;
+	name: string;
+	purpose: string | null;
+	enabled: boolean;
+	cost: ModelCost;
+	contextWindow: number | null;
+	maxTokens: number | null;
+	reasoning: boolean;
+	input: ('text' | 'image')[];
+	thinkingLevelMap: Record<string, string | null> | null;
+	compat: Record<string, unknown> | null;
+	samplingParams: Record<string, unknown> | null;
+	sortOrder: number;
+}
+
+/** A model discovered from a provider's list endpoint (fetch-catalog). */
+export interface FetchedModel {
+	id: string;
+	name?: string;
+	contextWindow?: number;
+	maxTokens?: number;
+	cost?: Partial<ModelCost>;
+}

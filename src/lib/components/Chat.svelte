@@ -60,12 +60,14 @@
 		initialComposer = '',
 		defaultModelPlaceholder,
 		effectiveModel,
-		chatPlaceholder
+		chatPlaceholder,
+		modelOptions = []
 	}: {
 		conversation: Conversation;
 		defaultModelPlaceholder: string;
 		effectiveModel: string;
 		chatPlaceholder: string;
+		modelOptions?: string[];
 		initialMessages: Message[];
 		initialUsage?: ConversationUsage | null;
 		parent?: {
@@ -1406,6 +1408,7 @@
 		{conversation}
 		model={sessionModel}
 		{defaultModelPlaceholder}
+		{modelOptions}
 		{parent}
 		{usage}
 		{recentCompaction}

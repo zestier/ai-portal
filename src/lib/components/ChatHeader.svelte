@@ -18,6 +18,7 @@
 		conversation,
 		model,
 		defaultModelPlaceholder,
+		modelOptions = [],
 		parent = null,
 		usage = null,
 		recentCompaction = null,
@@ -34,6 +35,8 @@
 		conversation: Conversation;
 		model: string;
 		defaultModelPlaceholder: string;
+		/** Enabled portal models as `providerId/modelId`, offered as suggestions. */
+		modelOptions?: string[];
 		parent?: {
 			id: number;
 			title: string;
@@ -571,12 +574,20 @@
 							class="model-input"
 							bind:value={customModel}
 							placeholder={defaultModelPlaceholder}
+							list={modelOptions.length > 0 ? 'chat-model-options' : undefined}
 							disabled={savingModel || modelChangeDisabled}
 							aria-label="Session model id"
 							onkeydown={(e) => {
 								if (e.key === 'Enter' && !customModelInvalid) void chooseModel(selectedCustomModel);
 							}}
 						/>
+						{#if modelOptions.length > 0}
+							<datalist id="chat-model-options">
+								{#each modelOptions as opt (opt)}
+									<option value={opt}></option>
+								{/each}
+							</datalist>
+						{/if}
 						<button
 							type="button"
 							class="save-model-btn"
@@ -661,6 +672,7 @@
 										class="model-input"
 										bind:value={customHarvesterModel}
 										placeholder="harvester-model-id"
+										list={modelOptions.length > 0 ? 'chat-model-options' : undefined}
 										disabled={savingHarvester || modelChangeDisabled}
 										aria-label="Custom memory harvester model id"
 										onkeydown={(e) => {
