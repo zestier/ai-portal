@@ -25,7 +25,7 @@ export async function archiveWorkspaceTicket({
 /**
  * Permanently delete a workspace ticket via `DELETE /api/tickets/[id]?purge=true`.
  * Unlike {@link archiveWorkspaceTicket} (which soft-archives), this removes the
- * row and its dependency edges / attachments for good — there is no undo. The
+ * row and its dependency edges for good — there is no undo. The
  * detail page uses this behind a confirm modal.
  */
 export async function deleteWorkspaceTicket({

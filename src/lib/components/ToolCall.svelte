@@ -9,7 +9,6 @@
 	import { parseGitToolResult } from '$lib/client/git-tool-result';
 	import { summarizeToolCall, splitSummaryForWrap } from '$lib/tool-summary';
 	import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '$lib/client/tool-result';
-	import type { ResultBlock as ResultBlockData } from '$lib/client/tool-result';
 	import { formatFieldBytes, type LazyFieldKind } from '$lib/client/lazy-field';
 	import { ensureLazyField, lazyFieldState, loadLazyField } from '$lib/client/lazy-field.svelte';
 
@@ -96,19 +95,6 @@
 	const decoded = $derived(decodeToolResult(resultJson));
 	const markdownResult = $derived(shouldRenderToolResultAsMarkdown(toolCall.tool));
 	const pending = $derived(toolCall.status === 'pending');
-	// Image attachments captured for this call (e.g. a `view`ed PNG). Rendered
-	// from the authed byte endpoint rather than inlined, so the card stays light
-	// and the bytes are only fetched when actually shown.
-	const attachmentImages = $derived.by<Extract<ResultBlockData, { kind: 'image' }>[]>(() => {
-		if (!conversationId || !toolCall.attachments) return [];
-		return toolCall.attachments
-			.filter((a) => a.kind === 'image')
-			.map((a) => ({
-				kind: 'image' as const,
-				mimeType: a.mimeType,
-				src: `/api/conversations/${conversationId}/tool-calls/${toolCall.id}/attachments/${a.id}`
-			}));
-	});
 	// Edits/creates render as a unified diff synthesized from args. We only
 	// show the diff once the call succeeded; while pending we'd be
 	// rendering args that haven't been applied, and on error the result
@@ -264,12 +250,6 @@
 					<Alert kind="error">{rerunError}</Alert>
 				{/if}
 			</div>
-		{/if}
-
-		{#if !pending && attachmentImages.length > 0}
-			{#each attachmentImages as block (block.src)}
-				<ResultBlock {block} />
-			{/each}
 		{/if}
 
 		{#if pending}

@@ -2,7 +2,6 @@
 	import type { PageData } from './$types';
 	import type {
 		ChatPromptTemplate,
-		TicketAttachmentMeta,
 		WorkspaceTicket,
 		WorkspaceTicketPriority,
 		WorkspaceTicketStatus
@@ -39,7 +38,6 @@
 	});
 
 	const ticket = $derived(data.ticket);
-	const attachments = $derived((data.attachments ?? []) as TicketAttachmentMeta[]);
 
 	const statusLabel: Record<WorkspaceTicketStatus, string> = {
 		open: 'Open',
@@ -228,26 +226,6 @@
 		}
 	}
 
-	async function deleteAttachment(attachmentId: number) {
-		if (busy) return;
-		busy = true;
-		errorMsg = null;
-		try {
-			const res = await fetch(`/api/tickets/${ticket.id}/attachments/${attachmentId}`, {
-				method: 'DELETE'
-			});
-			if (!res.ok) {
-				flashError(`Could not delete attachment (${res.status})`);
-				return;
-			}
-			await invalidateAll();
-		} catch {
-			flashError('Could not delete attachment');
-		} finally {
-			busy = false;
-		}
-	}
-
 	function fmtDate(ms: number): string {
 		return new Date(ms).toLocaleString();
 	}
@@ -401,38 +379,6 @@
 			</ul>
 		{/if}
 	</section>
-
-	<section class="card">
-		<h2 class="eyebrow">Attachments</h2>
-		{#if attachments.length === 0}
-			<p class="empty muted">No attachments.</p>
-		{:else}
-			<ul class="attach-list">
-				{#each attachments as att (att.id)}
-					<li>
-						<a
-							class="attach-link"
-							href={`/api/tickets/${ticket.id}/attachments/${att.id}`}
-							target="_blank"
-							rel="noopener"
-						>
-							{att.filename}
-						</a>
-						<span class="muted attach-meta"
-							>{att.mimeType} · {(att.byteSize / 1024).toFixed(1)} KB</span
-						>
-						<button
-							class="btn sm ghost danger"
-							disabled={busy}
-							onclick={() => deleteAttachment(att.id)}
-						>
-							Delete
-						</button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
 </div>
 
 <Modal
@@ -464,8 +410,8 @@
 	<div class="confirm">
 		<h2 class="confirm-title">Delete ticket permanently?</h2>
 		<p class="confirm-body">
-			This permanently removes the ticket, its attachments, and its blocking links from the
-			database. This cannot be undone.
+			This permanently removes the ticket and its blocking links from the database. This cannot be
+			undone.
 		</p>
 		<div class="confirm-actions">
 			<button class="btn sm ghost" onclick={cancelDelete}>Cancel</button>
@@ -652,37 +598,6 @@
 	}
 	.dep-link:hover {
 		color: var(--accent);
-	}
-	.attach-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-	}
-	.attach-list li {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-width: 0;
-		flex-wrap: wrap;
-	}
-	.attach-link {
-		color: var(--text);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		flex: 1 1 auto;
-		min-width: 0;
-	}
-	.attach-link:hover {
-		color: var(--accent);
-	}
-	.attach-meta {
-		font-size: var(--fs-sm);
-		white-space: nowrap;
-		flex-shrink: 0;
 	}
 	@media (max-width: 768px) {
 		.wrap {

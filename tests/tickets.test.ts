@@ -146,10 +146,9 @@ describe('workspace tickets', () => {
 		rmSync(otherWorkspace, { recursive: true, force: true });
 	});
 
-	it('API purge permanently deletes a ticket and cascades its edges and attachments', async () => {
+	it('API purge permanently deletes a ticket and cascades its edges', async () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		const tickets = await import('../src/lib/server/db/repos/tickets');
-		const attachments = await import('../src/lib/server/db/repos/ticket-attachments');
 		const { DELETE } = await import('../src/routes/api/tickets/[id]/+server');
 		const user = users.ensureLocalUser();
 
@@ -159,16 +158,7 @@ describe('workspace tickets', () => {
 			title: 'Blocked ticket',
 			blockedBy: [blocker.id]
 		});
-		attachments.insert({
-			ticketId: target.id,
-			filename: 'note.txt',
-			mimeType: 'text/plain',
-			byteSize: 3,
-			sourcePath: null,
-			data: Buffer.from('abc')
-		});
 		expect(tickets.listDependencies(target.id)).toEqual([blocker.id]);
-		expect(attachments.countForTicket(target.id)).toBe(1);
 
 		const purgeResponse = await DELETE(
 			event({
@@ -182,13 +172,12 @@ describe('workspace tickets', () => {
 		expect(purged.deleted).toBe(true);
 
 		// The row is gone entirely — not merely archived — and the FK cascade took
-		// its dependency edges and attachments with it. The blocker is untouched.
+		// its dependency edges with it. The blocker is untouched.
 		expect(tickets.get(target.id, user.id)).toBeNull();
 		expect(tickets.list(user.id, workspace, { status: 'all' }).map((t) => t.id)).toEqual([
 			blocker.id
 		]);
 		expect(tickets.listDependents(blocker.id)).toEqual([]);
-		expect(attachments.countForTicket(target.id)).toBe(0);
 
 		// Purging an already-deleted ticket is a 404, not a silent success.
 		let secondPurgeStatus: number;

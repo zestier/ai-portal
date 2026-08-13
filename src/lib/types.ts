@@ -191,15 +191,6 @@ export interface TicketDependencyRef {
 	status: WorkspaceTicketStatus;
 }
 
-export interface TicketAttachmentMeta {
-	id: number;
-	ticketId: number;
-	filename: string;
-	mimeType: string;
-	byteSize: number;
-	createdAt: number;
-}
-
 /**
  * A workspace ticket enriched with its still-open prerequisites for the sidebar
  * list. `blockers` is the subset of the ticket's prerequisites that are still
@@ -468,7 +459,6 @@ export interface ReasoningBlockRecord {
 	startedAt: number;
 	durationMs: number | null;
 	// When set, this block was emitted by a sub-agent spawned by the outer
-	// When set, this block was emitted by a sub-agent spawned by the outer
 	// `task` tool call with this id. Such blocks are rendered inside the
 	// SubagentCall component, not at the message level.
 	parentToolCallId: number | null;
@@ -515,13 +505,6 @@ export interface ToolCallRecord {
 	// running. Not persisted: server-side rehydrations leave these unset.
 	partialOutput?: string;
 	progressMessage?: string;
-	// Binary artifacts side-stored for this tool call (currently images
-	// captured for a native `view`). Metadata only — the bytes are served
-	// Binary artifacts side-stored for this tool call (currently images
-	// captured for a native `view`). Metadata only — the bytes are served
-	// lazily through an authed endpoint. Populated on conversation load and
-	// on the live `tool.result` event; absent while the tool is still running.
-	attachments?: ToolAttachmentMeta[];
 	// Server-computed collapsed-line summary (backend-projected transcript),
 	// used when `argsJson` was omitted from the payload so the collapsed card
 	// stays accurate without deriving from raw args. Live streamed records
@@ -531,14 +514,6 @@ export interface ToolCallRecord {
 	// pills (agent type / model / background id) for `task` calls, the shell id
 	// for bash-family calls. Populated server-side on trimmed payloads.
 	meta?: Record<string, unknown>;
-}
-
-export interface ToolAttachmentMeta {
-	id: number;
-	toolCallId: number;
-	kind: 'image';
-	mimeType: string;
-	byteSize: number;
 }
 
 export interface FileEditRecord {
@@ -1079,7 +1054,6 @@ export type PortalEvent =
 			summary: string;
 			output?: unknown;
 			parentToolCallId?: number | undefined;
-			attachments?: ToolAttachmentMeta[];
 	  }
 	// Ephemeral live-streaming events from the SDK during a tool's execution.
 	// Forwarded to subscribers but intentionally NOT appended to the turn's

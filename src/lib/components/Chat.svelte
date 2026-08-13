@@ -909,9 +909,6 @@
 					// Drop ephemeral streaming state — final result supersedes it.
 					delete tc.partialOutput;
 					delete tc.progressMessage;
-					if (ev.attachments && ev.attachments.length > 0) {
-						tc.attachments = ev.attachments;
-					}
 					touched = tc.messageId;
 				}
 				break;

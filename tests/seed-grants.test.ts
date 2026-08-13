@@ -220,11 +220,6 @@ describe('seed grants — runtime behaviour', () => {
 		expect(customToolMatch('ticket_unblock')).toBe('allow');
 	});
 
-	it('does not auto-approve ticket attachment tools by default', () => {
-		expect(customToolMatch('ticket_attach')).not.toBe('allow');
-		expect(customToolMatch('ticket_detach')).not.toBe('allow');
-	});
-
 	it('auto-approves permission capability inspection by default', () => {
 		expect(customToolMatch('permission_capabilities')).toBe('allow');
 	});

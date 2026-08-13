@@ -1,7 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import * as tickets from '$lib/server/db/repos/tickets';
-import * as ticketAttachments from '$lib/server/db/repos/ticket-attachments';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
 
@@ -21,7 +20,6 @@ export const load: PageServerLoad = ({ params, locals }) => {
 		// active blockers) and the tickets that depend on it.
 		dependsOn: tickets.dependencyRefs(ticket.id, userId),
 		dependents: tickets.dependentRefs(ticket.id, userId),
-		ticketActions: promptTemplates.list(userId, { type: 'ticket-action', status: 'open' }),
-		attachments: ticketAttachments.listMetaForTicket(ticketId)
+		ticketActions: promptTemplates.list(userId, { type: 'ticket-action', status: 'open' })
 	};
 };

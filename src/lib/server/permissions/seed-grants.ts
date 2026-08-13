@@ -382,10 +382,6 @@ const GIT_STRUCTURED_TOOLS = [
  * ordering follow-up work prompt, which is an auto-deny under the `auto-deny`
  * approval mode even though the portal guidance tells agents to link
  * tickets with `ticket_block`.
- *
- * The attachment tools stay out on purpose: `ticket_attach` reads an arbitrary
- * path off disk, so it belongs to the filesystem grants rather than this list,
- * and `ticket_detach` destroys a stored blob.
  */
 const TICKET_STRUCTURED_TOOLS = [
 	'ticket_add',

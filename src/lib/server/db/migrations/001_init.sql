@@ -507,32 +507,6 @@ CREATE TABLE ticket_deps (
 
 CREATE INDEX idx_ticket_deps_depends_on ON ticket_deps(depends_on);
 
-CREATE TABLE tool_attachments (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  tool_call_id  INTEGER NOT NULL REFERENCES tool_calls(id) ON DELETE CASCADE,
-  kind          TEXT NOT NULL DEFAULT 'image',
-  mime_type     TEXT NOT NULL,
-  byte_size     INTEGER NOT NULL,
-  source_path   TEXT,
-  data          BLOB NOT NULL,
-  created_at    INTEGER NOT NULL
-);
-
-CREATE INDEX idx_tool_attachments_tool_call ON tool_attachments(tool_call_id);
-
-CREATE TABLE ticket_attachments (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  ticket_id    INTEGER NOT NULL REFERENCES workspace_tickets(id) ON DELETE CASCADE,
-  filename     TEXT NOT NULL,
-  mime_type    TEXT NOT NULL,
-  byte_size    INTEGER NOT NULL,
-  source_path  TEXT,
-  data         BLOB NOT NULL,
-  created_at   INTEGER NOT NULL
-);
-
-CREATE INDEX idx_ticket_attachments_ticket ON ticket_attachments(ticket_id);
-
 CREATE TABLE turn_idempotency (
   conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   idempotency_key  TEXT NOT NULL,

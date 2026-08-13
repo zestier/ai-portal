@@ -403,19 +403,19 @@ describe('apply — workspace permissions', () => {
 		const rootA = makeWorkspace();
 		const rootB = makeWorkspace();
 		writeFile(rootA, `[[tool]]\nname = "git_commit"\ndecision = "deny"\n`);
-		writeFile(rootB, `[[tool]]\nname = "ticket_detach"\ndecision = "deny"\n`);
+		writeFile(rootB, `[[tool]]\nname = "git_merge_abort"\ndecision = "deny"\n`);
 		expect(applyWorkspaceFile({ userId, workspaceRoot: rootA })).toEqual({ ok: true, applied: 1 });
 		expect(applyWorkspaceFile({ userId, workspaceRoot: rootB })).toEqual({ ok: true, applied: 1 });
 
 		// Scoped to A: A's deny applies, B's is excluded.
 		expect(toolMatch(rootA, 'git_commit')).toBe('deny');
-		expect(toolMatch(rootA, 'ticket_detach')).not.toBe('deny');
+		expect(toolMatch(rootA, 'git_merge_abort')).not.toBe('deny');
 		// Scoped to B: B's deny applies, A's is excluded.
-		expect(toolMatch(rootB, 'ticket_detach')).toBe('deny');
+		expect(toolMatch(rootB, 'git_merge_abort')).toBe('deny');
 		expect(toolMatch(rootB, 'git_commit')).not.toBe('deny');
 		// No workspace roots at all: every workspace-file row is excluded.
 		expect(toolMatch(null, 'git_commit')).not.toBe('deny');
-		expect(toolMatch(null, 'ticket_detach')).not.toBe('deny');
+		expect(toolMatch(null, 'git_merge_abort')).not.toBe('deny');
 	});
 
 	it('a file deny beats a user allow for the same tool (deny wins across sources)', () => {
@@ -441,11 +441,11 @@ describe('apply — workspace permissions', () => {
 
 	it('is additive over seeds — file grants can extend, never remove, the seed floor', () => {
 		const root = makeWorkspace();
-		// `ticket_detach` is deliberately NOT seeded with an allow.
-		expect(toolMatch(root, 'ticket_detach')).not.toBe('allow');
-		writeFile(root, `[[tool]]\nname = "ticket_detach"\ndecision = "allow"\n`);
+		// `git_merge_abort` is deliberately NOT seeded with an allow.
+		expect(toolMatch(root, 'git_merge_abort')).not.toBe('allow');
+		writeFile(root, `[[tool]]\nname = "git_merge_abort"\ndecision = "allow"\n`);
 		expect(applyWorkspaceFile({ userId, workspaceRoot: root })).toEqual({ ok: true, applied: 1 });
-		expect(toolMatch(root, 'ticket_detach')).toBe('allow');
+		expect(toolMatch(root, 'git_merge_abort')).toBe('allow');
 		// Seeds still hold: a seeded allow remains an allow, a seeded prompt a prompt.
 		expect(toolMatch(root, 'git_status')).toBe('allow');
 		expect(toolMatch(root, 'git_commit')).not.toBe('allow');

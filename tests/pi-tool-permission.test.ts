@@ -24,10 +24,10 @@ import { makeTmpDir } from './helpers/tmp';
 //
 // Grant isolation: grants are seeded conversation-scoped (each test creates its
 // own conversation row), so one test's allow/deny grant can't leak into the
-// next. `ticket_detach` is deliberately NOT in the user-global seed grants, so
-// it is the workhorse for gate paths that must start from "nothing matches"
-// (prompt / deny-all / auto-deny); `ticket_list` IS seeded and only used where
-// a success envelope is asserted.
+// next. `bash` with an unseeded command (`mktemp -d`) is deliberately NOT
+// covered by any seed grant, so it is the workhorse for gate paths that must
+// start from "nothing matches" (prompt / deny-all / auto-deny); `ticket_list`
+// IS seeded and only used where a success envelope is asserted.
 
 let USER = 1;
 let convSeq = 0;
@@ -147,16 +147,16 @@ describe('pi tool calls + permission gate', () => {
 			addGrant({
 				userId: USER,
 				conversationId: convId,
-				tool: 'ticket_detach',
-				permissionKind: 'custom-tool',
-				scope: { kind: 'any' },
+				tool: 'bash',
+				permissionKind: 'shell',
+				scope: {
+					kind: 'shell',
+					rule: { command: [{ token: 'mktemp' }], positionals: { kind: 'any' } }
+				},
 				decision: 'allow'
 			});
 			const session = await openSession(wd, convId);
-			const { result, prompts } = await runToolCall(session, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const { result, prompts } = await runToolCall(session, 'bash', { command: 'mktemp -d' });
 			expect(ran(result)).toBe(true);
 			expect(prompts.length).toBe(0);
 		},
@@ -172,19 +172,19 @@ describe('pi tool calls + permission gate', () => {
 			addGrant({
 				userId: USER,
 				conversationId: convId,
-				tool: 'ticket_detach',
-				permissionKind: 'custom-tool',
-				scope: { kind: 'any' },
+				tool: 'bash',
+				permissionKind: 'shell',
+				scope: {
+					kind: 'shell',
+					rule: { command: [{ token: 'mktemp' }], positionals: { kind: 'any' } }
+				},
 				decision: 'deny',
-				denyReason: 'tests deny ticket detach'
+				denyReason: 'tests deny mktemp'
 			});
 			const session = await openSession(wd, convId);
-			const { result, prompts } = await runToolCall(session, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const { result, prompts } = await runToolCall(session, 'bash', { command: 'mktemp -d' });
 			expect(ran(result)).toBe(false);
-			expect(result.summary).toContain('tests deny ticket detach');
+			expect(result.summary).toContain('tests deny mktemp');
 			expect(prompts.length).toBe(0);
 		},
 		T
@@ -196,10 +196,7 @@ describe('pi tool calls + permission gate', () => {
 			const wd = makeTmpDir('pi-gate-');
 			const convId = await createConversation(wd);
 			const session = await openSession(wd, convId, { policy: 'deny-all' });
-			const { result, prompts } = await runToolCall(session, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const { result, prompts } = await runToolCall(session, 'bash', { command: 'mktemp -d' });
 			expect(ran(result)).toBe(false);
 			expect(prompts.length).toBe(0);
 		},
@@ -212,10 +209,7 @@ describe('pi tool calls + permission gate', () => {
 			const wd = makeTmpDir('pi-gate-');
 			const convId = await createConversation(wd);
 			const session = await openSession(wd, convId, { policy: 'allow-all' });
-			const { result, prompts } = await runToolCall(session, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const { result, prompts } = await runToolCall(session, 'bash', { command: 'mktemp -d' });
 			expect(ran(result)).toBe(true);
 			expect(prompts.length).toBe(0);
 		},
@@ -301,13 +295,13 @@ describe('pi tool calls + permission gate', () => {
 			const session = await openSession(wd, convId);
 			const { result, prompts } = await runToolCall(
 				session,
-				'ticket_detach',
-				{ ticketId: 'no-such-ticket', attachmentId: 'no-such-attachment' },
+				'bash',
+				{ command: 'mktemp -d' },
 				(view) =>
 					view.kind === 'permission' ? { kind: 'permission', decision: 'allow-once' } : undefined
 			);
 			expect(prompts.length).toBe(1);
-			expect(prompts[0].tool).toBe('ticket_detach');
+			expect(prompts[0].tool).toBe('bash');
 			expect(prompts[0].canPersistDecision).toBe(true);
 			expect(ran(result)).toBe(true);
 		},
@@ -322,8 +316,8 @@ describe('pi tool calls + permission gate', () => {
 			const session = await openSession(wd, convId);
 			const { result, prompts } = await runToolCall(
 				session,
-				'ticket_detach',
-				{ ticketId: 'no-such-ticket', attachmentId: 'no-such-attachment' },
+				'bash',
+				{ command: 'mktemp -d' },
 				(view) =>
 					view.kind === 'permission'
 						? { kind: 'permission', decision: 'deny', feedback: 'the test denies it' }
@@ -342,19 +336,13 @@ describe('pi tool calls + permission gate', () => {
 			const wd = makeTmpDir('pi-gate-');
 			const deniedConv = await createConversation(wd);
 			const denied = await openSession(wd, deniedConv, { approvalMode: 'auto-deny' });
-			const blocked = await runToolCall(denied, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const blocked = await runToolCall(denied, 'bash', { command: 'mktemp -d' });
 			expect(ran(blocked.result)).toBe(false);
 			expect(blocked.prompts.length).toBe(0);
 
 			const allowedConv = await createConversation(wd);
 			const allowed = await openSession(wd, allowedConv, { approvalMode: 'auto-approve' });
-			const ran2 = await runToolCall(allowed, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const ran2 = await runToolCall(allowed, 'bash', { command: 'mktemp -d' });
 			expect(ran(ran2.result)).toBe(true);
 			expect(ran2.prompts.length).toBe(0);
 		},
@@ -368,12 +356,9 @@ describe('pi tool calls + permission gate', () => {
 			const convId = await createConversation(wd);
 			const session = await openSession(wd, convId, {
 				policy: 'allow-all',
-				disabledToolGroups: ['tickets']
+				disabledToolGroups: ['shell']
 			});
-			const { result, prompts } = await runToolCall(session, 'ticket_detach', {
-				ticketId: 'no-such-ticket',
-				attachmentId: 'no-such-attachment'
-			});
+			const { result, prompts } = await runToolCall(session, 'bash', { command: 'mktemp -d' });
 			// The tool never reaches pi's registry (group filtered before assembly),
 			// so pi errors natively — the point is it's blocked, not allowed.
 			expect(ran(result)).toBe(false);

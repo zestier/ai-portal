@@ -2,7 +2,6 @@ import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import * as tickets from '$lib/server/db/repos/tickets';
-import * as ticketAttachments from '$lib/server/db/repos/ticket-attachments';
 import { ticketWorkspaceFromInput } from '$lib/server/ticket-workspace';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
@@ -34,8 +33,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
 	const ticket = tickets.get(ticketId, userId);
 	if (!ticket) throw error(404);
-	const attachments = ticketAttachments.listMetaForTicket(ticketId);
-	return json({ ticket, attachments });
+	return json({ ticket });
 };
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
@@ -72,7 +70,7 @@ export const DELETE: RequestHandler = ({ params, locals, url }) => {
 		if (current.workspaceKey !== workspace) throw error(404);
 	}
 	// `?purge=true` permanently removes the ticket row (cascading its dependency
-	// edges and attachments via FK ON DELETE CASCADE). The default — no flag —
+	// edges via FK ON DELETE CASCADE). The default — no flag —
 	// keeps the historical soft-delete behavior, archiving the ticket so it can
 	// still be reopened.
 	if (url.searchParams.get('purge') === 'true') {

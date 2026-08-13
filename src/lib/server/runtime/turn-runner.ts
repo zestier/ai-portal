@@ -24,7 +24,6 @@ import { publishConversationActivity } from './conversation-activity';
 import { PORTAL_PRELUDE } from './portal-prelude';
 import { AsyncQueue } from './async-queue';
 import { snapshot as takeSnapshot } from '../snapshots';
-import * as toolAttachments from '../db/repos/tool-attachments';
 import { isEnabled } from '../memory/engine';
 import { loadConfig } from '../config';
 import { extractAndCommitMemory } from '../memory/extractor';
@@ -544,10 +543,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				parentToolCallId: tool.parentToolCallId
 			});
 		} else if (ev.type === 'tool.result') {
-			// Surface any image attachments captured + flushed for this call so
-			// the live card can render them without waiting for a reload.
-			const attachments = toolAttachments.listMetaForToolCall(ev.toolCallId);
-			emit(attachments.length > 0 ? { ...ev, attachments } : ev);
+			emit(ev);
 			const tc = pendingTools.get(ev.toolCallId);
 			if (tc) {
 				tc.status = ev.ok ? 'ok' : 'error';

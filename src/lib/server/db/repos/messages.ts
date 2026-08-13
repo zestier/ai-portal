@@ -1,5 +1,4 @@
 import { getDb } from '../index';
-import * as toolAttachmentsRepo from './tool-attachments';
 import type Database from 'better-sqlite3';
 import type {
 	Message,
@@ -256,10 +255,8 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 	);
 
 	const byMsgT: Record<number, ToolCallRecord[]> = {};
-	const attachmentsByTool = toolAttachmentsRepo.listMetaForToolCalls(toolIds);
 	for (const t of toolRows) {
 		const lifecycle = lifecycleByTool.get(t.id);
-		const attachments = attachmentsByTool.get(t.id);
 		// A NULL alongside a non-zero byte count means "trimmed", not "absent";
 		// `result_json` is legitimately NULL while a call is still pending.
 		const argsTruncated = trim && t.args_json === null && (t.args_bytes ?? 0) > 0;
@@ -280,8 +277,7 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 			backgroundAgentStatus: lifecycle?.status ?? null,
 			backgroundAgentId: lifecycle?.agent_id ?? null,
 			backgroundAgentStartedAt: lifecycle?.started_at ?? null,
-			backgroundAgentEndedAt: lifecycle?.ended_at ?? null,
-			...(attachments && attachments.length > 0 ? { attachments } : {})
+			backgroundAgentEndedAt: lifecycle?.ended_at ?? null
 		});
 	}
 	const byMsgE: Record<number, FileEditRecord[]> = {};

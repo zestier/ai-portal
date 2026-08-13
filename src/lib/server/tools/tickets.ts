@@ -1,18 +1,8 @@
 import { z } from 'zod';
-import { readFileSync, realpathSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
 import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
 import type { WorkspaceTicket } from '$lib/types';
-import {
-	err,
-	ok,
-	type PortalTool,
-	type ToolBinaryResult,
-	type ToolPermissionRequest
-} from './types';
-import * as ticketAttachments from '../db/repos/ticket-attachments';
-import { sanitizeSvg } from '../svg-sanitize';
+import { err, ok, type PortalTool } from './types';
 import {
 	project,
 	withOmitted,
@@ -27,18 +17,8 @@ import {
 // (open blockers) and `blocks` (the tickets this one blocks) are part of the
 // compact view so ordering is visible on a plain read — they are small, bounded
 // id lists — but `withDeps` only attaches them when non-empty, so a ticket with
-// no edges shows neither rather than empty arrays. `attachments` is included so
-// the model can discover attached files via `ticket_get` and `fields` requests.
-const TICKET_KEEP = [
-	'id',
-	'title',
-	'body',
-	'priority',
-	'status',
-	'blockedBy',
-	'blocks',
-	'attachments'
-] as const;
+// no edges shows neither rather than empty arrays.
+const TICKET_KEEP = ['id', 'title', 'body', 'priority', 'status', 'blockedBy', 'blocks'] as const;
 
 // Enrich a ticket with its blocking edges for the agent tools. `blockedBy` is
 // the actionable subset (blockers that are still open); `blocks` lists the
@@ -54,56 +34,6 @@ function withDeps(ticket: WorkspaceTicket) {
 		...(blockedBy.length ? { blockedBy } : {}),
 		...(blocks.length ? { blocks } : {})
 	};
-}
-
-function sniffMimeType(filename: string, data: Buffer): string {
-	if (
-		data.length >= 12 &&
-		data.slice(0, 4).toString('ascii') === 'RIFF' &&
-		data.slice(8, 12).toString('ascii') === 'WEBP'
-	)
-		return 'image/webp';
-	if (data.length >= 4) {
-		const sig = data.slice(0, 4);
-		if (sig[0] === 0xff && sig[1] === 0xd8) return 'image/jpeg';
-		if (sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47)
-			return 'image/png';
-		if (sig[0] === 0x47 && sig[1] === 0x49 && sig[2] === 0x46) return 'image/gif';
-		if (sig[0] === 0x25 && sig[1] === 0x50 && sig[2] === 0x44 && sig[3] === 0x46)
-			return 'application/pdf';
-	}
-	const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-	const extMap: Record<string, string> = {
-		png: 'image/png',
-		jpg: 'image/jpeg',
-		jpeg: 'image/jpeg',
-		gif: 'image/gif',
-		webp: 'image/webp',
-		svg: 'image/svg+xml',
-		pdf: 'application/pdf',
-		txt: 'text/plain',
-		md: 'text/markdown',
-		json: 'application/json',
-		html: 'text/html',
-		css: 'text/css',
-		js: 'text/javascript',
-		ts: 'text/typescript',
-		log: 'text/plain',
-		csv: 'text/csv',
-		zip: 'application/zip',
-		gz: 'application/gzip',
-		mp4: 'video/mp4',
-		webm: 'video/webm'
-	};
-	return extMap[ext] ?? 'application/octet-stream';
-}
-
-function isTextMime(mimeType: string): boolean {
-	return mimeType.startsWith('text/') || mimeType === 'application/json';
-}
-
-function isImageMime(mimeType: string): boolean {
-	return mimeType.startsWith('image/');
 }
 
 const Status = z.enum(['open', 'done', 'archived']);
@@ -171,22 +101,6 @@ const BlockArgs = z.object({
 const UnblockArgs = z.object({
 	id: z.string().min(1),
 	blockedBy: z.string().min(1)
-});
-
-const AttachArgs = z.object({
-	ticketId: z.string().min(1),
-	path: z.string().min(1),
-	filename: z.string().trim().min(1).max(255).optional()
-});
-
-const DetachArgs = z.object({
-	ticketId: z.string().min(1),
-	attachmentId: z.string().min(1)
-});
-
-const ViewAttachmentArgs = z.object({
-	ticketId: z.string().min(1),
-	attachmentId: z.string().min(1)
 });
 
 export function buildTicketTools(opts: {
@@ -334,17 +248,15 @@ export function buildTicketTools(opts: {
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const attachments = ticketAttachments.listMetaForTicket(Number(id));
 				const fields = normalizeFieldSelector(rawFields);
 				// The tool id is a string (it round-trips into ticket_update/ticket_block's
 				// `z.string()` id param), so the result echoes it in that form. Edge lists
 				// stay numeric ids — they are display-only on this read.
-				const ticketWithAttachments = {
+				const ticketView = {
 					...withDeps(ticket),
-					id: String(ticket.id),
-					...(attachments.length > 0 ? { attachments } : {})
+					id: String(ticket.id)
 				};
-				const projected = project(ticketWithAttachments, {
+				const projected = project(ticketView, {
 					...(fields !== undefined ? { fields } : {}),
 					keep: TICKET_KEEP
 				});
@@ -492,185 +404,6 @@ export function buildTicketTools(opts: {
 							`Ticket ${id} no longer blocked by ${blockedBy}.`
 						)
 					: err(`Ticket ${id} is not blocked by ${blockedBy}.`);
-			}
-		},
-		{
-			name: 'ticket_attach',
-			description:
-				'Attach a file (screenshot, log, trace, or any blob) to a workspace ticket by path. Stored in the database, persists across sessions. 10 MB per-file and 20-attachment-per-ticket limits.',
-			argsSchema: AttachArgs,
-			parameters: {
-				type: 'object',
-				properties: {
-					ticketId: { type: 'string', description: 'The ticket id to attach to.' },
-					path: {
-						type: 'string',
-						description: 'Path to the file to attach (absolute or relative to working directory).'
-					},
-					filename: {
-						type: 'string',
-						description: 'Optional filename override; defaults to basename of the path.'
-					}
-				},
-				required: ['ticketId', 'path'],
-				additionalProperties: false
-			},
-			derivePermissionRequest(args: unknown): ToolPermissionRequest | null {
-				const parsed = AttachArgs.safeParse(args);
-				if (!parsed.success) return null;
-				try {
-					const resolved = realpathSync(resolve(parsed.data.path));
-					return { permissionKind: 'read', path: resolved };
-				} catch {
-					return { permissionKind: 'read', path: resolve(parsed.data.path) };
-				}
-			},
-			async handler(args) {
-				const parsed = AttachArgs.parse(args);
-				const ticket = tickets.get(Number(parsed.ticketId), opts.userId);
-				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
-					return err(`Ticket not found: ${parsed.ticketId}`);
-				}
-				// Resolve path
-				let resolvedPath: string;
-				try {
-					resolvedPath = realpathSync(resolve(parsed.path));
-				} catch {
-					resolvedPath = resolve(parsed.path);
-				}
-				// Read file
-				let data: Buffer;
-				try {
-					data = readFileSync(resolvedPath);
-				} catch (e) {
-					return err(`Cannot read file: ${e instanceof Error ? e.message : String(e)}`, {
-						code: 'read_error'
-					});
-				}
-				// Check size
-				if (data.length > ticketAttachments.MAX_BYTE_SIZE) {
-					return err(
-						`File exceeds the 10 MB per-file limit (${(data.length / 1024 / 1024).toFixed(1)} MB).`,
-						{ code: 'file_too_large' }
-					);
-				}
-				// Check count
-				const count = ticketAttachments.countForTicket(Number(parsed.ticketId));
-				if (count >= ticketAttachments.MAX_PER_TICKET) {
-					return err(
-						`Ticket already has ${count} attachment(s); the per-ticket limit is ${ticketAttachments.MAX_PER_TICKET}.`,
-						{ code: 'attachment_limit' }
-					);
-				}
-				const filename = parsed.filename ?? basename(resolvedPath);
-				const mimeType = sniffMimeType(filename, data);
-				// SVG is active content: sanitize before storing so the bytes at
-				// rest are safe to inline/serve, regardless of how a surface
-				// later renders them. Reject SVGs we can't sanitize rather than
-				// storing raw script-bearing markup.
-				if (mimeType === 'image/svg+xml') {
-					const clean = sanitizeSvg(data);
-					if (clean === null) {
-						return err('SVG could not be sanitized for safe rendering.', {
-							code: 'unsafe_svg'
-						});
-					}
-					data = Buffer.from(clean, 'utf-8');
-				}
-				const meta = ticketAttachments.insert({
-					ticketId: Number(parsed.ticketId),
-					filename,
-					mimeType,
-					byteSize: data.length,
-					sourcePath: resolvedPath,
-					data
-				});
-				return ok(
-					meta,
-					`Attached ${filename} (${(data.length / 1024).toFixed(1)} KB) to ticket ${parsed.ticketId}.`
-				);
-			}
-		},
-		{
-			name: 'ticket_detach',
-			description: 'Remove a single attachment from a ticket by attachment id.',
-			argsSchema: DetachArgs,
-			parameters: {
-				type: 'object',
-				properties: {
-					ticketId: { type: 'string', description: 'The ticket id.' },
-					attachmentId: { type: 'string', description: 'The attachment id to remove.' }
-				},
-				required: ['ticketId', 'attachmentId'],
-				additionalProperties: false
-			},
-			async handler(args) {
-				const parsed = DetachArgs.parse(args);
-				const ticket = tickets.get(Number(parsed.ticketId), opts.userId);
-				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
-					return err(`Ticket not found: ${parsed.ticketId}`);
-				}
-				const removed = ticketAttachments.remove(
-					Number(parsed.ticketId),
-					Number(parsed.attachmentId),
-					opts.userId
-				);
-				if (!removed)
-					return err(`Attachment not found: ${parsed.attachmentId}`, { code: 'not_found' });
-				return ok(
-					{ ticketId: parsed.ticketId, attachmentId: parsed.attachmentId },
-					`Attachment ${parsed.attachmentId} removed.`
-				);
-			}
-		},
-		{
-			name: 'ticket_view_attachment',
-			description:
-				"Read an attachment's content and return it to the model. Images as inline image data; text as text; other binaries as a resource blob. Use ticket_get to list attachment ids first.",
-			argsSchema: ViewAttachmentArgs,
-			permissionBehavior: 'never-prompt',
-			parameters: {
-				type: 'object',
-				properties: {
-					ticketId: { type: 'string', description: 'The ticket id.' },
-					attachmentId: { type: 'string', description: 'The attachment id to view.' }
-				},
-				required: ['ticketId', 'attachmentId'],
-				additionalProperties: false
-			},
-			async handler(args) {
-				const parsed = ViewAttachmentArgs.parse(args);
-				const ticket = tickets.get(Number(parsed.ticketId), opts.userId);
-				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
-					return err(`Ticket not found: ${parsed.ticketId}`);
-				}
-				const att = ticketAttachments.getForOwner(
-					Number(parsed.ticketId),
-					Number(parsed.attachmentId),
-					opts.userId
-				);
-				if (!att) return err(`Attachment not found: ${parsed.attachmentId}`, { code: 'not_found' });
-				if (isTextMime(att.mimeType)) {
-					return ok(
-						att.data.toString('utf8'),
-						`${att.filename} (${att.mimeType}, ${att.byteSize} bytes)`
-					);
-				}
-				const b64 = att.data.toString('base64');
-				const binaryType: 'image' | 'resource' = isImageMime(att.mimeType) ? 'image' : 'resource';
-				const binary: ToolBinaryResult[] = [
-					{ data: b64, mimeType: att.mimeType, type: binaryType, description: att.filename }
-				];
-				return ok(
-					{
-						attachmentId: parsed.attachmentId,
-						filename: att.filename,
-						mimeType: att.mimeType,
-						byteSize: att.byteSize
-					},
-					`${att.filename} (${att.mimeType})`,
-					{ binary }
-				);
 			}
 		}
 	];
