@@ -59,7 +59,8 @@ export async function saveProviderKey(id: string, apiKey: string): Promise<void>
 			if (e instanceof Error && e.message.includes('ENCRYPTION_KEY')) {
 				throw new Error(
 					'Cannot store an API key: ENCRYPTION_KEY is not configured. Add ENCRYPTION_KEY ' +
-						'to the server environment (e.g. `openssl rand -base64 32`).'
+						'to the server environment (e.g. `openssl rand -base64 32`).',
+					{ cause: e }
 				);
 			}
 			throw e;

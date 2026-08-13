@@ -67,6 +67,14 @@ interface PendingReasoning {
 const MEMORY_CONTINUATION_NUDGE =
 	'You queried durable memory but have not yet answered me. A memory tool call is not a response, and I never see tool output directly. Using what you retrieved, respond to my message now. Do not end your turn without a substantive reply.';
 
+// Shown when a turn finalizes with no content, no tool calls, and no
+// reasoning — the provider effectively returned nothing. Surfaced as a
+// visible system message (via an `error` event) so the user is never left
+// staring at a dead empty bubble that survives refresh: the exact artifact
+// the empty-turn guard exists to prevent. The client prefixes it with
+// "Error: " when rendering.
+const EMPTY_RESPONSE_MESSAGE = 'The model returned an empty response. Retry to try again.';
+
 // Read-only memory recall tools exposed to the model. Deliberately excludes
 // write/mutation tools (memory_global_record, memory_merge_entities): a turn
 // that *wrote* memory without answering is not the "recall then nothing"
@@ -385,6 +393,13 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	let assistantBuf = '';
 	let assistantId: number | null = null;
 	let persistedAssistantId: number | null = null;
+	// Set once a `message.start` has been dispatched this turn. Distinct from
+	// `assistantId`/`persistedAssistantId`: content-bearing events (deltas,
+	// tool calls, reasoning) can persist an assistant row even when the SDK
+	// never emitted `message_start`. The client only renders a bubble it saw a
+	// `message.start` for, so the empty-turn finalizer uses this to decide
+	// whether to synthesize one.
+	let sawMessageStart = false;
 	// Set to an error code when the stream fails for a non-abort reason
 	// (network drop, SDK crash, rate-limit). Drives the terminal `status` to
 	// `'error'` so the failed turn is persisted and reported as such rather
@@ -412,8 +427,18 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 		// Suppress the SDK's `done` event: we always emit our own terminal
 		// `done` in the finally block after persistence work completes.
 		if (ev.type === 'done') return;
+		// A stream-level `error` event (pi_stream_error from the mapper,
+		// pi_send_failed from runPrompt's catch, …) is a terminal failure even
+		// though the stream itself ends "normally" afterwards. Drive the
+		// finalizer to `status: 'error'` so the turn is never persisted as a
+		// false `complete` (the first error is the root cause). The turn's own
+		// catch overwrites with `stream_failed` on a hard throw.
+		if (ev.type === 'error') {
+			streamErrorCode ??= ev.code;
+		}
 
 		if (ev.type === 'message.start') {
+			sawMessageStart = true;
 			assistantId = ev.messageId;
 			emit({ ...ev, messageId: ensurePersistedAssistant() });
 		} else if (ev.type === 'message.delta') {
@@ -476,7 +501,21 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			}
 			emit({ ...ev, messageId: persistedId });
 		} else if (ev.type === 'message.end') {
-			emit({ ...ev, messageId: ensurePersistedAssistant() });
+			// D3: never create the assistant message from `message.end` alone.
+			// runPrompt's finally synthesizes a `message.end` whenever the SDK
+			// produced no real `message_end` (a silently-empty or
+			// error-swallowed response, or a prompt that yielded nothing).
+			// Creating the persisted row here — bypassing the turn finalizer's
+			// own empty-turn guard — is exactly how an empty, `complete`,
+			// no-error assistant message was born. Only ensure-persist when a
+			// `message.start` (or content/tool activity) already anchored the
+			// message this turn; otherwise pass the event through untouched so
+			// the client no-ops on the unknown id.
+			if (persistedAssistantId) {
+				emit({ ...ev, messageId: ensurePersistedAssistant() });
+			} else {
+				emit(ev);
+			}
 		} else if (ev.type === 'tool.call') {
 			const isChild = !!ev.parentToolCallId;
 			const persistedId = ensurePersistedAssistant();
@@ -681,16 +720,52 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				message: e instanceof Error ? e.message : String(e)
 			});
 		} finally {
-			const status: 'interrupted' | 'complete' | 'error' = turnAc.signal.aborted
+			let status: 'interrupted' | 'complete' | 'error' = turnAc.signal.aborted
 				? 'interrupted'
 				: streamErrorCode
 					? 'error'
 					: 'complete';
+			let errorCode: string | null = streamErrorCode;
+
+			// D2: never leave a silent empty `complete` message. If the turn
+			// finished cleanly but produced no assistant text, no tool calls,
+			// and no reasoning, the provider effectively returned nothing (a
+			// silently-empty or error-swallowed response, or a prompt that
+			// yielded nothing). Persisting that as `complete` is exactly the
+			// "dead empty bubble that survives refresh" artifact. Surface it as
+			// an explicit `empty_response` error instead, so the UI shows an
+			// Alert + Retry. Real provider failures already land here as
+			// `status === 'error'` (and a Stop as `interrupted`), so this only
+			// touches turns that would otherwise be a silent empty `complete`.
+			const emptyResponse =
+				status === 'complete' &&
+				assistantBuf.trim().length === 0 &&
+				pendingTools.size === 0 &&
+				pendingReasoning.size === 0;
+			if (emptyResponse) {
+				status = 'error';
+				errorCode = 'empty_response';
+				log.warn('turn.empty_response', {
+					conversationId: opts.conversationId,
+					turnId: turn.id
+				});
+			}
 
 			try {
-				if (persistedAssistantId || assistantBuf || assistantId || pendingTools.size) {
+				if (
+					persistedAssistantId ||
+					assistantBuf ||
+					assistantId ||
+					pendingTools.size ||
+					emptyResponse ||
+					// A stream-level error (pi_send_failed / pi_stream_error /
+					// stream_failed) with no message row yet still deserves a
+					// durable error trace + Retry affordance, rather than
+					// vanishing after refresh.
+					streamErrorCode !== null
+				) {
 					const id = ensurePersistedAssistant();
-					messages.updateContent(id, assistantBuf, status, streamErrorCode);
+					messages.updateContent(id, assistantBuf, status, errorCode);
 					for (const t of pendingTools.values()) {
 						if (t.status === 'pending') {
 							t.status = 'error';
@@ -702,12 +777,33 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 							});
 						}
 					}
+					// The client only renders bubbles it saw a `message.start`
+					// for. When the turn produced no stream events at all
+					// (runPrompt's synthetic `message.end`), no bubble exists
+					// yet — emit start/end so the errored bubble renders, then
+					// the `error` event below marks it and surfaces the visible
+					// system message + Retry affordance.
+					if (emptyResponse && !sawMessageStart) {
+						dispatch({ type: 'message.start', messageId: id, role: 'assistant' });
+						dispatch({ type: 'message.end', messageId: id });
+					}
 				}
 				convs.touch(opts.conversationId);
 			} catch (persistErr) {
 				log.error('turn.persist.failed', {
 					conversationId: opts.conversationId,
 					err: String(persistErr)
+				});
+			}
+
+			// Surface the empty response to live subscribers (and the event
+			// log, so a reconnect replays it): the client turns `error` into a
+			// visible system message and marks the trailing assistant bubble.
+			if (emptyResponse) {
+				dispatch({
+					type: 'error',
+					code: 'empty_response',
+					message: EMPTY_RESPONSE_MESSAGE
 				});
 			}
 

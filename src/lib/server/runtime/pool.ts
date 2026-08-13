@@ -83,6 +83,29 @@ function isProtected(conversationId: number): boolean {
 	return false;
 }
 
+/**
+ * True when a keep-alive predicate reports the conversation busy — i.e. the
+ * session is mid-stream on an active turn (the turn registry registers
+ * `turns.active` here). Distinct from `isProtected`, which also counts parked
+ * interactive prompts: a prompt-parked session CAN be evicted safely by
+ * expiring the prompt (a default denial unblocks the agent), whereas
+ * disposing a session out from under an active turn ends its stream silently
+ * and the turn-runner finalizes the turn as a false empty/partial `complete`.
+ */
+function isTurnBusy(conversationId: number): boolean {
+	for (const fn of keepAlive.values()) {
+		try {
+			if (fn(conversationId)) return true;
+		} catch (err) {
+			log.warn('pi.pool.keepalive_predicate_failed', {
+				conversationId,
+				err: err instanceof Error ? err.message : String(err)
+			});
+		}
+	}
+	return false;
+}
+
 async function disposeSession(
 	session: ProviderSession,
 	context: { conversationId: number; reason: string }
@@ -161,36 +184,51 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 	// new conversations all pass the guard and blow past the cap.
 	if (sessions.size + inflight.size >= cfg.MAX_CONCURRENT_SESSIONS) {
 		// Evict to make room. Prefer the oldest session with NO work
-		// outstanding so we never strand an open prompt / active turn. Only
-		// if every session is busy do we force-evict the oldest one — and
-		// then we expire its pending prompts with a distinct "session
-		// expired — re-issue" outcome so the parked agent unblocks instead
-		// of hanging on a deferred whose executor we just disposed.
+		// outstanding so we never strand an open prompt / active turn.
+		// Under capacity pressure a session parked on an interactive prompt
+		// is still evictable — expiring its pending prompts with a distinct
+		// "session expired — re-issue" outcome unblocks the parked agent
+		// instead of hanging it on a deferred whose executor we disposed.
+		// A session with an ACTIVE TURN is never disposed out from under its
+		// stream: that ends the send queue and the turn-runner finalizes the
+		// turn as a silent (empty/partial) `complete` — the "disappeared
+		// reply" bug. If every live session is mid-turn, defer the eviction:
+		// turns are transient, so the cap overrun is bounded and the next
+		// acquire can evict.
 		const sorted = [...sessions.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 		const unprotected = sorted.find(([cid]) => !isProtected(cid));
-		const picked = unprotected ?? sorted[0];
+		const promptParked = unprotected
+			? null
+			: sorted.find(([cid]) => isProtected(cid) && !isTurnBusy(cid));
+		const picked = unprotected ?? promptParked;
 		// `picked` can be undefined when every slot is consumed by in-flight
-		// opens (nothing live left to evict); there's nothing we can do but
-		// let this open proceed.
+		// opens (nothing live left to evict), or every live session has an
+		// active turn; there's nothing safe to dispose, so let this open
+		// proceed (the overrun is bounded by turn duration).
 		if (picked) {
 			const [oldestId, oldest] = picked;
 			// Claim the victim synchronously so a concurrent eviction can't
 			// pick the same oldest session and double-dispose it.
 			sessions.delete(oldestId);
-			if (unprotected) {
-				log.info('pi.pool.evict', { conversationId: oldestId });
-			} else {
+			if (promptParked) {
 				log.warn('pi.pool.evict_forced', { conversationId: oldestId });
 				// Settle the parked deferreds BEFORE disposing so the resolved
 				// event lands and the SDK callback's promise can't leak.
 				expireConversation(oldestId, 'capacity_evict');
+			} else {
+				log.info('pi.pool.evict', { conversationId: oldestId });
 			}
 			toDispose.push({
 				session: oldest.session,
 				context: {
 					conversationId: oldestId,
-					reason: unprotected ? 'capacity_evict' : 'capacity_evict_forced'
+					reason: promptParked ? 'capacity_evict_forced' : 'capacity_evict'
 				}
+			});
+		} else if (sorted.length > 0) {
+			log.warn('pi.pool.evict_deferred_active_turn', {
+				conversationId: sorted[0][0],
+				live: sorted.length
 			});
 		}
 	}
@@ -231,6 +269,17 @@ export function touch(conversationId: number) {
 export async function release(conversationId: number) {
 	const e = sessions.get(conversationId);
 	if (!e) return;
+	// D4: never dispose a session with work outstanding (an active turn
+	// streaming on it, or a parked interactive prompt). Disposing it now would
+	// end the send queue mid-turn and the turn-runner would finalize the turn
+	// as a silent (empty/partial) `complete` — the "disappeared reply" bug.
+	// Leave it pooled; the idle reaper (or a later release) disposes it once
+	// the work settles. Idle releases (the documented DELETE/archive flow,
+	// memory-mode session rebuilds) are unaffected — `isProtected` is false.
+	if (isProtected(conversationId)) {
+		log.info('pi.pool.release_skip_busy', { conversationId });
+		return;
+	}
 	sessions.delete(conversationId);
 	await disposeSession(e.session, { conversationId, reason: 'release' });
 }

@@ -26,6 +26,13 @@ interface StubRequestBody {
 let serverPromise: Promise<string> | null = null;
 let stubRegistered = false;
 
+// One-shot gate for the `@trigger-empty` directive: the FIRST request carrying
+// a given last-user-text replies with NO content, then subsequent identical
+// prompts (e.g. a Retry/regenerate of the same turn, which re-sends the same
+// user message) get the normal reply. Keys are the full user text, which e2e
+// tests make unique per test, so there's no cross-test state.
+const emptyTriggered = new Set<string>();
+
 /** Base URL of the shared stub server (started lazily, kept for process lifetime). */
 export function getStubServerBaseUrl(): Promise<string> {
 	serverPromise ??= startServer();
@@ -102,7 +109,15 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 	// follow-up request (assistant tool_calls + tool result in history) replies
 	// with plain text — the directive isn't re-triggered, so the loop ends.
 	const toolCall = hasAssistantToolCalls(body.messages) ? null : parseToolCallDirective(userText);
-	const reply = `Stubbed reply to: ${userText}`;
+	// `@trigger-empty` makes the FIRST request carrying this exact user text
+	// reply with NO content (a silently-empty response), so e2e can exercise
+	// the empty-turn handling. One-shot per unique prompt: a Retry/regenerate
+	// of the same turn (which re-sends the identical user message) gets the
+	// normal reply, letting tests assert "empty → visible error → Retry
+	// succeeds" deterministically.
+	const emptyReply = userText.includes('@trigger-empty') && !emptyTriggered.has(userText);
+	if (emptyReply) emptyTriggered.add(userText);
+	const reply = emptyReply ? '' : `Stubbed reply to: ${userText}`;
 	const id = `chatcmpl-stub-${Date.now()}`;
 	const created = Math.floor(Date.now() / 1000);
 	const model = typeof body.model === 'string' ? body.model : STUB_MODEL_ID;

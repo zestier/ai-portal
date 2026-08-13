@@ -2289,4 +2289,174 @@ describe('turn-runner', () => {
 			status: 'ok'
 		});
 	});
+
+	it('never persists a silent empty complete from a synthetic message.end — surfaces empty_response instead', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'silent-empty',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+
+		// runPrompt's finally synthesizes `message.end` when the SDK produced
+		// no assistant message at all — the "fresh chat, first reply" empty
+		// case. No `message.start`, no deltas, no tools, no reasoning.
+		acquireMock.mockResolvedValue(makeFakeSession([{ type: 'message.end', messageId: 0 }]));
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		const seen: PortalEvent[] = [];
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			seen.push(event);
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+
+		// The stream surfaces the failure: an empty_response error event and
+		// a terminal done carrying status 'error' — never a silent 'complete'.
+		expect(seen.some((e) => e.type === 'error' && e.code === 'empty_response')).toBe(true);
+		expect(done).toMatchObject({ type: 'done', status: 'error' });
+		expect(turnRunner.getTurn(conv.id)?.status).toBe('error');
+
+		// Exactly one assistant row, persisted as error/empty_response. The
+		// message.end-only path must NOT have created an empty `complete`
+		// row from the synthetic event, and the finalizer must not duplicate
+		// the bubble.
+		const assistant = messages.listByConversation(conv.id).filter((m) => m.role === 'assistant');
+		expect(assistant).toHaveLength(1);
+		expect(assistant[0].status).toBe('error');
+		expect(assistant[0].errorCode).toBe('empty_response');
+		expect(assistant[0].content).toBe('');
+	});
+
+	it('marks a streamed but content-free turn empty_response instead of a false complete', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'streamed-empty',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+
+		// The SDK opened an assistant message and closed it without ever
+		// emitting a text delta — a provider that "responded" with nothing.
+		acquireMock.mockResolvedValue(
+			makeFakeSession([
+				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.end', messageId: 1 }
+			])
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		const seen: PortalEvent[] = [];
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			seen.push(event);
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+
+		expect(seen.some((e) => e.type === 'error' && e.code === 'empty_response')).toBe(true);
+		expect(done).toMatchObject({ type: 'done', status: 'error' });
+
+		const assistant = messages.listByConversation(conv.id).filter((m) => m.role === 'assistant');
+		expect(assistant).toHaveLength(1);
+		expect(assistant[0].status).toBe('error');
+		expect(assistant[0].errorCode).toBe('empty_response');
+		expect(assistant[0].content).toBe('');
+
+		// Because a real `message.start` was seen, the finalizer must NOT
+		// synthesize a duplicate start/end pair: the event log's single
+		// message.start anchors the persisted error bubble.
+		const starts = seen.filter((e) => e.type === 'message.start');
+		expect(starts).toHaveLength(1);
+		expect(starts[0].messageId).toBe(assistant[0].id);
+	});
+
+	it('finalizes a stream that emitted an error event as error with the original code (never empty_response/complete)', async () => {
+		const { users, convs, turnRunner } = await freshImports();
+		const messages = await import('../src/lib/server/db/repos/messages');
+		const user = users.ensureLocalUser();
+		const wd = makeTmpDir('portal-wd-');
+		const conv = convs.create(user.id, {
+			title: 'event-error',
+			workdir: wd,
+			model: 'gpt-4'
+		});
+
+		// The SDK's runPrompt catch emits `pi_send_failed` as an `error`
+		// event (not a thrown send()). The stream then ends normally via the
+		// synthetic `message.end` — previously this finalized as a false
+		// silent-empty `complete`.
+		acquireMock.mockResolvedValue(
+			makeFakeSession([
+				{ type: 'error', code: 'pi_send_failed', message: 'provider refused' },
+				{ type: 'message.end', messageId: 0 }
+			])
+		);
+
+		const turn = await turnRunner.startTurn({
+			bridge: {
+				conversationId: conv.id,
+				userId: user.id,
+				workingDirectory: wd,
+				model: 'gpt-4',
+				policy: 'prompt'
+			},
+			prompt: 'hi',
+			conversationId: conv.id
+		});
+
+		const seen: PortalEvent[] = [];
+		let done: PortalEvent | undefined;
+		for await (const { event } of turn.subscribe()) {
+			seen.push(event);
+			if (event.type === 'done') {
+				done = event;
+				break;
+			}
+		}
+
+		expect(done).toMatchObject({ type: 'done', status: 'error' });
+		expect(seen.filter((e) => e.type === 'error')).toHaveLength(1);
+
+		// The turn is persisted with the ORIGINAL failure code — not masked
+		// as empty_response, and never a silent empty complete.
+		const assistant = messages.listByConversation(conv.id).filter((m) => m.role === 'assistant');
+		expect(assistant).toHaveLength(1);
+		expect(assistant[0].status).toBe('error');
+		expect(assistant[0].errorCode).toBe('pi_send_failed');
+		expect(assistant[0].content).toBe('');
+	});
 });

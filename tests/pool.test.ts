@@ -224,6 +224,113 @@ describe('session pool', () => {
 			policy: 'prompt'
 		});
 		expect(ok).toBe(session);
+		expect(ok).toBe(session);
 		expect(openMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('release leaves an active-turn session pooled instead of disposing it mid-turn', async () => {
+		const session = {
+			conversationId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			lastUsed: Date.now(),
+			send: vi.fn(),
+			abort: vi.fn(),
+			dispose: vi.fn().mockResolvedValue(undefined),
+			setMode: vi.fn(),
+			setApproveAll: vi.fn(),
+			resetSessionApprovals: vi.fn()
+		};
+		openMock.mockResolvedValue(session);
+		const pool = await importPool();
+		await pool.acquire({
+			conversationId: 1,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+
+		// Simulate an active turn via the keep-alive registry (turn-runner
+		// registers `turns.active` there in production). Releasing must NOT
+		// dispose the session out from under the stream — that would end the
+		// send queue and finalize the turn as a silent empty/partial 'complete'.
+		pool.registerKeepAlive('test.active', (cid) => cid === 1);
+		await pool.release(1);
+		expect(session.dispose).not.toHaveBeenCalled();
+		expect(pool.getActive(1)).toBe(session);
+
+		// Once the turn settles, release behaves exactly as before.
+		pool.registerKeepAlive('test.active', () => false);
+		await pool.release(1);
+		expect(session.dispose).toHaveBeenCalledTimes(1);
+		expect(pool.getActive(1)).toBeNull();
+	});
+
+	it('defers forced eviction while every session has an active turn', async () => {
+		process.env.MAX_CONCURRENT_SESSIONS = '1';
+		const makeSession = (conversationId: number) => ({
+			conversationId,
+			workingDirectory: `/tmp/work-${conversationId}`,
+			model: 'gpt-4',
+			lastUsed: Date.now(),
+			send: vi.fn(),
+			abort: vi.fn(),
+			dispose: vi.fn().mockResolvedValue(undefined),
+			setMode: vi.fn(),
+			setApproveAll: vi.fn(),
+			resetSessionApprovals: vi.fn()
+		});
+		const busySession = makeSession(1);
+		const spareSession = makeSession(2);
+		const afterSession = makeSession(3);
+		openMock
+			.mockResolvedValueOnce(busySession)
+			.mockResolvedValueOnce(spareSession)
+			.mockResolvedValueOnce(afterSession);
+		try {
+			const pool = await importPool();
+			await pool.acquire({
+				conversationId: 1,
+				userId: 1,
+				workingDirectory: '/tmp/work-1',
+				model: 'gpt-4',
+				policy: 'prompt'
+			});
+			pool.registerKeepAlive('test.active', (cid) => cid === 1);
+
+			// The only live session is mid-turn and the pool is at capacity: the
+			// new acquire must NOT force-dispose it (which would silently kill
+			// the stream); the cap overrun is deferred until the turn finishes.
+			const second = await pool.acquire({
+				conversationId: 2,
+				userId: 1,
+				workingDirectory: '/tmp/work-2',
+				model: 'gpt-4',
+				policy: 'prompt'
+			});
+			expect(second).toBe(spareSession);
+			expect(busySession.dispose).not.toHaveBeenCalled();
+			expect(pool.getActive(1)).toBe(busySession);
+
+			// Turn ends → the session is unprotected → the next acquire evicts
+			// it as the oldest idle session, as before the guard.
+			pool.registerKeepAlive('test.active', () => false);
+			const third = await pool.acquire({
+				conversationId: 3,
+				userId: 1,
+				workingDirectory: '/tmp/work-3',
+				model: 'gpt-4',
+				policy: 'prompt'
+			});
+			expect(third).toBe(afterSession);
+			expect(busySession.dispose).toHaveBeenCalledTimes(1);
+			expect(pool.getActive(1)).toBeNull();
+		} finally {
+			delete process.env.MAX_CONCURRENT_SESSIONS;
+			// Clear the keep-alive registration so it can't leak into the next
+			// test (the registry survives via globalThis).
+			openMock.mockReset();
+		}
 	});
 });

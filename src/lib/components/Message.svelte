@@ -84,11 +84,15 @@
 	);
 
 	// Assistant-message actions: regenerate the reply in place, or fork the
-	// thread up to here into a new conversation. Both require a persisted,
-	// completed assistant message and the parent's conversation id.
+	// thread up to here into a new conversation. Both require a persisted
+	// assistant message and the parent's conversation id. `error`-status
+	// messages are included: a failed or empty turn (e.g. `empty_response`)
+	// must offer Retry so the user can re-run it instead of being stranded on
+	// a dead bubble. The regenerate endpoint accepts any assistant message and
+	// re-runs from the preceding user prompt.
 	const canAssistantActions = $derived(
 		message.role === 'assistant' &&
-			message.status === 'complete' &&
+			(message.status === 'complete' || message.status === 'error') &&
 			!!conversationId &&
 			typeof message.id === 'number'
 	);

@@ -718,6 +718,10 @@
 	function applyEvent(ev: PortalEvent) {
 		switch (ev.type) {
 			case 'message.start': {
+				// Dedupe: a replayed/re-delivered `message.start` for a bubble we
+				// already hold (e.g. after a reconnect that re-sent it) would
+				// otherwise push a ghost duplicate.
+				if (messages.some((x) => x.id === ev.messageId)) break;
 				messages.push({
 					id: ev.messageId,
 					conversationId: conversation.id,
@@ -734,7 +738,14 @@
 			}
 			case 'message.delta': {
 				const m = messages.find((x) => x.id === ev.messageId);
-				if (!m) break;
+				if (!m) {
+					// A delta for a message this client has never seen — the
+					// content was persisted server-side in a reconnect gap (or
+					// the stream's `message.start` was dropped). Re-sync instead
+					// of silently dropping the text.
+					void refreshMessages();
+					break;
+				}
 				if (ev.parentToolCallId && ev.segmentId) {
 					// Sub-agent spoken content: accumulate into a threaded
 					// 'content' block (rendered inside the SubagentCall card),
@@ -810,6 +821,12 @@
 			case 'message.end': {
 				const m = messages.find((x) => x.id === ev.messageId);
 				if (m) m.status = 'complete';
+				else {
+					// Same reconnect-gap desync as `message.delta`: the terminal
+					// marker arrived for a bubble we never saw. Re-sync rather
+					// than silently dropping it.
+					void refreshMessages();
+				}
 				break;
 			}
 			case 'tool.call': {
