@@ -6,6 +6,7 @@ import * as pool from '$lib/server/runtime/pool';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { parseBody } from '$lib/server/validate';
+import { resolveModelSelection } from '$lib/server/pi/complete';
 import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 
@@ -58,6 +59,17 @@ const PatchBody = z
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	const body = await parseBody(request, PatchBody);
+	// Fail fast on an unselectable model instead of silently falling back to
+	// PI_MODEL on the next turn: the string must parse as `providerId/modelId`
+	// and resolve against the shared ModelRuntime (the same path the pi session
+	// uses at open time).
+	if (body.model !== undefined) {
+		try {
+			await resolveModelSelection(body.model);
+		} catch (err) {
+			throw error(400, err instanceof Error ? err.message : `invalid model id: ${body.model}`);
+		}
+	}
 	const modelChanged = body.model !== undefined && body.model !== conv.model;
 	const memoryChanged = body.memoryMode !== undefined && body.memoryMode !== conv.memoryMode;
 	const extractorModelChanged =

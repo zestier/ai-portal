@@ -100,7 +100,9 @@ const Schema = z
 
 		SHARED_SECRET: z.string().min(32).optional(),
 
-		// Default model id when a conversation has no model of its own.
+		// Default model id when a conversation has no model of its own. Display
+		// default on the pi path: the runtime maps a conversation model equal to
+		// this value to PI_MODEL (see pi/index.ts), never using it verbatim.
 		DEFAULT_MODEL: z.string().default('claude-sonnet-4.5'),
 		// Model-backed memory extraction. This is a pi model selection
 		// (`providerId/modelId`, e.g. `anthropic/claude-sonnet-4-5`), resolved
@@ -203,8 +205,10 @@ const Schema = z
 			.optional()
 			.transform((v) => v === '1' || v === 'true'),
 		// Default model id (providerId/modelId) for pi sessions. Only consulted
-		// when the conversation has no pi-specific model; the stub overrides it
-		// with the registered `pi-stub` model regardless.
+		// when the conversation has no pi-specific model — the chat-header Model
+		// field (saved to `conversations.model`) wins when it names a selection
+		// other than the DEFAULT_MODEL default; the stub overrides it with the
+		// registered `pi-stub` model regardless.
 		PI_MODEL: z.string().trim().default('anthropic/claude-sonnet-4-5'),
 
 		// Explicit override for the SQLite migrations directory. Useful for

@@ -34,7 +34,7 @@ export function isPiMode(): boolean {
  */
 export async function openPiSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
 	const runtime = await getModelRuntime();
-	const model = await resolvePiModel(runtime);
+	const model = await resolvePiModel(runtime, opts.model);
 	return createPiProviderSession({
 		cwd: opts.workingDirectory,
 		model,
@@ -60,20 +60,36 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
 	});
 }
 
-async function resolvePiModel(runtime: ModelRuntime): Promise<PiModel> {
+/**
+ * Resolve the pi model a turn runs, honoring override precedence:
+ *   stub mode   → the registered `pi-stub` model (e2e only)
+ *   conv model  → the per-conversation Model field (`opts.model`), when it is
+ *                 a real selection
+ *   PI_MODEL    → the env default, for conversations with no override
+ *
+ * The bridge always carries a model string (`turn-start` uses
+ * `conv.model ?? DEFAULT_MODEL`, and the create route stores `DEFAULT_MODEL`
+ * when the user picks none), so a request that is not a prefixed
+ * `providerId/modelId` selection — or that equals the `DEFAULT_MODEL` default —
+ * means "no per-conversation override" and falls back to `PI_MODEL`. Any other
+ * value is a real override, resolved against the runtime.
+ */
+async function resolvePiModel(runtime: ModelRuntime, requested: string): Promise<PiModel> {
 	if (isPiStubMode()) {
 		const stub = await getStubModel(runtime);
 		if (stub) return stub;
 		throw new Error('pi stub model unavailable');
 	}
-	const modelId = loadConfig().PI_MODEL;
-	const slash = modelId.indexOf('/');
+	const cfg = loadConfig();
+	const isOverride = requested && requested.indexOf('/') > 0 && requested !== cfg.DEFAULT_MODEL;
+	const selection = isOverride ? requested : cfg.PI_MODEL;
+	const slash = selection.indexOf('/');
 	if (slash <= 0) {
-		throw new Error(`invalid PI_MODEL "${modelId}": expected "providerId/modelId"`);
+		throw new Error(`invalid pi model "${selection}": expected "providerId/modelId"`);
 	}
-	const model = runtime.getModel(modelId.slice(0, slash), modelId.slice(slash + 1));
+	const model = runtime.getModel(selection.slice(0, slash), selection.slice(slash + 1));
 	if (!model) {
-		throw new Error(`pi model not found: ${modelId} (check PI_MODEL / pi credentials)`);
+		throw new Error(`pi model not found: ${selection}`);
 	}
 	return model;
 }
