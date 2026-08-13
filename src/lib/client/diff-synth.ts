@@ -74,15 +74,8 @@ function fromCreateArgs(path: string, args: ParsedArgs): SynthDiff | null {
 	return { path, diff: cleanPatch(patch) };
 }
 
-const EDIT_TOOLS = new Set([
-	'edit',
-	'str_replace_editor',
-	'replace',
-	'replace_text',
-	'replace_lines',
-	'apply_patch'
-]);
-const CREATE_TOOLS = new Set(['create', 'create_file', 'write', 'write_file', 'new_file']);
+const EDIT_TOOLS = new Set(['edit', 'apply_patch']);
+const CREATE_TOOLS = new Set(['write']);
 
 export function synthesizeDiffs(input: SynthDiffInput): SynthDiff[] {
 	const t = input.tool.toLowerCase();

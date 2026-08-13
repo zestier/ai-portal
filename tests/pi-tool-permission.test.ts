@@ -229,7 +229,9 @@ describe('pi tool calls + permission gate', () => {
 			writeFileSync(join(wd, 'notes.txt'), 'hello\n');
 			const convId = await createConversation(wd);
 			const session = await openSession(wd, convId);
-			const { result, prompts } = await runToolCall(session, 'read_file', { path: 'notes.txt' });
+			const { result, prompts } = await runToolCall(session, 'read', {
+				file_path: 'notes.txt'
+			});
 			expect(result.ok).toBe(true);
 			expect(prompts.length).toBe(0);
 		},
@@ -389,14 +391,14 @@ describe('pi tool calls + permission gate', () => {
 			const session = await openSession(wd, convId);
 			const { prompts } = await runToolCall(
 				session,
-				'shell_exec',
+				'bash',
 				{ command: 'mktemp -d | cat' },
 				(view) =>
 					view.kind === 'permission' ? { kind: 'permission', decision: 'allow-once' } : undefined
 			);
 			expect(prompts.length).toBe(1);
 			const p = prompts[0];
-			expect(p.tool).toBe('shell_exec');
+			expect(p.tool).toBe('bash');
 			expect(p.permissionKind).toBe('shell');
 			// canPersistDecision true → the dialog surfaces its grant-scope block
 			// (scope picker; shell picker once shellAnalysis is present). `mktemp`
@@ -422,7 +424,7 @@ describe('pi tool calls + permission gate', () => {
 			const { createPiPermissionResolver } = await import('../src/lib/server/pi/permission-gate');
 			const { ok } = await import('../src/lib/server/tools/types');
 			const tool: PortalTool = {
-				name: 'shell_exec',
+				name: 'bash',
 				description: 'test',
 				parameters: {},
 				handler: async () => ok('ran')
@@ -432,7 +434,7 @@ describe('pi tool calls + permission gate', () => {
 				conversationId: convId,
 				workingDirectory: wd,
 				policy: 'prompt',
-				portalToolsByName: new Map([['shell_exec', tool]]),
+				portalToolsByName: new Map([['bash', tool]]),
 				getApprovalMode: () => 'ask',
 				getWorkspaceRoots: () => [wd],
 				emit: (ev) => {
@@ -444,7 +446,7 @@ describe('pi tool calls + permission gate', () => {
 			// No matching allow grant → the `git` prompt seed fires and the call
 			// prompts. (`git status` would hit the subcommand deny seed instead,
 			// so `rev-parse` is used: it is only prompt-seeded.)
-			const c1 = resolver('shell_exec', { command: 'git rev-parse HEAD' }, 'c-1');
+			const c1 = resolver('bash', { command: 'git rev-parse HEAD' }, 'c-1');
 			expect(emitted.length).toBe(1);
 			resolve(emitted[0].requestId, USER, { kind: 'permission', decision: 'allow-once' });
 			expect((await c1).allow).toBe(true);
@@ -464,12 +466,12 @@ describe('pi tool calls + permission gate', () => {
 			});
 
 			// A matching command auto-allows without prompting.
-			const c2 = resolver('shell_exec', { command: 'git rev-parse HEAD' }, 'c-2');
+			const c2 = resolver('bash', { command: 'git rev-parse HEAD' }, 'c-2');
 			expect((await c2).allow).toBe(true);
 			expect(emitted.length).toBe(1);
 
 			// A non-matching command (unseeded argv0 `pnpm`) still prompts.
-			const c3 = resolver('shell_exec', { command: 'pnpm install' }, 'c-3');
+			const c3 = resolver('bash', { command: 'pnpm install' }, 'c-3');
 			expect(emitted.length).toBe(2);
 			resolve(emitted[1].requestId, USER, { kind: 'permission', decision: 'deny' });
 			expect((await c3).allow).toBe(false);

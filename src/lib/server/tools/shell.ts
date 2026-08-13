@@ -319,7 +319,7 @@ function runShell(
 export function buildShellTools(workspaceRoot: string): PortalTool[] {
 	return [
 		{
-			name: 'shell_exec',
+			name: 'bash',
 			description:
 				'Run a non-interactive Bash command in the current workspace (pipelines and shell syntax OK). `timeout` is ms (default 120000, max 600000); `cwd` is a workspace-relative working directory (portal extension) that cannot escape the workspace. Output past the in-context cap is spilled to `.zap/scratch/tool_results/` and the path returned for the model to read. `run_in_background` and `dangerouslyDisableSandbox` are not supported.',
 			argsSchema: ShellArgs,

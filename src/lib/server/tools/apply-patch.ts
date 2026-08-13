@@ -12,7 +12,7 @@ import {
 	WORKTREE_WRITE_PARAM,
 	type WorktreeToolContext
 } from './worktree-selector';
-import { buildTrashTools } from './trash';
+import { buildTrashTools } from './filesystem';
 
 const ApplyPatchArgs = z
 	.object({
@@ -50,7 +50,7 @@ export function buildApplyPatchTools(
 		{
 			name: 'apply_patch',
 			description:
-				'Apply a standard unified diff in the workspace. Use /dev/null file headers for additions/deletions and Git rename metadata for moves. dryRun validates without changing files. Paths must stay inside the workspace; pass worktree to edit a held worktree.',
+				'Apply a standard unified diff in the workspace. Use /dev/null file headers for additions/deletions and Git rename metadata for moves. dryRun validates without changing files. Paths must stay inside the workspace; pass worktree to edit a held worktree. Multi-hunk, context-matched, and atomic: prefer it for edits spanning several hunks or ranges — the context matching tolerates drift, unlike line-number edits. Use `edit` for a single exact-text replacement.',
 			argsSchema: ApplyPatchArgs,
 			parameters: {
 				type: 'object',

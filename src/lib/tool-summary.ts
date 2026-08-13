@@ -30,33 +30,13 @@ type SummaryHandler = (args: Record<string, unknown>) => string | null;
 
 const summaryHandlers: Record<string, SummaryHandler> = {
 	bash: commandSummary,
-	shell: commandSummary,
-	run: commandSummary,
-	view: readPathSummary,
-	read: readPathSummary,
-	read_file: readPathSummary,
-	cat: readPathSummary,
-	edit: pathSummary,
-	create: pathSummary,
-	write: pathSummary,
-	write_file: pathSummary,
-	create_file: pathSummary,
-	replace_lines: pathSummary,
-	replace_text: pathSummary,
-	grep: grepSummary,
-	list_files: pathSummary,
-	glob: patternSummary,
-	write_bash: writeBashSummary,
-	read_bash: shellIdSummary,
-	stop_bash: shellIdSummary,
 	task: taskSummary,
-	read_agent: agentIdSummary,
-	stop_agent: agentIdSummary,
-	write_agent: writeAgentSummary,
-	list_agents: listAgentsSummary,
-	report_intent: intentSummary,
-	web_fetch: urlSummary,
-	fetch: urlSummary,
+	read: readPathSummary,
+	edit: pathSummary,
+	write: pathSummary,
+	grep: grepSummary,
+	ls: pathSummary,
+	find: patternSummary,
 	git_diff: gitDiffSummary,
 	git_log: gitLogSummary,
 	git_show_commit: gitShowCommitSummary,
@@ -80,10 +60,7 @@ const summaryHandlers: Record<string, SummaryHandler> = {
 	ticket_update: ticketUpdateSummary,
 	ticket_list: ticketListSummary,
 	permission_capabilities: permissionCapabilitiesSummary,
-	request_permission_grant: grantRequestSummary,
-	skill: skillSummary,
-	sql: sqlSummary,
-	session_store_sql: sqlSummary
+	request_permission_grant: grantRequestSummary
 };
 
 // Split a header summary into chunks that each end at a path separator
@@ -134,6 +111,13 @@ function pathSummary(args: Record<string, unknown>): string | null {
 	return str(args.path) ?? str(args.file) ?? str(args.filename) ?? str(args.file_path);
 }
 
+// `task` is the portal's sub-agent tool (turn-runner emits `task` calls for
+// sub-agent and memory-extractor work); the description is the human-meaningful
+// label for the collapsed row.
+function taskSummary(args: Record<string, unknown>): string | null {
+	return str(args.description) ?? str(args.name);
+}
+
 function readPathSummary(args: Record<string, unknown>): string | null {
 	const p = pathSummary(args);
 	const range = Array.isArray(args.view_range) ? args.view_range : null;
@@ -150,42 +134,6 @@ function grepSummary(args: Record<string, unknown>): string | null {
 
 function patternSummary(args: Record<string, unknown>): string | null {
 	return str(args.pattern);
-}
-
-function writeBashSummary(args: Record<string, unknown>): string | null {
-	const input = str(args.input);
-	return input ? truncate(input, 40) : null;
-}
-
-function shellIdSummary(args: Record<string, unknown>): string | null {
-	return str(args.shellId);
-}
-
-function taskSummary(args: Record<string, unknown>): string | null {
-	return str(args.description) ?? str(args.name);
-}
-
-function agentIdSummary(args: Record<string, unknown>): string | null {
-	return str(args.agent_id);
-}
-
-function writeAgentSummary(args: Record<string, unknown>): string | null {
-	const id = str(args.agent_id);
-	const input = str(args.input);
-	if (id && input) return `${id} ← ${truncate(input, 40)}`;
-	return id ?? (input ? truncate(input, 60) : null);
-}
-
-function listAgentsSummary(args: Record<string, unknown>): string {
-	return args.include_completed === false ? 'active only' : 'all agents';
-}
-
-function intentSummary(args: Record<string, unknown>): string | null {
-	return str(args.intent);
-}
-
-function urlSummary(args: Record<string, unknown>): string | null {
-	return str(args.url);
 }
 
 function gitDiffSummary(args: Record<string, unknown>): string {
@@ -239,15 +187,6 @@ function gitCommitSummary(args: Record<string, unknown>): string | null {
 	].filter(Boolean);
 	const main = [subject ? truncate(subject, 50) : null, target].filter(Boolean).join(' · ');
 	return [main || null, ...extras].filter(Boolean).join(' · ') || null;
-}
-
-function skillSummary(args: Record<string, unknown>): string | null {
-	return str(args.skill);
-}
-
-function sqlSummary(args: Record<string, unknown>): string | null {
-	const query = str(args.query);
-	return str(args.description) ?? (query ? truncate(query, 60) : null);
 }
 
 function gitShowFileSummary(args: Record<string, unknown>): string | null {

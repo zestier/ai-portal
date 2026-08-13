@@ -1,12 +1,12 @@
 import { renderEditModelText, renderWriteModelText } from '../src/lib/server/tools/edit-file';
-import { renderGlobModelText, renderGrepModelText } from '../src/lib/server/tools/grep';
+import { renderGrepModelText } from '../src/lib/server/tools/grep';
 import { renderReadModelText } from '../src/lib/server/tools/read';
 import { renderShellModelText } from '../src/lib/server/tools/shell';
 
 /**
  * Registry for golden-tool conformance implementations.
  *
- * The reroute tickets (Read, Edit, Write, Glob, Grep, Bash portal
+ * The reroute tickets (Read, Edit, Write, Grep, Bash portal
  * implementations) register their renderer here once it can emit the
  * model-facing tool_result text. Each registration binds a built-in tool name
  * to a render function that takes the canonical args plus the fixture
@@ -52,12 +52,6 @@ export function goldenToolImplementations(): ReadonlyMap<string, GoldenToolImple
 registerGoldenToolImplementation('Grep', {
 	render(_name, args, ctx) {
 		return renderGrepModelText(args, ctx.cwd);
-	}
-});
-
-registerGoldenToolImplementation('Glob', {
-	render(_name, args, ctx) {
-		return renderGlobModelText(args, ctx.cwd);
 	}
 });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTmpDir } from './helpers/tmp';
-import { buildMoveTools } from '../src/lib/server/tools/move';
+import { buildMoveTools } from '../src/lib/server/tools/filesystem';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
 function moveTool(root: string): PortalTool {

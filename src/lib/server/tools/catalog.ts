@@ -14,10 +14,7 @@ import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 import type { PortalToolCatalogEntry } from '$lib/tools/catalog-types';
 import type { PortalTool } from './types';
 import { buildGitTools } from './git';
-import { buildCreateDirectoryTools } from './create-directory';
-import { buildMoveTools } from './move';
-import { buildTrashTools } from './trash';
-import { buildReadFileTools } from './read-file';
+import { buildCreateDirectoryTools, buildMoveTools, buildTrashTools } from './filesystem';
 import { buildReadTools } from './read';
 import { buildWorktreeTools } from './worktree';
 import { buildTicketTools } from './tickets';
@@ -28,6 +25,8 @@ import { buildShellTools } from './shell';
 import { buildApplyPatchTools } from './apply-patch';
 import { buildGrepTools } from './grep';
 import { buildEditFileTools } from './edit-file';
+import { buildLsTools } from './ls';
+import { buildFindTools } from './find';
 
 export type { PortalToolCatalogEntry };
 
@@ -55,10 +54,6 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			}),
-			...buildReadFileTools(STUB.cwd, {
-				userId: STUB.userId,
-				conversationId: STUB.conversationId
-			}),
 			...buildReadTools(STUB.cwd, {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
@@ -72,6 +67,14 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 				conversationId: STUB.conversationId
 			}),
 			...buildGrepTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildLsTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildFindTools(STUB.cwd, {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			})

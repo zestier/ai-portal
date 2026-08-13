@@ -36,10 +36,12 @@ describe('summarizeToolCall', () => {
 		expect(summarizeToolCall('bash', JSON.stringify({ command: 'ls -la' }))).toBe('ls -la');
 	});
 
-	it('shows path with view_range for view', () => {
+	it('falls back to the path for the legacy view tool', () => {
+		// `view` is a removed legacy name; old turns render via the generic
+		// first-string-arg fallback instead of the old `view_range` suffix.
 		expect(
 			summarizeToolCall('view', JSON.stringify({ path: 'src/foo.ts', view_range: [1, 30] }))
-		).toBe('src/foo.ts [1-30]');
+		).toBe('src/foo.ts');
 	});
 
 	it('shows pattern + glob for grep', () => {

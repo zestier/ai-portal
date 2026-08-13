@@ -84,9 +84,9 @@ describe('filesystem tools inside a worktree lease', () => {
 		leaseId = lease.leaseId;
 		leasePath = lease.path;
 
-		const { buildCreateDirectoryTools } = await import('../src/lib/server/tools/create-directory');
-		const { buildMoveTools } = await import('../src/lib/server/tools/move');
-		const { buildTrashTools } = await import('../src/lib/server/tools/trash');
+		const { buildCreateDirectoryTools } = await import('../src/lib/server/tools/filesystem');
+		const { buildMoveTools } = await import('../src/lib/server/tools/filesystem');
+		const { buildTrashTools } = await import('../src/lib/server/tools/filesystem');
 		tools = new Map(
 			[
 				...buildCreateDirectoryTools(source, { userId, conversationId }),
@@ -158,7 +158,7 @@ describe('filesystem tools inside a worktree lease', () => {
 	// The held-by-this-conversation check is what keeps the selector from being a
 	// way to write into an arbitrary path.
 	it('refuses a lease held by another conversation', async () => {
-		const { buildTrashTools } = await import('../src/lib/server/tools/trash');
+		const { buildTrashTools } = await import('../src/lib/server/tools/filesystem');
 		const otherContext = { userId, conversationId: newConversation() };
 		const otherTools = new Map([...buildTrashTools(source, otherContext)].map((t) => [t.name, t]));
 
@@ -172,7 +172,7 @@ describe('filesystem tools inside a worktree lease', () => {
 	// ignored — acting on the conversation's own workspace instead would delete
 	// the wrong file.
 	it('rejects the selector when the session has no context', async () => {
-		const { buildTrashTools } = await import('../src/lib/server/tools/trash');
+		const { buildTrashTools } = await import('../src/lib/server/tools/filesystem');
 		const bare = new Map(buildTrashTools(source).map((t) => [t.name, t]));
 
 		const res = await bare.get('trash')!.handler({ path: 'README.md', worktree: leaseId });
@@ -209,7 +209,7 @@ describe('filesystem tools inside a worktree lease', () => {
 		// auto-approve while describing a target the handler never touches.
 		// Returning null makes the gateway raise its default custom-tool prompt.
 		it('returns null for a lease this conversation does not hold', async () => {
-			const { buildTrashTools } = await import('../src/lib/server/tools/trash');
+			const { buildTrashTools } = await import('../src/lib/server/tools/filesystem');
 			const otherTools = new Map(
 				buildTrashTools(source, { userId, conversationId: newConversation() }).map((t) => [
 					t.name,

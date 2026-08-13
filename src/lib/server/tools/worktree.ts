@@ -228,7 +228,7 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		},
 		{
 			name: 'worktree_list',
-			description: `List the worktrees this conversation currently holds. \`dirtyCount\` is uncommitted files; \`ahead\` is committed work waiting to be merged back. ${FIELDS_NOTE}`,
+			description: `List the PORTAL worktree leases this conversation currently holds. \`dirtyCount\` is uncommitted files; \`ahead\` is committed work waiting to be merged back. Unlike the git-level \`git_worktree_list\`, this only sees leases this conversation created. ${FIELDS_NOTE}`,
 			argsSchema: ListArgs,
 			parameters: {
 				type: 'object',
@@ -273,7 +273,7 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		{
 			name: 'worktree_status',
 			description:
-				'Report one worktree: its path, branch, and how many files have uncommitted changes.',
+				'Report one PORTAL worktree lease this conversation holds: its path, branch, and how many files have uncommitted changes. The git-level `git_worktree_status` instead reports the git state of a checkout.',
 			argsSchema: StatusArgs,
 			parameters: {
 				type: 'object',
@@ -310,7 +310,7 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		{
 			name: 'worktree_merge',
 			description:
-				'Merge a worktree back into this conversation. "to-source" (default) merges its branch in after a sub-agent has COMMITTED work; pass `squash` with a subject to collapse commits into one. "from-source" refreshes the worktree with newer commits from this conversation. Refuses with uncommitted changes on either side. "to-source" always rolls back on conflict; a "from-source" conflict can be left ("keep") for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort.',
+				'Merge a PORTAL worktree lease back into this conversation. "to-source" (default) merges its branch in after a sub-agent has COMMITTED work; pass `squash` with a subject to collapse commits into one. "from-source" refreshes the worktree with newer commits from this conversation. Refuses with uncommitted changes on either side. "to-source" always rolls back on conflict; a "from-source" conflict can be left ("keep") for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort. The git-level `git_worktree_merge` operates on the repository\'s own worktrees instead.',
 			argsSchema: MergeArgs,
 			// Always prompts, matching `git_worktree_merge` and `git_commit`.
 			//

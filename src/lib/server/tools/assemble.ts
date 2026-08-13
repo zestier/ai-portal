@@ -19,19 +19,18 @@ import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { portalToolToPiTool } from '../pi/tools';
 import { buildApplyPatchTools } from './apply-patch';
-import { buildCreateDirectoryTools } from './create-directory';
+import { buildCreateDirectoryTools, buildMoveTools, buildTrashTools } from './filesystem';
 import { buildEditFileTools } from './edit-file';
 import { buildGitTools } from './git';
 import { buildGrepTools } from './grep';
+import { buildFindTools } from './find';
+import { buildLsTools } from './ls';
 import { buildMemoryTools } from './memory';
-import { buildMoveTools } from './move';
 import { buildPermissionTools } from './permissions';
 import { buildPromptTemplateTools } from './prompt-templates';
-import { buildReadFileTools } from './read-file';
 import { buildReadTools } from './read';
 import { buildShellTools } from './shell';
 import { buildTicketTools } from './tickets';
-import { buildTrashTools } from './trash';
 import { buildWorktreeTools } from './worktree';
 import type { PortalTool } from './types';
 
@@ -71,11 +70,12 @@ export function assemblePiTools(opts: AssemblePiToolsOptions): AssembledPiTools 
 			...buildCreateDirectoryTools(opts.cwd, { userId, conversationId }),
 			...buildMoveTools(opts.cwd, { userId, conversationId }),
 			...buildTrashTools(opts.cwd, { userId, conversationId }),
-			...buildReadFileTools(opts.cwd, { userId, conversationId }),
 			...buildReadTools(opts.cwd, { userId, conversationId }),
 			...buildApplyPatchTools(opts.cwd, { userId, conversationId }),
 			...buildEditFileTools(opts.cwd, { userId, conversationId }),
-			...buildGrepTools(opts.cwd, { userId, conversationId })
+			...buildGrepTools(opts.cwd, { userId, conversationId }),
+			...buildLsTools(opts.cwd, { userId, conversationId }),
+			...buildFindTools(opts.cwd, { userId, conversationId })
 		],
 		worktree: buildWorktreeTools({ userId, conversationId }),
 		tickets: buildTicketTools({ userId, workspaceKey: opts.workspaceKey ?? '', conversationId }),

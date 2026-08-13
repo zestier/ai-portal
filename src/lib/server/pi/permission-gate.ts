@@ -14,7 +14,7 @@
 //   0. approved forced-retry token            → allow (overrides everything)
 //   1. unknown tool                          → block
 //   2. `derivePermissionRequest` override    → fs kind on the derived path(s)
-//   3. `shell_exec`                          → `shell` kind on the command
+//   3. `bash`                                → `shell` kind on the command
 //   4. everything else                       → `custom-tool` kind
 //   5. grant match (allow / deny / prompt) per fs target, most-restrictive
 //   6. `auto-approve` approval mode          → allow (policy still consulted)
@@ -127,7 +127,7 @@ async function decidePermission(
 	// path (see `PortalTool.derivePermissionRequest`); when it does, the grant
 	// matcher sees the fs kind + path so existing fs grants/seeds apply.
 	const override = tool.derivePermissionRequest ? tool.derivePermissionRequest(args) : null;
-	const isShell = toolName === 'shell_exec';
+	const isShell = toolName === 'bash';
 	const permissionKind = override ? override.permissionKind : isShell ? 'shell' : 'custom-tool';
 	const matchTool = override ? override.permissionKind : toolName;
 	const fsKind = isFilesystemPermissionKind(permissionKind);

@@ -25,7 +25,7 @@ const GIT_TOOL_MARKER = 'git_status';
 const TICKET_TOOL_MARKER = 'ticket_add';
 const WORKTREE_TOOL_MARKER = 'worktree_create';
 const PERMISSION_TOOL_MARKERS = ['permission_capabilities', 'request_permission_grant'] as const;
-const SHELL_TOOL_MARKER = 'shell_exec';
+const SHELL_TOOL_MARKER = 'bash';
 
 /**
  * Build the standing, portal-wide system guidance for a session, tailored to the
@@ -43,7 +43,8 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 	blocks.push(
 		[
 			'You are running through a portal that mediates your tool calls via a permission gateway.',
-			'Prefer structured tools (view/edit/create/grep/glob) over shell equivalents (cat/sed/rg/find) where available.'
+			'Prefer structured tools (read/edit/write/grep/ls/find/bash) over shell equivalents (cat/sed/rg/find) where available.',
+			'Edit with content anchors, not line numbers: use `edit` (exact text) or `apply_patch` (multi-hunk, context-matched, atomic) — line-number edits go stale after any prior edit and silently mangle files.'
 		].join('\n')
 	);
 
@@ -55,7 +56,7 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 
 	if (names.has(SHELL_TOOL_MARKER)) {
 		blocks.push(
-			'Use shell_exec for commands that do not have an equivalent structured portal tool. Keep commands non-interactive and prefer the current workspace as the working directory.'
+			'Use bash for commands that do not have an equivalent structured portal tool. Keep commands non-interactive and prefer the current workspace as the working directory.'
 		);
 	}
 
@@ -84,9 +85,9 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 				'two sub-agents at the same worktree.',
 				'',
 				'The structured tools reach into a worktree the same way: the git tools and the filesystem',
-				'tools (create_directory / move / trash) all take the same optional `worktree: "<leaseId>"`',
-				'selector, and paths stay relative to that tree. Use it instead of shell mkdir/mv/rm, which',
-				'are not seeded here.',
+				'tools (create_directory / move / trash / read / edit / write / ls / find) all take the same',
+				'optional `worktree: "<leaseId>"` selector, and paths stay relative to that tree. Use it instead',
+				'of shell mkdir/mv/rm, which are not seeded here.',
 				'',
 				'Finish the loop: a worktree whose work you never merge is work you threw away. Tell each',
 				'sub-agent to COMMIT in its worktree when done (uncommitted changes cannot be merged) with',

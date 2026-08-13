@@ -14,7 +14,7 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 	}
 }
 
-function tool(workspace: string, name: 'edit' | 'write' | 'replace_lines' | 'replace_text') {
+function tool(workspace: string, name: 'edit' | 'write') {
 	return buildEditFileTools(workspace).find((candidate) => candidate.name === name)!;
 }
 
@@ -271,83 +271,6 @@ describe('edit', () => {
 				path: '/not/in/workspace.txt'
 			});
 			expect(derive?.({ file_path: 'bad\0path', old_string: 'a', new_string: 'b' })).toBeNull();
-		});
-	});
-});
-
-describe('replace_lines', () => {
-	it('replaces an inclusive line range and preserves CRLF endings', async () => {
-		await withWorkspace(async (workspace) => {
-			const path = join(workspace, 'file.txt');
-			await writeFile(path, 'one\r\ntwo\r\nthree\r\n');
-
-			const result = await tool(workspace, 'replace_lines').handler({
-				path: 'file.txt',
-				startLine: 2,
-				endLine: 2,
-				content: 'TWO\nSECOND'
-			});
-
-			expect(result).toMatchObject({ ok: true });
-			expect(await readFile(path, 'utf8')).toBe('one\r\nTWO\r\nSECOND\r\nthree\r\n');
-		});
-	});
-
-	it('rejects a stale range without writing', async () => {
-		await withWorkspace(async (workspace) => {
-			const path = join(workspace, 'file.txt');
-			await writeFile(path, 'one\ntwo\n');
-
-			const result = await tool(workspace, 'replace_lines').handler({
-				path: 'file.txt',
-				startLine: 2,
-				endLine: 3,
-				content: 'changed'
-			});
-
-			expect(result).toMatchObject({
-				ok: false,
-				error: { code: 'invalid_line_range' }
-			});
-			expect(await readFile(path, 'utf8')).toBe('one\ntwo\n');
-		});
-	});
-});
-
-describe('replace_text', () => {
-	it('limits exact replacements to a line range and maximum count', async () => {
-		await withWorkspace(async (workspace) => {
-			const path = join(workspace, 'file.txt');
-			await writeFile(path, 'old\nold old\nold\n');
-
-			const result = await tool(workspace, 'replace_text').handler({
-				path: 'file.txt',
-				oldText: 'old',
-				newText: 'new',
-				startLine: 2,
-				endLine: 2,
-				maxReplacements: 1,
-				worktree: '.'
-			});
-
-			expect(result).toMatchObject({ ok: true, result: { replacements: 1 } });
-			expect(await readFile(path, 'utf8')).toBe('old\nnew old\nold\n');
-		});
-	});
-
-	it('fails without writing when exact text is absent', async () => {
-		await withWorkspace(async (workspace) => {
-			const path = join(workspace, 'file.txt');
-			await writeFile(path, 'unchanged\n');
-
-			const result = await tool(workspace, 'replace_text').handler({
-				path: 'file.txt',
-				oldText: 'missing',
-				newText: 'new'
-			});
-
-			expect(result).toMatchObject({ ok: false, error: { code: 'text_not_found' } });
-			expect(await readFile(path, 'utf8')).toBe('unchanged\n');
 		});
 	});
 });

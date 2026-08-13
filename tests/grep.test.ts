@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGrepTools, type GrepResult } from '../src/lib/server/tools/grep';
 import { WorktreeSelector } from '../src/lib/server/tools/worktree-selector';
 
-function tool(workspace: string, name: 'grep' | 'list_files') {
+function tool(workspace: string, name: 'grep') {
 	return buildGrepTools(workspace).find((candidate) => candidate.name === name)!;
 }
 
@@ -165,37 +165,6 @@ describe('grep', () => {
 				worktree: '.'
 			});
 			expect(grepResult(result)).toMatchObject({ mode: 'files_with_matches', numFiles: 1 });
-		});
-	});
-});
-
-describe('list_files', () => {
-	it('lists matching files with ignore rules and bounded output', async () => {
-		await withWorkspace(async (workspace) => {
-			await mkdir(join(workspace, 'src'));
-			await mkdir(join(workspace, 'ignored'));
-			await writeFile(join(workspace, '.gitignore'), 'ignored/\n');
-			await writeFile(join(workspace, 'src', 'one.ts'), '');
-			await writeFile(join(workspace, 'src', 'two.ts'), '');
-			await writeFile(join(workspace, 'src', 'three.txt'), '');
-			await writeFile(join(workspace, 'ignored', 'hidden.ts'), '');
-
-			const result = await tool(workspace, 'list_files').handler({
-				glob: ['**/*.ts'],
-				maxResults: 1
-			});
-
-			expect(result).toMatchObject({
-				ok: true,
-				result: { files: ['src/one.ts'], count: 1, truncated: true }
-			});
-		});
-	});
-
-	it('rejects a path outside the workspace', async () => {
-		await withWorkspace(async (workspace) => {
-			const result = await tool(workspace, 'list_files').handler({ path: '..' });
-			expect(result).toMatchObject({ ok: false, error: { code: 'invalid_path' } });
 		});
 	});
 });

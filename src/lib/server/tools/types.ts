@@ -71,7 +71,7 @@ export type ToolResult =
 			// Preferred over the generic projection in `deriveToolResultViews`, and
 			// forwarded verbatim on the MCP edge so the same views reach the model
 			// on every provider. Absent for tools whose output must stay byte-exact
-			// in the raw envelope (read_file, replace_text).
+			// in the raw envelope (edit, write).
 			views?: ToolResultView[];
 	  }
 	| { ok: false; summary?: string; error: ToolError };

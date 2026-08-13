@@ -487,7 +487,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_status',
 			description:
-				'Report whether this workspace is a linked worktree, its branch, ahead/behind counts, and unmerged work. Read-only.',
+				'Report GIT worktree state for the selected tree: whether this workspace is a linked worktree, its branch, ahead/behind counts, and unmerged work. Read-only. This is the git-level view of a checkout; use `worktree_status` (portal lease tools) to inspect a portal worktree lease this conversation holds.',
 			argsSchema: GitWorktreeStatusArgs,
 			parameters: {
 				type: 'object',
@@ -508,7 +508,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_list',
 			description:
-				'List every worktree (main + linked) with branch, commit, and detached/locked/prunable state. Read-only. Sees all worktrees, including ones created outside the portal (unlike `worktree_list`).',
+				'List every GIT worktree (main + linked) with branch, commit, and detached/locked/prunable state. Read-only. Sees all worktrees, including ones created outside the portal — unlike `worktree_list`, which only sees portal worktree leases this conversation holds.',
 			argsSchema: GitWorktreeListArgs,
 			parameters: {
 				type: 'object',
@@ -536,7 +536,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_worktree_merge',
 			description:
-				'Merge this linked worktree’s branch with the main checkout’s branch. "to-source" integrates work back; "from-source" pulls in upstream commits to resolve conflicts in the worktree. Prefer `squash` for one commit per unit of work. Refuses with uncommitted changes on either side; never leaves the main checkout mid-merge.',
+				'Merge this linked GIT worktree’s branch with the main checkout’s branch. "to-source" integrates work back; "from-source" pulls in upstream commits to resolve conflicts in the worktree. Prefer `squash` for one commit per unit of work. Refuses with uncommitted changes on either side; never leaves the main checkout mid-merge. This is the git-level merge; the portal `worktree_merge` (lease tools) operates on worktree leases this conversation created and expects sub-agents to commit first.',
 			argsSchema: GitWorktreeMergeArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {

@@ -75,7 +75,7 @@ export function buildPermissionTools(opts: {
 	emit: (ev: PortalEvent) => void;
 	/**
 	 * Resolves a denied tool name (a portal tool name as the PreToolUse hook
-	 * reports it — `shell_exec`, `read`, `git_status`, …) to the portal tool
+	 * reports it — `bash`, `read`, `git_status`, …) to the portal tool
 	 * whose handler owns the call. When it resolves, a `force_retry_tool`
 	 * approval executes the originally captured tool + args directly and
 	 * returns the underlying `ToolResult`, instead of marking the token

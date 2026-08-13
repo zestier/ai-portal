@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { makeTmpDir } from './helpers/tmp';
-import { buildTrashTools } from '../src/lib/server/tools/trash';
+import { buildTrashTools } from '../src/lib/server/tools/filesystem';
 import { scratchSubdir, scratchDir, zapDir } from '../src/lib/server/tools/zap-dir';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 

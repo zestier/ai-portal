@@ -7,7 +7,9 @@ import {
 import { parseUnifiedDiff, diffStats } from '../src/lib/client/diff-parser';
 
 describe('synthesizeDiff', () => {
-	it('synthesizes replace_text arguments and does not misclassify replace_lines as creation', () => {
+	it('handles the removed replace_text shape via the tolerant fallback', () => {
+		// `replace_text` is gone from the tool set and from EDIT_TOOLS, but the
+		// shape-based fallback still renders old turns that used it.
 		const replacement = synthesizeDiff({
 			tool: 'replace_text',
 			argsJson: JSON.stringify({ path: 'src/a.ts', oldText: 'old', newText: 'new' })
@@ -15,13 +17,6 @@ describe('synthesizeDiff', () => {
 		expect(replacement?.path).toBe('src/a.ts');
 		expect(replacement?.diff).toContain('-old');
 		expect(replacement?.diff).toContain('+new');
-
-		expect(
-			synthesizeDiff({
-				tool: 'replace_lines',
-				argsJson: JSON.stringify({ path: 'src/a.ts', startLine: 2, endLine: 3, content: 'new' })
-			})
-		).toBeNull();
 	});
 
 	it('synthesizes a diff for edit-style {old_str, new_str} args', () => {
@@ -71,7 +66,7 @@ describe('synthesizeDiff', () => {
 		expect(r).toBeNull();
 	});
 
-	it('handles aliases (write_file with content)', () => {
+	it('handles the removed write_file alias via the tolerant fallback', () => {
 		const r = synthesizeDiff({
 			tool: 'write_file',
 			argsJson: JSON.stringify({ filename: 'a.md', content: 'hi' })

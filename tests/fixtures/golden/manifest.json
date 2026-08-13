@@ -102,24 +102,6 @@
       "isError": false
     },
     {
-      "tool": "Glob",
-      "name": "basic",
-      "toolUseId": "call_00_Feabkn93Xx6SpN0W1ZIH4252",
-      "isError": false
-    },
-    {
-      "tool": "Glob",
-      "name": "none",
-      "toolUseId": "call_00_ET_tgDSEO87P93OBh184y1Z1301",
-      "isError": false
-    },
-    {
-      "tool": "Glob",
-      "name": "ignored",
-      "toolUseId": "call_00_ET_r0VLkd7cgbblQtRzoZWf4339",
-      "isError": false
-    },
-    {
       "tool": "Grep",
       "name": "content",
       "toolUseId": "call_00_3IK2yO3t1qvTobNasuKx1491",

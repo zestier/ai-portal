@@ -19,7 +19,7 @@ async function withWorkspace(run: (workspace: string) => Promise<void>) {
 	}
 }
 
-describe('shell_exec', () => {
+describe('bash', () => {
 	it('does not expose portal configuration to commands', async () => {
 		await withWorkspace(async (workspace) => {
 			process.env.DATA_DIR = '/live/portal/data';
