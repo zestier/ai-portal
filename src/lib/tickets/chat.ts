@@ -46,13 +46,13 @@ export function interpolateTicketPrompt(
  * ticket + action template server-side and pre-fills the interpolated prompt.
  */
 export function ticketActionDraftUrl(
-	conversationId: number,
-	ticketId: number,
-	actionId: number
+	conversationId: string,
+	ticketId: string,
+	actionId: string
 ): string {
 	const params = new URLSearchParams({
-		draftTicketId: String(ticketId),
-		ticketActionId: String(actionId)
+		draftTicketId: ticketId,
+		ticketActionId: actionId
 	});
 	return `/conversations/${conversationId}?${params.toString()}`;
 }

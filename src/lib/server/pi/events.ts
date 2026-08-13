@@ -10,23 +10,25 @@
 import { ulid } from 'ulid';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { PortalEvent } from '$lib/types';
+import { toolCallId } from '$lib/ids';
 import { serializeEnvelope, type ToolResult } from '../tools/types';
 import { mintToolCallId } from '../db/repos/messages';
 
 const TOOL_SUMMARY_MAX = 200;
 
 export class PiEventMapper {
-	readonly messageId: number;
+	readonly messageId: string;
 	// Open reasoning bursts keyed by pi's content index (one per thinking block).
 	private reasoningSegments = new Map<number, { segmentId: string; startedAt: number }>();
 	// pi tool calls carry SDK-string ids; the portal persists numeric tool_calls
 	// ids. Map each SDK id to a minted numeric id (stable across the call's
-	// start/update/end events so the client and DB correlate them as one call).
+	// start/update/end events so the client and DB correlate them as one call),
+	// exposed to the turn stream as its opaque X-handle.
 	private toolCallIds = new Map<string, number>();
 	private messageEnded = false;
 	private emittedError = false;
 
-	constructor(messageId: number) {
+	constructor(messageId: string) {
 		this.messageId = messageId;
 	}
 
@@ -41,12 +43,12 @@ export class PiEventMapper {
 	}
 
 	/** Mint-or-lookup the numeric portal tool-call id for an SDK tool call id. */
-	private toolCallIdFor(sdkId: string): number {
+	private toolCallIdFor(sdkId: string): string {
 		const existing = this.toolCallIds.get(sdkId);
-		if (existing !== undefined) return existing;
+		if (existing !== undefined) return toolCallId.encode(existing);
 		const minted = mintToolCallId();
 		this.toolCallIds.set(sdkId, minted);
-		return minted;
+		return toolCallId.encode(minted);
 	}
 
 	map(event: AgentSessionEvent): PortalEvent[] {
@@ -163,7 +165,7 @@ export class PiEventMapper {
 // `{ portalStream: 'progress' | 'partial' }` (see tools.ts); map by that.
 function mapToolUpdate(
 	event: { toolCallId: string; partialResult: unknown },
-	toolCallId: number
+	toolCallId: string
 ): PortalEvent[] {
 	const { partialResult } = event;
 	const details = isRecord(partialResult) ? partialResult.details : undefined;
@@ -179,7 +181,7 @@ function mapToolUpdate(
 // portal tools).
 function mapToolResult(
 	event: { toolCallId: string; result: unknown; isError: boolean },
-	toolCallId: number
+	toolCallId: string
 ): PortalEvent[] {
 	const { result } = event;
 	const details = isRecord(result) ? result.details : undefined;

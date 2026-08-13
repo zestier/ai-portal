@@ -5,10 +5,11 @@
 // contract.
 
 import { getDb } from '../index';
+import { messageId } from '$lib/ids';
 
 export interface TurnIdempotencyRecord {
 	turnId: string;
-	userMessageId: number;
+	userMessageId: string;
 	title: string | null;
 }
 
@@ -29,7 +30,7 @@ export function lookup(conversationId: number, key: string): TurnIdempotencyReco
 		)
 		.get(conversationId, key) as TurnIdempotencyRow | undefined;
 	if (!row) return null;
-	return { turnId: row.turn_id, userMessageId: row.message_id, title: row.title };
+	return { turnId: row.turn_id, userMessageId: messageId.encode(row.message_id), title: row.title };
 }
 
 // Record the result of a successfully-started turn against its key. Uses
@@ -38,10 +39,11 @@ export function lookup(conversationId: number, key: string): TurnIdempotencyReco
 export function record(input: {
 	conversationId: number;
 	key: string;
-	messageId: number;
+	messageId: string | number;
 	turnId: string;
 	title?: string | null;
 }): void {
+	const messageIdInt = typeof input.messageId === 'number' ? input.messageId : messageId.parse(input.messageId);
 	getDb()
 		.prepare(
 			`INSERT OR IGNORE INTO turn_idempotency(
@@ -52,7 +54,7 @@ export function record(input: {
 		.run(
 			input.conversationId,
 			input.key,
-			input.messageId,
+			messageIdInt,
 			input.turnId,
 			input.title ?? null,
 			Date.now()

@@ -1,6 +1,15 @@
 import type Database from 'better-sqlite3';
 import { ulid } from '../ids';
 import { getDb } from '../index';
+import {
+	conversationId,
+	memoryEntityId,
+	memoryFactId,
+	memoryPatchItemId,
+	messageId,
+	toolCallId
+} from '$lib/ids';
+import type { IdCodec } from '$lib/ids';
 import { normalizeMemoryMode, type MemoryMode } from '$lib/types';
 
 export type MemoryItemStatus = 'active' | 'superseded' | 'disputed' | 'deleted';
@@ -12,8 +21,8 @@ export type MemoryPatchStatus =
 	| 'needs_review';
 
 export interface MemoryEntity {
-	id: number;
-	conversationId: number;
+	id: string;
+	conversationId: string;
 	entityKey: string;
 	entityType: string;
 	displayName: string;
@@ -26,33 +35,33 @@ export interface MemoryEntity {
 
 export interface MemoryEvent {
 	id: number;
-	conversationId: number;
+	conversationId: string;
 	turnId: string | null;
 	eventType: string;
 	occurredAt: number;
-	actorEntityId: number | null;
-	targetEntityId: number | null;
+	actorEntityId: string | null;
+	targetEntityId: string | null;
 	summary: string;
 	payload: unknown;
 	visibility: string;
 	confidence: number;
-	sourceMessageId: number | null;
-	sourceToolCallId: number | null;
+	sourceMessageId: string | null;
+	sourceToolCallId: string | null;
 	createdAt: number;
 }
 
 export interface MemoryFact {
-	id: number;
-	conversationId: number;
-	entityId: number | null;
+	id: string;
+	conversationId: string;
+	entityId: string | null;
 	predicate: string;
 	value: unknown;
 	status: string;
 	visibility: string;
 	confidence: number;
 	sourceEventId: number | null;
-	sourceMessageId: number | null;
-	supersedesFactId: number | null;
+	sourceMessageId: string | null;
+	supersedesFactId: string | null;
 	pinned: boolean;
 	createdAt: number;
 	updatedAt: number;
@@ -60,7 +69,7 @@ export interface MemoryFact {
 
 export interface MemoryOpenLoop {
 	id: number;
-	conversationId: number;
+	conversationId: string;
 	/**
 	 * Stable, human-legible handle (slug of the title, e.g. `loop.find_attic_key`),
 	 * unique within a conversation. This is what the extractor sees and references
@@ -73,9 +82,9 @@ export interface MemoryOpenLoop {
 	description: string;
 	status: string;
 	priority: number;
-	relatedEntityIds: number[];
+	relatedEntityIds: string[];
 	sourceEventId: number | null;
-	sourceMessageId: number | null;
+	sourceMessageId: string | null;
 	idleTurns: number;
 	createdAt: number;
 	updatedAt: number;
@@ -83,7 +92,7 @@ export interface MemoryOpenLoop {
 
 export interface MemoryPatch {
 	id: number;
-	conversationId: number;
+	conversationId: string;
 	turnId: string | null;
 	status: MemoryPatchStatus;
 	summary: string;
@@ -99,7 +108,7 @@ export interface MemoryPatch {
 
 export interface MemoryValidationIssue {
 	id: number;
-	conversationId: number;
+	conversationId: string;
 	patchId: number | null;
 	severity: 'info' | 'warning' | 'error';
 	code: string;
@@ -111,7 +120,7 @@ export interface MemoryValidationIssue {
 
 export interface MemoryToolCall {
 	id: number;
-	conversationId: number;
+	conversationId: string;
 	turnId: string | null;
 	toolName: string;
 	arguments: unknown;
@@ -121,9 +130,9 @@ export interface MemoryToolCall {
 }
 
 export interface MemoryPatchItem {
-	id: number;
+	id: string;
 	patchId: number;
-	conversationId: number;
+	conversationId: string;
 	itemType: string;
 	itemId: number;
 	action: string;
@@ -164,8 +173,8 @@ export interface GlobalMemory {
 	memoryKey: string;
 	value: unknown;
 	status: string;
-	sourceConversationId: number | null;
-	sourceMessageId: number | null;
+	sourceConversationId: string | null;
+	sourceMessageId: string | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -329,12 +338,12 @@ export interface AddEventInput {
 	visibility?: string | undefined;
 	confidence?: number | undefined;
 	sourceMessageId?: number | null | undefined;
-	actorEntityId?: number | null | undefined;
-	targetEntityId?: number | null | undefined;
+	actorEntityId?: string | number | null | undefined;
+	targetEntityId?: string | number | null | undefined;
 }
 
 export interface AddFactInput {
-	entityId?: number | null | undefined;
+	entityId?: string | number | null | undefined;
 	predicate: string;
 	value: unknown;
 	visibility?: string | undefined;
@@ -394,7 +403,7 @@ export interface AddOpenLoopInput {
 	title: string;
 	description?: string | undefined;
 	priority?: number | undefined;
-	relatedEntityIds?: number[] | undefined;
+	relatedEntityIds?: Array<string | number> | undefined;
 	sourceEventId?: number | null | undefined;
 	sourceMessageId?: number | null | undefined;
 }
@@ -505,13 +514,15 @@ export function getEntity(
 	conversationId: number,
 	entityKeyOrId: string | number
 ): MemoryEntity | null {
+	const id = typeof entityKeyOrId === 'string' ? memoryEntityId.tryParse(entityKeyOrId) : entityKeyOrId;
+	const key = typeof entityKeyOrId === 'string' && id === null ? entityKeyOrId : null;
 	const row = getDb()
 		.prepare(
 			`SELECT * FROM memory_entities
 			  WHERE conversation_id = ? AND (id = ? OR entity_key = ?)
 			  LIMIT 1`
 		)
-		.get(conversationId, entityKeyOrId, entityKeyOrId) as EntityRow | undefined;
+		.get(conversationId, id ?? -1, key ?? '') as EntityRow | undefined;
 	return row ? rowToEntity(row) : null;
 }
 
@@ -564,8 +575,8 @@ export function addEvent(conversationId: number, input: AddEventInput): MemoryEv
 				input.turnId ?? null,
 				input.eventType,
 				now,
-				input.actorEntityId ?? null,
-				input.targetEntityId ?? null,
+				resolveId(input.actorEntityId, memoryEntityId),
+				resolveId(input.targetEntityId, memoryEntityId),
 				input.summary,
 				safeJson(input.payload ?? {}),
 				input.visibility ?? 'session',
@@ -623,20 +634,21 @@ export function listEvents(
 	conversationId: number,
 	opts: {
 		limit?: number | undefined;
-		entityId?: number | undefined;
+		entityId?: string | number | undefined;
 		eventType?: string | undefined;
 	} = {}
 ): MemoryEvent[] {
 	const limit = opts.limit ?? 50;
 	let rows: EventRow[];
-	if (opts.entityId) {
+	const entityId = resolveId(opts.entityId, memoryEntityId);
+	if (entityId) {
 		rows = getDb()
 			.prepare(
 				`SELECT * FROM memory_events
 				  WHERE conversation_id = ? AND (actor_entity_id = ? OR target_entity_id = ?)
 				  ORDER BY created_at DESC LIMIT ?`
 			)
-			.all(conversationId, opts.entityId, opts.entityId, limit) as EventRow[];
+			.all(conversationId, entityId, entityId, limit) as EventRow[];
 	} else if (opts.eventType) {
 		rows = getDb()
 			.prepare(
@@ -676,7 +688,7 @@ export function addFact(conversationId: number, input: AddFactInput): MemoryFact
 			)
 			.run(
 				conversationId,
-				input.entityId ?? null,
+				resolveId(input.entityId, memoryEntityId),
 				input.predicate,
 				safeJson(input.value),
 				input.visibility ?? 'session',
@@ -765,7 +777,7 @@ export function listFacts(
 	conversationId: number,
 	opts: {
 		limit?: number | undefined;
-		entityId?: number | undefined;
+		entityId?: string | number | undefined;
 		status?: string | undefined;
 		predicate?: string | undefined;
 	} = {}
@@ -774,9 +786,10 @@ export function listFacts(
 	const status = opts.status ?? 'active';
 	const clauses = ['conversation_id = ?', 'status = ?'];
 	const params: (string | number)[] = [conversationId, status];
-	if (opts.entityId) {
+	const entityId = resolveId(opts.entityId, memoryEntityId);
+	if (entityId) {
 		clauses.push('entity_id = ?');
-		params.push(opts.entityId);
+		params.push(entityId);
 	}
 	if (opts.predicate) {
 		clauses.push('predicate = ?');
@@ -803,15 +816,16 @@ export function listFacts(
  * conversation. Used by the forget path to resolve a packet `[id=...]` handle to
  * a concrete fact and check its current status/kind before tombstoning it.
  */
-export function getFact(conversationId: number, id: number): MemoryFact | null {
-	if (!id) return null;
+export function getFact(conversationId: number, id: string | number): MemoryFact | null {
+	const intId = resolveId(id, memoryFactId);
+	if (!intId) return null;
 	const row = getDb()
 		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as FactRow | undefined;
+		.get(intId, conversationId) as FactRow | undefined;
 	return row ? rowToFact(row) : null;
 }
 
-export function entityFactCounts(conversationId: number): Map<number, number> {
+export function entityFactCounts(conversationId: number): Map<string, number> {
 	const rows = getDb()
 		.prepare(
 			`SELECT entity_id AS entityId, COUNT(*) AS count
@@ -820,8 +834,8 @@ export function entityFactCounts(conversationId: number): Map<number, number> {
 			  GROUP BY entity_id`
 		)
 		.all(conversationId) as Array<{ entityId: number; count: number }>;
-	const counts = new Map<number, number>();
-	for (const row of rows) counts.set(row.entityId, row.count);
+	const counts = new Map<string, number>();
+	for (const row of rows) counts.set(memoryEntityId.encode(row.entityId), row.count);
 	return counts;
 }
 
@@ -924,7 +938,11 @@ export function addOpenLoop(conversationId: number, input: AddOpenLoopInput): Me
 					input.title,
 					input.description ?? '',
 					input.priority ?? 0,
-					safeJson(input.relatedEntityIds ?? []),
+					safeJson(
+						(input.relatedEntityIds ?? [])
+							.map((id) => resolveId(id, memoryEntityId))
+							.filter((id): id is number => id !== null && id > 0)
+					),
 					input.sourceEventId ?? null,
 					input.sourceMessageId ?? null,
 					now,
@@ -1161,15 +1179,16 @@ export function updatePatchStatus(
 
 export function recordPatchItem(
 	conversationId: number,
-	input: { patchId: number; itemType: string; itemId: number; action: string }
+	input: { patchId: number; itemType: string; itemId: string | number; action: string }
 ): MemoryPatchItem {
 	const now = Date.now();
+	const itemId = resolveId(input.itemId, codecFor(input.itemType) ?? memoryEntityId) ?? 0;
 	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_patch_items(patch_id, conversation_id, item_type, item_id, action, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
 		)
-		.run(input.patchId, conversationId, input.itemType, input.itemId, input.action, now);
+		.run(input.patchId, conversationId, input.itemType, itemId, input.action, now);
 	const id = Number(info.lastInsertRowid);
 	const row = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ?')
@@ -1207,12 +1226,14 @@ export function listPatchItems(
 
 export function reviewPatchItem(
 	conversationId: number,
-	patchItemId: number,
+	patchItemId: string | number,
 	decision: 'approve' | 'reject'
 ): { item: MemoryPatchItem | null; affected: boolean } {
+	const intPatchItemId = resolveId(patchItemId, memoryPatchItemId);
+	if (!intPatchItemId) return { item: null, affected: false };
 	const current = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ? AND conversation_id = ?')
-		.get(patchItemId, conversationId) as PatchItemRow | undefined;
+		.get(intPatchItemId, conversationId) as PatchItemRow | undefined;
 	if (!current) return { item: null, affected: false };
 	let affected = false;
 	const status = decision === 'approve' ? 'approved' : 'rejected';
@@ -1229,14 +1250,14 @@ export function reviewPatchItem(
 			    SET review_status = ?, reviewed_at = ?
 			  WHERE id = ? AND conversation_id = ?`
 		)
-		.run(status, Date.now(), patchItemId, conversationId);
+		.run(status, Date.now(), intPatchItemId, conversationId);
 	const item = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ? AND conversation_id = ?')
-		.get(patchItemId, conversationId) as PatchItemRow;
+		.get(intPatchItemId, conversationId) as PatchItemRow;
 	appendSessionMemoryLog(getDb(), conversationId, {
 		eventKind: 'patch_item.review',
 		itemType: 'patch_item',
-		itemId: patchItemId,
+		itemId: intPatchItemId,
 		payload: { item: rowToPatchItem(item), decision, affected }
 	});
 	return { item: rowToPatchItem(item), affected };
@@ -1244,13 +1265,15 @@ export function reviewPatchItem(
 
 export function updateEntity(
 	conversationId: number,
-	id: number,
+	id: string | number,
 	patch: Partial<Pick<MemoryEntity, 'displayName' | 'summary' | 'status'>> & {
 		entityType?: string;
 		metadata?: unknown;
 	}
 ): MemoryEntity | null {
-	const current = getEntity(conversationId, id);
+	const intId = resolveId(id, memoryEntityId);
+	if (!intId) return null;
+	const current = getEntity(conversationId, intId);
 	if (!current) return null;
 	const next = {
 		entityType: patch.entityType ?? current.entityType,
@@ -1272,17 +1295,17 @@ export function updateEntity(
 			next.status,
 			safeJson(next.metadata),
 			Date.now(),
-			id,
+			intId,
 			conversationId
 		);
 	const row = getDb()
 		.prepare('SELECT * FROM memory_entities WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as EntityRow;
-	syncSessionIndex(getDb(), conversationId, 'entity', id, row.status, entityIndexText(row));
+		.get(intId, conversationId) as EntityRow;
+	syncSessionIndex(getDb(), conversationId, 'entity', intId, row.status, entityIndexText(row));
 	appendSessionMemoryLog(getDb(), conversationId, {
 		eventKind: row.status === 'deleted' ? 'entity.delete' : 'entity.update',
 		itemType: 'entity',
-		itemId: id,
+		itemId: intId,
 		payload: { item: rowToEntity(row) }
 	});
 	return rowToEntity(row);
@@ -1342,6 +1365,8 @@ export function mergeEntities(
 				reassignedFacts: 0,
 				reassignedEvents: 0
 			};
+		const fromId = memoryEntityId.parse(from.id);
+		const intoId = memoryEntityId.parse(into.id);
 		// Folding into a retired entity would silently bury the source's facts on a
 		// tombstoned referent (hidden from active views), so reject it. Merging
 		// *from* a deleted duplicate is fine — that is exactly the cleanup case.
@@ -1361,11 +1386,11 @@ export function mergeEntities(
 				`SELECT * FROM memory_facts
 				  WHERE conversation_id = ? AND entity_id = ? AND status != 'deleted'`
 			)
-			.all(conversationId, from.id) as FactRow[];
+			.all(conversationId, fromId) as FactRow[];
 		for (const factRow of factRows) {
 			db.prepare(
 				'UPDATE memory_facts SET entity_id = ?, updated_at = ? WHERE id = ? AND conversation_id = ?'
-			).run(into.id, now, factRow.id, conversationId);
+			).run(intoId, now, factRow.id, conversationId);
 			const updated = db
 				.prepare('SELECT * FROM memory_facts WHERE id = ?')
 				.get(factRow.id) as FactRow;
@@ -1389,8 +1414,8 @@ export function mergeEntities(
 		// the destination may now hold duplicate observations of a single-valued
 		// predicate, and the source group is left empty.
 		for (const predicate of touchedPredicates) {
-			consolidateFactGroup(db, conversationId, into.id, predicate);
-			consolidateFactGroup(db, conversationId, from.id, predicate);
+			consolidateFactGroup(db, conversationId, intoId, predicate);
+			consolidateFactGroup(db, conversationId, fromId, predicate);
 		}
 
 		const eventRows = db
@@ -1398,11 +1423,11 @@ export function mergeEntities(
 				`SELECT * FROM memory_events
 				  WHERE conversation_id = ? AND (actor_entity_id = ? OR target_entity_id = ?)`
 			)
-			.all(conversationId, from.id, from.id) as EventRow[];
+			.all(conversationId, fromId, fromId) as EventRow[];
 		for (const eventRow of eventRows) {
-			const nextActor = eventRow.actor_entity_id === from.id ? into.id : eventRow.actor_entity_id;
+			const nextActor = eventRow.actor_entity_id === fromId ? intoId : eventRow.actor_entity_id;
 			const nextTarget =
-				eventRow.target_entity_id === from.id ? into.id : eventRow.target_entity_id;
+				eventRow.target_entity_id === fromId ? intoId : eventRow.target_entity_id;
 			db.prepare(
 				'UPDATE memory_events SET actor_entity_id = ?, target_entity_id = ? WHERE id = ? AND conversation_id = ?'
 			).run(nextActor, nextTarget, eventRow.id, conversationId);
@@ -1425,20 +1450,20 @@ export function mergeEntities(
 			.all(conversationId) as OpenLoopRow[];
 		for (const loopRow of loopRows) {
 			const related = parseJson(loopRow.related_entity_ids_json, []) as number[];
-			if (!related.includes(from.id)) continue;
-			const next = related.map((id) => (id === from.id ? into.id : id));
+			if (!related.includes(fromId)) continue;
+			const next = related.map((id) => (id === fromId ? intoId : id));
 			const deduped = [...new Set(next)];
 			updateOpenLoop(conversationId, loopRow.id, { relatedEntityIds: deduped });
 		}
 
-		const tombstoned = updateEntity(conversationId, from.id, { status: 'deleted' });
+		const tombstoned = updateEntity(conversationId, fromId, { status: 'deleted' });
 		addEvent(conversationId, {
 			eventType: 'memory_entities_merged',
 			summary: `Merged ${from.entityKey} into ${into.entityKey}.`,
 			payload: {
-				fromEntityId: from.id,
+				fromEntityId: fromId,
 				fromEntityKey: from.entityKey,
-				intoEntityId: into.id,
+				intoEntityId: intoId,
 				intoEntityKey: into.entityKey,
 				reassignedFacts: factRows.length,
 				reassignedEvents: eventRows.length
@@ -1459,14 +1484,16 @@ export function mergeEntities(
 
 export function updateFact(
 	conversationId: number,
-	id: number,
+	id: string | number,
 	patch: Partial<Pick<MemoryFact, 'predicate' | 'value' | 'status' | 'visibility' | 'confidence'>>
 ): MemoryFact | null {
 	const db = getDb();
 	const tx = db.transaction(() => {
+		const intId = resolveId(id, memoryFactId);
+		if (!intId) return null;
 		const current = db
 			.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-			.get(id, conversationId) as FactRow | undefined;
+			.get(intId, conversationId) as FactRow | undefined;
 		if (!current) return null;
 		db.prepare(
 			`UPDATE memory_facts
@@ -1479,13 +1506,13 @@ export function updateFact(
 			patch.visibility ?? current.visibility,
 			patch.confidence ?? current.confidence,
 			Date.now(),
-			id,
+			intId,
 			conversationId
 		);
 		const row = db
 			.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-			.get(id, conversationId) as FactRow;
-		syncSessionIndex(db, conversationId, 'fact', id, row.status, factIndexText(row));
+			.get(intId, conversationId) as FactRow;
+		syncSessionIndex(db, conversationId, 'fact', intId, row.status, factIndexText(row));
 		appendSessionMemoryLog(db, conversationId, {
 			eventKind:
 				row.status === 'deleted'
@@ -1494,13 +1521,15 @@ export function updateFact(
 						? 'fact.supersede'
 						: 'fact.update',
 			itemType: 'fact',
-			itemId: id,
+			itemId: intId,
 			payload: { item: rowToFact(row) }
 		});
 		// Re-derive the active set: deleting/editing a fact can promote a previously
 		// superseded sibling (e.g. dropping the observation that overrode it).
 		consolidateFactGroup(db, conversationId, row.entity_id, row.predicate);
-		return rowToFact(db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow);
+		return rowToFact(
+			db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(intId) as FactRow
+		);
 	});
 	return tx();
 }
@@ -1509,11 +1538,8 @@ export function updateOpenLoop(
 	conversationId: number,
 	id: number,
 	patch: Partial<
-		Pick<
-			MemoryOpenLoop,
-			'loopType' | 'title' | 'description' | 'status' | 'priority' | 'relatedEntityIds'
-		>
-	>
+		Pick<MemoryOpenLoop, 'loopType' | 'title' | 'description' | 'status' | 'priority'>
+	> & { relatedEntityIds?: Array<string | number> | undefined }
 ): MemoryOpenLoop | null {
 	const current = getDb()
 		.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
@@ -1534,7 +1560,11 @@ export function updateOpenLoop(
 			patch.priority ?? current.priority,
 			patch.relatedEntityIds === undefined
 				? current.related_entity_ids_json
-				: safeJson(patch.relatedEntityIds),
+				: safeJson(
+						patch.relatedEntityIds
+							.map((entityRef) => resolveId(entityRef, memoryEntityId))
+							.filter((entityId): entityId is number => entityId !== null && entityId > 0)
+					),
 			Date.now(),
 			id,
 			conversationId
@@ -1761,14 +1791,16 @@ function headBeforeMessage(
 let turnStartViewSavepointSeq = 0;
 export function readMemoryAtTurnStart<T>(
 	conversationId: number,
-	assistantMessageId: number,
+	assistantMessageId: string | number,
 	read: () => T
 ): T {
 	const db = getDb();
 	const savepoint = `memory_turn_start_view_${turnStartViewSavepointSeq++}`;
 	db.exec(`SAVEPOINT ${savepoint}`);
 	try {
-		const branchPoint = headBeforeMessage(db, conversationId, assistantMessageId);
+		const intMessageId =
+			typeof assistantMessageId === 'number' ? assistantMessageId : messageId.parse(assistantMessageId);
+		const branchPoint = headBeforeMessage(db, conversationId, intMessageId);
 		rebuildSessionMemoryProjectionInTransaction(db, conversationId, branchPoint);
 		return read();
 	} finally {
@@ -2069,7 +2101,13 @@ export function listToolCalls(
 export function search(
 	conversationId: number,
 	opts: { query: string; types?: string[] | undefined; limit?: number | undefined }
-): Array<{ itemType: string; itemId: number; text: string; score?: number; sources?: string[] }> {
+): Array<{
+	itemType: string;
+	itemId: string | number;
+	text: string;
+	score?: number;
+	sources?: string[];
+}> {
 	const query = opts.query.trim();
 	if (!query) return [];
 	const limit = opts.limit ?? 20;
@@ -2095,7 +2133,14 @@ export function search(
 	}[];
 	return rows.map((row, index) => ({
 		itemType: row.item_type,
-		itemId: row.item_id,
+		// Entity/fact hits reference prefixed entities — surface their handles so
+		// callers can correlate with `MemoryEntity.id` / `MemoryFact.id`.
+		itemId:
+			row.item_type === 'entity'
+				? memoryEntityId.encode(row.item_id)
+				: row.item_type === 'fact'
+					? memoryFactId.encode(row.item_id)
+					: row.item_id,
 		text: row.text,
 		score: limit - index,
 		sources: ['fts']
@@ -2253,7 +2298,7 @@ export function replaySessionMemoryLogForFork(
 		for (const row of copied) {
 			const payload = parseJson(row.payload_json, {});
 			const transformed = remap(row.item_type, payload);
-			const targetItemId = remapIdForPayload(row.item_id, transformed);
+			const targetItemId = remapIdForPayload(row.item_type, row.item_id, transformed);
 			appendSessionMemoryLog(db, targetConversationId, {
 				eventKind: row.event_kind,
 				itemType: row.item_type,
@@ -2725,7 +2770,12 @@ function applySessionMemoryLogProjection(
 			// Re-derive the active set from the stream as it replays. Supersede /
 			// dedupe is not stored on events, so a rebuild from the surviving
 			// observations always yields the correct active facts.
-			consolidateFactGroup(db, item.conversationId, item.entityId, item.predicate);
+			consolidateFactGroup(
+				db,
+				toIntId(item.conversationId, conversationId) ?? 0,
+				toIntId(item.entityId, memoryEntityId),
+				item.predicate
+			);
 		}
 	} else if (row.item_type === 'open_loop') {
 		const item = record.item as MemoryOpenLoop | undefined;
@@ -2773,6 +2823,16 @@ function rebuildSessionMemoryIndexes(db: Database.Database, conversationId: numb
 	}
 }
 
+// The event log stores repo-shaped snapshots (which now carry opaque handle
+// ids). Replaying one means parsing the handles back to the ints the
+// projection tables need. Tolerant of legacy rows that stored raw ints.
+function toIntId(value: unknown, codec: IdCodec): number | null {
+	if (value === null || value === undefined) return null;
+	if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
+	if (typeof value !== 'string') return null;
+	return codec.tryParse(value);
+}
+
 function upsertEntityProjection(db: Database.Database, item: MemoryEntity): void {
 	db.prepare(
 		`INSERT OR REPLACE INTO memory_entities(
@@ -2780,8 +2840,8 @@ function upsertEntityProjection(db: Database.Database, item: MemoryEntity): void
 		   metadata_json, created_at, updated_at
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
-		item.id,
-		item.conversationId,
+		toIntId(item.id, memoryEntityId),
+		toIntId(item.conversationId, conversationId),
 		item.entityKey,
 		item.entityType,
 		item.displayName,
@@ -2802,18 +2862,18 @@ function upsertEventProjection(db: Database.Database, item: MemoryEvent): void {
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		item.id,
-		item.conversationId,
+		toIntId(item.conversationId, conversationId),
 		item.turnId,
 		item.eventType,
 		item.occurredAt,
-		item.actorEntityId,
-		item.targetEntityId,
+		toIntId(item.actorEntityId, memoryEntityId),
+		toIntId(item.targetEntityId, memoryEntityId),
 		item.summary,
 		safeJson(item.payload ?? {}),
 		item.visibility,
 		item.confidence,
-		item.sourceMessageId,
-		item.sourceToolCallId,
+		toIntId(item.sourceMessageId, messageId),
+		toIntId(item.sourceToolCallId, toolCallId),
 		item.createdAt
 	);
 }
@@ -2826,17 +2886,17 @@ function upsertFactProjection(db: Database.Database, item: MemoryFact): void {
 		   pinned, created_at, updated_at
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
-		item.id,
-		item.conversationId,
-		item.entityId,
+		toIntId(item.id, memoryFactId),
+		toIntId(item.conversationId, conversationId),
+		toIntId(item.entityId, memoryEntityId),
 		item.predicate,
 		safeJson(item.value),
 		item.status,
 		item.visibility,
 		item.confidence,
 		item.sourceEventId,
-		item.sourceMessageId,
-		item.supersedesFactId,
+		toIntId(item.sourceMessageId, messageId),
+		toIntId(item.supersedesFactId, memoryFactId),
 		item.pinned ? 1 : 0,
 		item.createdAt,
 		item.updatedAt
@@ -2851,16 +2911,20 @@ function upsertOpenLoopProjection(db: Database.Database, item: MemoryOpenLoop): 
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		item.id,
-		item.conversationId,
+		toIntId(item.conversationId, conversationId),
 		item.loopKey ?? '',
 		item.loopType,
 		item.title,
 		item.description,
 		item.status,
 		item.priority,
-		safeJson(item.relatedEntityIds ?? []),
+		safeJson(
+			(item.relatedEntityIds ?? [])
+				.map((id) => toIntId(id, memoryEntityId))
+				.filter((id): id is number => id !== null && id > 0)
+		),
 		item.sourceEventId,
-		item.sourceMessageId,
+		toIntId(item.sourceMessageId, messageId),
 		item.createdAt,
 		item.updatedAt
 	);
@@ -2875,7 +2939,7 @@ function upsertPatchProjection(db: Database.Database, patch: MemoryPatch): void 
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		patch.id,
-		patch.conversationId,
+		toIntId(patch.conversationId, conversationId),
 		patch.turnId,
 		patch.status,
 		patch.summary,
@@ -2897,9 +2961,9 @@ function upsertPatchItemProjection(db: Database.Database, item: MemoryPatchItem)
 		   reviewed_at, created_at
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
-		item.id,
+		toIntId(item.id, memoryPatchItemId),
 		item.patchId,
-		item.conversationId,
+		toIntId(item.conversationId, conversationId),
 		item.itemType,
 		item.itemId,
 		item.action,
@@ -2916,7 +2980,7 @@ function upsertIssueProjection(db: Database.Database, issue: MemoryValidationIss
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		issue.id,
-		issue.conversationId,
+		toIntId(issue.conversationId, conversationId),
 		issue.patchId,
 		issue.severity,
 		issue.code,
@@ -2935,7 +2999,7 @@ function upsertToolCallProjection(db: Database.Database, toolCall: MemoryToolCal
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		toolCall.id,
-		toolCall.conversationId,
+		toIntId(toolCall.conversationId, conversationId),
 		toolCall.turnId,
 		toolCall.toolName,
 		safeJson(toolCall.arguments ?? {}),
@@ -2970,6 +3034,18 @@ function getMaxRemapperId(db: Database.Database, type: string): number | undefin
 	return row?.m ?? undefined;
 }
 
+// Which session-memory item types carry opaque handle ids (see `$lib/ids`).
+// Event/open_loop/patch/issue/tool_call ids are not prefixed and stay ints.
+const ID_CODECS: Partial<Record<SessionMemoryLogItemType, IdCodec>> = {
+	entity: memoryEntityId,
+	fact: memoryFactId,
+	patch_item: memoryPatchItemId
+};
+
+function codecFor(type: string): IdCodec | undefined {
+	return ID_CODECS[type as SessionMemoryLogItemType];
+}
+
 function createForkMemoryRemapper(
 	targetConversationId: number,
 	messageIdMap: Map<number, number>,
@@ -2985,46 +3061,73 @@ function createForkMemoryRemapper(
 	// and this runs inside a transaction, so there are no races.
 	const idMaps = new Map<string, Map<number, number>>();
 	const nextId = new Map<string, number>();
-	// Mint (or reuse) the fork-local id for an item that IS being copied. Used
-	// for each row's own primary id.
-	const mintId = (type: string, id: number | null | undefined): number | null => {
-		if (!id) return null;
+	// Normalize a payload id to its int form (handles parse; ints pass through).
+	const toInt = (type: string, id: unknown): number | null => {
+		const codec = codecFor(type);
+		return codec ? toIntId(id, codec) : typeof id === 'number' ? id : null;
+	};
+	// Encode a fork-local int back to the wire form the type uses.
+	const enc = (type: string, id: number): string | number => {
+		const codec = codecFor(type);
+		return codec ? codec.encode(id) : id;
+	};
+	// Mint (or reuse) the fork-local INT id for an item that IS being copied.
+	// Used for each row's own primary id (callers re-encode with `enc`).
+	const mintId = (type: string, id: unknown): number | null => {
+		const intId = toInt(type, id);
+		if (!intId) return null;
 		let typeMap = idMaps.get(type);
 		if (!typeMap) {
 			typeMap = new Map();
 			idMaps.set(type, typeMap);
 			nextId.set(type, (getMaxRemapperId(db, type) ?? 0) + 1);
 		}
-		let next = typeMap.get(id);
+		let next = typeMap.get(intId);
 		if (next === undefined) {
 			next = nextId.get(type)!;
 			nextId.set(type, next + 1);
-			typeMap.set(id, next);
+			typeMap.set(intId, next);
 		}
 		return next;
 	};
-	// Resolve a reference to another item. Returns the fork-local id only when
-	// the referenced item was itself copied; otherwise null, so links to rows
-	// left behind by the fork never dangle at a non-existent id.
-	const refId = (type: string, id: number | null | undefined): number | null =>
-		id && isCopied(type, id) ? mintId(type, id) : null;
-	const mapMessage = (id: number | null | undefined): number | null =>
-		id ? (messageIdMap.get(id) ?? null) : null;
+	// Resolve a reference to another item, returning the fork-local id in the
+	// referenced type's wire form (handle or int). Returns null only when the
+	// referenced item was not itself copied, so links to rows left behind by the
+	// fork never dangle at a non-existent id.
+	const refId = (type: string, id: unknown): string | number | null => {
+		const intId = toInt(type, id);
+		if (!intId || !isCopied(type, intId)) return null;
+		const minted = mintId(type, intId);
+		return minted === null ? null : enc(type, minted);
+	};
+	// Like `refId` but always yields the raw INT — for kind-scoped reference
+	// columns (patch_item.itemId, patchId) that stay integers.
+	const refIntId = (type: string, id: number | null | undefined): number | null => {
+		if (!id || !isCopied(type, id)) return null;
+		return mintId(type, id);
+	};
+	const mapMessage = (id: unknown): string | null => {
+		const intId = toIntId(id, messageId);
+		if (!intId) return null;
+		const mapped = messageIdMap.get(intId);
+		return mapped === undefined ? null : messageId.encode(mapped);
+	};
+	const targetConv = conversationId.encode(targetConversationId);
 	const remapItem = (itemType: SessionMemoryLogItemType, value: unknown): unknown => {
 		if (!value || typeof value !== 'object') return value;
 		if (itemType === 'entity') {
 			const item = value as MemoryEntity;
-			return { ...item, id: mintId('entity', item.id), conversationId: targetConversationId };
+			return { ...item, id: enc('entity', mintId('entity', item.id)!), conversationId: targetConv };
 		}
 		if (itemType === 'event') {
 			const item = value as MemoryEvent;
 			return {
 				...item,
 				id: mintId('event', item.id),
-				conversationId: targetConversationId,
+				conversationId: targetConv,
 				turnId: null,
-				actorEntityId: refId('entity', item.actorEntityId),
-				targetEntityId: refId('entity', item.targetEntityId),
+				actorEntityId: refId('entity', item.actorEntityId) as string | null,
+				targetEntityId: refId('entity', item.targetEntityId) as string | null,
 				sourceMessageId: mapMessage(item.sourceMessageId),
 				sourceToolCallId: null
 			};
@@ -3033,12 +3136,12 @@ function createForkMemoryRemapper(
 			const item = value as MemoryFact;
 			return {
 				...item,
-				id: mintId('fact', item.id),
-				conversationId: targetConversationId,
-				entityId: refId('entity', item.entityId),
-				sourceEventId: refId('event', item.sourceEventId),
+				id: enc('fact', mintId('fact', item.id)!),
+				conversationId: targetConv,
+				entityId: refId('entity', item.entityId) as string | null,
+				sourceEventId: refId('event', item.sourceEventId) as number | null,
 				sourceMessageId: mapMessage(item.sourceMessageId),
-				supersedesFactId: refId('fact', item.supersedesFactId)
+				supersedesFactId: refId('fact', item.supersedesFactId) as string | null
 			};
 		}
 		if (itemType === 'open_loop') {
@@ -3046,11 +3149,11 @@ function createForkMemoryRemapper(
 			return {
 				...item,
 				id: mintId('open_loop', item.id),
-				conversationId: targetConversationId,
+				conversationId: targetConv,
 				relatedEntityIds: item.relatedEntityIds
 					.map((id) => refId('entity', id))
-					.filter((id): id is number => !!id),
-				sourceEventId: refId('event', item.sourceEventId),
+					.filter((id): id is string => typeof id === 'string'),
+				sourceEventId: refId('event', item.sourceEventId) as number | null,
 				sourceMessageId: mapMessage(item.sourceMessageId)
 			};
 		}
@@ -3059,7 +3162,7 @@ function createForkMemoryRemapper(
 			return {
 				...patch,
 				id: mintId('patch', patch.id),
-				conversationId: targetConversationId,
+				conversationId: targetConv,
 				turnId: null
 			};
 		}
@@ -3067,10 +3170,10 @@ function createForkMemoryRemapper(
 			const item = value as MemoryPatchItem;
 			return {
 				...item,
-				id: mintId('patch_item', item.id),
-				patchId: refId('patch', item.patchId),
-				conversationId: targetConversationId,
-				itemId: refId(item.itemType, item.itemId) ?? item.itemId
+				id: enc('patch_item', mintId('patch_item', item.id)!),
+				patchId: refIntId('patch', item.patchId) ?? item.patchId,
+				conversationId: targetConv,
+				itemId: refIntId(item.itemType, item.itemId) ?? item.itemId
 			};
 		}
 		if (itemType === 'issue') {
@@ -3078,8 +3181,8 @@ function createForkMemoryRemapper(
 			return {
 				...issue,
 				id: mintId('issue', issue.id),
-				conversationId: targetConversationId,
-				patchId: refId('patch', issue.patchId)
+				conversationId: targetConv,
+				patchId: refIntId('patch', issue.patchId) ?? issue.patchId
 			};
 		}
 		if (itemType === 'tool_call') {
@@ -3087,7 +3190,7 @@ function createForkMemoryRemapper(
 			return {
 				...toolCall,
 				id: mintId('tool_call', toolCall.id),
-				conversationId: targetConversationId,
+				conversationId: targetConv,
 				turnId: null
 			};
 		}
@@ -3111,8 +3214,8 @@ function createForkMemoryRemapper(
 			const remapLoopIds = (value: unknown): number[] =>
 				Array.isArray(value)
 					? value
-							.map((id) => (typeof id === 'number' ? refId('open_loop', id) : null))
-							.filter((id): id is number => !!id)
+							.map((id) => (typeof id === 'number' ? refIntId('open_loop', id) : null))
+							.filter((id): id is number => id !== null)
 					: [];
 			result.presented = remapLoopIds(result.presented);
 			result.kept = remapLoopIds(result.kept);
@@ -3121,12 +3224,15 @@ function createForkMemoryRemapper(
 	};
 }
 
-function remapIdForPayload(sourceItemId: number, payload: unknown): number {
+function remapIdForPayload(itemType: string, sourceItemId: number, payload: unknown): number {
 	const record = payloadObject(payload);
 	const value = (record.item ?? record.patch ?? record.issue ?? record.toolCall) as
 		| { id?: unknown }
 		| undefined;
-	return typeof value?.id === 'number' ? value.id : sourceItemId;
+	if (value?.id === undefined) return sourceItemId;
+	const codec = codecFor(itemType);
+	const parsed = codec ? toIntId(value.id, codec) : typeof value.id === 'number' ? value.id : null;
+	return parsed ?? sourceItemId;
 }
 
 function indexItem(
@@ -3193,10 +3299,23 @@ function deleteGlobalIndex(db: Database.Database, userId: number, itemId: number
 	);
 }
 
+function maybeEnc(v: number | null | undefined, encode: (id: number) => string): string | null {
+	return v === null || v === undefined ? null : encode(v);
+}
+
+// Resolve a possibly-handle id reference to its int form. Repo inputs accept
+// both `number` (raw int) and the opaque handle string; the SQL layer only
+// ever sees ints.
+function resolveId(ref: string | number | null | undefined, codec: IdCodec): number | null {
+	if (ref === null || ref === undefined) return null;
+	if (typeof ref === 'number') return Number.isSafeInteger(ref) && ref > 0 ? ref : null;
+	return codec.tryParse(ref);
+}
+
 function rowToEntity(row: EntityRow): MemoryEntity {
 	return {
-		id: row.id,
-		conversationId: row.conversation_id,
+		id: memoryEntityId.encode(row.id),
+		conversationId: conversationId.encode(row.conversation_id),
 		entityKey: row.entity_key,
 		entityType: row.entity_type,
 		displayName: row.display_name,
@@ -3211,35 +3330,35 @@ function rowToEntity(row: EntityRow): MemoryEntity {
 function rowToEvent(row: EventRow): MemoryEvent {
 	return {
 		id: row.id,
-		conversationId: row.conversation_id,
+		conversationId: conversationId.encode(row.conversation_id),
 		turnId: row.turn_id,
 		eventType: row.event_type,
 		occurredAt: row.occurred_at,
-		actorEntityId: row.actor_entity_id,
-		targetEntityId: row.target_entity_id,
+		actorEntityId: maybeEnc(row.actor_entity_id, memoryEntityId.encode),
+		targetEntityId: maybeEnc(row.target_entity_id, memoryEntityId.encode),
 		summary: row.summary,
 		payload: parseJson(row.payload_json, {}),
 		visibility: row.visibility,
 		confidence: row.confidence,
-		sourceMessageId: row.source_message_id,
-		sourceToolCallId: row.source_tool_call_id,
+		sourceMessageId: maybeEnc(row.source_message_id, messageId.encode),
+		sourceToolCallId: maybeEnc(row.source_tool_call_id, toolCallId.encode),
 		createdAt: row.created_at
 	};
 }
 
 function rowToFact(row: FactRow): MemoryFact {
 	return {
-		id: row.id,
-		conversationId: row.conversation_id,
-		entityId: row.entity_id,
+		id: memoryFactId.encode(row.id),
+		conversationId: conversationId.encode(row.conversation_id),
+		entityId: maybeEnc(row.entity_id, memoryEntityId.encode),
 		predicate: row.predicate,
 		value: parseJson(row.value_json, null),
 		status: row.status,
 		visibility: row.visibility,
 		confidence: row.confidence,
 		sourceEventId: row.source_event_id,
-		sourceMessageId: row.source_message_id,
-		supersedesFactId: row.supersedes_fact_id,
+		sourceMessageId: maybeEnc(row.source_message_id, messageId.encode),
+		supersedesFactId: maybeEnc(row.supersedes_fact_id, memoryFactId.encode),
 		pinned: Boolean(row.pinned),
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
@@ -3249,16 +3368,18 @@ function rowToFact(row: FactRow): MemoryFact {
 function rowToOpenLoop(row: OpenLoopRow): MemoryOpenLoop {
 	return {
 		id: row.id,
-		conversationId: row.conversation_id,
+		conversationId: conversationId.encode(row.conversation_id),
 		loopKey: row.loop_key ?? '',
 		loopType: row.loop_type,
 		title: row.title,
 		description: row.description,
 		status: row.status,
 		priority: row.priority,
-		relatedEntityIds: parseNumberArray(row.related_entity_ids_json),
+		relatedEntityIds: parseNumberArray(row.related_entity_ids_json).map((id) =>
+			memoryEntityId.encode(id)
+		),
 		sourceEventId: row.source_event_id,
-		sourceMessageId: row.source_message_id,
+		sourceMessageId: maybeEnc(row.source_message_id, messageId.encode),
 		idleTurns: row.idle_turns ?? 0,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
@@ -3268,7 +3389,7 @@ function rowToOpenLoop(row: OpenLoopRow): MemoryOpenLoop {
 function rowToPatch(row: PatchRow): MemoryPatch {
 	return {
 		id: row.id,
-		conversationId: row.conversation_id,
+		conversationId: conversationId.encode(row.conversation_id),
 		turnId: row.turn_id,
 		status: row.status,
 		summary: row.summary,
@@ -3286,7 +3407,7 @@ function rowToPatch(row: PatchRow): MemoryPatch {
 function rowToIssue(row: IssueRow): MemoryValidationIssue {
 	return {
 		id: row.id,
-		conversationId: row.conversation_id,
+		conversationId: conversationId.encode(row.conversation_id),
 		patchId: row.patch_id,
 		severity: row.severity,
 		code: row.code,
@@ -3300,7 +3421,7 @@ function rowToIssue(row: IssueRow): MemoryValidationIssue {
 function rowToToolCall(row: ToolCallRow): MemoryToolCall {
 	return {
 		id: row.id,
-		conversationId: row.conversation_id,
+		conversationId: conversationId.encode(row.conversation_id),
 		turnId: row.turn_id,
 		toolName: row.tool_name,
 		arguments: parseJson(row.arguments_json, {}),
@@ -3312,9 +3433,9 @@ function rowToToolCall(row: ToolCallRow): MemoryToolCall {
 
 function rowToPatchItem(row: PatchItemRow): MemoryPatchItem {
 	return {
-		id: row.id,
+		id: memoryPatchItemId.encode(row.id),
 		patchId: row.patch_id,
-		conversationId: row.conversation_id,
+		conversationId: conversationId.encode(row.conversation_id),
 		itemType: row.item_type,
 		itemId: row.item_id,
 		action: row.action,
@@ -3332,8 +3453,8 @@ function rowToGlobalMemory(row: GlobalMemoryRow): GlobalMemory {
 		memoryKey: row.memory_key,
 		value: parseJson(row.value_json, null),
 		status: row.status,
-		sourceConversationId: row.source_conversation_id,
-		sourceMessageId: row.source_message_id,
+		sourceConversationId: maybeEnc(row.source_conversation_id, conversationId.encode),
+		sourceMessageId: maybeEnc(row.source_message_id, messageId.encode),
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};

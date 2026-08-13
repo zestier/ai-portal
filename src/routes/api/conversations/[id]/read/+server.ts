@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { getTurn } from '$lib/server/runtime/turn-runner';
@@ -14,8 +15,9 @@ import { publishConversationActivity } from '$lib/server/runtime/conversation-ac
 // and out-of-order delivery are both harmless.
 export const POST: RequestHandler = ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	const lastReadAt = Date.now();
-	convs.markRead(conv.id, conv.userId, lastReadAt);
-	publishConversationActivity(conv.userId, conv.id, getTurn(conv.id)?.status === 'running');
+	convs.markRead(convId, conv.userId, lastReadAt);
+	publishConversationActivity(conv.userId, convId, getTurn(convId)?.status === 'running');
 	return json({ ok: true, lastReadAt });
 };

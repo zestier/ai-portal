@@ -2,6 +2,7 @@ import * as convs from '$lib/server/db/repos/conversations';
 import * as messages from '$lib/server/db/repos/messages';
 import * as settings from '$lib/server/db/repos/settings';
 import * as pool from '$lib/server/runtime/pool';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { loadConfig } from '$lib/server/config';
 import { startTurn } from '$lib/server/runtime/turn-runner';
 import { snapshot as takeSnapshot } from '$lib/server/snapshots';
@@ -34,11 +35,11 @@ export async function startTurnFromUserMessage(
 	if (memoryEnabled) {
 		// A memory-backed turn rebuilds the session's prompt from portal state,
 		// so any prior session is released to avoid stale context leaking in.
-		await pool.release(conv.id);
+		await pool.release(convCodec.parse(conv.id));
 	}
 	const prompt = memoryEnabled
 		? buildPromptWithMemory({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				mode: conv.memoryMode,
 				userMsg,
 				userId: conv.userId,
@@ -51,13 +52,15 @@ export async function startTurnFromUserMessage(
 		: userMsg.content;
 	const rerun = opts.rerun === true;
 	const rewindToUserMessageOrdinal =
-		rerun && !memoryEnabled ? userMessageOrdinal(conv.id, userMsg.id) : undefined;
+		rerun && !memoryEnabled
+			? userMessageOrdinal(convCodec.parse(conv.id), msgCodec.parse(userMsg.id))
+			: undefined;
 	const turn = await startTurn({
-		conversationId: conv.id,
+		conversationId: convCodec.parse(conv.id),
 		prompt,
 		userMessageId: userMsg.id,
 		bridge: {
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			userId: conv.userId,
 			workingDirectory: workdir,
 			workspaceKey: conv.workspaceKey,
@@ -85,7 +88,7 @@ export async function startTurnFromUserMessage(
 			: undefined,
 		beforeSend: async () => {
 			try {
-				await takeSnapshot(workdir, userMsg.id, 'pre');
+				await takeSnapshot(workdir, msgCodec.parse(userMsg.id), 'pre');
 			} catch (e) {
 				log.warn('snapshot.pre.failed', {
 					conversationId: conv.id,
@@ -95,7 +98,7 @@ export async function startTurnFromUserMessage(
 			}
 		}
 	});
-	convs.touch(conv.id);
+	convs.touch(convCodec.parse(conv.id));
 	return turn;
 }
 
@@ -107,7 +110,7 @@ export async function startTurnFromUserMessage(
  */
 function userMessageOrdinal(conversationId: number, userMessageId: number): number | undefined {
 	const all = messages.listByConversation(conversationId);
-	const idx = all.findIndex((m) => m.id === userMessageId);
+	const idx = all.findIndex((m) => msgCodec.parse(m.id) === userMessageId);
 	if (idx < 0) return undefined;
 	let ordinal = -1;
 	for (let i = 0; i <= idx; i++) {

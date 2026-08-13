@@ -15,7 +15,7 @@ export type PromptTemplateListItem = ChatPromptTemplate & {
 
 export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 	{
-		id: -1,
+		id: '-1',
 		userId: null,
 		type: 'chat',
 		title: 'Code review',
@@ -36,7 +36,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		archivedAt: null
 	},
 	{
-		id: -2,
+		id: '-2',
 		userId: null,
 		type: 'chat',
 		title: 'Debug an error',
@@ -57,7 +57,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		archivedAt: null
 	},
 	{
-		id: -3,
+		id: '-3',
 		userId: null,
 		type: 'chat',
 		title: 'Plan implementation',
@@ -78,7 +78,7 @@ export const BUILT_IN_PROMPT_TEMPLATES: ChatPromptTemplate[] = [
 		archivedAt: null
 	},
 	{
-		id: -4,
+		id: '-4',
 		userId: null,
 		type: 'chat',
 		title: 'Explain code',
@@ -104,7 +104,7 @@ export function listBuiltInPromptTemplates(): PromptTemplateListItem[] {
 	return BUILT_IN_PROMPT_TEMPLATES.map((template) => ({ ...template, source: 'builtin' }));
 }
 
-export function getBuiltInPromptTemplate(id: number): ChatPromptTemplate | null {
+export function getBuiltInPromptTemplate(id: string): ChatPromptTemplate | null {
 	return BUILT_IN_PROMPT_TEMPLATES.find((template) => template.id === id) ?? null;
 }
 

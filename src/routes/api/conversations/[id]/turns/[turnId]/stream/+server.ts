@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import { sseResponse } from '$lib/server/sse';
 import { getTurnById } from '$lib/server/runtime/turn-runner';
 import { authorizeConversation } from '$lib/server/conversation-auth';
@@ -21,7 +22,7 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
 export const GET: RequestHandler = ({ params, locals, request, url }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 
-	const turn = getTurnById(conv.id, params.turnId);
+	const turn = getTurnById(convCodec.parse(conv.id), params.turnId);
 	if (!turn) throw error(410, 'Turn no longer available');
 
 	// Browser auto-reconnect sets this header to the last `id:` it saw.

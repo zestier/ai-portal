@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import * as turnInputs from '$lib/server/db/repos/turn-inputs';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { projectMessageForOwner } from '$lib/server/present/transcript';
@@ -18,11 +19,12 @@ import { projectMessageForOwner } from '$lib/server/present/transcript';
  */
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	if (!params.messageId) throw error(400, 'missing message id');
-	const messageId = Number(params.messageId);
-	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
-	const message = projectMessageForOwner(conv.id, messageId);
+	const messageId = msgCodec.tryParse(params.messageId);
+	if (messageId === null) throw error(400, 'missing message id');
+	const message = projectMessageForOwner(convId, messageId);
 	if (!message) throw error(404);
-	const input = turnInputs.get(conv.id, messageId);
+	const input = turnInputs.get(convId, messageId);
 	return json({ message, input });
 };

@@ -1,4 +1,5 @@
 import { ulid } from 'ulid';
+import { messageId as msgCodec } from '$lib/ids';
 import { log } from '$lib/server/log';
 import {
 	commitPatch,
@@ -1067,8 +1068,7 @@ async function runExtractionAndCommit(
 		// docstring for the mechanism and failure-safety rationale.
 		input.initialPacket = input.priorPatchId
 			? memoryRepo.readMemoryAtTurnStart(input.conversationId, input.assistantMessage.id, build)
-			: build();
-	}
+			: build();	}
 	const presentedLoopIds = input.initialPacket.openLoops.map((loop) => loop.id);
 
 	const extraction = await extractor.extractPatch(input);
@@ -1080,7 +1080,7 @@ async function runExtractionAndCommit(
 		conversationId: input.conversationId,
 		mode: input.mode,
 		turnId: input.turnId,
-		sourceMessageId: input.assistantMessage.id,
+		sourceMessageId: msgCodec.parse(input.assistantMessage.id),
 		patch: extraction.patch,
 		summary: extraction.summary,
 		// Defer the prior-patch undo (retry path) into `commitPatch`, which runs
@@ -1121,7 +1121,7 @@ async function runExtractionAndCommit(
 			presentedLoopIds,
 			keptLoopIds,
 			baseThreshold,
-			sourceMessageId: input.assistantMessage.id,
+			sourceMessageId: msgCodec.parse(input.assistantMessage.id),
 			turnId: input.turnId
 		});
 		if (aged.dropped.length) {

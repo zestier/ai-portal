@@ -38,9 +38,9 @@
 		/** Enabled portal models as `providerId/modelId`, offered as suggestions. */
 		modelOptions?: string[];
 		parent?: {
-			id: number;
+			id: string;
 			title: string;
-			messageId: number | null;
+			messageId: string | null;
 			messageIndex: number | null;
 		} | null;
 		usage?: ConversationUsage | null;
@@ -337,7 +337,7 @@
 	let mergeFlash = $state<string | null>(null);
 	let mergeTimer: ReturnType<typeof setTimeout> | null = null;
 
-	async function loadWorktree(id: number) {
+	async function loadWorktree(id: string) {
 		try {
 			const res = await fetch(`/api/conversations/${id}/worktree`);
 			if (!res.ok) return;

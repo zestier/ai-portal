@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, promptTemplateId } from '$lib/ids';
 import { getDb } from '$lib/server/db';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as settings from '$lib/server/db/repos/settings';
@@ -42,7 +43,7 @@ const CreateBody = z
 		 * resolves to one of the caller's own chat templates, its
 		 * `disabledToolGroups` preset is copied onto the new conversation.
 		 */
-		promptTemplateId: z.number().int().positive().optional(),
+		promptTemplateId: z.string().optional(),
 		workspace: WorkspaceInput.optional()
 	})
 	.refine((body) => !(body.workdir && body.workspace), {
@@ -63,8 +64,9 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 	// always wins — that's how a resolved `ask` launch is expressed).
 	let disabledToolGroups: string[] = [];
 	let workspace = body.workspace;
-	if (body.promptTemplateId) {
-		const tpl = promptTemplates.get(body.promptTemplateId, userId);
+	const tplId = body.promptTemplateId ? promptTemplateId.tryParse(body.promptTemplateId) : null;
+	if (tplId) {
+		const tpl = promptTemplates.get(tplId, userId);
 		if (tpl && tpl.type === 'chat') disabledToolGroups = tpl.disabledToolGroups;
 		if (tpl && !workspace && !body.workdir && tpl.workspaceMode === 'worktree') {
 			workspace = { kind: 'worktree' };
@@ -128,16 +130,17 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 	}
 
 	const conv = createRow(workdir);
+	const convId = convCodec.parse(conv.id);
 	let managedWorktree;
 	try {
 		managedWorktree = await createManagedWorktree({
 			sourceWorkdir: workdir,
 			userId: String(userId),
-			conversationId: String(conv.id),
+			conversationId: String(convId),
 			...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
 		});
 	} catch (cause) {
-		convs.remove(conv.id, userId);
+		convs.remove(convId, userId);
 		if (cause instanceof WorktreeError) {
 			audit({
 				event_type: 'worktree_create',
@@ -155,14 +158,14 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 		throw cause;
 	}
 	getDb().transaction(() => {
-		convs.setManagedWorktree(conv.id, managedWorktree);
+		convs.setManagedWorktree(convId, managedWorktree);
 		getDb()
 			.prepare(
 				`UPDATE conversations SET workdir = ?, workspace_kind = ?, workspace_key = ? WHERE id = ?`
 			)
-			.run(managedWorktree.path, 'managed-worktree', managedWorktree.sourceWorkdir, conv.id);
+			.run(managedWorktree.path, 'managed-worktree', managedWorktree.sourceWorkdir, convId);
 	})();
-	const promoted = convs.get(conv.id, userId)!;
+	const promoted = convs.get(convId, userId)!;
 	audit({
 		event_type: 'worktree_create',
 		actor_login: locals.user?.githubLogin ?? null,

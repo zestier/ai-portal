@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as messages from '$lib/server/db/repos/messages';
 import * as memory from '$lib/server/db/repos/memory';
 import { authorizeConversation } from '$lib/server/conversation-auth';
@@ -8,9 +9,10 @@ import { isHiddenVisibility } from '$lib/server/memory/engine';
 // summarizing the conversation.
 export const GET: RequestHandler = ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	// Untrimmed on purpose: an export must contain the full tool args/results
 	// and diffs, not the page payload's lazily-fetched markers.
-	const msgs = messages.listByConversation(conv.id);
+	const msgs = messages.listByConversation(convId);
 
 	const lines: string[] = [];
 	lines.push(`# ${conv.title}`);
@@ -93,7 +95,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 		for (const fe of trailingEdits) emitEdit(fe);
 	}
 
-	const snapshot = memory.listSnapshot(conv.id);
+	const snapshot = memory.listSnapshot(convId);
 	if (conv.memoryMode !== 'off' || hasMemoryRecords(snapshot)) {
 		const exportable: memory.MemorySnapshot = {
 			...snapshot,

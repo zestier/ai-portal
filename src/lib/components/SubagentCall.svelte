@@ -47,7 +47,7 @@
 		allEdits?: DisplayFileEdit[];
 		/** 0 for a card anchored to the message; +1 per nesting level. */
 		depth?: number;
-		conversationId?: number | undefined;
+		conversationId?: string | undefined;
 		// True only for the latest assistant turn's extractor card while the
 		// conversation is idle; older turns' cards and a busy conversation
 		// disable the affordance (enforced server-side too).

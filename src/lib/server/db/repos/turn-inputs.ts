@@ -3,6 +3,7 @@
 // migration and the `TurnInput` type for the contract.
 
 import { getDb } from '../index';
+import { conversationId, messageId } from '$lib/ids';
 import type { InitialMessagePreview, TurnInput } from '$lib/types';
 
 interface TurnInputRow {
@@ -85,8 +86,8 @@ function rowToTurnInput(r: TurnInputRow): TurnInput {
 		}
 	}
 	return {
-		messageId: r.message_id,
-		conversationId: r.conversation_id,
+		messageId: messageId.encode(r.message_id),
+		conversationId: conversationId.encode(r.conversation_id),
 		turnId: r.turn_id,
 		fullInput: r.full_input,
 		promptBody: r.prompt_body,

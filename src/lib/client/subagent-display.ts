@@ -45,7 +45,7 @@ export type SubagentChildren = {
  */
 export function selectSubagentChildren(
 	pools: SubagentChildPools,
-	parentToolCallId: number
+	parentToolCallId: string
 ): SubagentChildren {
 	return {
 		tools: (pools.tools ?? []).filter(

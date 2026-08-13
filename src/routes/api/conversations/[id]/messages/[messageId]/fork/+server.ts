@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { forkAtMessage, ForkRejected } from '$lib/server/fork';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
@@ -44,10 +45,10 @@ const REJECT_STATUS: Record<string, number> = {
  */
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
-	const sourceId = Number(params.id);
-	const messageId = Number(params.messageId);
-	if (!Number.isInteger(sourceId) || sourceId <= 0) throw error(404);
-	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
+	const sourceId = convCodec.tryParse(params.id);
+	const messageId = msgCodec.tryParse(params.messageId);
+	if (sourceId === null) throw error(404);
+	if (messageId === null) throw error(400, 'missing message id');
 	// Accept an empty body for retry-from-assistant.
 	const parsed = await parseBody(request, Body, { allowEmpty: true });
 
@@ -66,12 +67,12 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		try {
 			turn = await startTurnFromUserMessage(conversation, userMessage, { rerun: true });
 		} catch (cause) {
-			if (!getTurn(conversation.id)) {
+			if (!getTurn(convCodec.parse(conversation.id))) {
 				try {
-					await pool.release(conversation.id);
-					const managed = convs.getManagedWorktree(conversation.id, userId);
+					await pool.release(convCodec.parse(conversation.id));
+					const managed = convs.getManagedWorktree(convCodec.parse(conversation.id), userId);
 					if (managed) await rollbackManagedWorktree(managed);
-					convs.remove(conversation.id, userId);
+					convs.remove(convCodec.parse(conversation.id), userId);
 				} catch (cleanupError) {
 					log.warn('fork.start_cleanup_failed', {
 						conversationId: conversation.id,

@@ -11,22 +11,33 @@
 // stored fields are immutable, and a component that remounts (scroll, keyed
 // re-render, progressive rendering) must not re-download hundreds of KB.
 
+import { toolCallId } from '$lib/ids';
+
 export type LazyFieldKind = 'tool-args' | 'tool-result' | 'file-diff' | 'reasoning-text';
 
 const cache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string>>();
 
+// The fields route deliberately keeps kind-scoped record ids as raw ints (see
+// `src/lib/ids.ts`). Tool-call records carry X-handles on the wire, so those
+// parse back to the int before the URL is built; edits/reasoning stay ints.
+export function fieldRecordId(kind: LazyFieldKind, recordId: number | string): number {
+	if (typeof recordId !== 'string') return recordId;
+	if (kind === 'tool-args' || kind === 'tool-result') return toolCallId.tryParse(recordId) ?? 0;
+	return Number(recordId) || 0;
+}
+
 export function lazyFieldUrl(
-	conversationId: number,
+	conversationId: string,
 	kind: LazyFieldKind,
 	recordId: number | string
 ): string {
-	return `/api/conversations/${encodeURIComponent(conversationId)}/fields/${kind}/${encodeURIComponent(recordId)}`;
+	return `/api/conversations/${encodeURIComponent(conversationId)}/fields/${kind}/${fieldRecordId(kind, recordId)}`;
 }
 
 /** Already-resolved value, if this field was fetched earlier on this page. */
 export function peekLazyField(
-	conversationId: number,
+	conversationId: string,
 	kind: LazyFieldKind,
 	recordId: number | string
 ): string | null {
@@ -34,7 +45,7 @@ export function peekLazyField(
 }
 
 export async function fetchLazyField(
-	conversationId: number,
+	conversationId: string,
 	kind: LazyFieldKind,
 	recordId: number | string
 ): Promise<string> {

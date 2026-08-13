@@ -1,4 +1,5 @@
 import type { LayoutServerLoad } from './$types';
+import { conversationId as convCodec, ticketId as ticketIdCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
@@ -16,7 +17,7 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 	// single-instance indicator never leaks another user's pending state.
 	const awaiting = locals.userId ? awaitingInputConversationIds() : new Set<number>();
 	const awaitingConversationIds = conversations
-		.filter((c) => c.archivedAt == null && awaiting.has(c.id))
+		.filter((c) => c.archivedAt == null && awaiting.has(convCodec.parse(c.id)))
 		.map((c) => c.id);
 	// The two halves of the sidebar's "active" indicator. Same intersect-with-
 	// this-user's-conversations discipline as `awaiting` above: the turn registry
@@ -25,20 +26,20 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 	// already user-scoped by its query.
 	const running = locals.userId ? runningConversationIds() : new Set<number>();
 	const runningIds = conversations
-		.filter((c) => c.archivedAt == null && running.has(c.id))
+		.filter((c) => c.archivedAt == null && running.has(convCodec.parse(c.id)))
 		.map((c) => c.id);
 	const unreadIds = locals.userId
 		? // The conversation being viewed is seen by definition. Its own page
 			// `load` marks it read, but the two loads run concurrently, so filtering
 			// here is what makes the result deterministic rather than a race.
-			[...convs.unreadConversationIds(locals.userId)].filter(
-				(id) => params.id === undefined || id !== Number(params.id)
-			)
-		: ([] as number[]);
+			[...convs.unreadConversationIds(locals.userId)]
+				.map((id) => convCodec.encode(id))
+				.filter((id) => params.id === undefined || id !== params.id)
+		: ([] as string[]);
 	let ticketWorkspace: string | null = null;
 	if (locals.userId) {
 		const activeConversation =
-			typeof params.id === 'string' ? convs.get(Number(params.id), locals.userId) : null;
+			typeof params.id === 'string' ? convs.get(convCodec.tryParse(params.id) ?? -1, locals.userId) : null;
 		ticketWorkspace = activeConversation
 			? ticketWorkspaceFromConversation(activeConversation)
 			: defaultTicketWorkspace(locals.userId);
@@ -59,7 +60,9 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 	if (userId && ticketWorkspace) {
 		sidebarTickets = tickets.listForSidebar(userId, ticketWorkspace, 10).map((ticket) => ({
 			...ticket,
-			blockers: tickets.dependencyRefs(ticket.id, userId).filter((ref) => ref.status === 'open')
+			blockers: tickets
+				.dependencyRefs(ticketIdCodec.parse(ticket.id), userId)
+				.filter((ref) => ref.status === 'open')
 		}));
 	}
 	return {

@@ -65,9 +65,9 @@
 		{ value: 'review', label: 'Review before sending' }
 	];
 
-	let refiningId = $state<number | null>(null);
+	let refiningId = $state<string | null>(null);
 	let refineError = $state<string | null>(null);
-	let refineErrorId = $state<number | null>(null);
+	let refineErrorId = $state<string | null>(null);
 	let refineController: AbortController | null = null;
 
 	async function refineTemplate(template: Pick<PromptTemplate, 'id' | 'title'>) {

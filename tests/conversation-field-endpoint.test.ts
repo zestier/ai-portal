@@ -57,7 +57,7 @@ async function seed() {
 	return { users, conv, user, fileEditId };
 }
 
-function makeEvent(convId: number, kind: string, recordId: string, userId: number | null) {
+function makeEvent(convId: string, kind: string, recordId: string, userId: number | null) {
 	const url = `http://127.0.0.1/api/conversations/${convId}/fields/${kind}/${recordId}`;
 	return {
 		params: { id: convId, kind, recordId },
@@ -67,7 +67,7 @@ function makeEvent(convId: number, kind: string, recordId: string, userId: numbe
 	};
 }
 
-async function callGet(convId: number, kind: string, recordId: string, userId: number | null) {
+async function callGet(convId: string, kind: string, recordId: string, userId: number | null) {
 	const { GET } =
 		await import('../src/routes/api/conversations/[id]/fields/[kind]/[recordId]/+server');
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any

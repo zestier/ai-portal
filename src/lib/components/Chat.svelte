@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { messageId } from '$lib/ids';
 	import type {
 		ApprovalMode,
 		Conversation,
@@ -75,9 +76,9 @@
 		initialTranscript: TranscriptProjection;
 		initialUsage?: ConversationUsage | null;
 		parent?: {
-			id: number;
+			id: string;
 			title: string;
-			messageId: number | null;
+			messageId: string | null;
 			messageIndex: number | null;
 		} | null;
 		initialActiveTurnId?: string | null;
@@ -108,11 +109,11 @@
 	// message to its triggering user message (the nearest preceding persisted
 	// user message) so the assistant header can offer the "Input" button.
 	const inputMessageIdByAssistant = $derived.by(() => {
-		const map: Record<string, number> = {};
-		let lastUserId: number | null = null;
+		const map: Record<string, string> = {};
+		let lastUserId: string | null = null;
 		for (const m of hydratedMessages) {
 			if (m.role === 'user') {
-				lastUserId = typeof m.id === 'number' ? m.id : null;
+				lastUserId = messageId.is(m.id) ? m.id : null;
 			} else if (m.role === 'assistant' && lastUserId) {
 				map[String(m.id)] = lastUserId;
 			}
@@ -138,9 +139,9 @@
 	// Child forks of this conversation, keyed by the source message id so
 	// the corresponding <Message_> can render a "Forked → ..." badge.
 	type ForkInfo = {
-		id: number;
+		id: string;
 		title: string;
-		sourceMessageId: number | null;
+		sourceMessageId: string | null;
 		createdAt: number;
 		archivedAt: number | null;
 	};
@@ -704,7 +705,7 @@
 		if (!eventSource) attachStream(turnId, { replay: false });
 	}
 
-	function handleInlineEdited(messageId: number, content: string, turnId: string) {
+	function handleInlineEdited(messageId: string, content: string, turnId: string) {
 		// Truncation race guard (D6): drop cached index/bodies past the cut
 		// BEFORE the replacement turn streams in, so stale cards can't resurface.
 		const body = transcript.bodies[String(messageId)];
@@ -729,7 +730,7 @@
 	// the rendered thread to that user message and attach to the new turn's
 	// stream so the fresh response renders in place. Mirrors handleInlineEdited
 	// but the user message's content is unchanged.
-	function handleRegenerated(userMessageId: number, turnId: string) {
+	function handleRegenerated(userMessageId: string, turnId: string) {
 		const had = transcript.entries.some((e) => e.id === userMessageId);
 		store.truncateAfter(transcript, userMessageId);
 		markOffsetsDirty();
@@ -883,11 +884,11 @@
 				(m.toolCalls ??= []).push({
 					id: ev.toolCallId,
 					// Streaming cards only ever attach to server-persisted assistant
-					// messages, whose id is always a number — the ephemeral string-id
-					// bubbles (local-/err-/thinking-placeholder) never receive tool
-					// calls. `ev.messageId` is absent for low-level SDK emitters, so
-					// fall back to the resolved message's id.
-					messageId: typeof m.id === 'number' ? m.id : (ev.messageId ?? 0),
+					// messages, whose id is always an M-handle — the ephemeral
+					// string-id bubbles (local-/err-/thinking-placeholder) never
+					// receive tool calls. `ev.messageId` is absent for low-level SDK
+					// emitters, so fall back to the resolved message's id.
+					messageId: typeof m.id === 'string' ? m.id : (ev.messageId ?? ''),
 					tool: ev.tool,
 					argsJson: safeJson(ev.args),
 					resultJson: null,
@@ -967,8 +968,8 @@
 				(m.fileEdits ??= []).push({
 					id: `${m.id}-${(m.fileEdits ?? []).length}`,
 					// See the note on `tool.call`: streaming cards only attach to
-					// number-id assistant messages.
-					messageId: typeof m.id === 'number' ? m.id : (ev.messageId ?? 0),
+					// M-handle assistant messages.
+					messageId: typeof m.id === 'string' ? m.id : (ev.messageId ?? ''),
 					path: ev.path,
 					diff: ev.diff,
 					createdAt: Date.now(),
@@ -1558,7 +1559,7 @@
 		}
 	}
 
-	async function fetchHydration(id: number): Promise<void> {
+	async function fetchHydration(id: string | number): Promise<void> {
 		try {
 			const r = await fetch(`/api/conversations/${conversation.id}/messages/${id}`);
 			if (!r.ok) return;
@@ -1615,7 +1616,7 @@
 	async function loadOlderPage() {
 		if (loadingOlder || !transcript.hasMoreOlder) return;
 		const oldest = transcript.entries[0]?.id;
-		if (typeof oldest !== 'number') return;
+		if (oldest === undefined) return;
 		loadingOlder = true;
 		const el = scrollEl;
 		// Prepend grows the document upward; hold the distance to the bottom
@@ -1668,7 +1669,7 @@
 		}, 2500);
 	}
 
-	async function ensureMessageLoaded(id: number) {
+	async function ensureMessageLoaded(id: string | number) {
 		let guard = 0;
 		while (
 			!transcript.entries.some((e) => e.id === id) &&
@@ -1679,7 +1680,7 @@
 		}
 	}
 
-	async function jumpToMessage(id: number) {
+	async function jumpToMessage(id: string | number) {
 		await ensureMessageLoaded(id);
 		if (transcript.bodies[String(id)] === undefined) await fetchHydration(id);
 		await tick();
@@ -1699,17 +1700,19 @@
 
 	async function handlePermalinkOnLoad() {
 		if (permalinkHandled || typeof window === 'undefined') return;
-		const id = new URL(window.location.href).searchParams.get('message');
-		if (!id || !/^\d+$/.test(id)) return;
+		const raw = new URL(window.location.href).searchParams.get('message');
+		if (!raw) return;
+		const id = messageId.tryParse(raw) ?? (/^\d+$/.test(raw) ? Number(raw) : null);
+		if (id === null) return;
 		permalinkHandled = true;
 		// Give the initial window a frame to mount, then fetch pages until the
 		// target is loaded and scroll to it.
-		setTimeout(() => void jumpToMessage(Number(id)), 50);
+		setTimeout(() => void jumpToMessage(id), 50);
 	}
 
 	// --- In-conversation search -----------------------------------------
 	type SearchResult = {
-		messageId: number;
+		messageId: string;
 		role: string;
 		status: string;
 		createdAt: number;

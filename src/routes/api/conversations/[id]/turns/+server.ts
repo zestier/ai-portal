@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as messages from '$lib/server/db/repos/messages';
 import * as turnIdempotency from '$lib/server/db/repos/turn-idempotency';
@@ -47,6 +48,7 @@ function resolveIdempotencyKey(request: Request, requestId: string | undefined):
  */
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 
 	const { content, requestId } = await parseBody(request, Body);
 	const idempotencyKey = resolveIdempotencyKey(request, requestId);
@@ -59,7 +61,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	// to the reservation guard and gets a 409, which is safe: no duplicate
 	// user message is created.)
 	if (idempotencyKey) {
-		const prior = turnIdempotency.lookup(conv.id, idempotencyKey);
+		const prior = turnIdempotency.lookup(convId, idempotencyKey);
 		if (prior) {
 			return json({
 				turnId: prior.turnId,
@@ -86,7 +88,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	// reservation closes that window with no intervening await, so the second
 	// request is rejected here — before it writes anything — as a clean 409.
 	try {
-		reserveTurn(conv.id);
+		reserveTurn(convId);
 	} catch (e) {
 		if (e instanceof TurnAlreadyInProgressError) {
 			throw error(409, 'A turn is already in progress for this conversation.');
@@ -96,11 +98,11 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 
 	try {
 		// Persist user message immediately.
-		const userMsg = messages.append(conv.id, { role: 'user', content });
+		const userMsg = messages.append(convId, { role: 'user', content });
 		// Once a turn is started any pending composer draft (e.g. from a deferred
 		// edit-fork) has been consumed, so it must not re-seed on future loads.
-		convs.clearDraftPrompt(conv.id);
-		convs.touch(conv.id);
+		convs.clearDraftPrompt(convId);
+		convs.touch(convId);
 
 		const title = tryRenameFromFirstUserMessage(conv, userMsg);
 		const initialEvents = title
@@ -116,7 +118,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		if (idempotencyKey) {
 			try {
 				turnIdempotency.record({
-					conversationId: conv.id,
+					conversationId: convId,
 					key: idempotencyKey,
 					messageId: userMsg.id,
 					turnId: turn.id,
@@ -140,6 +142,6 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		// (status 'running'), so subsequent POSTs are blocked by the running
 		// turn itself; the reservation has done its job. Releasing on the error
 		// path keeps a failed start from wedging the conversation.
-		releaseTurnReservation(conv.id);
+		releaseTurnReservation(convId);
 	}
 };

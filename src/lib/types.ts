@@ -1,4 +1,8 @@
 // Shared types used by both client and server.
+//
+// Entity ids are opaque prefixed handles (see `src/lib/ids.ts`): a ticket is
+// `T10`, not `10`. Only the DB repos treat ids as integers — the wire format
+// is always the handle. `userId` stays an int (never crosses as anything else).
 
 import type { GrantScope } from './permissions/scope-types';
 import type { TemplateBeforeSnapshot } from './permissions/prompt-template';
@@ -17,7 +21,7 @@ export interface User {
 }
 
 export interface Conversation {
-	id: number;
+	id: string;
 	userId: number;
 	title: string;
 	workdir: string;
@@ -89,9 +93,9 @@ export interface Conversation {
 	updatedAt: number;
 	archivedAt: number | null;
 	/** Set when this conversation was created by forking another one. */
-	forkedFromConversationId: number | null;
+	forkedFromConversationId: string | null;
 	/** The message in the source conversation whose edit produced this fork. */
-	forkedFromMessageId: number | null;
+	forkedFromMessageId: string | null;
 	/**
 	 * Pending composer draft seeded into the chat input on load. Set when an
 	 * edit-fork is created while the source has a running turn (the fork's
@@ -131,7 +135,7 @@ export interface WorktreeIntegration {
 
 /** One row of `GET /api/worktrees/status`, the sidebar's unmerged-work badge feed. */
 export interface WorktreeStatusSummary {
-	conversationId: number;
+	conversationId: string;
 	/** False when the checkout is missing or unreadable; every other field is then absent. */
 	available: boolean;
 	unmerged: boolean;
@@ -159,7 +163,7 @@ export const DEFAULT_TICKET_PRIORITY: WorkspaceTicketPriority = 'P2';
 export const TICKET_PRIORITIES: readonly WorkspaceTicketPriority[] = ['P0', 'P1', 'P2', 'P3'];
 
 export interface WorkspaceTicket {
-	id: number;
+	id: string;
 	userId: number;
 	workspaceKey: string;
 	title: string;
@@ -173,8 +177,8 @@ export interface WorkspaceTicket {
 	 */
 	plan: string;
 	status: WorkspaceTicketStatus;
-	sourceConversationId: number | null;
-	sourceMessageId: number | null;
+	sourceConversationId: string | null;
+	sourceMessageId: string | null;
 	createdAt: number;
 	updatedAt: number;
 	closedAt: number | null;
@@ -186,7 +190,7 @@ export interface WorkspaceTicket {
  * row. Used by the ticket detail page's dependency display.
  */
 export interface TicketDependencyRef {
-	id: number;
+	id: string;
 	title: string;
 	status: WorkspaceTicketStatus;
 }
@@ -270,7 +274,7 @@ export function normalizePromptTemplateWorkspaceMode(
 }
 
 export interface ChatPromptTemplate {
-	id: number;
+	id: string;
 	/** Built-in templates are static and not owned by a user. */
 	userId: number | null;
 	type: PromptTemplateType;
@@ -419,8 +423,8 @@ export function faviconDataUri(accent: ThemeAccent): string {
 }
 
 export interface Message {
-	id: number;
-	conversationId: number;
+	id: string;
+	conversationId: string;
 	role: Role;
 	content: string;
 	status: MessageStatus;
@@ -437,7 +441,7 @@ export interface Message {
 
 export interface ReasoningBlockRecord {
 	id: number;
-	messageId: number;
+	messageId: string;
 	segmentIndex: number;
 	// Null only on a trimmed conversation-open payload (see `textTruncated`) —
 	// never for a live/streamed or untrimmed record.
@@ -461,15 +465,15 @@ export interface ReasoningBlockRecord {
 	// When set, this block was emitted by a sub-agent spawned by the outer
 	// `task` tool call with this id. Such blocks are rendered inside the
 	// SubagentCall component, not at the message level.
-	parentToolCallId: number | null;
+	parentToolCallId: string | null;
 	// Server-computed collapsed-line summary ("Thought for Xs · <preview>")
 	// for blocks whose text was omitted from the payload (backend-projected
 	// transcript). The collapsed header renders this without fetching text.
 	summary?: string;
 }
 export interface ToolCallRecord {
-	id: number;
-	messageId: number;
+	id: string;
+	messageId: string;
 	tool: string;
 	// NULL when the field was omitted from a trimmed page payload (see
 	// `argsTruncated`) — never for a live/streamed or untrimmed record.
@@ -493,7 +497,7 @@ export interface ToolCallRecord {
 	// so this points at the `task` call that *immediately* spawned the emitting
 	// agent, not the outermost one. The chain can therefore be several levels
 	// deep and is rendered recursively by SubagentCall.
-	parentToolCallId: number | null;
+	parentToolCallId: string | null;
 	// For background `task` calls, these fields track the spawned agent's
 	// lifecycle separately from the launch tool-call status.
 	backgroundAgentStatus?: 'running' | 'completed' | 'failed' | null;
@@ -518,7 +522,7 @@ export interface ToolCallRecord {
 
 export interface FileEditRecord {
 	id: number;
-	messageId: number;
+	messageId: string;
 	path: string;
 	// NULL when omitted from a trimmed page payload; see
 	// ToolCallRecord.argsTruncated.
@@ -528,7 +532,7 @@ export interface FileEditRecord {
 	createdAt: number;
 	textOffset: number | null;
 	// See ReasoningBlockRecord.parentToolCallId.
-	parentToolCallId: number | null;
+	parentToolCallId: string | null;
 	// Server-computed collapsed-line summary ("path + diffstat") for records
 	// whose diff was omitted from the payload (backend-projected transcript).
 	// The client renders this on the collapsed card instead of deriving it.
@@ -558,9 +562,10 @@ export interface FileEditRecord {
  */
 export interface TranscriptRecordDescriptor {
 	kind: 'tool' | 'edit' | 'reasoning';
-	id: number;
+	/** X-handle for tools; kind-scoped int for edits/reasoning (fields URL). */
+	id: string | number;
 	textOffset: number | null;
-	parentToolCallId: number | null;
+	parentToolCallId: string | null;
 	/** Collapsed-line summary, computed server-side (tool: tool-summary; edit:
 	 * path + diffstat; reasoning: duration + preview). */
 	summary: string;
@@ -583,7 +588,7 @@ export interface TranscriptRecordDescriptor {
  * no args/results/diffs/reasoning text.
  */
 export interface TranscriptIndexEntry {
-	id: number;
+	id: string;
 	role: Role;
 	status: MessageStatus;
 	errorCode: string | null;
@@ -613,8 +618,8 @@ export interface TranscriptProjection {
 // so the user can inspect the portal prelude + any memory / prior-message
 // context injected on top of their raw message — "the guts" of the turn.
 export interface TurnInput {
-	messageId: number;
-	conversationId: number;
+	messageId: string;
+	conversationId: string;
 	turnId: string | null;
 	// Exact string sent to the runtime (prelude + body).
 	fullInput: string;
@@ -978,56 +983,56 @@ export type ElicitationSchemaField =
 // --- Normalized streaming protocol (server -> client over SSE) ---
 
 export type PortalEvent =
-	| { type: 'message.start'; messageId: number; role: 'assistant' }
+	| { type: 'message.start'; messageId: string; role: 'assistant' }
 	| {
 			type: 'message.delta';
-			messageId: number;
+			messageId: string;
 			text: string;
 			// When set, this content originated inside the sub-agent spawned by
 			// the outer `task` tool call with this id, and (with segmentId) is
 			// rendered as a threaded content block inside the SubagentCall card
 			// rather than appended to the outer assistant message body.
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 			// Groups consecutive child content deltas into one block. Only set
 			// for sub-agent content (alongside parentToolCallId).
 			segmentId?: string;
 	  }
 	| {
 			type: 'message.reasoning';
-			messageId: number;
+			messageId: string;
 			segmentId: string;
 			text: string;
 			// When set, this reasoning burst originated inside the sub-agent
 			// spawned by the outer `task` tool call with this id.
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 	  }
 	| {
 			type: 'message.reasoning.end';
-			messageId: number;
+			messageId: string;
 			segmentId: string;
 			durationMs: number;
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 	  }
-	| { type: 'message.end'; messageId: number }
+	| { type: 'message.end'; messageId: string }
 	| {
 			type: 'subagent.lifecycle';
-			toolCallId: number;
+			toolCallId: string;
 			agentId: string;
 			status: 'running' | 'completed' | 'failed';
 	  }
 	| {
 			type: 'tool.call';
-			toolCallId: number;
+			toolCallId: string;
 			tool: string;
 			args: unknown;
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 			// The assistant message this call is anchored to. Set when the event
 			// is emitted to clients so the UI can target by id (like
 			// `message.delta`) instead of assuming the last message is the active
 			// assistant turn — which breaks across a reconnect gap. Optional
 			// because lower-level SDK event emitters dispatch before the
 			// assistant message is persisted.
-			messageId?: number | undefined;
+			messageId?: string | undefined;
 	  }
 	| { type: 'interactive.request'; request: InteractiveRequestView }
 	| {
@@ -1049,11 +1054,11 @@ export type PortalEvent =
 	  }
 	| {
 			type: 'tool.result';
-			toolCallId: number;
+			toolCallId: string;
 			ok: boolean;
 			summary: string;
 			output?: unknown;
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 	  }
 	// Ephemeral live-streaming events from the SDK during a tool's execution.
 	// Forwarded to subscribers but intentionally NOT appended to the turn's
@@ -1061,28 +1066,28 @@ export type PortalEvent =
 	// `tool.result` and don't need to replay stale partial chunks.
 	| {
 			type: 'tool.partial_output';
-			toolCallId: number;
+			toolCallId: string;
 			output: string;
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 	  }
 	| {
 			type: 'tool.progress';
-			toolCallId: number;
+			toolCallId: string;
 			message: string;
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 	  }
 	| {
 			type: 'file.edit';
 			path: string;
 			diff: string;
-			parentToolCallId?: number | undefined;
+			parentToolCallId?: string | undefined;
 			// Assistant message anchor; see the note on `tool.call`.
-			messageId?: number | undefined;
+			messageId?: string | undefined;
 	  }
-	| { type: 'conversation.update'; conversationId: number; title?: string }
+	| { type: 'conversation.update'; conversationId: string; title?: string }
 	| {
 			type: 'session.settings';
-			conversationId: number;
+			conversationId: string;
 			mode?: SessionMode;
 			memoryMode?: MemoryMode;
 			approvalMode?: ApprovalMode;
@@ -1094,7 +1099,7 @@ export type PortalEvent =
 	| { type: 'reasoning.summary'; text: string }
 	| {
 			type: 'memory.status';
-			conversationId: number;
+			conversationId: string;
 			phase: 'checking' | 'extracting' | 'validating' | 'committed' | 'needs_review' | 'skipped';
 			summary?: string;
 			patchId?: number;
@@ -1151,7 +1156,7 @@ export type PortalEvent =
 export type AppEvent =
 	| {
 			type: 'awaiting.changed';
-			conversationId: number;
+			conversationId: string;
 			awaiting: boolean;
 	  }
 	// Content-free: it carries no ticket/workspace id because the client refresh
@@ -1166,7 +1171,7 @@ export type AppEvent =
 	// finalizes, and when a conversation is marked read.
 	| {
 			type: 'activity.changed';
-			conversationId: number;
+			conversationId: string;
 			running: boolean;
 			unread: boolean;
 	  };
@@ -1193,7 +1198,7 @@ export interface ContextUsageGridRow {
 }
 
 export interface ConversationUsage {
-	conversationId: number;
+	conversationId: string;
 	currentTokens: number;
 	tokenLimit: number;
 	messagesLength: number;

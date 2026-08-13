@@ -33,6 +33,7 @@ import type {
 	TranscriptProjection,
 	TranscriptRecordDescriptor
 } from '$lib/types';
+import { messageId as msgCodec } from '$lib/ids';
 import { summarizeToolCall } from '$lib/tool-summary';
 import * as messagesRepo from '$lib/server/db/repos/messages';
 import {
@@ -357,7 +358,7 @@ function indexEntryOf(msg: Message): TranscriptIndexEntry {
 export function projectTranscript(conversationId: number): TranscriptProjection {
 	const tail = messagesRepo.listRecent(conversationId, TRANSCRIPT_HYDRATED_TAIL);
 	if (tail.length === 0) return { tail: [], index: [], hasMoreOlder: false };
-	const tailOldestId = tail[0].id;
+	const tailOldestId = msgCodec.parse(tail[0].id);
 	const page = messagesRepo.listIndexPage(conversationId, tailOldestId, TRANSCRIPT_INDEX_COUNT);
 	return {
 		tail: tail.map((m) => projectMessageBody(m, INITIAL_RULES)),

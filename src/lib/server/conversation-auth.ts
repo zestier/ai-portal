@@ -3,6 +3,7 @@
 // don't each re-implement the same `userId / convs.get / 404` dance.
 
 import { error } from '@sveltejs/kit';
+import { conversationId } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import { resolveWorkspaceRoot } from '$lib/server/files';
 import { resolveConversationWorkspace, WorkspaceUnavailableError } from '$lib/server/workdir';
@@ -15,8 +16,10 @@ export function authorizeConversation(
 ): Conversation {
 	if (!userId) throw error(401);
 	if (!convId) throw error(400, 'missing conversation id');
-	const id = Number(convId);
-	if (!Number.isInteger(id) || id <= 0) throw error(404);
+	// Opaque C-handle on the wire; parse to the storage int here so every
+	// conversation-scoped route gets one parse + 404 for free.
+	const id = conversationId.tryParse(convId);
+	if (id === null) throw error(404);
 	const conv = convs.get(id, userId);
 	if (!conv) throw error(404);
 	return conv;
@@ -51,7 +54,7 @@ export function authorizeConversationWorkspace(
 	if (!leaseId) {
 		return { conversation, workdir: resolveWorkspace(conversation), lease: null };
 	}
-	const lease = getLease(Number(leaseId), conversation.userId);
+	const lease = getLease(leaseId, conversation.userId);
 	if (!lease || lease.heldByConversationId !== conversation.id) throw error(404);
 	let workdir: string;
 	try {

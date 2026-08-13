@@ -10,7 +10,7 @@ import {
 import type { AppEvent } from '../src/lib/types';
 
 function awaiting(conversationId: number, awaiting: boolean): AppEvent {
-	return { type: 'awaiting.changed', conversationId, awaiting };
+	return { type: 'awaiting.changed', conversationId: `C${conversationId}`, awaiting };
 }
 
 /**

@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as pool from '$lib/server/runtime/pool';
 import { getTurn } from '$lib/server/runtime/turn-runner';
@@ -58,6 +59,7 @@ const PatchBody = z
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	const body = await parseBody(request, PatchBody);
 	// Fail fast on an unselectable model instead of silently falling back to
 	// PI_MODEL on the next turn: the string must parse as `providerId/modelId`
@@ -85,7 +87,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const toolGroupsChanged =
 		body.disabledToolGroups !== undefined &&
 		!sameGroupSet(sanitizeDisabledToolGroups(body.disabledToolGroups), conv.disabledToolGroups);
-	const turn = getTurn(conv.id);
+	const turn = getTurn(convId);
 	if (
 		(modelChanged ||
 			memoryChanged ||
@@ -117,7 +119,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 			? { disabledToolGroups: body.disabledToolGroups }
 			: {})
 	};
-	convs.updateSessionSettings(conv.id, conv.userId, persistedPatch);
+	convs.updateSessionSettings(convId, conv.userId, persistedPatch);
 	if (
 		modelChanged ||
 		memoryChanged ||
@@ -129,12 +131,12 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		// Portal tools are fixed at session open — there is no live RPC to swap
 		// them — so releasing the pooled session is the mechanism that makes the
 		// next turn reopen with the filtered tool set.
-		await pool.release(conv.id);
+		await pool.release(convId);
 	}
 
 	return json({
 		ok: true,
-		conversation: convs.get(conv.id, conv.userId)
+		conversation: convs.get(convId, conv.userId)
 	});
 };
 

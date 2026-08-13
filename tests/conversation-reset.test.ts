@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { createConversationResetGate } from '../src/lib/client/conversation-reset';
+import { conversationId } from '../src/lib/ids';
 
 // Regression coverage for the bug where a background `invalidateAll()` /
 // `load` re-run wiped the user's unsent composer draft. The conversation page
@@ -10,15 +11,15 @@ import { createConversationResetGate } from '../src/lib/client/conversation-rese
 describe('createConversationResetGate', () => {
 	test('seeds state on first run (no previously-seen id)', () => {
 		const gate = createConversationResetGate();
-		expect(gate.shouldReset(1)).toBe(true);
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(true);
 	});
 
 	test('same id, new prop object → no reset (composer + messages preserved)', () => {
 		// This is the bug: a refresh produces a fresh prop object with the same
 		// id. The reset must be skipped so the in-progress draft survives.
 		const gate = createConversationResetGate();
-		gate.shouldReset(1);
-		expect(gate.shouldReset(1)).toBe(false);
+		gate.shouldReset(conversationId.encode(1));
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(false);
 	});
 
 	test('repeated same-id refreshes never reset (gate records the seeded id)', () => {
@@ -26,22 +27,22 @@ describe('createConversationResetGate', () => {
 		// gate that didn't remember the last id would reset on the *second*
 		// refresh and still wipe the draft.
 		const gate = createConversationResetGate();
-		expect(gate.shouldReset(1)).toBe(true);
-		expect(gate.shouldReset(1)).toBe(false);
-		expect(gate.shouldReset(1)).toBe(false);
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(true);
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(false);
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(false);
 	});
 
 	test('new id → reset (genuine conversation switch)', () => {
 		const gate = createConversationResetGate();
-		gate.shouldReset(1);
-		expect(gate.shouldReset(2)).toBe(true);
+		gate.shouldReset(conversationId.encode(1));
+		expect(gate.shouldReset(conversationId.encode(2))).toBe(true);
 	});
 
 	test('switching away and back resets each time the id actually changes', () => {
 		const gate = createConversationResetGate();
-		expect(gate.shouldReset(1)).toBe(true);
-		expect(gate.shouldReset(2)).toBe(true);
-		expect(gate.shouldReset(2)).toBe(false);
-		expect(gate.shouldReset(1)).toBe(true);
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(true);
+		expect(gate.shouldReset(conversationId.encode(2))).toBe(true);
+		expect(gate.shouldReset(conversationId.encode(2))).toBe(false);
+		expect(gate.shouldReset(conversationId.encode(1))).toBe(true);
 	});
 });

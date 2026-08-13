@@ -34,6 +34,7 @@
 //  - System messages can never be the fork target.
 
 import { getDb } from './db';
+import { conversationId as convCodec, messageId as msgCodec, toolCallId as toolCodec } from '$lib/ids';
 import * as convs from './db/repos/conversations';
 import * as messages from './db/repos/messages';
 import * as memoryRepo from './db/repos/memory';
@@ -98,8 +99,8 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	const source = convs.get(input.sourceConversationId, input.userId);
 	if (!source) throw new ForkRejected('source_not_found');
 
-	const all = messages.listByConversation(source.id);
-	const targetIdx = all.findIndex((m) => m.id === input.messageId);
+	const all = messages.listByConversation(convCodec.parse(source.id));
+	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
 	if (targetIdx < 0) throw new ForkRejected('message_not_found');
 	const target = all[targetIdx];
 
@@ -139,7 +140,7 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// source turn is not a hard blocker. It does, however, change whether we
 	// auto-start the fork's turn: doing so while the source is mid-turn would
 	// race a second turn against the shared workdir without the user opting in.
-	const active = getTurn(source.id);
+	const active = getTurn(convCodec.parse(source.id));
 	const sourceBusy = active?.status === 'running';
 
 	// A busy source defers an edit-fork: we create the fork with the prefix
@@ -174,19 +175,19 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		adversaryModel: source.adversaryModel,
 		globalMemoryEnabled: source.globalMemoryEnabled,
 		disabledToolGroups: source.disabledToolGroups,
-		forkedFromConversationId: source.id,
-		forkedFromMessageId: target.id,
+		forkedFromConversationId: convCodec.parse(source.id),
+		forkedFromMessageId: msgCodec.parse(target.id),
 		draftPrompt
 	});
 	if (isolate) {
 		const snapshotKind = mode === 'edit' ? 'pre' : 'post';
-		const snapshot = getSnapshot(target.id, snapshotKind);
+		const snapshot = getSnapshot(msgCodec.parse(target.id), snapshotKind);
 		if (!snapshot) {
 			throw new ForkRejected('no_snapshot', 'No snapshot exists for this message.');
 		}
 		const sourceWorkdir =
 			source.workspaceKind === 'managed-worktree'
-				? convs.getManagedWorktree(source.id, input.userId)?.sourceWorkdir
+				? convs.getManagedWorktree(convCodec.parse(source.id), input.userId)?.sourceWorkdir
 				: source.workdir;
 		if (!sourceWorkdir) {
 			throw new ForkRejected('source_not_found', 'Managed source workspace is unavailable.');
@@ -194,7 +195,7 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		managedWorktree = await createManagedWorktreeFromSnapshot({
 			sourceWorkdir,
 			userId: String(input.userId),
-			conversationId: String(newConv.id),
+			conversationId: String(convCodec.parse(newConv.id)),
 			...(snapshot.baseCommitSha ? { baseCommitSha: snapshot.baseCommitSha } : {}),
 			treeSha: snapshot.treeSha
 		});
@@ -216,10 +217,10 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	// SAVEPOINTs, so nesting is safe.
 	const tx = getDb().transaction((): ForkResult => {
 		if (managedWorktree) {
-			convs.setManagedWorktree(newConv.id, managedWorktree);
+			convs.setManagedWorktree(convCodec.parse(newConv.id), managedWorktree);
 			getDb()
 				.prepare(`UPDATE conversations SET workdir = ?, workspace_kind = ? WHERE id = ?`)
-				.run(managedWorktree.path, 'managed-worktree', newConv.id);
+				.run(managedWorktree.path, 'managed-worktree', convCodec.parse(newConv.id));
 		}
 
 		// Edit mode clones strictly before the target (so the new user message
@@ -228,27 +229,34 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		// user picks up by typing the next prompt).
 		const prefixEnd = mode === 'edit' ? targetIdx : targetIdx + 1;
 		const prefix = all.slice(0, prefixEnd);
-		const messageIdMap = cloneMessagePrefix(newConv.id, prefix);
+		const messageIdMap = cloneMessagePrefix(convCodec.parse(newConv.id), prefix);
 
 		// Rebuild durable session memory from the append-only log, scoped to the
 		// cloned prefix. Log entries linked to kept source messages are replayed
 		// with message/item ids remapped to the fork, while rewound suffix entries
 		// are left behind.
 		const firstDiscarded = all[prefixEnd];
-		const memoryCounts = memoryRepo.replaySessionMemoryLogForFork(source.id, newConv.id, {
-			messageIdMap,
-			createdBefore: firstDiscarded ? firstDiscarded.createdAt : Number.POSITIVE_INFINITY
-		});
+		const memoryCounts = memoryRepo.replaySessionMemoryLogForFork(
+			convCodec.parse(source.id),
+			convCodec.parse(newConv.id),
+			{
+				messageIdMap,
+				createdBefore: firstDiscarded ? firstDiscarded.createdAt : Number.POSITIVE_INFINITY
+			}
+		);
 
 		let userMessage: Message | null = null;
 		// Only an idle-source edit-fork auto-starts: append the user row so the
 		// caller kicks off the turn. A deferred edit-fork (busy source) leaves the
 		// prefix untouched and relies on the persisted draft_prompt seeded above.
 		if (mode === 'edit' && !deferred) {
-			userMessage = messages.append(newConv.id, { role: 'user', content: input.newContent! });
+			userMessage = messages.append(convCodec.parse(newConv.id), {
+				role: 'user',
+				content: input.newContent!
+			});
 		}
 
-		const refreshed = convs.get(newConv.id, input.userId);
+		const refreshed = convs.get(convCodec.parse(newConv.id), input.userId);
 		if (!refreshed) throw new Error('fork: created conversation disappeared');
 		log.info('fork.created', {
 			mode,
@@ -267,7 +275,7 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		// The conversation row was committed before this transaction ran, so an
 		// isolation failure must clean it up explicitly — otherwise an empty fork
 		// stays visible. The checkout is rolled back too.
-		convs.remove(newConv.id, input.userId);
+		convs.remove(convCodec.parse(newConv.id), input.userId);
 		if (managedWorktree) {
 			await rollbackManagedWorktree(managedWorktree).catch((cleanupError) => {
 				log.warn('fork.worktree_cleanup_failed', {
@@ -311,7 +319,7 @@ function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number
 			const newMsgId = Number(
 				insertMsg.run(targetConvId, m.role, m.content, m.status, m.errorCode, ts).lastInsertRowid
 			);
-			messageIdMap.set(m.id, newMsgId);
+			messageIdMap.set(msgCodec.parse(m.id), newMsgId);
 			// Tool_call ids are minted by the insert, so parent_tool_call_id
 			// references can't be filled in the same pass (a parent may appear
 			// anywhere in the message's call list). Insert with a NULL parent
@@ -332,7 +340,7 @@ function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number
 						null
 					).lastInsertRowid
 				);
-				toolIdRemap.set(t.id, remappedToolId);
+				toolIdRemap.set(toolCodec.parse(t.id), remappedToolId);
 				if (t.backgroundAgentStatus && t.backgroundAgentId && t.backgroundAgentStartedAt != null) {
 					insertLifecycle.run(
 						remappedToolId,
@@ -345,8 +353,8 @@ function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number
 			}
 			for (const t of m.toolCalls ?? []) {
 				if (t.parentToolCallId) {
-					const parent = toolIdRemap.get(t.parentToolCallId);
-					if (parent !== undefined) setToolParent.run(parent, toolIdRemap.get(t.id)!);
+					const parent = toolIdRemap.get(toolCodec.parse(t.parentToolCallId));
+					if (parent !== undefined) setToolParent.run(parent, toolIdRemap.get(toolCodec.parse(t.id))!);
 				}
 			}
 			for (const e of m.fileEdits ?? []) {
@@ -356,7 +364,7 @@ function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number
 					e.diff,
 					ts,
 					e.textOffset,
-					e.parentToolCallId ? (toolIdRemap.get(e.parentToolCallId) ?? null) : null
+					e.parentToolCallId ? (toolIdRemap.get(toolCodec.parse(e.parentToolCallId)) ?? null) : null
 				);
 			}
 			for (const r of m.reasoningBlocks ?? []) {
@@ -370,7 +378,7 @@ function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number
 					r.textOffset,
 					r.startedAt,
 					r.durationMs,
-					r.parentToolCallId ? (toolIdRemap.get(r.parentToolCallId) ?? null) : null
+					r.parentToolCallId ? (toolIdRemap.get(toolCodec.parse(r.parentToolCallId)) ?? null) : null
 				);
 			}
 		});

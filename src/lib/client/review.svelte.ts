@@ -17,7 +17,7 @@ let nextId = 0;
 
 class ReviewStore {
 	/** The conversation the current comments belong to. */
-	conversationId = $state<number | null>(null);
+	conversationId = $state<string | null>(null);
 	comments = $state<ReviewComment[]>([]);
 	/**
 	 * Text waiting to be appended to the chat composer. The Chat component
@@ -33,7 +33,7 @@ class ReviewStore {
 	 * one. No-op when already on that conversation so navigations within the
 	 * same conversation keep the draft review.
 	 */
-	setConversation(id: number) {
+	setConversation(id: string) {
 		if (this.conversationId === id) return;
 		this.conversationId = id;
 		this.comments = [];

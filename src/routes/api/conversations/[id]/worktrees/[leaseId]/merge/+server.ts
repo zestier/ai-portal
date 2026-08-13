@@ -28,7 +28,7 @@ const Body = z
  */
 export const POST: RequestHandler = async ({ params, locals, request, getClientAddress }) => {
 	const conversation = authorizeConversation(params.id, locals.userId);
-	const lease = getLease(Number(params.leaseId), conversation.userId);
+	const lease = getLease(params.leaseId, conversation.userId);
 	// Same flat 404 for "no such lease" and "not this conversation's lease".
 	if (!lease || lease.heldByConversationId !== conversation.id) throw error(404);
 	const body = await parseBody(request, Body);

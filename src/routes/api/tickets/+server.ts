@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as messages from '$lib/server/db/repos/messages';
 import * as tickets from '$lib/server/db/repos/tickets';
@@ -54,8 +55,8 @@ const CreateBody = z.object({
 	plan: z.string().trim().max(100000).optional(),
 	priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
 	workspace: z.string().min(1).optional(),
-	sourceConversationId: z.number().int().positive().optional(),
-	sourceMessageId: z.number().int().positive().optional()
+	sourceConversationId: z.string().optional(),
+	sourceMessageId: z.string().optional()
 });
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -64,11 +65,15 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	let workspace = ticketWorkspaceFromInput(body.workspace, userId);
 
 	if (body.sourceConversationId) {
-		const conv = convs.get(body.sourceConversationId, userId);
+		const sourceConvId = convCodec.tryParse(body.sourceConversationId);
+		if (sourceConvId === null) throw error(404, 'source conversation not found');
+		const conv = convs.get(sourceConvId, userId);
 		if (!conv) throw error(404, 'source conversation not found');
 		if (
 			body.sourceMessageId &&
-			!messages.listByConversation(conv.id).some((message) => message.id === body.sourceMessageId)
+			!messages
+				.listByConversation(convCodec.parse(conv.id))
+				.some((message) => message.id === body.sourceMessageId)
 		) {
 			throw error(404, 'source message not found');
 		}
@@ -80,8 +85,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const ticket = tickets.create(userId, {
 		workspaceKey: workspace,
 		title: body.title,
-		sourceConversationId: body.sourceConversationId ?? null,
-		sourceMessageId: body.sourceMessageId ?? null,
+		sourceConversationId: body.sourceConversationId ? convCodec.parse(body.sourceConversationId) : null,
+		sourceMessageId: body.sourceMessageId ? msgCodec.parse(body.sourceMessageId) : null,
 		...(body.body !== undefined ? { body: body.body } : {}),
 		...(body.plan !== undefined ? { plan: body.plan } : {}),
 		...(body.priority !== undefined ? { priority: body.priority } : {})

@@ -18,7 +18,7 @@
 		onRerunStarted
 	}: {
 		toolCall: ToolCallRecord;
-		conversationId?: number | undefined;
+		conversationId?: string | undefined;
 		onRerunStarted?: ((turnId: string) => void) | undefined;
 	} = $props();
 	let rerunning = $state(false);

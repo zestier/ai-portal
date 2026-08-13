@@ -333,7 +333,7 @@ function makePiProviderSession(
 		async *send(prompt: string, signal: AbortSignal): AsyncIterable<PortalEvent> {
 			if (active) throw new Error('session busy: a turn is already in progress');
 			if (disposed) throw new Error('session disposed');
-			const messageId = 0; // sentinel — the turn-runner overwrites it via `ensurePersistedAssistant`
+			const messageId = ''; // sentinel — the turn-runner overwrites it via `ensurePersistedAssistant`
 			const queue = new AsyncQueue<PortalEvent>();
 			const mapper = new PiEventMapper(messageId);
 			const unsub = piSession.subscribe((ev) => {
@@ -392,7 +392,7 @@ async function runPrompt(
 	piSession: AgentSession,
 	mapper: PiEventMapper,
 	queue: AsyncQueue<PortalEvent>,
-	messageId: number,
+	messageId: string,
 	conversationId: number
 ): Promise<void> {
 	try {

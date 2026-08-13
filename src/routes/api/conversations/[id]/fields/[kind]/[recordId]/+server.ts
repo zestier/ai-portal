@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import * as messages from '$lib/server/db/repos/messages';
 
@@ -26,6 +27,7 @@ function isFieldKind(v: string | undefined): v is FieldKind {
 
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	const kind = params.kind;
 	const recordId = Number(params.recordId);
 	if (!isFieldKind(kind)) throw error(404);
@@ -34,11 +36,11 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
 	const row =
 		kind === 'file-diff'
-			? messages.getFileEditDiffForOwner(conv.id, recordId, conv.userId)
+			? messages.getFileEditDiffForOwner(convId, recordId, conv.userId)
 			: kind === 'reasoning-text'
-				? messages.getReasoningTextForOwner(conv.id, recordId, conv.userId)
+				? messages.getReasoningTextForOwner(convId, recordId, conv.userId)
 				: messages.getToolCallFieldForOwner(
-						conv.id,
+						convId,
 						recordId,
 						conv.userId,
 						kind === 'tool-args' ? 'args' : 'result'

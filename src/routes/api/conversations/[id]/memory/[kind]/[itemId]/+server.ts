@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, memoryEntityId, memoryFactId } from '$lib/ids';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import * as memory from '$lib/server/db/repos/memory';
 import { parseBody } from '$lib/server/validate';
@@ -59,7 +60,7 @@ const OpenLoopPatch = z
 		description: z.string().max(4000).optional(),
 		status: OpenLoopStatus.optional(),
 		priority: z.number().int().min(-100).max(100).optional(),
-		relatedEntityIds: z.array(z.coerce.number().int().positive()).max(100).optional()
+		relatedEntityIds: z.array(z.union([z.string(), z.number()])).max(100).optional()
 	})
 	.strict();
 
@@ -71,28 +72,47 @@ const GlobalMemoryPatch = z
 	})
 	.strict();
 
+// Parse a memory item id from its URL segment. Entities and facts carry
+// E/F-handles on the wire; open loops and global memories keep int ids
+// (kind-scoped, server-minted — see `src/lib/ids.ts`).
+function parseMemoryItemId(kind: string, raw: string | undefined): number | null {
+	if (!raw) return null;
+	if (kind === 'globalMemories' || kind === 'openLoops' || kind === 'open-loops' || kind === 'open_loop') {
+		const id = Number(raw);
+		return Number.isSafeInteger(id) && id > 0 ? id : null;
+	}
+	const codec = kind === 'entities' || kind === 'entity' ? memoryEntityId : memoryFactId;
+	return codec.tryParse(raw);
+}
+
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	assertKnownKind(params.kind);
-	const itemId = Number(params.itemId);
-	if (!Number.isInteger(itemId) || itemId <= 0) throw error(404, 'Memory item not found.');
+	const itemId = parseMemoryItemId(params.kind, params.itemId);
+	if (itemId === null) throw error(404, 'Memory item not found.');
 	const body = await parseBody(request, RawPatchBody);
-	const updated = updateMemoryItem(conv.id, conv.userId, params.kind, itemId, body);
+	const updated = updateMemoryItem(convCodec.parse(conv.id), conv.userId, params.kind, itemId, body);
 	if (!updated) throw error(404, 'Memory item not found.');
-	return json({ item: updated, memory: memory.listSnapshot(conv.id, { userId: conv.userId }) });
+	return json({
+		item: updated,
+		memory: memory.listSnapshot(convCodec.parse(conv.id), { userId: conv.userId })
+	});
 };
 
 export const DELETE: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	assertKnownKind(params.kind);
-	const itemId = Number(params.itemId);
-	if (!Number.isInteger(itemId) || itemId <= 0) throw error(404, 'Memory item not found.');
+	const itemId = parseMemoryItemId(params.kind, params.itemId);
+	if (itemId === null) throw error(404, 'Memory item not found.');
 	const deleted =
 		params.kind === 'globalMemories'
 			? memory.deleteGlobalMemory(conv.userId, itemId)
-			: memory.deleteItem(conv.id, params.kind, itemId);
+			: memory.deleteItem(convCodec.parse(conv.id), params.kind, itemId);
 	if (!deleted) throw error(404, 'Memory item not found.');
-	return json({ ok: true, memory: memory.listSnapshot(conv.id, { userId: conv.userId }) });
+	return json({
+		ok: true,
+		memory: memory.listSnapshot(convCodec.parse(conv.id), { userId: conv.userId })
+	});
 };
 
 function updateMemoryItem(

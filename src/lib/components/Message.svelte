@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ToolCallRecord } from '$lib/types';
+	import { messageId } from '$lib/ids';
 	import type {
 		DisplayFileEdit,
 		DisplayMessage,
@@ -35,9 +36,9 @@
 		onMemoryRetryStarted
 	}: {
 		message: DisplayMessage;
-		conversationId?: number;
-		inputMessageId?: number | null;
-		forks?: Array<{ id: number; title: string; archivedAt: number | null }>;
+		conversationId?: string;
+		inputMessageId?: string | null;
+		forks?: Array<{ id: string; title: string; archivedAt: number | null }>;
 		isInFlightTurnUser?: boolean;
 		thinking?: boolean;
 		// True when this is the latest assistant message and the conversation is
@@ -48,8 +49,8 @@
 		// side with `conversation_busy`. Forking is still allowed while busy.
 		busy?: boolean;
 		onForked?: () => void;
-		onInlineEdited?: (messageId: number, content: string, turnId: string) => void;
-		onRegenerated?: (userMessageId: number, turnId: string) => void;
+		onInlineEdited?: (messageId: string, content: string, turnId: string) => void;
+		onRegenerated?: (userMessageId: string, turnId: string) => void;
 		onToolRerunStarted?: (turnId: string) => void;
 		onMemoryRetryStarted?: (turnId: string) => void;
 	} = $props();
@@ -80,7 +81,7 @@
 		message.role === 'user' &&
 			!!conversationId &&
 			!isInFlightTurnUser &&
-			typeof message.id === 'number'
+			messageId.is(message.id)
 	);
 
 	// Assistant-message actions: regenerate the reply in place, or fork the
@@ -127,7 +128,7 @@
 				return;
 			}
 			const data = (await r.json()) as {
-				conversationId: number;
+				conversationId: string;
 				turnId?: string;
 				deferred?: boolean;
 			};
@@ -164,7 +165,7 @@
 				errorMsg = body || `Inline edit failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { turnId: string; userMessageId: number };
+			const data = (await r.json()) as { turnId: string; userMessageId: string };
 			editing = false;
 			onInlineEdited?.(data.userMessageId, text, data.turnId);
 		} catch (e) {
@@ -196,7 +197,7 @@
 				errorMsg = body || `Regenerate failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { turnId: string; userMessageId: number };
+			const data = (await r.json()) as { turnId: string; userMessageId: string };
 			onRegenerated?.(data.userMessageId, data.turnId);
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : String(e);
@@ -220,7 +221,7 @@
 				errorMsg = body || `Continue failed (${r.status})`;
 				return;
 			}
-			const data = (await r.json()) as { conversationId: number };
+			const data = (await r.json()) as { conversationId: string };
 			onForked?.();
 			await goto(`/conversations/${data.conversationId}`);
 		} catch (e) {

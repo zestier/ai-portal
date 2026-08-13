@@ -52,7 +52,7 @@ const SLOT_RELEASE_GRACE_MS = 5_000;
 export const SKIPPED_PREFIX = 'skipped: ';
 
 export interface ShadowObserveInput extends BuildAdversaryFactsInput {
-	conversationId: number;
+	conversationId: string | number;
 	argsHash: string | null;
 	/** Why this request needed a human. Recorded to characterize the sample. */
 	resolutionSource?: ShadowResolutionSource | undefined;

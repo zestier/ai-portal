@@ -69,11 +69,11 @@ export async function createTicketLaunchChat({
 	options?: TemplateLaunchOptions;
 	fetcher?: TicketDraftFetch;
 }): Promise<
-	| { ok: true; conversationId: number; href: string }
+	| { ok: true; conversationId: string; href: string }
 	| { ok: false; stage: 'create' | 'launch'; status?: number }
 > {
 	const resolved = options ?? defaultOptions(template, ticket);
-	let conversationId: number | null = null;
+	let conversationId: string | null = null;
 	try {
 		const convRes = await fetcher('/api/conversations', {
 			method: 'POST',
@@ -82,7 +82,7 @@ export async function createTicketLaunchChat({
 		});
 		if (!convRes.ok) return { ok: false, stage: 'create', status: convRes.status };
 		const body = await convRes.json();
-		conversationId = body.conversation.id as number;
+		conversationId = body.conversation.id as string;
 		const turnRes = await fetcher(`/api/conversations/${conversationId}/turns`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
@@ -101,7 +101,7 @@ export async function createTicketLaunchChat({
 
 async function deleteConversation(
 	fetcher: TicketDraftFetch,
-	conversationId: number
+	conversationId: string
 ): Promise<void> {
 	try {
 		await fetcher(`/api/conversations/${conversationId}`, { method: 'DELETE' });

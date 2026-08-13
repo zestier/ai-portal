@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import * as memory from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
@@ -9,7 +10,7 @@ import { getTurn, startExtractionRetryTurn } from '$lib/server/runtime/turn-runn
 
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
-	return json({ memory: memory.listSnapshot(conv.id, { userId: conv.userId }) });
+	return json({ memory: memory.listSnapshot(convCodec.parse(conv.id), { userId: conv.userId }) });
 };
 
 /**
@@ -25,6 +26,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
  */
 export const POST: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 
 	if (!isEnabled(conv.memoryMode)) {
 		throw error(400, 'Memory is disabled for this conversation; nothing to re-extract.');
@@ -33,14 +35,14 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	// Block while a turn (or its extraction) is running — consistent with the
 	// failed-tool rerun endpoint. `startExtractionRetryTurn` also registers a
 	// running turn, so this likewise guards a second retry in flight.
-	const current = getTurn(conv.id);
+	const current = getTurn(convId);
 	if (current && current.status === 'running') {
 		throw error(409, 'A turn is already in progress for this conversation.');
 	}
 
 	// Resolve the latest turn server-side: the most recent assistant message
 	// and the user message that triggered it.
-	const allMessages = messages.listByConversation(conv.id);
+	const allMessages = messages.listByConversation(convId);
 	let assistantIdx = -1;
 	for (let i = allMessages.length - 1; i >= 0; i--) {
 		if (allMessages[i].role === 'assistant') {
@@ -67,14 +69,14 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	// user message). Committed patches — original and any prior retries — are
 	// grouped under it, so the undo can find the prior patch across repeated
 	// retries even though each retry runs under a fresh streaming turn.
-	const latestTurnId = turnInputs.get(conv.id, userMessage.id)?.turnId ?? null;
+	const latestTurnId = turnInputs.get(convId, msgCodec.parse(userMessage.id))?.turnId ?? null;
 
 	// Identify the prior committed patch to undo. The undo itself is deferred
 	// into the retry turn and applied only once re-extraction produces a
 	// committable patch (see `startExtractionRetryTurn`), so a failed retry
 	// never destroys the existing memory. Skip when the prior extraction
 	// committed nothing (failed / needs_review).
-	const patches = memory.listPatches(conv.id, { limit: 50 });
+	const patches = memory.listPatches(convId, { limit: 50 });
 	const isCommitted = (status: string) =>
 		status === 'committed' || status === 'partially_committed';
 	// Only undo when we can pin the patch to *this* turn via its stable turn
@@ -88,7 +90,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		: undefined;
 
 	const turn = await startExtractionRetryTurn({
-		conversationId: conv.id,
+		conversationId: convId,
 		userId: conv.userId,
 		assistantMessageId: assistantMessage.id,
 		assistantContent: assistantMessage.content,
@@ -113,6 +115,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 
 export const DELETE: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
-	memory.wipe(conv.id);
-	return json({ ok: true, memory: memory.listSnapshot(conv.id, { userId: conv.userId }) });
+	const convId = convCodec.parse(conv.id);
+	memory.wipe(convId);
+	return json({ ok: true, memory: memory.listSnapshot(convId, { userId: conv.userId }) });
 };

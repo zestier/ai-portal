@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import { getTurnById } from '$lib/server/runtime/turn-runner';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 
@@ -15,7 +16,7 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
 export const DELETE: RequestHandler = async ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 
-	const turn = getTurnById(conv.id, params.turnId);
+	const turn = getTurnById(convCodec.parse(conv.id), params.turnId);
 	if (!turn || turn.status !== 'running') {
 		return json({ ok: true, aborted: false });
 	}

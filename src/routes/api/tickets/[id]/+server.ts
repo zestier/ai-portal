@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { ticketId } from '$lib/ids';
 import * as tickets from '$lib/server/db/repos/tickets';
 import { ticketWorkspaceFromInput } from '$lib/server/ticket-workspace';
 import { parseBody } from '$lib/server/validate';
@@ -29,9 +30,9 @@ const PatchBody = z
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const ticketId = Number(params.id);
-	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
-	const ticket = tickets.get(ticketId, userId);
+	const ticketIdInt = ticketId.tryParse(params.id);
+	if (ticketIdInt === null) throw error(404);
+	const ticket = tickets.get(ticketIdInt, userId);
 	if (!ticket) throw error(404);
 	return json({ ticket });
 };
@@ -39,15 +40,15 @@ export const GET: RequestHandler = ({ params, locals }) => {
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
 	const body = await parseBody(request, PatchBody);
-	const ticketId = Number(params.id);
-	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
-	const current = tickets.get(ticketId, userId);
+	const ticketIdInt = ticketId.tryParse(params.id);
+	if (ticketIdInt === null) throw error(404);
+	const current = tickets.get(ticketIdInt, userId);
 	if (!current) throw error(404);
 	if (body.workspace) {
 		const workspace = ticketWorkspaceFromInput(body.workspace, userId);
 		if (current.workspaceKey !== workspace) throw error(404);
 	}
-	const ticket = tickets.update(ticketId, userId, {
+	const ticket = tickets.update(ticketIdInt, userId, {
 		...(body.title !== undefined ? { title: body.title } : {}),
 		...(body.body !== undefined ? { body: body.body } : {}),
 		...(body.plan !== undefined ? { plan: body.plan } : {}),
@@ -60,9 +61,9 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 
 export const DELETE: RequestHandler = ({ params, locals, url }) => {
 	const userId = requireUserId(locals);
-	const ticketId = Number(params.id);
-	if (!Number.isInteger(ticketId) || ticketId <= 0) throw error(404);
-	const current = tickets.get(ticketId, userId);
+	const ticketIdInt = ticketId.tryParse(params.id);
+	if (ticketIdInt === null) throw error(404);
+	const current = tickets.get(ticketIdInt, userId);
 	if (!current) throw error(404);
 	const requestedWorkspace = url.searchParams.get('workspace');
 	if (requestedWorkspace) {
@@ -74,11 +75,11 @@ export const DELETE: RequestHandler = ({ params, locals, url }) => {
 	// keeps the historical soft-delete behavior, archiving the ticket so it can
 	// still be reopened.
 	if (url.searchParams.get('purge') === 'true') {
-		const deleted = tickets.remove(ticketId, userId);
+		const deleted = tickets.remove(ticketIdInt, userId);
 		if (!deleted) throw error(404);
 		return json({ ok: true, deleted: true });
 	}
-	const ticket = tickets.update(ticketId, userId, { status: 'archived' });
+	const ticket = tickets.update(ticketIdInt, userId, { status: 'archived' });
 	if (!ticket) throw error(404);
 	return json({ ok: true, ticket });
 };

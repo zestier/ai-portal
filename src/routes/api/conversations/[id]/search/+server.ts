@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as messages from '$lib/server/db/repos/messages';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { previewCut } from '$lib/server/present/transcript';
@@ -17,7 +18,7 @@ export const GET: RequestHandler = ({ params, locals, url }) => {
 	const rawLimit = Number(url.searchParams.get('limit')) || 20;
 	const limit = Math.min(Math.max(Number.isInteger(rawLimit) ? rawLimit : 20, 1), 100);
 	if (!q) return json({ results: [] });
-	const msgs = messages.searchConversation(conv.id, q, { limit });
+	const msgs = messages.searchConversation(convCodec.parse(conv.id), q, { limit });
 	const results = msgs.map((m) => ({
 		messageId: m.id,
 		role: m.role,

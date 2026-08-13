@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { getDb } from '$lib/server/db';
+import { memoryFactId } from '$lib/ids';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import { getMemoryProfile } from './profiles';
 import type { MemoryMode, Message } from '$lib/types';
 
 export interface MemoryEntityIndexEntry {
-	entityId: number;
+	entityId: string;
 	entityKey: string;
 	entityType: string;
 	displayName: string;
@@ -16,7 +17,7 @@ export interface MemoryEntityIndexEntry {
 
 export interface MemoryAutoSearchHit {
 	itemType: string;
-	itemId: number;
+	itemId: string | number;
 	text: string;
 	score: number;
 }
@@ -43,7 +44,7 @@ export interface TurnMemoryPacket {
 	relevanceQuery: string | null;
 	/** id -> entityKey for every entity, so rendering preserves keys even when
 	 *  an entity's full summary is dropped from the budgeted packet. */
-	entityKeyById: Record<number, string>;
+	entityKeyById: Record<string, string>;
 	toolGuidance: {
 		mandatory: boolean;
 		availableTools: string[];
@@ -218,11 +219,16 @@ export function resolveForgetTarget(
 	}
 ): { factId: number; isDirective: boolean } | null {
 	if (target.factId) {
-		const factId = Number(target.factId);
+		// The packet renders fact handles as `[id=F7]`; tolerate both that and a
+		// raw int (older model output / tests).
+		const factId =
+			typeof target.factId === 'number'
+				? target.factId
+				: memoryFactId.tryParse(target.factId) ?? Number(target.factId);
 		if (!Number.isInteger(factId) || factId <= 0) return null; // stale/hallucinated handle
 		const fact = memoryRepo.getFact(conversationId, factId);
 		if (!fact || fact.status !== 'active') return null;
-		return { factId: fact.id, isDirective: isDirectivePredicate(fact.predicate) };
+		return { factId: memoryFactId.parse(fact.id), isDirective: isDirectivePredicate(fact.predicate) };
 	}
 	if (target.entityKey && target.predicate) {
 		const entity = memoryRepo.getEntity(conversationId, target.entityKey);
@@ -236,7 +242,7 @@ export function resolveForgetTarget(
 			})
 			.at(0);
 		if (!fact) return null;
-		return { factId: fact.id, isDirective: isDirectivePredicate(fact.predicate) };
+		return { factId: memoryFactId.parse(fact.id), isDirective: isDirectivePredicate(fact.predicate) };
 	}
 	return null;
 }
@@ -352,9 +358,9 @@ export function buildInitialPacket(
 	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
 	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
 
-	const entityKeyById: Record<number, string> = {};
+	const entityKeyById: Record<string, string> = {};
 	for (const entity of entityPool) entityKeyById[entity.id] = entity.entityKey;
-	const keyOf = (id: number | null): string | null => (id ? (entityKeyById[id] ?? null) : null);
+	const keyOf = (id: string | null): string | null => (id ? (entityKeyById[id] ?? null) : null);
 	const factCounts = memoryRepo.entityFactCounts(conversationId);
 
 	// One search per turn powers both relevance ranking and the auto-search
@@ -362,7 +368,7 @@ export function buildInitialPacket(
 	const searchHits = query
 		? memoryRepo.search(conversationId, { query, limit: Math.max(AUTO_SEARCH_LIMIT, 300) })
 		: [];
-	const scores = new Map<number, number>();
+	const scores = new Map<string | number, number>();
 	for (const hit of searchHits) {
 		scores.set(hit.itemId, Math.max(scores.get(hit.itemId) ?? 0, hit.score ?? 0));
 	}
@@ -911,7 +917,7 @@ export function commitPatch(
 		// entity-key reuse operates on clean pre-turn state.
 		input.beforeCommit?.();
 
-		const entityIdsByKey = new Map<string, number>();
+		const entityIdsByKey = new Map<string, string>();
 		for (const entity of input.patch.entities ?? []) {
 			// entityType/displayName are independently optional. For a brand-new
 			// entity, fill whichever the caller omitted from the key (the single
@@ -995,7 +1001,7 @@ export function commitPatch(
 		// undo/review just like an explicitly-declared entity. Pre-existing
 		// entities are reused silently and must NOT be recorded, or undoing this
 		// patch would delete an entity that other patches rely on.
-		const recordMintedEntity = (entityId: number) => {
+		const recordMintedEntity = (entityId: string | number) => {
 			memoryRepo.recordPatchItem(input.conversationId, {
 				patchId: patchRecord.id,
 				itemType: 'entity',
@@ -1003,8 +1009,8 @@ export function commitPatch(
 				action: 'create'
 			});
 		};
-		let sessionEntityId: number | null = null;
-		const ensureSessionEntity = (): number => {
+		let sessionEntityId: string | null = null;
+		const ensureSessionEntity = (): string => {
 			if (sessionEntityId) return sessionEntityId;
 			const cached = entityIdsByKey.get(SESSION_ENTITY_KEY);
 			if (cached) {
@@ -1030,7 +1036,7 @@ export function commitPatch(
 			recordMintedEntity(row.id);
 			return row.id;
 		};
-		const ensureEntityForKey = (key: string): number => {
+		const ensureEntityForKey = (key: string): string => {
 			const known = entityIdsByKey.get(key);
 			if (known) return known;
 			// Reaching here means the key was absent from input.patch.entities and
@@ -1050,11 +1056,12 @@ export function commitPatch(
 		};
 
 		let factCount = 0;
-		// Fact ids created by THIS patch. A forget that re-resolves to one of these
-		// (e.g. a forget-by-entityKey+predicate aimed at a predicate the same patch
-		// also re-asserted — supersede already retired the old value, leaving the
-		// fresh one active under that selector) must be skipped, otherwise the forget
-		// would tombstone the just-written value and wipe the predicate entirely.
+		// Fact ids created by THIS patch (int form). A forget that re-resolves to
+		// one of these (e.g. a forget-by-entityKey+predicate aimed at a predicate
+		// the same patch also re-asserted — supersede already retired the old
+		// value, leaving the fresh one active under that selector) must be
+		// skipped, otherwise the forget would tombstone the just-written value and
+		// wipe the predicate entirely.
 		const createdFactIds = new Set<number>();
 		for (const fact of input.patch.facts ?? []) {
 			const entityId = fact.entityKey ? ensureEntityForKey(fact.entityKey) : ensureSessionEntity();
@@ -1083,7 +1090,7 @@ export function commitPatch(
 				itemId: row.id,
 				action: 'create'
 			});
-			createdFactIds.add(row.id);
+			createdFactIds.add(memoryFactId.parse(row.id));
 			factCount++;
 		}
 
@@ -1115,7 +1122,7 @@ export function commitPatch(
 				priority: loop.priority,
 				relatedEntityIds: (loop.relatedEntityKeys ?? [])
 					.map((key) => entityIdsByKey.get(key))
-					.filter((id): id is number => id !== undefined),
+					.filter((id): id is string => id !== undefined),
 				sourceMessageId: input.sourceMessageId ?? null
 			});
 			memoryRepo.recordPatchItem(input.conversationId, {
@@ -1825,7 +1832,7 @@ function entityIndexLine(entry: MemoryEntityIndexEntry, includeId = false): stri
 
 function factLine(
 	fact: memoryRepo.MemoryFact,
-	keyOf: (id: number | null) => string | null
+	keyOf: (id: string | null) => string | null
 ): string {
 	const key = keyOf(fact.entityId);
 	const subject = key ? `${key}.` : '';
@@ -1850,7 +1857,7 @@ function factDetail(fact: memoryRepo.MemoryFact, includeId = false): string {
 
 function loopLine(
 	loop: memoryRepo.MemoryOpenLoop,
-	keyOf: (id: number | null) => string | null,
+	keyOf: (id: string | null) => string | null,
 	opts: {
 		includeId?: boolean | undefined;
 		expiry?: { baseThreshold: number; warnWithin?: number | undefined } | undefined;
@@ -1887,7 +1894,7 @@ function loopLine(
 
 function eventLine(
 	event: memoryRepo.MemoryEvent,
-	keyOf: (id: number | null) => string | null,
+	keyOf: (id: string | null) => string | null,
 	includeId = false
 ): string {
 	const actor = keyOf(event.actorEntityId);
@@ -1954,7 +1961,7 @@ export function renderMemoryPacket(
 	options: RenderMemoryPacketOptions = {}
 ): string {
 	const includeIds = options.includeIds ?? false;
-	const keyOf = (id: number | null): string | null =>
+	const keyOf = (id: string | null): string | null =>
 		id ? (packet.entityKeyById[id] ?? null) : null;
 
 	const lines: string[] = [];
@@ -1999,9 +2006,9 @@ export function renderMemoryPacket(
 	// rather than a flat list of "entityKey.predicate = value" lines.
 	const entityById = new Map(packet.entities.map((entity) => [entity.id, entity]));
 	const indexById = new Map(packet.entityIndex.map((entry) => [entry.entityId, entry]));
-	const factsByEntity = new Map<number, memoryRepo.MemoryFact[]>();
+	const factsByEntity = new Map<string, memoryRepo.MemoryFact[]>();
 	const detachedFacts: memoryRepo.MemoryFact[] = [];
-	const blockOrder: number[] = [];
+	const blockOrder: string[] = [];
 	for (const fact of packet.facts) {
 		// Directives are rendered in their own always-on block above; never group
 		// them under an entity here even if one slipped into packet.facts.
@@ -2024,7 +2031,7 @@ export function renderMemoryPacket(
 		if (!factsByEntity.has(entity.id)) blockOrder.push(entity.id);
 	}
 
-	const entityHeader = (id: number): string => {
+	const entityHeader = (id: string): string => {
 		const entity = entityById.get(id);
 		if (entity) return entityLine(entity, includeIds);
 		const entry = indexById.get(id);
@@ -2043,7 +2050,7 @@ export function renderMemoryPacket(
 	// because entity/fact/event/loop rows each have their own INTEGER id space
 	// starting at 1, so a bare id would collide across tables and wrongly dedupe.
 	const shownIds = new Set<string>();
-	const shown = (type: 'entity' | 'fact' | 'event' | 'open_loop', id: number): string => {
+	const shown = (type: 'entity' | 'fact' | 'event' | 'open_loop', id: string | number): string => {
 		const key = `${type}:${id}`;
 		shownIds.add(key);
 		return key;
@@ -2151,7 +2158,7 @@ function collectEntityKeys(patch: MemoryPatchProposal): Set<string> {
 	return keys;
 }
 
-function recentTranscript(conversationId: number, userMessageId: number, limit: number): string {
+function recentTranscript(conversationId: number, userMessageId: string, limit: number): string {
 	const transcript = messages.listByConversation(conversationId);
 	const targetIdx = transcript.findIndex((message) => message.id === userMessageId);
 	const prior = transcript

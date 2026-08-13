@@ -1,4 +1,5 @@
 import { getDb } from '$lib/server/db';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
@@ -45,7 +46,7 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
 	}
 
 	const { conv, all } = loadIdleConversation(input.userId, input.conversationId);
-	const targetIdx = all.findIndex((m) => m.id === input.messageId);
+	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
 	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
 	if (target.role !== 'user') {
@@ -76,7 +77,7 @@ export interface RegenerateInput {
  */
 export function regenerateFromAssistant(input: RegenerateInput): InlineEditResult {
 	const { conv, all } = loadIdleConversation(input.userId, input.conversationId);
-	const targetIdx = all.findIndex((m) => m.id === input.messageId);
+	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
 	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
 	if (target.role !== 'assistant') {
@@ -119,12 +120,12 @@ function loadIdleConversation(
 	const conv = convs.get(conversationId, userId);
 	if (!conv) throw new InlineEditRejected('conversation_not_found');
 
-	const active = getTurn(conv.id);
+	const active = getTurn(convCodec.parse(conv.id));
 	if (active && active.status === 'running') {
 		throw new InlineEditRejected('conversation_busy', 'Conversation has a running turn.');
 	}
 
-	const all = messages.listByConversation(conv.id);
+	const all = messages.listByConversation(convCodec.parse(conv.id));
 	return { conv, all };
 }
 
@@ -147,23 +148,25 @@ function rerunFromUserMessage(
 	const targetIdx = all.findIndex((m) => m.id === userMessage.id);
 	resolveConversationWorkspace(conv);
 
-	cancelPendingInteractive(conv.id, cancelReason);
+	cancelPendingInteractive(convCodec.parse(conv.id), cancelReason);
 	const updated = getDb().transaction(() => {
-		memoryRepo.rewindSessionMemoryLogToMessagePrefix(conv.id, {
-			messageIds: new Set(all.slice(0, targetIdx + 1).map((message) => message.id)),
+		memoryRepo.rewindSessionMemoryLogToMessagePrefix(convCodec.parse(conv.id), {
+			messageIds: new Set(
+				all.slice(0, targetIdx + 1).map((message) => msgCodec.parse(message.id))
+			),
 			createdBefore: all[targetIdx + 1]?.createdAt
 		});
 		const updatedMessage = messages.truncateAfterAndUpdateUserMessage(
-			conv.id,
-			userMessage.id,
+			convCodec.parse(conv.id),
+			msgCodec.parse(userMessage.id),
 			content
 		);
 		if (!updatedMessage) throw new InlineEditRejected('message_not_found');
-		usage.remove(conv.id);
+		usage.remove(convCodec.parse(conv.id));
 		return updatedMessage;
 	})();
 
-	const refreshed = convs.get(conv.id, userId);
+	const refreshed = convs.get(convCodec.parse(conv.id), userId);
 	if (!refreshed) throw new InlineEditRejected('conversation_not_found');
 	return { conversation: refreshed, userMessage: updated };
 }

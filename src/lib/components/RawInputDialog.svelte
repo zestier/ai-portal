@@ -7,8 +7,8 @@
 		messageId,
 		onClose
 	}: {
-		conversationId: number;
-		messageId: number;
+		conversationId: string;
+		messageId: string;
 		onClose: () => void;
 	} = $props();
 

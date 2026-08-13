@@ -23,7 +23,7 @@ export type AssistantTargetResult = { kind: 'found'; index: number } | { kind: '
  */
 export function resolveAssistantTarget(
 	messages: Pick<DisplayMessage, 'id' | 'role'>[],
-	messageId: number | undefined
+	messageId: string | undefined
 ): AssistantTargetResult {
 	if (messageId) {
 		const index = messages.findIndex((m) => m.id === messageId);

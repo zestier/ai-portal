@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 
@@ -12,7 +13,7 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
  */
 export const GET: RequestHandler = ({ params, locals }) => {
 	const source = authorizeConversation(params.id, locals.userId);
-	const children = convs.listChildren(source.userId, source.id);
+	const children = convs.listChildren(source.userId, convCodec.parse(source.id));
 	return json({
 		forks: children.map((c) => ({
 			id: c.id,

@@ -10,7 +10,7 @@
 		refreshToken = 0,
 		onrevert
 	}: {
-		conversationId: number;
+		conversationId: string;
 		worktree?: string | null;
 		refreshToken?: number;
 		onrevert?: () => void;

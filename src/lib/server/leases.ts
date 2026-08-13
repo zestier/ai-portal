@@ -23,6 +23,7 @@ import { log } from './log';
 import * as leaseRepo from './db/repos/leases';
 import type { LeaseRow } from './db/repos/leases';
 import * as convs from './db/repos/conversations';
+import { conversationId as convCodec, leaseId as leaseCodec } from '$lib/ids';
 import {
 	createWorktreeForSlot,
 	deleteMergedBranch,
@@ -60,7 +61,7 @@ function toMetadata(lease: Lease): ManagedWorktreeMetadata {
 }
 
 function leaseSlot(lease: Pick<Lease, 'userId' | 'id'>): WorktreeSlot {
-	return { kind: 'lease', userId: String(lease.userId), leaseId: String(lease.id) };
+	return { kind: 'lease', userId: String(lease.userId), leaseId: String(leaseCodec.parse(lease.id)) };
 }
 
 /**
@@ -114,7 +115,7 @@ export async function createLease(input: CreateLeaseInput): Promise<Lease> {
 	// for the duration of the checkout creation below.
 	const id = leaseRepo.mintPlaceholder({
 		userId: conversation.userId,
-		heldByConversationId: conversation.id,
+		heldByConversationId: convCodec.parse(conversation.id),
 		label
 	});
 
@@ -128,7 +129,7 @@ export async function createLease(input: CreateLeaseInput): Promise<Lease> {
 			// the lock) so two concurrent creates can't both observe "n-1 leases" and
 			// both succeed. A throw rolls the checkout back.
 			onCreated: (meta) => {
-				const perConversation = leaseRepo.countByConversation(conversation.id);
+				const perConversation = leaseRepo.countByConversation(convCodec.parse(conversation.id));
 				if (perConversation >= cfg.WORKTREE_MAX_LEASES_PER_CONVERSATION) {
 					throw new LeaseQuotaError(
 						`this conversation already holds ${perConversation} worktrees (limit ${cfg.WORKTREE_MAX_LEASES_PER_CONVERSATION}); remove one before creating another`
@@ -165,16 +166,21 @@ export async function createLease(input: CreateLeaseInput): Promise<Lease> {
 	}
 }
 
-export function getLease(leaseId: number, userId: number): Lease | null {
-	return leaseRepo.getById(leaseId, userId);
+export function getLease(leaseId: string | number, userId: number): Lease | null {
+	// Handles parse via the codec; raw ints pass through (the lease routes parse
+	// at entry, but callers holding a repo-shaped `Lease` pass the handle).
+	const intId = typeof leaseId === 'number' ? leaseId : leaseCodec.parse(leaseId);
+	return leaseRepo.getById(intId, userId);
 }
 
-export function listLeases(conversationId: number, userId: number): Lease[] {
-	return leaseRepo.listByConversation(conversationId, userId);
+export function listLeases(conversationId: string | number, userId: number): Lease[] {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	return leaseRepo.listByConversation(intConv, userId);
 }
 
-export function touchLease(leaseId: number): void {
-	leaseRepo.touch(leaseId);
+export function touchLease(leaseId: string | number): void {
+	const intId = typeof leaseId === 'number' ? leaseId : leaseCodec.parse(leaseId);
+	leaseRepo.touch(intId);
 }
 
 /**
@@ -194,7 +200,7 @@ export function resolveLeaseWorkspace(lease: Lease): string {
 	try {
 		const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
 		const storedReal = realpathSync(stored);
-		const expectedReal = resolve(rootReal, String(lease.userId), 'leases', String(lease.id));
+		const expectedReal = resolve(rootReal, String(lease.userId), 'leases', String(leaseCodec.parse(lease.id)));
 		if (
 			!statSync(stored).isDirectory() ||
 			storedReal !== expectedReal ||
@@ -231,7 +237,7 @@ export async function removeLease(
 		owner: leaseSlot(lease)
 	});
 	const branchDeleted = await deleteBranchIfMerged(lease);
-	leaseRepo.remove(lease.id);
+	leaseRepo.remove(leaseCodec.parse(lease.id));
 	log.info('lease.removed', {
 		leaseId: lease.id,
 		branch: lease.branch,
@@ -258,7 +264,7 @@ export interface RetainedLease {
 }
 
 export interface RemoveLeasesResult {
-	removed: number[];
+	removed: string[];
 	/** Leases left in place because removing them would lose sight of work. */
 	retained: RetainedLease[];
 }
@@ -338,7 +344,7 @@ export function conversationWorkspaceRoots(conversation: Conversation): string[]
 		// A conversation whose own workspace is unavailable still fails closed at
 		// the point of use; here we simply contribute no root for it.
 	}
-	for (const lease of leaseRepo.listByConversation(conversation.id, conversation.userId)) {
+	for (const lease of leaseRepo.listByConversation(convCodec.parse(conversation.id), conversation.userId)) {
 		if (lease.state !== 'active') continue;
 		try {
 			roots.push(resolveLeaseWorkspace(lease));
@@ -462,7 +468,7 @@ export async function reapIdleLeases(now = Date.now()): Promise<{ removed: numbe
 			const { dirtyCount } = await inspectLease(lease);
 			if (dirtyCount > 0) continue;
 			const conversation = lease.heldByConversationId
-				? convs.get(lease.heldByConversationId, lease.userId)
+				? convs.get(convCodec.parse(lease.heldByConversationId), lease.userId)
 				: null;
 			// A lease whose conversation is gone has no counterpart to measure
 			// against; the FK cascade means the row is orphaned anyway, so let it go.
@@ -494,7 +500,7 @@ export async function reconcileLeases(): Promise<{ rowsDropped: number; reposPru
 		try {
 			resolveLeaseWorkspace(lease);
 		} catch {
-			leaseRepo.remove(lease.id);
+			leaseRepo.remove(leaseCodec.parse(lease.id));
 			staleRepos.add(lease.sourceWorkdir);
 			rowsDropped++;
 		}

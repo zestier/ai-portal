@@ -1,4 +1,5 @@
 import { getDb } from '../index';
+import { promptTemplateId } from '$lib/ids';
 import {
 	TICKET_ACTION_DEFAULTS,
 	findUnknownPlaceholders,
@@ -65,7 +66,7 @@ function parseDisabledToolGroups(raw: string | null): PortalToolGroupId[] {
 function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 	const type = normalizePromptTemplateType(row.type);
 	return {
-		id: row.id,
+		id: promptTemplateId.encode(row.id),
 		userId: row.user_id,
 		type,
 		title: row.title,
@@ -129,10 +130,14 @@ export function list(userId: number, opts: ListOptions = {}): ChatPromptTemplate
 	return rows.map(rowToTemplate);
 }
 
-export function get(id: number, userId: number): ChatPromptTemplate | null {
+function templateInt(id: string | number): number {
+	return typeof id === 'number' ? id : promptTemplateId.parse(id);
+}
+
+export function get(id: string | number, userId: number): ChatPromptTemplate | null {
 	const row = getDb()
 		.prepare('SELECT * FROM prompt_templates WHERE id = ? AND user_id = ?')
-		.get(id, userId) as PromptTemplateRow | undefined;
+		.get(templateInt(id), userId) as PromptTemplateRow | undefined;
 	return row ? rowToTemplate(row) : null;
 }
 
@@ -196,7 +201,7 @@ export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 			).lastInsertRowid
 	);
 	return {
-		id,
+		id: promptTemplateId.encode(id),
 		userId,
 		type,
 		title,
@@ -232,8 +237,13 @@ export interface UpdateInput {
 	orderIndex?: number;
 }
 
-export function update(id: number, userId: number, patch: UpdateInput): ChatPromptTemplate | null {
-	const current = get(id, userId);
+export function update(
+	id: string | number,
+	userId: number,
+	patch: UpdateInput
+): ChatPromptTemplate | null {
+	const intId = templateInt(id);
+	const current = get(intId, userId);
 	if (!current) return null;
 
 	const title = patch.title?.trim();
@@ -291,13 +301,13 @@ export function update(id: number, userId: number, patch: UpdateInput): ChatProm
 			orderIndex,
 			now,
 			archivedAt,
-			id,
+			intId,
 			userId
 		);
-	return get(id, userId);
+	return get(intId, userId);
 }
 
-export function archive(id: number, userId: number): ChatPromptTemplate | null {
+export function archive(id: string | number, userId: number): ChatPromptTemplate | null {
 	return update(id, userId, { status: 'archived' });
 }
 
@@ -373,7 +383,7 @@ export function restoreTicketActionDefaults(userId: number): number {
 				insertDefault(userId, def);
 				restored += 1;
 			} else {
-				update(existing.id, userId, {
+				update(promptTemplateId.parse(existing.id), userId, {
 					status: 'open',
 					title: def.title,
 					description: def.description,

@@ -12,7 +12,7 @@ export async function patchTicketStatus({
 	status,
 	fetcher = fetch
 }: {
-	ticketId: number;
+	ticketId: string;
 	status: WorkspaceTicketStatus;
 	fetcher?: TicketStatusFetch;
 }): Promise<{ ok: true } | { ok: false; status?: number }> {
@@ -35,7 +35,7 @@ export async function patchTicketPriority({
 	priority,
 	fetcher = fetch
 }: {
-	ticketId: number;
+	ticketId: string;
 	priority: WorkspaceTicketPriority;
 	fetcher?: TicketStatusFetch;
 }): Promise<{ ok: true } | { ok: false; status?: number }> {

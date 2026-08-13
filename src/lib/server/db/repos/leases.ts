@@ -8,11 +8,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../index';
+import { conversationId, leaseId } from '$lib/ids';
 
 export interface LeaseRow {
-	id: number;
+	id: string;
 	userId: number;
-	heldByConversationId: number | null;
+	heldByConversationId: string | null;
 	label: string;
 	sourceWorkdir: string;
 	gitCommonDir: string;
@@ -41,9 +42,10 @@ interface RawLeaseRow {
 
 function toLease(r: RawLeaseRow): LeaseRow {
 	return {
-		id: r.id,
+		id: leaseId.encode(r.id),
 		userId: r.user_id,
-		heldByConversationId: r.held_by_conversation_id,
+		heldByConversationId:
+			r.held_by_conversation_id === null ? null : conversationId.encode(r.held_by_conversation_id),
 		label: r.label,
 		sourceWorkdir: r.source_workdir,
 		gitCommonDir: r.git_common_dir,
@@ -122,7 +124,7 @@ export function mintPlaceholder(input: {
 
 /** Fill in the real checkout metadata after the worktree exists. */
 export function completePlaceholder(
-	id: number,
+	id: string | number,
 	userId: number,
 	meta: {
 		sourceWorkdir: string;
@@ -132,41 +134,50 @@ export function completePlaceholder(
 		baseSha: string;
 	}
 ): LeaseRow | null {
+	const intId = leaseInt(id);
 	getDb()
 		.prepare(
 			`UPDATE workspace_leases
 			    SET source_workdir = ?, git_common_dir = ?, path = ?, branch = ?, base_sha = ?
 			  WHERE id = ?`
 		)
-		.run(meta.sourceWorkdir, meta.gitCommonDir, meta.path, meta.branch, meta.baseSha, id);
-	return getById(id, userId);
+		.run(meta.sourceWorkdir, meta.gitCommonDir, meta.path, meta.branch, meta.baseSha, intId);
+	return getById(intId, userId);
 }
 
-export function getById(id: number, userId: number): LeaseRow | null {
+function leaseInt(id: string | number): number {
+	return typeof id === 'number' ? id : leaseId.parse(id);
+}
+
+function convInt(id: string | number): number {
+	return typeof id === 'number' ? id : conversationId.parse(id);
+}
+
+export function getById(id: string | number, userId: number): LeaseRow | null {
 	const row = getDb()
 		.prepare(`SELECT * FROM workspace_leases WHERE id = ? AND user_id = ?`)
-		.get(id, userId) as RawLeaseRow | undefined;
+		.get(leaseInt(id), userId) as RawLeaseRow | undefined;
 	return row ? toLease(row) : null;
 }
 
-export function listByConversation(conversationId: number, userId: number): LeaseRow[] {
+export function listByConversation(conversationId: string | number, userId: number): LeaseRow[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM workspace_leases
 			  WHERE held_by_conversation_id = ? AND user_id = ?
 			  ORDER BY created_at ASC`
 		)
-		.all(conversationId, userId) as RawLeaseRow[];
+		.all(convInt(conversationId), userId) as RawLeaseRow[];
 	return rows.map(toLease);
 }
 
-export function countByConversation(conversationId: number): number {
+export function countByConversation(conversationId: string | number): number {
 	const row = getDb()
 		.prepare(
 			`SELECT COUNT(*) AS n FROM workspace_leases
 			  WHERE held_by_conversation_id = ? AND state = 'active' AND base_sha != ''`
 		)
-		.get(conversationId) as { n: number };
+		.get(convInt(conversationId)) as { n: number };
 	return row.n;
 }
 
@@ -204,14 +215,14 @@ export function listIdle(before: number): LeaseRow[] {
 	return rows.map(toLease);
 }
 
-export function touch(id: number, now = Date.now()): void {
-	getDb().prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`).run(now, id);
+export function touch(id: string | number, now = Date.now()): void {
+	getDb().prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`).run(now, leaseInt(id));
 }
 
-export function setState(id: number, state: 'active' | 'releasing'): void {
-	getDb().prepare(`UPDATE workspace_leases SET state = ? WHERE id = ?`).run(state, id);
+export function setState(id: string | number, state: 'active' | 'releasing'): void {
+	getDb().prepare(`UPDATE workspace_leases SET state = ? WHERE id = ?`).run(state, leaseInt(id));
 }
 
-export function remove(id: number): void {
-	getDb().prepare(`DELETE FROM workspace_leases WHERE id = ?`).run(id);
+export function remove(id: string | number): void {
+	getDb().prepare(`DELETE FROM workspace_leases WHERE id = ?`).run(leaseInt(id));
 }

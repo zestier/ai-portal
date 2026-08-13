@@ -2,6 +2,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy, tick } from 'svelte';
+	import { conversationId } from '$lib/ids';
 	import type {
 		ChatPromptTemplate,
 		Conversation,
@@ -43,9 +44,9 @@
 		onnavigate
 	}: {
 		conversations: Conversation[];
-		awaitingConversationIds?: number[];
-		runningConversationIds?: number[];
-		unreadConversationIds?: number[];
+		awaitingConversationIds?: string[];
+		runningConversationIds?: string[];
+		unreadConversationIds?: string[];
 		tickets: SidebarTicket[];
 		ticketCount: number;
 		ticketWorkspace: string | null;
@@ -54,28 +55,28 @@
 		onnavigate?: () => void;
 	} = $props();
 
-	let openMenuId = $state<number | null>(null);
-	let renamingId = $state<number | null>(null);
+	let openMenuId = $state<string | null>(null);
+	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
 	let archivedOpen = $state(false);
 	let selectMode = $state(false);
-	let selected = $state(new Set<number>());
+	let selected = $state(new Set<string>());
 	let bulkBusy = $state(false);
 	let ticketsOpen = $state(false);
 	let ticketDraftOpen = $state(false);
 	let ticketTitle = $state('');
 	let ticketBusy = $state(false);
-	let ticketLaunchId = $state<number | null>(null);
-	let ticketArchiveId = $state<number | null>(null);
+	let ticketLaunchId = $state<string | null>(null);
+	let ticketArchiveId = $state<string | null>(null);
 	// Ticket action awaiting confirmation in the review dialog.
 	let reviewing = $state<{ ticket: WorkspaceTicket; action: ChatPromptTemplate } | null>(null);
-	let expandedTicketIds = $state(new Set<number>());
+	let expandedTicketIds = $state(new Set<string>());
 	let errorMsg = $state<string | null>(null);
 	let mounted = $state(false);
 	// Unmerged-work state for managed-worktree sessions, keyed by conversation id.
 	// Fetched client-side (see the route comment) and refreshed on a slow poll —
 	// the answer only changes when an agent commits or someone merges.
-	let worktreeStatuses = $state(new Map<number, WorktreeStatusSummary>());
+	let worktreeStatuses = $state(new Map<string, WorktreeStatusSummary>());
 	const WORKTREE_POLL_MS = 30_000;
 	let worktreeTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -121,14 +122,13 @@
 	const active = $derived(conversations.filter((c) => c.archivedAt == null));
 	const archived = $derived(conversations.filter((c) => c.archivedAt != null));
 	const serverAwaiting = $derived(new Set(awaitingConversationIds));
-	const awaiting = (id: number) => isAwaitingInput(id, serverAwaiting, $awaitingInputOverrides);
+	const awaiting = (id: string) => isAwaitingInput(id, serverAwaiting, $awaitingInputOverrides);
 	const serverRunning = $derived(new Set(runningConversationIds));
 	const serverUnread = $derived(new Set(unreadConversationIds));
 	const openConversationId = $derived.by(() => {
 		const raw = $page.url.pathname.match(/^\/conversations\/([^/]+)/)?.[1];
 		if (raw === undefined) return null;
-		const parsed = Number(raw);
-		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+		return conversationId.is(raw) ? raw : null;
 	});
 
 	type ActivityIndicator = {
@@ -146,7 +146,7 @@
 	 * user's attention (a prompt is blocked on them, an agent is working, there's
 	 * something new to read), and stacking dots would just add noise.
 	 */
-	function indicatorFor(id: number): ActivityIndicator | null {
+	function indicatorFor(id: string): ActivityIndicator | null {
 		if (awaiting(id)) {
 			return {
 				kind: 'awaiting',
@@ -189,7 +189,7 @@
 	 * attention right now?" and is exclusive, whereas unmerged work is a durable
 	 * property of the session's checkout and can coexist with any of them.
 	 */
-	function unmergedLabelFor(id: number): string | null {
+	function unmergedLabelFor(id: string): string | null {
 		const status = worktreeStatuses.get(id);
 		if (!status?.unmerged) return null;
 		const parts: string[] = [];
@@ -265,11 +265,11 @@
 		ticketDraftOpen = !ticketDraftOpen;
 	}
 
-	function isTicketExpanded(ticketId: number): boolean {
+	function isTicketExpanded(ticketId: string): boolean {
 		return expandedTicketIds.has(ticketId);
 	}
 
-	function toggleTicketExpanded(ticketId: number) {
+	function toggleTicketExpanded(ticketId: string) {
 		const next = new Set(expandedTicketIds);
 		if (next.has(ticketId)) {
 			next.delete(ticketId);
@@ -279,7 +279,7 @@
 		expandedTicketIds = next;
 	}
 
-	function collapseTicket(ticketId: number) {
+	function collapseTicket(ticketId: string) {
 		const next = new Set(expandedTicketIds);
 		next.delete(ticketId);
 		expandedTicketIds = next;
@@ -395,7 +395,7 @@
 		}
 	}
 
-	async function openMenu(id: number) {
+	async function openMenu(id: string) {
 		openMenuId = id;
 		await tick();
 		firstMenuItem?.focus();
@@ -405,7 +405,7 @@
 		openMenuId = null;
 	}
 
-	function toggleMenu(id: number, ev: Event) {
+	function toggleMenu(id: string, ev: Event) {
 		ev.preventDefault();
 		ev.stopPropagation();
 		if (openMenuId === id) closeMenu();
@@ -442,7 +442,7 @@
 		renamingId = null;
 	}
 
-	async function setArchived(id: number, archived: boolean) {
+	async function setArchived(id: string, archived: boolean) {
 		closeMenu();
 		const ok = await api(
 			`/api/conversations/${id}`,
@@ -489,7 +489,7 @@
 		return null;
 	}
 
-	async function deleteConv(id: number) {
+	async function deleteConv(id: string) {
 		closeMenu();
 		if (!confirm('Delete this conversation? This cannot be undone.')) return;
 		let res: Response;
@@ -524,7 +524,7 @@
 		selected = new Set();
 	}
 
-	function toggleSelected(id: number) {
+	function toggleSelected(id: string) {
 		const next = new Set(selected);
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
@@ -597,10 +597,10 @@
 			await invalidateAll();
 			if (action === 'delete') {
 				const currentId = location.pathname.match(/^\/conversations\/([^/]+)/)?.[1];
-				const currentIdNum = currentId === undefined ? undefined : Number(currentId);
+				const currentIdNum = currentId === undefined ? undefined : conversationId.tryParse(currentId);
 				if (
 					currentIdNum !== undefined &&
-					results.some((result) => result.id === currentIdNum && result.ok)
+					results.some((result) => result.id === currentId && result.ok)
 				) {
 					location.href = '/';
 				}

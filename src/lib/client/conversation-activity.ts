@@ -17,11 +17,11 @@ export interface ConversationActivity {
 	unread: boolean;
 }
 
-export const conversationActivityOverrides = writable<Record<number, ConversationActivity>>({});
+export const conversationActivityOverrides = writable<Record<string, ConversationActivity>>({});
 
 /** Record a conversation's live activity state (from an `activity.changed` event). */
 export function setConversationActivity(
-	conversationId: number,
+	conversationId: string,
 	activity: ConversationActivity
 ): void {
 	conversationActivityOverrides.update((current) => {
@@ -38,7 +38,7 @@ export function setConversationActivity(
  * running state. Used the moment the user opens a chat, so the indicator goes
  * away immediately instead of after the `/read` round-trip.
  */
-export function clearConversationUnread(conversationId: number): void {
+export function clearConversationUnread(conversationId: string): void {
 	conversationActivityOverrides.update((current) => {
 		const prev = current[conversationId];
 		if (prev && !prev.unread) return current;
@@ -63,10 +63,10 @@ export function clearConversationActivityOverrides(): void {
  * present, otherwise fall back to the server `load` sets.
  */
 export function resolveConversationActivity(
-	conversationId: number,
-	serverRunning: Set<number>,
-	serverUnread: Set<number>,
-	overrides: Record<number, ConversationActivity>
+	conversationId: string,
+	serverRunning: Set<string>,
+	serverUnread: Set<string>,
+	overrides: Record<string, ConversationActivity>
 ): ConversationActivity {
 	const override = overrides[conversationId];
 	if (override) return override;
@@ -82,7 +82,7 @@ export function resolveConversationActivity(
  * reappears on the next layout `load`, which is strictly better than surfacing
  * an error for a passive read receipt.
  */
-export async function markConversationRead(conversationId: number): Promise<void> {
+export async function markConversationRead(conversationId: string): Promise<void> {
 	clearConversationUnread(conversationId);
 	try {
 		await fetch(`/api/conversations/${conversationId}/read`, { method: 'POST' });

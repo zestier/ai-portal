@@ -41,7 +41,7 @@
 		 * `diff` into an explicit "load diff" affordance rather than an error.
 		 */
 		lazy?: {
-			conversationId: number;
+			conversationId: string;
 			fileEditId: number | string;
 			bytes?: number | undefined;
 		} | null;

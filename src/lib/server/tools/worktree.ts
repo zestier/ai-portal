@@ -29,6 +29,7 @@
 // the tools stay singular.
 
 import { z } from 'zod';
+import { conversationId as convCodec } from '$lib/ids';
 import { err, ok, type PortalTool } from './types';
 import { project, withOmitted, FieldsArg, FIELDS_PARAM, FIELDS_NOTE } from './project';
 import {
@@ -287,8 +288,8 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 				const { leaseId } = StatusArgs.parse(args);
 				const conv = conversation();
 				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
-				const lease = getLease(Number(leaseId), ctx.userId);
-				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
+				const lease = getLease(leaseId, ctx.userId);
+				if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) {
 					return err(`no worktree with id ${leaseId} in this conversation`, {
 						code: 'lease_not_found'
 					});
@@ -355,8 +356,8 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 				const parsed = MergeArgs.parse(args);
 				const conv = conversation();
 				if (!conv) return err('conversation not found', { code: 'conversation_not_found' });
-				const lease = getLease(Number(parsed.leaseId), ctx.userId);
-				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
+				const lease = getLease(parsed.leaseId, ctx.userId);
+				if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) {
 					return err(`no worktree with id ${parsed.leaseId} in this conversation`, {
 						code: 'lease_not_found'
 					});
@@ -437,8 +438,8 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 			},
 			async handler(args) {
 				const parsed = RemoveArgs.parse(args);
-				const lease = getLease(Number(parsed.leaseId), ctx.userId);
-				if (!lease || lease.heldByConversationId !== ctx.conversationId) {
+				const lease = getLease(parsed.leaseId, ctx.userId);
+				if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) {
 					return err(`no worktree with id ${parsed.leaseId} in this conversation`, {
 						code: 'lease_not_found'
 					});

@@ -26,13 +26,13 @@ export interface ConversationResetGate {
 	// very first mount. A repeat of the same id (a background refresh handing a
 	// new prop object) returns false, so local state such as an in-progress
 	// composer draft survives untouched.
-	shouldReset(nextId: number): boolean;
+	shouldReset(nextId: string): boolean;
 }
 
 export function createConversationResetGate(): ConversationResetGate {
-	let lastId: number | undefined = undefined;
+	let lastId: string | undefined = undefined;
 	return {
-		shouldReset(nextId: number): boolean {
+		shouldReset(nextId: string): boolean {
 			if (lastId === nextId) return false;
 			lastId = nextId;
 			return true;

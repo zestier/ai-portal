@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ticketId } from '$lib/ids';
 import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
 import type { WorkspaceTicket } from '$lib/types';
@@ -27,8 +28,9 @@ const TICKET_KEEP = ['id', 'title', 'body', 'priority', 'status', 'blockedBy', '
 // TICKET_KEEP, so a `fields` request for either is always valid (never an
 // unknown-field error) even on a ticket that currently has no such edges.
 function withDeps(ticket: WorkspaceTicket) {
-	const blockedBy = tickets.openBlockers(ticket.id);
-	const blocks = tickets.listDependents(ticket.id);
+	const id = ticketId.parse(ticket.id);
+	const blockedBy = tickets.openBlockers(id).map((blockerId) => ticketId.encode(blockerId));
+	const blocks = tickets.listDependents(id).map((dependentId) => ticketId.encode(dependentId));
 	return {
 		...ticket,
 		...(blockedBy.length ? { blockedBy } : {}),
@@ -221,7 +223,9 @@ export function buildTicketTools(opts: {
 				}
 				const rendered = rows
 					.map((t) => {
-						const blockers = tickets.openBlockers(t.id);
+						const blockers = tickets.openBlockers(ticketId.parse(t.id)).map((blockerId) =>
+							ticketId.encode(blockerId)
+						);
 						const blockedNote = blockers.length ? ` (blocked by: ${blockers.join(', ')})` : '';
 						return `- ${t.id} [${t.priority}] [${t.status}] ${t.title}${blockedNote}${t.body ? `\n  ${t.body}` : ''}`;
 					})
@@ -244,17 +248,17 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, fields: rawFields } = GetArgs.parse(args);
-				const ticket = tickets.get(Number(id), opts.userId);
+				const ticket = tickets.get(ticketId.parse(id), opts.userId);
 				if (!ticket || ticket.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
 				const fields = normalizeFieldSelector(rawFields);
 				// The tool id is a string (it round-trips into ticket_update/ticket_block's
 				// `z.string()` id param), so the result echoes it in that form. Edge lists
-				// stay numeric ids — they are display-only on this read.
+				// are T-handles — they round-trip into the same id params.
 				const ticketView = {
 					...withDeps(ticket),
-					id: String(ticket.id)
+					id: ticket.id
 				};
 				const projected = project(ticketView, {
 					...(fields !== undefined ? { fields } : {}),
@@ -314,17 +318,17 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, ...patch } = UpdateArgs.parse(args);
-				const current = tickets.get(Number(id), opts.userId);
+				const current = tickets.get(ticketId.parse(id), opts.userId);
 				if (!current || current.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
 				try {
-					const updated = tickets.update(Number(id), opts.userId, {
+					const updated = tickets.update(ticketId.parse(id), opts.userId, {
 						...patch,
 						...(patch.blockedBy !== undefined
-							? { blockedBy: patch.blockedBy.map((x) => Number(x)) }
+							? { blockedBy: patch.blockedBy.map(ticketId.parse) }
 							: {}),
-						...(patch.blocks !== undefined ? { blocks: patch.blocks.map((x) => Number(x)) } : {})
+						...(patch.blocks !== undefined ? { blocks: patch.blocks.map(ticketId.parse) } : {})
 					} as UpdateInput);
 					if (!updated) return err(`Ticket not found: ${id}`);
 					return ok(
@@ -360,16 +364,20 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, blockedBy } = BlockArgs.parse(args);
-				const dependent = tickets.get(Number(id), opts.userId);
+				const dependent = tickets.get(ticketId.parse(id), opts.userId);
 				if (!dependent || dependent.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const prereq = tickets.get(Number(blockedBy), opts.userId);
+				const prereq = tickets.get(ticketId.parse(blockedBy), opts.userId);
 				if (!prereq || prereq.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${blockedBy}`);
 				}
 				try {
-					const result = tickets.addDependency(opts.userId, Number(id), Number(blockedBy));
+					const result = tickets.addDependency(
+						opts.userId,
+						ticketId.parse(id),
+						ticketId.parse(blockedBy)
+					);
 					const verb = result === 'added' ? 'now blocked by' : 'already blocked by';
 					return ok({ id, blockedBy, result }, `Ticket ${id} ${verb} ${blockedBy}.`);
 				} catch (e) {
@@ -393,11 +401,15 @@ export function buildTicketTools(opts: {
 			},
 			async handler(args) {
 				const { id, blockedBy } = UnblockArgs.parse(args);
-				const dependent = tickets.get(Number(id), opts.userId);
+				const dependent = tickets.get(ticketId.parse(id), opts.userId);
 				if (!dependent || dependent.workspaceKey !== opts.workspaceKey) {
 					return err(`Ticket not found: ${id}`);
 				}
-				const removed = tickets.removeDependency(opts.userId, Number(id), Number(blockedBy));
+				const removed = tickets.removeDependency(
+					opts.userId,
+					ticketId.parse(id),
+					ticketId.parse(blockedBy)
+				);
 				return removed
 					? ok(
 							{ id, blockedBy, result: 'removed' },

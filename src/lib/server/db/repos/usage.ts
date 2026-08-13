@@ -3,6 +3,7 @@
 // PortalEvent by the bridge and persisted by the turn runner).
 
 import { getDb } from '../index';
+import { conversationId } from '$lib/ids';
 import type { ConversationUsage } from '$lib/types';
 
 interface UsageRow {
@@ -18,7 +19,7 @@ interface UsageRow {
 
 function rowToUsage(r: UsageRow): ConversationUsage {
 	return {
-		conversationId: r.conversation_id,
+		conversationId: conversationId.encode(r.conversation_id),
 		currentTokens: r.current_tokens,
 		tokenLimit: r.token_limit,
 		messagesLength: r.messages_length,

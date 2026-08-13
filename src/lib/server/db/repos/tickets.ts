@@ -1,5 +1,8 @@
 import { getDb } from '../index';
 import { notifyTicketMutation } from '../ticket-mutations';
+// `ticketId` aliased: repo functions take a `ticketId` param (dependencyRefs),
+// which would shadow the codec.
+import { conversationId, messageId, ticketId as ticketCodec } from '$lib/ids';
 import type {
 	TicketDependencyRef,
 	WorkspaceTicket,
@@ -40,7 +43,7 @@ function normalizePriority(raw: string | undefined): WorkspaceTicketPriority {
 
 function rowToTicket(r: TicketRow): WorkspaceTicket {
 	return {
-		id: r.id,
+		id: ticketCodec.encode(r.id),
 		userId: r.user_id,
 		workspaceKey: r.workspace_key,
 		title: r.title,
@@ -54,8 +57,9 @@ function rowToTicket(r: TicketRow): WorkspaceTicket {
 		// unexpected value to the default rather than leaking `undefined`.
 		priority: normalizePriority(r.priority),
 		status: normalizeStatus(r.status),
-		sourceConversationId: r.source_conversation_id,
-		sourceMessageId: r.source_message_id,
+		sourceConversationId:
+			r.source_conversation_id === null ? null : conversationId.encode(r.source_conversation_id),
+		sourceMessageId: r.source_message_id === null ? null : messageId.encode(r.source_message_id),
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
 		closedAt: r.closed_at
@@ -184,10 +188,14 @@ export function count(
 	return row?.count ?? 0;
 }
 
-export function get(id: number, userId: number): WorkspaceTicket | null {
+function ticketInt(id: string | number): number {
+	return typeof id === 'number' ? id : ticketCodec.parse(id);
+}
+
+export function get(id: string | number, userId: number): WorkspaceTicket | null {
 	const row = getDb()
 		.prepare('SELECT * FROM workspace_tickets WHERE id = ? AND user_id = ?')
-		.get(id, userId) as TicketRow | undefined;
+		.get(ticketInt(id), userId) as TicketRow | undefined;
 	return row ? rowToTicket(row) : null;
 }
 
@@ -249,7 +257,7 @@ export function create(userId: number, input: CreateInput): WorkspaceTicket {
 	// inserts above don't each fan out a redundant signal.
 	notifyTicketMutation({ userId, workspaceKey: input.workspaceKey, ticketId: id });
 	return {
-		id,
+		id: ticketCodec.encode(id),
 		userId,
 		workspaceKey: input.workspaceKey,
 		title,
@@ -257,8 +265,14 @@ export function create(userId: number, input: CreateInput): WorkspaceTicket {
 		plan,
 		priority,
 		status: 'open',
-		sourceConversationId: input.sourceConversationId ?? null,
-		sourceMessageId: input.sourceMessageId ?? null,
+		sourceConversationId:
+			input.sourceConversationId === undefined || input.sourceConversationId === null
+				? null
+				: conversationId.encode(input.sourceConversationId),
+		sourceMessageId:
+			input.sourceMessageId === undefined || input.sourceMessageId === null
+				? null
+				: messageId.encode(input.sourceMessageId),
 		createdAt: now,
 		updatedAt: now,
 		closedAt: null
@@ -282,8 +296,9 @@ export interface UpdateInput {
 	blocks?: number[];
 }
 
-export function update(id: number, userId: number, patch: UpdateInput): WorkspaceTicket | null {
-	const current = get(id, userId);
+export function update(id: string | number, userId: number, patch: UpdateInput): WorkspaceTicket | null {
+	const intId = ticketInt(id);
+	const current = get(intId, userId);
 	if (!current) return null;
 
 	const title = patch.title?.trim();
@@ -310,14 +325,14 @@ export function update(id: number, userId: number, patch: UpdateInput): Workspac
 				nextStatus,
 				now,
 				closedAt,
-				id,
+				intId,
 				userId
 			);
-		if (patch.blockedBy !== undefined) reconcileEdges(userId, id, patch.blockedBy, 'blockedBy');
-		if (patch.blocks !== undefined) reconcileEdges(userId, id, patch.blocks, 'blocks');
+		if (patch.blockedBy !== undefined) reconcileEdges(userId, intId, patch.blockedBy, 'blockedBy');
+		if (patch.blocks !== undefined) reconcileEdges(userId, intId, patch.blocks, 'blocks');
 	})();
-	notifyTicketMutation({ userId, workspaceKey: current.workspaceKey, ticketId: id });
-	return get(id, userId);
+	notifyTicketMutation({ userId, workspaceKey: current.workspaceKey, ticketId: intId });
+	return get(intId, userId);
 }
 
 // Reconcile one side of a ticket's blocking edges to a desired-state set: add
@@ -346,13 +361,14 @@ function reconcileEdges(
 	}
 }
 
-export function remove(id: number, userId: number): boolean {
-	const existing = get(id, userId);
+export function remove(id: string | number, userId: number): boolean {
+	const intId = ticketInt(id);
+	const existing = get(intId, userId);
 	const r = getDb()
 		.prepare('DELETE FROM workspace_tickets WHERE id = ? AND user_id = ?')
-		.run(id, userId);
+		.run(intId, userId);
 	if (r.changes > 0) {
-		notifyTicketMutation({ userId, workspaceKey: existing?.workspaceKey, ticketId: id });
+		notifyTicketMutation({ userId, workspaceKey: existing?.workspaceKey, ticketId: intId });
 	}
 	return r.changes > 0;
 }
@@ -364,24 +380,26 @@ export function remove(id: number, userId: number): boolean {
 // are plain lookups.
 
 /** depends_on ids for a ticket (its prerequisites), newest edge first. */
-export function listDependencies(ticketId: number): number[] {
+export function listDependencies(ticketId: string | number): number[] {
+	const intId = ticketInt(ticketId);
 	return (
 		getDb()
 			.prepare(
 				`SELECT depends_on FROM ticket_deps WHERE ticket_id = ? ORDER BY created_at DESC, depends_on`
 			)
-			.all(ticketId) as { depends_on: number }[]
+			.all(intId) as { depends_on: number }[]
 	).map((r) => r.depends_on);
 }
 
 /** ids of tickets that depend on this ticket (its dependents). */
-export function listDependents(ticketId: number): number[] {
+export function listDependents(ticketId: string | number): number[] {
+	const intId = ticketInt(ticketId);
 	return (
 		getDb()
 			.prepare(
 				`SELECT ticket_id FROM ticket_deps WHERE depends_on = ? ORDER BY created_at DESC, ticket_id`
 			)
-			.all(ticketId) as { ticket_id: number }[]
+			.all(intId) as { ticket_id: number }[]
 	).map((r) => r.ticket_id);
 }
 
@@ -390,7 +408,8 @@ export function listDependents(ticketId: number): number[] {
  * that actively block it. A ticket with an empty list is "ready". Done/archived
  * prerequisites are satisfied and excluded.
  */
-export function openBlockers(ticketId: number): number[] {
+export function openBlockers(ticketId: string | number): number[] {
+	const intId = ticketInt(ticketId);
 	return (
 		getDb()
 			.prepare(
@@ -399,7 +418,7 @@ export function openBlockers(ticketId: number): number[] {
 				 WHERE d.ticket_id = ? AND t.status = 'open'
 				 ORDER BY d.created_at DESC, d.depends_on`
 			)
-			.all(ticketId) as { depends_on: number }[]
+			.all(intId) as { depends_on: number }[]
 	).map((r) => r.depends_on);
 }
 
@@ -503,7 +522,8 @@ function removeDependencyUnnotified(userId: number, ticketId: number, dependsOn:
  * `addDependency`, so this is belt-and-suspenders, but it means a read can never
  * surface another user's title even if an edge were ever created off that path.
  */
-export function dependencyRefs(ticketId: number, userId: number): TicketDependencyRef[] {
+export function dependencyRefs(ticketId: string | number, userId: number): TicketDependencyRef[] {
+	const intId = ticketInt(ticketId);
 	return getDb()
 		.prepare(
 			`SELECT t.id, t.title, t.status FROM ticket_deps d
@@ -511,11 +531,20 @@ export function dependencyRefs(ticketId: number, userId: number): TicketDependen
 			 WHERE d.ticket_id = ? AND t.user_id = ?
 			 ORDER BY d.created_at DESC, t.title`
 		)
-		.all(ticketId, userId) as TicketDependencyRef[];
+		.all(intId, userId)
+		.map((r) => {
+			const row = r as { id: number; title: string; status: string };
+			return {
+				id: ticketCodec.encode(row.id),
+				title: row.title,
+				status: normalizeStatus(row.status)
+			};
+		});
 }
 
 /** Dependents of a ticket (tickets it blocks), as display refs, any status. Scoped by `userId` (see `dependencyRefs`). */
-export function dependentRefs(ticketId: number, userId: number): TicketDependencyRef[] {
+export function dependentRefs(ticketId: string | number, userId: number): TicketDependencyRef[] {
+	const intId = ticketInt(ticketId);
 	return getDb()
 		.prepare(
 			`SELECT t.id, t.title, t.status FROM ticket_deps d
@@ -523,5 +552,13 @@ export function dependentRefs(ticketId: number, userId: number): TicketDependenc
 			 WHERE d.depends_on = ? AND t.user_id = ?
 			 ORDER BY d.created_at DESC, t.title`
 		)
-		.all(ticketId, userId) as TicketDependencyRef[];
+		.all(intId, userId)
+		.map((r) => {
+			const row = r as { id: number; title: string; status: string };
+			return {
+				id: ticketCodec.encode(row.id),
+				title: row.title,
+				status: normalizeStatus(row.status)
+			};
+		});
 }

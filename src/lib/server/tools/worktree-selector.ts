@@ -9,6 +9,7 @@
 // arbitrary path — so both import this one implementation.
 
 import { z } from 'zod';
+import { conversationId as convCodec } from '$lib/ids';
 import { getLease, resolveLeaseWorkspace, touchLease } from '../leases';
 import { WorkspaceUnavailableError } from '../workdir';
 import { err, type ToolResult } from './types';
@@ -89,8 +90,8 @@ export function resolveWorktreeDir(
 	ctx: WorktreeToolContext | undefined
 ): string | null {
 	if (!ctx) return null;
-	const lease = getLease(Number(leaseId), ctx.userId);
-	if (!lease || lease.heldByConversationId !== ctx.conversationId) return null;
+	const lease = getLease(leaseId, ctx.userId);
+	if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) return null;
 	try {
 		return resolveLeaseWorkspace(lease);
 	} catch (cause) {
@@ -120,8 +121,8 @@ export function createTreeResolver(
 				})
 			};
 		}
-		const lease = getLease(Number(leaseId), ctx.userId);
-		if (!lease || lease.heldByConversationId !== ctx.conversationId) {
+		const lease = getLease(leaseId, ctx.userId);
+		if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) {
 			return {
 				error: err(`no worktree with id ${leaseId} in this conversation`, {
 					code: 'lease_not_found'

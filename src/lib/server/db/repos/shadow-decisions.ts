@@ -14,6 +14,7 @@
  */
 
 import { getDb } from '../index';
+import { conversationId as convCodec } from '$lib/ids';
 import type {
 	AdversaryVerdict,
 	HumanPermissionDecision,
@@ -26,7 +27,7 @@ export type ShadowStatus = 'pending' | 'verdict' | 'error';
 export type ShadowResolutionSource = 'prompt-grant' | 'prompt-policy' | 'auto-approve';
 
 export interface InsertPendingShadowOptions {
-	conversationId: number;
+	conversationId: string | number;
 	tool: string;
 	permissionKind: string;
 	scopeKey: string | null;
@@ -39,6 +40,7 @@ export interface InsertPendingShadowOptions {
 }
 
 export function insertPending(opts: InsertPendingShadowOptions): number {
+	const convId = typeof opts.conversationId === 'number' ? opts.conversationId : convCodec.parse(opts.conversationId);
 	const info = getDb()
 		.prepare(
 			`INSERT INTO permission_shadow_decisions(
@@ -48,7 +50,7 @@ export function insertPending(opts: InsertPendingShadowOptions): number {
 			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
 		)
 		.run(
-			opts.conversationId,
+			convId,
 			opts.tool,
 			opts.permissionKind,
 			opts.scopeKey,
@@ -237,13 +239,14 @@ export function listForUser(userId: number, limit = 500): ShadowDecisionRecord[]
 	return rows.map(rowToRecord);
 }
 
-export function listForConversation(conversationId: number): ShadowDecisionRecord[] {
+export function listForConversation(conversationId: string | number): ShadowDecisionRecord[] {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM permission_shadow_decisions
 			  WHERE conversation_id = ?
 			  ORDER BY created_at ASC, id ASC`
 		)
-		.all(conversationId) as ShadowDbRow[];
+		.all(intConv) as ShadowDbRow[];
 	return rows.map(rowToRecord);
 }

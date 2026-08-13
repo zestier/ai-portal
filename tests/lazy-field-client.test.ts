@@ -6,6 +6,9 @@ import {
 	peekLazyField,
 	resetLazyFieldCache
 } from '../src/lib/client/lazy-field';
+import { conversationId, toolCallId } from '../src/lib/ids';
+
+const C1 = conversationId.encode(1);
 
 describe('lazy field client', () => {
 	beforeEach(() => {
@@ -17,8 +20,11 @@ describe('lazy field client', () => {
 	});
 
 	it('builds an escaped, kind-scoped URL', () => {
-		expect(lazyFieldUrl(1, 'tool-result', 'tc/1')).toBe(
-			'/api/conversations/1/fields/tool-result/tc%2F1'
+		// Tool-call records carry X-handles on the wire; the fields route keeps
+		// kind-scoped record ids as raw ints, so the handle parses back to the
+		// numeric segment.
+		expect(lazyFieldUrl(C1, 'tool-result', toolCallId.encode(1))).toBe(
+			'/api/conversations/C1/fields/tool-result/1'
 		);
 	});
 
@@ -26,17 +32,20 @@ describe('lazy field client', () => {
 		const fetchMock = vi.fn(async () => new Response('the-result', { status: 200 }));
 		vi.stubGlobal('fetch', fetchMock);
 
-		expect(peekLazyField(1, 'tool-result', 't')).toBeNull();
-		expect(await fetchLazyField(1, 'tool-result', 't')).toBe('the-result');
-		expect(await fetchLazyField(1, 'tool-result', 't')).toBe('the-result');
-		expect(peekLazyField(1, 'tool-result', 't')).toBe('the-result');
+		expect(peekLazyField(C1, 'tool-result', toolCallId.encode(1))).toBeNull();
+		expect(await fetchLazyField(C1, 'tool-result', toolCallId.encode(1))).toBe('the-result');
+		expect(await fetchLazyField(C1, 'tool-result', toolCallId.encode(1))).toBe('the-result');
+		expect(peekLazyField(C1, 'tool-result', toolCallId.encode(1))).toBe('the-result');
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('de-duplicates concurrent requests for the same field', async () => {
 		const fetchMock = vi.fn(async () => new Response('x', { status: 200 }));
 		vi.stubGlobal('fetch', fetchMock);
-		await Promise.all([fetchLazyField(1, 'tool-args', 't'), fetchLazyField(1, 'tool-args', 't')]);
+		await Promise.all([
+			fetchLazyField(C1, 'tool-args', toolCallId.encode(1)),
+			fetchLazyField(C1, 'tool-args', toolCallId.encode(1))
+		]);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
@@ -54,11 +63,11 @@ describe('lazy field client', () => {
 		);
 		let firstDone = false;
 		let secondDone = false;
-		const a = fetchLazyField(1, 'tool-args', 't').then((v) => {
+		const a = fetchLazyField(C1, 'tool-args', toolCallId.encode(1)).then((v) => {
 			firstDone = true;
 			return v;
 		});
-		const b = fetchLazyField(1, 'tool-args', 't').then((v) => {
+		const b = fetchLazyField(C1, 'tool-args', toolCallId.encode(1)).then((v) => {
 			secondDone = true;
 			return v;
 		});
@@ -77,9 +86,9 @@ describe('lazy field client', () => {
 			.mockResolvedValueOnce(new Response('recovered', { status: 200 }));
 		vi.stubGlobal('fetch', fetchMock);
 
-		await expect(fetchLazyField(1, 'file-diff', 'e')).rejects.toThrow(/Could not load/);
+		await expect(fetchLazyField(C1, 'file-diff', 3)).rejects.toThrow(/Could not load/);
 		// The failure must not poison the memo: a retry has to be able to succeed.
-		expect(await fetchLazyField(1, 'file-diff', 'e')).toBe('recovered');
+		expect(await fetchLazyField(C1, 'file-diff', 3)).toBe('recovered');
 	});
 
 	it('reports a missing field distinctly from a transport failure', async () => {
@@ -87,7 +96,9 @@ describe('lazy field client', () => {
 			'fetch',
 			vi.fn(async () => new Response('', { status: 404 }))
 		);
-		await expect(fetchLazyField(1, 'tool-result', 'gone')).rejects.toThrow(/no longer available/);
+		await expect(fetchLazyField(C1, 'tool-result', toolCallId.encode(9))).rejects.toThrow(
+			/no longer available/
+		);
 	});
 
 	it('formats withheld sizes for the load affordance', () => {

@@ -1,5 +1,12 @@
 import { getDb } from '../index';
 import type Database from 'better-sqlite3';
+// Aliased: repo functions take params named `conversationId`/`toolCallId`, which
+// would shadow the codec imports.
+import {
+	conversationId as convCodec,
+	messageId as msgCodec,
+	toolCallId as toolCodec
+} from '$lib/ids';
 import type {
 	Message,
 	MessageStatus,
@@ -121,8 +128,8 @@ function runInBatches(
 
 function rowToMessage(r: MsgRow): Message {
 	return {
-		id: r.id,
-		conversationId: r.conversation_id,
+		id: msgCodec.encode(r.id),
+		conversationId: convCodec.encode(r.conversation_id),
 		role: r.role as Role,
 		content: r.content,
 		status: r.status as MessageStatus,
@@ -183,14 +190,29 @@ const ALWAYS_INLINE_ARGS_TOOLS = "tool <> 'task' AND ";
 // at most one such block per open, so keeping it costs nothing.
 const ALWAYS_INLINE_REASONING = "kind <> 'content' AND duration_ms IS NOT NULL AND ";
 
+// Resolve id arguments to storage ints. Repo inputs accept raw ints or the
+// opaque handles; the SQL layer only ever sees ints.
+function convInt(id: string | number): number {
+	return typeof id === 'number' ? id : convCodec.parse(id);
+}
+
+function msgInt(id: string | number): number {
+	return typeof id === 'number' ? id : msgCodec.parse(id);
+}
+
+function toolInt(id: string | number): number {
+	return typeof id === 'number' ? id : toolCodec.parse(id);
+}
+
 export function listByConversation(
-	conversationId: number,
+	conversationId: string | number,
 	opts: ListByConversationOptions = {}
 ): Message[] {
+	const intConv = convInt(conversationId);
 	const db = getDb();
 	const rows = db
 		.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC')
-		.all(conversationId) as MsgRow[];
+		.all(intConv) as MsgRow[];
 	const msgs = rows.map(rowToMessage);
 	attachRecords(msgs, opts);
 	return msgs;
@@ -222,7 +244,7 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 			`kind, text_offset, started_at, duration_ms, parent_tool_call_id`
 		: '*';
 
-	const ids = msgs.map((m) => m.id);
+	const ids = msgs.map((m) => msgCodec.parse(m.id));
 	const toolRows = selectInBatches<ToolRow>(
 		db,
 		ids,
@@ -262,8 +284,8 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 		const argsTruncated = trim && t.args_json === null && (t.args_bytes ?? 0) > 0;
 		const resultTruncated = trim && t.result_json === null && (t.result_bytes ?? 0) > 0;
 		(byMsgT[t.message_id] ??= []).push({
-			id: t.id,
-			messageId: t.message_id,
+			id: toolCodec.encode(t.id),
+			messageId: msgCodec.encode(t.message_id),
 			tool: t.tool,
 			argsJson: t.args_json,
 			resultJson: t.result_json,
@@ -273,7 +295,8 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 			startedAt: t.started_at,
 			endedAt: t.ended_at,
 			textOffset: t.text_offset,
-			parentToolCallId: t.parent_tool_call_id,
+			parentToolCallId:
+				t.parent_tool_call_id === null ? null : toolCodec.encode(t.parent_tool_call_id),
 			backgroundAgentStatus: lifecycle?.status ?? null,
 			backgroundAgentId: lifecycle?.agent_id ?? null,
 			backgroundAgentStartedAt: lifecycle?.started_at ?? null,
@@ -285,13 +308,14 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 		const diffTruncated = trim && e.diff === null && (e.diff_bytes ?? 0) > 0;
 		(byMsgE[e.message_id] ??= []).push({
 			id: e.id,
-			messageId: e.message_id,
+			messageId: msgCodec.encode(e.message_id),
 			path: e.path,
 			diff: e.diff,
 			...(diffTruncated ? { diffTruncated: true, diffBytes: e.diff_bytes } : {}),
 			createdAt: e.created_at,
 			textOffset: e.text_offset,
-			parentToolCallId: e.parent_tool_call_id
+			parentToolCallId:
+				e.parent_tool_call_id === null ? null : toolCodec.encode(e.parent_tool_call_id)
 		});
 	}
 	const byMsgR: Record<number, ReasoningBlockRecord[]> = {};
@@ -300,7 +324,7 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 		const textTruncated = trim && r.text === null;
 		(byMsgR[r.message_id] ??= []).push({
 			id: r.id,
-			messageId: r.message_id,
+			messageId: msgCodec.encode(r.message_id),
 			segmentIndex: r.segment_index,
 			text: r.text,
 			...(textTruncated ? { textTruncated: true, textBytes: r.text_bytes } : {}),
@@ -308,26 +332,27 @@ function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
 			textOffset: r.text_offset,
 			startedAt: r.started_at,
 			durationMs: r.duration_ms,
-			parentToolCallId: r.parent_tool_call_id
+			parentToolCallId:
+				r.parent_tool_call_id === null ? null : toolCodec.encode(r.parent_tool_call_id)
 		});
 	}
 	for (const m of msgs) {
-		m.toolCalls = byMsgT[m.id] ?? [];
-		m.fileEdits = byMsgE[m.id] ?? [];
-		m.reasoningBlocks = byMsgR[m.id] ?? [];
+		m.toolCalls = byMsgT[msgCodec.parse(m.id)] ?? [];
+		m.fileEdits = byMsgE[msgCodec.parse(m.id)] ?? [];
+		m.reasoningBlocks = byMsgR[msgCodec.parse(m.id)] ?? [];
 	}
 }
 
 // Newest `limit` messages (ASC order) with their records — the bounded
 // hydrated tail of the backend-projected transcript. Loaded raw (untrimmed);
 // the projection layer trims for the wire and computes summaries.
-export function listRecent(conversationId: number, limit: number): Message[] {
+export function listRecent(conversationId: string | number, limit: number): Message[] {
 	const db = getDb();
 	const rows = db
 		.prepare(
 			'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'
 		)
-		.all(conversationId, limit) as MsgRow[];
+		.all(convInt(conversationId), limit) as MsgRow[];
 	const msgs = rows.reverse().map(rowToMessage);
 	attachRecords(msgs, {});
 	return msgs;
@@ -346,14 +371,15 @@ export interface IndexPageResult {
 // projection layer shapes it into index entries. `limit + 1` rows are fetched
 // so `hasMore` needs no second query.
 export function listIndexPage(
-	conversationId: number,
-	beforeId: number,
+	conversationId: string | number,
+	beforeId: string | number,
 	limit: number
 ): IndexPageResult {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const before = db
 		.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
-		.get(conversationId, beforeId) as MsgRow | undefined;
+		.get(intConv, msgInt(beforeId)) as MsgRow | undefined;
 	if (!before) return { messages: [], hasMore: false };
 	const rows = db
 		.prepare(
@@ -363,7 +389,7 @@ export function listIndexPage(
 			  ORDER BY created_at DESC, id DESC
 			  LIMIT ?`
 		)
-		.all(conversationId, before.created_at, before.created_at, before.id, limit + 1) as MsgRow[];
+		.all(intConv, before.created_at, before.created_at, before.id, limit + 1) as MsgRow[];
 	const hasMore = rows.length > limit;
 	const msgs = rows.slice(0, limit).reverse().map(rowToMessage);
 	attachRecords(msgs, {});
@@ -372,21 +398,24 @@ export function listIndexPage(
 
 // One message with its records (the message-detail hydration endpoint). Loaded
 // raw; the projection layer applies the generous INLINE_* trim for the body.
-export function getMessage(conversationId: number, messageId: number): Message | null {
+export function getMessage(
+	conversationId: string | number,
+	messageId: string | number
+): Message | null {
 	const db = getDb();
 	const row = db
 		.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
-		.get(conversationId, messageId) as MsgRow | undefined;
+		.get(convInt(conversationId), msgInt(messageId)) as MsgRow | undefined;
 	if (!row) return null;
 	const msg = rowToMessage(row);
 	attachRecords([msg], {});
 	return msg;
 }
 
-export function countMessages(conversationId: number): number {
+export function countMessages(conversationId: string | number): number {
 	const row = getDb()
 		.prepare('SELECT count(*) AS n FROM messages WHERE conversation_id = ?')
-		.get(conversationId) as { n: number };
+		.get(convInt(conversationId)) as { n: number };
 	return row.n;
 }
 // multi-word query matches the literal substring including its spaces.
@@ -396,7 +425,7 @@ function ftsPhrase(term: string): string | null {
 }
 
 export function searchConversation(
-	conversationId: number,
+	conversationId: string | number,
 	query: string,
 	opts: { limit?: number } = {}
 ): Message[] {
@@ -404,6 +433,7 @@ export function searchConversation(
 	if (!term) return [];
 	const limit = opts.limit ?? 20;
 	const phrase = ftsPhrase(term);
+	const intConv = convInt(conversationId);
 	// Sub-trigram (1-2 char) queries can't use the trigram index; fall back to a
 	// scan to preserve the exact-literal contract for those rare short terms.
 	if (!phrase) {
@@ -415,7 +445,7 @@ export function searchConversation(
 				  ORDER BY created_at DESC, id DESC
 				  LIMIT ?`
 			)
-			.all(conversationId, term, limit) as MsgRow[];
+			.all(intConv, term, limit) as MsgRow[];
 		return rows.map(rowToMessage).reverse();
 	}
 	// Trigram FTS5 MATCH narrows to messages whose content contains the literal
@@ -431,7 +461,7 @@ export function searchConversation(
 			  ORDER BY m.created_at DESC, m.id DESC
 			  LIMIT ?`
 		)
-		.all(conversationId, phrase, term, limit) as MsgRow[];
+		.all(intConv, phrase, term, limit) as MsgRow[];
 	return rows.map(rowToMessage).reverse();
 }
 
@@ -442,15 +472,16 @@ export interface AppendInput {
 	errorCode?: string | null;
 }
 
-export function append(conversationId: number, input: AppendInput): Message {
+export function append(conversationId: string | number, input: AppendInput): Message {
 	const now = Date.now();
+	const intConv = convInt(conversationId);
 	const info = getDb()
 		.prepare(
 			`INSERT INTO messages(conversation_id, role, content, status, error_code, created_at, reasoning, reasoning_duration_ms)
 			 VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`
 		)
 		.run(
-			conversationId,
+			intConv,
 			input.role,
 			input.content,
 			input.status ?? 'complete',
@@ -459,8 +490,8 @@ export function append(conversationId: number, input: AppendInput): Message {
 		);
 	const id = Number(info.lastInsertRowid);
 	return {
-		id,
-		conversationId,
+		id: msgCodec.encode(id),
+		conversationId: convCodec.encode(intConv),
 		role: input.role,
 		content: input.content,
 		status: input.status ?? 'complete',
@@ -491,18 +522,20 @@ export function updateContentOnly(id: number, content: string) {
 }
 
 export function truncateAfterAndUpdateUserMessage(
-	conversationId: number,
-	messageId: number,
+	conversationId: string | number,
+	messageId: string | number,
 	content: string
 ): Message | null {
 	const db = getDb();
+	const intConv = convInt(conversationId);
+	const intMsg = msgInt(messageId);
 	const tx = db.transaction(() => {
 		const target = db
 			.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
-			.get(conversationId, messageId) as MsgRow | undefined;
+			.get(intConv, intMsg) as MsgRow | undefined;
 		if (!target) return null;
 
-		deleteMessagesAfter(db, conversationId, target);
+		deleteMessagesAfter(db, intConv, target);
 
 		db.prepare(
 			`UPDATE messages
@@ -510,7 +543,7 @@ export function truncateAfterAndUpdateUserMessage(
 			        status = 'complete',
 			        error_code = NULL
 			  WHERE id = ?`
-		).run(content, messageId);
+		).run(content, intMsg);
 
 		return rowToMessage({
 			...target,
@@ -557,14 +590,15 @@ function deleteMessagesAfter(db: Database.Database, conversationId: number, targ
 	);
 }
 
-export function truncateAfterMessage(conversationId: number, messageId: number): boolean {
+export function truncateAfterMessage(conversationId: string | number, messageId: string | number): boolean {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const tx = db.transaction(() => {
 		const target = db
 			.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
-			.get(conversationId, messageId) as MsgRow | undefined;
+			.get(intConv, msgInt(messageId)) as MsgRow | undefined;
 		if (!target) return false;
-		deleteMessagesAfter(db, conversationId, target);
+		deleteMessagesAfter(db, intConv, target);
 		return true;
 	});
 	return tx();
@@ -574,8 +608,12 @@ export function truncateAfterMessage(conversationId: number, messageId: number):
 // payload) can produce a null `argsJson`, and `tool_calls.args_json` is NOT
 // NULL. Requiring it here keeps a trimmed record from being wired into an
 // insert/clone path and failing as a runtime constraint violation instead of a
-// compile error.
-type ToolCallInsert = Omit<ToolCallRecord, 'messageId'> & { argsJson: string };
+// compile error. Id-ish fields stay ints at the storage boundary (handles
+// parse at the caller).
+type ToolCallInsert = Omit<
+	ToolCallRecord,
+	'messageId' | 'id' | 'parentToolCallId' | 'argsJson'
+> & { id: number; parentToolCallId: number | null; argsJson: string };
 
 /**
  * Reserve the next numeric autoincrement id for `table` WITHOUT inserting a row.
@@ -610,7 +648,8 @@ export function mintReasoningBlockId(): number {
 	return mintId('reasoning_blocks');
 }
 
-export function insertToolCall(messageId: number, t: ToolCallInsert) {
+export function insertToolCall(messageId: string | number, t: ToolCallInsert) {
+	const intMsg = msgInt(messageId);
 	getDb()
 		.prepare(
 			`INSERT INTO tool_calls(
@@ -621,7 +660,7 @@ export function insertToolCall(messageId: number, t: ToolCallInsert) {
 		)
 		.run(
 			t.id,
-			messageId,
+			intMsg,
 			t.tool,
 			t.argsJson,
 			t.resultJson,
@@ -633,7 +672,8 @@ export function insertToolCall(messageId: number, t: ToolCallInsert) {
 		);
 }
 
-export function upsertToolCall(messageId: number, t: ToolCallInsert) {
+export function upsertToolCall(messageId: string | number, t: ToolCallInsert) {
+	const intMsg = msgInt(messageId);
 	getDb()
 		.prepare(
 			`INSERT INTO tool_calls(
@@ -654,7 +694,7 @@ export function upsertToolCall(messageId: number, t: ToolCallInsert) {
 		)
 		.run(
 			t.id,
-			messageId,
+			intMsg,
 			t.tool,
 			t.argsJson,
 			t.resultJson,
@@ -732,16 +772,17 @@ export interface ToolCallWithConversation extends ToolCallRecord {
 	// the page payload's trimmed marker — narrow the type back to non-null for
 	// the rerun flow, which needs the exact original arguments.
 	argsJson: string;
-	conversationId: number;
+	conversationId: string;
 	conversationUserId: number;
 	messageRole: Role;
 }
 
 export function getToolCallForConversation(
-	conversationId: number,
-	toolCallId: number
+	conversationId: string | number,
+	toolCallId: string | number
 ): ToolCallWithConversation | null {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const row = db
 		.prepare(
 			`SELECT tc.*,
@@ -758,7 +799,7 @@ export function getToolCallForConversation(
 			   LEFT JOIN background_agent_lifecycles bal ON bal.tool_call_id = tc.id
 			  WHERE tc.id = ? AND m.conversation_id = ?`
 		)
-		.get(toolCallId, conversationId) as
+		.get(toolInt(toolCallId), intConv) as
 		| (ToolRow & {
 				conversation_id: number;
 				conversation_user_id: number;
@@ -771,8 +812,8 @@ export function getToolCallForConversation(
 		| undefined;
 	if (!row) return null;
 	return {
-		id: row.id,
-		messageId: row.message_id,
+		id: toolCodec.encode(row.id),
+		messageId: msgCodec.encode(row.message_id),
 		tool: row.tool,
 		// `SELECT tc.*` on a NOT NULL column: never actually null, and never
 		// trimmed (this path doesn't go through listByConversation).
@@ -782,12 +823,13 @@ export function getToolCallForConversation(
 		startedAt: row.started_at,
 		endedAt: row.ended_at,
 		textOffset: row.text_offset,
-		parentToolCallId: row.parent_tool_call_id,
+		parentToolCallId:
+			row.parent_tool_call_id === null ? null : toolCodec.encode(row.parent_tool_call_id),
 		backgroundAgentStatus: row.background_agent_status,
 		backgroundAgentId: row.background_agent_id,
 		backgroundAgentStartedAt: row.background_agent_started_at,
 		backgroundAgentEndedAt: row.background_agent_ended_at,
-		conversationId: row.conversation_id,
+		conversationId: convCodec.encode(row.conversation_id),
 		conversationUserId: row.conversation_user_id,
 		messageRole: row.message_role as Role
 	};
@@ -798,8 +840,8 @@ export function getToolCallForConversation(
 // conversation owner), so a mismatched user gets the same `null` an unknown id
 // does and the endpoint can 404 without leaking existence.
 export function getToolCallFieldForOwner(
-	conversationId: number,
-	toolCallId: number,
+	conversationId: string | number,
+	toolCallId: string | number,
 	userId: number,
 	field: 'args' | 'result'
 ): { value: string | null } | null {
@@ -812,12 +854,12 @@ export function getToolCallFieldForOwner(
 			   JOIN conversations c ON c.id = m.conversation_id
 			  WHERE tc.id = ? AND m.conversation_id = ? AND c.user_id = ?`
 		)
-		.get(toolCallId, conversationId, userId) as { value: string | null } | undefined;
+		.get(toolInt(toolCallId), convInt(conversationId), userId) as { value: string | null } | undefined;
 	return row ?? null;
 }
 
 export function getFileEditDiffForOwner(
-	conversationId: number,
+	conversationId: string | number,
 	fileEditId: number,
 	userId: number
 ): { value: string | null } | null {
@@ -829,12 +871,12 @@ export function getFileEditDiffForOwner(
 			   JOIN conversations c ON c.id = m.conversation_id
 			  WHERE fe.id = ? AND m.conversation_id = ? AND c.user_id = ?`
 		)
-		.get(fileEditId, conversationId, userId) as { value: string | null } | undefined;
+		.get(fileEditId, convInt(conversationId), userId) as { value: string | null } | undefined;
 	return row ?? null;
 }
 
 export function getReasoningTextForOwner(
-	conversationId: number,
+	conversationId: string | number,
 	reasoningBlockId: number,
 	userId: number
 ): { value: string | null } | null {
@@ -846,12 +888,12 @@ export function getReasoningTextForOwner(
 			   JOIN conversations c ON c.id = m.conversation_id
 			  WHERE rb.id = ? AND m.conversation_id = ? AND c.user_id = ?`
 		)
-		.get(reasoningBlockId, conversationId, userId) as { value: string | null } | undefined;
+		.get(reasoningBlockId, convInt(conversationId), userId) as { value: string | null } | undefined;
 	return row ?? null;
 }
 
 export function insertFileEdit(
-	messageId: number,
+	messageId: string | number,
 	path: string,
 	diff: string,
 	textOffset: number | null = null,
@@ -862,14 +904,19 @@ export function insertFileEdit(
 			`INSERT INTO file_edits(message_id, path, diff, created_at, text_offset, parent_tool_call_id)
 			 VALUES (?, ?, ?, ?, ?, ?)`
 		)
-		.run(messageId, path, diff, Date.now(), textOffset, parentToolCallId);
+		.run(msgInt(messageId), path, diff, Date.now(), textOffset, parentToolCallId);
 }
 
 // Writes always carry real text: `reasoning_blocks.text` is NOT NULL, and only
-// a *trimmed read* (see `inlineMaxBytes`) ever hands back a null.
-type ReasoningBlockWrite = Omit<ReasoningBlockRecord, 'messageId' | 'text'> & { text: string };
+// a *trimmed read* (see `inlineMaxBytes`) ever hands back a null. The id-ish
+// fields stay ints at the storage boundary (handles parse at the caller).
+type ReasoningBlockWrite = Omit<
+	ReasoningBlockRecord,
+	'messageId' | 'text' | 'parentToolCallId'
+> & { text: string; parentToolCallId: number | null };
 
-export function upsertReasoningBlock(messageId: number, r: ReasoningBlockWrite) {
+export function upsertReasoningBlock(messageId: string | number, r: ReasoningBlockWrite) {
+	const intMsg = msgInt(messageId);
 	getDb()
 		.prepare(
 			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
@@ -886,7 +933,7 @@ export function upsertReasoningBlock(messageId: number, r: ReasoningBlockWrite) 
 		)
 		.run(
 			r.id,
-			messageId,
+			intMsg,
 			r.segmentIndex,
 			r.text,
 			r.kind ?? 'reasoning',
@@ -897,7 +944,7 @@ export function upsertReasoningBlock(messageId: number, r: ReasoningBlockWrite) 
 		);
 }
 
-export function insertReasoningBlock(messageId: number, r: ReasoningBlockWrite) {
+export function insertReasoningBlock(messageId: string | number, r: ReasoningBlockWrite) {
 	getDb()
 		.prepare(
 			`INSERT INTO reasoning_blocks(id, message_id, segment_index, text, kind, text_offset, started_at, duration_ms, parent_tool_call_id)
@@ -905,7 +952,7 @@ export function insertReasoningBlock(messageId: number, r: ReasoningBlockWrite) 
 		)
 		.run(
 			r.id,
-			messageId,
+			msgInt(messageId),
 			r.segmentIndex,
 			r.text,
 			r.kind ?? 'reasoning',

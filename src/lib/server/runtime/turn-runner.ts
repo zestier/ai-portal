@@ -12,6 +12,7 @@
 
 import { ulid } from 'ulid';
 import { log } from '../log';
+import { conversationId as convCodec, messageId as msgCodec, toolCallId as toolCodec } from '$lib/ids';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
 import * as messages from '../db/repos/messages';
 import * as convs from '../db/repos/conversations';
@@ -259,13 +260,13 @@ export interface StartTurnOptions {
 	// The user message that triggered this turn. When provided, the full
 	// assembled provider input (prelude + prompt) is captured against it so the
 	// UI can inspect "the guts" of the turn later.
-	userMessageId?: number | undefined;
+	userMessageId?: string | undefined;
 	beforeSend?: (() => Promise<void>) | undefined;
 	initialEvents?: PortalEvent[] | undefined;
 	memory?:
 		| {
 				mode: MemoryMode;
-				userMessageId: number;
+				userMessageId: string;
 				userContent: string;
 				extractorModel?: string | null | undefined;
 		  }
@@ -390,8 +391,8 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 
 	// Accumulators for persistence.
 	let assistantBuf = '';
-	let assistantId: number | null = null;
-	let persistedAssistantId: number | null = null;
+	let assistantId: string | null = null;
+	let persistedAssistantId: string | null = null;
 	// Set once a `message.start` has been dispatched this turn. Distinct from
 	// `assistantId`/`persistedAssistantId`: content-bearing events (deltas,
 	// tool calls, reasoning) can persist an assistant row even when the SDK
@@ -411,7 +412,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	const persistedFileEditKeys = new Set<string>();
 	let nextReasoningIndex = 0;
 
-	function ensurePersistedAssistant(): number {
+	function ensurePersistedAssistant(): string {
 		if (persistedAssistantId) return persistedAssistantId;
 		const persisted = messages.append(opts.conversationId, {
 			role: 'assistant',
@@ -445,7 +446,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			if (ev.parentToolCallId && ev.segmentId) {
 				// Sub-agent content: thread it into the spawning card as a
 				// 'content' block instead of appending to the outer message body,
-				// so a nested agent renders its response interleaved with its
+				// so a nested agent renders its output interleaved with its
 				// tools/reasoning. Accumulated by segmentId like reasoning.
 				let seg = pendingReasoning.get(ev.segmentId);
 				if (!seg) {
@@ -457,16 +458,16 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 						textOffset: null,
 						startedAt: Date.now(),
 						durationMs: null,
-						parentToolCallId: ev.parentToolCallId
+						parentToolCallId: toolCodec.parse(ev.parentToolCallId)
 					};
 					pendingReasoning.set(ev.segmentId, seg);
 				}
 				seg.text += ev.text;
-				messages.upsertReasoningBlock(persistedId, seg);
+				messages.upsertReasoningBlock(msgCodec.parse(persistedId), seg);
 				emit({ ...ev, messageId: persistedId });
 			} else {
 				assistantBuf += ev.text;
-				messages.updateContentOnly(persistedId, assistantBuf);
+				messages.updateContentOnly(msgCodec.parse(persistedId), assistantBuf);
 				emit({ ...ev, messageId: persistedId });
 			}
 		} else if (ev.type === 'message.reasoning') {
@@ -484,19 +485,19 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					textOffset: isChild ? null : assistantBuf.length,
 					startedAt: Date.now(),
 					durationMs: null,
-					parentToolCallId: ev.parentToolCallId ?? null
+					parentToolCallId: ev.parentToolCallId ? toolCodec.parse(ev.parentToolCallId) : null
 				};
 				pendingReasoning.set(ev.segmentId, seg);
 			}
 			seg.text += ev.text;
-			messages.upsertReasoningBlock(persistedId, seg);
+			messages.upsertReasoningBlock(msgCodec.parse(persistedId), seg);
 			emit({ ...ev, messageId: persistedId });
 		} else if (ev.type === 'message.reasoning.end') {
 			const seg = pendingReasoning.get(ev.segmentId);
 			const persistedId = ensurePersistedAssistant();
 			if (seg) {
 				seg.durationMs = ev.durationMs;
-				messages.upsertReasoningBlock(persistedId, seg);
+				messages.upsertReasoningBlock(msgCodec.parse(persistedId), seg);
 			}
 			emit({ ...ev, messageId: persistedId });
 		} else if (ev.type === 'message.end') {
@@ -519,8 +520,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			const isChild = !!ev.parentToolCallId;
 			const persistedId = ensurePersistedAssistant();
 			emit({ ...ev, messageId: persistedId });
+			const toolCallId = toolCodec.parse(ev.toolCallId);
 			const tool: PendingTool = {
-				toolCallId: ev.toolCallId,
+				toolCallId,
 				tool: ev.tool,
 				argsJson: safeJson(ev.args),
 				resultJson: null,
@@ -528,10 +530,10 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 				startedAt: Date.now(),
 				endedAt: null,
 				textOffset: isChild ? null : assistantBuf.length,
-				parentToolCallId: ev.parentToolCallId ?? null
+				parentToolCallId: ev.parentToolCallId ? toolCodec.parse(ev.parentToolCallId) : null
 			};
-			pendingTools.set(ev.toolCallId, tool);
-			messages.upsertToolCall(persistedId, {
+			pendingTools.set(toolCallId, tool);
+			messages.upsertToolCall(msgCodec.parse(persistedId), {
 				id: tool.toolCallId,
 				tool: tool.tool,
 				argsJson: tool.argsJson,
@@ -544,12 +546,12 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			});
 		} else if (ev.type === 'tool.result') {
 			emit(ev);
-			const tc = pendingTools.get(ev.toolCallId);
+			const tc = pendingTools.get(toolCodec.parse(ev.toolCallId));
 			if (tc) {
 				tc.status = ev.ok ? 'ok' : 'error';
 				tc.resultJson = safeJson(ev.output ?? ev.summary);
 				tc.endedAt = Date.now();
-				messages.updateToolCall(ev.toolCallId, {
+				messages.updateToolCall(toolCodec.parse(ev.toolCallId), {
 					status: tc.status,
 					resultJson: tc.resultJson,
 					endedAt: tc.endedAt
@@ -557,18 +559,18 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			}
 		} else if (ev.type === 'subagent.lifecycle') {
 			emit(ev);
-			messages.updateBackgroundAgentLifecycle(ev.toolCallId, ev.agentId, ev.status);
+			messages.updateBackgroundAgentLifecycle(toolCodec.parse(ev.toolCallId), ev.agentId, ev.status);
 		} else if (ev.type === 'file.edit') {
 			const isChild = !!ev.parentToolCallId;
 			const persistedId = ensurePersistedAssistant();
 			emit({ ...ev, messageId: persistedId });
 			const textOffset = isChild ? null : assistantBuf.length;
-			const parentToolCallId = ev.parentToolCallId ?? null;
+			const parentToolCallId = ev.parentToolCallId ? toolCodec.parse(ev.parentToolCallId) : null;
 			const key = JSON.stringify([ev.path, ev.diff, textOffset, parentToolCallId]);
 			if (!persistedFileEditKeys.has(key)) {
 				persistedFileEditKeys.add(key);
 				messages.insertFileEdit(
-					ensurePersistedAssistant(),
+					msgCodec.parse(ensurePersistedAssistant()),
 					ev.path,
 					ev.diff,
 					textOffset,
@@ -617,7 +619,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 	if (opts.userMessageId) {
 		try {
 			turnInputs.record({
-				messageId: opts.userMessageId,
+				messageId: msgCodec.parse(opts.userMessageId),
 				conversationId: opts.conversationId,
 				turnId: turn.id,
 				fullInput: promptToSend,
@@ -761,7 +763,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 					streamErrorCode !== null
 				) {
 					const id = ensurePersistedAssistant();
-					messages.updateContent(id, assistantBuf, status, errorCode);
+					messages.updateContent(msgCodec.parse(id), assistantBuf, status, errorCode);
 					for (const t of pendingTools.values()) {
 						if (t.status === 'pending') {
 							t.status = 'error';
@@ -808,7 +810,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			// post-turn diff views. Non-fatal on failure.
 			if (persistedAssistantId) {
 				try {
-					await takeSnapshot(opts.bridge.workingDirectory, persistedAssistantId, 'post');
+					await takeSnapshot(opts.bridge.workingDirectory, msgCodec.parse(persistedAssistantId), 'post');
 				} catch (snapErr) {
 					log.warn('snapshot.post.failed', {
 						conversationId: opts.conversationId,
@@ -1056,15 +1058,15 @@ function memoryFailureLogFields(err: unknown): Record<string, unknown> {
 // retry card survives reloads and appears in history just like a post-turn one.
 function makeExtractorCardDispatch(
 	emit: (ev: PortalEvent) => void,
-	assistantMessageId: number
+	assistantMessageId: string
 ): (ev: PortalEvent) => void {
 	const pendingReasoning = new Map<string, PendingReasoning>();
 	let nextReasoningIndex = 0;
 	return (ev: PortalEvent) => {
 		if (ev.type === 'tool.call') {
 			emit({ ...ev, messageId: assistantMessageId });
-			messages.upsertToolCall(assistantMessageId, {
-				id: ev.toolCallId,
+			messages.upsertToolCall(msgCodec.parse(assistantMessageId), {
+				id: toolCodec.parse(ev.toolCallId),
 				tool: ev.tool,
 				argsJson: safeJson(ev.args),
 				resultJson: null,
@@ -1072,18 +1074,18 @@ function makeExtractorCardDispatch(
 				startedAt: Date.now(),
 				endedAt: null,
 				textOffset: null,
-				parentToolCallId: ev.parentToolCallId ?? null
+				parentToolCallId: ev.parentToolCallId ? toolCodec.parse(ev.parentToolCallId) : null
 			});
 		} else if (ev.type === 'tool.result') {
 			emit(ev);
-			messages.updateToolCall(ev.toolCallId, {
+			messages.updateToolCall(toolCodec.parse(ev.toolCallId), {
 				status: ev.ok ? 'ok' : 'error',
 				resultJson: safeJson(ev.output ?? ev.summary),
 				endedAt: Date.now()
 			});
 		} else if (ev.type === 'subagent.lifecycle') {
 			emit(ev);
-			messages.updateBackgroundAgentLifecycle(ev.toolCallId, ev.agentId, ev.status);
+			messages.updateBackgroundAgentLifecycle(toolCodec.parse(ev.toolCallId), ev.agentId, ev.status);
 		} else if (ev.type === 'message.reasoning') {
 			let seg = pendingReasoning.get(ev.segmentId);
 			if (!seg) {
@@ -1095,18 +1097,18 @@ function makeExtractorCardDispatch(
 					textOffset: null,
 					startedAt: Date.now(),
 					durationMs: null,
-					parentToolCallId: ev.parentToolCallId ?? null
+					parentToolCallId: ev.parentToolCallId ? toolCodec.parse(ev.parentToolCallId) : null
 				};
 				pendingReasoning.set(ev.segmentId, seg);
 			}
 			seg.text += ev.text;
-			messages.upsertReasoningBlock(assistantMessageId, seg);
+			messages.upsertReasoningBlock(msgCodec.parse(assistantMessageId), seg);
 			emit({ ...ev, messageId: assistantMessageId });
 		} else if (ev.type === 'message.reasoning.end') {
 			const seg = pendingReasoning.get(ev.segmentId);
 			if (seg) {
 				seg.durationMs = ev.durationMs;
-				messages.upsertReasoningBlock(assistantMessageId, seg);
+				messages.upsertReasoningBlock(msgCodec.parse(assistantMessageId), seg);
 			}
 			emit({ ...ev, messageId: assistantMessageId });
 		} else if (ev.type === 'message.delta' && ev.parentToolCallId && ev.segmentId) {
@@ -1120,12 +1122,12 @@ function makeExtractorCardDispatch(
 					textOffset: null,
 					startedAt: Date.now(),
 					durationMs: null,
-					parentToolCallId: ev.parentToolCallId
+					parentToolCallId: toolCodec.parse(ev.parentToolCallId)
 				};
 				pendingReasoning.set(ev.segmentId, seg);
 			}
 			seg.text += ev.text;
-			messages.upsertReasoningBlock(assistantMessageId, seg);
+			messages.upsertReasoningBlock(msgCodec.parse(assistantMessageId), seg);
 			emit({ ...ev, messageId: assistantMessageId });
 		} else {
 			emit(ev);
@@ -1147,9 +1149,9 @@ interface MemoryExtractionCardOptions {
 	userId: number;
 	// The assistant message the extractor card is attached to; its content is the
 	// turn's assistant response (reused verbatim — never regenerated here).
-	assistantMessageId: number;
+	assistantMessageId: string;
 	assistantContent: string;
-	userMessageId: number;
+	userMessageId: string;
 	userContent: string;
 	mode: MemoryMode;
 	extractorModel?: string | null | undefined;
@@ -1203,8 +1205,8 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 	// callback must become a no-op: the turn is being finalized. Guarded at the
 	// single `onActivity` entry point.
 	let abandoned = false;
-	const ensureExtractorParent = (prompt?: string): number => {
-		if (extractorParentId) return extractorParentId;
+	const ensureExtractorParent = (prompt?: string): string => {
+		if (extractorParentId) return toolCodec.encode(extractorParentId);
 		extractorParentId = mintToolCallId();
 		extractorAgentId = `mem_agent_${ulid()}`;
 		// Emit the same event shape as a real subagent: a `task` tool call plus a
@@ -1214,7 +1216,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 		// from, just like a real subagent's prompt.
 		o.dispatch({
 			type: 'tool.call',
-			toolCallId: extractorParentId,
+			toolCallId: toolCodec.encode(extractorParentId),
 			tool: 'task',
 			args: {
 				name: 'Memory extractor',
@@ -1225,17 +1227,17 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 		});
 		o.dispatch({
 			type: 'subagent.lifecycle',
-			toolCallId: extractorParentId,
+			toolCallId: toolCodec.encode(extractorParentId),
 			agentId: extractorAgentId,
 			status: 'running'
 		});
-		return extractorParentId;
+		return toolCodec.encode(extractorParentId);
 	};
 	const closeExtractorParent = (status: 'completed' | 'failed') => {
 		if (extractorParentId && extractorAgentId) {
 			o.dispatch({
 				type: 'subagent.lifecycle',
-				toolCallId: extractorParentId,
+				toolCallId: toolCodec.encode(extractorParentId),
 				agentId: extractorAgentId,
 				status
 			});
@@ -1252,7 +1254,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 			case 'tool.call':
 				o.dispatch({
 					type: 'tool.call',
-					toolCallId: activity.toolCallId,
+					toolCallId: toolCodec.encode(activity.toolCallId),
 					tool: activity.tool,
 					args: activity.args,
 					parentToolCallId
@@ -1261,7 +1263,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 			case 'tool.result':
 				o.dispatch({
 					type: 'tool.result',
-					toolCallId: activity.toolCallId,
+					toolCallId: toolCodec.encode(activity.toolCallId),
 					ok: activity.ok,
 					summary: activity.summary,
 					output: activity.output,
@@ -1300,13 +1302,13 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 	try {
 		o.emit({
 			type: 'memory.status',
-			conversationId: o.conversationId,
+			conversationId: convCodec.encode(o.conversationId),
 			phase: 'extracting',
 			summary: o.extractingSummary
 		});
 		const userMessage = {
 			id: o.userMessageId,
-			conversationId: o.conversationId,
+			conversationId: convCodec.encode(o.conversationId),
 			role: 'user',
 			content: o.userContent,
 			status: 'complete',
@@ -1315,7 +1317,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 		} as const;
 		const assistantMessage = {
 			id: o.assistantMessageId,
-			conversationId: o.conversationId,
+			conversationId: convCodec.encode(o.conversationId),
 			role: 'assistant',
 			content: o.assistantContent,
 			status: 'complete',
@@ -1324,7 +1326,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 		} as const;
 		o.emit({
 			type: 'memory.status',
-			conversationId: o.conversationId,
+			conversationId: convCodec.encode(o.conversationId),
 			phase: 'validating',
 			summary: 'Validating durable memory patch.'
 		});
@@ -1360,7 +1362,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 				'Memory extraction complete.';
 			o.dispatch({
 				type: 'tool.result',
-				toolCallId: extractorParentId,
+				toolCallId: toolCodec.encode(extractorParentId),
 				ok: committed.patch.status !== 'needs_review',
 				summary: committed.patch.summary || 'Memory extraction complete.',
 				output: JSON.stringify({
@@ -1374,7 +1376,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 		}
 		o.emit({
 			type: 'memory.status',
-			conversationId: o.conversationId,
+			conversationId: convCodec.encode(o.conversationId),
 			phase: committed.patch.status === 'needs_review' ? 'needs_review' : 'committed',
 			summary: committed.patch.summary || 'Memory patch processed.',
 			patchId: committed.patch.id,
@@ -1393,7 +1395,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 		if (extractorParentId) {
 			o.dispatch({
 				type: 'tool.result',
-				toolCallId: extractorParentId,
+				toolCallId: toolCodec.encode(extractorParentId),
 				ok: false,
 				summary: aborted ? 'Memory extraction cancelled.' : memoryFailureSummary(memoryErr),
 				output: aborted ? o.cancelOutput : memoryFailureMessage(memoryErr)
@@ -1405,7 +1407,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 			log.info(`${o.logPrefix}.aborted`, { conversationId: o.conversationId });
 			o.emit({
 				type: 'memory.status',
-				conversationId: o.conversationId,
+				conversationId: convCodec.encode(o.conversationId),
 				phase: 'skipped',
 				summary: 'Memory extraction cancelled.'
 			});
@@ -1417,7 +1419,7 @@ async function runMemoryExtractionCard(o: MemoryExtractionCardOptions): Promise<
 			});
 			o.emit({
 				type: 'memory.status',
-				conversationId: o.conversationId,
+				conversationId: convCodec.encode(o.conversationId),
 				phase: 'needs_review',
 				summary: memoryFailureSummary(memoryErr)
 			});
@@ -1434,11 +1436,11 @@ export interface StartExtractionRetryOptions {
 	userId: number;
 	// The existing assistant message whose extraction is being re-run. Its
 	// content is reused verbatim — the assistant response is NOT regenerated.
-	assistantMessageId: number;
+	assistantMessageId: string;
 	assistantContent: string;
 	memory: {
 		mode: MemoryMode;
-		userMessageId: number;
+		userMessageId: string;
 		userContent: string;
 		extractorModel?: string | null;
 		// Stable turn id used for the committed patch so repeated retries of the

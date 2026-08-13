@@ -11,6 +11,7 @@
 // module cycle. Callers that aren't the turn runner resolve it via `getTurn`.
 
 import { publishAppEvent } from './app-events';
+import { conversationId as convCodec } from '$lib/ids';
 import * as convs from '../db/repos/conversations';
 import { log } from '../log';
 
@@ -30,7 +31,7 @@ export function publishConversationActivity(
 	try {
 		publishAppEvent(userId, {
 			type: 'activity.changed',
-			conversationId,
+			conversationId: convCodec.encode(conversationId),
 			running,
 			unread: convs.hasUnread(conversationId, userId)
 		});

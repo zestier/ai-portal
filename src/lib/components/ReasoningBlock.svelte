@@ -23,7 +23,7 @@
 		 * it is drawn entirely from `durationMs`.
 		 */
 		lazy?: {
-			conversationId: number;
+			conversationId: string;
 			reasoningBlockId: number | string;
 			bytes?: number | undefined;
 		} | null;

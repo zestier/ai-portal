@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchHeadStatus } from '../src/lib/client/file-browser';
+import { conversationId } from '../src/lib/ids';
+
+const C123 = conversationId.encode(123);
 
 describe('fetchHeadStatus', () => {
 	afterEach(() => {
@@ -27,11 +30,11 @@ describe('fetchHeadStatus', () => {
 			})
 		);
 
-		await expect(fetchHeadStatus(123)).resolves.toMatchObject({
+		await expect(fetchHeadStatus(C123)).resolves.toMatchObject({
 			initialized: true,
 			dirtyCount: 3
 		});
-		expect(fetch).toHaveBeenCalledWith('/api/conversations/123/git/status');
+		expect(fetch).toHaveBeenCalledWith('/api/conversations/C123/git/status');
 	});
 
 	it('throws the response body for non-ok responses', async () => {
@@ -44,6 +47,6 @@ describe('fetchHeadStatus', () => {
 			})
 		);
 
-		await expect(fetchHeadStatus(123)).rejects.toThrow('boom');
+		await expect(fetchHeadStatus(C123)).rejects.toThrow('boom');
 	});
 });

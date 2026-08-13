@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as pool from '$lib/server/runtime/pool';
 import { getTurn } from '$lib/server/runtime/turn-runner';
@@ -17,11 +18,12 @@ import { audit } from '$lib/server/audit';
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	// Surface any in-flight turn so the client can reattach its
 	// EventSource on page load without a separate round-trip. Only
 	// running turns count — finished-but-still-cached turns are not
 	// useful to reattach to (replay then immediate done).
-	const turn = getTurn(conv.id);
+	const turn = getTurn(convId);
 	const activeTurnId = turn && turn.status === 'running' ? turn.id : null;
 	return json({
 		conversation: conv,
@@ -29,12 +31,12 @@ export const GET: RequestHandler = ({ params, locals }) => {
 		// older messages (see $lib/server/present/transcript.ts). Refresh /
 		// recovery refetch exactly the shape the page `load` produced, so the
 		// client's sparse store merges either source identically.
-		transcript: projectTranscript(conv.id),
+		transcript: projectTranscript(convId),
 		activeTurnId,
 		// Outstanding prompts so a refresh / SSE blip can rehydrate the
 		// dialog rather than stranding the agent on a request the user can
 		// no longer see.
-		pendingInteractive: listPendingInteractive(conv.id)
+		pendingInteractive: listPendingInteractive(convId)
 	});
 };
 
@@ -50,16 +52,17 @@ const PatchBody = z
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
 	const body = await parseBody(request, PatchBody);
+	const convId = convCodec.parse(conv.id);
 
 	if (body.title !== undefined) {
-		convs.rename(conv.id, conv.userId, body.title);
+		convs.rename(convId, conv.userId, body.title);
 	}
 	if (body.archived !== undefined) {
 		if (body.archived) {
-			convs.archive(conv.id, conv.userId);
-			await pool.release(conv.id);
+			convs.archive(convId, conv.userId);
+			await pool.release(convId);
 		} else {
-			convs.unarchive(conv.id, conv.userId);
+			convs.unarchive(convId, conv.userId);
 		}
 	}
 	return json({ ok: true });
@@ -67,16 +70,17 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 
 export const DELETE: RequestHandler = async ({ params, locals, url, getClientAddress }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	// A provider subprocess may have this directory as its cwd. Dispose it
 	// before asking Git to remove the linked worktree.
-	await pool.release(conv.id);
+	await pool.release(convId);
 	const forced = url.searchParams.get('forceWorktree') === '1';
 
 	// Leases first: they are children of the same repository, and failing after
 	// the conversation's own checkout is gone would leave a messier state to
 	// reconcile. A lease blocks deletion on the same two counts the primary
 	// does — uncommitted changes, or commits not merged into the source branch.
-	const leaseResult = await removeLeasesForConversation(conv.id, conv.userId, { force: forced });
+	const leaseResult = await removeLeasesForConversation(convId, conv.userId, { force: forced });
 	for (const leaseId of leaseResult.removed) {
 		audit({
 			event_type: 'worktree_remove',
@@ -125,7 +129,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 		} as App.Error);
 	}
 
-	const managed = getManagedWorktree(conv.id, conv.userId);
+	const managed = getManagedWorktree(convId, conv.userId);
 	if (managed) {
 		// Removing the checkout leaves the branch behind, so commits are not
 		// destroyed — but the conversation that named them is, which turns them
@@ -155,7 +159,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 				owner: {
 					kind: 'conversation',
 					userId: String(conv.userId),
-					conversationId: String(conv.id)
+					conversationId: String(convId)
 				}
 			});
 		} catch (cause) {
@@ -187,7 +191,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 			}
 		});
 	}
-	convs.remove(conv.id, conv.userId);
+	convs.remove(convId, conv.userId);
 	return json({ ok: true });
 };
 

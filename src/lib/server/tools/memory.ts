@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { memoryEntityId, memoryFactId, messageId as msgCodec } from '$lib/ids';
 import * as memoryRepo from '../db/repos/memory';
 import * as messagesRepo from '../db/repos/messages';
 import { buildInitialPacket, renderMemoryPacket } from '../memory/engine';
@@ -190,7 +191,13 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_search',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: results.map((result) => result.itemId)
+					resultIds: results.map((result) =>
+						result.itemType === 'entity'
+							? memoryEntityId.parse(result.itemId as string)
+							: result.itemType === 'fact'
+								? memoryFactId.parse(result.itemId as string)
+								: (result.itemId as number)
+					)
 				});
 				const projected = project(results, projectOptions(parsed.fields, SEARCH_HIT_KEEP));
 				return ok(withOmitted({ results: projected.value }, projected.omitted), summary);
@@ -241,7 +248,7 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_get_entity',
 					arguments: { id },
 					resultSummary: entity.displayName,
-					resultIds: [entity.id]
+					resultIds: [memoryEntityId.parse(entity.id)]
 				});
 				return ok(result, entity.displayName);
 			}
@@ -340,7 +347,7 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_get_transcript',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: matches.map((message) => message.id)
+					resultIds: matches.map((message) => msgCodec.parse(message.id))
 				});
 				const projected = project(matches, projectOptions(parsed.fields, MESSAGE_KEEP));
 				return ok(withOmitted({ messages: projected.value }, projected.omitted), summary);
@@ -421,7 +428,7 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_query_clues',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: [...loops.map((loop) => loop.id), ...clueFacts.map((fact) => fact.id)]
+					resultIds: [...loops.map((loop) => loop.id), ...clueFacts.map((fact) => memoryFactId.parse(fact.id))]
 				});
 				assertFieldsKnown(parsed.fields, [
 					{ input: loops, keep: OPEN_LOOP_KEEP },
@@ -473,7 +480,7 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_get_character_knowledge',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: [...facts.map((fact) => fact.id), ...events.map((event) => event.id)]
+					resultIds: [...facts.map((fact) => memoryFactId.parse(fact.id)), ...events.map((event) => event.id)]
 				});
 				assertFieldsKnown(parsed.fields, [
 					{ input: entity, keep: ENTITY_KEEP },
@@ -565,7 +572,7 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_merge_entities',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: result.into ? [result.into.id] : []
+					resultIds: result.into ? [memoryEntityId.parse(result.into.id)] : []
 				});
 				return ok(result, summary);
 			}

@@ -19,7 +19,7 @@
 		onselect,
 		onmerged
 	}: {
-		conversationId: number;
+		conversationId: string;
 		selected?: string | null;
 		onselect?: (leaseId: string | null) => void;
 		/** Fired after a successful merge so the panes re-read both trees. */
@@ -111,7 +111,7 @@
 		}
 	}
 
-	function postMerge(leaseId: number, allowMergeCommit: boolean) {
+	function postMerge(leaseId: string, allowMergeCommit: boolean) {
 		return fetch(`/api/conversations/${conversationId}/worktrees/${leaseId}/merge`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },

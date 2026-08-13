@@ -33,7 +33,7 @@
 		refreshToken = 0,
 		onSendToChat
 	}: {
-		conversationId: number;
+		conversationId: string;
 		pane?: Pane;
 		/** Selected worktree lease id, or null for the conversation's own workspace. */
 		worktree?: string | null;

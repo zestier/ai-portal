@@ -19,7 +19,7 @@ import { audit } from '$lib/server/audit';
  */
 export const DELETE: RequestHandler = async ({ params, locals, url, getClientAddress }) => {
 	const conversation = authorizeConversation(params.id, locals.userId);
-	const lease = getLease(Number(params.leaseId), conversation.userId);
+	const lease = getLease(params.leaseId, conversation.userId);
 	// Same flat 404 for "no such lease" and "not this conversation's lease": the
 	// endpoint must not confirm that an id exists elsewhere.
 	if (!lease || lease.heldByConversationId !== conversation.id) throw error(404);

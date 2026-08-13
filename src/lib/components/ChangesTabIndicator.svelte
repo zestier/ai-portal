@@ -3,7 +3,7 @@
 	import { fetchHeadStatus, type HeadStatus } from '$lib/client/file-browser';
 	import Pill from './ui/Pill.svelte';
 
-	let { conversationId }: { conversationId: number } = $props();
+	let { conversationId }: { conversationId: string } = $props();
 
 	const POLL_MS = 5000;
 

@@ -23,6 +23,7 @@
 // so a forgotten dialog doesn't pin the session forever.
 
 import { ulid } from 'ulid';
+import { conversationId as convCodec } from '$lib/ids';
 import * as settingsRepo from '../db/repos/settings';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
 import { log } from '../log';
@@ -187,7 +188,11 @@ function publishAwaitingChanged(
 ): void {
 	if (!userId) return;
 	try {
-		publishAppEvent(userId, { type: 'awaiting.changed', conversationId, awaiting });
+		publishAppEvent(userId, {
+			type: 'awaiting.changed',
+			conversationId: convCodec.encode(conversationId),
+			awaiting
+		});
 	} catch {
 		/* non-fatal */
 	}

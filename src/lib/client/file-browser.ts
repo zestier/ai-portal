@@ -11,7 +11,7 @@ export type { ChangeStatus, ChangeEntry, ChangesResponse };
  * visible rather than silently absent.
  */
 export interface WorktreeOption {
-	id: number;
+	id: string;
 	label: string;
 	branch: string;
 	path: string;
@@ -45,7 +45,7 @@ export function worktreeParams(
 	return params;
 }
 
-export async function fetchWorktrees(conversationId: number): Promise<WorktreeOption[]> {
+export async function fetchWorktrees(conversationId: string): Promise<WorktreeOption[]> {
 	const res = await fetch(`/api/conversations/${conversationId}/worktrees`);
 	if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
 	return ((await res.json()) as { worktrees: WorktreeOption[] }).worktrees;
@@ -83,7 +83,7 @@ export interface HeadInfo {
 export type HeadStatus = HeadInfo | { initialized: false };
 
 export async function fetchHeadStatus(
-	conversationId: number,
+	conversationId: string,
 	worktree?: string | null
 ): Promise<HeadStatus> {
 	const params = worktreeParams(worktree);

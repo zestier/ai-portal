@@ -5,7 +5,7 @@ export async function archiveWorkspaceTicket({
 	workspace,
 	fetcher = fetch
 }: {
-	ticketId: number;
+	ticketId: string;
 	workspace?: string | null;
 	fetcher?: TicketArchiveFetch;
 }): Promise<{ ok: true } | { ok: false; status?: number }> {
@@ -33,7 +33,7 @@ export async function deleteWorkspaceTicket({
 	workspace,
 	fetcher = fetch
 }: {
-	ticketId: number;
+	ticketId: string;
 	workspace?: string | null;
 	fetcher?: TicketArchiveFetch;
 }): Promise<{ ok: true } | { ok: false; status?: number }> {

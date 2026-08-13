@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec, toolCallId as toolCodec } from '$lib/ids';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
@@ -25,17 +26,17 @@ const APPROVAL_TTL_MS = 2 * 60_000;
 
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const conv = authorizeConversation(params.id, locals.userId);
+	const convId = convCodec.parse(conv.id);
 	const body = await parseBody(request, Body, { allowEmpty: true });
-	const toolCallId = Number(params.toolCallId);
-	if (!params.toolCallId) throw error(400, 'missing tool call id');
-	if (!Number.isInteger(toolCallId) || toolCallId <= 0) throw error(400, 'missing tool call id');
+	const toolCallId = toolCodec.tryParse(params.toolCallId);
+	if (toolCallId === null) throw error(400, 'missing tool call id');
 
-	const current = getTurn(conv.id);
+	const current = getTurn(convId);
 	if (current && current.status === 'running') {
 		throw error(409, 'A turn is already in progress for this conversation.');
 	}
 
-	const original = messages.getToolCallForConversation(conv.id, toolCallId);
+	const original = messages.getToolCallForConversation(convId, toolCallId);
 	if (!original || original.conversationUserId !== conv.userId) throw error(404);
 
 	const eligibility = getRerunEligibility(original);
@@ -56,7 +57,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	settings.pruneExpiredGrants();
 	settings.addGrant({
 		userId: conv.userId,
-		conversationId: conv.id,
+		conversationId: convId,
 		tool: approvalToolFor(original.tool),
 		permissionKind: null,
 		scopePattern: null,
@@ -66,38 +67,42 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		expiresAt
 	});
 	settings.recordDecision(
-		conv.id,
+		convId,
 		original.tool,
 		`Manual rerun approval for ${original.id}`,
 		'allow-once'
 	);
 
-	const allMessages = messages.listByConversation(conv.id);
-	const originalMessageIdx = allMessages.findIndex((message) => message.id === original.messageId);
+	const allMessages = messages.listByConversation(convId);
+	const originalMessageIdx = allMessages.findIndex(
+		(message) => message.id === original.messageId
+	);
 	if (originalMessageIdx < 0) throw error(404);
-	memoryRepo.rewindSessionMemoryLogToMessagePrefix(conv.id, {
-		messageIds: new Set(allMessages.slice(0, originalMessageIdx + 1).map((message) => message.id)),
+	memoryRepo.rewindSessionMemoryLogToMessagePrefix(convId, {
+		messageIds: new Set(
+			allMessages.slice(0, originalMessageIdx + 1).map((message) => msgCodec.parse(message.id))
+		),
 		createdBefore: allMessages[originalMessageIdx + 1]?.createdAt
 	});
-	messages.truncateAfterMessage(conv.id, original.messageId);
-	usage.remove(conv.id);
+	messages.truncateAfterMessage(convId, msgCodec.parse(original.messageId));
+	usage.remove(convId);
 	// Drop the pooled session synchronously (map deletion before the first await
 	// in `release`) so the rerun opens a fresh, independent one.
-	void pool.release(conv.id);
+	void pool.release(convId);
 
 	const cfg = loadConfig();
 	const userSettings = settings.get(conv.userId) ?? settings.defaults();
 	const prompt = buildRerunPrompt(original.tool, original.argsJson);
-	const userMessage = messages.append(conv.id, {
+	const userMessage = messages.append(convId, {
 		role: 'user',
 		content: `Manual tool rerun: rerun failed tool call ${original.id} (${original.tool}) with its exact stored arguments.`,
 		status: 'complete'
 	});
 	const turn = await startTurn({
-		conversationId: conv.id,
+		conversationId: convId,
 		prompt,
 		bridge: {
-			conversationId: conv.id,
+			conversationId: convId,
 			userId: conv.userId,
 			workingDirectory: effectiveWorkdir(conv.workdir),
 			model: conv.model ?? cfg.DEFAULT_MODEL,
