@@ -59,6 +59,48 @@ describe('session pool', () => {
 		expect(session.dispose).not.toHaveBeenCalled();
 	});
 
+	it('reuses a session whose providerSessionId is the string form of the conversation id', async () => {
+		// Regression: `openPiSession` stores `providerSessionId = String(conversationId)`
+		// ("7"), while a follow-up acquire computes the requested id from the numeric
+		// `conversationId` (7). A strict `===` on the raw values mismatched, so the
+		// pool disposed the live session and recreated it on EVERY turn after the
+		// first. The comparison must treat "7" and 7 as the same session.
+		const session = {
+			conversationId: 7,
+			providerSessionId: '7',
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			lastUsed: Date.now(),
+			send: vi.fn(),
+			abort: vi.fn(),
+			dispose: vi.fn().mockResolvedValue(undefined),
+			setMode: vi.fn(),
+			setApproveAll: vi.fn(),
+			resetSessionApprovals: vi.fn()
+		};
+		openMock.mockResolvedValue(session);
+		const pool = await importPool();
+
+		const first = await pool.acquire({
+			conversationId: 7,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+		const second = await pool.acquire({
+			conversationId: 7,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+
+		expect(first).toBe(second);
+		expect(openMock).toHaveBeenCalledTimes(1);
+		expect(session.dispose).not.toHaveBeenCalled();
+	});
+
 	it('recreates a live session when the requested workdir changes', async () => {
 		const firstSession = {
 			conversationId: 1,

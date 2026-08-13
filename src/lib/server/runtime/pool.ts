@@ -132,7 +132,13 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 	if (pending) return pending;
 
 	const requestedProvider = opts.provider ?? 'pi';
-	const requestedProviderSessionId = opts.providerSessionId ?? opts.conversationId;
+	// Compare session ids in their string forms. `openPiSession` stores
+	// `providerSessionId = String(conversationId)` ("7"), while the fallback
+	// here is the numeric `conversationId` (7); a strict `===` on the raw
+	// values would mismatch and force a pointless session recreate on every
+	// follow-up turn. Normalizing both sides keeps the string/number forms of
+	// the same conversation id equal.
+	const requestedProviderSessionId = String(opts.providerSessionId ?? opts.conversationId);
 
 	// Sessions to tear down once the new open is in flight. Map mutations
 	// (claiming the stale entry / eviction victim) happen synchronously
@@ -147,8 +153,9 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 	const existing = sessions.get(opts.conversationId);
 	if (existing) {
 		const cachedProvider = existing.session.provider ?? 'pi';
-		const cachedProviderSessionId =
-			existing.session.providerSessionId ?? existing.session.conversationId;
+		const cachedProviderSessionId = String(
+			existing.session.providerSessionId ?? existing.session.conversationId
+		);
 		if (
 			existing.session.workingDirectory === opts.workingDirectory &&
 			existing.session.model === opts.model &&
