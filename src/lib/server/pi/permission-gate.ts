@@ -2,15 +2,16 @@
 //
 // Hangs off the pi `tool_call` extension bridge (see session.ts): for every
 // tool call the resolver decides allow/block, mirroring the native session's
-// PreToolUse evaluation without the shadow-reviewer / forced-retry /
-// shell-misuse / image-capture machinery those tickets layered on. Every
-// decision funnels through the SAME machinery the
-// non-pi path uses — `matchGrantDetailed` against the user's grants, the
-// conversation's permission policy, and the interactive-request registry for
-// human prompts — so a pi session and a native session see identical
-// permission behavior.
+// PreToolUse evaluation without the shadow-reviewer / shell-misuse /
+// image-capture machinery those tickets layered on. Every decision funnels
+// through the SAME machinery the non-pi path uses — `matchGrantDetailed`
+// against the user's grants, the conversation's permission policy, and the
+// interactive-request registry for human prompts — so a pi session sees the
+// identical permission behavior, including the scope/shell pickers and the
+// `force_retry_tool` escalation loop.
 //
 // Evaluation order per call:
+//   0. approved forced-retry token            → allow (overrides everything)
 //   1. unknown tool                          → block
 //   2. `derivePermissionRequest` override    → fs kind on the derived path(s)
 //   3. `shell_exec`                          → `shell` kind on the command
@@ -21,13 +22,19 @@
 //   8. `never-prompt` / `always-prompt` behaviors
 //   9. `auto-deny` approval mode             → block with actionable feedback
 //  10. otherwise                             → register a human prompt + await
+//
+// Every denial mints a one-shot forced-retry token embedded in the feedback
+// (see runtime/forced-retry.ts), so any blocked call can be escalated through
+// `force_retry_tool`; approving that tool either executes the call directly
+// (portal-owned tools) or flips the matching retry to auto-allow via step 0.
 
 import type {
 	ApprovalMode,
 	InteractivePermissionView,
 	InteractiveResponse,
 	PermissionPolicy,
-	PortalEvent
+	PortalEvent,
+	ShellAnalysisView
 } from '$lib/types';
 import {
 	autoDenyAlternativeHint,
@@ -41,6 +48,12 @@ import {
 	newRequestId,
 	register as registerInteractive
 } from '../runtime/interactive-requests';
+import { parseShellCommand, type ParsedSegment } from '../permissions/shell-parser';
+import {
+	consumeForcedRetryMatch,
+	mintForcedRetry,
+	withForceRetryHint
+} from '../runtime/forced-retry';
 import * as settingsRepo from '../db/repos/settings';
 import { argsHash } from '../tool-invocation';
 import { log } from '../log';
@@ -144,6 +157,60 @@ async function decidePermission(
 		}
 	};
 
+	// For shell requests, parse the command up front so the permission dialog
+	// can surface a pipeline breakdown and offer per-argv0 "always" grants (the
+	// shell picker). The parsed segments also feed the grant matcher, so a
+	// picker-persisted rule grant can match a later invocation.
+	let shellAnalysis: ShellAnalysisView | undefined;
+	let shellSegments: ParsedSegment[] | null = null;
+	if (isShell && typeof scopeKey === 'string') {
+		const parsed = parseShellCommand(scopeKey);
+		if (parsed.kind === 'parsed') {
+			shellSegments = parsed.segments;
+			shellAnalysis = {
+				kind: 'parsed',
+				segments: parsed.segments.map((s) => ({ argv: s.argv, followingOp: s.followingOp }))
+			};
+		} else {
+			shellAnalysis = { kind: 'unsafe', reason: parsed.reason };
+		}
+	}
+
+	// A token minted when this exact request was previously denied and then
+	// approved through `force_retry_tool` makes the retry the strongest signal:
+	// the human explicitly approved THIS call, so it overrides every other
+	// decision below. Consumed one-shot — a third identical request is denied
+	// again.
+	const forcedApproval = consumeForcedRetryMatch({
+		conversationId: opts.conversationId,
+		tool: toolName,
+		permissionKind,
+		scopeKey,
+		argsHash: hash
+	});
+	if (forcedApproval) {
+		audit('auto-allow');
+		return { allow: true };
+	}
+
+	// Every denial mints a one-shot forced-retry token bound to this exact
+	// request and embeds the escalation hint in the feedback the agent sees, so
+	// ANY denial can be escalated via `force_retry_tool` — a matched deny
+	// grant, the `auto-deny` approval mode, or a human denying a dialog.
+	const deny = (feedback?: string): { allow: false; reason?: string } => {
+		const token = mintForcedRetry({
+			conversationId: opts.conversationId,
+			tool: toolName,
+			permissionKind,
+			scopeKey,
+			argsHash: hash,
+			summary,
+			args,
+			deniedFeedback: feedback ?? null
+		});
+		return { allow: false, reason: withForceRetryHint(feedback ?? 'Permission denied.', token) };
+	};
+
 	// fs targets to evaluate. A tool may declare additional fs paths that must
 	// ALSO be permitted (e.g. `move`): per-target decisions combine
 	// most-restrictively (deny on any target denies; auto-allow needs every
@@ -165,7 +232,8 @@ async function decidePermission(
 				workspaceRoots,
 				sessionWorkspaceRoot: opts.workingDirectory,
 				shellCwd: opts.workingDirectory,
-				argsHash: hash
+				argsHash: hash,
+				shellSegments
 			}
 		);
 		if (g.outcome === 'allow') return { kind: 'allow' };
@@ -207,7 +275,14 @@ async function decidePermission(
 		// auto-allows once the human approves.
 		return await askHuman(
 			opts,
-			{ toolName, permissionKind, summary, args, canPersistDecision: false },
+			{
+				toolName,
+				permissionKind,
+				summary,
+				args,
+				canPersistDecision: false,
+				...(shellAnalysis !== undefined ? { shellAnalysis } : {})
+			},
 			{
 				onApprove: () => {
 					audit('auto-allow');
@@ -215,7 +290,7 @@ async function decidePermission(
 				},
 				onDeny: (feedback) => {
 					audit('auto-deny');
-					return feedback ? { allow: false, reason: feedback } : { allow: false };
+					return deny(feedback);
 				}
 			}
 		);
@@ -228,7 +303,7 @@ async function decidePermission(
 	}
 	if (evaluation.kind === 'deny') {
 		audit('auto-deny');
-		return { allow: false, reason: evaluation.feedback ?? 'Permission denied.' };
+		return deny(evaluation.feedback);
 	}
 
 	// prompt-grant (a saved prompt grant matched) or prompt-policy (nothing
@@ -244,7 +319,7 @@ async function decidePermission(
 
 	if (opts.getApprovalMode() === 'auto-deny') {
 		audit('auto-prompt-required');
-		return { allow: false, reason: autoDenyFeedback };
+		return deny(autoDenyFeedback);
 	}
 
 	return await askHuman(
@@ -255,6 +330,7 @@ async function decidePermission(
 			summary,
 			args,
 			canPersistDecision,
+			...(shellAnalysis !== undefined ? { shellAnalysis } : {}),
 			...(evaluation.feedback !== undefined ? { defaultDenyFeedback: evaluation.feedback } : {})
 		},
 		{
@@ -264,7 +340,7 @@ async function decidePermission(
 			},
 			onDeny: (feedback) => {
 				audit('auto-deny');
-				return feedback ? { allow: false, reason: feedback } : { allow: false };
+				return deny(feedback);
 			}
 		}
 	);
@@ -281,6 +357,7 @@ async function askHuman(
 		summary: string;
 		args: unknown;
 		canPersistDecision: boolean;
+		shellAnalysis?: ShellAnalysisView;
 		defaultDenyFeedback?: string;
 	},
 	handlers: {
@@ -298,6 +375,7 @@ async function askHuman(
 		args: view.args,
 		userPolicy: opts.policy,
 		canPersistDecision: view.canPersistDecision,
+		...(view.shellAnalysis !== undefined ? { shellAnalysis: view.shellAnalysis } : {}),
 		...(view.defaultDenyFeedback !== undefined
 			? { defaultDenyFeedback: view.defaultDenyFeedback }
 			: {})
@@ -347,7 +425,7 @@ function autoDenyPermissionFeedback(view: { permissionKind: string }): string {
 	const alternative = autoDenyAlternativeHint(view.permissionKind);
 	return (
 		`A ${kind} permission request was auto-rejected because this conversation's approval mode is \`auto-deny\`. ` +
-		`${alternative} Use \`permission_capabilities\` to inspect alternatives. If still blocked after verifying no allowed alternative works, raise a one-off approval with \`force_retry_tool\`; only reach for \`request_permission_grant\` when you want a durable, saved rule.`
+		`${alternative} Use \`permission_capabilities\` to inspect alternatives. If still blocked after verifying no allowed alternative works, retry the exact call with \`force_retry_tool\` (the token is attached to this denial); only reach for \`request_permission_grant\` when you want a durable, saved rule.`
 	);
 }
 

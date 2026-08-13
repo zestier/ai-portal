@@ -7,7 +7,7 @@ import type {
 	InteractiveResponse,
 	PortalEvent
 } from '../src/lib/types';
-import type { PortalTool } from '../src/lib/server/tools/types';
+import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 import type { ProviderOpenOptions } from '../src/lib/server/pi/session-contract';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
@@ -377,6 +377,180 @@ describe('pi tool calls + permission gate', () => {
 			expect(ran(result)).toBe(false);
 			expect(result.summary).toContain('not found');
 			expect(prompts.length).toBe(0);
+		},
+		T
+	);
+
+	it(
+		'shell permission prompts surface shell analysis + persistable scope (picker data)',
+		async () => {
+			const wd = makeTmpDir('pi-gate-');
+			const convId = await createConversation(wd);
+			const session = await openSession(wd, convId);
+			const { prompts } = await runToolCall(
+				session,
+				'shell_exec',
+				{ command: 'mktemp -d | cat' },
+				(view) =>
+					view.kind === 'permission' ? { kind: 'permission', decision: 'allow-once' } : undefined
+			);
+			expect(prompts.length).toBe(1);
+			const p = prompts[0];
+			expect(p.tool).toBe('shell_exec');
+			expect(p.permissionKind).toBe('shell');
+			// canPersistDecision true → the dialog surfaces its grant-scope block
+			// (scope picker; shell picker once shellAnalysis is present). `mktemp`
+			// is not covered by any seed grant, so the request is prompt-policy.
+			expect(p.canPersistDecision).toBe(true);
+			expect(p.shellAnalysis).toEqual({
+				kind: 'parsed',
+				segments: [
+					{ argv: ['mktemp', '-d'], followingOp: '|' },
+					{ argv: ['cat'], followingOp: null }
+				]
+			});
+		},
+		T
+	);
+
+	it(
+		'a picker-persisted per-argv0 shell rule grant matches a later matching call',
+		async () => {
+			const wd = makeTmpDir('pi-gate-');
+			const convId = await createConversation(wd);
+			const emitted: InteractiveRequestView[] = [];
+			const { createPiPermissionResolver } = await import('../src/lib/server/pi/permission-gate');
+			const { ok } = await import('../src/lib/server/tools/types');
+			const tool: PortalTool = {
+				name: 'shell_exec',
+				description: 'test',
+				parameters: {},
+				handler: async () => ok('ran')
+			};
+			const resolver = createPiPermissionResolver({
+				userId: USER,
+				conversationId: convId,
+				workingDirectory: wd,
+				policy: 'prompt',
+				portalToolsByName: new Map([['shell_exec', tool]]),
+				getApprovalMode: () => 'ask',
+				getWorkspaceRoots: () => [wd],
+				emit: (ev) => {
+					if (ev.type === 'interactive.request') emitted.push(ev.request);
+				}
+			});
+			const { resolve } = await import('../src/lib/server/runtime/interactive-requests');
+
+			// No matching allow grant → the `git` prompt seed fires and the call
+			// prompts. (`git status` would hit the subcommand deny seed instead,
+			// so `rev-parse` is used: it is only prompt-seeded.)
+			const c1 = resolver('shell_exec', { command: 'git rev-parse HEAD' }, 'c-1');
+			expect(emitted.length).toBe(1);
+			resolve(emitted[0].requestId, USER, { kind: 'permission', decision: 'allow-once' });
+			expect((await c1).allow).toBe(true);
+
+			// Persist the per-argv0 rule grant the shell picker emits for `git`.
+			const { addGrant } = await import('../src/lib/server/db/repos/settings');
+			addGrant({
+				userId: USER,
+				conversationId: convId,
+				tool: 'shell',
+				permissionKind: 'shell',
+				scope: {
+					kind: 'shell',
+					rule: { command: [{ token: 'git' }], positionals: { kind: 'any' } }
+				},
+				decision: 'allow'
+			});
+
+			// A matching command auto-allows without prompting.
+			const c2 = resolver('shell_exec', { command: 'git rev-parse HEAD' }, 'c-2');
+			expect((await c2).allow).toBe(true);
+			expect(emitted.length).toBe(1);
+
+			// A non-matching command (unseeded argv0 `pnpm`) still prompts.
+			const c3 = resolver('shell_exec', { command: 'pnpm install' }, 'c-3');
+			expect(emitted.length).toBe(2);
+			resolve(emitted[1].requestId, USER, { kind: 'permission', decision: 'deny' });
+			expect((await c3).allow).toBe(false);
+		},
+		T
+	);
+
+	it(
+		'every denial mints a forced-retry token and an approved retry auto-allows once',
+		async () => {
+			const wd = makeTmpDir('pi-gate-');
+			const convId = await createConversation(wd);
+			const emitted: (InteractiveRequestView & { kind: 'permission' })[] = [];
+			const { createPiPermissionResolver } = await import('../src/lib/server/pi/permission-gate');
+			const { buildPermissionTools } = await import('../src/lib/server/tools/permissions');
+			const { ok } = await import('../src/lib/server/tools/types');
+			const tool: PortalTool = {
+				name: 'synthetic_op',
+				description: 'test',
+				parameters: {},
+				handler: async () => ok('ran')
+			};
+			const resolver = createPiPermissionResolver({
+				userId: USER,
+				conversationId: convId,
+				workingDirectory: wd,
+				policy: 'prompt',
+				portalToolsByName: new Map([['synthetic_op', tool]]),
+				getApprovalMode: () => 'ask',
+				getWorkspaceRoots: () => [wd],
+				emit: (ev) => {
+					if (ev.type === 'interactive.request' && ev.request.kind === 'permission')
+						emitted.push(ev.request);
+				}
+			});
+			const { resolve } = await import('../src/lib/server/runtime/interactive-requests');
+
+			// Human denies the prompt → the deny feedback carries a one-shot token.
+			const pending = resolver('synthetic_op', { x: 1 }, 'c-1');
+			expect(emitted.length).toBe(1);
+			resolve(emitted[0].requestId, USER, { kind: 'permission', decision: 'deny', feedback: 'no' });
+			const denied = await pending;
+			expect(denied.allow).toBe(false);
+			const token = /token: "([0-9a-f]{24})"/.exec(denied.reason ?? '')?.[1];
+			expect(token).toBeTruthy();
+
+			// force_retry_tool (no resolvePortalTool → approve-then-retry) raises a
+			// fresh prompt; approving marks the token approved.
+			const tools = buildPermissionTools({
+				userId: USER,
+				conversationId: convId,
+				policy: 'prompt',
+				getMode: () => 'interactive',
+				getApprovalMode: () => 'ask',
+				emit: (ev) => {
+					if (ev.type === 'interactive.request' && ev.request.kind === 'permission')
+						emitted.push(ev.request);
+				}
+			});
+			const forceTool = tools.find((t) => t.name === 'force_retry_tool') as PortalTool;
+			const resultPromise = forceTool.handler({
+				token,
+				reason: 'The test needs to run this one operation.'
+			}) as Promise<ToolResult>;
+			for (let i = 0; i < 200 && emitted.length < 2; i++) {
+				await new Promise((r) => setTimeout(r, 1));
+			}
+			expect(emitted.length).toBe(2);
+			expect(emitted[1].escalationReason).toBe('The test needs to run this one operation.');
+			resolve(emitted[1].requestId, USER, { kind: 'permission', decision: 'allow-once' });
+			const result = await resultPromise;
+			expect(result.ok).toBe(true);
+
+			// Re-issuing the exact call is auto-allowed (token consumed).
+			expect((await resolver('synthetic_op', { x: 1 }, 'c-2')).allow).toBe(true);
+
+			// One-shot: a THIRD identical call is denied again.
+			const third = resolver('synthetic_op', { x: 1 }, 'c-3');
+			expect(emitted.length).toBe(3);
+			resolve(emitted[2].requestId, USER, { kind: 'permission', decision: 'deny' });
+			expect((await third).allow).toBe(false);
 		},
 		T
 	);
