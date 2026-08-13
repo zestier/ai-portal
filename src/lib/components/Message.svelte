@@ -586,6 +586,11 @@
 					<DiffView
 						path={p.edit.path}
 						diff={p.edit.diff}
+						// D8: transcript file-edit diffs are lazy sections — the
+						// collapsed card shows path + diffstat, the full diff
+						// hydrates on expand.
+						collapsible={true}
+						collapsedByDefault={true}
 						lazy={p.edit.diffTruncated && conversationId
 							? { conversationId, fileEditId: p.edit.id, bytes: p.edit.diffBytes }
 							: null}

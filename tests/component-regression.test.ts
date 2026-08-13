@@ -322,7 +322,7 @@ describe('Svelte component regression coverage', () => {
 		const body = render(Chat, {
 			props: {
 				conversation,
-				initialMessages: [],
+				initialTranscript: { tail: [], index: [], hasMoreOlder: false },
 				initialPendingInteractive: [pending],
 				defaultModelPlaceholder: 'claude-sonnet-4.5',
 				effectiveModel: 'claude-sonnet-4.5',

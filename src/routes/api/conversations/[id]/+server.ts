@@ -2,10 +2,10 @@ import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
-import * as messages from '$lib/server/db/repos/messages';
 import * as pool from '$lib/server/runtime/pool';
 import { getTurn } from '$lib/server/runtime/turn-runner';
 import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
+import { projectTranscript } from '$lib/server/present/transcript';
 import { parseBody } from '$lib/server/validate';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { getManagedWorktree } from '$lib/server/db/repos/conversations';
@@ -25,7 +25,11 @@ export const GET: RequestHandler = ({ params, locals }) => {
 	const activeTurnId = turn && turn.status === 'running' ? turn.id : null;
 	return json({
 		conversation: conv,
-		messages: messages.listByConversation(conv.id),
+		// Backend-projected transcript: a bounded hydrated tail + an index of
+		// older messages (see $lib/server/present/transcript.ts). Refresh /
+		// recovery refetch exactly the shape the page `load` produced, so the
+		// client's sparse store merges either source identically.
+		transcript: projectTranscript(conv.id),
 		activeTurnId,
 		// Outstanding prompts so a refresh / SSE blip can rehydrate the
 		// dialog rather than stranding the agent on a request the user can

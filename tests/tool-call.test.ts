@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseGitToolResult } from '../src/lib/client/git-tool-result';
-import { summarizeToolCall, splitSummaryForWrap } from '../src/lib/client/tool-summary';
+import { summarizeToolCall, splitSummaryForWrap } from '../src/lib/tool-summary';
 import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '../src/lib/client/tool-result';
 import {
 	getBackgroundAgentId,

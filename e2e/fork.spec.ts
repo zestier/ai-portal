@@ -2,6 +2,7 @@ import { test, expect } from './helpers/fixtures';
 import {
 	createConversation,
 	getConversation,
+	messagesOf,
 	uniqueTitle,
 	waitForAssistantMessage
 } from './helpers/conversations';
@@ -40,7 +41,7 @@ test('fork by editing a user message produces a new conversation with the edited
 	// only auto-runs when the source is idle; while it's busy the fork defers
 	// and prefills the composer instead).
 	const msgs = await getConversation(request, sourceId);
-	const userMsg = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
+	const userMsg = (messagesOf(msgs) as Array<{ id: string; role: string; content: string }>).find(
 		(m) => m.role === 'user' && m.content === 'original prompt'
 	);
 	expect(userMsg).toBeDefined();
@@ -73,7 +74,7 @@ test('fork by editing a user message produces a new conversation with the edited
 
 	// Source conversation still has the original turn intact.
 	const srcMsgs = await getConversation(request, sourceId);
-	const srcContents = (srcMsgs.messages as Array<{ role: string; content: string }>).map(
+	const srcContents = (messagesOf(srcMsgs) as Array<{ role: string; content: string }>).map(
 		(m) => m.content
 	);
 	expect(srcContents).toContain('original prompt');
@@ -96,7 +97,7 @@ test('edit-fork while the source turn is running defers and prefills the new com
 
 	// Grab the first user message id before kicking off a long-running turn.
 	const msgs = await getConversation(request, sourceId);
-	const firstUser = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
+	const firstUser = (messagesOf(msgs) as Array<{ id: string; role: string; content: string }>).find(
 		(m) => m.role === 'user' && m.content === 'first'
 	);
 	expect(firstUser).toBeDefined();
@@ -155,9 +156,9 @@ test('deferred edit-fork of a non-first message seeds the composer, then clears 
 	await expect(page.getByText('Stubbed reply to: second').first()).toBeVisible();
 
 	const msgs = await getConversation(request, sourceId);
-	const secondUser = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
-		(m) => m.role === 'user' && m.content === 'second'
-	);
+	const secondUser = (
+		messagesOf(msgs) as Array<{ id: string; role: string; content: string }>
+	).find((m) => m.role === 'user' && m.content === 'second');
 	expect(secondUser).toBeDefined();
 
 	// Hold a third turn open so the source is busy when we fork.
@@ -206,9 +207,9 @@ test('retry from an assistant message clones up to it without a new user prompt'
 	await expect(page.getByText('Stubbed reply to: first').first()).toBeVisible();
 
 	const msgs = await getConversation(request, sourceId);
-	const assistantMsg = (msgs.messages as Array<{ id: string; role: string; content: string }>).find(
-		(m) => m.role === 'assistant'
-	);
+	const assistantMsg = (
+		messagesOf(msgs) as Array<{ id: string; role: string; content: string }>
+	).find((m) => m.role === 'assistant');
 	expect(assistantMsg).toBeDefined();
 
 	const forkRes = await request.post(
@@ -247,9 +248,9 @@ test('inline edit replaces a user message, truncates later messages, and reruns 
 	await expect(page.getByText('Stubbed reply to: second prompt').first()).toBeVisible();
 
 	const before = await getConversation(request, sourceId);
-	const firstUser = (before.messages as Array<{ id: string; role: string; content: string }>).find(
-		(m) => m.role === 'user' && m.content === 'first prompt'
-	);
+	const firstUser = (
+		messagesOf(before) as Array<{ id: string; role: string; content: string }>
+	).find((m) => m.role === 'user' && m.content === 'first prompt');
 	expect(firstUser).toBeDefined();
 
 	const editRes = await request.post(
@@ -260,7 +261,7 @@ test('inline edit replaces a user message, truncates later messages, and reruns 
 	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: first prompt edited inline');
 
 	const after = await getConversation(request, sourceId);
-	const list = after.messages as Array<{ id: string; role: string; content: string }>;
+	const list = messagesOf(after) as Array<{ id: string; role: string; content: string }>;
 	expect(list.map((m) => `${m.role}:${m.content}`)).toEqual([
 		'user:first prompt edited inline',
 		'assistant:Stubbed reply to: first prompt edited inline'
@@ -287,7 +288,7 @@ test('regenerate an assistant message re-runs in place from the unchanged user p
 	await expect(page.getByText('Stubbed reply to: second prompt').first()).toBeVisible();
 
 	const before = await getConversation(request, sourceId);
-	const beforeList = before.messages as Array<{ id: string; role: string; content: string }>;
+	const beforeList = messagesOf(before) as Array<{ id: string; role: string; content: string }>;
 	const firstAssistant = beforeList.find(
 		(m) => m.role === 'assistant' && m.content === 'Stubbed reply to: first prompt'
 	);
@@ -306,7 +307,7 @@ test('regenerate an assistant message re-runs in place from the unchanged user p
 	await waitForAssistantMessage(request, sourceId, 'Stubbed reply to: first prompt');
 
 	const after = await getConversation(request, sourceId);
-	const list = after.messages as Array<{ id: string; role: string; content: string }>;
+	const list = messagesOf(after) as Array<{ id: string; role: string; content: string }>;
 	expect(list.map((m) => `${m.role}:${m.content}`)).toEqual([
 		'user:first prompt',
 		'assistant:Stubbed reply to: first prompt'

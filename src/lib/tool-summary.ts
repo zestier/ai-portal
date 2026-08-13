@@ -2,9 +2,12 @@
 // "view · src/foo.ts [1-30]"). Pure: a function of the tool name and the
 // JSON-encoded arguments. Kept out of the renderer so it can be unit
 // tested without spinning up Svelte.
+//
+// Shared module (moved from $lib/client): the server computes collapsed
+// summaries at read time for the backend-projected transcript, and the
+// client still derives them for live streamed records.
 
-import { parseApplyPatch } from './apply-patch';
-
+import { parseApplyPatch } from './client/apply-patch';
 function truncate(s: string, n = 80): string {
 	const oneLine = s.replace(/\s+/g, ' ').trim();
 	return oneLine.length > n ? oneLine.slice(0, n - 1) + '…' : oneLine;

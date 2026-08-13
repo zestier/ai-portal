@@ -7,7 +7,7 @@
 	import Alert from './ui/Alert.svelte';
 	import { synthesizeDiffs } from '$lib/client/diff-synth';
 	import { parseGitToolResult } from '$lib/client/git-tool-result';
-	import { summarizeToolCall, splitSummaryForWrap } from '$lib/client/tool-summary';
+	import { summarizeToolCall, splitSummaryForWrap } from '$lib/tool-summary';
 	import { decodeToolResult, shouldRenderToolResultAsMarkdown } from '$lib/client/tool-result';
 	import type { ResultBlock as ResultBlockData } from '$lib/client/tool-result';
 	import { formatFieldBytes, type LazyFieldKind } from '$lib/client/lazy-field';
@@ -90,8 +90,9 @@
 
 	// The collapsed summary line degrades gracefully when args were trimmed:
 	// `summarizeToolCall` returns null for a null args string, and the header
-	// falls back to the tool name plus the withheld size.
-	const summary = $derived(summarizeToolCall(toolCall.tool, argsJson));
+	// falls back to the server-computed `summary` (backend-projected
+	// transcript) before showing just the tool name plus the withheld size.
+	const summary = $derived(summarizeToolCall(toolCall.tool, argsJson) ?? toolCall.summary ?? null);
 	const decoded = $derived(decodeToolResult(resultJson));
 	const markdownResult = $derived(shouldRenderToolResultAsMarkdown(toolCall.tool));
 	const pending = $derived(toolCall.status === 'pending');

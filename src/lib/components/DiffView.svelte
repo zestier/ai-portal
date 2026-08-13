@@ -24,6 +24,7 @@
 		lazy = null,
 		showLineNumbers = true,
 		collapsible = false,
+		collapsedByDefault = false,
 		commentable = false,
 		commentSha = null,
 		commentedKeys,
@@ -46,6 +47,12 @@
 		} | null;
 		showLineNumbers?: boolean;
 		collapsible?: boolean;
+		/**
+		 * Start each file chunk collapsed to its path bar + diffstat (D8: lazy
+		 * file-edit diffs in the chat transcript). The user's toggle overrides
+		 * the default for that chunk.
+		 */
+		collapsedByDefault?: boolean;
 		/** When true, each code line gets an affordance to attach a review comment. */
 		commentable?: boolean;
 		/** Commit SHA, when the diff is for a specific commit. */
@@ -55,8 +62,6 @@
 		onLineClick?: (location: ReviewLocation) => void;
 	} = $props();
 
-	// Lazily-fetched text for a trimmed diff. Seeded from the page-lifetime memo
-	// so a remount (progressive rendering, scroll) doesn't re-download it.
 	// Lazily-fetched text for a trimmed diff. Keyed by record in a shared store,
 	// never held on this instance: the transcript's each-blocks are index-keyed,
 	// so an instance can be re-bound to a different file edit and must not then
@@ -88,6 +93,7 @@
 		const split = splitUnifiedDiffByFile(resolvedDiff, path);
 		return split.length > 0 ? split : [{ path, diff: resolvedDiff }];
 	});
+
 	const parsedChunks = $derived.by(() =>
 		chunks.map((chunk, chunkIndex) => {
 			const parsed = parseUnifiedDiff(chunk.diff);
@@ -175,7 +181,7 @@
 	{/if}
 	{#each parsedChunks as chunk (chunk.key)}
 		{@const key = chunk.key}
-		{@const collapsed = collapsible && collapsedFiles[key] === true}
+		{@const collapsed = collapsible && (collapsedFiles[key] ?? collapsedByDefault)}
 		<div class="diff" class:collapsed>
 			<div class="path-bar">
 				{#if collapsible}

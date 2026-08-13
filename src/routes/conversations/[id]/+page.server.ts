@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as messages from '$lib/server/db/repos/messages';
+import { projectTranscript } from '$lib/server/present/transcript';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as usage from '$lib/server/db/repos/usage';
@@ -13,12 +14,6 @@ import { loadConfig } from '$lib/server/config';
 import { listEnabledModelOptions } from '$lib/server/models/catalog-service';
 import { ticketWorkspaceFromConversation } from '$lib/server/ticket-workspace';
 import { interpolateTicketPrompt } from '$lib/tickets/chat';
-import {
-	INLINE_ARGS_MAX_BYTES,
-	INLINE_DIFF_MAX_BYTES,
-	INLINE_REASONING_MAX_BYTES,
-	INLINE_RESULT_MAX_BYTES
-} from '$lib/payload-limits';
 
 export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (!locals.userId) throw error(401);
@@ -26,18 +21,12 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (!Number.isInteger(conversationId) || conversationId <= 0) throw error(404);
 	const conv = convs.get(conversationId, locals.userId);
 	if (!conv) throw error(404);
-	const msgs = messages.listByConversation(conv.id, {
-		// Oversized tool args/results, file diffs and reasoning text are collapsed
-		// by default in the UI, so shipping them in the page payload costs
-		// megabytes for content the reader rarely opens. Trim them to markers;
-		// ToolCall / DiffView / ReasoningBlock fetch the full text on demand.
-		inlineMaxBytes: {
-			args: INLINE_ARGS_MAX_BYTES,
-			result: INLINE_RESULT_MAX_BYTES,
-			diff: INLINE_DIFF_MAX_BYTES,
-			reasoning: INLINE_REASONING_MAX_BYTES
-		}
-	});
+	// Backend-projected transcript: a bounded hydrated tail (records trimmed to
+	// tight markers) + an index of older messages as previews/descriptors. The
+	// client hydrates older bodies on demand; nothing ships the whole thread.
+	const transcript = projectTranscript(conv.id);
+	const hasMessages = transcript.tail.length > 0;
+
 	// Opening a conversation counts as seeing it: clears the sidebar's unseen
 	// indicator. Output that streams in *after* this load is covered by the
 	// client's post-turn POST to `/read`.
@@ -46,7 +35,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const memorySnapshot = memory.listSnapshot(conv.id, { userId: conv.userId });
 	let initialComposer = '';
 	const draftTicketId = url.searchParams.get('draftTicketId');
-	if (draftTicketId && msgs.length === 0) {
+	if (draftTicketId && !hasMessages) {
 		const ticket = tickets.get(Number(draftTicketId), locals.userId);
 		if (!ticket || ticket.workspaceKey !== ticketWorkspaceFromConversation(conv)) {
 			throw error(404);
@@ -59,7 +48,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		initialComposer = interpolateTicketPrompt(action, ticket);
 	}
 	const promptTemplateId = url.searchParams.get('promptTemplateId');
-	if (!initialComposer && promptTemplateId && msgs.length === 0) {
+	if (!initialComposer && promptTemplateId && !hasMessages) {
 		const source = url.searchParams.get('promptTemplateSource');
 		const template =
 			source === 'builtin'
@@ -71,7 +60,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		initialComposer = template.prompt;
 	}
 	const refinePromptTemplateId = url.searchParams.get('refinePromptTemplateId');
-	if (!initialComposer && refinePromptTemplateId && msgs.length === 0) {
+	if (!initialComposer && refinePromptTemplateId && !hasMessages) {
 		const template = promptTemplates.get(Number(refinePromptTemplateId), locals.userId);
 		if (!template || template.status !== 'open') throw error(404);
 		initialComposer = buildRefinePromptSeed(template);
@@ -79,7 +68,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// A fork created while its source was busy stashes the edited prompt as a
 	// persisted draft (no turn auto-started). Seed it into the composer until
 	// the user sends it; survives reloads since it lives on the conversation row.
-	// We can't gate on `msgs.length === 0` here — a deferred edit-fork clones the
+	// We can't gate on `hasMessages` here — a deferred edit-fork clones the
 	// prefix before the edited message, so the fork usually already has messages.
 	// The draft is cleared when the first turn starts, so a non-null value always
 	// means "not yet sent".
@@ -132,7 +121,8 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		defaultModelPlaceholder: cfg.PI_MODEL ?? 'provider/model',
 		modelOptions: listEnabledModelOptions(),
 		chatPlaceholder: 'Message…',
-		messages: msgs,
+		// Backend-projected transcript: bounded hydrated tail + older index.
+		transcript,
 		contextUsage,
 		memorySnapshot,
 		parent,

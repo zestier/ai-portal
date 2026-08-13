@@ -126,7 +126,7 @@
 			effectiveModel={data.effectiveModel}
 			modelOptions={data.modelOptions}
 			chatPlaceholder={data.chatPlaceholder}
-			initialMessages={data.messages}
+			initialTranscript={data.transcript}
 			initialUsage={data.contextUsage}
 			parent={data.parent}
 			initialActiveTurnId={data.activeTurnId}

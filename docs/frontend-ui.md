@@ -55,6 +55,41 @@ let pendingInteractive = $state<InteractiveRequestView[]>([]);
 let toolCalls = $state<Record<string, ToolCallView>>({});
 ```
 
+#### Backend-projected transcript (windowed + lazy)
+
+Long conversations ship as a **projection**, not raw rows
+(`src/lib/server/present/transcript.ts`): the page `load` and
+`GET /api/conversations/[id]` return a bounded hydrated tail (records
+trimmed to markers, with server-computed summaries) plus an index of older
+messages carrying plain-text previews and per-record descriptors. The client
+store (`src/lib/client/transcript-store.ts`) keeps `entries` (all messages
+in order) and `bodies` (hydrated `DisplayMessage`s, LRU-capped), so the
+initial payload is bounded regardless of conversation length and the client
+never derives collapsed summaries from raw args.
+
+- **Windowed rendering**: only a viewport ± margin window (≤ 40 messages)
+  mounts full `Message_` cards; everything else renders as a compact
+  `MessageIndexRow` (preview + record summary chips) that keeps the
+  scrollbar honest. The window is recomputed from real row offsets on
+  scroll, so it can't drift even when cards change height mid-stream.
+- **Hydration**: index rows near the viewport fetch their full body from
+  `GET /api/conversations/[id]/messages/[messageId]` during idle, in small
+  serialized batches (no fetch storms); bodies are LRU-evicted
+  (≤ 100) and demote back to index rows. Expanding a trimmed field still
+  fetches it via `/api/conversations/[id]/fields/[kind]/[recordId]`.
+- **Load older**: scrolling to the top fetches the next index-only page
+  (`GET /api/conversations/[id]/messages?beforeId=&limit=`), anchoring the
+  viewport via the existing `distanceFromBottom` guard.
+- **Search + permalinks**: an in-app search box (wired to the FTS
+  `searchConversation`) jumps to a hit, hydrating the window around it;
+  `?message=<id>` deep-links scroll to and highlight a message.
+- **File-edit diffs** render collapsed to path + diffstat and hydrate the
+  full diff on expand (`DiffView` `collapsedByDefault`).
+- **Refresh semantics**: refresh merges the server's tail into the store
+  and keeps hydrated older pages (messages are immutable); inline
+  edit/regenerate truncate the cache past the cut before the replacement
+  turn streams in.
+
 ### `Message.svelte`
 
 Renders one message. Assistant content is markdown → sanitized HTML

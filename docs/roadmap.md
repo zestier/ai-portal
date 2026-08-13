@@ -2,9 +2,19 @@
 
 Phased plan. Each phase ends in a usable artifact.
 
-## Phase 0 — Scaffolding (½ day)
+## Completed
 
-- `npm create svelte@latest` → SvelteKit + TS + ESLint + Prettier + Vitest +
+- **Backend-projected transcript (BFF presentation layer)** — long
+  conversations open fast on phones. The page payload is a bounded hydrated
+  tail + an index of older messages with server-computed summaries
+  (`src/lib/server/present/transcript.ts`); the client renders only a
+  viewport window of full cards (index rows elsewhere), hydrates bodies on
+  demand (`/messages/[messageId]`), pages older history
+  (`/messages?beforeId=`), and replaces whole-transcript Ctrl+F with an FTS
+  search box + `?message=` permalinks. File-edit diffs are lazy sections.
+  Bench targets: ≤ ~40 KB initial payload, ≤ 40 mounted cards, TTI ≤ ~200 ms.
+
+## Phase 0 — Scaffolding (½ day)
   Playwright.
 - Add `@sveltejs/adapter-node`, `better-sqlite3`, `zod`,
   `@earendil-works/pi-coding-agent`.

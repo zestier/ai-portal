@@ -468,11 +468,15 @@ export interface ReasoningBlockRecord {
 	startedAt: number;
 	durationMs: number | null;
 	// When set, this block was emitted by a sub-agent spawned by the outer
+	// When set, this block was emitted by a sub-agent spawned by the outer
 	// `task` tool call with this id. Such blocks are rendered inside the
 	// SubagentCall component, not at the message level.
 	parentToolCallId: number | null;
+	// Server-computed collapsed-line summary ("Thought for Xs · <preview>")
+	// for blocks whose text was omitted from the payload (backend-projected
+	// transcript). The collapsed header renders this without fetching text.
+	summary?: string;
 }
-
 export interface ToolCallRecord {
 	id: number;
 	messageId: number;
@@ -513,9 +517,20 @@ export interface ToolCallRecord {
 	progressMessage?: string;
 	// Binary artifacts side-stored for this tool call (currently images
 	// captured for a native `view`). Metadata only — the bytes are served
+	// Binary artifacts side-stored for this tool call (currently images
+	// captured for a native `view`). Metadata only — the bytes are served
 	// lazily through an authed endpoint. Populated on conversation load and
 	// on the live `tool.result` event; absent while the tool is still running.
 	attachments?: ToolAttachmentMeta[];
+	// Server-computed collapsed-line summary (backend-projected transcript),
+	// used when `argsJson` was omitted from the payload so the collapsed card
+	// stays accurate without deriving from raw args. Live streamed records
+	// carry their args inline and don't set this.
+	summary?: string;
+	// Structured fields collapsed cards need when args are absent: subagent
+	// pills (agent type / model / background id) for `task` calls, the shell id
+	// for bash-family calls. Populated server-side on trimmed payloads.
+	meta?: Record<string, unknown>;
 }
 
 export interface ToolAttachmentMeta {
@@ -539,6 +554,83 @@ export interface FileEditRecord {
 	textOffset: number | null;
 	// See ReasoningBlockRecord.parentToolCallId.
 	parentToolCallId: number | null;
+	// Server-computed collapsed-line summary ("path + diffstat") for records
+	// whose diff was omitted from the payload (backend-projected transcript).
+	// The client renders this on the collapsed card instead of deriving it.
+	summary?: string;
+}
+
+// --- Backend-projected transcript (BFF presentation layer) ---
+//
+// Long conversations ship as a compact, ready-to-render *projection* instead
+// of raw rows: a short hydrated tail (full bodies, fields trimmed to markers)
+// plus an index of older messages carrying plain-text previews and per-record
+// summaries. The client stops deriving collapsed summaries from raw
+// `args_json` / diffs / reasoning text; the server computes them at read time
+// from the stored rows and the wire payload shrinks accordingly. Messages are
+// immutable except inline-edit/regenerate, so hydrated older pages can be
+// cached client-side and only the tail+index are refetched.
+
+/**
+ * One tool call / file edit / reasoning block as shipped in a transcript
+ * INDEX entry: enough to render a collapsed, accurate description without
+ * any of the underlying args/results/diff/reasoning text.
+ *
+ * `kind`-specific fields are optional so a single descriptor type covers all
+ * three record families (tool → `tool`/`status`; edit → `path`; reasoning →
+ * `reasoningKind`/`durationMs`). `meta` carries structured fields collapsed
+ * cards need (subagent pills: agent type / model / background id; shell id…).
+ */
+export interface TranscriptRecordDescriptor {
+	kind: 'tool' | 'edit' | 'reasoning';
+	id: number;
+	textOffset: number | null;
+	parentToolCallId: number | null;
+	/** Collapsed-line summary, computed server-side (tool: tool-summary; edit:
+	 * path + diffstat; reasoning: duration + preview). */
+	summary: string;
+	/** Structured fields collapsed cards need (subagent pills, shell id…). */
+	meta?: Record<string, unknown>;
+	// kind-specific (tool):
+	tool?: string;
+	status?: ToolCallRecord['status'];
+	// kind-specific (edit):
+	path?: string;
+	// kind-specific (reasoning):
+	reasoningKind?: 'reasoning' | 'content';
+	durationMs?: number | null;
+}
+
+/**
+ * One message as shipped in a transcript INDEX entry: metadata + plain-text
+ * preview + ordered record descriptors (kept in `textOffset` order so the
+ * client can still interleave parts after hydration). No message content,
+ * no args/results/diffs/reasoning text.
+ */
+export interface TranscriptIndexEntry {
+	id: number;
+	role: Role;
+	status: MessageStatus;
+	errorCode: string | null;
+	createdAt: number;
+	/** Plain-text cut of the message content (~300 chars, word boundary).
+	 * Null when the message has no content. */
+	preview: string | null;
+	/** Ready-to-render record descriptors in textOffset order. */
+	records: TranscriptRecordDescriptor[];
+}
+
+/**
+ * The conversation-open projection: `tail` = newest messages with full
+ * bodies (content + records, oversized fields trimmed to markers), `index` =
+ * older messages as index entries, `hasMoreOlder` = whether pages remain
+ * beyond the loaded index. Served by the page `load` and by
+ * `GET /api/conversations/[id]` so refresh/recovery refetch the same shape.
+ */
+export interface TranscriptProjection {
+	tail: Message[];
+	index: TranscriptIndexEntry[];
+	hasMoreOlder: boolean;
 }
 
 // Observability record of the *full input* the portal handed to the runtime

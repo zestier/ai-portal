@@ -6,13 +6,17 @@
 		Conversation,
 		ConversationUsage,
 		MemoryMode,
-		Message,
 		PortalEvent,
 		InteractiveRequestView,
-		InteractiveResponse
+		InteractiveResponse,
+		TranscriptProjection
 	} from '$lib/types';
-	import type { DisplayMessage } from '$lib/client/display-message';
+	import type { DisplayId, DisplayMessage } from '$lib/client/display-message';
+	import type { TranscriptEntry, TranscriptState } from '$lib/client/transcript-store';
+	import * as store from '$lib/client/transcript-store';
+	import { TRANSCRIPT_BODY_CACHE_MAX, TRANSCRIPT_OLDER_PAGE_SIZE } from '$lib/payload-limits';
 	import Message_ from './Message.svelte';
+	import MessageIndexRow from './MessageIndexRow.svelte';
 	import InteractiveRequestDialog from './InteractiveRequestDialog.svelte';
 	import ChatHeader from './ChatHeader.svelte';
 	import Composer from './Composer.svelte';
@@ -52,7 +56,7 @@
 
 	let {
 		conversation,
-		initialMessages,
+		initialTranscript,
 		initialUsage = null,
 		parent = null,
 		initialActiveTurnId = null,
@@ -68,7 +72,7 @@
 		effectiveModel: string;
 		chatPlaceholder: string;
 		modelOptions?: string[];
-		initialMessages: Message[];
+		initialTranscript: TranscriptProjection;
 		initialUsage?: ConversationUsage | null;
 		parent?: {
 			id: number;
@@ -81,7 +85,22 @@
 		initialComposer?: string;
 	} = $props();
 
-	let messages = $state<DisplayMessage[]>([]);
+	// --- Backend-projected transcript state --------------------------------
+	//
+	// `entries` holds every message in order as an index entry (preview +
+	// record descriptors); `bodies` holds hydrated `DisplayMessage`s, LRU-capped.
+	// Older messages render as compact index rows until they scroll near the
+	// viewport, at which point their body is fetched and they mount as full
+	// cards — see `src/lib/client/transcript-store.ts` and the windowing below.
+	let transcript = $state<TranscriptState>(store.emptyState());
+
+	// Hydrated bodies in transcript order, for the event handlers and the
+	// derived affordances that used to read the flat `messages` array.
+	const hydratedMessages = $derived(
+		transcript.entries
+			.map((e) => transcript.bodies.get(e.id))
+			.filter((m): m is DisplayMessage => m !== undefined)
+	);
 
 	// The full provider input is captured per turn and keyed to the user
 	// message that triggered it, but the inspector affordance reads more
@@ -91,7 +110,7 @@
 	const inputMessageIdByAssistant = $derived.by(() => {
 		const map: Record<string, number> = {};
 		let lastUserId: number | null = null;
-		for (const m of renderedMessages) {
+		for (const m of hydratedMessages) {
 			if (m.role === 'user') {
 				lastUserId = typeof m.id === 'number' ? m.id : null;
 			} else if (m.role === 'assistant' && lastUserId) {
@@ -187,10 +206,11 @@
 			invalidateRefreshMessages();
 			// Tear down any stream attached to the previous conversation
 			// before we swap state — otherwise its events would land in
-			// the new conversation's `messages` array.
+			// the new conversation's transcript store.
 			closeStream();
-			messages = [...initialMessages];
-			renderStartIndex = initialRenderStart(initialMessages.length);
+			transcript = store.initState(initialTranscript);
+			resetWindow();
+			clearHydrationQueue();
 			title = conversation.title;
 			sessionModel = conversation.model ?? effectiveModel;
 			sessionMode = conversation.mode;
@@ -216,6 +236,7 @@
 				attachStream(initialActiveTurnId, { replay: false });
 			}
 			void refreshForks();
+			void handlePermalinkOnLoad();
 		});
 	});
 
@@ -393,6 +414,8 @@
 		});
 		pinnedToBottom = next.pinnedToBottom;
 		hasNewBelow = next.hasNewBelow;
+		// Keep the full-card window glued to the viewport while scrolling.
+		scheduleWindowUpdate();
 	}
 
 	function setScrollToBottom(behavior: TranscriptScrollBehavior = 'auto') {
@@ -613,22 +636,25 @@
 		scheduleStreamStallTimeout();
 	}
 
-	// Pull the latest persisted messages for this conversation and replace
-	// local state. Used as a recovery path when the EventSource closes
-	// without a `done` (e.g. 410 Gone after grace expiry) so the UI
-	// doesn't strand mid-stream content forever.
+	// Pull the latest persisted projection (tail + index) for this conversation
+	// and merge it into the sparse store. Used as a recovery path when the
+	// EventSource closes without a `done` (e.g. 410 Gone after grace expiry)
+	// so the UI doesn't strand mid-stream content forever. Tail-only: hydrated
+	// older pages are immutable and stay cached (`mergeRefresh`).
 	async function refreshMessages() {
 		const run = ++refreshMessagesRun;
 		try {
 			const r = await fetch(`/api/conversations/${conversation.id}`);
 			if (!r.ok) return;
 			const data = (await r.json()) as {
-				messages: Message[];
+				transcript: TranscriptProjection;
 				activeTurnId: string | null;
 				pendingInteractive?: InteractiveRequestView[];
 			};
 			if (run !== refreshMessagesRun) return;
-			messages = data.messages;
+			store.mergeRefresh(transcript, data.transcript);
+			markOffsetsDirty();
+			evictBodies();
 			// Rehydrate outstanding prompts from the authoritative server
 			// list. Previously we cleared this unconditionally, which meant
 			// any transient SSE drop stranded the dialog even though the
@@ -679,18 +705,19 @@
 	}
 
 	function handleInlineEdited(messageId: number, content: string, turnId: string) {
-		const idx = messages.findIndex((m) => m.id === messageId);
-		if (idx >= 0) {
-			messages = messages.slice(0, idx + 1);
-			messages[idx] = {
-				...messages[idx],
-				content,
-				status: 'complete',
-				errorCode: null
-			};
+		// Truncation race guard (D6): drop cached index/bodies past the cut
+		// BEFORE the replacement turn streams in, so stale cards can't resurface.
+		const body = transcript.bodies.get(messageId);
+		store.truncateAfter(transcript, messageId);
+		if (body) {
+			body.content = content;
+			body.status = 'complete';
+			body.errorCode = null;
+			store.syncEntry(transcript, messageId);
 		} else {
 			void refreshMessages();
 		}
+		markOffsetsDirty();
 		pendingInteractive = [];
 		usage = null;
 		streaming = true;
@@ -703,10 +730,10 @@
 	// stream so the fresh response renders in place. Mirrors handleInlineEdited
 	// but the user message's content is unchanged.
 	function handleRegenerated(userMessageId: number, turnId: string) {
-		const idx = messages.findIndex((m) => m.id === userMessageId);
-		if (idx >= 0) {
-			messages = messages.slice(0, idx + 1);
-		} else {
+		const had = transcript.entries.some((e) => e.id === userMessageId);
+		store.truncateAfter(transcript, userMessageId);
+		markOffsetsDirty();
+		if (!had) {
 			void refreshMessages();
 		}
 		pendingInteractive = [];
@@ -716,13 +743,20 @@
 	}
 
 	function applyEvent(ev: PortalEvent) {
+		// Resolve against the hydrated bodies (the streaming tail is always
+		// hydrated, so this behaves like the old flat `messages` array). An
+		// event targeting an unhydrated message — reconnect gap, demoted
+		// history — updates nothing and never crashes; the entry stays correct
+		// until its body is next fetched.
+		const msgs = hydratedMessages;
+		let touched: DisplayId | null = null;
 		switch (ev.type) {
 			case 'message.start': {
 				// Dedupe: a replayed/re-delivered `message.start` for a bubble we
 				// already hold (e.g. after a reconnect that re-sent it) would
 				// otherwise push a ghost duplicate.
-				if (messages.some((x) => x.id === ev.messageId)) break;
-				messages.push({
+				if (transcript.entries.some((e) => e.id === ev.messageId)) break;
+				store.appendMessage(transcript, {
 					id: ev.messageId,
 					conversationId: conversation.id,
 					role: 'assistant',
@@ -737,7 +771,7 @@
 				break;
 			}
 			case 'message.delta': {
-				const m = messages.find((x) => x.id === ev.messageId);
+				const m = transcript.bodies.get(ev.messageId);
 				if (!m) {
 					// A delta for a message this client has never seen — the
 					// content was persisted server-side in a reconnect gap (or
@@ -770,10 +804,11 @@
 				} else {
 					m.content += ev.text;
 				}
+				touched = ev.messageId;
 				break;
 			}
 			case 'message.reasoning': {
-				let m = messages.find((x) => x.id === ev.messageId);
+				let m = transcript.bodies.get(ev.messageId);
 				if (!m) {
 					// Reasoning can arrive before the first visible token. The
 					// bridge opens a message.start in that case, but be defensive
@@ -790,7 +825,7 @@
 						fileEdits: [],
 						reasoningBlocks: []
 					};
-					messages.push(m);
+					store.appendMessage(transcript, m);
 				}
 				const blocks = (m.reasoningBlocks ??= []);
 				let seg = blocks.find((b) => b.id === ev.segmentId);
@@ -810,18 +845,24 @@
 					blocks.push(seg);
 				}
 				seg.text = (seg.text ?? '') + ev.text;
+				touched = ev.messageId;
 				break;
 			}
 			case 'message.reasoning.end': {
-				const m = messages.find((x) => x.id === ev.messageId);
+				const m = transcript.bodies.get(ev.messageId);
 				const seg = m?.reasoningBlocks?.find((b) => b.id === ev.segmentId);
-				if (seg) seg.durationMs = ev.durationMs;
+				if (seg) {
+					seg.durationMs = ev.durationMs;
+					touched = ev.messageId;
+				}
 				break;
 			}
 			case 'message.end': {
-				const m = messages.find((x) => x.id === ev.messageId);
-				if (m) m.status = 'complete';
-				else {
+				const m = transcript.bodies.get(ev.messageId);
+				if (m) {
+					m.status = 'complete';
+					touched = ev.messageId;
+				} else {
 					// Same reconnect-gap desync as `message.delta`: the terminal
 					// marker arrived for a bubble we never saw. Re-sync rather
 					// than silently dropping it.
@@ -830,14 +871,14 @@
 				break;
 			}
 			case 'tool.call': {
-				const target = resolveAssistantTarget(messages, ev.messageId);
+				const target = resolveAssistantTarget(msgs, ev.messageId);
 				if (target.kind === 'refresh') {
 					// Card arrived in a reconnect gap before its assistant message
 					// was fetched — re-sync rather than silently dropping it.
 					void refreshMessages();
 					break;
 				}
-				const m = messages[target.index];
+				const m = msgs[target.index];
 				const isChild = !!ev.parentToolCallId;
 				(m.toolCalls ??= []).push({
 					id: ev.toolCallId,
@@ -856,10 +897,11 @@
 					textOffset: isChild ? null : m.content.length,
 					parentToolCallId: ev.parentToolCallId ?? null
 				});
+				touched = m.id;
 				break;
 			}
 			case 'tool.result': {
-				const tc = findToolCallRecord(messages, ev.toolCallId);
+				const tc = findToolCallRecord(msgs, ev.toolCallId);
 				if (tc) {
 					tc.status = ev.ok ? 'ok' : 'error';
 					tc.resultJson = safeJson(ev.output ?? ev.summary);
@@ -870,11 +912,12 @@
 					if (ev.attachments && ev.attachments.length > 0) {
 						tc.attachments = ev.attachments;
 					}
+					touched = tc.messageId;
 				}
 				break;
 			}
 			case 'subagent.lifecycle': {
-				const tc = findToolCallRecord(messages, ev.toolCallId);
+				const tc = findToolCallRecord(msgs, ev.toolCallId);
 				if (tc) {
 					tc.backgroundAgentStatus = ev.status;
 					tc.backgroundAgentId = ev.agentId;
@@ -884,11 +927,12 @@
 					} else {
 						tc.backgroundAgentEndedAt = Date.now();
 					}
+					touched = tc.messageId;
 				}
 				break;
 			}
 			case 'tool.partial_output': {
-				const tc = findToolCallRecord(messages, ev.toolCallId);
+				const tc = findToolCallRecord(msgs, ev.toolCallId);
 				// The SDK emits cumulative snapshots of the tool's stdout/stderr
 				// buffer (not deltas) so progress bars and carriage-return redraws
 				// render correctly — each event already contains everything that
@@ -897,7 +941,7 @@
 				break;
 			}
 			case 'tool.progress': {
-				const tc = findToolCallRecord(messages, ev.toolCallId);
+				const tc = findToolCallRecord(msgs, ev.toolCallId);
 				if (tc) tc.progressMessage = ev.message;
 				break;
 			}
@@ -914,14 +958,14 @@
 				break;
 			}
 			case 'file.edit': {
-				const target = resolveAssistantTarget(messages, ev.messageId);
+				const target = resolveAssistantTarget(msgs, ev.messageId);
 				if (target.kind === 'refresh') {
 					// Edit card arrived in a reconnect gap before its assistant
 					// message was fetched — re-sync rather than dropping it.
 					void refreshMessages();
 					break;
 				}
-				const m = messages[target.index];
+				const m = msgs[target.index];
 				const isChild = !!ev.parentToolCallId;
 				(m.fileEdits ??= []).push({
 					id: `${m.id}-${(m.fileEdits ?? []).length}`,
@@ -934,20 +978,22 @@
 					textOffset: isChild ? null : m.content.length,
 					parentToolCallId: ev.parentToolCallId ?? null
 				});
+				touched = m.id;
 				break;
 			}
 			case 'error': {
 				turnErrored = true;
-				const m = messages[messages.length - 1];
-				if (m && m.role === 'assistant') {
-					m.status = 'error';
-					m.errorCode = ev.code;
+				const last = msgs[msgs.length - 1];
+				if (last && last.role === 'assistant') {
+					last.status = 'error';
+					last.errorCode = ev.code;
+					touched = last.id;
 				}
 				// Always surface the error as a separate system message rather
 				// than appending the server/agent-supplied text into the
 				// assistant body, where adversarial Markdown (headings, tables,
 				// HRs) could visually corrupt the thread.
-				messages.push({
+				store.appendMessage(transcript, {
 					id: `err-${Date.now()}`,
 					conversationId: conversation.id,
 					role: 'system',
@@ -1011,6 +1057,10 @@
 				}
 				break;
 			}
+		}
+		if (touched !== null) {
+			store.syncEntry(transcript, touched);
+			markOffsetsDirty();
 		}
 		scrollToBottom();
 	}
@@ -1129,7 +1179,7 @@
 		// Stable per-send key so a retried POST (after a client-side timeout)
 		// dedupes server-side instead of creating a second user message/turn.
 		const requestId = crypto.randomUUID();
-		messages.push({
+		store.appendMessage(transcript, {
 			id: localMessageId,
 			conversationId: conversation.id,
 			role: 'user',
@@ -1138,6 +1188,7 @@
 			errorCode: null,
 			createdAt: Date.now()
 		});
+		markOffsetsDirty();
 		scrollToBottom({ force: true });
 
 		// Start the turn server-side, then attach an EventSource to its
@@ -1155,7 +1206,8 @@
 			streaming = false;
 			if (!composer) composer = text;
 			applyEvent({ type: 'error', code, message });
-			messages = messages.filter((m) => m.id !== localMessageId);
+			store.removeMessage(transcript, localMessageId);
+			markOffsetsDirty();
 		};
 		// POST the turn, reusing the same idempotency key across attempts so a
 		// network/timeout failure that actually reached the server replays the
@@ -1206,7 +1258,8 @@
 				userMessageId: number;
 				title?: string | null;
 			};
-			messages = messages.map((m) => (m.id === localMessageId ? { ...m, id: userMessageId } : m));
+			store.replaceId(transcript, localMessageId, userMessageId);
+			markOffsetsDirty();
 			if (updatedTitle && updatedTitle !== title) {
 				title = updatedTitle;
 				void invalidateAll();
@@ -1265,7 +1318,7 @@
 	}
 
 	$effect(() => {
-		void messages.length;
+		void transcript.entries.length;
 		scrollToBottom();
 	});
 
@@ -1274,7 +1327,8 @@
 	// message exists yet, or it exists but has no content and no tool activity).
 	const thinking = $derived.by(() => {
 		if (!streaming || pendingInteractive.length > 0) return false;
-		const last = messages[messages.length - 1];
+		const lastEntry = transcript.entries[transcript.entries.length - 1];
+		const last = lastEntry ? transcript.bodies.get(lastEntry.id) : undefined;
 		if (!last || last.role !== 'assistant') return true;
 		const hasContent = last.content.length > 0;
 		const hasTools = (last.toolCalls?.length ?? 0) > 0 || (last.fileEdits?.length ?? 0) > 0;
@@ -1300,6 +1354,7 @@
 		if (!el || typeof ResizeObserver === 'undefined') return;
 		const ro = new ResizeObserver(() => {
 			if (pinnedToBottom) setScrollToBottom();
+			scheduleWindowUpdate();
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
@@ -1310,16 +1365,15 @@
 	// that window we append a synthetic placeholder assistant turn so the
 	// thinking indicator (and the rest of the assistant-turn affordances)
 	// render inside a normal bubble. Once a real assistant message exists it
-	// takes over and the placeholder is dropped. Keeping the placeholder in
-	// the same list the template iterates means it flows through the identical
-	// <Message_> wiring (input inspector, forks, idle state) as a real turn —
-	// no second rendering path to keep in sync.
-	const lastIsAssistant = $derived(messages[messages.length - 1]?.role === 'assistant');
+	// takes over and the placeholder is dropped.
+	const lastIsAssistant = $derived(
+		transcript.entries[transcript.entries.length - 1]?.role === 'assistant'
+	);
 	// The latest persisted assistant message. Its memory-extractor card may show
 	// a "Retry extraction" control — but only while the conversation is idle.
 	const latestAssistantMessageId = $derived.by(() => {
-		for (let i = messages.length - 1; i >= 0; i--) {
-			if (messages[i].role === 'assistant') return messages[i].id;
+		for (let i = transcript.entries.length - 1; i >= 0; i--) {
+			if (transcript.entries[i].role === 'assistant') return transcript.entries[i].id;
 		}
 		return null;
 	});
@@ -1328,8 +1382,8 @@
 	// user message stays forkable even while this turn streams.
 	const inFlightUserMessageId = $derived.by(() => {
 		if (!streaming) return null;
-		for (let i = messages.length - 1; i >= 0; i--) {
-			if (messages[i].role === 'user') return messages[i].id;
+		for (let i = transcript.entries.length - 1; i >= 0; i--) {
+			if (transcript.entries[i].role === 'user') return transcript.entries[i].id;
 		}
 		return null;
 	});
@@ -1345,78 +1399,376 @@
 		fileEdits: [],
 		reasoningBlocks: []
 	});
-	const renderedMessages = $derived(
-		thinking && !lastIsAssistant ? [...messages, thinkingPlaceholder] : messages
-	);
 
-	// --- Progressive rendering -------------------------------------------
+	// --- Windowed rendering ----------------------------------------------
 	//
 	// Mounting every <Message_> at once is O(history): each one interleaves its
 	// parts, runs `renderMarkdown` (marked + DOMPurify) and mounts a card per
 	// tool call. On a 100-message / 600-tool-call thread that is most of the
-	// time between "page loaded" and "page usable".
+	// time between "page loaded" and "page usable" — and on a phone it stays
+	// frozen forever. So only a viewport ± margin window mounts full cards
+	// (bounded by MAX_FULL_CARDS); every other message renders as a compact
+	// index row (preview + record summaries). Index rows keep the scrollbar
+	// honest — every entry stays in the DOM — while the heavy markdown/tool
+	// cards stay bounded no matter how long the thread is.
 	//
-	// So we mount the most recent slice immediately and let the older head in
-	// during idle time, oldest-last. This is deliberately NOT virtualization:
-	// nothing is ever unmounted, so in-page Ctrl+F and any future
-	// anchor/permalink scrolling still find old messages once the queue drains
-	// (a few frames), and there are no blank gaps to scroll into.
-	//
-	// `renderStartIndex` is an index into `renderedMessages`, not a count from
-	// the end, so a message arriving on the live stream never pushes an
-	// already-rendered one back out of the window.
-	const INITIAL_RENDER_TAIL = 20;
-	const DEFERRED_RENDER_CHUNK = 15;
+	// The window is recomputed from the rows' real `offsetTop`s on scroll
+	// (rAF-throttled); because every entry renders a row, offsets are exact, so
+	// windowing can't drift even when cards change height mid-stream.
+	const OVERSCAN = 8;
+	const MAX_FULL_CARDS = 40;
+	const rowEls = new Map<string, HTMLElement>();
+	let offsets: number[] = [];
+	let offsetsDirty = true;
+	let windowFrame = 0;
 
-	let renderStartIndex = $state(0);
+	let windowStart = $state(0);
+	let windowEnd = $state(0);
 
-	function initialRenderStart(total: number): number {
-		return Math.max(0, total - INITIAL_RENDER_TAIL);
+	function markOffsetsDirty() {
+		offsetsDirty = true;
+		scheduleWindowUpdate();
 	}
 
-	// Clamped, because `messages` can SHRINK under a fixed start index: an inline
-	// edit or a regenerate truncates the array (`messages.slice(0, idx + 1)`),
-	// and an unclamped `slice(renderStartIndex)` would then return [] — a blank
-	// transcript, precisely while the replacement turn is streaming in.
-	const renderStart = $derived(
-		Math.min(renderStartIndex, initialRenderStart(renderedMessages.length))
-	);
+	function resetWindow() {
+		windowStart = 0;
+		windowEnd = 0;
+		offsets = [];
+		offsetsDirty = true;
+	}
 
-	const visibleMessages = $derived(
-		renderStart > 0 ? renderedMessages.slice(renderStart) : renderedMessages
-	);
+	// Captures each rendered row's element so the window can read real
+	// offsets; the destroy hook keeps the map in sync as rows mount/unmount.
+	function rowAction(node: HTMLElement, id: DisplayId) {
+		rowEls.set(String(id), node);
+		return {
+			destroy() {
+				rowEls.delete(String(id));
+			}
+		};
+	}
 
-	function scheduleIdle(fn: () => void): () => void {
-		if (typeof requestIdleCallback === 'function') {
-			// The timeout keeps a busy main thread from starving the queue, so
-			// the transcript always finishes filling in.
-			const handle = requestIdleCallback(fn, { timeout: 250 });
-			return () => cancelIdleCallback(handle);
+	// First index whose offsetTop is >= target (all rows, in order).
+	function lowerBoundIndex(arr: number[], target: number): number {
+		let lo = 0;
+		let hi = arr.length;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			if (arr[mid] < target) lo = mid + 1;
+			else hi = mid;
 		}
-		const handle = setTimeout(fn, 16);
-		return () => clearTimeout(handle);
+		return lo;
 	}
 
-	// Mounting older messages above the viewport grows the document upward, so
-	// hold the distance to the bottom fixed — otherwise the reader's position
-	// slides as the head fills in.
-	async function renderMoreHistory() {
+	function scheduleWindowUpdate() {
+		if (windowFrame) return;
+		windowFrame = requestAnimationFrame(() => {
+			windowFrame = 0;
+			computeWindow();
+		});
+	}
+
+	function computeWindow() {
 		const el = scrollEl;
+		const n = transcript.entries.length;
+		if (!el || n === 0) {
+			windowStart = 0;
+			windowEnd = 0;
+			return;
+		}
+		if (offsetsDirty || offsets.length !== n) {
+			offsets = new Array(n);
+			for (let i = 0; i < n; i++) {
+				const node = rowEls.get(String(transcript.entries[i].id));
+				offsets[i] = node ? node.offsetTop : 0;
+			}
+			offsetsDirty = false;
+		}
+		const viewTop = el.scrollTop;
+		const viewBottom = viewTop + el.clientHeight;
+		let start = lowerBoundIndex(offsets, viewTop);
+		if (start > 0) start -= 1; // a card may straddle the viewport top
+		let end = lowerBoundIndex(offsets, viewBottom);
+		start = Math.max(0, start - OVERSCAN);
+		end = Math.min(n, end + OVERSCAN);
+		if (end - start > MAX_FULL_CARDS) {
+			const center = (start + end) >> 1;
+			start = Math.max(0, center - (MAX_FULL_CARDS >> 1));
+			end = Math.min(n, start + MAX_FULL_CARDS);
+		}
+		windowStart = start;
+		windowEnd = end;
+	}
+
+	type RenderUnit =
+		| { kind: 'message'; m: DisplayMessage; entry: TranscriptEntry }
+		| { kind: 'index'; entry: TranscriptEntry };
+
+	// The placeholder flows through the same render path as a real turn.
+	const placeholderUnit = $derived<RenderUnit>({
+		kind: 'message',
+		m: thinkingPlaceholder,
+		entry: {
+			id: 'thinking-placeholder',
+			role: 'assistant',
+			status: 'streaming',
+			errorCode: null,
+			createdAt: Date.now(),
+			preview: null,
+			records: []
+		}
+	});
+
+	const renderUnits = $derived.by<RenderUnit[]>(() => {
+		const out: RenderUnit[] = [];
+		const n = transcript.entries.length;
+		for (let i = 0; i < n; i++) {
+			const entry = transcript.entries[i];
+			const body = i >= windowStart && i < windowEnd ? transcript.bodies.get(entry.id) : undefined;
+			if (body) out.push({ kind: 'message', m: body, entry });
+			else out.push({ kind: 'index', entry });
+		}
+		if (thinking && !lastIsAssistant) out.push(placeholderUnit);
+		return out;
+	});
+
+	// --- Hydration (near-viewport, idled, LRU-capped) --------------------
+	const hydrationQueue = new Set<number>();
+	let hydrationTimer: ReturnType<typeof setTimeout> | null = null;
+	let pumpingHydration = false;
+
+	function clearHydrationQueue() {
+		hydrationQueue.clear();
+		if (hydrationTimer) {
+			clearTimeout(hydrationTimer);
+			hydrationTimer = null;
+		}
+	}
+
+	function enqueueHydration(id: number) {
+		hydrationQueue.add(id);
+		if (hydrationTimer) return;
+		const run = () => {
+			hydrationTimer = null;
+			void pumpHydration();
+		};
+		if (typeof requestIdleCallback === 'function') {
+			// A timeout keeps a busy main thread from starving the queue.
+			requestIdleCallback(run, { timeout: 600 });
+		} else {
+			hydrationTimer = setTimeout(run, 50);
+		}
+	}
+
+	async function fetchHydration(id: number): Promise<void> {
+		try {
+			const r = await fetch(`/api/conversations/${conversation.id}/messages/${id}`);
+			if (!r.ok) return;
+			const data = (await r.json()) as { message: DisplayMessage | null };
+			if (!data.message) return;
+			store.hydrate(transcript, id, data.message);
+			markOffsetsDirty();
+			evictBodies();
+		} catch {
+			/* non-fatal */
+		}
+	}
+
+	// Small serialized batches (2 at a time) — no burst of N fetches on a fast
+	// scroll; the LRU cap bounds cached bodies regardless.
+	async function pumpHydration() {
+		if (pumpingHydration) return;
+		pumpingHydration = true;
+		try {
+			while (hydrationQueue.size > 0) {
+				const batch = [...hydrationQueue].slice(0, 2);
+				for (const id of batch) hydrationQueue.delete(id);
+				await Promise.all(batch.map((id) => fetchHydration(id)));
+			}
+		} finally {
+			pumpingHydration = false;
+		}
+	}
+
+	function evictBodies() {
+		const pinned = new Set<DisplayId>();
+		const n = transcript.entries.length;
+		for (let i = Math.max(0, windowStart - OVERSCAN); i < Math.min(n, windowEnd + OVERSCAN); i++) {
+			pinned.add(transcript.entries[i].id);
+		}
+		// Never evict the streaming tail.
+		for (let i = Math.max(0, n - 5); i < n; i++) pinned.add(transcript.entries[i].id);
+		store.evictLRU(transcript, TRANSCRIPT_BODY_CACHE_MAX, pinned);
+	}
+
+	$effect(() => {
+		// Hydrate window entries that lack a body, during idle, coalesced.
+		for (let i = windowStart; i < Math.min(windowEnd, transcript.entries.length); i++) {
+			const e = transcript.entries[i];
+			if (typeof e.id !== 'number') continue;
+			if (transcript.bodies.has(e.id) || hydrationQueue.has(e.id)) continue;
+			enqueueHydration(e.id);
+		}
+	});
+
+	// --- Load older ------------------------------------------------------
+	let loadingOlder = $state(false);
+
+	async function loadOlderPage() {
+		if (loadingOlder || !transcript.hasMoreOlder) return;
+		const oldest = transcript.entries[0]?.id;
+		if (typeof oldest !== 'number') return;
+		loadingOlder = true;
+		const el = scrollEl;
+		// Prepend grows the document upward; hold the distance to the bottom
+		// fixed so the reader's position doesn't slide.
 		const distanceFromBottom = el ? el.scrollHeight - el.scrollTop : null;
-		renderStartIndex = Math.max(0, renderStart - DEFERRED_RENDER_CHUNK);
-		await tick();
-		if (el && distanceFromBottom !== null) {
-			setProgrammaticScrollGuard(120);
-			el.scrollTop = el.scrollHeight - distanceFromBottom;
+		try {
+			const r = await fetch(
+				`/api/conversations/${conversation.id}/messages?beforeId=${oldest}&limit=${TRANSCRIPT_OLDER_PAGE_SIZE}`
+			);
+			if (!r.ok) return;
+			const data = (await r.json()) as {
+				entries: TranscriptEntry[];
+				hasMore: boolean;
+			};
+			store.prependIndexPage(transcript, data.entries, data.hasMore);
+			markOffsetsDirty();
+			await tick();
+			if (el && distanceFromBottom !== null) {
+				setProgrammaticScrollGuard(120);
+				el.scrollTop = el.scrollHeight - distanceFromBottom;
+			}
+		} catch {
+			/* non-fatal */
+		} finally {
+			loadingOlder = false;
 		}
 	}
 
 	$effect(() => {
-		if (renderStart <= 0) return;
-		return scheduleIdle(() => {
-			void renderMoreHistory();
-		});
+		// Auto-load when the user reaches the top of a long conversation. After
+		// a prepend the restored scroll position is past the top, so this can't
+		// chain-load pages without further scrolling.
+		if (!transcript.hasMoreOlder || loadingOlder) return;
+		if (!scrollEl || scrollEl.scrollTop > 8) return;
+		void loadOlderPage();
 	});
+
+	// --- Permalink + search jump ----------------------------------------
+	let highlighted = $state<Set<DisplayId>>(new Set());
+	let permalinkHandled = false;
+
+	function highlightMessage(id: DisplayId) {
+		const next = new Set(highlighted);
+		next.add(id);
+		highlighted = next;
+		setTimeout(() => {
+			const next2 = new Set(highlighted);
+			next2.delete(id);
+			highlighted = next2;
+		}, 2500);
+	}
+
+	async function ensureMessageLoaded(id: number) {
+		let guard = 0;
+		while (
+			!transcript.entries.some((e) => e.id === id) &&
+			transcript.hasMoreOlder &&
+			guard++ < 200
+		) {
+			await loadOlderPage();
+		}
+	}
+
+	async function jumpToMessage(id: number) {
+		await ensureMessageLoaded(id);
+		if (!transcript.bodies.has(id)) await fetchHydration(id);
+		await tick();
+		const node = rowEls.get(String(id));
+		const el = scrollEl;
+		if (node && el) {
+			const rect = node.getBoundingClientRect();
+			const elRect = el.getBoundingClientRect();
+			setProgrammaticScrollGuard(700);
+			el.scrollTo({
+				top: el.scrollTop + (rect.top - elRect.top) - el.clientHeight / 3,
+				behavior: 'smooth'
+			});
+		}
+		highlightMessage(id);
+	}
+
+	async function handlePermalinkOnLoad() {
+		if (permalinkHandled || typeof window === 'undefined') return;
+		const id = new URL(window.location.href).searchParams.get('message');
+		if (!id || !/^\d+$/.test(id)) return;
+		permalinkHandled = true;
+		// Give the initial window a frame to mount, then fetch pages until the
+		// target is loaded and scroll to it.
+		setTimeout(() => void jumpToMessage(Number(id)), 50);
+	}
+
+	// --- In-conversation search -----------------------------------------
+	type SearchResult = {
+		messageId: number;
+		role: string;
+		status: string;
+		createdAt: number;
+		preview: string | null;
+	};
+	let searchOpen = $state(false);
+	let searchQuery = $state('');
+	let searching = $state(false);
+	let searchResults = $state<SearchResult[] | null>(null);
+	let searchError = $state<string | null>(null);
+	let searchSeq = 0;
+
+	async function runSearch() {
+		const q = searchQuery.trim();
+		if (!q) {
+			searchResults = null;
+			searchError = null;
+			return;
+		}
+		const seq = ++searchSeq;
+		searching = true;
+		searchError = null;
+		try {
+			const r = await fetch(
+				`/api/conversations/${conversation.id}/search?q=${encodeURIComponent(q)}&limit=20`
+			);
+			if (!r.ok) {
+				if (seq === searchSeq) searchError = `Search failed (${r.status})`;
+				return;
+			}
+			const data = (await r.json()) as { results: SearchResult[] };
+			if (seq !== searchSeq) return;
+			searchResults = data.results;
+		} catch (e) {
+			if (seq === searchSeq) searchError = e instanceof Error ? e.message : String(e);
+		} finally {
+			if (seq === searchSeq) searching = false;
+		}
+	}
+
+	// Debounced search-as-you-type; the submit button shares the same path.
+	$effect(() => {
+		if (!searchOpen) return;
+		const q = searchQuery.trim();
+		if (!q) {
+			searchResults = null;
+			return;
+		}
+		const timer = setTimeout(() => void runSearch(), 300);
+		return () => clearTimeout(timer);
+	});
+
+	function closeSearch() {
+		searchOpen = false;
+		searchResults = null;
+		searchError = null;
+	}
 </script>
 
 <div class="chat">
@@ -1448,10 +1800,81 @@
 		}}
 	/>
 
+	<div class="chat-toolbar">
+		{#if searchOpen}
+			<form
+				class="search-box"
+				role="search"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void runSearch();
+				}}
+			>
+				<input
+					type="search"
+					bind:value={searchQuery}
+					placeholder="Search this conversation…"
+					aria-label="Search this conversation"
+				/>
+				<button type="submit" class="btn sm" disabled={searching}>Search</button>
+				<button type="button" class="btn sm" onclick={closeSearch} aria-label="Close search"
+					>✕</button
+				>
+			</form>
+			{#if searchResults !== null || searchError !== null}
+				<div class="search-results" role="listbox" aria-label="Search results">
+					{#if searching}
+						<div class="search-status muted">Searching…</div>
+					{:else if searchError !== null}
+						<div class="search-status">Search failed: {searchError}</div>
+					{:else if searchResults !== null && searchResults.length === 0}
+						<div class="search-status muted">No matches for “{searchQuery}”</div>
+					{:else if searchResults !== null}
+						{#each searchResults as r (r.messageId)}
+							<button
+								type="button"
+								class="search-result"
+								role="option"
+								aria-selected="false"
+								onclick={() => void jumpToMessage(r.messageId)}
+							>
+								<span class="search-result-role">{r.role}</span>
+								<span class="search-result-preview">{r.preview ?? 'Message'}</span>
+							</button>
+						{/each}
+					{/if}
+				</div>
+			{/if}
+		{:else}
+			<button
+				type="button"
+				class="search-toggle"
+				onclick={() => (searchOpen = true)}
+				aria-label="Search this conversation"
+			>
+				<svg
+					width="12"
+					height="12"
+					viewBox="0 0 16 16"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.6"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<circle cx="7" cy="7" r="4.5" />
+					<path d="M10.5 10.5L14 14" />
+				</svg>
+				Search
+			</button>
+		{/if}
+	</div>
+
 	<div class="messages-wrap">
 		<div class="messages" bind:this={scrollEl} onscroll={onMessagesScroll}>
 			<div class="messages-inner" role="log" aria-live="polite" aria-label="Conversation messages">
-				{#if renderedMessages.length === 0 && visibleInteractive.length === 0}
+				{#if transcript.entries.length === 0 && visibleInteractive.length === 0 && !thinking}
 					<div class="empty-conversation">
 						<EmptyState
 							title="Start the conversation"
@@ -1460,22 +1883,49 @@
 						/>
 					</div>
 				{/if}
-				{#each visibleMessages as m, i (m.id)}
-					<Message_
-						message={m}
-						conversationId={conversation.id}
-						inputMessageId={inputMessageIdByAssistant[m.id] ?? null}
-						forks={forksByMessage[m.id] ?? []}
-						isInFlightTurnUser={m.id === inFlightUserMessageId}
-						thinking={thinking && i === visibleMessages.length - 1}
-						canRetryMemory={!streaming && m.id === latestAssistantMessageId}
-						busy={streaming}
-						onForked={refreshForks}
-						onInlineEdited={handleInlineEdited}
-						onRegenerated={handleRegenerated}
-						onToolRerunStarted={handleToolRerunStarted}
-						onMemoryRetryStarted={handleMemoryRetryStarted}
-					/>
+				{#if transcript.hasMoreOlder}
+					<div class="load-older-region">
+						{#if loadingOlder}
+							<span class="muted">Loading older messages…</span>
+						{:else}
+							<button
+								type="button"
+								class="load-older"
+								onclick={() => void loadOlderPage()}
+								aria-label="Load older messages"
+							>
+								Load older messages
+							</button>
+						{/if}
+					</div>
+				{/if}
+				{#each renderUnits as u, i (u.entry.id)}
+					{#if u.kind === 'message'}
+						<div class:highlighted={highlighted.has(u.m.id)} use:rowAction={u.entry.id}>
+							<Message_
+								message={u.m}
+								conversationId={conversation.id}
+								inputMessageId={inputMessageIdByAssistant[String(u.m.id)] ?? null}
+								forks={forksByMessage[String(u.m.id)] ?? []}
+								isInFlightTurnUser={u.m.id === inFlightUserMessageId}
+								thinking={thinking && i === renderUnits.length - 1}
+								canRetryMemory={!streaming && u.m.id === latestAssistantMessageId}
+								busy={streaming}
+								onForked={refreshForks}
+								onInlineEdited={handleInlineEdited}
+								onRegenerated={handleRegenerated}
+								onToolRerunStarted={handleToolRerunStarted}
+								onMemoryRetryStarted={handleMemoryRetryStarted}
+							/>
+						</div>
+					{:else}
+						<div class:highlighted={highlighted.has(u.entry.id)} use:rowAction={u.entry.id}>
+							<MessageIndexRow
+								entry={u.entry}
+								onHydrate={() => void fetchHydration(u.entry.id as number)}
+							/>
+						</div>
+					{/if}
 				{/each}
 				{#each visibleInteractive as p (p.requestId)}
 					<InteractiveRequestDialog
@@ -1483,7 +1933,7 @@
 						onRespond={(r) => respondInteractive(p.requestId, r)}
 					/>
 				{/each}
-				{#if renderedMessages.length > 0 || visibleInteractive.length > 0}
+				{#if transcript.entries.length > 0 || visibleInteractive.length > 0 || thinking}
 					<div class="messages-bottom-spacer" aria-hidden="true"></div>
 				{/if}
 			</div>
@@ -1605,5 +2055,143 @@
 	}
 	.jump-latest:active {
 		transform: translateX(-50%) scale(0.96);
+	}
+	/* --- Backend-projected transcript: toolbar / load-older / highlight --- */
+	.chat-toolbar {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-1) var(--space-5);
+		border-bottom: 1px solid var(--border);
+	}
+	@media (max-width: 768px) {
+		.chat-toolbar {
+			padding: var(--space-1) var(--space-3);
+		}
+	}
+	.search-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		padding: 0.2rem 0.55rem;
+		font: inherit;
+		font-size: var(--fs-sm);
+		color: var(--text-muted);
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-pill);
+		cursor: pointer;
+	}
+	.search-toggle:hover {
+		background: var(--surface-hover);
+		color: var(--text);
+	}
+	.search-box {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		flex: 1;
+		max-width: 40rem;
+	}
+	.search-box input[type='search'] {
+		flex: 1;
+		min-width: 6rem;
+		font: inherit;
+		padding: 0.3rem 0.55rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		color: inherit;
+	}
+	.search-box input[type='search']:focus {
+		outline: none;
+		border-color: var(--accent);
+		box-shadow: var(--focus-ring);
+	}
+	.search-results {
+		position: absolute;
+		z-index: var(--z-overlay);
+		top: 100%;
+		left: var(--space-5);
+		right: var(--space-5);
+		max-width: 40rem;
+		max-height: 18rem;
+		overflow-y: auto;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-2);
+		padding: var(--space-1);
+	}
+	@media (max-width: 768px) {
+		.search-results {
+			left: var(--space-3);
+			right: var(--space-3);
+		}
+	}
+	.search-status {
+		padding: 0.4rem 0.6rem;
+		font-size: var(--fs-sm);
+	}
+	.search-result {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-2);
+		width: 100%;
+		text-align: left;
+		padding: 0.4rem 0.6rem;
+		font: inherit;
+		font-size: var(--fs-sm);
+		background: transparent;
+		border: none;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+	}
+	.search-result:hover,
+	.search-result:focus-visible {
+		background: var(--surface-hover);
+	}
+	.search-result-role {
+		flex: none;
+		font-weight: 600;
+		color: var(--text-muted);
+		text-transform: capitalize;
+	}
+	.search-result-preview {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.load-older-region {
+		display: flex;
+		justify-content: center;
+		padding: var(--space-2) 0;
+	}
+	.load-older {
+		padding: 0.35rem 0.8rem;
+		font: inherit;
+		font-size: var(--fs-sm);
+		color: var(--text-muted);
+		background: transparent;
+		border: 1px dashed var(--border);
+		border-radius: var(--radius-pill);
+		cursor: pointer;
+	}
+	.load-older:hover {
+		color: var(--text);
+		background: var(--surface-hover);
+	}
+	.highlighted {
+		animation: transcript-highlight 2.4s ease-out;
+	}
+	@keyframes transcript-highlight {
+		0% {
+			background: color-mix(in srgb, var(--accent) 22%, transparent);
+			border-radius: var(--radius-lg);
+		}
+		100% {
+			background: transparent;
+		}
 	}
 </style>

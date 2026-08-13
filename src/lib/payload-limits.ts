@@ -35,3 +35,46 @@ export const INLINE_ARGS_MAX_BYTES = 2048;
 export const INLINE_RESULT_MAX_BYTES = 512;
 export const INLINE_DIFF_MAX_BYTES = 2048;
 export const INLINE_REASONING_MAX_BYTES = 512;
+
+// --- Backend-projected transcript (BFF presentation layer) ---
+
+// --- Backend-projected transcript (BFF presentation layer) ---
+//
+// The conversation-open payload no longer ships the whole transcript. It
+// carries a short hydrated tail plus an index of older messages (see
+// `src/lib/server/present/transcript.ts`), so the page payload is *bounded
+// regardless of conversation length*. These constants tune that window; the
+// bench (`scripts/bench-conversation-load.mjs`) asserts the resulting payload
+// size, mounted-card count and TTI.
+//
+// The tail messages are fully hydrated — content + records — but their
+// records ship with the *initial* limits below (much tighter than
+// INLINE_*_MAX_BYTES): collapsed cards render from the server-computed
+// `summary` / `meta` instead of raw args, so there is no reason to push raw
+// fields for the initial view. Expanding a card (or hydrating an older
+// message via `/messages/[messageId]`) fetches the real field with the
+// generous limits above.
+export const INITIAL_INLINE_ARGS_MAX_BYTES = 128;
+export const INITIAL_INLINE_RESULT_MAX_BYTES = 128;
+export const INITIAL_INLINE_DIFF_MAX_BYTES = 256;
+export const INITIAL_INLINE_REASONING_MAX_BYTES = 256;
+// `task` args stay inline on the hydration path (they ARE the subagent card's
+// identity), but on the initial page payload they are capped too — the card
+// renders from `meta` (agent type / model / background id) instead.
+export const INITIAL_INLINE_TASK_ARGS_MAX_BYTES = 512;
+
+// How many newest messages arrive fully hydrated on page open. Tuned so the
+// bench seed (100 msgs / 600 tools / 180 reasoning / 2.43 MB at rest) lands
+// the initial payload under the ~40 KB target (D7); D3's 25/100 defaults would
+// ship ~5x that on this seed, so the window is smaller and the load-older
+// paging does the rest.
+export const TRANSCRIPT_HYDRATED_TAIL = 6;
+// How many older messages arrive as index entries alongside the tail.
+export const TRANSCRIPT_INDEX_COUNT = 10;
+// Batch size for `GET /api/conversations/[id]/messages?beforeId=` paging.
+export const TRANSCRIPT_OLDER_PAGE_SIZE = 50;
+// Preview cut for index entries (plain text, word/line boundary).
+export const TRANSCRIPT_INDEX_PREVIEW_MAX_CHARS = 300;
+// Client-side cap on cached hydrated bodies (LRU). Bodies beyond this are
+// dropped back to index rows; re-scrolling re-hydrates on demand.
+export const TRANSCRIPT_BODY_CACHE_MAX = 100;

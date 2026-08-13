@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ToolCallRecord } from '$lib/types';
+	import type { SubagentArgs } from '$lib/client/subagent-display';
 	import type { DisplayFileEdit, DisplayReasoningBlock } from '$lib/client/display-message';
 	import { renderMarkdown } from '$lib/client/markdown';
 	import { copyableCodeBlocks } from '$lib/client/copyable-code-blocks';
@@ -80,7 +81,13 @@
 	const displayState = $derived(getSubagentDisplayState(effectiveToolCall));
 	const pending = $derived(displayState.pending);
 
-	const args = $derived(parseSubagentArgs(toolCall.argsJson));
+	// Headline / pills come from the args — or, when the args were trimmed out
+	// of the initial page payload (backend-projected transcript), from the
+	// server-computed `meta` (agent_type / model / mode / description / name).
+	const args = $derived.by<SubagentArgs>(() => {
+		const parsed = toolCall.argsJson ? parseSubagentArgs(toolCall.argsJson) : {};
+		return { ...parsed, ...(toolCall.meta as SubagentArgs | undefined) };
+	});
 
 	// Presentation (icon, auto-expand behavior) is data-driven off `agent_type`
 	// in subagent-display.ts, so adding or specializing an agent is a registry

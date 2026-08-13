@@ -189,13 +189,24 @@ export function listByConversation(
 	opts: ListByConversationOptions = {}
 ): Message[] {
 	const db = getDb();
-	const limits = opts.inlineMaxBytes;
-	const trim = limits !== undefined;
 	const rows = db
 		.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC')
 		.all(conversationId) as MsgRow[];
 	const msgs = rows.map(rowToMessage);
-	if (msgs.length === 0) return msgs;
+	attachRecords(msgs, opts);
+	return msgs;
+}
+
+// Loads the tool-call / file-edit / reasoning records for already-fetched
+// messages and attaches them in place, honoring `opts.inlineMaxBytes` when set
+// (see `listByConversation`). Shared by every transcript read path so the
+// window queries below (tail / index page / single message) can't drift from
+// the full-list shape.
+function attachRecords(msgs: Message[], opts: ListByConversationOptions): void {
+	if (msgs.length === 0) return;
+	const db = getDb();
+	const limits = opts.inlineMaxBytes;
+	const trim = limits !== undefined;
 
 	const toolCols = trim
 		? `id, message_id, tool, ${trimmedColumn('args_json', 'args_bytes', ALWAYS_INLINE_ARGS_TOOLS)}, ` +
@@ -309,13 +320,79 @@ export function listByConversation(
 		m.fileEdits = byMsgE[m.id] ?? [];
 		m.reasoningBlocks = byMsgR[m.id] ?? [];
 	}
+}
+
+// Newest `limit` messages (ASC order) with their records — the bounded
+// hydrated tail of the backend-projected transcript. Loaded raw (untrimmed);
+// the projection layer trims for the wire and computes summaries.
+export function listRecent(conversationId: number, limit: number): Message[] {
+	const db = getDb();
+	const rows = db
+		.prepare(
+			'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'
+		)
+		.all(conversationId, limit) as MsgRow[];
+	const msgs = rows.reverse().map(rowToMessage);
+	attachRecords(msgs, {});
 	return msgs;
 }
 
-// Build a trigram FTS5 query for a literal substring search. Trigram matching
-// needs at least 3 characters; shorter terms can't use the index, so we return
-// null and the caller falls back to a plain scan. The whole term is sent as one
-// quoted phrase (double quotes stripped — they're the phrase delimiter) so a
+export interface IndexPageResult {
+	/** Messages strictly older than `beforeId`, ASC order, at most `limit`. */
+	messages: Message[];
+	/** True when more rows exist beyond the returned page. */
+	hasMore: boolean;
+}
+
+// Index-only page of messages older than `beforeId`, sharing the
+// (created_at, id) tiebreak the rest of the repo uses so paging can't skip or
+// duplicate a row that shares its timestamp with the cursor. Loaded raw — the
+// projection layer shapes it into index entries. `limit + 1` rows are fetched
+// so `hasMore` needs no second query.
+export function listIndexPage(
+	conversationId: number,
+	beforeId: number,
+	limit: number
+): IndexPageResult {
+	const db = getDb();
+	const before = db
+		.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
+		.get(conversationId, beforeId) as MsgRow | undefined;
+	if (!before) return { messages: [], hasMore: false };
+	const rows = db
+		.prepare(
+			`SELECT * FROM messages
+			  WHERE conversation_id = ?
+			    AND (created_at < ? OR (created_at = ? AND id < ?))
+			  ORDER BY created_at DESC, id DESC
+			  LIMIT ?`
+		)
+		.all(conversationId, before.created_at, before.created_at, before.id, limit + 1) as MsgRow[];
+	const hasMore = rows.length > limit;
+	const msgs = rows.slice(0, limit).reverse().map(rowToMessage);
+	attachRecords(msgs, {});
+	return { messages: msgs, hasMore };
+}
+
+// One message with its records (the message-detail hydration endpoint). Loaded
+// raw; the projection layer applies the generous INLINE_* trim for the body.
+export function getMessage(conversationId: number, messageId: number): Message | null {
+	const db = getDb();
+	const row = db
+		.prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
+		.get(conversationId, messageId) as MsgRow | undefined;
+	if (!row) return null;
+	const msg = rowToMessage(row);
+	attachRecords([msg], {});
+	return msg;
+}
+
+export function countMessages(conversationId: number): number {
+	const row = getDb()
+		.prepare('SELECT count(*) AS n FROM messages WHERE conversation_id = ?')
+		.get(conversationId) as { n: number };
+	return row.n;
+}
 // multi-word query matches the literal substring including its spaces.
 function ftsPhrase(term: string): string | null {
 	if (term.length < 3) return null;

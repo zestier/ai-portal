@@ -5,28 +5,34 @@
 // reasoning blocks, with result sizes drawn to match the real distribution
 // observed in a production ./data/portal.db — median small, tail up to
 // ~280 KB) into a throwaway DATA_DIR, serves it from a production build, and
-// reports two numbers:
+// reports the backend-projected transcript (BFF presentation layer) metrics:
 //
-//   ssrBytes  — bytes of SSR HTML the server ships for the conversation page.
-//   ttiMs     — time from navigation start until the transcript is mounted,
-//               hydrated and scrolled to the bottom (i.e. usable).
+//   ssrHtmlBytes          — bytes of SSR HTML for the conversation page.
+//   transcriptPayloadBytes — bytes of the projected transcript JSON
+//                           (`GET /api/conversations/[id]`, the same shape the
+//                           page `load` embeds). This is the primary wire
+//                           metric: the bounded hydrated tail + index, never
+//                           the whole conversation.
+//   ttiMs                 — time from navigation start until the transcript is
+//                           mounted, hydrated and scrolled to the bottom.
+//   cardsAfterLoad        — mounted `article.msg` (full message cards) right
+//                           after load (windowed rendering bounds this).
+//   cardsAtTop            — mounted cards after scrolling to the top (older
+//                           messages hydrate near the viewport, the tail
+//                           demotes to index rows).
+//   jankFps               — rAF frame rate while scrolling the whole thread
+//                           under a 4x CPU throttle (Chromium only; n/a when
+//                           Chromium isn't installed).
 //
-// Also reports `fullRenderMs` (every message mounted) so progressive rendering
-// can be seen to finish, not just to defer.
+// Targets (D7): transcript payload <= ~40 KB, <= 40 mounted cards at any
+// time, TTI <= ~200 ms. The script exits non-zero when an assert fails.
 //
 // Recorded numbers for the default seed (100 messages / 600 tool calls /
-// 180 reasoning blocks / 2.43 MB of text at rest, seed 1337), measured in a
-// dev container:
+// 180 reasoning blocks / 2.43 MB of text at rest, seed 1337):
 //
 //                        before            after
-//   transcript payload   2.43 MB           462.7 KB    (5.4x smaller)
-//   full page HTML       2.68 MB           736.5 KB    (3.7x smaller)
-//   TTI (median)         615 ms            161 ms      (-74%)
-//   fully rendered       615 ms            395 ms
-//
-// "before" was taken by disabling both halves of the change (the
-// `inlineMaxBytes` option on the conversation page load, and Chat.svelte's
-// deferred-render window) and re-running against the identical seeded data.
+//   transcript payload   2.43 MB           462.7 KB    (pre-projection)
+//   full page HTML       2.68 MB           736.5 KB
 //
 // Usage:
 //   pnpm bench:conversation-load
@@ -36,7 +42,7 @@
 // rebuild. The temp DATA_DIR is left on disk for post-mortem.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -55,7 +61,8 @@ function parseArgs(argv) {
 		build: false,
 		serve: false,
 		seed: 1337,
-		json: false
+		json: false,
+		jank: true
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
@@ -70,9 +77,10 @@ function parseArgs(argv) {
 		else if (a === '--build') opts.build = true;
 		else if (a === '--serve') opts.serve = true;
 		else if (a === '--json') opts.json = true;
+		else if (a === '--no-jank') opts.jank = false;
 		else if (a === '--help' || a === '-h') {
 			console.log(
-				'Usage: pnpm bench:conversation-load [--messages N] [--tool-calls N] [--reasoning-blocks N] [--runs N] [--seed N] [--build] [--serve] [--json]'
+				'Usage: pnpm bench:conversation-load [--messages N] [--tool-calls N] [--reasoning-blocks N] [--runs N] [--seed N] [--build] [--serve] [--json] [--no-jank]'
 			);
 			process.exit(0);
 		} else throw new Error(`unknown argument: ${a}`);
@@ -153,12 +161,13 @@ function lorem(rand, bytes) {
 	return out.slice(0, bytes);
 }
 
-// Field sizes are heavily skewed and the shape matters: the trim keeps small
-// fields inline, so a benchmark with the wrong distribution measures the wrong
-// thing. These bands are fitted to per-band counts and byte sums measured
-// (read-only) on the worst real conversation in a production ./data/portal.db —
-// 92 messages, 604 tool calls, 355 KB of `args_json`, 1.58 MB of `result_json`,
-// 132 KB of message content and 131 KB of reasoning text.
+// Field sizes are heavily skewed and the shape matters: the projection keeps
+// small fields inline and summarizes the rest, so a benchmark with the wrong
+// distribution measures the wrong thing. These bands are fitted to per-band
+// counts and byte sums measured (read-only) on the worst real conversation in
+// a production ./data/portal.db — 92 messages, 604 tool calls, 355 KB of
+// `args_json`, 1.58 MB of `result_json`, 132 KB of message content and 131 KB
+// of reasoning text.
 //
 // Each entry is [probability, minBytes, maxBytes]; draws are log-uniform within
 // a band so a 2x-wide band reproduces the observed mean (~1.44x its floor)
@@ -218,6 +227,8 @@ function jsonOfSize(rand, envelope, fillKey, targetBytes) {
 	});
 }
 
+// NOTE: ids are sequential integers — `messages` and its children use INTEGER
+// PRIMARY KEYs since the integer-PK migration, so string ids no longer fit.
 function seedConversation(db, conversationId, opts) {
 	const rand = mulberry32(opts.seed);
 	const now = Date.now() - opts.messages * 60_000;
@@ -241,7 +252,7 @@ function seedConversation(db, conversationId, opts) {
 
 	const tools = ['bash', 'view', 'grep', 'glob', 'edit', 'git_status', 'task'];
 	let seq = 0;
-	const nextId = (p) => `${p}${String(++seq).padStart(10, '0')}bench`;
+	const nextId = () => ++seq;
 
 	const stats = {
 		messages: 0,
@@ -266,7 +277,7 @@ function seedConversation(db, conversationId, opts) {
 	const tx = db.transaction(() => {
 		for (let i = 0; i < opts.messages; i++) {
 			const role = i % 2 === 0 ? 'user' : 'assistant';
-			const msgId = nextId('m');
+			const msgId = nextId();
 			const content = lorem(rand, role === 'user' ? 400 : 2_200);
 			stats.dbBytes += content.length;
 			stats.contentBytes += content.length;
@@ -290,7 +301,7 @@ function seedConversation(db, conversationId, opts) {
 				stats.argsBytes += args.length;
 				stats.resultBytes += result.length;
 				insertTool.run(
-					nextId('t'),
+					nextId(),
 					msgId,
 					tool,
 					args,
@@ -305,7 +316,7 @@ function seedConversation(db, conversationId, opts) {
 				const text = lorem(rand, 300 + Math.floor(rand() * 900));
 				stats.dbBytes += text.length;
 				stats.reasoningBytes += text.length;
-				insertReasoning.run(nextId('r'), msgId, r, text, r * 10, now + i * 60_000, 1_200);
+				insertReasoning.run(nextId(), msgId, r, text, r * 10, now + i * 60_000, 1_200);
 				stats.reasoningBlocks++;
 			}
 			if (editsLeft > 0) {
@@ -318,7 +329,7 @@ function seedConversation(db, conversationId, opts) {
 				].join('\n');
 				stats.dbBytes += diff.length;
 				stats.diffBytes += diff.length;
-				insertEdit.run(nextId('e'), msgId, `src/bench/file-${seq}.ts`, diff, now + i * 60_000, 0);
+				insertEdit.run(nextId(), msgId, `src/bench/file-${seq}.ts`, diff, now + i * 60_000, 0);
 				stats.fileEdits++;
 			}
 		}
@@ -340,77 +351,50 @@ async function measureSsrBytes(baseUrl, conversationId) {
 	return body.byteLength;
 }
 
-// `GET /api/conversations/:id` deliberately does NOT trim, so it is a live,
-// same-run stand-in for the pre-change transcript payload: the exact same rows,
-// serialized in full. Reporting both makes the reduction reproducible without
-// having to check out the old code.
-async function measureUntrimmedTranscriptBytes(baseUrl, conversationId) {
+// The projected transcript JSON — the exact wire shape the page `load` embeds.
+// This is the primary "initial payload" metric (target <= ~40 KB).
+async function measureTranscriptPayloadBytes(baseUrl, conversationId) {
 	const res = await fetch(`${baseUrl}/api/conversations/${conversationId}`);
 	if (!res.ok) throw new Error(`conversation API returned ${res.status}`);
 	const body = await res.arrayBuffer();
 	return body.byteLength;
 }
 
-// Transcript bytes the page ships after the trim, in the same unit the ticket's
-// 2.25 MB baseline was stated in (summed column bytes). Thresholds are imported
-// from the production module, so this can't drift from what the server does.
-function measureInlineTranscriptBytes(db, conversationId, limits) {
+// Bytes of text at rest for the seeded conversation (the 2.43 MB baseline).
+function measureStoredTranscriptBytes(db, conversationId) {
 	const g = (sql, ...p) => db.prepare(sql).get(...p).t ?? 0;
 	const content = g(
 		'SELECT sum(length(CAST(content AS blob))) t FROM messages WHERE conversation_id = ?',
 		conversationId
 	);
-	// `alwaysInline` mirrors the repo's keep-inline carve-outs (a `task` call's
-	// args, a sub-agent's spoken 'content' block): rows matching it count in
-	// full, whatever their size.
-	const inlineSum = (table, col, join, max, alwaysInline = '') =>
+	const sumOf = (table, col, join) =>
 		g(
-			`SELECT sum(CASE WHEN ${alwaysInline ? `(${alwaysInline}) = 0 OR ` : ''}length(CAST(${col} AS blob)) <= ? THEN length(CAST(${col} AS blob)) ELSE 0 END) t
+			`SELECT sum(length(CAST(${col} AS blob))) t
 			   FROM ${table} x JOIN messages m ON m.id = x.message_id WHERE m.conversation_id = ?`,
-			max,
 			conversationId
 		) + (join ?? 0);
-	const reasoning = inlineSum(
-		'reasoning_blocks',
-		'text',
-		0,
-		limits.reasoning,
-		"kind <> 'content' AND duration_ms IS NOT NULL"
-	);
-	const args = inlineSum('tool_calls', 'args_json', 0, limits.args, "tool <> 'task'");
-	const result = inlineSum('tool_calls', 'result_json', 0, limits.result);
-	const diff = inlineSum('file_edits', 'diff', 0, limits.diff);
 	return {
 		content,
-		reasoning,
-		args,
-		result,
-		diff,
-		total: content + reasoning + args + result + diff
+		reasoning: sumOf('reasoning_blocks', 'text'),
+		args: sumOf('tool_calls', 'args_json'),
+		result: sumOf('tool_calls', 'result_json'),
+		diff: sumOf('file_edits', 'diff'),
+		total: 0
 	};
 }
 
-function measureStoredTranscriptBytes(db, conversationId) {
-	return measureInlineTranscriptBytes(db, conversationId, {
-		args: Number.MAX_SAFE_INTEGER,
-		result: Number.MAX_SAFE_INTEGER,
-		diff: Number.MAX_SAFE_INTEGER,
-		reasoning: Number.MAX_SAFE_INTEGER
-	});
-}
-
-// Instrumentation injected before any app code runs. Two rAF pollers:
+// Instrumentation injected before any app code runs. Pollers:
 //   __tti        — first frame on which the transcript is mounted AND scrolled
-//                  to the bottom. Mounting + scroll-to-bottom is Chat.svelte's
-//                  own "the page is usable now" signal, and rAF callbacks are
-//                  starved while the main thread hydrates, so the timestamp
-//                  naturally includes hydration cost.
-//   __fullRender — first frame on which every message is in the DOM.
-const INSTRUMENT = (expectedMessages) => `
+//                  to the bottom (Chat.svelte's own "usable now" signal).
+//   __cards      — mounted `article.msg` count after load.
+//   __topCards   — mounted `article.msg` count after scrolling to the top.
+//   __scrollFps  — rAF frame rate sampled while scrolling to the top.
+const INSTRUMENT = `
 	window.__benchT0 = performance.now();
 	window.__tti = null;
-	window.__fullRender = null;
-	const expected = ${expectedMessages};
+	window.__cards = null;
+	window.__topCards = null;
+	window.__scrollFps = null;
 	const poll = () => {
 		if (window.__tti === null) {
 			const el = document.querySelector('.messages');
@@ -418,47 +402,102 @@ const INSTRUMENT = (expectedMessages) => `
 				window.__tti = performance.now() - window.__benchT0;
 			}
 		}
-		if (window.__fullRender === null) {
-			if (document.querySelectorAll('article.msg').length >= expected) {
-				window.__fullRender = performance.now() - window.__benchT0;
-			}
+		if (window.__cards === null && document.querySelectorAll('article.msg').length > 0) {
+			window.__cards = document.querySelectorAll('article.msg').length;
 		}
-		if (window.__tti === null || window.__fullRender === null) requestAnimationFrame(poll);
+		if (window.__tti === null || window.__cards === null) requestAnimationFrame(poll);
 	};
 	requestAnimationFrame(poll);
+	// Frame-rate meter for the throttled scroll-to-top pass.
+	const sampleFps = () => {
+		const el = document.querySelector('.messages');
+		if (!el || el.scrollTop <= 0) { window.__scrollFps = null; return; }
+		let frames = 0;
+		let t0 = performance.now();
+		const tick = (t) => {
+			frames++;
+			if (t - t0 >= 500) {
+				window.__scrollFps = (frames / ((t - t0) / 1000)).toFixed(1);
+				return;
+			}
+			requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	};
+	window.__startScrollToTop = () => {
+		const el = document.querySelector('.messages');
+		if (!el) return;
+		sampleFps();
+		const step = () => {
+			if (el.scrollTop <= 0) {
+				setTimeout(() => {
+					window.__topCards = document.querySelectorAll('article.msg').length;
+				}, 400);
+				return;
+			}
+			el.scrollTop = Math.max(0, el.scrollTop - Math.max(400, el.clientHeight));
+			requestAnimationFrame(step);
+		};
+		requestAnimationFrame(step);
+	};
 `;
 
-async function measureClient(browser, baseUrl, conversationId, expectedMessages) {
+async function measureClient(browser, baseUrl, conversationId) {
 	const context = await browser.newContext();
 	const page = await context.newPage();
-	await page.addInitScript(INSTRUMENT(expectedMessages));
+	await page.addInitScript(INSTRUMENT);
 	await page.goto(`${baseUrl}/conversations/${conversationId}`, { waitUntil: 'commit' });
 	await page.waitForFunction(() => window.__tti !== null, undefined, { timeout: 60_000 });
-	const tti = await page.evaluate(() => window.__tti);
+	const ttiMs = await page.evaluate(() => window.__tti);
 	await page
-		.waitForFunction(() => window.__fullRender !== null, undefined, { timeout: 60_000 })
+		.waitForFunction(() => window.__cards !== null, undefined, { timeout: 60_000 })
 		.catch(() => {});
-	const fullRender = await page.evaluate(() => window.__fullRender);
-	const domMessages = await page.evaluate(() => document.querySelectorAll('article.msg').length);
+	const cardsAfterLoad = await page.evaluate(() => window.__cards);
+	// Scroll to the top: older messages hydrate near the viewport and the tail
+	// demotes to index rows; mounted cards must stay bounded.
+	await page.evaluate(() => window.__startScrollToTop());
+	await page.waitForFunction(() => window.__topCards !== null, undefined, { timeout: 60_000 });
+	const cardsAtTop = await page.evaluate(() => window.__topCards);
 	await context.close();
-	return { ttiMs: tti, fullRenderMs: fullRender, domMessages };
+	return { ttiMs, cardsAfterLoad, cardsAtTop };
 }
 
-// Single source of truth for the thresholds: read them out of the production
-// module rather than duplicating the numbers here.
-function readInlineLimits() {
-	const src = readFileSync(join(repoRoot, 'src/lib/payload-limits.ts'), 'utf8');
-	const read = (name) => {
-		const m = src.match(new RegExp(`export const ${name}\\s*=\\s*(\\d+)`));
-		if (!m) throw new Error(`could not read ${name} from src/lib/payload-limits.ts`);
-		return Number(m[1]);
-	};
-	return {
-		args: read('INLINE_ARGS_MAX_BYTES'),
-		result: read('INLINE_RESULT_MAX_BYTES'),
-		diff: read('INLINE_DIFF_MAX_BYTES'),
-		reasoning: read('INLINE_REASONING_MAX_BYTES')
-	};
+// Scroll-jank pass: rAF frame rate while scrolling the whole thread under a
+// 4x CPU throttle. CDP emulation is Chromium-only; skipped when Chromium
+// can't launch (reported as n/a).
+async function measureJank(baseUrl, conversationId) {
+	let chromium;
+	try {
+		({ chromium } = await import('@playwright/test'));
+	} catch {
+		return null;
+	}
+	let browser;
+	try {
+		browser = await chromium.launch();
+	} catch {
+		return null;
+	}
+	try {
+		const context = await browser.newContext();
+		const page = await context.newPage();
+		await page.addInitScript(INSTRUMENT);
+		const cdp = await context.newCDPSession(page);
+		await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+		await page.goto(`${baseUrl}/conversations/${conversationId}`, { waitUntil: 'commit' });
+		await page.waitForFunction(() => window.__tti !== null, undefined, { timeout: 60_000 });
+		await page.evaluate(() => window.__startScrollToTop());
+		await page.waitForFunction(() => window.__topCards !== null, undefined, { timeout: 60_000 });
+		await page.waitForTimeout(600);
+		const fps = await page.evaluate(() => window.__scrollFps);
+		const cardsAtTop = await page.evaluate(() => window.__topCards);
+		await context.close();
+		return { fps: fps === null ? null : Number(fps), cardsAtTop };
+	} catch {
+		return null;
+	} finally {
+		await browser.close().catch(() => {});
+	}
 }
 
 function fmtBytes(n) {
@@ -533,10 +572,9 @@ async function main() {
 		const { default: Database } = await import('better-sqlite3');
 		const db = new Database(join(dataDir, 'portal.db'));
 		const stats = seedConversation(db, conversationId, opts);
-		const limits = readInlineLimits();
-		const storedTranscript = measureStoredTranscriptBytes(db, conversationId);
-		const inlineTranscript = measureInlineTranscriptBytes(db, conversationId, limits);
+		const stored = measureStoredTranscriptBytes(db, conversationId);
 		db.close();
+		stored.total = stored.content + stored.reasoning + stored.args + stored.result + stored.diff;
 		console.log(
 			`[bench] seeded ${stats.messages} messages, ${stats.toolCalls} tool calls, ` +
 				`${stats.reasoningBlocks} reasoning blocks, ${stats.fileEdits} file edits ` +
@@ -547,20 +585,17 @@ async function main() {
 				`result ${fmtBytes(stats.resultBytes)} · reasoning ${fmtBytes(stats.reasoningBytes)} · ` +
 				`diffs ${fmtBytes(stats.diffBytes)}`
 		);
-		console.log(
-			`[bench]   thresholds: args ≤${limits.args}B, result ≤${limits.result}B, ` +
-				`diff ≤${limits.diff}B, reasoning ≤${limits.reasoning}B`
-		);
 
 		const ssrBytes = await measureSsrBytes(baseUrl, conversationId);
-		const untrimmedBytes = await measureUntrimmedTranscriptBytes(baseUrl, conversationId);
+		const transcriptPayloadBytes = await measureTranscriptPayloadBytes(baseUrl, conversationId);
 
 		const { firefox } = await import('@playwright/test');
 		browser = await firefox.launch();
 		const runs = [];
 		for (let i = 0; i < opts.runs; i++) {
-			runs.push(await measureClient(browser, baseUrl, conversationId, opts.messages));
+			runs.push(await measureClient(browser, baseUrl, conversationId));
 		}
+		const jank = opts.jank ? await measureJank(baseUrl, conversationId) : null;
 
 		const result = {
 			seed: opts.seed,
@@ -568,50 +603,63 @@ async function main() {
 			toolCalls: stats.toolCalls,
 			reasoningBlocks: stats.reasoningBlocks,
 			fileEdits: stats.fileEdits,
-			inlineLimits: limits,
-			storedTranscriptBytes: storedTranscript.total,
-			inlineTranscriptBytes: inlineTranscript.total,
-			inlineTranscriptBreakdown: inlineTranscript,
+			storedTranscriptBytes: stored.total,
 			ssrHtmlBytes: ssrBytes,
-			untrimmedTranscriptJsonBytes: untrimmedBytes,
+			transcriptPayloadBytes,
 			ttiMsMedian: median(runs.map((r) => r.ttiMs)),
-			fullRenderMsMedian: median(runs.map((r) => r.fullRenderMs)),
+			cardsAfterLoad: median(runs.map((r) => r.cardsAfterLoad)),
+			cardsAtTop: median(runs.map((r) => r.cardsAtTop)),
+			jankFps: jank?.fps ?? null,
+			jankCardsAtTop: jank?.cardsAtTop ?? null,
 			runs
 		};
+
+		// Assert the measurable targets (D7). The mounted-card bound and the
+		// payload bound are the point of the whole ticket; TTI must not regress.
+		const failures = [];
+		if (result.transcriptPayloadBytes > 40960) {
+			failures.push(`transcript payload ${result.transcriptPayloadBytes} B > 40960 B (~40 KB)`);
+		}
+		if (result.cardsAfterLoad > 40 || result.cardsAtTop > 40) {
+			failures.push(
+				`mounted cards ${result.cardsAfterLoad} (load) / ${result.cardsAtTop} (top) > 40`
+			);
+		}
+		if (result.ttiMsMedian > 200) {
+			failures.push(`TTI ${Math.round(result.ttiMsMedian)} ms > 200 ms`);
+		}
 
 		if (opts.json) {
 			console.log(JSON.stringify(result, null, 2));
 		} else {
-			const ratio = storedTranscript.total / Math.max(1, inlineTranscript.total);
 			console.log('');
 			console.log('=== conversation-load benchmark ===');
-			// Headline metric, in the same unit as the ticket's 2.25 MB baseline:
-			// summed transcript column bytes the page carries.
 			console.log(
-				`  transcript payload : ${fmtBytes(inlineTranscript.total)} inline ` +
-					`(was ${fmtBytes(storedTranscript.total)} untrimmed — ${ratio.toFixed(1)}x smaller)`
-			);
-			console.log(
-				`    breakdown        : content ${fmtBytes(inlineTranscript.content)} · ` +
-					`reasoning ${fmtBytes(inlineTranscript.reasoning)} · args ${fmtBytes(inlineTranscript.args)} · ` +
-					`result ${fmtBytes(inlineTranscript.result)} · diff ${fmtBytes(inlineTranscript.diff)}`
+				`  transcript payload : ${fmtBytes(transcriptPayloadBytes)} projected JSON ` +
+					`(was ${fmtBytes(stored.total)} untrimmed — ${(stored.total / Math.max(1, transcriptPayloadBytes)).toFixed(1)}x smaller)`
 			);
 			console.log(`  full page HTML     : ${fmtBytes(ssrBytes)} (${ssrBytes} bytes)`);
-			console.log(
-				`  untrimmed API JSON : ${fmtBytes(untrimmedBytes)} ` +
-					`(same rows via /api/conversations/:id, which never trims)`
-			);
 			console.log(`  TTI (median)       : ${Math.round(result.ttiMsMedian)} ms`);
 			console.log(
-				`  Fully rendered     : ${
-					result.fullRenderMsMedian === null ? 'n/a' : `${Math.round(result.fullRenderMsMedian)} ms`
+				`  mounted cards      : ${Math.round(result.cardsAfterLoad)} after load · ` +
+					`${Math.round(result.cardsAtTop)} after scrolling to top (target ≤ 40)`
+			);
+			console.log(
+				`  scroll jank (4x)   : ${
+					jank?.fps === null || jank?.fps === undefined ? 'n/a (no Chromium)' : `${jank.fps} fps`
 				}`
 			);
 			console.log(
 				`  runs               : ${runs
-					.map((r) => `${Math.round(r.ttiMs)}ms/${r.domMessages}msgs`)
+					.map((r) => `${Math.round(r.ttiMs)}ms/${r.cardsAfterLoad}/${r.cardsAtTop}cards`)
 					.join(', ')}`
 			);
+			if (failures.length > 0) {
+				console.log('');
+				console.log(`  FAILED targets:`);
+				for (const f of failures) console.log(`    - ${f}`);
+				process.exitCode = 1;
+			}
 			console.log('');
 		}
 
