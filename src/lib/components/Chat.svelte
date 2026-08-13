@@ -98,7 +98,7 @@
 	// derived affordances that used to read the flat `messages` array.
 	const hydratedMessages = $derived(
 		transcript.entries
-			.map((e) => transcript.bodies.get(e.id))
+			.map((e) => transcript.bodies[String(e.id)])
 			.filter((m): m is DisplayMessage => m !== undefined)
 	);
 
@@ -707,7 +707,7 @@
 	function handleInlineEdited(messageId: number, content: string, turnId: string) {
 		// Truncation race guard (D6): drop cached index/bodies past the cut
 		// BEFORE the replacement turn streams in, so stale cards can't resurface.
-		const body = transcript.bodies.get(messageId);
+		const body = transcript.bodies[String(messageId)];
 		store.truncateAfter(transcript, messageId);
 		if (body) {
 			body.content = content;
@@ -771,7 +771,7 @@
 				break;
 			}
 			case 'message.delta': {
-				const m = transcript.bodies.get(ev.messageId);
+				const m = transcript.bodies[String(ev.messageId)];
 				if (!m) {
 					// A delta for a message this client has never seen — the
 					// content was persisted server-side in a reconnect gap (or
@@ -808,7 +808,7 @@
 				break;
 			}
 			case 'message.reasoning': {
-				let m = transcript.bodies.get(ev.messageId);
+				let m = transcript.bodies[String(ev.messageId)];
 				if (!m) {
 					// Reasoning can arrive before the first visible token. The
 					// bridge opens a message.start in that case, but be defensive
@@ -849,7 +849,7 @@
 				break;
 			}
 			case 'message.reasoning.end': {
-				const m = transcript.bodies.get(ev.messageId);
+				const m = transcript.bodies[String(ev.messageId)];
 				const seg = m?.reasoningBlocks?.find((b) => b.id === ev.segmentId);
 				if (seg) {
 					seg.durationMs = ev.durationMs;
@@ -858,7 +858,7 @@
 				break;
 			}
 			case 'message.end': {
-				const m = transcript.bodies.get(ev.messageId);
+				const m = transcript.bodies[String(ev.messageId)];
 				if (m) {
 					m.status = 'complete';
 					touched = ev.messageId;
@@ -1328,7 +1328,7 @@
 	const thinking = $derived.by(() => {
 		if (!streaming || pendingInteractive.length > 0) return false;
 		const lastEntry = transcript.entries[transcript.entries.length - 1];
-		const last = lastEntry ? transcript.bodies.get(lastEntry.id) : undefined;
+		const last = lastEntry ? transcript.bodies[String(lastEntry.id)] : undefined;
 		if (!last || last.role !== 'assistant') return true;
 		const hasContent = last.content.length > 0;
 		const hasTools = (last.toolCalls?.length ?? 0) > 0 || (last.fileEdits?.length ?? 0) > 0;
@@ -1524,7 +1524,8 @@
 		const n = transcript.entries.length;
 		for (let i = 0; i < n; i++) {
 			const entry = transcript.entries[i];
-			const body = i >= windowStart && i < windowEnd ? transcript.bodies.get(entry.id) : undefined;
+			const body =
+				i >= windowStart && i < windowEnd ? transcript.bodies[String(entry.id)] : undefined;
 			if (body) out.push({ kind: 'message', m: body, entry });
 			else out.push({ kind: 'index', entry });
 		}
@@ -1594,10 +1595,10 @@
 		const pinned = new Set<DisplayId>();
 		const n = transcript.entries.length;
 		for (let i = Math.max(0, windowStart - OVERSCAN); i < Math.min(n, windowEnd + OVERSCAN); i++) {
-			pinned.add(transcript.entries[i].id);
+			pinned.add(String(transcript.entries[i].id));
 		}
 		// Never evict the streaming tail.
-		for (let i = Math.max(0, n - 5); i < n; i++) pinned.add(transcript.entries[i].id);
+		for (let i = Math.max(0, n - 5); i < n; i++) pinned.add(String(transcript.entries[i].id));
 		store.evictLRU(transcript, TRANSCRIPT_BODY_CACHE_MAX, pinned);
 	}
 
@@ -1606,7 +1607,7 @@
 		for (let i = windowStart; i < Math.min(windowEnd, transcript.entries.length); i++) {
 			const e = transcript.entries[i];
 			if (typeof e.id !== 'number') continue;
-			if (transcript.bodies.has(e.id) || hydrationQueue.has(e.id)) continue;
+			if (transcript.bodies[String(e.id)] !== undefined || hydrationQueue.has(e.id)) continue;
 			enqueueHydration(e.id);
 		}
 	});
@@ -1683,7 +1684,7 @@
 
 	async function jumpToMessage(id: number) {
 		await ensureMessageLoaded(id);
-		if (!transcript.bodies.has(id)) await fetchHydration(id);
+		if (transcript.bodies[String(id)] === undefined) await fetchHydration(id);
 		await tick();
 		const node = rowEls.get(String(id));
 		const el = scrollEl;

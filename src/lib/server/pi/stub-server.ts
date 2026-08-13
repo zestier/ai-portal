@@ -163,7 +163,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 			created,
 			model,
 			reply,
-			slowStart: userText.includes('@trigger-slow-start')
+			slowStart: userText.includes('@trigger-slow-start'),
+			slowStream: userText.includes('@trigger-slow-stream')
 		});
 	} else {
 		res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -185,9 +186,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 // Stream the reply as OpenAI chat-completions SSE chunks so pi's
 // openai-completions provider parses real stream deltas (not one blob).
 const SLOW_START_HOLD_MS = 1200;
+const SLOW_STREAM_INTERVAL_MS = 120;
 function writeSseReply(
 	res: ServerResponse,
-	opts: { id: string; created: number; model: string; reply: string; slowStart?: boolean }
+	opts: {
+		id: string;
+		created: number;
+		model: string;
+		reply: string;
+		slowStart?: boolean;
+		slowStream?: boolean;
+	}
 ): void {
 	res.writeHead(200, { 'Content-Type': 'text/event-stream' });
 	const chunks = opts.reply.match(/.{1,16}/g) ?? [opts.reply];
@@ -203,7 +212,10 @@ function writeSseReply(
 	// `@trigger-slow-start` in the prompt holds the first byte so the turn sits
 	// in the pre-delta "setting up" state long enough to assert on; otherwise the
 	// first chunk goes out immediately and the rest drain on a short timer
-	// (mirrors a real model's token cadence).
+	// (mirrors a real model's token cadence). `@trigger-slow-stream` widens the
+	// inter-chunk gap so e2e can observe intermediate (partially-streamed) text
+	// in the UI instead of only the finished reply.
+	const intervalMs = opts.slowStream ? SLOW_STREAM_INTERVAL_MS : 2;
 	const emit = () => {
 		for (let i = 0; i <= finishIndex; i++) {
 			if (i === 0) {
@@ -213,7 +225,7 @@ function writeSseReply(
 			setTimeout(() => {
 				if (i === finishIndex) res.write(chunkEvent(chunks[i], 'stop'));
 				else res.write(chunkEvent(chunks[i], null));
-			}, i * 2);
+			}, i * intervalMs);
 		}
 		res.write(
 			`data: ${JSON.stringify({
@@ -229,7 +241,7 @@ function writeSseReply(
 				res.write('data: [DONE]\n\n');
 				res.end();
 			},
-			(finishIndex + 1) * 2
+			(finishIndex + 1) * intervalMs
 		);
 	};
 	if (opts.slowStart) setTimeout(emit, SLOW_START_HOLD_MS);

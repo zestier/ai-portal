@@ -22,6 +22,13 @@
 // Messages are immutable except inline-edit/regenerate, so once an older body
 // is hydrated it stays correct until a truncation (`truncateAfter`) or a
 // refresh that reports a smaller conversation.
+//
+// `bodies` is a plain object, NOT a `Map`: Svelte 5's `$state` deep proxy
+// wraps plain objects and arrays, but returns `Map`/`Set` instances raw, so
+// an in-place mutation of a value stored in a `$state` Map never invalidates
+// any reactive reads (the streamed `message.delta` content updates would not
+// re-render until some unrelated tracked state changed — the live-streaming
+// regression this structure guards against). Keyed by `String(id)`.
 
 import type { TranscriptIndexEntry, TranscriptProjection } from '$lib/types';
 import type { DisplayId, DisplayMessage } from './display-message';
@@ -37,15 +44,16 @@ export type TranscriptEntry = Omit<TranscriptIndexEntry, 'id'> & { id: DisplayId
 export interface TranscriptState {
 	/** Every message in the loaded window, in transcript order. */
 	entries: TranscriptEntry[];
-	/** Hydrated bodies, keyed by message id (string ids for ephemeral
-	 * local-/err- bubbles and the thinking placeholder). */
-	bodies: Map<DisplayId, DisplayMessage>;
+	/** Hydrated bodies keyed by message id — a plain object (not a Map) so
+	 * Svelte's deep proxy wraps each body and in-place content mutations are
+	 * reactive (see the module comment). */
+	bodies: Record<string, DisplayMessage>;
 	/** True when index pages older than `entries[0]` remain on the server. */
 	hasMoreOlder: boolean;
 }
 
 export function emptyState(): TranscriptState {
-	return { entries: [], bodies: new Map(), hasMoreOlder: false };
+	return { entries: [], bodies: {}, hasMoreOlder: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +135,9 @@ export function entryFromMessage(m: DisplayMessage): TranscriptEntry {
 
 /** Seed from a server projection (page load or full refresh). */
 export function initState(p: TranscriptProjection): TranscriptState {
-	const bodies = new Map<DisplayId, DisplayMessage>();
+	const bodies: Record<string, DisplayMessage> = {};
 	for (const m of p.tail) {
-		const body = m as DisplayMessage;
-		bodies.set(body.id, body);
+		bodies[String(m.id)] = m as DisplayMessage;
 	}
 	return {
 		entries: [...p.index.map((e) => ({ ...e })), ...p.tail.map(entryFromMessage)],
@@ -142,7 +149,7 @@ export function initState(p: TranscriptProjection): TranscriptState {
 /** Append a live message (SSE `message.start`, optimistic user bubble, error). */
 export function appendMessage(state: TranscriptState, body: DisplayMessage): void {
 	state.entries.push(entryFromMessage(body));
-	state.bodies.set(body.id, body);
+	state.bodies[String(body.id)] = body;
 }
 
 /**
@@ -156,31 +163,25 @@ export function applyToMessage(
 	id: DisplayId,
 	fn: (m: DisplayMessage) => void
 ): boolean {
-	const body = state.bodies.get(id);
+	const body = state.bodies[String(id)];
 	if (!body) return false;
 	fn(body);
 	syncEntry(state, id);
 	return true;
 }
-
-/** Mark the body as most-recently-used (LRU eviction order). */
-export function touch(state: TranscriptState, id: DisplayId): void {
-	const body = state.bodies.get(id);
-	if (!body) return;
-	state.bodies.delete(id);
-	state.bodies.set(id, body);
-}
-
-/** Store a freshly fetched body (hydration), refreshing its entry meta. */
+/**
+ * Store a freshly fetched body (hydration), refreshing its entry meta.
+ * (Eviction order is the plain-object key order — numeric ids ascending,
+ * oldest-first — which is the right policy for a transcript body cache.)
+ */
 export function hydrate(state: TranscriptState, id: DisplayId, body: DisplayMessage): void {
-	state.bodies.set(id, body);
+	state.bodies[String(id)] = body;
 	syncEntry(state, id);
-	touch(state, id);
 }
 
 /** Refresh an entry's meta/descriptors from its hydrated body. */
 export function syncEntry(state: TranscriptState, id: DisplayId): void {
-	const body = state.bodies.get(id);
+	const body = state.bodies[String(id)];
 	if (!body) return;
 	const entry = state.entries.find((e) => e.id === id);
 	if (!entry) return;
@@ -197,35 +198,36 @@ export function syncEntry(state: TranscriptState, id: DisplayId): void {
 export function replaceId(state: TranscriptState, from: DisplayId, to: DisplayId): void {
 	const entry = state.entries.find((e) => e.id === from);
 	if (entry) entry.id = to;
-	const body = state.bodies.get(from);
+	const body = state.bodies[String(from)];
 	if (body) {
 		body.id = to;
-		state.bodies.delete(from);
-		state.bodies.set(to, body);
+		delete state.bodies[String(from)];
+		state.bodies[String(to)] = body;
 	}
 }
 
 /** Remove one message (failed optimistic send rollback). */
 export function removeMessage(state: TranscriptState, id: DisplayId): void {
 	state.entries = state.entries.filter((e) => e.id !== id);
-	state.bodies.delete(id);
+	delete state.bodies[String(id)];
 }
 
 /**
  * Evict least-recently-used bodies beyond `cap`, keeping `pinned` ids (the
  * streaming tail must never unmount). Returns the ids that were dropped.
+ * Pinned ids are matched against `String(id)` keys (and their numeric form).
  */
 export function evictLRU(state: TranscriptState, cap: number, pinned: Set<DisplayId>): DisplayId[] {
 	const dropped: DisplayId[] = [];
-	while (state.bodies.size > cap) {
-		let victim: DisplayId | null = null;
-		for (const id of state.bodies.keys()) {
-			if (pinned.has(id)) continue;
-			victim = id;
+	while (Object.keys(state.bodies).length > cap) {
+		let victim: string | null = null;
+		for (const key of Object.keys(state.bodies)) {
+			if (pinned.has(key) || pinned.has(Number(key))) continue;
+			victim = key;
 			break;
 		}
 		if (victim === null) break; // everything is pinned
-		state.bodies.delete(victim);
+		delete state.bodies[victim];
 		dropped.push(victim);
 	}
 	return dropped;
@@ -239,13 +241,13 @@ export function truncateAfter(state: TranscriptState, id: DisplayId): void {
 	const index = state.entries.findIndex((e) => e.id === id);
 	if (index < 0) {
 		state.entries = [];
-		state.bodies.clear();
+		state.bodies = {};
 		return;
 	}
 	state.entries = state.entries.slice(0, index + 1);
-	const kept = new Set(state.entries.map((e) => e.id));
-	for (const key of [...state.bodies.keys()]) {
-		if (!kept.has(key)) state.bodies.delete(key);
+	const kept = new Set(state.entries.map((e) => String(e.id)));
+	for (const key of Object.keys(state.bodies)) {
+		if (!kept.has(key)) delete state.bodies[key];
 	}
 }
 
@@ -287,12 +289,12 @@ export function mergeRefresh(state: TranscriptState, p: TranscriptProjection): v
 		...state.entries.filter((e) => !tailIds.has(e.id)),
 		...p.tail.map(entryFromMessage)
 	];
-	const newBodies = new Map<DisplayId, DisplayMessage>();
-	for (const m of p.tail) newBodies.set(m.id, m as DisplayMessage);
+	const newBodies: Record<string, DisplayMessage> = {};
+	for (const m of p.tail) newBodies[String(m.id)] = m as DisplayMessage;
 	// Keep bodies for entries that survived (they're immutable).
 	for (const e of state.entries) {
-		const existing = state.bodies.get(e.id);
-		if (existing && !tailIds.has(e.id)) newBodies.set(e.id, existing);
+		const existing = state.bodies[String(e.id)];
+		if (existing && !tailIds.has(e.id)) newBodies[String(e.id)] = existing;
 	}
 	state.bodies = newBodies;
 	state.hasMoreOlder = p.hasMoreOlder;
