@@ -165,7 +165,7 @@ function editConfirmation(replaceAll: boolean, rawFilePath: string): string {
 function editNotFoundError(oldString: string, hint?: string): string {
 	return hint === undefined
 		? `<tool_use_error>String to replace not found in file.\nString: ${oldString}</tool_use_error>`
-		: `<tool_use_error>String to replace not found in file.\nString: ${oldString}\nDid you mean: ${hint}</tool_use_error>`;
+		: `<tool_use_error>String to replace not found in file.\nString: ${oldString}\n${hint}</tool_use_error>`;
 }
 
 // jsdiff pads `---`/`+++` headers with a GNU-diff tab and prepends an
@@ -398,7 +398,7 @@ function buildSnippet(window: readonly string[]): string {
 }
 
 // Find the closest matching region of `content` for an unmatched `old_string`,
-// so the not-found error can tell the model "Did you mean: <this>".
+// so the not-found error can tell the model `Did you mean: "old_string": "<…>"`.
 // Returns null when nothing clears the thresholds — the caller then emits the
 // plain SDK error text (byte-identical to today).
 export function findClosestMatch(content: string, oldString: string): Suggestion | null {
@@ -447,11 +447,11 @@ export function findClosestMatch(content: string, oldString: string): Suggestion
 
 // Render a suggestion as the model-facing hint. The snippet is already a
 // complete JSON string literal of the window's exact bytes (quotes included,
-// escape sequences visible), so the hint tells the agent to pass it verbatim as
-// `old_string` on the next attempt. One line, no invented indentation — the
-// quotes and escapes carry the whitespace, character for character.
+// escape sequences visible), so the hint shows it as the `old_string` argument
+// the agent should pass next — `"old_string": "<json>"` mirrors the tool call,
+// character for character, with no invented indentation.
 export function suggestionHint(suggestion: Suggestion): string {
-	return `pass the following JSON string as old_string: ${suggestion.snippet}`;
+	return `Did you mean: "old_string": ${suggestion.snippet}`;
 }
 
 // The edit itself plus the SDK FileEditOutput projection and the model-facing

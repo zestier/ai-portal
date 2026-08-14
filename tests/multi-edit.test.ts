@@ -185,9 +185,7 @@ describe('multi_edit', () => {
 			if (!result.ok) {
 				expect(result.error.message).toContain('edits[1] (b.txt)');
 				expect(result.error.message).toContain('Did you mean:');
-				expect(result.error.message).toContain(
-					'pass the following JSON string as old_string: "gamma three"'
-				);
+				expect(result.error.message).toContain('"old_string": "gamma three"');
 				expect(result.error.details).toMatchObject({
 					suggestion: { snippet: '"gamma three"', lineStart: 1, lineEnd: 1 }
 				});

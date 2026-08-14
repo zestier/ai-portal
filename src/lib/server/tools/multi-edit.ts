@@ -246,7 +246,7 @@ export function buildMultiEditTools(
 							return editError(
 								i,
 								edit.file_path,
-								`string to replace not found.\nString: ${edit.old_string}\nDid you mean: ${suggestionHint(suggestion)}`,
+								`string to replace not found.\nString: ${edit.old_string}\n${suggestionHint(suggestion)}`,
 								{ suggestion },
 								true
 							);

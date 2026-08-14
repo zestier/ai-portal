@@ -193,10 +193,10 @@ describe('findClosestMatch', () => {
 });
 
 describe('suggestionHint', () => {
-	it('tells the agent to pass the JSON string literal as old_string', () => {
+	it('shows the exact old_string argument as JSON', () => {
 		expect(
 			suggestionHint({ snippet: '"gamma three"', lineStart: 3, lineEnd: 3, similarity: 0.9 })
-		).toBe('pass the following JSON string as old_string: "gamma three"');
+		).toBe('Did you mean: "old_string": "gamma three"');
 	});
 
 	it('keeps multi-line escapes character-for-character on a single line', () => {
@@ -206,7 +206,7 @@ describe('suggestionHint', () => {
 			lineEnd: 3,
 			similarity: 0.9
 		});
-		expect(hint).toBe('pass the following JSON string as old_string: "gamma three\\nbeta two"');
+		expect(hint).toBe('Did you mean: "old_string": "gamma three\\nbeta two"');
 		// No real newlines / invented indentation: the escapes carry the structure.
 		expect(hint.split('\n')).toHaveLength(1);
 	});
@@ -415,9 +415,7 @@ describe('edit', () => {
 			expect(result).toMatchObject({ ok: false });
 			if (!result.ok) {
 				expect(result.error.message).toContain('Did you mean:');
-				expect(result.error.message).toContain(
-					'pass the following JSON string as old_string: "gamma three"'
-				);
+				expect(result.error.message).toContain('"old_string": "gamma three"');
 				expect(result.error.details).toMatchObject({
 					suggestion: { snippet: '"gamma three"', lineStart: 2, lineEnd: 2 }
 				});
@@ -445,9 +443,7 @@ describe('edit', () => {
 				expect(result.error.message).toContain('Did you mean:');
 				// The hint is a single JSON-escaped old_string (escape sequences
 				// visible, no invented indentation).
-				expect(result.error.message).toContain(
-					'pass the following JSON string as old_string: "gamma three\\nbeta two"'
-				);
+				expect(result.error.message).toContain('"old_string": "gamma three\\nbeta two"');
 				expect(result.error.details).toMatchObject({
 					suggestion: { snippet: '"gamma three\\nbeta two"', lineStart: 2, lineEnd: 3 }
 				});
@@ -470,9 +466,7 @@ describe('edit', () => {
 			expect(result).toMatchObject({ ok: false });
 			if (!result.ok) {
 				expect(result.error.message).toContain('Did you mean:');
-				expect(result.error.message).toContain(
-					'pass the following JSON string as old_string: "gamma three"'
-				);
+				expect(result.error.message).toContain('"old_string": "gamma three"');
 				expect(result.error.details).toMatchObject({
 					suggestion: { similarity: 1, lineStart: 1, lineEnd: 1 }
 				});
