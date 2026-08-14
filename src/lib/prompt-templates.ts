@@ -299,15 +299,28 @@ export interface TicketActionDefault {
 }
 
 const DO_PROMPT =
-	'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
+	'Do this workspace ticket: {{ticket.title}}\n\n' +
+	'Execute the spec and plan below. When the plan is detailed, follow it as written — make the ' +
+	'changes each step describes, verify each step as it specifies, and do not redesign it. If ' +
+	'something is genuinely missing or impossible, stop and ask rather than improvising.\n\n' +
+	'Ticket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 
 const REFINE_PROMPT =
 	'Refine this workspace ticket: {{ticket.title}}\n\n' +
-	'Clarify the request, acceptance criteria, scope, risks, and useful implementation notes. ' +
-	'Research the code if needed. Ask me the questions required to flesh out the ticket, driving ' +
-	'each open decision to a concrete choice rather than leaving it ambiguous. Record those ' +
-	'decisions in the ticket and build a concrete implementation plan with a checklist in the ' +
-	"ticket's plan field. Update the ticket instead of implementing it unless explicitly asked." +
+	'Turn this ticket into a complete, self-contained spec and implementation plan that a later "Do" ' +
+	'run can execute without making any decisions. You are the strong model doing the thinking up front; ' +
+	'the executor that follows may be much weaker, so resolve everything now and leave nothing to infer.\n\n' +
+	'Write both artifacts into the ticket with `ticket_update` (id {{ticket.id}}), keeping any important ' +
+	'details from the current body:\n\n' +
+	'1. Spec (ticket body) — goal, verifiable acceptance criteria, requirements and edge cases, explicit ' +
+	'in/out of scope, constraints (dependencies, versions, conventions, performance, security), and every ' +
+	'decision with its rationale. No open questions left.\n\n' +
+	'2. Plan (ticket plan) — an ordered, dependency-sorted checklist of small, independently verifiable ' +
+	'steps: file paths, symbols, the exact change, and how to verify each. The executor should only follow ' +
+	'it, not design it.\n\n' +
+	'Research the code first so file paths and approaches are accurate. Ask me the questions needed to drive ' +
+	'each open decision to a concrete choice. Match depth to the ticket — a small change needs a tight spec ' +
+	'and short checklist, not a padded one. Do not implement anything — refine only writes the spec and plan.' +
 	'\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 
 export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
@@ -338,7 +351,8 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 	{
 		key: 'refine',
 		title: 'Refine',
-		description: 'Refine the ticket interactively instead of implementing it.',
+		description:
+			'Refine the ticket into a full spec and executable plan (interactive, no implementation).',
 		prompt: REFINE_PROMPT,
 		launchBehavior: 'send',
 		conversationMode: 'interactive',

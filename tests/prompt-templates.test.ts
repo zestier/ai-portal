@@ -391,7 +391,7 @@ describe('prompt templates', () => {
 			type: 'ticket-action',
 			title: 'Do',
 			prompt:
-				'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
+				'Do this workspace ticket: {{ticket.title}}\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
 			launchBehavior: 'draft'
 		});
 
@@ -403,7 +403,7 @@ describe('prompt templates', () => {
 			)
 		} as never);
 		expect((data as { initialComposer: string }).initialComposer).toBe(
-			`Do this workspace ticket: Fix sidebar actions\n\nTicket ID: ${ticket.id}\n\nAdd a launch button.\n\nPlan:\n(none)`
+			`Do this workspace ticket: Fix sidebar actions\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: ${ticket.id}\n\nAdd a launch button.\n\nPlan:\n(none)`
 		);
 
 		// A chat template id is not a valid ticket action -> 404.

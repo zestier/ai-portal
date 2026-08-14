@@ -119,9 +119,9 @@ describe('orderSidebarTickets', () => {
 
 describe('ticket action helpers', () => {
 	const doPrompt =
-		'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
+		'Do this workspace ticket: {{ticket.title}}\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 	const refinePrompt =
-		"Refine this workspace ticket: {{ticket.title}}\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}";
+		'Refine this workspace ticket: {{ticket.title}}\n\nTurn this ticket into a complete, self-contained spec and implementation plan that a later "Do" run can execute without making any decisions. You are the strong model doing the thinking up front; the executor that follows may be much weaker, so resolve everything now and leave nothing to infer.\n\nWrite both artifacts into the ticket with `ticket_update` (id {{ticket.id}}), keeping any important details from the current body:\n\n1. Spec (ticket body) — goal, verifiable acceptance criteria, requirements and edge cases, explicit in/out of scope, constraints (dependencies, versions, conventions, performance, security), and every decision with its rationale. No open questions left.\n\n2. Plan (ticket plan) — an ordered, dependency-sorted checklist of small, independently verifiable steps: file paths, symbols, the exact change, and how to verify each. The executor should only follow it, not design it.\n\nResearch the code first so file paths and approaches are accurate. Ask me the questions needed to drive each open decision to a concrete choice. Match depth to the ticket — a small change needs a tight spec and short checklist, not a padded one. Do not implement anything — refine only writes the spec and plan.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 
 	it('uses the ticket title as the chat title', () => {
 		expect(ticketActionChatTitle({ title: 'Fix sidebar actions' })).toBe('Fix sidebar actions');
@@ -139,7 +139,7 @@ describe('ticket action helpers', () => {
 				{ id: 'T1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
+			'Do this workspace ticket: Fix sidebar actions\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		);
 	});
 
@@ -150,7 +150,7 @@ describe('ticket action helpers', () => {
 				{ id: 'T1', title: 'Fix sidebar actions', body: 'Add a launch button.', plan: '' }
 			)
 		).toBe(
-			"Refine this workspace ticket: Fix sidebar actions\n\nClarify the request, acceptance criteria, scope, risks, and useful implementation notes. Research the code if needed. Ask me the questions required to flesh out the ticket, driving each open decision to a concrete choice rather than leaving it ambiguous. Record those decisions in the ticket and build a concrete implementation plan with a checklist in the ticket's plan field. Update the ticket instead of implementing it unless explicitly asked.\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)"
+			'Refine this workspace ticket: Fix sidebar actions\n\nTurn this ticket into a complete, self-contained spec and implementation plan that a later "Do" run can execute without making any decisions. You are the strong model doing the thinking up front; the executor that follows may be much weaker, so resolve everything now and leave nothing to infer.\n\nWrite both artifacts into the ticket with `ticket_update` (id T1), keeping any important details from the current body:\n\n1. Spec (ticket body) — goal, verifiable acceptance criteria, requirements and edge cases, explicit in/out of scope, constraints (dependencies, versions, conventions, performance, security), and every decision with its rationale. No open questions left.\n\n2. Plan (ticket plan) — an ordered, dependency-sorted checklist of small, independently verifiable steps: file paths, symbols, the exact change, and how to verify each. The executor should only follow it, not design it.\n\nResearch the code first so file paths and approaches are accurate. Ask me the questions needed to drive each open decision to a concrete choice. Match depth to the ticket — a small change needs a tight spec and short checklist, not a padded one. Do not implement anything — refine only writes the spec and plan.\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		);
 	});
 
@@ -160,7 +160,9 @@ describe('ticket action helpers', () => {
 				{ prompt: doPrompt },
 				{ id: 'T1', title: 'Fix sidebar actions', body: '  ', plan: '' }
 			)
-		).toBe('Do this workspace ticket: Fix sidebar actions\n\nTicket ID: T1\n\nPlan:\n(none)');
+		).toBe(
+			'Do this workspace ticket: Fix sidebar actions\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: T1\n\nPlan:\n(none)'
+		);
 	});
 
 	it('builds encoded draft chat URLs that carry the action id', () => {

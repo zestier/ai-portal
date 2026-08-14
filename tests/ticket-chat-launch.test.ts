@@ -26,7 +26,7 @@ function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate
 		title: 'Do',
 		description: '',
 		prompt:
-			'Do this workspace ticket: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
+			'Do this workspace ticket: {{ticket.title}}\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
 		launchBehavior: 'draft',
 		conversationMode: null,
 		approvalMode: null,
@@ -62,7 +62,7 @@ describe('createTicketDraftChat', () => {
 			ok: true,
 			href: '/conversations/conv-1?draftTicketId=T1&ticketActionId=PT100',
 			prompt:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
+				'Do this workspace ticket: Fix sidebar actions\n\nExecute the spec and plan below. When the plan is detailed, follow it as written — make the changes each step describes, verify each step as it specifies, and do not redesign it. If something is genuinely missing or impossible, stop and ask rather than improvising.\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const [url, init] = fetcher.mock.calls[0];
