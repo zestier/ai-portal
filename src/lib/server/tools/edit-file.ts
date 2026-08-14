@@ -15,7 +15,13 @@ import {
 	type WorktreeToolContext
 } from './worktree-selector';
 
-const MAX_EDIT_FILE_BYTES = 5_000_000;
+export const MAX_EDIT_FILE_BYTES = 5_000_000;
+
+// Maximum serialized size of the `edits` payload a single `multi_edit` call may
+// carry. Mirrors the 1MB patch cap the portal's legacy unified-diff apply tool
+// enforced, so an oversize batch is rejected up front rather than streaming
+// megabytes through the permission layer.
+export const MAX_MULTI_EDIT_PAYLOAD_BYTES = 1_000_000;
 
 // Mirrors the SDK WriteInput so the aliased SDK `Write` tool (which sends
 // `file_path`/`content` verbatim) parses cleanly. `file_path` is absolute per
@@ -90,8 +96,9 @@ export interface FileEditOutput {
 // Resolve a Write `file_path` to an absolute, symlink-resolved target inside
 // the workspace. Accepts both the SDK contract's absolute paths and
 // workspace-relative paths (as the golden capture used), rejecting any `..`
-// escape that resolves outside the root.
-function resolveWriteTarget(
+// escape that resolves outside the root. Exported so `multi_edit` resolves its
+// `file_path`s through the exact same rules.
+export function resolveWriteTarget(
 	workspaceRoot: string,
 	rawPath: string
 ): { ok: true; abs: string; rel: string } | { ok: false; message: string } {
@@ -114,7 +121,10 @@ function resolveWriteTarget(
 	return { ok: true, abs, rel: abs === root ? '.' : relative(root, abs) };
 }
 
-async function readExisting(abs: string): Promise<string | null> {
+// Read an existing file's content, enforcing the size/binary caps. Returns null
+// when the path does not exist. Exported so `multi_edit` reads through the same
+// gate (the batch must reject a >5MB or binary file exactly like `edit`).
+export async function readExisting(abs: string): Promise<string | null> {
 	const fileStat = await stat(abs).catch(() => null);
 	if (fileStat === null) return null;
 	if (!fileStat.isFile()) throw new Error('path is not a file');
@@ -170,8 +180,9 @@ function cleanTwoFilesPatch(patch: string): string {
 // The SDK's `gitDiff` is the file's unified diff inside a git repo. The patch
 // is synthesized from pre/post content via jsdiff (not `git diff`, so a
 // freshly-created untracked file still yields a patch) with the SDK's
-// status/additions/deletions/changes fields.
-function gitDiffFor(
+// status/additions/deletions/changes fields. Exported so `multi_edit` reports a
+// per-edit gitDiff through the exact same projection as `edit`.
+export function gitDiffFor(
 	type: 'create' | 'update',
 	filename: string,
 	oldContent: string,
@@ -256,6 +267,31 @@ export async function renderWriteModelText(
 	return outcome.text;
 }
 
+// The pure content transformation behind an exact-text replacement. Shared by
+// the `edit` tool and `multi_edit` so the replace semantics (first occurrence
+// unless `replaceAll`, no-change rejection) cannot drift. `multi_edit` calls it
+// against the in-memory batch content instead of a file, which is what makes the
+// sequential intra-file semantics identical to repeated `edit` calls.
+export type EditContentResult =
+	| { ok: true; content: string }
+	| { ok: false; reason: 'not_found' | 'no_change' };
+
+export function applyEditToContent(
+	content: string,
+	oldString: string,
+	newString: string,
+	replaceAll: boolean
+): EditContentResult {
+	if (oldString === newString) return { ok: false, reason: 'no_change' };
+	if (!content.includes(oldString)) return { ok: false, reason: 'not_found' };
+	return {
+		ok: true,
+		content: replaceAll
+			? content.replaceAll(oldString, newString)
+			: content.replace(oldString, newString)
+	};
+}
+
 // The edit itself plus the SDK FileEditOutput projection and the model-facing
 // confirmation text. `rawFilePath` is echoed verbatim in the confirmation,
 // matching the SDK's rendering (the golden capture passed relative paths).
@@ -277,15 +313,13 @@ async function performEdit(
 			// fails like any unmatched string.
 			return { message: editNotFoundError(oldString) };
 		}
-		if (oldString === newString) {
-			return { message: 'new_string must be different from old_string' };
+		const applied = applyEditToContent(existing, oldString, newString, replaceAll);
+		if (!applied.ok) {
+			return applied.reason === 'not_found'
+				? { message: editNotFoundError(oldString) }
+				: { message: 'new_string must be different from old_string' };
 		}
-		if (!existing.includes(oldString)) {
-			return { message: editNotFoundError(oldString) };
-		}
-		const content = replaceAll
-			? existing.replaceAll(oldString, newString)
-			: existing.replace(oldString, newString);
+		const content = applied.content;
 		await writeFile(target.abs, content);
 		const hunks = structuredPatch('a', 'b', existing, content, '', '', { context: 3 }).hunks;
 		const result: FileEditOutput = {
@@ -335,7 +369,7 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		{
 			name: 'edit',
 			description:
-				'Replace exact text in an existing text file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `old_string` is the literal text to find; `new_string` replaces it (must differ); `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. Prefer this exact-text form for a single replacement; use `apply_patch` for multi-hunk or range edits (line-number edits are drift-prone — anchor on content, not line numbers).',
+				'Replace exact text in an existing text file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `old_string` is the literal text to find; `new_string` replaces it (must differ); `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits (line-number edits are drift-prone — anchor on content, not line numbers).',
 			argsSchema: EditArgs,
 			parameters: {
 				type: 'object',

@@ -22,7 +22,7 @@ import { buildPermissionTools } from './permissions';
 import { buildMemoryTools } from './memory';
 import { buildPromptTemplateTools } from './prompt-templates';
 import { buildShellTools } from './shell';
-import { buildApplyPatchTools } from './apply-patch';
+import { buildMultiEditTools } from './multi-edit';
 import { buildGrepTools } from './grep';
 import { buildEditFileTools } from './edit-file';
 import { buildLsTools } from './ls';
@@ -58,7 +58,7 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			}),
-			...buildApplyPatchTools(STUB.cwd, {
+			...buildMultiEditTools(STUB.cwd, {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			}),

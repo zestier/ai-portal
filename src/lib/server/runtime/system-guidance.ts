@@ -44,7 +44,7 @@ export function buildPortalSystemGuidance(availableToolNames: Iterable<string>):
 		[
 			'You are running through a portal that mediates your tool calls via a permission gateway.',
 			'Prefer structured tools (read/edit/write/grep/ls/find/bash) over shell equivalents (cat/sed/rg/find) where available.',
-			'Edit with content anchors, not line numbers: use `edit` (exact text) or `apply_patch` (multi-hunk, context-matched, atomic) — line-number edits go stale after any prior edit and silently mangle files.'
+			'Edit with content anchors, not line numbers: use `edit` (exact text) or `multi_edit` (multi-hunk/multi-file exact-text batch, atomic) — line-number edits go stale after any prior edit and silently mangle files.'
 		].join('\n')
 	);
 

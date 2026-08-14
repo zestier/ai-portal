@@ -1,5 +1,4 @@
 import { createTwoFilesPatch } from 'diff';
-import { parseApplyPatch } from './apply-patch';
 
 // Synthesize a unified-diff string from the arguments of file-mutation tool
 // calls (create, edit, write_file, etc.) so the existing DiffView component
@@ -67,6 +66,24 @@ function fromEditArgs(path: string, args: ParsedArgs): SynthDiff | null {
 	return { path, diff: cleanPatch(patch) };
 }
 
+// `multi_edit` carries its edits as an array of `{file_path, old_string,
+// new_string, replace_all?}` objects — the same shape `edit` uses, so each
+// entry synthesizes through `fromEditArgs` and the UI shows one sequential diff
+// per edit (mirroring how the batch applies).
+function fromMultiEditArgs(args: ParsedArgs): SynthDiff[] {
+	if (!Array.isArray(args.edits)) return [];
+	const diffs: SynthDiff[] = [];
+	for (const raw of args.edits) {
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+		const entry = raw as ParsedArgs;
+		const path = str(entry.file_path) ?? str(entry.path) ?? str(entry.file);
+		if (!path) continue;
+		const diff = fromEditArgs(path, entry);
+		if (diff) diffs.push(diff);
+	}
+	return diffs;
+}
+
 function fromCreateArgs(path: string, args: ParsedArgs): SynthDiff | null {
 	const body = str(args.file_text) ?? str(args.content) ?? str(args.contents) ?? str(args.text);
 	if (body == null) return null;
@@ -74,15 +91,16 @@ function fromCreateArgs(path: string, args: ParsedArgs): SynthDiff | null {
 	return { path, diff: cleanPatch(patch) };
 }
 
-const EDIT_TOOLS = new Set(['edit', 'apply_patch']);
+const EDIT_TOOLS = new Set(['edit']);
 const CREATE_TOOLS = new Set(['write']);
 
 export function synthesizeDiffs(input: SynthDiffInput): SynthDiff[] {
 	const t = input.tool.toLowerCase();
-	if (t === 'apply_patch') return parseApplyPatch(input.argsJson) ?? [];
 
 	const args = parseArgs(input.argsJson);
 	if (!args) return [];
+	if (t === 'multi_edit') return fromMultiEditArgs(args);
+
 	const path = str(args.path) ?? str(args.file) ?? str(args.filename) ?? str(args.file_path);
 	if (!path) return [];
 	if (EDIT_TOOLS.has(t)) {

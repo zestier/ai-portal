@@ -54,26 +54,26 @@ describe('summarizeToolCall', () => {
 		expect(summarizeToolCall('bash', 'not json')).toBeNull();
 	});
 
-	it('summarizes raw apply_patch input by touched files', () => {
+	it('summarizes multi_edit by the unique files its edits touch', () => {
 		expect(
 			summarizeToolCall(
-				'apply_patch',
-				[
-					'diff --git a/src/foo.ts b/src/foo.ts',
-					'--- a/src/foo.ts',
-					'+++ b/src/foo.ts',
-					'@@ -1 +1 @@',
-					'-a',
-					'+b',
-					'diff --git a/src/bar.ts b/src/bar.ts',
-					'new file mode 100644',
-					'--- /dev/null',
-					'+++ b/src/bar.ts',
-					'@@ -0,0 +1 @@',
-					'+hello'
-				].join('\n')
+				'multi_edit',
+				JSON.stringify({
+					edits: [
+						{ file_path: 'src/foo.ts', old_string: 'a', new_string: 'b' },
+						{ file_path: 'src/bar.ts', old_string: 'x', new_string: 'y' },
+						{ file_path: 'src/foo.ts', old_string: 'c', new_string: 'd' }
+					]
+				})
 			)
 		).toBe('src/foo.ts +1 more');
+		// A single touched file collapses to just its path.
+		expect(
+			summarizeToolCall(
+				'multi_edit',
+				JSON.stringify({ edits: [{ file_path: 'src/foo.ts', old_string: 'a', new_string: 'b' }] })
+			)
+		).toBe('src/foo.ts');
 	});
 
 	it('falls back to first string arg for unknown tools', () => {

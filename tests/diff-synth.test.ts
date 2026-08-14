@@ -98,45 +98,45 @@ describe('synthesizeDiff', () => {
 		expect(synthesizeDiff({ tool: 'edit', argsJson: 'not json' })).toBeNull();
 	});
 
-	it('synthesizes diffs for raw apply_patch input', () => {
+	it('synthesizes one diff per edit from a multi_edit edits array', () => {
 		const r = synthesizeDiffs({
-			tool: 'apply_patch',
-			argsJson: [
-				'diff --git a/src/foo.ts b/src/foo.ts',
-				'--- a/src/foo.ts',
-				'+++ b/src/foo.ts',
-				'@@ -1 +1 @@',
-				'-const value = 1;',
-				'+const value = 2;',
-				'diff --git a/src/bar.ts b/src/bar.ts',
-				'new file mode 100644',
-				'--- /dev/null',
-				'+++ b/src/bar.ts',
-				'@@ -0,0 +1 @@',
-				'+export const bar = true;'
-			].join('\n')
+			tool: 'multi_edit',
+			argsJson: JSON.stringify({
+				edits: [
+					{
+						file_path: 'src/foo.ts',
+						old_string: 'const value = 1;',
+						new_string: 'const value = 2;'
+					},
+					{ file_path: 'src/bar.ts', old_string: 'bar = false', new_string: 'bar = true' }
+				]
+			})
 		});
 		expect(r).toHaveLength(2);
 		expect(r[0]?.path).toBe('src/foo.ts');
 		expect(diffStats(parseUnifiedDiff(r[0]!.diff))).toEqual({ added: 1, removed: 1 });
 		expect(r[1]?.path).toBe('src/bar.ts');
-		expect(diffStats(parseUnifiedDiff(r[1]!.diff))).toEqual({ added: 1, removed: 0 });
+		expect(diffStats(parseUnifiedDiff(r[1]!.diff))).toEqual({ added: 1, removed: 1 });
 	});
 
-	it('shows renames from apply_patch updates', () => {
-		const r = synthesizeDiff({
-			tool: 'apply_patch',
-			argsJson: [
-				'diff --git a/src/old.ts b/src/new.ts',
-				'similarity index 100%',
-				'rename from src/old.ts',
-				'rename to src/new.ts'
-			].join('\n')
+	it('synthesizes a separate diff for each sequential edit to the same file', () => {
+		const r = synthesizeDiffs({
+			tool: 'multi_edit',
+			argsJson: JSON.stringify({
+				edits: [
+					{ file_path: 'f.ts', old_string: 'a', new_string: 'A' },
+					{ file_path: 'f.ts', old_string: 'b', new_string: 'B' }
+				]
+			})
 		});
-		expect(r).not.toBeNull();
-		expect(r!.path).toBe('src/old.ts -> src/new.ts');
-		expect(r!.diff).toContain('rename from src/old.ts');
-		expect(r!.diff).toContain('rename to src/new.ts');
+		expect(r).toHaveLength(2);
+		expect(r[0]?.path).toBe('f.ts');
+		expect(r[1]?.path).toBe('f.ts');
+	});
+
+	it('returns no diffs for a multi_edit call without an edits array', () => {
+		expect(synthesizeDiffs({ tool: 'multi_edit', argsJson: '{}' })).toEqual([]);
+		expect(synthesizeDiffs({ tool: 'multi_edit', argsJson: null })).toEqual([]);
 	});
 });
 

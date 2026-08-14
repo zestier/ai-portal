@@ -7,7 +7,6 @@
 // summaries at read time for the backend-projected transcript, and the
 // client still derives them for live streamed records.
 
-import { parseApplyPatch } from './client/apply-patch';
 function truncate(s: string, n = 80): string {
 	const oneLine = s.replace(/\s+/g, ' ').trim();
 	return oneLine.length > n ? oneLine.slice(0, n - 1) + '…' : oneLine;
@@ -81,16 +80,22 @@ export function splitSummaryForWrap(summary: string): string[] {
 export function summarizeToolCall(tool: string, argsJson: string | null): string | null {
 	if (argsJson === null) return null;
 	const t = tool.toLowerCase();
-	if (t === 'apply_patch') {
-		const changes = parseApplyPatch(argsJson);
-		if (changes?.length) {
-			return changes.length === 1
-				? changes[0].path
-				: `${changes[0].path} +${changes.length - 1} more`;
+	const args = parseArgs(argsJson);
+	// `multi_edit` summarizes by the unique files its `edits` array touches,
+	// mirroring the "file.txt +N more" shape the removed apply_patch used.
+	if (t === 'multi_edit' && args && Array.isArray(args.edits)) {
+		const paths = new Set<string>();
+		for (const raw of args.edits) {
+			if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+				const path = str((raw as Record<string, unknown>).file_path);
+				if (path) paths.add(path);
+			}
 		}
+		const unique = [...paths];
+		if (unique.length === 1) return unique[0];
+		if (unique.length > 1) return `${unique[0]} +${unique.length - 1} more`;
 	}
 
-	const args = parseArgs(argsJson);
 	if (!args) return null;
 	const handler = summaryHandlers[t];
 	if (handler) return handler(args);

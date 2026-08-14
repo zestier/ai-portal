@@ -18,9 +18,9 @@ import { sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { portalToolToPiTool } from '../pi/tools';
-import { buildApplyPatchTools } from './apply-patch';
 import { buildCreateDirectoryTools, buildMoveTools, buildTrashTools } from './filesystem';
 import { buildEditFileTools } from './edit-file';
+import { buildMultiEditTools } from './multi-edit';
 import { buildGitTools } from './git';
 import { buildGrepTools } from './grep';
 import { buildFindTools } from './find';
@@ -71,7 +71,7 @@ export function assemblePiTools(opts: AssemblePiToolsOptions): AssembledPiTools 
 			...buildMoveTools(opts.cwd, { userId, conversationId }),
 			...buildTrashTools(opts.cwd, { userId, conversationId }),
 			...buildReadTools(opts.cwd, { userId, conversationId }),
-			...buildApplyPatchTools(opts.cwd, { userId, conversationId }),
+			...buildMultiEditTools(opts.cwd, { userId, conversationId }),
 			...buildEditFileTools(opts.cwd, { userId, conversationId }),
 			...buildGrepTools(opts.cwd, { userId, conversationId }),
 			...buildLsTools(opts.cwd, { userId, conversationId }),
