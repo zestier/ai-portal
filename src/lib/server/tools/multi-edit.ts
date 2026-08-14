@@ -87,15 +87,20 @@ type Target = { abs: string; rel: string };
 // Error text for a failing edit: 0-based index into the `edits` array, the
 // caller's path, and the failure reason (for an unmatched `old_string`, the
 // unmatched string itself). `details` (the closest-match suggestion, when one
-// clears the threshold) rides the envelope for the UI, independent of the
-// model-facing text.
+// clears the threshold) rides the envelope for the UI; `detailsUiOnly` marks it
+// as UI-only so the message stays the complete model-facing text.
 function editError(
 	index: number,
 	filePath: string,
 	message: string,
-	details?: unknown
+	details?: unknown,
+	detailsUiOnly?: boolean
 ): ToolResult {
-	return err(`edits[${index}] (${filePath}): ${message}`, { code: 'edit_failed', details });
+	return err(`edits[${index}] (${filePath}): ${message}`, {
+		code: 'edit_failed',
+		...(details !== undefined ? { details } : {}),
+		...(detailsUiOnly !== undefined ? { detailsUiOnly } : {})
+	});
 }
 
 // The model-facing confirmation, mirroring `edit`'s wording (the diffs live in
@@ -242,7 +247,8 @@ export function buildMultiEditTools(
 								i,
 								edit.file_path,
 								`string to replace not found.\nString: ${edit.old_string}\nDid you mean: ${suggestionHint(suggestion)}`,
-								{ suggestion }
+								{ suggestion },
+								true
 							);
 						}
 						return editError(i, edit.file_path, 'new_string must be different from old_string');

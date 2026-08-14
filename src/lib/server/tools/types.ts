@@ -22,6 +22,13 @@ export interface ToolError {
 	message: string;
 	code?: string;
 	details?: unknown;
+	// UI-only marker: when true, `code`/`details` are advisory metadata for the
+	// UI (they still ship in the serialized envelope / fullContent) and are NOT
+	// rendered into the model-facing text — the `message` is the complete model
+	// view. Used by tools that put everything the model needs into the message
+	// (e.g. edit's "Did you mean" closest-match hint) while keeping the
+	// structured payload for the client.
+	detailsUiOnly?: boolean;
 }
 
 // Binary artifact returned alongside a successful tool result — e.g. an image
@@ -153,11 +160,12 @@ export function ok(
 // throwing; thrown exceptions are normalized to the same shape at the boundary.
 export function err(
 	message: string,
-	opts?: { code?: string; details?: unknown; summary?: string }
+	opts?: { code?: string; details?: unknown; summary?: string; detailsUiOnly?: boolean }
 ): ToolResult {
 	const error: ToolError = { message };
 	if (opts?.code !== undefined) error.code = opts.code;
 	if (opts?.details !== undefined) error.details = opts.details;
+	if (opts?.detailsUiOnly !== undefined) error.detailsUiOnly = opts.detailsUiOnly;
 	return opts?.summary === undefined
 		? { ok: false, error }
 		: { ok: false, summary: opts.summary, error };
@@ -209,6 +217,7 @@ export function parseEnvelopeJson(json: string): ToolResult | null {
 		const error: ToolError = { message: e.message };
 		if (typeof e.code === 'string') error.code = e.code;
 		if ('details' in e) error.details = e.details;
+		if (e.detailsUiOnly === true) error.detailsUiOnly = true;
 		return summary === undefined ? { ok: false, error } : { ok: false, summary, error };
 	}
 	const out: {
@@ -290,9 +299,9 @@ export function deriveToolResultViews(envelope: ToolResult): ToolResultViews {
 // was serialized verbatim to the model.
 function deriveModelText(envelope: ToolResult): string {
 	if (!envelope.ok) {
-		const { message, code, details } = envelope.error;
-		let text = code ? `${message} (code: ${code})` : message;
-		if (details !== undefined) text += `\n${renderReadable(details)}`;
+		const { message, code, details, detailsUiOnly } = envelope.error;
+		let text = detailsUiOnly ? message : code ? `${message} (code: ${code})` : message;
+		if (details !== undefined && !detailsUiOnly) text += `\n${renderReadable(details)}`;
 		return text;
 	}
 	const rendered = renderViewText(envelope.views);

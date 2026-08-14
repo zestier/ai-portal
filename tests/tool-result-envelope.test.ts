@@ -124,6 +124,31 @@ describe('deriveToolResultViews', () => {
 		expect(views.modelText).toContain('staged: 0');
 	});
 
+	it('keeps UI-only code and details out of the model text (detailsUiOnly)', () => {
+		const views = deriveToolResultViews(
+			err('string to replace not found', {
+				code: 'edit_failed',
+				details: {
+					suggestion: { snippet: 'gamma three', lineStart: 2, lineEnd: 2, similarity: 0.9 }
+				},
+				detailsUiOnly: true
+			})
+		);
+		// The message is the complete model-facing text — no `(code: …)` suffix,
+		// no rendered details block.
+		expect(views.ok).toBe(false);
+		expect(views.modelText).toBe('string to replace not found');
+		// The envelope still carries code/details for the UI/fullContent.
+		expect(JSON.parse(views.fullContent)).toMatchObject({
+			ok: false,
+			error: {
+				code: 'edit_failed',
+				detailsUiOnly: true,
+				details: { suggestion: { lineStart: 2 } }
+			}
+		});
+	});
+
 	it('reports an empty success result without leaking the envelope JSON', () => {
 		const views = deriveToolResultViews(ok());
 		expect(views.modelText).toBe('(no result)');

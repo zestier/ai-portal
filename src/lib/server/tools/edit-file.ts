@@ -306,7 +306,9 @@ export function applyEditToContent(
 // anywhere` vs the fixture's greek-letter lines).
 export const MIN_SUGGEST_SIMILARITY = 0.6;
 
-// Maximum trimmed lines shown in a suggestion snippet (the hint stays small).
+// Maximum file lines a suggestion snippet may include before it is truncated
+// (with an explicit '…' marker so a preview is never mistaken for the full
+// string). The snippet is the matching window's exact bytes, JSON-escaped.
 export const MAX_SUGGEST_LINES = 3;
 
 // Absolute sanity cap on edit distance: a "closest match" must be within this
@@ -324,8 +326,12 @@ export const MAX_SUGGEST_OLD_BYTES = 16 * 1024;
 
 // Total snippet length cap (keeps the "Did you mean" line short).
 const MAX_SUGGEST_SNIPPET_CHARS = 300;
-
 export interface Suggestion {
+	// The matching window's exact bytes as a complete JSON string literal
+	// (surrounding quotes included), e.g.
+	// `"export function main() {\n\tconst value = helper(\"golden\");"` — copy
+	// it verbatim as `old_string` to make the edit succeed. Truncation keeps the
+	// closing quote and marks the cut with '…'.
 	snippet: string;
 	lineStart: number;
 	lineEnd: number;
@@ -373,22 +379,22 @@ export function cappedLevenshtein(
 	return Math.min(prev[n], maxDist + 1);
 }
 
-// Build the display snippet for a matching window: at most MAX_SUGGEST_LINES
-// trimmed lines (the file's actual text, not the normalized form), with the
-// total length capped so the hint stays small.
+// Build the display snippet for a matching window: the window's exact bytes as
+// a complete JSON string literal — surrounding quotes included — so the agent
+// can copy it verbatim into `old_string` and the escapes carry the whitespace,
+// character for character (`\n`/`\t`/`\r` and all). The raw window lines joined
+// by '\n' reproduce the file's exact region (CRLF files keep their `\r` as-is).
+// Truncation — line cap or char cap — keeps the closing quote and marks the cut
+// with '…' so a preview is never mistaken for the full string.
 function buildSnippet(window: readonly string[]): string {
-	const lines = window.map((line) => line.trim()).slice(0, MAX_SUGGEST_LINES);
-	const out: string[] = [];
-	let budget = MAX_SUGGEST_SNIPPET_CHARS;
-	for (const line of lines) {
-		if (line.length > budget) {
-			out.push(`${line.slice(0, budget)}…`);
-			break;
-		}
-		out.push(line);
-		budget -= line.length;
-	}
-	return out.join('\n');
+	const lines = window.length > MAX_SUGGEST_LINES ? window.slice(0, MAX_SUGGEST_LINES) : window;
+	const truncatedLines = lines.length < window.length;
+	const raw = lines.join('\n') + (truncatedLines ? '\n…' : '');
+	const literal = JSON.stringify(raw);
+	if (literal.length <= MAX_SUGGEST_SNIPPET_CHARS) return literal;
+	// Keep the opening quote, cut the escaped content, close the literal.
+	const cut = literal.slice(0, MAX_SUGGEST_SNIPPET_CHARS);
+	return `${cut.endsWith('\\') ? cut.slice(0, -1) : cut}…"`;
 }
 
 // Find the closest matching region of `content` for an unmatched `old_string`,
@@ -411,9 +417,12 @@ export function findClosestMatch(content: string, oldString: string): Suggestion
 
 	let best: Suggestion | null = null;
 	for (let i = 0; i + oldLineCount <= fileLines.length; i++) {
-		// Strip the CRLF residue (`\r` before a `\n`) so CRLF files score equal
-		// to LF files; `collapseWhitespace` then has no stray `\r` to account for.
-		const window = fileLines.slice(i, i + oldLineCount).map((line) => line.replace(/\r$/, ''));
+		// The raw window is the file's exact bytes for this region (CRLF files
+		// keep their trailing `\r`); the snippet JSON-escapes it verbatim so the
+		// agent can pass it as `old_string`. Scoring uses a copy with the CRLF
+		// residue stripped so CRLF files score equal to LF files.
+		const rawWindow = fileLines.slice(i, i + oldLineCount);
+		const window = rawWindow.map((line) => line.replace(/\r$/, ''));
 		const candidate = collapseWhitespace(window.join('\n'));
 		const candidateCodePoints = Array.from(candidate);
 		const maxLen = Math.max(oldCodePoints.length, candidateCodePoints.length);
@@ -426,7 +435,7 @@ export function findClosestMatch(content: string, oldString: string): Suggestion
 		const similarity = Math.round((1 - distance / maxLen) * 1000) / 1000;
 		if (best === null || similarity > best.similarity) {
 			best = {
-				snippet: buildSnippet(window),
+				snippet: buildSnippet(rawWindow),
 				lineStart: i + 1,
 				lineEnd: i + oldLineCount,
 				similarity
@@ -436,15 +445,13 @@ export function findClosestMatch(content: string, oldString: string): Suggestion
 	return best;
 }
 
-// Render a suggestion as the model-facing "Did you mean" hint: the line range
-// (1-based) plus the snippet. Single-line windows read "line N", multi-line
-// windows "lines N-M", e.g. `line 3: gamma three`.
+// Render a suggestion as the model-facing hint. The snippet is already a
+// complete JSON string literal of the window's exact bytes (quotes included,
+// escape sequences visible), so the hint tells the agent to pass it verbatim as
+// `old_string` on the next attempt. One line, no invented indentation — the
+// quotes and escapes carry the whitespace, character for character.
 export function suggestionHint(suggestion: Suggestion): string {
-	const range =
-		suggestion.lineStart === suggestion.lineEnd
-			? `line ${suggestion.lineStart}`
-			: `lines ${suggestion.lineStart}-${suggestion.lineEnd}`;
-	return `${range}: ${suggestion.snippet}`;
+	return `pass the following JSON string as old_string: ${suggestion.snippet}`;
 }
 
 // The edit itself plus the SDK FileEditOutput projection and the model-facing
@@ -465,7 +472,12 @@ async function performEdit(
 	replaceAll: boolean
 ): Promise<
 	| { result: FileEditOutput; text: string }
-	| { message: string; code?: 'edit_failed'; details?: { suggestion: Suggestion } }
+	| {
+			message: string;
+			code?: 'edit_failed';
+			details?: { suggestion: Suggestion };
+			detailsUiOnly?: boolean;
+	  }
 > {
 	try {
 		const existing = await readExisting(target.abs);
@@ -485,7 +497,10 @@ async function performEdit(
 				return {
 					message: editNotFoundError(oldString, suggestionHint(suggestion)),
 					code: 'edit_failed',
-					details: { suggestion }
+					details: { suggestion },
+					// The message is the complete model-facing text; code/details
+					// stay in the envelope for the UI only.
+					detailsUiOnly: true
 				};
 			}
 			return { message: 'new_string must be different from old_string' };
@@ -585,10 +600,12 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 					parsed.replace_all
 				);
 				if ('message' in outcome) {
-					return err(
-						outcome.message,
-						outcome.code ? { code: outcome.code, details: outcome.details } : undefined
-					);
+					if (!outcome.code) return err(outcome.message);
+					return err(outcome.message, {
+						code: outcome.code,
+						...(outcome.details !== undefined ? { details: outcome.details } : {}),
+						...(outcome.detailsUiOnly !== undefined ? { detailsUiOnly: outcome.detailsUiOnly } : {})
+					});
 				}
 				return ok(outcome.result, outcome.text, {
 					views: [{ type: 'text', text: outcome.text }]

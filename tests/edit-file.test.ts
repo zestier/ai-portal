@@ -10,8 +10,8 @@ import {
 	findClosestMatch,
 	MAX_SUGGEST_DISTANCE,
 	MAX_SUGGEST_FILE_BYTES,
-	MAX_SUGGEST_LINES,
-	MAX_SUGGEST_OLD_BYTES
+	MAX_SUGGEST_OLD_BYTES,
+	suggestionHint
 } from '../src/lib/server/tools/edit-file';
 
 async function withWorkspace(run: (workspace: string) => Promise<void>) {
@@ -113,7 +113,8 @@ describe('findClosestMatch', () => {
 	it('finds a one-word typo on a single line with 1-based line numbers', () => {
 		const match = findClosestMatch('alpha one\ngamma three\nbeta two\n', 'gamma tree');
 		expect(match).not.toBeNull();
-		expect(match).toMatchObject({ snippet: 'gamma three', lineStart: 2, lineEnd: 2 });
+		// The snippet is a complete JSON string literal (quotes included).
+		expect(match).toMatchObject({ snippet: '"gamma three"', lineStart: 2, lineEnd: 2 });
 		expect(match!.similarity).toBeGreaterThan(0.6);
 	});
 
@@ -124,7 +125,9 @@ describe('findClosestMatch', () => {
 		);
 		expect(match).not.toBeNull();
 		expect(match).toMatchObject({
-			snippet: 'gamma three\nbeta two',
+			// A complete JSON string literal: the `\n` is a literal backslash-n
+			// escape, surrounded by the literal's quotes.
+			snippet: '"gamma three\\nbeta two"',
 			lineStart: 2,
 			lineEnd: 3
 		});
@@ -139,17 +142,23 @@ describe('findClosestMatch', () => {
 	it('scores whitespace-only differences as a perfect match', () => {
 		const match = findClosestMatch('gamma three\n', 'gamma  three');
 		expect(match).not.toBeNull();
-		expect(match).toMatchObject({ snippet: 'gamma three', lineStart: 1, lineEnd: 1 });
+		expect(match).toMatchObject({ snippet: '"gamma three"', lineStart: 1, lineEnd: 1 });
 		expect(match!.similarity).toBe(1);
 	});
 
 	it('scores CRLF content equal to LF content', () => {
 		const match = findClosestMatch('gamma three\r\nbeta two\r\n', 'gamma tree\nbeta two');
 		expect(match).not.toBeNull();
-		expect(match).toMatchObject({ snippet: 'gamma three\nbeta two', lineStart: 1, lineEnd: 2 });
+		// The snippet keeps the file's exact bytes, quotes and escapes and all:
+		// `\r\n` (and the last line's trailing `\r`) are visible as escapes.
+		expect(match).toMatchObject({
+			snippet: '"gamma three\\r\\nbeta two\\r"',
+			lineStart: 1,
+			lineEnd: 2
+		});
 	});
 
-	it('caps the snippet at MAX_SUGGEST_LINES trimmed lines', () => {
+	it('truncates oversized windows with a marker instead of a partial string', () => {
 		const block = ['alpha one', 'beta two', 'gamma three', 'delta four', 'epsilon five'].join('\n');
 		const match = findClosestMatch(
 			block + '\n',
@@ -157,7 +166,12 @@ describe('findClosestMatch', () => {
 		);
 		expect(match).not.toBeNull();
 		expect(match).toMatchObject({ lineStart: 1, lineEnd: 5 });
-		expect(match!.snippet.split('\n').length).toBeLessThanOrEqual(MAX_SUGGEST_LINES);
+		// Only the first MAX_SUGGEST_LINES lines, then an explicit '…' marker —
+		// lines 4/5 never leak into the hint. The literal stays quoted.
+		expect(match!.snippet).toContain('"alpha one\\nbeta two\\ngamma three\\n…"');
+		expect(match!.snippet).toContain('\\n…');
+		expect(match!.snippet).not.toContain('delta four');
+		expect(match!.snippet).not.toContain('epsilon five');
 	});
 
 	it('returns null for files over the file size guard', () => {
@@ -175,6 +189,26 @@ describe('findClosestMatch', () => {
 	it('returns null for an empty or all-whitespace old_string', () => {
 		expect(findClosestMatch('gamma three\n', '')).toBeNull();
 		expect(findClosestMatch('gamma three\n', '   \t  ')).toBeNull();
+	});
+});
+
+describe('suggestionHint', () => {
+	it('tells the agent to pass the JSON string literal as old_string', () => {
+		expect(
+			suggestionHint({ snippet: '"gamma three"', lineStart: 3, lineEnd: 3, similarity: 0.9 })
+		).toBe('pass the following JSON string as old_string: "gamma three"');
+	});
+
+	it('keeps multi-line escapes character-for-character on a single line', () => {
+		const hint = suggestionHint({
+			snippet: '"gamma three\\nbeta two"',
+			lineStart: 2,
+			lineEnd: 3,
+			similarity: 0.9
+		});
+		expect(hint).toBe('pass the following JSON string as old_string: "gamma three\\nbeta two"');
+		// No real newlines / invented indentation: the escapes carry the structure.
+		expect(hint.split('\n')).toHaveLength(1);
 	});
 });
 
@@ -381,9 +415,11 @@ describe('edit', () => {
 			expect(result).toMatchObject({ ok: false });
 			if (!result.ok) {
 				expect(result.error.message).toContain('Did you mean:');
-				expect(result.error.message).toContain('line 2: gamma three');
+				expect(result.error.message).toContain(
+					'pass the following JSON string as old_string: "gamma three"'
+				);
 				expect(result.error.details).toMatchObject({
-					suggestion: { snippet: 'gamma three', lineStart: 2, lineEnd: 2 }
+					suggestion: { snippet: '"gamma three"', lineStart: 2, lineEnd: 2 }
 				});
 				const suggestion = (result.error.details as { suggestion: { similarity: number } })
 					.suggestion;
@@ -407,8 +443,13 @@ describe('edit', () => {
 			expect(result).toMatchObject({ ok: false });
 			if (!result.ok) {
 				expect(result.error.message).toContain('Did you mean:');
+				// The hint is a single JSON-escaped old_string (escape sequences
+				// visible, no invented indentation).
+				expect(result.error.message).toContain(
+					'pass the following JSON string as old_string: "gamma three\\nbeta two"'
+				);
 				expect(result.error.details).toMatchObject({
-					suggestion: { snippet: 'gamma three\nbeta two', lineStart: 2, lineEnd: 3 }
+					suggestion: { snippet: '"gamma three\\nbeta two"', lineStart: 2, lineEnd: 3 }
 				});
 			}
 			expect(await readFile(path, 'utf8')).toBe('alpha one\ngamma three\nbeta two\ndelta four\n');
@@ -429,7 +470,9 @@ describe('edit', () => {
 			expect(result).toMatchObject({ ok: false });
 			if (!result.ok) {
 				expect(result.error.message).toContain('Did you mean:');
-				expect(result.error.message).toContain('line 1: gamma three');
+				expect(result.error.message).toContain(
+					'pass the following JSON string as old_string: "gamma three"'
+				);
 				expect(result.error.details).toMatchObject({
 					suggestion: { similarity: 1, lineStart: 1, lineEnd: 1 }
 				});
@@ -459,7 +502,7 @@ describe('edit', () => {
 		});
 	});
 
-	it('keeps the hint concise (at most MAX_SUGGEST_LINES lines, ACB-8)', async () => {
+	it('keeps the hint concise, truncating oversized windows with a marker (ACB-8)', async () => {
 		await withWorkspace(async (workspace) => {
 			const path = join(workspace, 'sample.txt');
 			const block = ['alpha one', 'beta two', 'gamma three', 'delta four', 'epsilon five'].join(
@@ -482,10 +525,14 @@ describe('edit', () => {
 				).suggestion;
 				expect(suggestion.lineStart).toBe(1);
 				expect(suggestion.lineEnd).toBe(5);
-				expect(suggestion.snippet.split('\n').length).toBeLessThanOrEqual(MAX_SUGGEST_LINES);
-				// No full-file dump: the 4th/5th window lines are not in the hint.
+				// The 5-line window is truncated to the first MAX_SUGGEST_LINES
+				// lines with an explicit '…' marker — lines 4/5 never leak in, and
+				// the whole hint stays small.
+				expect(suggestion.snippet).toContain('alpha one\\nbeta two\\ngamma three');
+				expect(suggestion.snippet).toContain('\\n…');
 				expect(suggestion.snippet).not.toContain('delta four');
 				expect(suggestion.snippet).not.toContain('epsilon five');
+				expect(result.error.message.length).toBeLessThan(400);
 			}
 		});
 	});
