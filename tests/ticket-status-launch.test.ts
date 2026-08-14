@@ -4,7 +4,7 @@ import { patchTicketStatus } from '../src/lib/client/ticket-status';
 import type { ChatPromptTemplate, WorkspaceTicket } from '../src/lib/types';
 
 const ticket: WorkspaceTicket = {
-	id: 1,
+	id: 'T1',
 	userId: 1,
 	workspaceKey: '/workspace',
 	title: 'Fix sidebar actions',
@@ -21,7 +21,7 @@ const ticket: WorkspaceTicket = {
 
 function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate {
 	return {
-		id: 100,
+		id: 'PT100',
 		userId: 1,
 		type: 'ticket-action',
 		title: 'Do',
@@ -187,7 +187,7 @@ describe('patchTicketStatus', () => {
 			return Response.json({ ok: true }, { status: 200 });
 		});
 
-		const result = await patchTicketStatus({ ticketId: 1, status: 'done', fetcher });
+		const result = await patchTicketStatus({ ticketId: 'T1', status: 'done', fetcher });
 
 		expect(result).toEqual({ ok: true });
 		const [url, init] = fetcher.mock.calls[0];
@@ -203,7 +203,7 @@ describe('patchTicketStatus', () => {
 			return new Response(null, { status: 404 });
 		});
 
-		const result = await patchTicketStatus({ ticketId: 1, status: 'archived', fetcher });
+		const result = await patchTicketStatus({ ticketId: 'T1', status: 'archived', fetcher });
 
 		expect(result).toEqual({ ok: false, status: 404 });
 	});
@@ -215,7 +215,7 @@ describe('patchTicketStatus', () => {
 			return Response.json({ ok: true }, { status: 200 });
 		});
 
-		await patchTicketStatus({ ticketId: 12345, status: 'open', fetcher });
+		await patchTicketStatus({ ticketId: 'T12345', status: 'open', fetcher });
 
 		expect(fetcher.mock.calls[0][0]).toBe('/api/tickets/12345');
 	});

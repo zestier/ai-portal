@@ -26,7 +26,7 @@ async function loadPost() {
 	return POST;
 }
 
-function call(convId: number, userId: number) {
+function call(convId: string, userId: number) {
 	return loadPost().then((POST) =>
 		POST({
 			params: { id: convId },

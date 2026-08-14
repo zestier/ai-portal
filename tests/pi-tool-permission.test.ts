@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { conversationId as conversationIdCodec } from '../src/lib/ids';
 import type {
 	InteractivePermissionView,
 	InteractiveRequestView,
@@ -34,12 +35,13 @@ let convSeq = 0;
 
 async function openSession(
 	wd: string,
-	conversationId: number,
+	conversationId: string | number,
 	opts: Partial<ProviderOpenOptions> = {}
 ) {
 	const { openPiSession } = await import('../src/lib/server/pi');
 	const bridge: ProviderOpenOptions = {
-		conversationId,
+		conversationId:
+			typeof conversationId === 'number' ? conversationId : conversationIdCodec.parse(conversationId),
 		userId: USER,
 		workingDirectory: wd,
 		model: 'stub',
@@ -51,7 +53,7 @@ async function openSession(
 
 // A fresh conversation row whose workdir is the test's tmpdir: grants can be
 // seeded against it (FK), and the gate's workspaceRootsFor resolves to [wd].
-async function createConversation(wd: string): Promise<number> {
+async function createConversation(wd: string): Promise<string> {
 	const { create } = await import('../src/lib/server/db/repos/conversations');
 	const conv = create(USER, { title: `pi-gate-${convSeq++}`, workdir: wd, model: null });
 	return conv.id;
@@ -257,7 +259,7 @@ describe('pi tool calls + permission gate', () => {
 			const emitted: InteractiveRequestView[] = [];
 			const resolver = createPiPermissionResolver({
 				userId: USER,
-				conversationId: fsConvId,
+				conversationId: conversationIdCodec.parse(fsConvId),
 				workingDirectory: wd,
 				policy: 'prompt',
 				portalToolsByName: new Map([['synthetic_edit', tool]]),
@@ -416,7 +418,7 @@ describe('pi tool calls + permission gate', () => {
 			};
 			const resolver = createPiPermissionResolver({
 				userId: USER,
-				conversationId: convId,
+				conversationId: conversationIdCodec.parse(convId),
 				workingDirectory: wd,
 				policy: 'prompt',
 				portalToolsByName: new Map([['bash', tool]]),
@@ -481,7 +483,7 @@ describe('pi tool calls + permission gate', () => {
 			};
 			const resolver = createPiPermissionResolver({
 				userId: USER,
-				conversationId: convId,
+				conversationId: conversationIdCodec.parse(convId),
 				workingDirectory: wd,
 				policy: 'prompt',
 				portalToolsByName: new Map([['synthetic_op', tool]]),
@@ -507,7 +509,7 @@ describe('pi tool calls + permission gate', () => {
 			// fresh prompt; approving marks the token approved.
 			const tools = buildPermissionTools({
 				userId: USER,
-				conversationId: convId,
+				conversationId: conversationIdCodec.parse(convId),
 				policy: 'prompt',
 				getMode: () => 'interactive',
 				getApprovalMode: () => 'ask',

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ticketId } from '$lib/ids';
+import { conversationId as conversationCodec, ticketId } from '$lib/ids';
 import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
 import type { WorkspaceTicket } from '$lib/types';
@@ -108,8 +108,10 @@ const UnblockArgs = z.object({
 export function buildTicketTools(opts: {
 	userId: number;
 	workspaceKey: string;
-	conversationId: number;
+	conversationId: string | number;
 }): PortalTool[] {
+	const conversationIdInt =
+		typeof opts.conversationId === 'number' ? opts.conversationId : conversationCodec.parse(opts.conversationId);
 	return [
 		{
 			name: 'ticket_add',
@@ -160,7 +162,7 @@ export function buildTicketTools(opts: {
 						...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
 						...(parsed.blockedBy !== undefined ? { blockedBy: parsed.blockedBy.map(Number) } : {}),
 						...(parsed.blocks !== undefined ? { blocks: parsed.blocks.map(Number) } : {}),
-						sourceConversationId: opts.conversationId
+						sourceConversationId: conversationIdInt
 					});
 					return ok(
 						{

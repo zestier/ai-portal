@@ -11,8 +11,8 @@ import type { ToolCallRecord } from '../src/lib/types';
 
 function toolCall(overrides: Partial<ToolCallRecord>): ToolCallRecord {
 	return {
-		id: 1,
-		messageId: 1,
+		id: 'X1',
+		messageId: 'M1',
 		tool: 'task',
 		argsJson: '{}',
 		resultJson: null,

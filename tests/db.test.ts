@@ -813,7 +813,7 @@ describe('db migrations + repos', () => {
 			model: null
 		});
 
-		const created: number[] = [];
+		const created: string[] = [];
 		for (let i = 0; i < total; i++) {
 			const m = messages.append(c.id, {
 				role: i % 2 === 0 ? 'user' : 'assistant',

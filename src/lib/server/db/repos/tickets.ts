@@ -452,11 +452,15 @@ export type AddDepResult = 'added' | 'exists';
  * cross-workspace pairing, a self-edge, or a cycle. Returns 'exists' (no-op) if
  * the edge is already present.
  */
-export function addDependency(userId: number, ticketId: number, dependsOn: number): AddDepResult {
-	const result = addDependencyUnnotified(userId, ticketId, dependsOn);
+export function addDependency(
+	userId: number,
+	ticketId: string | number,
+	dependsOn: string | number
+): AddDepResult {
+	const result = addDependencyUnnotified(userId, ticketInt(ticketId), ticketInt(dependsOn));
 	// Only an actually-added edge changes the sidebar (badges / ordering); an
 	// 'exists' no-op leaves the graph untouched, so don't fan out a signal.
-	if (result === 'added') notifyTicketMutation({ userId, ticketId });
+	if (result === 'added') notifyTicketMutation({ userId, ticketId: ticketInt(ticketId) });
 	return result;
 }
 
@@ -494,9 +498,13 @@ function addDependencyUnnotified(
 }
 
 /** Remove a dependency edge. Returns false when no such edge existed. */
-export function removeDependency(userId: number, ticketId: number, dependsOn: number): boolean {
-	const removed = removeDependencyUnnotified(userId, ticketId, dependsOn);
-	if (removed) notifyTicketMutation({ userId, ticketId });
+export function removeDependency(
+	userId: number,
+	ticketId: string | number,
+	dependsOn: string | number
+): boolean {
+	const removed = removeDependencyUnnotified(userId, ticketInt(ticketId), ticketInt(dependsOn));
+	if (removed) notifyTicketMutation({ userId, ticketId: ticketInt(ticketId) });
 	return removed;
 }
 

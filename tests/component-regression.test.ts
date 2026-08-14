@@ -17,7 +17,7 @@ import { listBuiltInPromptTemplates } from '../src/lib/prompt-templates';
 import type { Conversation, InteractiveRequestView } from '../src/lib/types';
 
 const conversation: Conversation = {
-	id: 1,
+	id: 'C1',
 	userId: 1,
 	title: 'Regression chat',
 	workdir: '/workspaces/zap',
@@ -424,8 +424,8 @@ describe('Svelte component regression coverage', () => {
 
 	test('ToolCall surfaces a generic followUpHint for non-git tools', () => {
 		const toolCall = {
-			id: 1,
-			messageId: 1,
+			id: 'X1',
+			messageId: 'M1',
 			tool: 'ticket_add',
 			argsJson: '{}',
 			resultJson: JSON.stringify({
@@ -455,8 +455,8 @@ describe('Svelte component regression coverage', () => {
 
 	test('ToolCall injects <wbr> break points after slashes in a long path summary', () => {
 		const toolCall = {
-			id: 2,
-			messageId: 1,
+			id: 'X2',
+			messageId: 'M1',
 			tool: 'view',
 			argsJson: JSON.stringify({
 				path: '/workspaces/zap/src/routes/api/conversations/[id]/messages/[messageId]/edit/+server.ts'
@@ -481,7 +481,7 @@ describe('Svelte component regression coverage', () => {
 
 	test('FileBrowser renders safe empty states without client fetch data', () => {
 		const body = render(FileBrowser, {
-			props: { conversationId: 1, pane: 'changes' }
+			props: { conversationId: 'C1', pane: 'changes' }
 		}).body;
 
 		expect(body).toContain('aria-label="Git status"');
@@ -641,7 +641,7 @@ describe('Svelte component regression coverage', () => {
 				builtInTemplates: listBuiltInPromptTemplates(),
 				promptTemplates: [
 					{
-						id: 1,
+						id: 'PT1',
 						userId: 1,
 						type: 'chat',
 						title: 'Weekly review',
@@ -661,7 +661,7 @@ describe('Svelte component regression coverage', () => {
 						archivedAt: null
 					},
 					{
-						id: 2,
+						id: 'PT2',
 						userId: 1,
 						type: 'ticket-action',
 						title: 'Do',

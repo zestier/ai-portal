@@ -3,7 +3,7 @@ import { createTicketDraftChat } from '../src/lib/client/ticket-chat-launch';
 import type { ChatPromptTemplate, WorkspaceTicket } from '../src/lib/types';
 
 const ticket: WorkspaceTicket = {
-	id: 1,
+	id: 'T1',
 	userId: 1,
 	workspaceKey: '/workspace',
 	title: 'Fix sidebar actions',
@@ -20,7 +20,7 @@ const ticket: WorkspaceTicket = {
 
 function action(overrides: Partial<ChatPromptTemplate> = {}): ChatPromptTemplate {
 	return {
-		id: 100,
+		id: 'PT100',
 		userId: 1,
 		type: 'ticket-action',
 		title: 'Do',
@@ -83,7 +83,7 @@ describe('createTicketDraftChat', () => {
 
 		const result = await createTicketDraftChat({
 			ticket,
-			template: action({ id: 101, conversationMode: 'interactive' }),
+			template: action({ id: 'PT101', conversationMode: 'interactive' }),
 			workdir: '/workspace',
 			fetcher
 		});

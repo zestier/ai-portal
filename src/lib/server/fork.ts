@@ -69,8 +69,8 @@ export class ForkRejected extends Error {
 
 export interface ForkInput {
 	userId: number;
-	sourceConversationId: number;
-	messageId: number;
+	sourceConversationId: string | number;
+	messageId: string | number;
 	/**
 	 * The replacement text for a user-message edit. Must be null/undefined
 	 * for an assistant-message retry.
@@ -99,7 +99,8 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	const source = convs.get(input.sourceConversationId, input.userId);
 	if (!source) throw new ForkRejected('source_not_found');
 
-	const all = messages.listByConversation(convCodec.parse(source.id));
+	const sourceConvInt = typeof input.sourceConversationId === 'number' ? input.sourceConversationId : convCodec.parse(input.sourceConversationId);
+	const all = messages.listByConversation(sourceConvInt);
 	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
 	if (targetIdx < 0) throw new ForkRejected('message_not_found');
 	const target = all[targetIdx];

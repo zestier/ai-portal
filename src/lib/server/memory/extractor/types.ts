@@ -21,7 +21,7 @@ export type ExtractorActivity =
 export type ExtractorActivityEmitter = (activity: ExtractorActivity) => void;
 
 export interface ExtractPatchInput {
-	conversationId: number;
+	conversationId: string | number;
 	userId: number;
 	mode: MemoryMode;
 	turnId: string;

@@ -7,10 +7,13 @@ import {
 } from '../src/lib/client/subagent-display';
 import type { ToolCallRecord, ReasoningBlockRecord, FileEditRecord } from '../src/lib/types';
 
+const x = (id: number): string => `X${id}`;
+const M1 = 'M1';
+
 function tool(id: number, parentToolCallId: number | null, name = 'bash'): ToolCallRecord {
 	return {
-		id,
-		messageId: 1,
+		id: x(id),
+		messageId: M1,
 		tool: name,
 		argsJson: '{}',
 		resultJson: null,
@@ -18,33 +21,33 @@ function tool(id: number, parentToolCallId: number | null, name = 'bash'): ToolC
 		startedAt: 0,
 		endedAt: 1,
 		textOffset: null,
-		parentToolCallId
+		parentToolCallId: parentToolCallId === null ? null : x(parentToolCallId)
 	};
 }
 
 function reasoning(id: number, parentToolCallId: number | null): ReasoningBlockRecord {
 	return {
 		id,
-		messageId: 1,
+		messageId: M1,
 		segmentIndex: 0,
 		text: 'thinking',
 		kind: 'reasoning',
 		textOffset: null,
 		startedAt: 0,
 		durationMs: 1,
-		parentToolCallId
+		parentToolCallId: parentToolCallId === null ? null : x(parentToolCallId)
 	};
 }
 
 function edit(id: number, parentToolCallId: number | null): FileEditRecord {
 	return {
 		id,
-		messageId: 1,
+		messageId: M1,
 		path: 'a.ts',
 		diff: '',
 		createdAt: 0,
 		textOffset: null,
-		parentToolCallId
+		parentToolCallId: parentToolCallId === null ? null : x(parentToolCallId)
 	};
 }
 
@@ -67,8 +70,8 @@ describe('selectSubagentChildren', () => {
 			reasoning: [reasoning(1, 100), reasoning(2, null)],
 			edits: [edit(1, 100), edit(2, 101)]
 		};
-		const children = selectSubagentChildren(pools, 100);
-		expect(children.tools.map((t) => t.id)).toEqual([1]);
+		const children = selectSubagentChildren(pools, x(100));
+		expect(children.tools.map((t) => t.id)).toEqual(['X1']);
 		expect(children.reasoning.map((r) => r.id)).toEqual([1]);
 		expect(children.edits.map((e) => e.id)).toEqual([1]);
 	});
@@ -78,27 +81,27 @@ describe('selectSubagentChildren', () => {
 		const pools = {
 			tools: [tool(10, 100, SUBAGENT_TOOL), tool(11, 10), tool(12, 100)]
 		};
-		const outer = selectSubagentChildren(pools, 100);
-		expect(outer.tools.map((t) => t.id)).toEqual([10, 12]);
+		const outer = selectSubagentChildren(pools, x(100));
+		expect(outer.tools.map((t) => t.id)).toEqual(['X10', 'X12']);
 
 		// The grandchild is reachable one level down — the regression this
 		// guards is it being dropped from the UI entirely.
-		const inner = selectSubagentChildren(pools, 10);
-		expect(inner.tools.map((t) => t.id)).toEqual([11]);
+		const inner = selectSubagentChildren(pools, x(10));
+		expect(inner.tools.map((t) => t.id)).toEqual(['X11']);
 	});
 
 	it('drops a self-referential row so a card cannot contain itself', () => {
 		const pools = { tools: [tool(99, 99)] };
-		expect(selectSubagentChildren(pools, 99).tools).toEqual([]);
+		expect(selectSubagentChildren(pools, x(99)).tools).toEqual([]);
 	});
 
 	it('treats missing pools as empty rather than throwing', () => {
-		expect(selectSubagentChildren({}, 100)).toEqual({ tools: [], reasoning: [], edits: [] });
+		expect(selectSubagentChildren({}, x(100))).toEqual({ tools: [], reasoning: [], edits: [] });
 	});
 
 	it('returns nothing for an id with no children', () => {
 		const pools = { tools: [tool(1, 100)] };
-		expect(selectSubagentChildren(pools, 999).tools).toEqual([]);
+		expect(selectSubagentChildren(pools, x(999)).tools).toEqual([]);
 	});
 });
 

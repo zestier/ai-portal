@@ -23,8 +23,8 @@ function committedRepository(): string {
 describe('lease-scoped conversation routes', () => {
 	let source: string;
 	let userId: number;
-	let conversationId: number;
-	let otherConversationId: number;
+	let conversationId: string;
+	let otherConversationId: string;
 
 	async function makeLease(convId = conversationId, label = 'api') {
 		const convs = await import('../src/lib/server/db/repos/conversations');

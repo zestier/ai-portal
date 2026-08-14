@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getDb } from '$lib/server/db';
-import { memoryFactId } from '$lib/ids';
+import { conversationId as convCodec, memoryFactId, messageId as msgCodec } from '$lib/ids';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
 import { getMemoryProfile } from './profiles';
@@ -139,10 +139,10 @@ export interface MemoryPatchProposal {
 }
 
 export interface CommitMemoryPatchInput {
-	conversationId: number;
+	conversationId: string | number;
 	mode?: MemoryMode | undefined;
 	turnId?: string | null | undefined;
-	sourceMessageId?: number | null | undefined;
+	sourceMessageId?: string | number | null | undefined;
 	patch: MemoryPatchProposal;
 	summary?: string | undefined;
 	/**
@@ -211,7 +211,7 @@ export function isDirectivePredicate(predicate: string): boolean {
  * (memory_forget_attribute) additionally refuses a directive hit via `isDirective`.
  */
 export function resolveForgetTarget(
-	conversationId: number,
+	conversationId: string | number,
 	target: {
 		factId?: string | number | undefined;
 		entityKey?: string | undefined;
@@ -319,22 +319,23 @@ function relevanceRank(score: number | undefined, salience: number): number {
 }
 
 export function buildInitialPacket(
-	conversationId: number,
+	conversationId: string | number,
 	mode: MemoryMode,
 	opts: BuildInitialPacketOptions = {}
 ): TurnMemoryPacket {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const strict = mode === 'strict';
 	const query = (opts.query ?? '').trim();
 	const budget = opts.tokenBudget ?? packetTokenBudget(mode);
 
-	const entityPool = memoryRepo.listEntities(conversationId, { limit: 500 });
-	const allFacts = memoryRepo.listFacts(conversationId, { limit: strict ? 400 : 200 });
+	const entityPool = memoryRepo.listEntities(intConv, { limit: 500 });
+	const allFacts = memoryRepo.listFacts(intConv, { limit: strict ? 400 : 200 });
 	// Directives are loaded in full (up to a safety cap) and held apart so every
 	// active standing rule is always injected, regardless of how many other facts
 	// exist or where they fall in the relevance-ranked fact pool. listFacts orders
 	// by updated_at DESC, so capping the load keeps the most recently asserted
 	// directives if a pathological conversation exceeds MAX_DIRECTIVES.
-	const loadedDirectives = memoryRepo.listFacts(conversationId, {
+	const loadedDirectives = memoryRepo.listFacts(intConv, {
 		predicate: DIRECTIVE_PREDICATE,
 		limit: MAX_DIRECTIVES
 	});
@@ -355,18 +356,18 @@ export function buildInitialPacket(
 		(a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)
 	);
 	const factPool = allFacts.filter((fact) => !isDirectivePredicate(fact.predicate));
-	const eventPool = memoryRepo.listEvents(conversationId, { limit: strict ? 200 : 100 });
-	const openLoops = memoryRepo.listOpenLoops(conversationId, { limit: strict ? 80 : 40 });
+	const eventPool = memoryRepo.listEvents(intConv, { limit: strict ? 200 : 100 });
+	const openLoops = memoryRepo.listOpenLoops(intConv, { limit: strict ? 80 : 40 });
 
 	const entityKeyById: Record<string, string> = {};
 	for (const entity of entityPool) entityKeyById[entity.id] = entity.entityKey;
 	const keyOf = (id: string | null): string | null => (id ? (entityKeyById[id] ?? null) : null);
-	const factCounts = memoryRepo.entityFactCounts(conversationId);
+	const factCounts = memoryRepo.entityFactCounts(intConv);
 
 	// One search per turn powers both relevance ranking and the auto-search
 	// section: scores rank the pools, the top hits are injected verbatim.
 	const searchHits = query
-		? memoryRepo.search(conversationId, { query, limit: Math.max(AUTO_SEARCH_LIMIT, 300) })
+		? memoryRepo.search(intConv, { query, limit: Math.max(AUTO_SEARCH_LIMIT, 300) })
 		: [];
 	const scores = new Map<string | number, number>();
 	for (const hit of searchHits) {
@@ -507,7 +508,7 @@ function isPacketEmpty(packet: TurnMemoryPacket): boolean {
 }
 
 export function buildPromptWithMemory(params: {
-	conversationId: number;
+	conversationId: string | number;
 	mode: MemoryMode;
 	userMsg: Message;
 	userId?: number | undefined;
@@ -515,12 +516,14 @@ export function buildPromptWithMemory(params: {
 	globalMemoryEnabled?: boolean | undefined;
 	extractorPresent?: boolean | undefined;
 }): string {
+	const intConv =
+		typeof params.conversationId === 'number' ? params.conversationId : convCodec.parse(params.conversationId);
 	const recent = params.includeRecentTranscript
-		? recentTranscript(params.conversationId, params.userMsg.id, 6)
+		? recentTranscript(intConv, params.userMsg.id, 6)
 		: '';
 	// Condition selection (and the auto-search prestep) on the current turn.
 	const query = [params.userMsg.content, recent].filter(Boolean).join('\n').trim();
-	const packet = buildInitialPacket(params.conversationId, params.mode, {
+	const packet = buildInitialPacket(intConv, params.mode, {
 		globalMemoryEnabled: params.globalMemoryEnabled,
 		query
 	});
@@ -568,7 +571,7 @@ export function buildPromptWithMemory(params: {
 
 export function validatePatch(
 	patch: MemoryPatchProposal,
-	opts: { conversationId?: number | undefined; mode?: MemoryMode | undefined } = {}
+	opts: { conversationId?: string | number | undefined; mode?: MemoryMode | undefined } = {}
 ): {
 	ok: boolean;
 	issues: Array<{ severity: 'info' | 'warning' | 'error'; code: string; message: string }>;
@@ -762,7 +765,7 @@ export function validatePatch(
 
 export function solveStrictContinuity(
 	patch: MemoryPatchProposal,
-	conversationId?: number
+	conversationId?: string | number
 ): Array<{ severity: 'warning' | 'error'; code: string; message: string }> {
 	const issues: Array<{ severity: 'warning' | 'error'; code: string; message: string }> = [];
 	const seen = new Map<string, { location: string; summary: string }>();
@@ -858,8 +861,16 @@ export function commitPatch(
 		issues: number;
 	};
 } {
+	const intConv =
+		typeof input.conversationId === 'number' ? input.conversationId : convCodec.parse(input.conversationId);
+	const intSourceMessageId =
+		input.sourceMessageId == null
+			? null
+			: typeof input.sourceMessageId === 'number'
+				? input.sourceMessageId
+				: msgCodec.parse(input.sourceMessageId);
 	const validation = validatePatch(input.patch, {
-		conversationId: input.conversationId,
+		conversationId: intConv,
 		mode: input.mode
 	});
 	const status = validation.ok ? 'committed' : 'needs_review';
@@ -875,9 +886,9 @@ export function commitPatch(
 	// savepoints under this outer transaction rather than throwing. The whole
 	// body is synchronous (no awaits), which db.transaction() requires.
 	return getDb().transaction(() => {
-		const patchRecord = memoryRepo.createPatch(input.conversationId, {
+		const patchRecord = memoryRepo.createPatch(intConv, {
 			turnId: input.turnId ?? null,
-			sourceMessageId: input.sourceMessageId ?? null,
+			sourceMessageId: intSourceMessageId ?? null,
 			status,
 			summary: input.summary ?? summarizePatch(input.patch),
 			rawPatch: input.patch,
@@ -892,7 +903,7 @@ export function commitPatch(
 			committedAt: validation.ok ? Date.now() : null
 		});
 		for (const issue of validation.issues) {
-			memoryRepo.addIssue(input.conversationId, { patchId: patchRecord.id, ...issue });
+			memoryRepo.addIssue(intConv, { patchId: patchRecord.id, ...issue });
 		}
 		if (!validation.ok) {
 			return {
@@ -924,7 +935,7 @@ export function commitPatch(
 			// derive site shared with ensureEntityForKey below). For an EXISTING
 			// entity, leave the omitted field undefined so upsertEntity preserves the
 			// stored value instead of clobbering it.
-			const existing = memoryRepo.getEntity(input.conversationId, entity.entityKey);
+			const existing = memoryRepo.getEntity(intConv, entity.entityKey);
 			let resolved = entity;
 			if (!existing && (entity.entityType === undefined || entity.displayName === undefined)) {
 				const derived = deriveEntityFromKey(entity.entityKey);
@@ -934,13 +945,13 @@ export function commitPatch(
 					displayName: entity.displayName ?? derived.displayName
 				};
 			}
-			const row = memoryRepo.upsertEntity(input.conversationId, {
+			const row = memoryRepo.upsertEntity(intConv, {
 				...resolved,
-				sourceMessageId: input.sourceMessageId ?? null,
+				sourceMessageId: intSourceMessageId ?? null,
 				turnId: input.turnId ?? null
 			});
 			entityIdsByKey.set(entity.entityKey, row.id);
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'entity',
 				itemId: row.id,
@@ -949,7 +960,7 @@ export function commitPatch(
 		}
 		for (const key of collectEntityKeys(input.patch)) {
 			if (!entityIdsByKey.has(key)) {
-				const existing = memoryRepo.getEntity(input.conversationId, key);
+				const existing = memoryRepo.getEntity(intConv, key);
 				if (existing) entityIdsByKey.set(key, existing.id);
 			}
 		}
@@ -965,7 +976,7 @@ export function commitPatch(
 			// append-only, so without this both commits would land a permanent
 			// duplicate. Skip an event whose (turnId, eventType, summary) identity is
 			// already present from another patch.
-			const dupEvent = memoryRepo.findDuplicateEvent(input.conversationId, {
+			const dupEvent = memoryRepo.findDuplicateEvent(intConv, {
 				turnId: input.turnId ?? null,
 				eventType: event.eventType,
 				summary: event.summary
@@ -973,17 +984,17 @@ export function commitPatch(
 			if (dupEvent && !createdEventIds.has(dupEvent.id)) {
 				continue;
 			}
-			const row = memoryRepo.addEvent(input.conversationId, {
+			const row = memoryRepo.addEvent(intConv, {
 				turnId: input.turnId,
 				eventType: event.eventType,
 				summary: event.summary,
 				payload: event.payload,
 				visibility: event.visibility,
 				confidence: event.confidence,
-				sourceMessageId: input.sourceMessageId ?? null,
+				sourceMessageId: intSourceMessageId ?? null,
 				targetEntityId: event.entityKey ? (entityIdsByKey.get(event.entityKey) ?? null) : null
 			});
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'event',
 				itemId: row.id,
@@ -1002,7 +1013,7 @@ export function commitPatch(
 		// entities are reused silently and must NOT be recorded, or undoing this
 		// patch would delete an entity that other patches rely on.
 		const recordMintedEntity = (entityId: string | number) => {
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'entity',
 				itemId: entityId,
@@ -1017,18 +1028,18 @@ export function commitPatch(
 				sessionEntityId = cached;
 				return cached;
 			}
-			const existing = memoryRepo.getEntity(input.conversationId, SESSION_ENTITY_KEY);
+			const existing = memoryRepo.getEntity(intConv, SESSION_ENTITY_KEY);
 			if (existing) {
 				entityIdsByKey.set(SESSION_ENTITY_KEY, existing.id);
 				sessionEntityId = existing.id;
 				return existing.id;
 			}
-			const row = memoryRepo.upsertEntity(input.conversationId, {
+			const row = memoryRepo.upsertEntity(intConv, {
 				entityKey: SESSION_ENTITY_KEY,
 				entityType: 'session',
 				displayName: 'Session',
 				summary: 'Catch-all for session-scoped facts not tied to a specific entity.',
-				sourceMessageId: input.sourceMessageId ?? null,
+				sourceMessageId: intSourceMessageId ?? null,
 				turnId: input.turnId ?? null
 			});
 			entityIdsByKey.set(SESSION_ENTITY_KEY, row.id);
@@ -1043,11 +1054,11 @@ export function commitPatch(
 			// from the DB (collectEntityKeys already resolved existing keys above),
 			// so this is a genuinely new entity.
 			const { entityType, displayName } = deriveEntityFromKey(key);
-			const row = memoryRepo.upsertEntity(input.conversationId, {
+			const row = memoryRepo.upsertEntity(intConv, {
 				entityKey: key,
 				entityType,
 				displayName,
-				sourceMessageId: input.sourceMessageId ?? null,
+				sourceMessageId: intSourceMessageId ?? null,
 				turnId: input.turnId ?? null
 			});
 			entityIdsByKey.set(key, row.id);
@@ -1075,16 +1086,16 @@ export function commitPatch(
 			const isDirective = isDirectivePredicate(fact.predicate);
 			const predicate = isDirective ? DIRECTIVE_PREDICATE : fact.predicate;
 			const pinned = isDirective ? true : undefined;
-			const row = memoryRepo.addFact(input.conversationId, {
+			const row = memoryRepo.addFact(intConv, {
 				entityId,
 				predicate,
 				value: fact.value,
 				visibility: fact.visibility,
 				confidence: fact.confidence,
 				pinned,
-				sourceMessageId: input.sourceMessageId ?? null
+				sourceMessageId: intSourceMessageId ?? null
 			});
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'fact',
 				itemId: row.id,
@@ -1108,14 +1119,14 @@ export function commitPatch(
 			// loop. Skip a loop whose (loopType, title) already exists as an open
 			// loop from another patch. Resolved/dropped loops don't match, so a
 			// deliberately re-raised thread still creates a fresh loop.
-			const dupLoop = memoryRepo.findDuplicateOpenLoop(input.conversationId, {
+			const dupLoop = memoryRepo.findDuplicateOpenLoop(intConv, {
 				loopType: loop.loopType,
 				title: loop.title
 			});
 			if (dupLoop && !createdOpenLoopIds.has(dupLoop.id)) {
 				continue;
 			}
-			const row = memoryRepo.addOpenLoop(input.conversationId, {
+			const row = memoryRepo.addOpenLoop(intConv, {
 				loopType: loop.loopType,
 				title: loop.title,
 				description: loop.description,
@@ -1123,9 +1134,9 @@ export function commitPatch(
 				relatedEntityIds: (loop.relatedEntityKeys ?? [])
 					.map((key) => entityIdsByKey.get(key))
 					.filter((id): id is string => id !== undefined),
-				sourceMessageId: input.sourceMessageId ?? null
+				sourceMessageId: intSourceMessageId ?? null
 			});
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'open_loop',
 				itemId: row.id,
@@ -1137,8 +1148,8 @@ export function commitPatch(
 		let resolvedOpenLoops = 0;
 		for (const resolution of input.patch.resolveOpenLoops ?? []) {
 			// Accept either the stable loop key or the raw id; resolve to canonical id.
-			const loopId = memoryRepo.resolveOpenLoopId(input.conversationId, resolution.id);
-			const existing = loopId ? memoryRepo.getOpenLoop(input.conversationId, loopId) : null;
+			const loopId = memoryRepo.resolveOpenLoopId(intConv, resolution.id);
+			const existing = loopId ? memoryRepo.getOpenLoop(intConv, loopId) : null;
 			// Skip unknown references (already warned in validation) so a hallucinated
 			// id doesn't abort the rest of the commit.
 			if (!loopId || !existing) continue;
@@ -1153,13 +1164,13 @@ export function commitPatch(
 				existing.status === 'open' && resolution.reason?.trim()
 					? `${existing.description}${existing.description ? '\n' : ''}[${resolution.status}] ${resolution.reason.trim()}`
 					: existing.description;
-			const updated = memoryRepo.updateOpenLoop(input.conversationId, loopId, {
+			const updated = memoryRepo.updateOpenLoop(intConv, loopId, {
 				status: resolution.status,
 				description
 			});
 			if (!updated) continue;
 			resolvedOpenLoops += 1;
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'open_loop',
 				itemId: loopId,
@@ -1174,7 +1185,7 @@ export function commitPatch(
 		// auditable and visible in the inspector (and reviewable per item).
 		let forgottenFacts = 0;
 		for (const target of input.patch.forgetFacts ?? []) {
-			const resolved = resolveForgetTarget(input.conversationId, target);
+			const resolved = resolveForgetTarget(intConv, target);
 			// Unresolved targets were already flagged in validation; skip so a stale
 			// handle doesn't abort the rest of the commit.
 			if (!resolved) continue;
@@ -1182,12 +1193,12 @@ export function commitPatch(
 			// re-resolves to the freshly-superseding value, so tombstoning it would
 			// undo the supersede and drop the predicate. Prefer the supersede.
 			if (createdFactIds.has(resolved.factId)) continue;
-			const updated = memoryRepo.updateFact(input.conversationId, resolved.factId, {
+			const updated = memoryRepo.updateFact(intConv, resolved.factId, {
 				status: 'deleted'
 			});
 			if (!updated) continue;
 			forgottenFacts += 1;
-			memoryRepo.recordPatchItem(input.conversationId, {
+			memoryRepo.recordPatchItem(intConv, {
 				patchId: patchRecord.id,
 				itemType: 'fact',
 				itemId: resolved.factId,
@@ -1233,16 +1244,17 @@ export interface AgeOpenLoopsResult {
  * reversible like any other memory mutation.
  */
 export function ageOpenLoops(
-	conversationId: number,
+	conversationId: string | number,
 	opts: {
 		presentedLoopIds: Iterable<number>;
 		keptLoopIds?: Iterable<number> | undefined;
 		baseThreshold: number;
-		sourceMessageId?: number | null | undefined;
+		sourceMessageId?: string | number | null | undefined;
 		turnId?: string | null | undefined;
 	}
 ): AgeOpenLoopsResult {
-	return memoryRepo.recordOpenLoopLiveness(conversationId, {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	return memoryRepo.recordOpenLoopLiveness(intConv, {
 		presentedLoopIds: [...opts.presentedLoopIds],
 		keptLoopIds: opts.keptLoopIds ? [...opts.keptLoopIds] : [],
 		baseThreshold: opts.baseThreshold,

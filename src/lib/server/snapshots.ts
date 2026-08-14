@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, existsSync, realpathSync, rmSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { messageId as msgCodec } from '$lib/ids';
 import { isolatedChildEnv } from './child-env';
 import { getDb } from './db';
 
@@ -174,10 +175,11 @@ async function isSnapshotRepo(workdir: string): Promise<boolean> {
  */
 export async function snapshot(
 	workdir: string,
-	messageId: number,
+	messageId: string | number,
 	kind: SnapshotKind
 ): Promise<SnapshotRow | null> {
 	const db = getDb();
+	const intMsg = typeof messageId === 'number' ? messageId : msgCodec.parse(messageId);
 
 	return withLock(workdir, async () => {
 		// Existence check runs inside the per-workdir lock so that
@@ -186,7 +188,7 @@ export async function snapshot(
 		// INSERT, which would violate the (message_id, kind) primary key.
 		const existing = db
 			.prepare('SELECT * FROM turn_snapshots WHERE message_id = ? AND kind = ?')
-			.get(messageId, kind) as
+			.get(intMsg, kind) as
 			| {
 					message_id: number;
 					kind: SnapshotKind;
@@ -210,11 +212,11 @@ export async function snapshot(
 		}
 
 		if (!(await isSnapshotRepo(workdir))) return null;
-		const ref = refFor(messageId, kind);
+		const ref = refFor(intMsg, kind);
 		// Use a private index file so the user's staging area (if any) is
 		// not disturbed. We pick a path inside .git so concurrent processes
 		// using a different convention don't conflict.
-		const indexName = `portal-index-${messageId}-${kind}`;
+		const indexName = `portal-index-${intMsg}-${kind}`;
 		const indexPath = (
 			await runOk(['rev-parse', '--git-path', indexName], { cwd: workdir })
 		).trim();
@@ -235,7 +237,7 @@ export async function snapshot(
 			await runOk(['update-ref', ref, commit], { cwd: workdir });
 
 			const row: SnapshotRow = {
-				messageId,
+				messageId: intMsg,
 				kind,
 				gitRef: ref,
 				commitSha: commit,
@@ -285,10 +287,11 @@ export async function snapshot(
 /**
  * Look up a snapshot row.
  */
-export function getSnapshot(messageId: number, kind: SnapshotKind): SnapshotRow | null {
+export function getSnapshot(messageId: string | number, kind: SnapshotKind): SnapshotRow | null {
+	const intMsg = typeof messageId === 'number' ? messageId : msgCodec.parse(messageId);
 	const r = getDb()
 		.prepare('SELECT * FROM turn_snapshots WHERE message_id = ? AND kind = ?')
-		.get(messageId, kind) as
+		.get(intMsg, kind) as
 		| {
 				message_id: number;
 				kind: SnapshotKind;

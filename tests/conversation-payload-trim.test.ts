@@ -152,7 +152,7 @@ describe('listByConversation payload trim', () => {
 	it('leaves every field inline when no trim is requested', async () => {
 		const { conv, bigArgs, bigResult, bigReasoning, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id);
-		const big = m.toolCalls!.find((t) => t.id === 2)!;
+		const big = m.toolCalls!.find((t) => t.id === 'X2')!;
 		expect(big.argsJson).toBe(bigArgs);
 		expect(big.resultJson).toBe(bigResult);
 		expect(big.argsTruncated).toBeUndefined();
@@ -169,7 +169,7 @@ describe('listByConversation payload trim', () => {
 		const { conv, bigArgs, bigResult, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
 
-		const big = m.toolCalls!.find((t) => t.id === 2)!;
+		const big = m.toolCalls!.find((t) => t.id === 'X2')!;
 		expect(big.argsJson).toBeNull();
 		expect(big.argsTruncated).toBe(true);
 		expect(big.argsBytes).toBe(Buffer.byteLength(bigArgs, 'utf8'));
@@ -197,7 +197,7 @@ describe('listByConversation payload trim', () => {
 		const { conv, smallArgs, smallResult, smallReasoning, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
 
-		const small = m.toolCalls!.find((t) => t.id === 1)!;
+		const small = m.toolCalls!.find((t) => t.id === 'X1')!;
 		expect(small.argsJson).toBe(smallArgs);
 		expect(small.resultJson).toBe(smallResult);
 		expect(small.argsTruncated).toBeUndefined();
@@ -245,7 +245,7 @@ describe('listByConversation payload trim', () => {
 		// unlabelled, un-retryable rows. Its result is still trimmed.
 		const { conv, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
-		const task = m.toolCalls!.find((t) => t.id === 4)!;
+		const task = m.toolCalls!.find((t) => t.id === 'X4')!;
 		expect(task.argsJson).not.toBeNull();
 		expect(JSON.parse(task.argsJson!).agent_type).toBe('memory-extractor');
 		expect(task.argsTruncated).toBeUndefined();
@@ -258,7 +258,7 @@ describe('listByConversation payload trim', () => {
 		// the client must not offer to "load" something that does not exist.
 		const { conv, messages } = await seed();
 		const [m] = messages.listByConversation(conv.id, { inlineMaxBytes: TRIM });
-		const pending = m.toolCalls!.find((t) => t.id === 3)!;
+		const pending = m.toolCalls!.find((t) => t.id === 'X3')!;
 		expect(pending.resultJson).toBeNull();
 		expect(pending.resultTruncated).toBeUndefined();
 		expect(pending.resultBytes).toBeUndefined();

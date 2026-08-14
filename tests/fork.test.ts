@@ -3,18 +3,21 @@ import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setupLocalEnv } from './helpers/env';
+import { conversationId as conversationIdCodec } from '../src/lib/ids';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../src/lib/server/global-singleton';
 
 // Register a fake "running" turn for `conversationId` in the shared turn
 // registry so `getTurn()` reports the source as busy, without spinning up a
 // real provider turn. Returns a cleanup that removes it again.
-function markConversationBusy(conversationId: number): () => void {
+function markConversationBusy(conversationId: string | number): () => void {
+	const intId =
+		typeof conversationId === 'number' ? conversationId : conversationIdCodec.parse(conversationId);
 	const registry = getOrCreateGlobalSingleton<Map<number, { status: string }>>(
 		appGlobalSymbols('turns'),
 		() => new Map()
 	);
-	registry.set(conversationId, { status: 'running' });
-	return () => registry.delete(conversationId);
+	registry.set(intId, { status: 'running' });
+	return () => registry.delete(intId);
 }
 
 async function freshImports() {

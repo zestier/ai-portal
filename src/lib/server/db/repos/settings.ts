@@ -1,4 +1,5 @@
 import { getDb } from '../index';
+import { conversationId } from '$lib/ids';
 import {
 	normalizeApprovalMode,
 	normalizeSessionMode,
@@ -235,7 +236,7 @@ export interface MatchGrantContext {
  */
 export function matchGrant(
 	userId: number,
-	conversationId: number,
+	conversationId: string | number,
 	tool: string,
 	permissionKind: string,
 	scopeKey: string | null,
@@ -254,16 +255,17 @@ export function matchGrant(
  */
 export function matchGrantDetailed(
 	userId: number,
-	conversationId: number,
+	conversationId: string | number,
 	tool: string,
 	permissionKind: string,
 	scopeKey: string | null,
 	ctx: MatchGrantContext = {},
 	now: number = Date.now()
 ): DetailedMatchOutcome {
+	const intConv = convInt(conversationId) ?? -1;
 	const rows = loadCandidateGrants(
 		userId,
-		conversationId,
+		intConv,
 		tool,
 		// Grants are keyed by the canonical permission vocabulary
 		// (`shell`/`read`/`write`/`edit`/`url`) or by the tool's own name
@@ -299,7 +301,9 @@ export function matchGrantDetailed(
  * "allow this tool for anything" grant exists. New code should call
  * `matchGrant` with the runtime kind + scopeKey.
  */
-export function hasGrant(userId: number, conversationId: number, tool: string): boolean {
+function convInt(id: string | number | null): number | null {
+	return id === null ? null : typeof id === 'number' ? id : conversationId.parse(id);
+}export function hasGrant(userId: number, conversationId: string | number, tool: string): boolean {
 	// Legacy callers don't know about kinds/patterns; pretend the request
 	// is for whatever the grant covers by passing a wildcard scope.
 	return matchGrant(userId, conversationId, tool, '*', null) === 'allow';
@@ -308,7 +312,7 @@ export function hasGrant(userId: number, conversationId: number, tool: string): 
 export interface AddGrantOptions {
 	userId: number;
 	/** NULL = user-global. */
-	conversationId: number | null;
+	conversationId: string | number | null;
 	tool: string;
 	/** NULL = any kind. */
 	permissionKind?: string | null;
@@ -343,7 +347,7 @@ export function addGrant(opts: AddGrantOptions) {
 		)
 		.run(
 			opts.userId,
-			opts.conversationId,
+			convInt(opts.conversationId),
 			opts.tool,
 			opts.permissionKind ?? null,
 			opts.scopePattern ?? null,
@@ -663,7 +667,7 @@ export function pruneExpiredGrants(now: number = Date.now()): number {
 }
 
 export function recordDecision(
-	conversationId: number,
+	conversationId: string | number,
 	tool: string,
 	argsSummary: string,
 	decision: PermissionDecisionRecord['decision']
@@ -673,7 +677,7 @@ export function recordDecision(
 			`INSERT INTO permission_decisions(conversation_id, tool, args_summary, decision, decided_at)
 			 VALUES (?, ?, ?, ?, ?)`
 		)
-		.run(conversationId, tool, argsSummary, decision, Date.now());
+		.run(convInt(conversationId), tool, argsSummary, decision, Date.now());
 }
 
 export interface PermissionDecisionRecord {

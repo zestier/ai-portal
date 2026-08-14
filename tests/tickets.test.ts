@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setupLocalEnv, resetServerSingletons } from './helpers/env';
+import { conversationId as conversationIdCodec, ticketId as ticketIdCodec } from '../src/lib/ids';
 
 let workspace: string;
 
@@ -156,7 +157,7 @@ describe('workspace tickets', () => {
 		const target = tickets.create(user.id, {
 			workspaceKey: workspace,
 			title: 'Blocked ticket',
-			blockedBy: [blocker.id]
+			blockedBy: [ticketIdCodec.parse(blocker.id)]
 		});
 		expect(tickets.listDependencies(target.id)).toEqual([blocker.id]);
 
@@ -210,7 +211,7 @@ describe('workspace tickets', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: conv.id
+			conversationId: conversationIdCodec.parse(conv.id)
 		});
 
 		const add = tools.find((t) => t.name === 'ticket_add')!;
@@ -285,7 +286,7 @@ describe('workspace tickets', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: conv.id
+			conversationId: conversationIdCodec.parse(conv.id)
 		});
 		const list = tools.find((t) => t.name === 'ticket_list')!;
 		const get = tools.find((t) => t.name === 'ticket_get')!;
@@ -375,7 +376,7 @@ describe('workspace tickets', () => {
 		const tools = buildTicketTools({
 			userId: user.id,
 			workspaceKey: workspace,
-			conversationId: conv.id
+			conversationId: conversationIdCodec.parse(conv.id)
 		});
 		const add = tools.find((t) => t.name === 'ticket_add')!;
 		const update = tools.find((t) => t.name === 'ticket_update')!;
@@ -454,19 +455,19 @@ describe('workspace tickets', () => {
 		const ui = tickets.create(user.id, {
 			workspaceKey: workspace,
 			title: 'UI',
-			blockedBy: [api.id]
+			blockedBy: [ticketIdCodec.parse(api.id)]
 		});
 		const ship = tickets.create(user.id, {
 			workspaceKey: workspace,
 			title: 'Ship',
-			blockedBy: [ui.id]
+			blockedBy: [ticketIdCodec.parse(ui.id)]
 		});
 		expect(tickets.dependencyRefs(ui.id, user.id).map((r) => r.id)).toEqual([api.id]);
 		expect(tickets.dependentRefs(ui.id, user.id).map((r) => r.id)).toEqual([ship.id]);
 
 		// update() reconciles a side as a desired-state set: replace ui's blockers
 		// with [api, infra] (adds infra, keeps api), and clear ship's via [].
-		tickets.update(ui.id, user.id, { blockedBy: [api.id, infra.id] });
+		tickets.update(ui.id, user.id, { blockedBy: [ticketIdCodec.parse(api.id), ticketIdCodec.parse(infra.id)] });
 		expect(
 			tickets
 				.dependencyRefs(ui.id, user.id)
@@ -485,8 +486,8 @@ describe('workspace tickets', () => {
 			tickets.create(user.id, {
 				workspaceKey: workspace,
 				title: 'Cyclic',
-				blockedBy: [api.id],
-				blocks: [api.id] // api blocked by new AND new blocked by api -> cycle
+				blockedBy: [ticketIdCodec.parse(api.id)],
+				blocks: [ticketIdCodec.parse(api.id)] // api blocked by new AND new blocked by api -> cycle
 			})
 		).toThrow(/cycle/i);
 		expect(tickets.list(user.id, workspace, { status: 'all' }).length).toBe(before);
@@ -725,7 +726,7 @@ describe('workspace tickets', () => {
 		// A ready ticket created early, so it falls outside the 10 most-recent rows.
 		const ready = tickets.create(user.id, { workspaceKey: workspace, title: 'Ready' });
 		// Ten newer tickets, each blocked by the still-open prerequisite.
-		const blocked: number[] = [];
+		const blocked: string[] = [];
 		for (let i = 0; i < 10; i++) {
 			const b = tickets.create(user.id, { workspaceKey: workspace, title: `Blocked ${i}` });
 			tickets.addDependency(user.id, b.id, prereq.id);

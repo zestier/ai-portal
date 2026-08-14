@@ -3,7 +3,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { PiEventMapper } from '../src/lib/server/pi/events';
 import { setupLocalEnv } from './helpers/env';
 
-const MESSAGE_ID = 1;
+const MESSAGE_ID = 'M1';
 
 // Minimal structurally-typed AgentSessionEvent fixtures: the mapper only reads
 // the discriminated `type` and the fields asserted below.
@@ -147,8 +147,8 @@ describe('PiEventMapper', () => {
 			})
 		);
 		expect(call).toHaveLength(1);
-		const toolCallId = (call[0] as { type: 'tool.call'; toolCallId: number }).toolCallId;
-		expect(toolCallId).toEqual(expect.any(Number));
+		const toolCallId = (call[0] as { type: 'tool.call'; toolCallId: string }).toolCallId;
+		expect(toolCallId).toEqual(expect.stringMatching(/^X[1-9][0-9]*$/));
 		expect(call[0]).toMatchObject({
 			type: 'tool.call',
 			tool: 'read',

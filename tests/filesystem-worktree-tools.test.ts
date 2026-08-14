@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
+import { conversationId as convCodec } from '../src/lib/ids';
 import { scratchSubdir } from '../src/lib/server/tools/zap-dir';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
@@ -66,13 +67,15 @@ describe('filesystem tools inside a worktree lease', () => {
 		userId = users.ensureLocalUser().id;
 		const convs = await import('../src/lib/server/db/repos/conversations');
 		newConversation = () =>
-			convs.create(userId, {
-				title: 'orchestrator',
-				workdir: source,
-				model: 'test-model',
-				workspaceKind: 'shared',
-				workspaceKey: source
-			}).id;
+			convCodec.parse(
+				convs.create(userId, {
+					title: 'orchestrator',
+					workdir: source,
+					model: 'test-model',
+					workspaceKind: 'shared',
+					workspaceKey: source
+				}).id
+			);
 		conversationId = newConversation();
 
 		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');

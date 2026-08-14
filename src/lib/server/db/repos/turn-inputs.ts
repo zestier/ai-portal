@@ -21,8 +21,8 @@ interface TurnInputRow {
 }
 
 export interface RecordTurnInput {
-	messageId: number;
-	conversationId: number;
+	messageId: string | number;
+	conversationId: string | number;
 	turnId?: string | null;
 	fullInput: string;
 	promptBody: string;
@@ -35,6 +35,8 @@ export interface RecordTurnInput {
 
 export function record(input: RecordTurnInput): void {
 	const db = getDb();
+	const intMsg = typeof input.messageId === 'number' ? input.messageId : messageId.parse(input.messageId);
+	const intConv = typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
 	db.prepare(
 		`INSERT INTO turn_inputs(
 		   message_id, conversation_id, turn_id, full_input, prompt_body, prelude,
@@ -53,8 +55,8 @@ export function record(input: RecordTurnInput): void {
 		   initial_messages = excluded.initial_messages,
 		   created_at = excluded.created_at`
 	).run(
-		input.messageId,
-		input.conversationId,
+		intMsg,
+		intConv,
 		input.turnId ?? null,
 		input.fullInput,
 		input.promptBody,

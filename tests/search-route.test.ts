@@ -18,7 +18,7 @@ async function seed() {
 	return { conv, m, user };
 }
 
-function makeEvent(convId: number, q: string | null, userId: number | null) {
+function makeEvent(convId: string, q: string | null, userId: number | null) {
 	const url = new URL(`http://127.0.0.1/api/conversations/${convId}/search?q=${q ?? ''}`);
 	return {
 		params: { id: convId },
@@ -27,7 +27,7 @@ function makeEvent(convId: number, q: string | null, userId: number | null) {
 	};
 }
 
-async function callGet(convId: number, q: string | null, userId: number | null) {
+async function callGet(convId: string, q: string | null, userId: number | null) {
 	const { GET } = await import('../src/routes/api/conversations/[id]/search/+server');
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	return (GET as any)(makeEvent(convId, q, userId));
@@ -39,19 +39,19 @@ describe('conversation search endpoint', () => {
 	});
 
 	it('returns jump targets for an FTS hit', async () => {
-		const { conv, m } = await seed();
-		const res = await callGet(conv.id, 'needle-find-abc123', m.id);
+		const { conv, m, user } = await seed();
+		const res = await callGet(conv.id, 'needle-find-abc123', user.id);
 		const body = await res.json();
 		expect(body.results.length).toBeGreaterThan(0);
-		const hit = body.results.find((r: { messageId: number }) => r.messageId === m.id);
+		const hit = body.results.find((r: { messageId: string }) => r.messageId === m.id);
 		expect(hit).toBeTruthy();
 		expect(hit.preview).toContain('needle-find-abc123');
 		expect(hit.role).toBe('user');
 	});
 
 	it('returns an empty result list for a blank query', async () => {
-		const { conv, m } = await seed();
-		const res = await callGet(conv.id, '', m.id);
+		const { conv, user } = await seed();
+		const res = await callGet(conv.id, '', user.id);
 		const body = await res.json();
 		expect(body.results).toEqual([]);
 	});

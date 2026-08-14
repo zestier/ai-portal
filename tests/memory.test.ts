@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { conversationId as convCodec, memoryEntityId } from '../src/lib/ids';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
@@ -53,7 +54,7 @@ function toolData<T>(r: ToolResult): T {
 // items the patch created (appending delete events to the log) and rebuild the
 // projection so consolidation is re-derived purely from the surviving
 // observations — the rebuild-based equivalent of the old whole-patch revert.
-function dropPatchAndRebuild(conversationId: number, patchId: number): void {
+function dropPatchAndRebuild(conversationId: string | number, patchId: number): void {
 	const items = memory.listPatchItems(conversationId, { patchId, limit: 1000 });
 	for (const item of items) {
 		if (item.action === 'create') {
@@ -64,10 +65,10 @@ function dropPatchAndRebuild(conversationId: number, patchId: number): void {
 }
 
 function routeEvent(
-	conversationId: number,
+	conversationId: string,
 	userId: number,
 	kind: string,
-	itemId: number,
+	itemId: string | number,
 	body: unknown
 ): Parameters<typeof patchMemoryItem>[0] {
 	return {
@@ -5515,7 +5516,7 @@ describe('memory-backed sessions', () => {
 		const entity = memory.getEntity(conv.id, 'object.brass_key');
 		expect(entity).not.toBeNull();
 		const items = memory.listPatchItems(conv.id, { patchId: patch.id, limit: 100 });
-		expect(items.some((i) => i.itemType === 'entity' && i.itemId === entity!.id)).toBe(true);
+		expect(items.some((i) => i.itemType === 'entity' && i.itemId === memoryEntityId.parse(entity!.id))).toBe(true);
 
 		dropPatchAndRebuild(conv.id, patch.id);
 		// The auto-minted entity must be removed (soft-deleted), not left active.
@@ -6147,15 +6148,15 @@ describe('memory_event_log retention + maintenance', () => {
 		vi.restoreAllMocks();
 	});
 
-	function eventCount(conversationId: number): number {
+	function eventCount(conversationId: string | number): number {
 		return (
 			getDb()
 				.prepare('SELECT COUNT(*) AS n FROM memory_event_log WHERE conversation_id = ?')
-				.get(conversationId) as { n: number }
+				.get(typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId)) as { n: number }
 		).n;
 	}
 
-	function rootCount(conversationId: number): number {
+	function rootCount(conversationId: string | number): number {
 		return (
 			getDb()
 				.prepare(
@@ -6165,7 +6166,7 @@ describe('memory_event_log retention + maintenance', () => {
 		).n;
 	}
 
-	function seedCommits(conversationId: number, count: number): void {
+	function seedCommits(conversationId: string | number, count: number): void {
 		for (let i = 0; i < count; i++) {
 			const a = messages.append(conversationId, { role: 'assistant', content: `turn ${i}` });
 			commitPatch({
@@ -6180,7 +6181,7 @@ describe('memory_event_log retention + maintenance', () => {
 		}
 	}
 
-	function entityKeys(conversationId: number): string[] {
+	function entityKeys(conversationId: string | number): string[] {
 		return memory
 			.listEntities(conversationId)
 			.map((e) => e.entityKey)

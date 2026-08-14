@@ -17,7 +17,7 @@ describe('prompt template chat launcher', () => {
 		});
 
 		const result = await createPromptTemplateDraftChat({
-			template: { id: -2, source: 'builtin', title: 'Debug an error' },
+			template: { id: '-2', source: 'builtin', title: 'Debug an error' },
 			fetcher
 		});
 
@@ -31,13 +31,13 @@ describe('prompt template chat launcher', () => {
 		expect(String(url)).not.toContain('/turns');
 		expect(JSON.parse(init?.body as string)).toEqual({
 			title: 'Debug an error',
-			promptTemplateId: -2
+			promptTemplateId: '-2'
 		});
 	});
 
 	it('encodes custom template draft URLs', () => {
-		expect(promptTemplateDraftUrl(1, { id: 1, source: 'custom' })).toBe(
-			'/conversations/1?promptTemplateSource=custom&promptTemplateId=1'
+		expect(promptTemplateDraftUrl('C1', { id: 'PT1', source: 'custom' })).toBe(
+			'/conversations/C1?promptTemplateSource=custom&promptTemplateId=PT1'
 		);
 	});
 
@@ -50,7 +50,7 @@ describe('prompt template chat launcher', () => {
 		});
 
 		await createPromptTemplateDraftChat({
-			template: { id: -2, source: 'builtin', title: 'Debug an error' },
+			template: { id: '-2', source: 'builtin', title: 'Debug an error' },
 			fetcher,
 			signal: controller.signal
 		});
@@ -70,7 +70,7 @@ describe('prompt template chat launcher', () => {
 		});
 
 		const pending = createPromptTemplateDraftChat({
-			template: { id: -2, source: 'builtin', title: 'Debug an error' },
+			template: { id: '-2', source: 'builtin', title: 'Debug an error' },
 			fetcher,
 			signal: controller.signal
 		});
@@ -89,13 +89,13 @@ describe('prompt template refine launcher', () => {
 		});
 
 		const result = await createPromptTemplateRefineChat({
-			template: { id: 1, title: 'My helper' },
+			template: { id: 'PT1', title: 'My helper' },
 			fetcher
 		});
 
 		expect(result).toEqual({
 			ok: true,
-			href: '/conversations/conv-9?refinePromptTemplateId=1'
+			href: '/conversations/conv-9?refinePromptTemplateId=PT1'
 		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const [url, init] = fetcher.mock.calls[0];
@@ -107,7 +107,7 @@ describe('prompt template refine launcher', () => {
 	it('reports a non-ok conversation create as a failure', async () => {
 		const fetcher = vi.fn(async () => new Response(null, { status: 500 }));
 		const result = await createPromptTemplateRefineChat({
-			template: { id: 1, title: 'My helper' },
+			template: { id: 'PT1', title: 'My helper' },
 			fetcher
 		});
 		expect(result).toEqual({ ok: false, status: 500 });
@@ -122,7 +122,7 @@ describe('prompt template refine launcher', () => {
 		});
 
 		await createPromptTemplateRefineChat({
-			template: { id: 2, title: 'Another' },
+			template: { id: 'PT2', title: 'Another' },
 			fetcher,
 			signal: controller.signal
 		});
@@ -132,12 +132,14 @@ describe('prompt template refine launcher', () => {
 	});
 
 	it('encodes refine URLs', () => {
-		expect(promptTemplateRefineUrl(3, 3)).toBe('/conversations/3?refinePromptTemplateId=3');
+		expect(promptTemplateRefineUrl('C3', 'PT3')).toBe(
+			'/conversations/C3?refinePromptTemplateId=PT3'
+		);
 	});
 });
 
 describe('prompt template send/review launcher', () => {
-	const template = { id: 1, title: 'Weekly review' };
+	const template = { id: 'PT1', title: 'Weekly review' };
 	const options = {
 		prompt: 'Reviewed prompt',
 		workspace: 'worktree' as const,
@@ -161,7 +163,7 @@ describe('prompt template send/review launcher', () => {
 		expect(result).toEqual({ ok: true, href: '/conversations/conv-1' });
 		expect(JSON.parse(calls[0].init?.body as string)).toEqual({
 			title: 'Weekly review',
-			promptTemplateId: 1,
+			promptTemplateId: 'PT1',
 			workspace: { kind: 'worktree' },
 			mode: 'autopilot',
 			approvalMode: 'auto-deny',

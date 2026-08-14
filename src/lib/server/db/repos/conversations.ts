@@ -132,14 +132,14 @@ export interface ListOpts {
  * Scoped to `userId` so users only ever see their own forks; the source
  * conversation must also be theirs at the call site.
  */
-export function listChildren(userId: number, sourceId: number): Conversation[] {
+export function listChildren(userId: number, sourceId: string | number): Conversation[] {
 	const rows = getDb()
 		.prepare(
 			`${CONVERSATION_SELECT}
 			 WHERE conversations.user_id = ? AND conversations.forked_from_conversation_id = ?
 			 ORDER BY created_at ASC`
 		)
-		.all(userId, sourceId) as ConvRow[];
+		.all(userId, convInt(sourceId)) as ConvRow[];
 	return rows.map(rowToConv);
 }
 

@@ -355,11 +355,12 @@ function indexEntryOf(msg: Message): TranscriptIndexEntry {
  * `hasMoreOlder` telling the client whether a paging endpoint has more.
  * Bounded regardless of conversation length.
  */
-export function projectTranscript(conversationId: number): TranscriptProjection {
-	const tail = messagesRepo.listRecent(conversationId, TRANSCRIPT_HYDRATED_TAIL);
+export function projectTranscript(conversationId: string | number): TranscriptProjection {
+	const intConv = typeof conversationId === 'number' ? conversationId : msgCodec.parse(conversationId);
+	const tail = messagesRepo.listRecent(intConv, TRANSCRIPT_HYDRATED_TAIL);
 	if (tail.length === 0) return { tail: [], index: [], hasMoreOlder: false };
 	const tailOldestId = msgCodec.parse(tail[0].id);
-	const page = messagesRepo.listIndexPage(conversationId, tailOldestId, TRANSCRIPT_INDEX_COUNT);
+	const page = messagesRepo.listIndexPage(intConv, tailOldestId, TRANSCRIPT_INDEX_COUNT);
 	return {
 		tail: tail.map((m) => projectMessageBody(m, INITIAL_RULES)),
 		index: page.messages.map(indexEntryOf),
@@ -369,11 +370,15 @@ export function projectTranscript(conversationId: number): TranscriptProjection 
 
 /** Index-only page of messages older than `beforeId` (the load-older path). */
 export function projectIndexPage(
-	conversationId: number,
+	conversationId: string | number,
 	beforeId: number,
 	limit: number
 ): { entries: TranscriptIndexEntry[]; hasMore: boolean } {
-	const page = messagesRepo.listIndexPage(conversationId, beforeId, limit);
+	const page = messagesRepo.listIndexPage(
+		typeof conversationId === 'number' ? conversationId : msgCodec.parse(conversationId),
+		beforeId,
+		limit
+	);
 	return { entries: page.messages.map(indexEntryOf), hasMore: page.hasMore };
 }
 
@@ -383,8 +388,14 @@ export function projectIndexPage(
  * exist in this conversation — the route turns that into a 404 without
  * leaking existence.
  */
-export function projectMessageForOwner(conversationId: number, messageId: number): Message | null {
-	const msg = messagesRepo.getMessage(conversationId, messageId);
+export function projectMessageForOwner(
+	conversationId: string | number,
+	messageId: number
+): Message | null {
+	const msg = messagesRepo.getMessage(
+		typeof conversationId === 'number' ? conversationId : msgCodec.parse(conversationId),
+		messageId
+	);
 	if (!msg) return null;
 	return projectMessageBody(msg, HYDRATION_RULES);
 }

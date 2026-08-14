@@ -3,7 +3,7 @@
 // PortalEvent by the bridge and persisted by the turn runner).
 
 import { getDb } from '../index';
-import { conversationId } from '$lib/ids';
+import { conversationId as convCodec } from '$lib/ids';
 import type { ConversationUsage } from '$lib/types';
 
 interface UsageRow {
@@ -19,7 +19,7 @@ interface UsageRow {
 
 function rowToUsage(r: UsageRow): ConversationUsage {
 	return {
-		conversationId: conversationId.encode(r.conversation_id),
+		conversationId: convCodec.encode(r.conversation_id),
 		currentTokens: r.current_tokens,
 		tokenLimit: r.token_limit,
 		messagesLength: r.messages_length,
@@ -39,14 +39,16 @@ export interface UsageSnapshot {
 	toolDefinitionsTokens?: number | null;
 }
 
-export function get(conversationId: number): ConversationUsage | null {
+export function get(conversationId: string | number): ConversationUsage | null {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const r = getDb()
 		.prepare('SELECT * FROM conversation_usage WHERE conversation_id = ?')
-		.get(conversationId) as UsageRow | undefined;
+		.get(intConv) as UsageRow | undefined;
 	return r ? rowToUsage(r) : null;
 }
 
-export function upsert(conversationId: number, s: UsageSnapshot): void {
+export function upsert(conversationId: string | number, s: UsageSnapshot): void {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	getDb()
 		.prepare(
 			`INSERT INTO conversation_usage(
@@ -63,7 +65,7 @@ export function upsert(conversationId: number, s: UsageSnapshot): void {
 				updated_at              = excluded.updated_at`
 		)
 		.run(
-			conversationId,
+			intConv,
 			s.currentTokens,
 			s.tokenLimit,
 			s.messagesLength,
@@ -74,6 +76,8 @@ export function upsert(conversationId: number, s: UsageSnapshot): void {
 		);
 }
 
-export function remove(conversationId: number): void {
-	getDb().prepare('DELETE FROM conversation_usage WHERE conversation_id = ?').run(conversationId);
+export function remove(conversationId: string | number): void {
+	getDb().prepare('DELETE FROM conversation_usage WHERE conversation_id = ?').run(
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId)
+	);
 }

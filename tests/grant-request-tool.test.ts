@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
+import { conversationId as convCodec } from '../src/lib/ids';
 import type { ApprovalMode, InteractivePermissionDecision, PortalEvent } from '../src/lib/types';
 import type { GrantScope } from '../src/lib/permissions/scope-types';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
@@ -26,7 +27,7 @@ async function makeHarness(approvalMode: ApprovalMode = 'ask') {
 		workdir: '/tmp',
 		model: 'gpt-4'
 	});
-	const conversationId = conversation.id;
+	const conversationId = convCodec.parse(conversation.id);
 	const events: PortalEvent[] = [];
 	const tools = buildPermissionTools({
 		userId: user.id,

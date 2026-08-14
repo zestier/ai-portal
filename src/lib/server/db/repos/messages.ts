@@ -517,8 +517,8 @@ export function updateContent(
 		.run(content, status, errorCode ?? null, id);
 }
 
-export function updateContentOnly(id: number, content: string) {
-	getDb().prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, id);
+export function updateContentOnly(id: string | number, content: string) {
+	getDb().prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, msgInt(id));
 }
 
 export function truncateAfterAndUpdateUserMessage(

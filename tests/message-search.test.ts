@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
+import { messageId } from '../src/lib/ids';
 
 async function freshImports() {
 	const users = await import('../src/lib/server/db/repos/users');
@@ -9,11 +10,11 @@ async function freshImports() {
 	return { users, convs, messages, db };
 }
 
-function ftsCount(db: { getDb: () => import('better-sqlite3').Database }, convId: number): number {
+function ftsCount(db: { getDb: () => import('better-sqlite3').Database }, convId: string | number): number {
 	const row = db
 		.getDb()
 		.prepare('SELECT COUNT(*) AS n FROM messages_fts WHERE conversation_id = ?')
-		.get(convId) as { n: number };
+		.get(typeof convId === 'number' ? convId : messageId.parse(convId)) as { n: number };
 	return row.n;
 }
 

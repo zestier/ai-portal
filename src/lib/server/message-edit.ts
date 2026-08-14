@@ -30,8 +30,8 @@ export class InlineEditRejected extends Error {
 
 export interface InlineEditInput {
 	userId: number;
-	conversationId: number;
-	messageId: number;
+	conversationId: string | number;
+	messageId: string | number;
 	newContent: string;
 }
 
@@ -46,7 +46,9 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
 	}
 
 	const { conv, all } = loadIdleConversation(input.userId, input.conversationId);
-	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
+	const targetIdx = all.findIndex(
+		(m) => msgCodec.parse(m.id) === (typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId))
+	);
 	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
 	if (target.role !== 'user') {
@@ -65,8 +67,8 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
 
 export interface RegenerateInput {
 	userId: number;
-	conversationId: number;
-	messageId: number;
+	conversationId: string | number;
+	messageId: string | number;
 }
 
 /**
@@ -77,7 +79,9 @@ export interface RegenerateInput {
  */
 export function regenerateFromAssistant(input: RegenerateInput): InlineEditResult {
 	const { conv, all } = loadIdleConversation(input.userId, input.conversationId);
-	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
+	const targetIdx = all.findIndex(
+		(m) => msgCodec.parse(m.id) === (typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId))
+	);
 	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
 	if (target.role !== 'assistant') {
@@ -115,9 +119,10 @@ export function regenerateFromAssistant(input: RegenerateInput): InlineEditResul
 
 function loadIdleConversation(
 	userId: number,
-	conversationId: number
+	conversationId: string | number
 ): { conv: Conversation; all: Message[] } {
-	const conv = convs.get(conversationId, userId);
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const conv = convs.get(intConv, userId);
 	if (!conv) throw new InlineEditRejected('conversation_not_found');
 
 	const active = getTurn(convCodec.parse(conv.id));

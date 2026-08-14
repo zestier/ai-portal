@@ -1,5 +1,5 @@
 import { ulid } from 'ulid';
-import { messageId as msgCodec } from '$lib/ids';
+import { conversationId, messageId as msgCodec } from '$lib/ids';
 import { log } from '$lib/server/log';
 import {
 	commitPatch,
@@ -223,6 +223,8 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 	}
 
 	async extractPatch(input: ExtractPatchInput): Promise<ExtractPatchResult> {
+		const intConv =
+			typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
 		// Resolve the pi model selection once, then drive the whole loop over it.
 		// An unresolvable selection (typo, unconfigured provider) falls back to
 		// the heuristic extractor for THIS turn rather than failing the turn —
@@ -267,7 +269,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 
 		const readTools = buildMemoryTools({
 			userId: input.userId,
-			conversationId: input.conversationId,
+			conversationId: intConv,
 			// The extractor's retrieval calls are background work, not part of
 			// the user-visible turn. Leave their tool-call records unattributed
 			// so they don't mix into the foreground turn's memory_tool_calls
@@ -290,7 +292,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		// these results before they enter the transcript (see the push site below).
 		const readToolNames = new Set(readTools.map((tool) => tool.name));
 		const writeHandlers = createWriteToolHandlers({
-			conversationId: input.conversationId,
+			conversationId: intConv,
 			mode: input.mode,
 			presentedLoops,
 			storedFactSignatures: buildStoredFactSignatures(input.initialPacket),
@@ -627,7 +629,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 			}
 		}
 
-		const merged = mergePatchProposals(staged, input.conversationId);
+		const merged = mergePatchProposals(staged, intConv);
 		const sanitized = sanitizePatch(merged, input.initialPacket);
 		// The loop ran to the iteration cap only if the model neither stopped on
 		// its own nor ran out of wall-clock budget.
@@ -636,7 +638,7 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 		// totalToolCalls === 0 means the model never emitted a tool call (common
 		// with weak local models), so there was no activity to render.
 		log.info('memory.extractor.tool_run', {
-			conversationId: input.conversationId,
+			conversationId: intConv,
 			model: this.model,
 			iterations: iterationsRun,
 			totalToolCalls,
@@ -973,7 +975,7 @@ export function isModelBackedExtractorConfigured(
  * is logged rather than fatal.
  */
 async function acquireExtractionLock(
-	conversationId: number,
+	conversationId: string | number,
 	holder: string,
 	opts: {
 		ttlMs: number;
@@ -999,6 +1001,8 @@ export async function extractAndCommitMemory(
 ): Promise<
 	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
 > {
+	const intConv =
+		typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
 	const extractor = createMemoryExtractor({
 		model: input.extractorModel
 	});
@@ -1006,7 +1010,7 @@ export async function extractAndCommitMemory(
 	// signal when diagnosing "extraction happens but no subagent card": only
 	// the `openai-compatible-tools` kind emits tool activity / a card.
 	log.info('memory.extractor.selected', {
-		conversationId: input.conversationId,
+		conversationId: intConv,
 		kind: extractor.kind,
 		model: extractor.model ?? null,
 		emitsActivity: extractor.kind === 'openai-compatible-tools'
@@ -1023,21 +1027,21 @@ export async function extractAndCommitMemory(
 	const lockTtlMs =
 		cfg.MEMORY_EXTRACTOR_MAX_WALLCLOCK_MS + cfg.MEMORY_EXTRACTOR_WATCHDOG_GRACE_MS + 30_000;
 	const lockHolder = ulid();
-	const lockHeld = await acquireExtractionLock(input.conversationId, lockHolder, {
+	const lockHeld = await acquireExtractionLock(intConv, lockHolder, {
 		ttlMs: lockTtlMs,
 		timeoutMs: lockTtlMs,
 		signal: input.signal
 	});
 	if (!lockHeld) {
 		log.warn('memory.extractor.lock_unavailable', {
-			conversationId: input.conversationId,
+			conversationId: intConv,
 			turnId: input.turnId ?? null
 		});
 	}
 	try {
 		return await runExtractionAndCommit(input, extractor);
 	} finally {
-		if (lockHeld) memoryRepo.releaseExtractionLock(input.conversationId, lockHolder);
+		if (lockHeld) memoryRepo.releaseExtractionLock(intConv, lockHolder);
 	}
 }
 
@@ -1047,6 +1051,8 @@ async function runExtractionAndCommit(
 ): Promise<
 	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
 > {
+	const intConv =
+		typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
 	// extractor must see the existing durable state — crucially the open-loop
 	// ids — to reuse keys and to keep/close loops by id. Callers (tests) may
 	// supply their own packet; production does not, so build one here keyed on
@@ -1054,9 +1060,9 @@ async function runExtractionAndCommit(
 	// "Initial packet: (none)" and is blind to existing ids.
 	if (!input.initialPacket) {
 		const globalMemoryEnabled =
-			conversationsRepo.get(input.conversationId, input.userId)?.globalMemoryEnabled ?? false;
+			conversationsRepo.get(intConv, input.userId)?.globalMemoryEnabled ?? false;
 		const build = () =>
-			buildInitialPacket(input.conversationId, input.mode, {
+			buildInitialPacket(intConv, input.mode, {
 				query: input.userMessage.content,
 				globalMemoryEnabled
 			});
@@ -1067,7 +1073,7 @@ async function runExtractionAndCommit(
 		// the turn's start (rolled back immediately, no durable writes) — see its
 		// docstring for the mechanism and failure-safety rationale.
 		input.initialPacket = input.priorPatchId
-			? memoryRepo.readMemoryAtTurnStart(input.conversationId, input.assistantMessage.id, build)
+			? memoryRepo.readMemoryAtTurnStart(intConv, input.assistantMessage.id, build)
 			: build();	}
 	const presentedLoopIds = input.initialPacket.openLoops.map((loop) => loop.id);
 
@@ -1077,7 +1083,7 @@ async function runExtractionAndCommit(
 	// the turn is being torn down and a late partial patch must not land.
 	input.signal?.throwIfAborted();
 	const commitInput: CommitMemoryPatchInput = {
-		conversationId: input.conversationId,
+		conversationId: intConv,
 		mode: input.mode,
 		turnId: input.turnId,
 		sourceMessageId: msgCodec.parse(input.assistantMessage.id),
@@ -1115,9 +1121,9 @@ async function runExtractionAndCommit(
 			...(extraction.patch.keepOpenLoops ?? []),
 			...(extraction.patch.resolveOpenLoops ?? []).map((resolution) => resolution.id)
 		]
-			.map((ref) => memoryRepo.resolveOpenLoopId(input.conversationId, ref))
+			.map((ref) => memoryRepo.resolveOpenLoopId(intConv, ref))
 			.filter((id): id is number => id !== undefined);
-		const aged = ageOpenLoops(input.conversationId, {
+		const aged = ageOpenLoops(intConv, {
 			presentedLoopIds,
 			keptLoopIds,
 			baseThreshold,
@@ -1126,7 +1132,7 @@ async function runExtractionAndCommit(
 		});
 		if (aged.dropped.length) {
 			log.info('memory.open_loops.auto_dropped', {
-				conversationId: input.conversationId,
+				conversationId: intConv,
 				count: aged.dropped.length,
 				baseThreshold
 			});

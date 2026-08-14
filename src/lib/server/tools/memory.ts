@@ -153,7 +153,7 @@ const CheckClaimsArgs = z.object({
 
 export function buildMemoryTools(opts: {
 	userId: number;
-	conversationId: number;
+	conversationId: string | number;
 	getTurnId?: () => string | null;
 	mode: MemoryMode;
 	globalMemoryEnabled?: boolean;
@@ -681,7 +681,7 @@ export function buildMemoryTools(opts: {
 }
 
 function checkClaim(
-	conversationId: number,
+	conversationId: string | number,
 	claim: { entityKey?: string | undefined; predicate: string; value?: unknown }
 ) {
 	const entity = claim.entityKey ? memoryRepo.getEntity(conversationId, claim.entityKey) : null;

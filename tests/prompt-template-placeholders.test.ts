@@ -49,7 +49,7 @@ describe('placeholder registry', () => {
 
 describe('interpolatePrompt', () => {
 	const values = ticketPlaceholderValues({
-		id: 1,
+		id: 'T1',
 		title: 'Fix it',
 		body: 'Some details.',
 		plan: 'Step 1. Step 2.'
@@ -66,7 +66,7 @@ describe('interpolatePrompt', () => {
 
 	it('drops unknown placeholders and trims dangling blanks for an empty body', () => {
 		const empty = ticketPlaceholderValues({
-			id: 1,
+			id: 'T1',
 			title: 'Fix it',
 			body: '   ',
 			plan: ''
@@ -81,10 +81,10 @@ describe('interpolatePrompt', () => {
 
 	it('renders an empty plan as (none) and trims a non-empty plan', () => {
 		expect(
-			ticketPlaceholderValues({ id: 1, title: 'x', body: 'b', plan: '   ' })['ticket.plan']
+			ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'b', plan: '   ' })['ticket.plan']
 		).toBe('(none)');
 		expect(
-			ticketPlaceholderValues({ id: 1, title: 'x', body: 'b', plan: '  Step 1.  ' })['ticket.plan']
+			ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'b', plan: '  Step 1.  ' })['ticket.plan']
 		).toBe('Step 1.');
 	});
 
@@ -92,7 +92,7 @@ describe('interpolatePrompt', () => {
 		expect(
 			interpolatePrompt(
 				'{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
-				ticketPlaceholderValues({ id: 1, title: 'x', body: 'Body.', plan: 'Step 1. Step 2.' })
+				ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'Body.', plan: 'Step 1. Step 2.' })
 			)
 		).toBe('Body.\n\nPlan:\nStep 1. Step 2.');
 	});
@@ -101,7 +101,7 @@ describe('interpolatePrompt', () => {
 		expect(
 			interpolatePrompt(
 				'{{ticket.body}}\n\nPlan:\n{{ticket.plan}}',
-				ticketPlaceholderValues({ id: 1, title: 'x', body: 'Body.', plan: '' })
+				ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'Body.', plan: '' })
 			)
 		).toBe('Body.\n\nPlan:\n(none)');
 	});

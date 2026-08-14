@@ -422,33 +422,40 @@ export interface CreatePatchInput {
 	committedAt?: number | null | undefined;
 }
 
-export function getMode(conversationId: number): MemoryMode {
+// Resolve a conversation-id argument to its storage int (handles parse here).
+function convInt(id: string | number): number {
+	return typeof id === 'number' ? id : conversationId.parse(id);
+}
+
+export function getMode(conversationId: string | number): MemoryMode {
 	const row = getDb()
 		.prepare('SELECT memory_mode FROM conversations WHERE id = ?')
-		.get(conversationId) as { memory_mode: string | null } | undefined;
+		.get(convInt(conversationId)) as { memory_mode: string | null } | undefined;
 	return normalizeMemoryMode(row?.memory_mode);
 }
 
 export function listSnapshot(
-	conversationId: number,
+	conversationId: string | number,
 	opts: { userId?: number } = {}
 ): MemorySnapshot {
+	const intConv = convInt(conversationId);
 	return {
-		mode: getMode(conversationId),
-		entities: listEntities(conversationId, { limit: 200 }),
-		facts: listFacts(conversationId, { limit: 300 }),
-		openLoops: listOpenLoops(conversationId, { status: 'open', limit: 100 }),
-		events: listEvents(conversationId, { limit: 100 }),
-		patches: listPatches(conversationId, { limit: 50 }),
-		issues: listIssues(conversationId, { limit: 100 }),
-		toolCalls: listToolCalls(conversationId, { limit: 50 }),
-		patchItems: listPatchItems(conversationId, { limit: 200 }),
+		mode: getMode(intConv),
+		entities: listEntities(intConv, { limit: 200 }),
+		facts: listFacts(intConv, { limit: 300 }),
+		openLoops: listOpenLoops(intConv, { status: 'open', limit: 100 }),
+		events: listEvents(intConv, { limit: 100 }),
+		patches: listPatches(intConv, { limit: 50 }),
+		issues: listIssues(intConv, { limit: 100 }),
+		toolCalls: listToolCalls(intConv, { limit: 50 }),
+		patchItems: listPatchItems(intConv, { limit: 200 }),
 		globalMemories: opts.userId ? listGlobalMemories(opts.userId, { limit: 100 }) : undefined
 	};
 }
 
-export function upsertEntity(conversationId: number, input: UpsertEntityInput): MemoryEntity {
+export function upsertEntity(conversationId: string | number, input: UpsertEntityInput): MemoryEntity {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const now = Date.now();
 	// Read + write must live in the SAME transaction: a read outside the write
 	// lets two concurrent callers (extraction retry, fork replay) both observe
@@ -459,7 +466,7 @@ export function upsertEntity(conversationId: number, input: UpsertEntityInput): 
 	const tx = db.transaction((): MemoryEntity => {
 		const existing = db
 			.prepare('SELECT * FROM memory_entities WHERE conversation_id = ? AND entity_key = ?')
-			.get(conversationId, input.entityKey) as EntityRow | undefined;
+			.get(intConv, input.entityKey) as EntityRow | undefined;
 		// On INSERT the caller is responsible for resolving entityType/displayName
 		// (the engine commit path derives them from the entityKey for a brand-new
 		// entity — see deriveEntityFromKey). The `?? ''` is only a type-level guard;
@@ -484,7 +491,7 @@ export function upsertEntity(conversationId: number, input: UpsertEntityInput): 
 			   metadata_json = excluded.metadata_json,
 			   updated_at = excluded.updated_at`
 		).run(
-			conversationId,
+			intConv,
 			input.entityKey,
 			entityType,
 			displayName,
@@ -495,9 +502,9 @@ export function upsertEntity(conversationId: number, input: UpsertEntityInput): 
 		);
 		const row = db
 			.prepare('SELECT * FROM memory_entities WHERE conversation_id = ? AND entity_key = ?')
-			.get(conversationId, input.entityKey) as EntityRow;
-		indexItem(db, conversationId, 'entity', row.id, entityIndexText(row));
-		appendSessionMemoryLog(db, conversationId, {
+			.get(intConv, input.entityKey) as EntityRow;
+		indexItem(db, intConv, 'entity', row.id, entityIndexText(row));
+		appendSessionMemoryLog(db, intConv, {
 			eventKind: existing ? 'entity.update' : 'entity.create',
 			itemType: 'entity',
 			itemId: row.id,
@@ -511,9 +518,10 @@ export function upsertEntity(conversationId: number, input: UpsertEntityInput): 
 }
 
 export function getEntity(
-	conversationId: number,
+	conversationId: string | number,
 	entityKeyOrId: string | number
 ): MemoryEntity | null {
+	const intConv = convInt(conversationId);
 	const id = typeof entityKeyOrId === 'string' ? memoryEntityId.tryParse(entityKeyOrId) : entityKeyOrId;
 	const key = typeof entityKeyOrId === 'string' && id === null ? entityKeyOrId : null;
 	const row = getDb()
@@ -522,18 +530,19 @@ export function getEntity(
 			  WHERE conversation_id = ? AND (id = ? OR entity_key = ?)
 			  LIMIT 1`
 		)
-		.get(conversationId, id ?? -1, key ?? '') as EntityRow | undefined;
+		.get(intConv, id ?? -1, key ?? '') as EntityRow | undefined;
 	return row ? rowToEntity(row) : null;
 }
 
 export function listEntities(
-	conversationId: number,
+	conversationId: string | number,
 	opts: {
 		limit?: number | undefined;
 		entityType?: string | undefined;
 		status?: string | undefined;
 	} = {}
 ): MemoryEntity[] {
+	const intConv = convInt(conversationId);
 	const limit = opts.limit ?? 100;
 	const status = opts.status ?? 'active';
 	const rows = opts.entityType
@@ -543,19 +552,20 @@ export function listEntities(
 					  WHERE conversation_id = ? AND entity_type = ? AND status = ?
 					  ORDER BY updated_at DESC LIMIT ?`
 				)
-				.all(conversationId, opts.entityType, status, limit) as EntityRow[])
+				.all(intConv, opts.entityType, status, limit) as EntityRow[])
 		: (getDb()
 				.prepare(
 					`SELECT * FROM memory_entities
 					  WHERE conversation_id = ? AND status = ?
 					  ORDER BY updated_at DESC LIMIT ?`
 				)
-				.all(conversationId, status, limit) as EntityRow[]);
+				.all(intConv, status, limit) as EntityRow[]);
 	return rows.map(rowToEntity);
 }
 
-export function addEvent(conversationId: number, input: AddEventInput): MemoryEvent {
+export function addEvent(conversationId: string | number, input: AddEventInput): MemoryEvent {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const now = Date.now();
 	// The projection INSERT, the FTS index write, and the event-log append must
 	// commit atomically: the event log is the rebuild source of truth, so a crash
@@ -571,7 +581,7 @@ export function addEvent(conversationId: number, input: AddEventInput): MemoryEv
 			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
 			)
 			.run(
-				conversationId,
+				intConv,
 				input.turnId ?? null,
 				input.eventType,
 				now,
@@ -586,8 +596,8 @@ export function addEvent(conversationId: number, input: AddEventInput): MemoryEv
 			);
 		const id = Number(info.lastInsertRowid);
 		const row = db.prepare('SELECT * FROM memory_events WHERE id = ?').get(id) as EventRow;
-		indexItem(db, conversationId, 'event', id, eventIndexText(row));
-		appendSessionMemoryLog(db, conversationId, {
+		indexItem(db, intConv, 'event', id, eventIndexText(row));
+		appendSessionMemoryLog(db, intConv, {
 			eventKind: 'event.create',
 			itemType: 'event',
 			itemId: id,
@@ -631,13 +641,14 @@ export function findDuplicateEvent(
 }
 
 export function listEvents(
-	conversationId: number,
+	conversationId: string | number,
 	opts: {
 		limit?: number | undefined;
 		entityId?: string | number | undefined;
 		eventType?: string | undefined;
 	} = {}
 ): MemoryEvent[] {
+	const intConv = convInt(conversationId);
 	const limit = opts.limit ?? 50;
 	let rows: EventRow[];
 	const entityId = resolveId(opts.entityId, memoryEntityId);
@@ -648,7 +659,7 @@ export function listEvents(
 				  WHERE conversation_id = ? AND (actor_entity_id = ? OR target_entity_id = ?)
 				  ORDER BY created_at DESC LIMIT ?`
 			)
-			.all(conversationId, entityId, entityId, limit) as EventRow[];
+			.all(intConv, entityId, entityId, limit) as EventRow[];
 	} else if (opts.eventType) {
 		rows = getDb()
 			.prepare(
@@ -656,7 +667,7 @@ export function listEvents(
 				  WHERE conversation_id = ? AND event_type = ?
 				  ORDER BY created_at DESC LIMIT ?`
 			)
-			.all(conversationId, opts.eventType, limit) as EventRow[];
+			.all(intConv, opts.eventType, limit) as EventRow[];
 	} else {
 		rows = getDb()
 			.prepare(
@@ -664,13 +675,14 @@ export function listEvents(
 				  WHERE conversation_id = ?
 				  ORDER BY created_at DESC LIMIT ?`
 			)
-			.all(conversationId, limit) as EventRow[];
+			.all(intConv, limit) as EventRow[];
 	}
 	return rows.map(rowToEvent);
 }
 
-export function addFact(conversationId: number, input: AddFactInput): MemoryFact {
+export function addFact(conversationId: string | number, input: AddFactInput): MemoryFact {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const tx = db.transaction(() => {
 		const now = Date.now();
 		// Append the raw observation as a `fact.create` event + projection row.
@@ -687,7 +699,7 @@ export function addFact(conversationId: number, input: AddFactInput): MemoryFact
 			 ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
-				conversationId,
+				intConv,
 				resolveId(input.entityId, memoryEntityId),
 				input.predicate,
 				safeJson(input.value),
@@ -702,15 +714,15 @@ export function addFact(conversationId: number, input: AddFactInput): MemoryFact
 			);
 		const id = Number(info.lastInsertRowid);
 		const row = db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
-		indexItem(db, conversationId, 'fact', id, factIndexText(row));
-		appendSessionMemoryLog(db, conversationId, {
+		indexItem(db, intConv, 'fact', id, factIndexText(row));
+		appendSessionMemoryLog(db, intConv, {
 			eventKind: 'fact.create',
 			itemType: 'fact',
 			itemId: id,
 			sourceMessageId: input.sourceMessageId ?? null,
 			payload: { item: rowToFact(row) }
 		});
-		consolidateFactGroup(db, conversationId, row.entity_id, row.predicate);
+		consolidateFactGroup(db, intConv, row.entity_id, row.predicate);
 		return db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as FactRow;
 	});
 	return rowToFact(tx());
@@ -774,7 +786,7 @@ function consolidateFactGroup(
 }
 
 export function listFacts(
-	conversationId: number,
+	conversationId: string | number,
 	opts: {
 		limit?: number | undefined;
 		entityId?: string | number | undefined;
@@ -782,10 +794,11 @@ export function listFacts(
 		predicate?: string | undefined;
 	} = {}
 ): MemoryFact[] {
+	const intConv = convInt(conversationId);
 	const limit = opts.limit ?? 100;
 	const status = opts.status ?? 'active';
 	const clauses = ['conversation_id = ?', 'status = ?'];
-	const params: (string | number)[] = [conversationId, status];
+	const params: (string | number)[] = [intConv, status];
 	const entityId = resolveId(opts.entityId, memoryEntityId);
 	if (entityId) {
 		clauses.push('entity_id = ?');
@@ -816,12 +829,13 @@ export function listFacts(
  * conversation. Used by the forget path to resolve a packet `[id=...]` handle to
  * a concrete fact and check its current status/kind before tombstoning it.
  */
-export function getFact(conversationId: number, id: string | number): MemoryFact | null {
+export function getFact(conversationId: string | number, id: string | number): MemoryFact | null {
+	const intConv = convInt(conversationId);
 	const intId = resolveId(id, memoryFactId);
 	if (!intId) return null;
 	const row = getDb()
 		.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-		.get(intId, conversationId) as FactRow | undefined;
+		.get(intId, intConv) as FactRow | undefined;
 	return row ? rowToFact(row) : null;
 }
 
@@ -876,18 +890,19 @@ function allocateLoopKey(db: Database.Database, conversationId: number, title: s
  * non-empty key, so both addressing forms work and id-based internal callers are
  * unaffected.
  */
-export function resolveOpenLoopId(conversationId: number, ref: string | number): number | null {
+export function resolveOpenLoopId(conversationId: string | number, ref: string | number): number | null {
 	if (ref === '' || ref === undefined || ref === null) return null;
+	const intConv = convInt(conversationId);
 	const db = getDb();
 	const byId = db
 		.prepare('SELECT id FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
-		.get(ref, conversationId) as { id: number } | undefined;
+		.get(ref, intConv) as { id: number } | undefined;
 	if (byId) return byId.id;
 	const byKey = db
 		.prepare(
 			"SELECT id FROM memory_open_loops WHERE loop_key = ? AND conversation_id = ? AND loop_key != ''"
 		)
-		.get(ref, conversationId) as { id: number } | undefined;
+		.get(ref, intConv) as { id: number } | undefined;
 	return byKey ? byKey.id : null;
 }
 
@@ -906,8 +921,9 @@ function isLoopKeyUniqueViolation(err: unknown): boolean {
 	);
 }
 
-export function addOpenLoop(conversationId: number, input: AddOpenLoopInput): MemoryOpenLoop {
+export function addOpenLoop(conversationId: string | number, input: AddOpenLoopInput): MemoryOpenLoop {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const now = Date.now();
 	// allocateLoopKey reads-then-inserts, so two concurrent extractions (separate
 	// connections, same pre-commit snapshot) can both pick the same free key. The
@@ -923,7 +939,7 @@ export function addOpenLoop(conversationId: number, input: AddOpenLoopInput): Me
 		// log entry (unrecoverable) or diverge the FTS index from the projection
 		// row.
 		const tx = db.transaction((): MemoryOpenLoop => {
-			const loopKey = allocateLoopKey(db, conversationId, input.title);
+			const loopKey = allocateLoopKey(db, intConv, input.title);
 			const info = db
 				.prepare(
 					`INSERT INTO memory_open_loops(
@@ -932,7 +948,7 @@ export function addOpenLoop(conversationId: number, input: AddOpenLoopInput): Me
 				 ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
-					conversationId,
+					intConv,
 					loopKey,
 					input.loopType,
 					input.title,
@@ -950,8 +966,8 @@ export function addOpenLoop(conversationId: number, input: AddOpenLoopInput): Me
 				);
 			const id = Number(info.lastInsertRowid);
 			const row = db.prepare('SELECT * FROM memory_open_loops WHERE id = ?').get(id) as OpenLoopRow;
-			indexItem(db, conversationId, 'open_loop', id, openLoopIndexText(row));
-			appendSessionMemoryLog(db, conversationId, {
+			indexItem(db, intConv, 'open_loop', id, openLoopIndexText(row));
+			appendSessionMemoryLog(db, intConv, {
 				eventKind: 'open_loop.create',
 				itemType: 'open_loop',
 				itemId: id,
@@ -992,21 +1008,22 @@ export function findDuplicateOpenLoop(
 	return row ? rowToOpenLoop(row) : null;
 }
 
-export function getOpenLoop(conversationId: number, id: number): MemoryOpenLoop | null {
+export function getOpenLoop(conversationId: string | number, id: number): MemoryOpenLoop | null {
 	const row = getDb()
 		.prepare('SELECT * FROM memory_open_loops WHERE id = ? AND conversation_id = ?')
-		.get(id, conversationId) as OpenLoopRow | undefined;
+		.get(id, convInt(conversationId)) as OpenLoopRow | undefined;
 	return row ? rowToOpenLoop(row) : null;
 }
 
 export function listOpenLoops(
-	conversationId: number,
+	conversationId: string | number,
 	opts: {
 		limit?: number | undefined;
 		status?: string | undefined;
 		loopType?: string | undefined;
 	} = {}
 ): MemoryOpenLoop[] {
+	const intConv = convInt(conversationId);
 	const limit = opts.limit ?? 50;
 	const status = opts.status ?? 'open';
 	if (status === 'all') {
@@ -1017,14 +1034,14 @@ export function listOpenLoops(
 						  WHERE conversation_id = ? AND loop_type = ?
 						  ORDER BY priority DESC, updated_at DESC LIMIT ?`
 					)
-					.all(conversationId, opts.loopType, limit) as OpenLoopRow[])
+					.all(intConv, opts.loopType, limit) as OpenLoopRow[])
 			: (getDb()
 					.prepare(
 						`SELECT * FROM memory_open_loops
 						  WHERE conversation_id = ?
 						  ORDER BY priority DESC, updated_at DESC LIMIT ?`
 					)
-					.all(conversationId, limit) as OpenLoopRow[]);
+					.all(intConv, limit) as OpenLoopRow[]);
 		return rows.map(rowToOpenLoop);
 	}
 	const rows = opts.loopType
@@ -1034,14 +1051,14 @@ export function listOpenLoops(
 					  WHERE conversation_id = ? AND loop_type = ? AND status = ?
 					  ORDER BY priority DESC, updated_at DESC LIMIT ?`
 				)
-				.all(conversationId, opts.loopType, status, limit) as OpenLoopRow[])
+				.all(intConv, opts.loopType, status, limit) as OpenLoopRow[])
 		: (getDb()
 				.prepare(
 					`SELECT * FROM memory_open_loops
 					  WHERE conversation_id = ? AND status = ?
 					  ORDER BY priority DESC, updated_at DESC LIMIT ?`
 				)
-				.all(conversationId, status, limit) as OpenLoopRow[]);
+				.all(intConv, status, limit) as OpenLoopRow[]);
 	return rows.map(rowToOpenLoop);
 }
 
@@ -1059,24 +1076,25 @@ export function listOpenLoops(
  * can never deadlock forever.
  */
 export function tryAcquireExtractionLock(
-	conversationId: number,
+	conversationId: string | number,
 	holder: string,
 	opts: { ttlMs: number; now?: number }
 ): boolean {
+	const intConv = convInt(conversationId);
 	const now = opts.now ?? Date.now();
 	const expiresAt = now + opts.ttlMs;
 	const db = getDb();
 	return db.transaction(() => {
 		db.prepare(
 			'DELETE FROM memory_extraction_locks WHERE conversation_id = ? AND expires_at <= ?'
-		).run(conversationId, now);
+		).run(intConv, now);
 		db.prepare(
 			`INSERT OR IGNORE INTO memory_extraction_locks(conversation_id, holder, acquired_at, expires_at)
 			 VALUES (?, ?, ?, ?)`
-		).run(conversationId, holder, now, expiresAt);
+		).run(intConv, holder, now, expiresAt);
 		const row = db
 			.prepare('SELECT holder FROM memory_extraction_locks WHERE conversation_id = ?')
-			.get(conversationId) as { holder: string } | undefined;
+			.get(intConv) as { holder: string } | undefined;
 		return row?.holder === holder;
 	})();
 }
@@ -1086,14 +1104,15 @@ export function tryAcquireExtractionLock(
  * to the holder token so a caller can never drop a lock another holder took
  * over after its own row expired.
  */
-export function releaseExtractionLock(conversationId: number, holder: string): void {
+export function releaseExtractionLock(conversationId: string | number, holder: string): void {
 	getDb()
 		.prepare('DELETE FROM memory_extraction_locks WHERE conversation_id = ? AND holder = ?')
-		.run(conversationId, holder);
+		.run(convInt(conversationId), holder);
 }
 
-export function createPatch(conversationId: number, input: CreatePatchInput): MemoryPatch {
+export function createPatch(conversationId: string | number, input: CreatePatchInput): MemoryPatch {
 	const now = Date.now();
+	const intConv = convInt(conversationId);
 	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_patches(
@@ -1103,7 +1122,7 @@ export function createPatch(conversationId: number, input: CreatePatchInput): Me
 			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
-			conversationId,
+			intConv,
 			input.turnId ?? null,
 			input.status,
 			input.summary ?? '',
@@ -1118,7 +1137,7 @@ export function createPatch(conversationId: number, input: CreatePatchInput): Me
 		);
 	const id = Number(info.lastInsertRowid);
 	const row = getDb().prepare('SELECT * FROM memory_patches WHERE id = ?').get(id) as PatchRow;
-	appendSessionMemoryLog(getDb(), conversationId, {
+	appendSessionMemoryLog(getDb(), intConv, {
 		eventKind: 'patch.create',
 		itemType: 'patch',
 		itemId: id,
@@ -1129,14 +1148,14 @@ export function createPatch(conversationId: number, input: CreatePatchInput): Me
 	return rowToPatch(row);
 }
 
-export function listPatches(conversationId: number, opts: { limit?: number } = {}): MemoryPatch[] {
+export function listPatches(conversationId: string | number, opts: { limit?: number } = {}): MemoryPatch[] {
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM memory_patches
 			  WHERE conversation_id = ?
 			  ORDER BY created_at DESC LIMIT ?`
 		)
-		.all(conversationId, opts.limit ?? 50) as PatchRow[];
+		.all(convInt(conversationId), opts.limit ?? 50) as PatchRow[];
 	return rows.map(rowToPatch);
 }
 
@@ -1203,9 +1222,10 @@ export function recordPatchItem(
 }
 
 export function listPatchItems(
-	conversationId: number,
+	conversationId: string | number,
 	opts: { patchId?: number; limit?: number } = {}
 ): MemoryPatchItem[] {
+	const intConv = convInt(conversationId);
 	const rows = opts.patchId
 		? (getDb()
 				.prepare(
@@ -1213,27 +1233,28 @@ export function listPatchItems(
 					  WHERE conversation_id = ? AND patch_id = ?
 					  ORDER BY created_at DESC LIMIT ?`
 				)
-				.all(conversationId, opts.patchId, opts.limit ?? 200) as PatchItemRow[])
+				.all(intConv, opts.patchId, opts.limit ?? 200) as PatchItemRow[])
 		: (getDb()
 				.prepare(
 					`SELECT * FROM memory_patch_items
 					  WHERE conversation_id = ?
 					  ORDER BY created_at DESC LIMIT ?`
 				)
-				.all(conversationId, opts.limit ?? 200) as PatchItemRow[]);
+				.all(intConv, opts.limit ?? 200) as PatchItemRow[]);
 	return rows.map(rowToPatchItem);
 }
 
 export function reviewPatchItem(
-	conversationId: number,
+	conversationId: string | number,
 	patchItemId: string | number,
 	decision: 'approve' | 'reject'
 ): { item: MemoryPatchItem | null; affected: boolean } {
+	const intConv = convInt(conversationId);
 	const intPatchItemId = resolveId(patchItemId, memoryPatchItemId);
 	if (!intPatchItemId) return { item: null, affected: false };
 	const current = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ? AND conversation_id = ?')
-		.get(intPatchItemId, conversationId) as PatchItemRow | undefined;
+		.get(intPatchItemId, intConv) as PatchItemRow | undefined;
 	if (!current) return { item: null, affected: false };
 	let affected = false;
 	const status = decision === 'approve' ? 'approved' : 'rejected';
@@ -1242,7 +1263,7 @@ export function reviewPatchItem(
 		current.review_status !== 'rejected' &&
 		current.action === 'create'
 	) {
-		affected = deleteItem(conversationId, current.item_type, current.item_id);
+		affected = deleteItem(intConv, current.item_type, current.item_id);
 	}
 	getDb()
 		.prepare(
@@ -1250,11 +1271,11 @@ export function reviewPatchItem(
 			    SET review_status = ?, reviewed_at = ?
 			  WHERE id = ? AND conversation_id = ?`
 		)
-		.run(status, Date.now(), intPatchItemId, conversationId);
+		.run(status, Date.now(), intPatchItemId, intConv);
 	const item = getDb()
 		.prepare('SELECT * FROM memory_patch_items WHERE id = ? AND conversation_id = ?')
-		.get(intPatchItemId, conversationId) as PatchItemRow;
-	appendSessionMemoryLog(getDb(), conversationId, {
+		.get(intPatchItemId, intConv) as PatchItemRow;
+	appendSessionMemoryLog(getDb(), intConv, {
 		eventKind: 'patch_item.review',
 		itemType: 'patch_item',
 		itemId: intPatchItemId,
@@ -1264,16 +1285,17 @@ export function reviewPatchItem(
 }
 
 export function updateEntity(
-	conversationId: number,
+	conversationId: string | number,
 	id: string | number,
 	patch: Partial<Pick<MemoryEntity, 'displayName' | 'summary' | 'status'>> & {
 		entityType?: string;
 		metadata?: unknown;
 	}
 ): MemoryEntity | null {
+	const intConv = convInt(conversationId);
 	const intId = resolveId(id, memoryEntityId);
 	if (!intId) return null;
-	const current = getEntity(conversationId, intId);
+	const current = getEntity(intConv, intId);
 	if (!current) return null;
 	const next = {
 		entityType: patch.entityType ?? current.entityType,
@@ -1301,8 +1323,8 @@ export function updateEntity(
 	const row = getDb()
 		.prepare('SELECT * FROM memory_entities WHERE id = ? AND conversation_id = ?')
 		.get(intId, conversationId) as EntityRow;
-	syncSessionIndex(getDb(), conversationId, 'entity', intId, row.status, entityIndexText(row));
-	appendSessionMemoryLog(getDb(), conversationId, {
+	syncSessionIndex(getDb(), intConv, 'entity', intId, row.status, entityIndexText(row));
+	appendSessionMemoryLog(getDb(), intConv, {
 		eventKind: row.status === 'deleted' ? 'entity.delete' : 'entity.update',
 		itemType: 'entity',
 		itemId: intId,
@@ -1337,13 +1359,14 @@ export interface MergeEntitiesResult {
  * told to.
  */
 export function mergeEntities(
-	conversationId: number,
+	conversationId: string | number,
 	opts: { fromKeyOrId: string; intoKeyOrId: string }
 ): MergeEntitiesResult {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const tx = db.transaction((): MergeEntitiesResult => {
-		const from = getEntity(conversationId, opts.fromKeyOrId);
-		const into = getEntity(conversationId, opts.intoKeyOrId);
+		const from = getEntity(intConv, opts.fromKeyOrId);
+		const into = getEntity(intConv, opts.intoKeyOrId);
 		if (!from)
 			return {
 				ok: false,
@@ -1386,7 +1409,7 @@ export function mergeEntities(
 				`SELECT * FROM memory_facts
 				  WHERE conversation_id = ? AND entity_id = ? AND status != 'deleted'`
 			)
-			.all(conversationId, fromId) as FactRow[];
+			.all(intConv, fromId) as FactRow[];
 		for (const factRow of factRows) {
 			db.prepare(
 				'UPDATE memory_facts SET entity_id = ?, updated_at = ? WHERE id = ? AND conversation_id = ?'
@@ -1396,13 +1419,13 @@ export function mergeEntities(
 				.get(factRow.id) as FactRow;
 			syncSessionIndex(
 				db,
-				conversationId,
+				intConv,
 				'fact',
 				updated.id,
 				updated.status,
 				factIndexText(updated)
 			);
-			appendSessionMemoryLog(db, conversationId, {
+			appendSessionMemoryLog(db, intConv, {
 				eventKind: 'fact.update',
 				itemType: 'fact',
 				itemId: updated.id,
@@ -1414,8 +1437,8 @@ export function mergeEntities(
 		// the destination may now hold duplicate observations of a single-valued
 		// predicate, and the source group is left empty.
 		for (const predicate of touchedPredicates) {
-			consolidateFactGroup(db, conversationId, intoId, predicate);
-			consolidateFactGroup(db, conversationId, fromId, predicate);
+			consolidateFactGroup(db, intConv, intoId, predicate);
+			consolidateFactGroup(db, intConv, fromId, predicate);
 		}
 
 		const eventRows = db
@@ -1423,7 +1446,7 @@ export function mergeEntities(
 				`SELECT * FROM memory_events
 				  WHERE conversation_id = ? AND (actor_entity_id = ? OR target_entity_id = ?)`
 			)
-			.all(conversationId, fromId, fromId) as EventRow[];
+			.all(intConv, fromId, fromId) as EventRow[];
 		for (const eventRow of eventRows) {
 			const nextActor = eventRow.actor_entity_id === fromId ? intoId : eventRow.actor_entity_id;
 			const nextTarget =
@@ -1434,8 +1457,8 @@ export function mergeEntities(
 			const updated = db
 				.prepare('SELECT * FROM memory_events WHERE id = ?')
 				.get(eventRow.id) as EventRow;
-			indexItem(db, conversationId, 'event', updated.id, eventIndexText(updated));
-			appendSessionMemoryLog(db, conversationId, {
+			indexItem(db, intConv, 'event', updated.id, eventIndexText(updated));
+			appendSessionMemoryLog(db, intConv, {
 				eventKind: 'event.update',
 				itemType: 'event',
 				itemId: updated.id,
@@ -1453,11 +1476,11 @@ export function mergeEntities(
 			if (!related.includes(fromId)) continue;
 			const next = related.map((id) => (id === fromId ? intoId : id));
 			const deduped = [...new Set(next)];
-			updateOpenLoop(conversationId, loopRow.id, { relatedEntityIds: deduped });
+			updateOpenLoop(intConv, loopRow.id, { relatedEntityIds: deduped });
 		}
 
-		const tombstoned = updateEntity(conversationId, fromId, { status: 'deleted' });
-		addEvent(conversationId, {
+		const tombstoned = updateEntity(intConv, fromId, { status: 'deleted' });
+		addEvent(intConv, {
 			eventType: 'memory_entities_merged',
 			summary: `Merged ${from.entityKey} into ${into.entityKey}.`,
 			payload: {
@@ -1483,17 +1506,18 @@ export function mergeEntities(
 }
 
 export function updateFact(
-	conversationId: number,
+	conversationId: string | number,
 	id: string | number,
 	patch: Partial<Pick<MemoryFact, 'predicate' | 'value' | 'status' | 'visibility' | 'confidence'>>
 ): MemoryFact | null {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const tx = db.transaction(() => {
 		const intId = resolveId(id, memoryFactId);
 		if (!intId) return null;
 		const current = db
 			.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-			.get(intId, conversationId) as FactRow | undefined;
+			.get(intId, intConv) as FactRow | undefined;
 		if (!current) return null;
 		db.prepare(
 			`UPDATE memory_facts
@@ -1507,13 +1531,13 @@ export function updateFact(
 			patch.confidence ?? current.confidence,
 			Date.now(),
 			intId,
-			conversationId
+			intConv
 		);
 		const row = db
 			.prepare('SELECT * FROM memory_facts WHERE id = ? AND conversation_id = ?')
-			.get(intId, conversationId) as FactRow;
-		syncSessionIndex(db, conversationId, 'fact', intId, row.status, factIndexText(row));
-		appendSessionMemoryLog(db, conversationId, {
+			.get(intId, intConv) as FactRow;
+		syncSessionIndex(db, intConv, 'fact', intId, row.status, factIndexText(row));
+		appendSessionMemoryLog(db, intConv, {
 			eventKind:
 				row.status === 'deleted'
 					? 'fact.delete'
@@ -1526,7 +1550,7 @@ export function updateFact(
 		});
 		// Re-derive the active set: deleting/editing a fact can promote a previously
 		// superseded sibling (e.g. dropping the observation that overrode it).
-		consolidateFactGroup(db, conversationId, row.entity_id, row.predicate);
+		consolidateFactGroup(db, intConv, row.entity_id, row.predicate);
 		return rowToFact(
 			db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(intId) as FactRow
 		);
@@ -1603,7 +1627,7 @@ export function recordOpenLoopLiveness(
 		presentedLoopIds: number[];
 		keptLoopIds?: number[] | undefined;
 		baseThreshold: number;
-		sourceMessageId?: number | null | undefined;
+		sourceMessageId?: string | number | null | undefined;
 		turnId?: string | null | undefined;
 	}
 ): { dropped: number[] } {
@@ -1611,6 +1635,7 @@ export function recordOpenLoopLiveness(
 	if (presented.length === 0 || !(input.baseThreshold > 0)) return { dropped: [] };
 	const kept = [...new Set(input.keptLoopIds ?? [])].filter(Boolean);
 	const payload = { presented, kept, baseThreshold: input.baseThreshold };
+	const intSource = msgIntOf(input.sourceMessageId);
 	const db = getDb();
 	let dropped: number[] = [];
 	const tx = db.transaction(() => {
@@ -1622,13 +1647,18 @@ export function recordOpenLoopLiveness(
 			eventKind: 'open_loop.liveness',
 			itemType: 'open_loop_liveness',
 			itemId: Date.now(),
-			sourceMessageId: input.sourceMessageId ?? null,
+			sourceMessageId: intSource,
 			turnId: input.turnId ?? null,
 			payload
 		});
 	});
 	tx();
 	return { dropped };
+}
+
+function msgIntOf(id: string | number | null | undefined): number | null {
+	if (id === null || id === undefined) return null;
+	return typeof id === 'number' ? id : messageId.parse(id);
 }
 
 interface OpenLoopLivenessPayload {
@@ -1694,14 +1724,17 @@ function applyOpenLoopLivenessProjection(
 	return dropped;
 }
 
-export function deleteItem(conversationId: number, kind: string, id: number): boolean {
+export function deleteItem(conversationId: string | number, kind: string, id: string | number): boolean {
+	const intConv = convInt(conversationId);
 	const normalized = normalizeKind(kind);
 	if (!normalized) return false;
 	if (normalized === 'entity')
-		return updateEntity(conversationId, id, { status: 'deleted' }) !== null;
-	if (normalized === 'fact') return updateFact(conversationId, id, { status: 'deleted' }) !== null;
+		return updateEntity(intConv, id, { status: 'deleted' }) !== null;
+	if (normalized === 'fact') return updateFact(intConv, id, { status: 'deleted' }) !== null;
 	if (normalized === 'open_loop')
-		return updateOpenLoop(conversationId, id, { status: 'deleted' }) !== null;
+		return updateOpenLoop(intConv, typeof id === 'number' ? id : Number(id) || 0, {
+			status: 'deleted'
+		}) !== null;
 	return false;
 }
 
@@ -1715,8 +1748,9 @@ export function deleteItem(conversationId: number, kind: string, id: number): bo
  * once a replacement patch validates, so a failed/aborted/needs_review retry
  * never reaches it. Mutates durable state.
  */
-export function revertCommittedPatch(conversationId: number, patchId: number): void {
-	const items = listPatchItems(conversationId, { patchId, limit: 1000 });
+export function revertCommittedPatch(conversationId: string | number, patchId: number): void {
+	const intConv = convInt(conversationId);
+	const items = listPatchItems(intConv, { patchId, limit: 1000 });
 	const db = getDb();
 	// Apply every item AND rebuild the projection inside one transaction so a
 	// crash mid-loop can't leave a half-reverted state (some facts restored,
@@ -1726,14 +1760,14 @@ export function revertCommittedPatch(conversationId: number, patchId: number): v
 	const tx = db.transaction(() => {
 		for (const item of items) {
 			if (item.action === 'create') {
-				deleteItem(conversationId, item.itemType, item.itemId);
+				deleteItem(intConv, item.itemType, item.itemId);
 			} else if (item.action === 'resolve' && item.itemType === 'open_loop') {
-				updateOpenLoop(conversationId, item.itemId, { status: 'open' });
+				updateOpenLoop(intConv, item.itemId, { status: 'open' });
 			} else if (item.action === 'forget' && item.itemType === 'fact') {
-				updateFact(conversationId, item.itemId, { status: 'active' });
+				updateFact(intConv, item.itemId, { status: 'active' });
 			}
 		}
-		rebuildSessionMemoryProjection(conversationId);
+		rebuildSessionMemoryProjection(intConv);
 	});
 	tx();
 }
@@ -1790,18 +1824,19 @@ function headBeforeMessage(
  */
 let turnStartViewSavepointSeq = 0;
 export function readMemoryAtTurnStart<T>(
-	conversationId: number,
+	conversationId: string | number,
 	assistantMessageId: string | number,
 	read: () => T
 ): T {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const savepoint = `memory_turn_start_view_${turnStartViewSavepointSeq++}`;
 	db.exec(`SAVEPOINT ${savepoint}`);
 	try {
 		const intMessageId =
 			typeof assistantMessageId === 'number' ? assistantMessageId : messageId.parse(assistantMessageId);
-		const branchPoint = headBeforeMessage(db, conversationId, intMessageId);
-		rebuildSessionMemoryProjectionInTransaction(db, conversationId, branchPoint);
+		const branchPoint = headBeforeMessage(db, intConv, intMessageId);
+		rebuildSessionMemoryProjectionInTransaction(db, intConv, branchPoint);
 		return read();
 	} finally {
 		// Discard the transient re-projection (and its head move); the materialized
@@ -1817,8 +1852,8 @@ export function upsertGlobalMemory(
 		kind: string;
 		memoryKey: string;
 		value: unknown;
-		sourceConversationId?: number | null | undefined;
-		sourceMessageId?: number | null | undefined;
+		sourceConversationId?: string | number | null | undefined;
+		sourceMessageId?: string | number | null | undefined;
 	}
 ): GlobalMemory {
 	const db = getDb();
@@ -1845,8 +1880,10 @@ export function upsertGlobalMemory(
 			  WHERE id = ?`
 			).run(
 				safeJson(input.value),
-				input.sourceConversationId ?? existing.source_conversation_id,
-				input.sourceMessageId ?? existing.source_message_id,
+				input.sourceConversationId == null
+					? existing.source_conversation_id
+					: convInt(input.sourceConversationId),
+				input.sourceMessageId == null ? existing.source_message_id : msgIntOf(input.sourceMessageId),
 				now,
 				existing.id
 			);
@@ -1868,8 +1905,8 @@ export function upsertGlobalMemory(
 				input.kind,
 				input.memoryKey,
 				safeJson(input.value),
-				input.sourceConversationId ?? null,
-				input.sourceMessageId ?? null,
+				input.sourceConversationId == null ? null : convInt(input.sourceConversationId),
+				input.sourceMessageId == null ? null : msgIntOf(input.sourceMessageId),
 				now,
 				now
 			);
@@ -1927,8 +1964,10 @@ export function updateGlobalMemory(
 			input.kind,
 			input.memoryKey,
 			safeJson(input.value),
-			input.sourceConversationId ?? current.source_conversation_id,
-			input.sourceMessageId ?? current.source_message_id,
+			input.sourceConversationId == null
+				? current.source_conversation_id
+				: convInt(input.sourceConversationId),
+			input.sourceMessageId == null ? current.source_message_id : msgIntOf(input.sourceMessageId),
 			now,
 			id,
 			userId
@@ -2044,7 +2083,7 @@ export function listIssues(
 }
 
 export function recordToolCall(
-	conversationId: number,
+	conversationId: string | number,
 	input: {
 		turnId?: string | null | undefined;
 		toolName: string;
@@ -2054,6 +2093,7 @@ export function recordToolCall(
 	}
 ): MemoryToolCall {
 	const now = Date.now();
+	const intConv = convInt(conversationId);
 	const info = getDb()
 		.prepare(
 			`INSERT INTO memory_tool_calls(
@@ -2062,7 +2102,7 @@ export function recordToolCall(
 			 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
-			conversationId,
+			intConv,
 			input.turnId ?? null,
 			input.toolName,
 			safeJson(input.arguments),
@@ -2074,7 +2114,7 @@ export function recordToolCall(
 	const row = getDb()
 		.prepare('SELECT * FROM memory_tool_calls WHERE id = ?')
 		.get(id) as ToolCallRow;
-	appendSessionMemoryLog(getDb(), conversationId, {
+	appendSessionMemoryLog(getDb(), intConv, {
 		eventKind: 'tool_call.create',
 		itemType: 'tool_call',
 		itemId: id,
@@ -2099,7 +2139,7 @@ export function listToolCalls(
 }
 
 export function search(
-	conversationId: number,
+	conversationId: string | number,
 	opts: { query: string; types?: string[] | undefined; limit?: number | undefined }
 ): Array<{
 	itemType: string;
@@ -2112,6 +2152,7 @@ export function search(
 	if (!query) return [];
 	const limit = opts.limit ?? 20;
 	const types = opts.types ?? [];
+	const intConv = convInt(conversationId);
 	// Push the type filter into SQL so LIMIT applies after filtering, avoiding
 	// starvation when the top-ranked FTS hits are all of an unwanted type.
 	const typeFilter =
@@ -2126,7 +2167,7 @@ export function search(
 			  ORDER BY rank
 			  LIMIT ?`
 		)
-		.all(conversationId, ftsQuery(query), ...types, limit) as {
+		.all(intConv, ftsQuery(query), ...types, limit) as {
 		item_type: string;
 		item_id: number;
 		text: string;
@@ -2161,14 +2202,15 @@ export function purgeSessionSearchIndex(db: Database.Database, conversationId: n
 	db.prepare('DELETE FROM memory_search_index WHERE conversation_id = ?').run(conversationId);
 }
 
-export function wipe(conversationId: number): void {
+export function wipe(conversationId: string | number): void {
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	const tx = db.transaction(() => {
-		clearSessionMemoryProjection(db, conversationId);
-		db.prepare('DELETE FROM memory_event_log WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_refs WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_heads WHERE conversation_id = ?').run(conversationId);
-		db.prepare('DELETE FROM memory_message_heads WHERE conversation_id = ?').run(conversationId);
+		clearSessionMemoryProjection(db, intConv);
+		db.prepare('DELETE FROM memory_event_log WHERE conversation_id = ?').run(intConv);
+		db.prepare('DELETE FROM memory_refs WHERE conversation_id = ?').run(intConv);
+		db.prepare('DELETE FROM memory_heads WHERE conversation_id = ?').run(intConv);
+		db.prepare('DELETE FROM memory_message_heads WHERE conversation_id = ?').run(intConv);
 	});
 	tx();
 }
@@ -2183,14 +2225,15 @@ export function wipe(conversationId: number): void {
 // that still reconstructs every surviving item's latest state — the only thing
 // lost is "cold" history (items whose sole observation aged out), which is
 // exactly the intent of a retention sweep. Returns the number of events trimmed.
-export function compactSessionMemoryLog(conversationId: number, maxEvents: number): number {
+export function compactSessionMemoryLog(conversationId: string | number, maxEvents: number): number {
 	if (!Number.isFinite(maxEvents) || maxEvents <= 0) return 0;
 	const cap = Math.floor(maxEvents);
 	const db = getDb();
+	const intConv = convInt(conversationId);
 	let trimmed = 0;
 	const tx = db.transaction(() => {
-		const head = getCurrentMemoryHead(db, conversationId);
-		const chain = chainRowsForHead(db, conversationId, head); // root -> head
+		const head = getCurrentMemoryHead(db, intConv);
+		const chain = chainRowsForHead(db, intConv, head); // root -> head
 		if (chain.length <= cap) return;
 		const purged = chain.slice(0, chain.length - cap);
 		const newRoot = chain[chain.length - cap];
@@ -2207,9 +2250,9 @@ export function compactSessionMemoryLog(conversationId: number, maxEvents: numbe
 		);
 		for (const row of purged) {
 			deleteRefBySource.run(row.id);
-			deleteRefByTarget.run(conversationId, row.id);
-			deleteMessageHead.run(conversationId, row.id);
-			deleteEvent.run(conversationId, row.id);
+			deleteRefByTarget.run(intConv, row.id);
+			deleteMessageHead.run(intConv, row.id);
+			deleteEvent.run(intConv, row.id);
 		}
 
 		// Re-root: the oldest survivor's parent has just been removed, so detach it
@@ -2217,12 +2260,12 @@ export function compactSessionMemoryLog(conversationId: number, maxEvents: numbe
 		// terminates cleanly at this event on the next rebuild.
 		db.prepare(
 			'UPDATE memory_event_log SET parent_id = NULL WHERE conversation_id = ? AND id = ?'
-		).run(conversationId, newRoot.id);
+		).run(intConv, newRoot.id);
 		deleteRefBySource.run(newRoot.id);
 
 		// Rebuild the projection + FTS index from the capped chain so the live state
 		// (and search) reflect exactly the retained events.
-		rebuildSessionMemoryProjectionInTransaction(db, conversationId);
+		rebuildSessionMemoryProjectionInTransaction(db, intConv);
 		trimmed = purged.length;
 	});
 	tx();
@@ -2731,9 +2774,10 @@ function clearSessionMemoryProjection(db: Database.Database, conversationId: num
 	db.prepare('DELETE FROM memory_entities WHERE conversation_id = ?').run(conversationId);
 }
 
-export function rebuildSessionMemoryProjection(conversationId: number): void {
+export function rebuildSessionMemoryProjection(conversationId: string | number): void {
 	const db = getDb();
-	const tx = db.transaction(() => rebuildSessionMemoryProjectionInTransaction(db, conversationId));
+	const intConv = convInt(conversationId);
+	const tx = db.transaction(() => rebuildSessionMemoryProjectionInTransaction(db, intConv));
 	tx();
 }
 

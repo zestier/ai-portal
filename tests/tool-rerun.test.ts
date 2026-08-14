@@ -139,7 +139,7 @@ describe('tool-call rerun endpoint', () => {
 			messages
 				.listByConversation(conv.id)
 				.flatMap((m) => m.toolCalls ?? [])
-				.find((t) => t.id === 2)
+				.find((t) => t.id === 'X2')
 		).toMatchObject({
 			id: 2,
 			status: 'error',

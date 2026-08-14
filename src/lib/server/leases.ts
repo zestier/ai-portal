@@ -295,13 +295,14 @@ async function unmergedCommitCount(lease: Lease, conversation: Conversation): Pr
  *    conversation's own. Same reasoning as the primary worktree's guard.
  */
 export async function removeLeasesForConversation(
-	conversationId: number,
+	conversationId: string | number,
 	userId: number,
 	opts: { force?: boolean } = {}
 ): Promise<RemoveLeasesResult> {
+	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const result: RemoveLeasesResult = { removed: [], retained: [] };
-	const conversation = convs.get(conversationId, userId);
-	for (const lease of leaseRepo.listByConversation(conversationId, userId)) {
+	const conversation = convs.get(intConv, userId);
+	for (const lease of leaseRepo.listByConversation(intConv, userId)) {
 		if (!opts.force && conversation) {
 			const ahead = await unmergedCommitCount(lease, conversation);
 			if (ahead > 0) {
@@ -365,12 +366,13 @@ export function conversationWorkspaceRoots(conversation: Conversation): string[]
  * must be writable within that same turn.
  */
 export function workspaceRootsFor(
-	conversationId: number,
+	conversationId: string | number,
 	userId: number,
 	fallback: string
 ): string[] {
 	try {
-		const conversation = convs.get(conversationId, userId);
+		const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+		const conversation = convs.get(intConv, userId);
 		if (!conversation) return [fallback];
 		const roots = conversationWorkspaceRoots(conversation);
 		return roots.length > 0 ? roots : [fallback];
