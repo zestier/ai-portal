@@ -28,11 +28,13 @@ import { isGitRepo } from '../git';
 import { resolveAbsoluteTarget } from './filesystem';
 import {
 	applyEditToContent,
+	findClosestMatch,
 	gitDiffFor,
 	MAX_EDIT_FILE_BYTES,
 	MAX_MULTI_EDIT_PAYLOAD_BYTES,
 	readExisting,
 	resolveWriteTarget,
+	suggestionHint,
 	type FileEditOutput
 } from './edit-file';
 import { err, ok, type PortalTool, type ToolPermissionRequest, type ToolResult } from './types';
@@ -84,9 +86,16 @@ type Target = { abs: string; rel: string };
 
 // Error text for a failing edit: 0-based index into the `edits` array, the
 // caller's path, and the failure reason (for an unmatched `old_string`, the
-// unmatched string itself).
-function editError(index: number, filePath: string, message: string): ToolResult {
-	return err(`edits[${index}] (${filePath}): ${message}`, { code: 'edit_failed' });
+// unmatched string itself). `details` (the closest-match suggestion, when one
+// clears the threshold) rides the envelope for the UI, independent of the
+// model-facing text.
+function editError(
+	index: number,
+	filePath: string,
+	message: string,
+	details?: unknown
+): ToolResult {
+	return err(`edits[${index}] (${filePath}): ${message}`, { code: 'edit_failed', details });
 }
 
 // The model-facing confirmation, mirroring `edit`'s wording (the diffs live in
@@ -104,7 +113,7 @@ export function buildMultiEditTools(
 		{
 			name: 'multi_edit',
 			description:
-				'Apply an atomic batch of exact-text edits. `edits` is an array (1-100) of the same objects `edit` takes — `{file_path, old_string, new_string, replace_all?}` — and the batch is all-or-nothing: every `old_string` must match the file contents, and if any edit fails nothing is written (the error names the failing edit index, path, and unmatched string). Edits apply sequentially per file — edit N matches the content after edits 1..N−1 — and `new_string` may be empty to delete text. Replacement-only: use `write`/`trash`/`move` for create/delete/rename. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace. Anchor on content, never line numbers. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. dryRun validates without writing.',
+				"Apply an atomic batch of exact-text edits. `edits` is an array (1-100) of the same objects `edit` takes — `{file_path, old_string, new_string, replace_all?}` — and the batch is all-or-nothing: every `old_string` must match the file contents, and if any edit fails nothing is written (the error names the failing edit index, path, and unmatched string — when `old_string` isn't found, the error may include the closest matching region ('Did you mean') to help correct the edit). Edits apply sequentially per file — edit N matches the content after edits 1..N−1 — and `new_string` may be empty to delete text. Replacement-only: use `write`/`trash`/`move` for create/delete/rename. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace. Anchor on content, never line numbers. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. dryRun validates without writing.",
 			argsSchema: MultiEditArgs,
 			parameters: {
 				type: 'object',
@@ -217,13 +226,26 @@ export function buildMultiEditTools(
 						edit.replace_all
 					);
 					if (!applied.ok) {
-						return applied.reason === 'not_found'
-							? editError(
+						if (applied.reason === 'not_found') {
+							// The failing edit matches against `current` (content after
+							// edits 1..N−1), so the closest-match hint must reflect that
+							// same content.
+							const suggestion = findClosestMatch(current, edit.old_string);
+							if (suggestion === null) {
+								return editError(
 									i,
 									edit.file_path,
 									`string to replace not found.\nString: ${edit.old_string}`
-								)
-							: editError(i, edit.file_path, 'new_string must be different from old_string');
+								);
+							}
+							return editError(
+								i,
+								edit.file_path,
+								`string to replace not found.\nString: ${edit.old_string}\nDid you mean: ${suggestionHint(suggestion)}`,
+								{ suggestion }
+							);
+						}
+						return editError(i, edit.file_path, 'new_string must be different from old_string');
 					}
 					currentContents.set(target.abs, applied.content);
 

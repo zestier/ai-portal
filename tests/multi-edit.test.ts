@@ -159,6 +159,40 @@ describe('multi_edit', () => {
 					message: 'edits[1] (sample.txt): string to replace not found.\nString: nope'
 				}
 			});
+			// Low-similarity not-found stays exactly today's envelope (no hint).
+			if (!result.ok) {
+				expect(result.error.details).toBeUndefined();
+				expect(result.error.message).not.toContain('Did you mean:');
+			}
+		});
+	});
+
+	it('includes the closest-match hint for the failing edit only, keeping the batch atomic (ACB-4)', async () => {
+		await withWorkspace(async (workspace) => {
+			const a = join(workspace, 'a.txt');
+			const b = join(workspace, 'b.txt');
+			await writeFile(a, 'original-a\n');
+			await writeFile(b, 'gamma three\n');
+
+			const result = await multiEditTool(workspace).handler({
+				edits: [
+					{ file_path: 'a.txt', old_string: 'original-a', new_string: 'edited-a' },
+					{ file_path: 'b.txt', old_string: 'gamma tree', new_string: 'gamma FOUR' }
+				]
+			});
+
+			expect(result).toMatchObject({ ok: false });
+			if (!result.ok) {
+				expect(result.error.message).toContain('edits[1] (b.txt)');
+				expect(result.error.message).toContain('Did you mean:');
+				expect(result.error.message).toContain('line 1: gamma three');
+				expect(result.error.details).toMatchObject({
+					suggestion: { snippet: 'gamma three', lineStart: 1, lineEnd: 1 }
+				});
+			}
+			// Atomic: the first (valid) edit must not have landed either.
+			expect(await readFile(a, 'utf8')).toBe('original-a\n');
+			expect(await readFile(b, 'utf8')).toBe('gamma three\n');
 		});
 	});
 
