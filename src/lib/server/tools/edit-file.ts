@@ -91,6 +91,11 @@ export interface FileEditOutput {
 	userModified: boolean;
 	replaceAll: boolean;
 	gitDiff?: FileWriteGitDiff;
+	// Present only when the edit matched via the numbered-read tab-eating
+	// fallback. `ateLines` are the 1-based line numbers (into `old_string`)
+	// whose stray leading numbering tab was dropped; `new_string` was written
+	// with the same tabs removed, so the file carries no artifact.
+	lenientTabEating?: { ateLines: number[] };
 }
 
 // Resolve a Write `file_path` to an absolute, symlink-resolved target inside
@@ -256,13 +261,130 @@ async function performWrite(
 	}
 }
 
-// The pure content transformation behind an exact-text replacement. Shared by
-// the `edit` tool and `multi_edit` so the replace semantics (first occurrence
-// unless `replaceAll`, no-change rejection) cannot drift. `multi_edit` calls it
-// against the in-memory batch content instead of a file, which is what makes the
-// sequential intra-file semantics identical to repeated `edit` calls.
+// ---- Numbered-read tab eating (Option 3) ----
+
+// Number of leading `\t` characters on a line. Only tabs count: the numbering
+// separator `read` emits is a tab, so a leading space never triggers eating.
+export function leadingTabs(line: string): number {
+	let n = 0;
+	for (const ch of line) {
+		if (ch !== '\t') break;
+		n += 1;
+	}
+	return n;
+}
+
+// Decide whether `old_string` carries the per-line leading tab that numbered
+// `read` output inserts between the line number and the content — `7\t\treturn;`
+// renders line 7 whose content is `\treturn;`, and weak models copy that stray
+// tab into `old_string`, so the exact match fails. Returns null when the string
+// does not look like artifact-laden numbered output (the edit then falls
+// through to the plain not-found path and its "Did you mean" suggestion);
+// non-null means "drop exactly one leading tab on every line where `ate` is
+// true".
+//
+// Coherent patterns only — a copied block's numbering tab is all-or-nothing:
+//   - every line carries >= 1 leading tab (the whole block was copied), or
+//   - the FIRST line carries none but every following non-empty line carries
+//     one (the first line is a mid-line fragment of a file line, so it had no
+//     numbering tab in the display and is matched as-is).
+// Any other mix — e.g. a non-empty following line without a leading tab while
+// its siblings have one — is refused (null): those tabs are real indentation,
+// not numbering residue. Whitespace-only lines are exempt from the uniformity
+// check: a blank file line renders as just `N\t`, which a model may copy as
+// `\t` (eaten here) or drop wholesale (`""`), and both normalize identically.
+// A trailing `\n` is a line terminator, not a content line: it never breaks
+// uniformity and is never eaten.
+export interface TabEatingPlan {
+	// Per-line (0-based) whether exactly one leading tab should be dropped.
+	ate: boolean[];
+	// Per-line leading-tab count of the ORIGINAL `old_string`, which the
+	// `new_string` mirror uses to recognize artifact-laden lines.
+	oldTabs: number[];
+	// `old_string` with `ate[i]` leading tabs removed per line.
+	normalized: string;
+}
+
+export function planNumberingTabEating(oldString: string): TabEatingPlan | null {
+	const lines = oldString.split('\n');
+	const last = lines.length - 1;
+	const hasTrailingNewline = lines.length > 1 && lines[last] === '';
+	// Exclusive index of the body (content) lines — a trailing `\n` adds a final
+	// empty element that is just the terminator.
+	const bodyEnd = hasTrailingNewline ? last : lines.length;
+
+	const ate: boolean[] = [];
+	const oldTabs: number[] = [];
+	for (let i = 0; i < lines.length; i += 1) {
+		const tabs = leadingTabs(lines[i]!);
+		oldTabs.push(tabs);
+		const isTerminator = hasTrailingNewline && i === last;
+		ate.push(!isTerminator && tabs > 0);
+	}
+
+	// Uniformity among following non-empty body lines (index >= 1): every one
+	// must carry a leading tab, else the leading tabs are real indentation and
+	// eating them would be guesswork.
+	for (let i = 1; i < bodyEnd; i += 1) {
+		const line = lines[i]!;
+		if (line.trim().length > 0 && leadingTabs(line) === 0) return null;
+	}
+
+	// Nothing to eat anywhere — the fallback has nothing to do.
+	if (!ate.some(Boolean)) return null;
+
+	return {
+		ate,
+		oldTabs,
+		normalized: lines.map((line, i) => (ate[i] ? line!.slice(1) : line)).join('\n')
+	};
+}
+
+// Count occurrences of `needle` in `haystack`, including overlapping starts, so
+// a uniqueness check can require exactly one match window.
+function countOccurrences(haystack: string, needle: string): number {
+	if (needle.length === 0) return 0;
+	let count = 0;
+	let idx = haystack.indexOf(needle);
+	while (idx !== -1) {
+		count += 1;
+		idx = haystack.indexOf(needle, idx + 1);
+	}
+	return count;
+}
+
+// Apply the numbering-tab strip to `new_string` so the write does not reinsert
+// the artifact (the extra indentation) the model copied from numbered output.
+// The strip mirrors the old_string mask positionally, but only on lines that
+// carry the artifact signature — a leading-tab count at least as large as the
+// corresponding old_string line had. A freshly hand-typed `new_string` at the
+// already-stripped depth has fewer tabs than the artifact-laden `old_string`
+// and is left untouched. Lines beyond the old_string's count are fresh
+// insertions and are never stripped.
+export function mirrorNumberingTabEating(
+	newString: string,
+	ate: boolean[],
+	oldTabs: number[]
+): string {
+	const lines = newString.split('\n');
+	return lines
+		.map((line, j) => {
+			if (j >= ate.length) return line;
+			if (!ate[j]) return line;
+			if (leadingTabs(line) < oldTabs[j]!) return line;
+			return line.slice(1);
+		})
+		.join('\n');
+}
+
+// The pure content transformation behind a replacement: exact-text first, then
+// the numbered-read tab-eating fallback. Shared by the `edit` tool and
+// `multi_edit` so the replace semantics (first occurrence unless `replaceAll`,
+// no-change rejection, and the tab-eating fallback) cannot drift. `multi_edit`
+// calls it against the in-memory batch content instead of a file, which is what
+// makes the sequential intra-file semantics identical to repeated `edit` calls.
 export type EditContentResult =
-	| { ok: true; content: string }
+	| { ok: true; content: string; lenient?: { ateLines: number[] } }
 	| { ok: false; reason: 'not_found' | 'no_change' };
 
 export function applyEditToContent(
@@ -272,13 +394,30 @@ export function applyEditToContent(
 	replaceAll: boolean
 ): EditContentResult {
 	if (oldString === newString) return { ok: false, reason: 'no_change' };
-	if (!content.includes(oldString)) return { ok: false, reason: 'not_found' };
-	return {
-		ok: true,
-		content: replaceAll
-			? content.replaceAll(oldString, newString)
-			: content.replace(oldString, newString)
-	};
+	if (content.includes(oldString)) {
+		return {
+			ok: true,
+			content: replaceAll
+				? content.replaceAll(oldString, newString)
+				: content.replace(oldString, newString)
+		};
+	}
+	// Exact match failed. If `old_string` carries a stray leading tab from
+	// numbered `read` output, match the tab-stripped form instead — but only
+	// when that form is unambiguous (exactly one occurrence), so a wrong-line
+	// edit is never silently applied. Mirror the strip onto `new_string` so the
+	// artifact is not reinserted.
+	const plan = planNumberingTabEating(oldString);
+	if (plan !== null && countOccurrences(content, plan.normalized) === 1) {
+		const mirrored = mirrorNumberingTabEating(newString, plan.ate, plan.oldTabs);
+		const ateLines = plan.ate.map((ate, i) => (ate ? i + 1 : -1)).filter((line) => line > 0);
+		return {
+			ok: true,
+			content: content.replace(plan.normalized, mirrored),
+			lenient: { ateLines }
+		};
+	}
+	return { ok: false, reason: 'not_found' };
 }
 
 // ---- "Did you mean" closest-match suggestion on not-found (Option 2) ----
@@ -498,6 +637,7 @@ async function performEdit(
 			userModified: false,
 			replaceAll
 		};
+		if (applied.lenient !== undefined) result.lenientTabEating = applied.lenient;
 		if (await isGitRepo(cwd)) {
 			result.gitDiff = gitDiffFor('update', target.rel, existing, content, hunks);
 		}
@@ -513,7 +653,7 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		{
 			name: 'edit',
 			description:
-				"Replace exact text in an existing text file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `old_string` is the literal text to find; `new_string` replaces it (must differ); `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged — when `old_string` isn't found, the error may include the closest matching region ('Did you mean') to help correct the edit. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits (line-number edits are drift-prone — anchor on content, not line numbers).",
+				"Replace exact text in an existing text file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `old_string` is the literal text to find; `new_string` replaces it (must differ); `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged — when `old_string` isn't found, the error may include the closest matching region ('Did you mean') to help correct the edit. A stray leading tab per line (as copied from numbered `read` output) is tolerated: it is ignored when matching `old_string` and stripped from `new_string` so no extra indentation is written. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits (line-number edits are drift-prone — anchor on content, not line numbers).",
 			argsSchema: EditArgs,
 			parameters: {
 				type: 'object',

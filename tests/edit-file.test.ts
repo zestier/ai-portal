@@ -8,9 +8,12 @@ import {
 	cappedLevenshtein,
 	collapseWhitespace,
 	findClosestMatch,
+	leadingTabs,
 	MAX_SUGGEST_DISTANCE,
 	MAX_SUGGEST_FILE_BYTES,
 	MAX_SUGGEST_OLD_BYTES,
+	mirrorNumberingTabEating,
+	planNumberingTabEating,
 	suggestionHint
 } from '../src/lib/server/tools/edit-file';
 
@@ -209,6 +212,92 @@ describe('suggestionHint', () => {
 		expect(hint).toBe('Did you mean: "old_string": "gamma three\\nbeta two"');
 		// No real newlines / invented indentation: the escapes carry the structure.
 		expect(hint.split('\n')).toHaveLength(1);
+	});
+});
+
+describe('leadingTabs', () => {
+	it('counts only leading tab characters', () => {
+		expect(leadingTabs('')).toBe(0);
+		expect(leadingTabs('foo')).toBe(0);
+		expect(leadingTabs('\tfoo')).toBe(1);
+		expect(leadingTabs('\t\tfoo')).toBe(2);
+		expect(leadingTabs('\t')).toBe(1);
+		// Spaces are not tabs: the numbering separator `read` emits is a tab.
+		expect(leadingTabs(' \tfoo')).toBe(0);
+	});
+});
+
+describe('planNumberingTabEating', () => {
+	it('eats one tab from every line when the whole block carries the artifact', () => {
+		expect(planNumberingTabEating('\t\tfoo\n\t\tbar')).toEqual({
+			ate: [true, true],
+			oldTabs: [2, 2],
+			normalized: '\tfoo\n\tbar'
+		});
+	});
+
+	it('leaves the first line untouched when it is a mid-line fragment', () => {
+		expect(planNumberingTabEating('foo\n\t\tbar')).toEqual({
+			ate: [false, true],
+			oldTabs: [0, 2],
+			normalized: 'foo\n\tbar'
+		});
+	});
+
+	it('handles a single line independently', () => {
+		expect(planNumberingTabEating('\t\tfoo')).toEqual({
+			ate: [true],
+			oldTabs: [2],
+			normalized: '\tfoo'
+		});
+	});
+
+	it('returns null when nothing has a leading tab', () => {
+		expect(planNumberingTabEating('foo\nbar')).toBeNull();
+	});
+
+	it('refuses a mixed pattern among following lines', () => {
+		expect(planNumberingTabEating('\t\tfoo\nbar\n\t\tbaz')).toBeNull();
+	});
+
+	it('refuses a first-line eat when following lines lack the artifact', () => {
+		expect(planNumberingTabEating('\t\tfoo\nbar')).toBeNull();
+	});
+
+	it('treats a trailing newline as a terminator, never eaten', () => {
+		expect(planNumberingTabEating('\t\tfoo\n')).toEqual({
+			ate: [true, false],
+			oldTabs: [2, 0],
+			normalized: '\tfoo\n'
+		});
+	});
+
+	it('normalizes a blank middle line whether the tab was kept or dropped', () => {
+		expect(planNumberingTabEating('\t\tfoo\n\n\t\tbar')).toMatchObject({
+			normalized: '\tfoo\n\n\tbar'
+		});
+		expect(planNumberingTabEating('\t\tfoo\n\t\n\t\tbar')).toMatchObject({
+			normalized: '\tfoo\n\n\tbar'
+		});
+	});
+});
+
+describe('mirrorNumberingTabEating', () => {
+	const ateAll = [true, true];
+	const oldTabs = [2, 2];
+
+	it('strips the artifact from a copied new_string', () => {
+		expect(mirrorNumberingTabEating('\t\tFOO\n\t\tBAR', ateAll, oldTabs)).toBe('\tFOO\n\tBAR');
+	});
+
+	it('leaves a hand-typed new_string at the correct depth untouched', () => {
+		expect(mirrorNumberingTabEating('\tFOO\n\tBAR', ateAll, oldTabs)).toBe('\tFOO\n\tBAR');
+	});
+
+	it('leaves lines beyond the old_string count untouched', () => {
+		expect(mirrorNumberingTabEating('\t\tFOO\n\t\tBAR\n\t\tBAZ', ateAll, oldTabs)).toBe(
+			'\tFOO\n\tBAR\n\t\tBAZ'
+		);
 	});
 });
 
@@ -594,6 +683,83 @@ describe('edit', () => {
 				path: '/not/in/workspace.txt'
 			});
 			expect(derive?.({ file_path: 'bad\0path', old_string: 'a', new_string: 'b' })).toBeNull();
+		});
+	});
+
+	it('eats a stray numbered-read tab and mirrors it onto new_string (Option 3)', async () => {
+		await withWorkspace(async (workspace) => {
+			const path = join(workspace, 'sample.ts');
+			await writeFile(path, 'if (x) {\n\treturn;\n}\n');
+
+			const result = await tool(workspace, 'edit').handler({
+				file_path: 'sample.ts',
+				// Stray tab from numbered read ("7\t\treturn;") and a new_string
+				// copied with the same stray tab.
+				old_string: '\t\treturn;',
+				new_string: '\t\treturn value;'
+			});
+
+			expect(result).toMatchObject({ ok: true });
+			expect(await readFile(path, 'utf8')).toBe('if (x) {\n\treturn value;\n}\n');
+			if (result.ok) {
+				const output = result.result as { lenientTabEating?: { ateLines: number[] } };
+				// The fallback is tracked on the envelope (1-based lines eaten).
+				expect(output.lenientTabEating).toEqual({ ateLines: [1] });
+			}
+		});
+	});
+
+	it('does not strip real indentation from a hand-typed new_string', async () => {
+		await withWorkspace(async (workspace) => {
+			const path = join(workspace, 'sample.ts');
+			await writeFile(path, 'if (x) {\n\treturn;\n}\n');
+
+			const result = await tool(workspace, 'edit').handler({
+				file_path: 'sample.ts',
+				old_string: '\t\treturn;',
+				new_string: '\treturn value;' // hand-typed at the correct depth
+			});
+
+			expect(result).toMatchObject({ ok: true });
+			expect(await readFile(path, 'utf8')).toBe('if (x) {\n\treturn value;\n}\n');
+		});
+	});
+
+	it('refuses a silent edit when the stripped match is ambiguous', async () => {
+		await withWorkspace(async (workspace) => {
+			const path = join(workspace, 'sample.txt');
+			await writeFile(path, '\tfoo\n\tfoo\n');
+
+			const result = await tool(workspace, 'edit').handler({
+				file_path: 'sample.txt',
+				old_string: '\t\tfoo',
+				new_string: '\t\tBAR'
+			});
+
+			// Stripping leaves `\tfoo`, which occurs twice — never a silent
+			// wrong-line edit; it falls through to the not-found path.
+			expect(result).toMatchObject({ ok: false });
+			expect(await readFile(path, 'utf8')).toBe('\tfoo\n\tfoo\n');
+		});
+	});
+
+	it('keeps the exact-match fast path byte-identical with no lenient flag', async () => {
+		await withWorkspace(async (workspace) => {
+			const path = join(workspace, 'sample.txt');
+			await writeFile(path, '\t\tfoo\n');
+
+			const result = await tool(workspace, 'edit').handler({
+				file_path: 'sample.txt',
+				old_string: '\t\tfoo',
+				new_string: 'x'
+			});
+
+			expect(result).toMatchObject({ ok: true });
+			expect(await readFile(path, 'utf8')).toBe('x\n');
+			if (result.ok) {
+				const output = result.result as { lenientTabEating?: unknown };
+				expect(output.lenientTabEating).toBeUndefined();
+			}
 		});
 	});
 });

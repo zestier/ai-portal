@@ -325,4 +325,30 @@ describe('multi_edit', () => {
 			}
 		});
 	});
+
+	it('eats a stray numbered-read tab and mirrors it onto new_string (Option 3)', async () => {
+		await withWorkspace(async (workspace) => {
+			const path = join(workspace, 'sample.ts');
+			await writeFile(path, 'if (x) {\n\treturn;\n}\n');
+
+			const result = await multiEditTool(workspace).handler({
+				edits: [
+					{
+						file_path: 'sample.ts',
+						old_string: '\t\treturn;',
+						new_string: '\t\treturn value;'
+					}
+				]
+			});
+
+			expect(result).toMatchObject({ ok: true });
+			expect(await readFile(path, 'utf8')).toBe('if (x) {\n\treturn value;\n}\n');
+			if (result.ok) {
+				const output = result.result as {
+					edits: Array<{ lenientTabEating?: { ateLines: number[] } }>;
+				};
+				expect(output.edits[0]?.lenientTabEating).toEqual({ ateLines: [1] });
+			}
+		});
+	});
 });
