@@ -42,7 +42,7 @@ export interface ToolBinaryResult {
 }
 
 // A model-facing rendered view a tool may attach to a successful result. The
-// tool renders its own output (rg-style Grep, numbered Read, diff-after-Edit,
+// tool renders its own output (rg-style Grep, Read (with optional line numbering), diff-after-Edit,
 // raw Bash) as a typed array so the same views reach the model on every
 // provider edge — the pi session forwards them verbatim as content blocks
 // (text and image), the string edges join the text blocks.
@@ -72,7 +72,7 @@ export type ToolResult =
 			followUpHint?: string;
 			binary?: ToolBinaryResult[];
 			// Tool-provided rendered views, when the tool renders its own output
-			// (rg-style Grep, numbered Read, diff-after-Edit, raw Bash). A typed
+			// (rg-style Grep, Read (with optional line numbering), diff-after-Edit, raw Bash). A typed
 			// array so one tool can carry multiple payloads — e.g. an image read
 			// ships both the text summary and the image block the model must see.
 			// Preferred over the generic projection in `deriveToolResultViews`, and
@@ -283,7 +283,7 @@ export function deriveToolResultViews(envelope: ToolResult): ToolResultViews {
 
 // Concise, raw text for the model. Errors render their message (plus code and
 // any readable details). Successes prefer the tool's own rendered text — the
-// `views` a tool attaches (rg-style Grep, numbered Read, diff-after-Edit, raw
+// `views` a tool attaches (rg-style Grep, Read (with optional line numbering), diff-after-Edit, raw
 // Bash), joined across text blocks — and that text must reach the model
 // identically on every provider edge. (Image views carry no model-facing text
 // here; adapters forward them as image content blocks so the model sees them.)

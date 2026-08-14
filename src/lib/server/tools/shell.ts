@@ -7,14 +7,7 @@ import { isolatedChildEnv } from '../child-env';
 import { ulid } from '../db/ids';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { ensureZapGitignore, scratchSubdir } from './zap-dir';
-import {
-	deriveToolResultViews,
-	err,
-	ok,
-	type PortalTool,
-	type ToolResult,
-	type ToolStreamContext
-} from './types';
+import { err, ok, type PortalTool, type ToolResult, type ToolStreamContext } from './types';
 
 // In-context output cap: the model sees up to this much verbatim; anything past
 // it is spilled to `.zap/scratch/tool_results/` and the persisted path returned
@@ -26,7 +19,7 @@ const DEFAULT_SHELL_OUTPUT_BYTES = 32 * 1024;
 // in-context preview still gives the model a usable (bounded) view.
 const MAX_PERSISTED_OUTPUT_BYTES = 5 * 1024 * 1024;
 // Preview length in the persisted-output block. The SDK labels it "first 2KB"
-// but uses decimal KB (2000 bytes), matching the captured golden.
+// but uses decimal KB (2000 bytes).
 const PERSISTED_PREVIEW_BYTES = 2_000;
 
 // Mirrors the Agent SDK's BashInput (sdk-tools.d.ts) so the portal shell tool
@@ -90,11 +83,10 @@ function exitCodeFor(code: number | null, signal: NodeJS.Signals | null): number
 	return null;
 }
 
-// The model-facing rendering of a Bash run, matching the captured golden
-// (tests/fixtures/golden/Bash). Non-zero exits render the output (if any) plus
-// an `Exit code N` note; empty successful output renders the SDK's
-// `(Bash completed with no output)`; oversized output renders the persisted
-// block with a size label and a 2KB preview.
+// The model-facing rendering of a Bash run. Non-zero exits render the output
+// (if any) plus an `Exit code N` note; empty successful output renders the
+// SDK's `(Bash completed with no output)`; oversized output renders the
+// persisted block with a size label and a 2KB preview.
 function renderBashText(opts: {
 	stdout: string;
 	stderr: string;
@@ -381,29 +373,4 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 			}
 		}
 	];
-}
-
-// The text a model sees for a Bash call (used by the golden conformance
-// registry; the tool handler reuses `runShell`).
-export async function renderShellModelText(
-	args: Record<string, unknown>,
-	cwd: string
-): Promise<string> {
-	const parsed = ShellArgs.parse(args);
-	if (parsed.run_in_background === true || parsed.dangerouslyDisableSandbox === true) {
-		return 'unsupported';
-	}
-	const resolvedCwd = resolveCwd(cwd, parsed.cwd);
-	if (resolvedCwd === null) {
-		return deriveToolResultViews(err('cwd must resolve to a directory inside the workspace.'))
-			.modelText;
-	}
-	const result = await runShell(
-		cwd,
-		parsed.command,
-		resolvedCwd,
-		parsed.timeout,
-		parsed.maxOutputBytes
-	);
-	return deriveToolResultViews(result).modelText;
 }

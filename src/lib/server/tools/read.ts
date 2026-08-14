@@ -4,14 +4,7 @@ import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
 import { sniffImageMime } from '../image-detect';
 import { resolveAbsoluteTarget } from './filesystem';
-import {
-	deriveToolResultViews,
-	err,
-	ok,
-	type PortalTool,
-	type ToolPermissionRequest,
-	type ToolResult
-} from './types';
+import { err, ok, type PortalTool, type ToolPermissionRequest, type ToolResult } from './types';
 import {
 	createTreeResolver,
 	resolveWorktreeDir,
@@ -23,24 +16,23 @@ import {
 // Mirrors the Agent SDK's FileReadInput (sdk-tools.d.ts) so the aliased SDK
 // `Read` tool (which sends these field names verbatim) parses cleanly.
 // `file_path` is absolute per the SDK contract; `resolveReadTarget` below also
-// accepts workspace-relative paths so tests and golden replays work unchanged.
+// accepts workspace-relative paths so tests pass them unchanged. `offset` and
+// `limit` are NOT schema-required here — image reads must work without them — so
+// they are enforced in the handler for text reads (see `readFileResult`).
 const ReadArgs = z
 	.object({
 		file_path: z.string().min(1).max(4096),
 		offset: z.number().int().min(1).optional(),
 		limit: z.number().int().min(1).optional(),
+		numbered: z.boolean().optional(),
 		pages: z.string().max(64).optional(),
 		worktree: WorktreeSelector
 	})
 	.strict();
 
-// Hard ceiling on a single read (whole-file reads and range reads both load the
-// file into memory). Matches the other portal file tools' 5MB bound.
+// Hard ceiling on a single read (range reads load the file into memory). Matches
+// the other portal file tools' 5MB bound.
 const MAX_READ_FILE_BYTES = 5_000_000;
-// Whole-file reads (no offset/limit) above this byte cap error, mirroring the
-// SDK built-in: "File content (X KB) exceeds maximum allowed size (256KB)."
-// The SDK formats the size in KiB while labeling it KB (908,894 B -> 887.6KB).
-const MAX_WHOLE_READ_BYTES = 256 * 1024;
 // Numbered rendering of a selected range larger than this is paginated to a
 // first page with a continuation banner (the SDK's token-cap auto-pagination).
 const MAX_READ_RESULT_BYTES = 200_000;
@@ -52,7 +44,8 @@ const SDK_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/
 
 // The portal's projection of the SDK FileReadOutput text union (sdk-tools.d.ts),
 // plus `size` kept as a portal extension. `content` is the raw file text of the
-// selected range; the model-facing numbered rendering is attached as `views`.
+// selected range; the model-facing rendering (plain by default, numbered when
+// `numbered: true`) is attached as `views`.
 export interface FileReadTextOutput {
 	type: 'text';
 	file: {
@@ -79,9 +72,9 @@ export interface FileReadImageOutput {
 
 // Resolve a Read `file_path` to an absolute, symlink-resolved target inside the
 // workspace. Accepts both the SDK contract's absolute paths and
-// workspace-relative paths (as the golden capture used), rejecting any `..`
-// escape that resolves outside the root. Mirrors `resolveWriteTarget` in
-// edit-file.ts — same resolver, different tool.
+// workspace-relative paths (as the tests use), rejecting any `..` escape that
+// resolves outside the root. Mirrors `resolveWriteTarget` in edit-file.ts — same
+// resolver, different tool.
 function resolveReadTarget(
 	workspaceRoot: string,
 	rawPath: string
@@ -105,34 +98,33 @@ function resolveReadTarget(
 	return { ok: true, abs, rel: abs === root ? '.' : relative(root, abs) };
 }
 
-// The SDK formats sizes in KiB but labels them KB (golden Read/large:
-// "File content (887.6KB)" for a 908,894-byte file).
-function formatKb(bytes: number): string {
-	return `${(bytes / 1024).toFixed(1)}KB`;
-}
-
-// The numbered rendering a model sees for a read, matching the golden capture:
-// one `<lineNumber>\t<content>` per line.
+// The numbered rendering a model sees for a read when `numbered: true`: one
+// `<lineNumber>\t<content>` per line.
 function renderNumberedLines(lines: string[], startLine: number): string {
 	return lines.map((line, i) => `${startLine + i}\t${line}`).join('\n');
 }
 
-// The continuation banner the SDK prepends when a read is auto-paginated to a
-// first page. `offset` echoes the count covered so far (starting reads begin at
-// line 1), matching the golden format "Read 100 lines (25% complete)...".
+// The continuation banner prepended when a read is auto-paginated to a first
+// page. `offset` echoes the count covered so far (reads begin at line 1).
 function paginationBanner(numLines: number, totalLines: number, end: number): string {
 	const pct = totalLines === 0 ? 100 : Math.round((end / totalLines) * 100);
 	return `Read ${numLines} lines (${pct}% complete)... continue with offset=${end}`;
 }
 
-// Largest exclusive end index (into `lines`) whose numbered rendering from
-// `startLine` fits under `capBytes`, so a too-large page is trimmed deterministically.
-function paginateEnd(lines: string[], startLine: number, capBytes: number): number {
+// Largest exclusive end index (into `lines`) whose rendering from `startLine`
+// fits under `capBytes`, so a too-large page is trimmed deterministically. The
+// per-line byte cost is measured in the active prefix mode (numbered or plain).
+function paginateEnd(
+	lines: string[],
+	startLine: number,
+	capBytes: number,
+	numbered: boolean
+): number {
 	let used = 0;
 	let i = startLine - 1;
 	for (; i < lines.length; i += 1) {
 		const sep = used === 0 ? 0 : 1;
-		const lineBytes = Buffer.byteLength(`${i + 1}\t${lines[i]}`);
+		const lineBytes = Buffer.byteLength(numbered ? `${i + 1}\t${lines[i]}` : lines[i]);
 		if (used + sep + lineBytes > capBytes) break;
 		used += sep + lineBytes;
 	}
@@ -146,13 +138,10 @@ function readImageResult(rel: string, mime: string, buf: Buffer, originalSize: n
 	});
 }
 
-// Shared by the tool handler and the golden conformance renderer so the
-// model-facing text cannot drift between the two paths.
 export async function readFileResult(
 	cwd: string,
 	filePath: string,
-	offset?: number,
-	limit?: number
+	req: { offset?: number; limit?: number; numbered?: boolean } = {}
 ): Promise<ToolResult> {
 	const resolved = resolveReadTarget(cwd, filePath);
 	if (!resolved.ok) return err(resolved.message);
@@ -176,37 +165,37 @@ export async function readFileResult(
 		if (content.includes('\0')) {
 			return err(`File contains null bytes and is likely binary: ${rel}`);
 		}
-		if (offset === undefined && limit === undefined && fileStat.size > MAX_WHOLE_READ_BYTES) {
-			return err(
-				`File content (${formatKb(fileStat.size)}) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.`
-			);
-		}
 		const lines = content.split(/\r?\n/);
 		const totalLines = lines.length;
-		const startLine = offset ?? 1;
-		let end = limit !== undefined ? Math.min(totalLines, startLine + limit - 1) : totalLines;
+		if (req.offset === undefined || req.limit === undefined) {
+			return err(
+				`Reads of text files require both offset and limit (file has ${totalLines} lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`
+			);
+		}
+		const numbered = req.numbered === true;
+		const startLine = req.offset;
+		let end = Math.min(totalLines, startLine + req.limit - 1);
 		let truncatedByTokenCap = false;
 		if (
-			Buffer.byteLength(renderNumberedLines(lines.slice(startLine - 1, end), startLine)) >
-			MAX_READ_RESULT_BYTES
+			Buffer.byteLength(
+				numbered
+					? renderNumberedLines(lines.slice(startLine - 1, end), startLine)
+					: lines.slice(startLine - 1, end).join('\n')
+			) > MAX_READ_RESULT_BYTES
 		) {
 			truncatedByTokenCap = true;
-			end = paginateEnd(lines, startLine, MAX_READ_RESULT_BYTES);
+			end = paginateEnd(lines, startLine, MAX_READ_RESULT_BYTES, numbered);
 		}
 		const sliced = lines.slice(startLine - 1, end);
 		const numLines = sliced.length;
-		const numbered = renderNumberedLines(sliced, startLine);
+		const rendered = numbered ? renderNumberedLines(sliced, startLine) : sliced.join('\n');
+		const body = truncatedByTokenCap
+			? `${paginationBanner(numLines, totalLines, end)}\n${rendered}`
+			: rendered;
 		const views =
-			numbered.trim().length === 0
+			rendered.trim().length === 0
 				? undefined
-				: [
-						{
-							type: 'text' as const,
-							text: truncatedByTokenCap
-								? `${paginationBanner(numLines, totalLines, end)}\n${numbered}`
-								: numbered
-						}
-					];
+				: [{ type: 'text' as const, text: `${body}\n(file has ${totalLines} total lines)` }];
 		return ok(
 			{
 				type: 'text',
@@ -231,20 +220,6 @@ export async function readFileResult(
 	}
 }
 
-// The text a model sees for a Read call (used by the golden conformance
-// registry; the tool handler reuses `readFileResult`).
-export async function renderReadModelText(
-	args: Record<string, unknown>,
-	cwd: string
-): Promise<string> {
-	const parsed = ReadArgs.parse(args);
-	if (parsed.pages !== undefined) {
-		throw new Error('pages is only supported for PDF files, which this read tool does not render.');
-	}
-	const result = await readFileResult(cwd, parsed.file_path, parsed.offset, parsed.limit);
-	return deriveToolResultViews(result).modelText;
-}
-
 export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(workspaceRoot, ctx);
 	const permissionRoot = (worktree: string | undefined) =>
@@ -254,7 +229,7 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 		{
 			name: 'read',
 			description:
-				'Read the content of a file in the workspace. `file_path` is the absolute path (workspace-relative also resolves). `offset`/`limit` return a 1-indexed line range; whole-file reads over 256KB error, so pass offset/limit for those. Text renders numbered lines; images (jpeg/png/gif/webp) return as an image. Pass `worktree` to read inside a held worktree instead. Errors on binary files or directories.',
+				'Read the content of a file in the workspace. `file_path` is the absolute path (workspace-relative also resolves). Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`. Images (jpeg/png/gif/webp) return as an image and ignore offset/limit. `pages` is unsupported. Pass `worktree` to read inside a held worktree instead. Errors on binary files or directories.',
 			argsSchema: ReadArgs,
 			parameters: {
 				type: 'object',
@@ -265,11 +240,15 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					},
 					offset: {
 						type: 'number',
-						description: '1-indexed line number to start from.'
+						description: 'Required for text reads. 1-indexed line number to start from.'
 					},
 					limit: {
 						type: 'number',
-						description: 'Number of lines to read.'
+						description: 'Required for text reads. Number of lines to read.'
+					},
+					numbered: {
+						type: 'boolean',
+						description: 'Prefix each line with `<lineNumber>\t`. Default false.'
 					},
 					pages: {
 						type: 'string',
@@ -277,6 +256,9 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					},
 					worktree: WORKTREE_PARAM
 				},
+				// offset/limit are intentionally NOT in `required`: image reads
+				// must work without them. They are enforced in the handler for
+				// text reads (conditional on text-vs-image), not here.
 				required: ['file_path'],
 				additionalProperties: false
 			},
@@ -298,7 +280,11 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 				}
 				const tree = treeFor(parsed.worktree);
 				if (tree.error) return tree.error;
-				return readFileResult(tree.cwd, parsed.file_path, parsed.offset, parsed.limit);
+				return readFileResult(tree.cwd, parsed.file_path, {
+					...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
+					...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+					...(parsed.numbered !== undefined ? { numbered: parsed.numbered } : {})
+				});
 			}
 		}
 	];

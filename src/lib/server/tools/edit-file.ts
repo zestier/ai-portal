@@ -26,7 +26,7 @@ export const MAX_MULTI_EDIT_PAYLOAD_BYTES = 1_000_000;
 // Mirrors the SDK WriteInput so the aliased SDK `Write` tool (which sends
 // `file_path`/`content` verbatim) parses cleanly. `file_path` is absolute per
 // the SDK contract; the resolver below also accepts workspace-relative paths so
-// tests and golden replays (which pass relative paths) work unchanged.
+// tests (which pass relative paths) work unchanged.
 const WriteArgs = z
 	.object({
 		file_path: z.string().min(1).max(4096),
@@ -38,7 +38,7 @@ const WriteArgs = z
 // Mirrors the SDK FileEditInput so the aliased SDK `Edit` tool (which sends
 // `file_path`/`old_string`/`new_string`/`replace_all` verbatim) parses cleanly.
 // `file_path` is absolute per the SDK contract; `resolveWriteTarget` below also
-// accepts workspace-relative paths so tests and golden replays work unchanged.
+// accepts workspace-relative paths so tests (which pass relative paths) work unchanged.
 const EditArgs = z
 	.object({
 		file_path: z.string().min(1).max(4096),
@@ -95,7 +95,7 @@ export interface FileEditOutput {
 
 // Resolve a Write `file_path` to an absolute, symlink-resolved target inside
 // the workspace. Accepts both the SDK contract's absolute paths and
-// workspace-relative paths (as the golden capture used), rejecting any `..`
+// workspace-relative paths (as the tests use), rejecting any `..`
 // escape that resolves outside the root. Exported so `multi_edit` resolves its
 // `file_path`s through the exact same rules.
 export function resolveWriteTarget(
@@ -136,10 +136,9 @@ export async function readExisting(abs: string): Promise<string | null> {
 	return content;
 }
 
-// The text a model sees for a FileWriteOutput, mirroring the SDK's rendering so
-// the golden conformance suite can compare byte-for-byte. The path is echoed
-// verbatim from the call, matching the SDK (which renders the input path as
-// given).
+// The text a model sees for a FileWriteOutput, mirroring the SDK's rendering.
+// The path is echoed verbatim from the call, matching the SDK (which renders
+// the input path as given).
 function writeConfirmation(type: 'create' | 'update', rawFilePath: string): string {
 	return type === 'create'
 		? `File created successfully at: ${rawFilePath} (file state is current in your context — no need to Read it back)`
@@ -147,18 +146,18 @@ function writeConfirmation(type: 'create' | 'update', rawFilePath: string): stri
 }
 
 // The text a model sees for a FileEditOutput, mirroring the SDK's rendering
-// (the golden capture's `content` is confirmation only — the diff lives in the
-// envelope's structuredPatch/gitDiff for the UI). `replace_all` swaps in the
-// SDK's "all occurrences" wording. The path is echoed verbatim as given.
+// (`content` is confirmation only — the diff lives in the envelope's
+// structuredPatch/gitDiff for the UI). `replace_all` swaps in the SDK's "all
+// occurrences" wording. The path is echoed verbatim as given.
 function editConfirmation(replaceAll: boolean, rawFilePath: string): string {
 	return replaceAll
 		? `The file ${rawFilePath} has been updated. All occurrences were successfully replaced. (file state is current in your context — no need to Read it back)`
 		: `The file ${rawFilePath} has been updated successfully. (file state is current in your context — no need to Read it back)`;
 }
 
-// The SDK's Edit failure text for an unmatched `old_string`, byte-for-byte
-// (golden Edit/not_found). The `<tool_use_error>` wrapper is part of the
-// message, so the model sees exactly what the SDK built-in would emit. When a
+// The SDK's Edit failure text for an unmatched `old_string`, byte-for-byte.
+// The `<tool_use_error>` wrapper is part of the message, so the model sees
+// exactly what the SDK built-in would emit. When a
 // closest-match suggestion is found (Option 2), the `hint` appends a
 // "Did you mean" line INSIDE the wrapper so the correction is part of the same
 // model-facing error.
@@ -257,21 +256,6 @@ async function performWrite(
 	}
 }
 
-// Run a Write call against a plain workspace directory and render its model
-// text (used by the golden conformance registry; the tool handler reuses
-// `performWrite` so the two cannot drift).
-export async function renderWriteModelText(
-	args: Record<string, unknown>,
-	cwd: string
-): Promise<string> {
-	const parsed = WriteArgs.parse(args);
-	const target = resolveWriteTarget(cwd, parsed.file_path);
-	if (!target.ok) throw new Error(target.message);
-	const outcome = await performWrite(cwd, target, parsed.file_path, parsed.content);
-	if ('message' in outcome) throw new Error(outcome.message);
-	return outcome.text;
-}
-
 // The pure content transformation behind an exact-text replacement. Shared by
 // the `edit` tool and `multi_edit` so the replace semantics (first occurrence
 // unless `replaceAll`, no-change rejection) cannot drift. `multi_edit` calls it
@@ -301,9 +285,7 @@ export function applyEditToContent(
 
 // Minimum similarity (1 − distance/maxLen) a candidate window must reach to be
 // surfaced as a suggestion. Below this the not-found error stays EXACTLY the
-// SDK text, which keeps the SDK-parity goldens and existing tests
-// byte-identical for low-similarity misses (e.g. the golden `does not exist
-// anywhere` vs the fixture's greek-letter lines).
+// SDK text, keeping existing tests byte-identical for low-similarity misses.
 export const MIN_SUGGEST_SIMILARITY = 0.6;
 
 // Maximum file lines a suggestion snippet may include before it is truncated
@@ -329,7 +311,7 @@ const MAX_SUGGEST_SNIPPET_CHARS = 300;
 export interface Suggestion {
 	// The matching window's exact bytes as a complete JSON string literal
 	// (surrounding quotes included), e.g.
-	// `"export function main() {\n\tconst value = helper(\"golden\");"` — copy
+	// `"export function main() {\n\tconst value = helper(\"value\");"` — copy
 	// it verbatim as `old_string` to make the edit succeed. Truncation keeps the
 	// closing quote and marks the cut with '…'.
 	snippet: string;
@@ -456,13 +438,12 @@ export function suggestionHint(suggestion: Suggestion): string {
 
 // The edit itself plus the SDK FileEditOutput projection and the model-facing
 // confirmation text. `rawFilePath` is echoed verbatim in the confirmation,
-// matching the SDK's rendering (the golden capture passed relative paths).
+// matching the SDK's rendering (which echoes the input path as given).
 // `cwd` gates the gitDiff (only reported inside a git work tree). Failures
-// return the SDK-style message; the not-found case carries no `code` so the
-// model-facing text stays byte-identical to the golden capture — UNLESS a
-// closest-match suggestion clears the threshold, in which case the message gains
-// a "Did you mean" line and the envelope carries `code` + `details.suggestion`
-// for the UI.
+// return the SDK-style message; the not-found case carries no `code`, so the
+// model-facing text is exactly the SDK text — UNLESS a closest-match suggestion
+// clears the threshold, in which case the message gains a "Did you mean" line
+// and the envelope carries `code` + `details.suggestion` for the UI.
 async function performEdit(
 	cwd: string,
 	target: { abs: string; rel: string },
@@ -524,29 +505,6 @@ async function performEdit(
 	} catch (error) {
 		return { message: error instanceof Error ? error.message : String(error), code: 'edit_failed' };
 	}
-}
-
-// Run an Edit call against a plain workspace directory and render its model
-// text (used by the golden conformance registry; the tool handler reuses
-// `performEdit` so the two cannot drift). Failures return the SDK-style message
-// rather than throwing so the captured error goldens compare equal.
-export async function renderEditModelText(
-	args: Record<string, unknown>,
-	cwd: string
-): Promise<string> {
-	const parsed = EditArgs.parse(args);
-	const target = resolveWriteTarget(cwd, parsed.file_path);
-	if (!target.ok) throw new Error(target.message);
-	const outcome = await performEdit(
-		cwd,
-		target,
-		parsed.file_path,
-		parsed.old_string,
-		parsed.new_string,
-		parsed.replace_all
-	);
-	if ('message' in outcome) return outcome.message;
-	return outcome.text;
 }
 
 export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {

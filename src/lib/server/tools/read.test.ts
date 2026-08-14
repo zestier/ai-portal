@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildReadTools } from './read';
-import { renderReadModelText } from './read';
 import { makeTmpDir } from '../../../../tests/helpers/tmp';
 
 function readTool(root: string) {
@@ -10,10 +9,10 @@ function readTool(root: string) {
 }
 
 describe('read tool', () => {
-	it('renders a whole-file read as numbered lines with the SDK text shape', async () => {
+	it('renders a bounded read as plain lines with the total-line footer', async () => {
 		const root = makeTmpDir('read-tool-');
 		writeFileSync(join(root, 'sample.txt'), 'alpha\nbeta\ngamma');
-		const result = await readTool(root).handler({ file_path: 'sample.txt' });
+		const result = await readTool(root).handler({ file_path: 'sample.txt', offset: 1, limit: 3 });
 		if (!result.ok) throw new Error(result.error.message);
 		expect(result.result).toEqual({
 			type: 'text',
@@ -26,19 +25,21 @@ describe('read tool', () => {
 				size: 16
 			}
 		});
-		expect(result.views).toEqual([{ type: 'text', text: '1\talpha\n2\tbeta\n3\tgamma' }]);
+		expect(result.views).toEqual([
+			{ type: 'text', text: 'alpha\nbeta\ngamma\n(file has 3 total lines)' }
+		]);
 	});
 
-	it('counts the trailing empty line of a newline-terminated file (golden small)', async () => {
+	it('counts the trailing empty line of a newline-terminated file', async () => {
 		const root = makeTmpDir('read-tool-');
 		writeFileSync(join(root, 'sample.txt'), 'a\nb\n');
-		const result = await readTool(root).handler({ file_path: 'sample.txt' });
+		const result = await readTool(root).handler({ file_path: 'sample.txt', offset: 1, limit: 5 });
 		if (!result.ok) throw new Error(result.error.message);
 		expect(result.result).toMatchObject({
 			type: 'text',
 			file: { numLines: 3, startLine: 1, totalLines: 3 }
 		});
-		expect(result.views).toEqual([{ type: 'text', text: '1\ta\n2\tb\n3\t' }]);
+		expect(result.views).toEqual([{ type: 'text', text: 'a\nb\n\n(file has 3 total lines)' }]);
 	});
 
 	it('accepts an absolute file_path and honors offset/limit', async () => {
@@ -51,35 +52,64 @@ describe('read tool', () => {
 			type: 'text',
 			file: { numLines: 2, startLine: 2, totalLines: 5 }
 		});
-		expect(result.views).toEqual([{ type: 'text', text: '2\tb\n3\tc' }]);
+		expect(result.views).toEqual([{ type: 'text', text: 'b\nc\n(file has 5 total lines)' }]);
 	});
 
-	it('errors on a whole-file read past the 256KB cap with the SDK message', async () => {
+	it('renders numbered lines when numbered: true', async () => {
 		const root = makeTmpDir('read-tool-');
-		const size = 256 * 1024 + 1;
-		writeFileSync(join(root, 'big.txt'), Buffer.alloc(size, 0x61));
-		const result = await readTool(root).handler({ file_path: 'big.txt' });
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		// 256KB + 1 = 256.001KB -> the SDK formats KiB labeled as KB.
-		expect(result.error.message).toBe(
-			`File content (256.0KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.`
-		);
+		writeFileSync(join(root, 'sample.txt'), 'a\nb\nc');
+		const result = await readTool(root).handler({
+			file_path: 'sample.txt',
+			offset: 1,
+			limit: 3,
+			numbered: true
+		});
+		if (!result.ok) throw new Error(result.error.message);
+		expect(result.result).toMatchObject({
+			type: 'text',
+			file: { content: 'a\nb\nc', numLines: 3, startLine: 1, totalLines: 3 }
+		});
+		expect(result.views).toEqual([
+			{ type: 'text', text: '1\ta\n2\tb\n3\tc\n(file has 3 total lines)' }
+		]);
+	});
+
+	it('errors on text reads missing offset or limit with the true line count', async () => {
+		const root = makeTmpDir('read-tool-');
+		writeFileSync(join(root, 'sample.txt'), 'a\nb\nc');
+		const expected = `Reads of text files require both offset and limit (file has 3 lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`;
+		for (const args of [
+			{ file_path: 'sample.txt' },
+			{ file_path: 'sample.txt', offset: 2 },
+			{ file_path: 'sample.txt', limit: 2 }
+		]) {
+			const result = await readTool(root).handler(args);
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.error.message).toBe(expected);
+		}
 	});
 
 	it('paginates a huge page with the continuation banner', async () => {
 		const root = makeTmpDir('read-tool-');
-		// 50k single-char lines: the file itself is 100KB (under the 256KB
-		// whole-read cap) but the numbered rendering exceeds the 200KB page cap,
-		// so the SDK-style auto-pagination kicks in.
-		writeFileSync(join(root, 'many.txt'), Array.from({ length: 50_000 }, () => 'x').join('\n'));
-		const result = await readTool(root).handler({ file_path: 'many.txt' });
+		// 50k eight-char lines: the plain rendering exceeds the 200KB page cap
+		// (about 450KB), so the auto-pagination kicks in.
+		writeFileSync(
+			join(root, 'many.txt'),
+			Array.from({ length: 50_000 }, () => 'xxxxxxxx').join('\n')
+		);
+		const result = await readTool(root).handler({
+			file_path: 'many.txt',
+			offset: 1,
+			limit: 50_000
+		});
 		if (!result.ok) throw new Error(result.error.message);
 		const view = result.views?.[0] as { type: 'text'; text: string } | undefined;
 		expect(view?.type).toBe('text');
 		expect(view?.text).toMatch(
 			/^Read \d+ lines \(\d+% complete\)\.\.\. continue with offset=\d+\n/
 		);
+		expect(view?.text).toMatch(/\(file has 50000 total lines\)$/);
 		expect(
 			(result.result as { file: { truncatedByTokenCap?: boolean } }).file.truncatedByTokenCap
 		).toBe(true);
@@ -153,16 +183,5 @@ describe('read tool', () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.error.message).toContain('directory');
-	});
-
-	it('renderReadModelText matches the numbered model text (golden replay)', async () => {
-		const root = makeTmpDir('read-tool-');
-		writeFileSync(join(root, 'sample.txt'), 'alpha one\nbeta two\ngamma three');
-		await expect(renderReadModelText({ file_path: 'sample.txt' }, root)).resolves.toBe(
-			'1\talpha one\n2\tbeta two\n3\tgamma three'
-		);
-		await expect(
-			renderReadModelText({ file_path: 'sample.txt', offset: 2, limit: 1 }, root)
-		).resolves.toBe('2\tbeta two');
 	});
 });

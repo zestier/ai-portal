@@ -228,7 +228,9 @@ describe('pi tool calls + permission gate', () => {
 			const convId = await createConversation(wd);
 			const session = await openSession(wd, convId);
 			const { result, prompts } = await runToolCall(session, 'read', {
-				file_path: 'notes.txt'
+				file_path: 'notes.txt',
+				offset: 1,
+				limit: 10
 			});
 			expect(result.ok).toBe(true);
 			expect(prompts.length).toBe(0);

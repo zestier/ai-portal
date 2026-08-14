@@ -218,8 +218,7 @@ async function searchGrep(cwd: string, target: string, args: GrepArgsParsed): Pr
 	};
 }
 
-// The text a model sees for a GrepOutput, mirroring the SDK's rendering so the
-// golden conformance suite can compare byte-for-byte.
+// The text a model sees for a GrepOutput, mirroring the SDK's rendering.
 export function renderGrepResult(result: GrepResult): string {
 	if (result.mode === 'count') {
 		if ((result.numMatches ?? 0) === 0) {
@@ -235,19 +234,6 @@ export function renderGrepResult(result: GrepResult): string {
 	if (result.filenames && result.filenames.length > 0) lines.push(...result.filenames);
 	if (result.truncated) lines.push('[truncated: results exceed 100KB]');
 	return lines.join('\n');
-}
-
-// Run a Grep call against a plain workspace directory and render its model text
-// (used by the golden conformance registry; the tool handler reuses
-// `searchGrep` + `renderGrepResult`).
-export async function renderGrepModelText(
-	args: Record<string, unknown>,
-	cwd: string
-): Promise<string> {
-	const parsed = GrepArgs.parse(args);
-	const target = resolveTarget(cwd, parsed.path);
-	if (!target) throw new Error('path must resolve inside the workspace');
-	return renderGrepResult(await searchGrep(cwd, target, parsed));
 }
 
 export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
