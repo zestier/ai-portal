@@ -78,10 +78,7 @@
 	// but NOT on the user message that triggered the in-flight turn — that
 	// is the live, streaming turn's boundary and editing it makes no sense.
 	const canEdit = $derived(
-		message.role === 'user' &&
-			!!conversationId &&
-			!isInFlightTurnUser &&
-			messageId.is(message.id)
+		message.role === 'user' && !!conversationId && !isInFlightTurnUser && messageId.is(message.id)
 	);
 
 	// Assistant-message actions: regenerate the reply in place, or fork the
@@ -95,7 +92,7 @@
 		message.role === 'assistant' &&
 			(message.status === 'complete' || message.status === 'error') &&
 			!!conversationId &&
-			typeof message.id === 'number'
+			typeof message.id === 'string'
 	);
 
 	const liveForks = $derived(forks.filter((f) => f.archivedAt == null));

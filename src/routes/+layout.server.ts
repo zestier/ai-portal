@@ -32,14 +32,16 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 		? // The conversation being viewed is seen by definition. Its own page
 			// `load` marks it read, but the two loads run concurrently, so filtering
 			// here is what makes the result deterministic rather than a race.
-			[...convs.unreadConversationIds(locals.userId)]
-				.map((id) => convCodec.encode(id))
-				.filter((id) => params.id === undefined || id !== params.id)
+			[...convs.unreadConversationIds(locals.userId)].filter(
+				(id) => params.id === undefined || id !== params.id
+			)
 		: ([] as string[]);
 	let ticketWorkspace: string | null = null;
 	if (locals.userId) {
 		const activeConversation =
-			typeof params.id === 'string' ? convs.get(convCodec.tryParse(params.id) ?? -1, locals.userId) : null;
+			typeof params.id === 'string'
+				? convs.get(convCodec.tryParse(params.id) ?? -1, locals.userId)
+				: null;
 		ticketWorkspace = activeConversation
 			? ticketWorkspaceFromConversation(activeConversation)
 			: defaultTicketWorkspace(locals.userId);

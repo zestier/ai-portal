@@ -40,7 +40,10 @@ export interface InsertPendingShadowOptions {
 }
 
 export function insertPending(opts: InsertPendingShadowOptions): number {
-	const convId = typeof opts.conversationId === 'number' ? opts.conversationId : convCodec.parse(opts.conversationId);
+	const convId =
+		typeof opts.conversationId === 'number'
+			? opts.conversationId
+			: convCodec.parse(opts.conversationId);
 	const info = getDb()
 		.prepare(
 			`INSERT INTO permission_shadow_decisions(
@@ -240,7 +243,8 @@ export function listForUser(userId: number, limit = 500): ShadowDecisionRecord[]
 }
 
 export function listForConversation(conversationId: string | number): ShadowDecisionRecord[] {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const rows = getDb()
 		.prepare(
 			`SELECT * FROM permission_shadow_decisions

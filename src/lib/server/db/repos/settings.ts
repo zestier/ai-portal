@@ -303,7 +303,8 @@ export function matchGrantDetailed(
  */
 function convInt(id: string | number | null): number | null {
 	return id === null ? null : typeof id === 'number' ? id : conversationId.parse(id);
-}export function hasGrant(userId: number, conversationId: string | number, tool: string): boolean {
+}
+export function hasGrant(userId: number, conversationId: string | number, tool: string): boolean {
 	// Legacy callers don't know about kinds/patterns; pretend the request
 	// is for whatever the grant covers by passing a wildcard scope.
 	return matchGrant(userId, conversationId, tool, '*', null) === 'allow';
@@ -408,7 +409,7 @@ export function updateGrant(userId: number, id: number, opts: UpdateGrantOptions
 
 export interface GrantSummary {
 	id: number;
-	conversationId: number | null;
+	conversationId: string | null;
 	conversationTitle: string | null;
 	tool: string;
 	permissionKind: string | null;
@@ -463,7 +464,7 @@ export function listGrantsForUser(userId: number): GrantSummary[] {
 	}>;
 	return rows.map((r) => ({
 		id: r.id,
-		conversationId: r.conversation_id,
+		conversationId: r.conversation_id === null ? null : conversationId.encode(r.conversation_id),
 		conversationTitle: r.conversation_title,
 		tool: r.tool,
 		permissionKind: r.permission_kind,
@@ -682,7 +683,7 @@ export function recordDecision(
 
 export interface PermissionDecisionRecord {
 	id: number;
-	conversationId: number;
+	conversationId: string;
 	conversationTitle: string | null;
 	tool: string;
 	argsSummary: string | null;
@@ -726,7 +727,7 @@ export function listRecentDecisionsForUser(userId: number, limit = 50): Permissi
 	}>;
 	return rows.map((r) => ({
 		id: r.id,
-		conversationId: r.conversation_id,
+		conversationId: conversationId.encode(r.conversation_id),
 		conversationTitle: r.conversation_title,
 		tool: r.tool,
 		argsSummary: r.args_summary,

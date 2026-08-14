@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
+import { conversationId as convCodec } from '../src/lib/ids';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
 function git(cwd: string, args: string[]): string {
@@ -56,7 +57,7 @@ describe('worktree tools', () => {
 			workspaceKind: 'shared',
 			workspaceKey: source
 		});
-		conversationId = conv.id;
+		conversationId = convCodec.parse(conv.id);
 
 		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
 		tools = new Map(buildWorktreeTools({ userId, conversationId }).map((t) => [t.name, t]));
@@ -194,7 +195,10 @@ describe('worktree tools', () => {
 			workspaceKey: source
 		});
 		const otherTools = new Map(
-			buildWorktreeTools({ userId, conversationId: other.id }).map((t) => [t.name, t])
+			buildWorktreeTools({ userId, conversationId: convCodec.parse(other.id) }).map((t) => [
+				t.name,
+				t
+			])
 		);
 
 		const status = otherTools.get('worktree_status')!;
@@ -347,7 +351,10 @@ describe('worktree tools', () => {
 				workspaceKey: source
 			});
 			const otherTools = new Map(
-				buildWorktreeTools({ userId, conversationId: other.id }).map((t) => [t.name, t])
+				buildWorktreeTools({ userId, conversationId: convCodec.parse(other.id) }).map((t) => [
+					t.name,
+					t
+				])
 			);
 
 			const res = await otherTools.get('worktree_merge')!.handler({ leaseId: created.leaseId });

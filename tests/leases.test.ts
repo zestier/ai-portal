@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
+import { conversationId as convCodec, leaseId as leaseIdCodec } from '../src/lib/ids';
 
 function git(cwd: string, args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -55,8 +56,10 @@ describe('workspace leases', () => {
 
 		const lease = await createLease({ conversation, label: 'api' });
 
-		expect(lease.path).toBe(join(worktreeRoot, String(userId), 'leases', String(lease.id)));
-		expect(lease.branch).toBe(`portal/lease/${lease.id}--api`);
+		expect(lease.path).toBe(
+			join(worktreeRoot, String(userId), 'leases', String(leaseIdCodec.parse(lease.id)))
+		);
+		expect(lease.branch).toBe(`portal/lease/${leaseIdCodec.parse(lease.id)}--api`);
 		expect(lease.heldByConversationId).toBe(conversation.id);
 		expect(resolveLeaseWorkspace(lease)).toBe(lease.path);
 		expect(listLeases(conversation.id, userId)).toHaveLength(1);
@@ -418,7 +421,7 @@ describe('workspace leases', () => {
 				.prepare(
 					`UPDATE conversations SET workdir = ?, workspace_kind = 'managed-worktree' WHERE id = ?`
 				)
-				.run(managedWorktree.path, created.id);
+				.run(managedWorktree.path, convCodec.parse(created.id));
 			return convs.get(created.id, userId)!;
 		}
 

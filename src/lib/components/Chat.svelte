@@ -1702,7 +1702,8 @@
 		if (permalinkHandled || typeof window === 'undefined') return;
 		const raw = new URL(window.location.href).searchParams.get('message');
 		if (!raw) return;
-		const id = messageId.tryParse(raw) ?? (/^\d+$/.test(raw) ? Number(raw) : null);
+		// Message handles are the wire format; a bare int URL is a legacy form.
+		const id = messageId.is(raw) ? raw : /^\d+$/.test(raw) ? Number(raw) : null;
 		if (id === null) return;
 		permalinkHandled = true;
 		// Give the initial window a frame to mount, then fetch pages until the

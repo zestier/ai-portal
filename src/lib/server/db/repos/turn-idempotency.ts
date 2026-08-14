@@ -43,7 +43,8 @@ export function record(input: {
 	turnId: string;
 	title?: string | null;
 }): void {
-	const messageIdInt = typeof input.messageId === 'number' ? input.messageId : messageId.parse(input.messageId);
+	const messageIdInt =
+		typeof input.messageId === 'number' ? input.messageId : messageId.parse(input.messageId);
 	getDb()
 		.prepare(
 			`INSERT OR IGNORE INTO turn_idempotency(

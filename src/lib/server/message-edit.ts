@@ -47,7 +47,9 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
 
 	const { conv, all } = loadIdleConversation(input.userId, input.conversationId);
 	const targetIdx = all.findIndex(
-		(m) => msgCodec.parse(m.id) === (typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId))
+		(m) =>
+			msgCodec.parse(m.id) ===
+			(typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId))
 	);
 	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
@@ -80,7 +82,9 @@ export interface RegenerateInput {
 export function regenerateFromAssistant(input: RegenerateInput): InlineEditResult {
 	const { conv, all } = loadIdleConversation(input.userId, input.conversationId);
 	const targetIdx = all.findIndex(
-		(m) => msgCodec.parse(m.id) === (typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId))
+		(m) =>
+			msgCodec.parse(m.id) ===
+			(typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId))
 	);
 	const target = targetIdx >= 0 ? all[targetIdx] : null;
 	if (!target) throw new InlineEditRejected('message_not_found');
@@ -121,7 +125,8 @@ function loadIdleConversation(
 	userId: number,
 	conversationId: string | number
 ): { conv: Conversation; all: Message[] } {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const conv = convs.get(intConv, userId);
 	if (!conv) throw new InlineEditRejected('conversation_not_found');
 
@@ -156,9 +161,7 @@ function rerunFromUserMessage(
 	cancelPendingInteractive(convCodec.parse(conv.id), cancelReason);
 	const updated = getDb().transaction(() => {
 		memoryRepo.rewindSessionMemoryLogToMessagePrefix(convCodec.parse(conv.id), {
-			messageIds: new Set(
-				all.slice(0, targetIdx + 1).map((message) => msgCodec.parse(message.id))
-			),
+			messageIds: new Set(all.slice(0, targetIdx + 1).map((message) => msgCodec.parse(message.id))),
 			createdBefore: all[targetIdx + 1]?.createdAt
 		});
 		const updatedMessage = messages.truncateAfterAndUpdateUserMessage(

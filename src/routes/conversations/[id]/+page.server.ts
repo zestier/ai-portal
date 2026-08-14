@@ -57,7 +57,10 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 			source === 'builtin'
 				? getBuiltInPromptTemplate(promptTemplateIdParam)
 				: source === 'custom'
-					? promptTemplates.get(promptTemplateId.tryParse(promptTemplateIdParam) ?? -1, locals.userId)
+					? promptTemplates.get(
+							promptTemplateId.tryParse(promptTemplateIdParam) ?? -1,
+							locals.userId
+						)
 					: null;
 		if (!template || template.status !== 'open') throw error(404);
 		initialComposer = template.prompt;

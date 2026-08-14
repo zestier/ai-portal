@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { regenerateFromAssistant, InlineEditRejected } from '$lib/server/message-edit';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { requireUserId } from '$lib/server/auth/require';
@@ -32,10 +33,10 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 	authorizeConversation(params.id, locals.userId);
 	const userId = requireUserId(locals);
 
-	const conversationId = Number(params.id);
-	const messageId = Number(params.messageId);
-	if (!Number.isInteger(conversationId) || conversationId <= 0) throw error(404);
-	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
+	const conversationId = convCodec.tryParse(params.id);
+	const messageId = msgCodec.tryParse(params.messageId);
+	if (conversationId === null) throw error(404);
+	if (messageId === null) throw error(400, 'missing message id');
 
 	// Claim the turn slot synchronously to close the same memory-mode race as
 	// the inline-edit route: a plain `getTurn` busy-check leaves a window where

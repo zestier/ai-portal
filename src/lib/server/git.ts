@@ -946,7 +946,9 @@ export async function commitChanges(
 		ctx?.progress?.('running git commit (pre-commit / commit-msg hooks)…');
 		await runGitOk(['commit', '-F', messagePath], {
 			cwd: repoRoot,
-			timeoutMs: 60_000,
+			// Pre-commit hooks can run a full verify suite; keep the budget well
+			// above a plain git op.
+			timeoutMs: 180_000,
 			onData: ctx?.partial ? (snap) => ctx.partial?.(snap) : undefined,
 			signal: ctx?.signal
 		});

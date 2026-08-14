@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { getDb } from '../src/lib/server/db';
+import { conversationId as convCodec } from '../src/lib/ids';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
@@ -183,7 +184,9 @@ describe('db migrations + repos', () => {
 		// Simulate a row written before migration 066 split the axes. The
 		// migration rewrites these, but the normalizer is the backstop for a
 		// connection that raced it (dev HMR) or a hand-edited row.
-		getDb().prepare('UPDATE conversations SET mode = ? WHERE id = ?').run('best-effort', c.id);
+		getDb()
+			.prepare('UPDATE conversations SET mode = ? WHERE id = ?')
+			.run('best-effort', convCodec.parse(c.id));
 		expect(convs.get(c.id, u.id)?.mode).toBe('autopilot');
 	});
 
@@ -226,7 +229,7 @@ describe('db migrations + repos', () => {
 			(
 				db
 					.prepare('SELECT COUNT(*) AS n FROM permission_grants WHERE conversation_id = ?')
-					.get(c.id) as { n: number }
+					.get(convCodec.parse(c.id)) as { n: number }
 			).n
 		).toBe(1);
 		convs.remove(c.id, u.id);
@@ -234,7 +237,7 @@ describe('db migrations + repos', () => {
 			(
 				db
 					.prepare('SELECT COUNT(*) AS n FROM permission_grants WHERE conversation_id = ?')
-					.get(c.id) as { n: number }
+					.get(convCodec.parse(c.id)) as { n: number }
 			).n
 		).toBe(0);
 	});
@@ -713,7 +716,7 @@ describe('db migrations + repos', () => {
 		expect(reloaded?.status).toBe('interrupted');
 		expect(reloaded?.errorCode).toBe('server_restarted');
 		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 1,
+			id: 'X1',
 			status: 'error',
 			endedAt: 1234
 		});
@@ -749,7 +752,7 @@ describe('db migrations + repos', () => {
 
 		const reloaded = messages.listByConversation(c.id).find((m) => m.id === assistant.id);
 		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 1,
+			id: 'X1',
 			status: 'ok',
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-1',
@@ -757,7 +760,7 @@ describe('db migrations + repos', () => {
 			backgroundAgentEndedAt: 130
 		});
 		expect(messages.getToolCallForConversation(c.id, 1)).toMatchObject({
-			id: 1,
+			id: 'X1',
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-1',
 			backgroundAgentStartedAt: 120,
@@ -794,7 +797,7 @@ describe('db migrations + repos', () => {
 
 		const reloaded = messages.listByConversation(c.id).find((m) => m.id === assistant.id);
 		expect(reloaded?.toolCalls?.[0]).toMatchObject({
-			id: 1,
+			id: 'X1',
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-race',
 			backgroundAgentStartedAt: 120,

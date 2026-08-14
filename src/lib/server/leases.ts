@@ -61,7 +61,11 @@ function toMetadata(lease: Lease): ManagedWorktreeMetadata {
 }
 
 function leaseSlot(lease: Pick<Lease, 'userId' | 'id'>): WorktreeSlot {
-	return { kind: 'lease', userId: String(lease.userId), leaseId: String(leaseCodec.parse(lease.id)) };
+	return {
+		kind: 'lease',
+		userId: String(lease.userId),
+		leaseId: String(leaseCodec.parse(lease.id))
+	};
 }
 
 /**
@@ -174,7 +178,8 @@ export function getLease(leaseId: string | number, userId: number): Lease | null
 }
 
 export function listLeases(conversationId: string | number, userId: number): Lease[] {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	return leaseRepo.listByConversation(intConv, userId);
 }
 
@@ -200,7 +205,12 @@ export function resolveLeaseWorkspace(lease: Lease): string {
 	try {
 		const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
 		const storedReal = realpathSync(stored);
-		const expectedReal = resolve(rootReal, String(lease.userId), 'leases', String(leaseCodec.parse(lease.id)));
+		const expectedReal = resolve(
+			rootReal,
+			String(lease.userId),
+			'leases',
+			String(leaseCodec.parse(lease.id))
+		);
 		if (
 			!statSync(stored).isDirectory() ||
 			storedReal !== expectedReal ||
@@ -299,7 +309,8 @@ export async function removeLeasesForConversation(
 	userId: number,
 	opts: { force?: boolean } = {}
 ): Promise<RemoveLeasesResult> {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const result: RemoveLeasesResult = { removed: [], retained: [] };
 	const conversation = convs.get(intConv, userId);
 	for (const lease of leaseRepo.listByConversation(intConv, userId)) {
@@ -345,7 +356,10 @@ export function conversationWorkspaceRoots(conversation: Conversation): string[]
 		// A conversation whose own workspace is unavailable still fails closed at
 		// the point of use; here we simply contribute no root for it.
 	}
-	for (const lease of leaseRepo.listByConversation(convCodec.parse(conversation.id), conversation.userId)) {
+	for (const lease of leaseRepo.listByConversation(
+		convCodec.parse(conversation.id),
+		conversation.userId
+	)) {
 		if (lease.state !== 'active') continue;
 		try {
 			roots.push(resolveLeaseWorkspace(lease));
@@ -371,7 +385,8 @@ export function workspaceRootsFor(
 	fallback: string
 ): string[] {
 	try {
-		const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+		const intConv =
+			typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 		const conversation = convs.get(intConv, userId);
 		if (!conversation) return [fallback];
 		const roots = conversationWorkspaceRoots(conversation);

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PortalEvent } from '../src/lib/types';
+import { conversationId as convCodec } from '../src/lib/ids';
 import { setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
 import { makeFakeSession } from './helpers/fake-session';
@@ -77,28 +78,28 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
-		expect(turnRunner.getTurn(conv.id)).toBe(turn);
+		expect(turnRunner.getTurn(convCodec.parse(conv.id))).toBe(turn);
 		await expect(
 			turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'second',
-				conversationId: conv.id
+				conversationId: convCodec.parse(conv.id)
 			})
 		).rejects.toThrow('turn already in progress');
 
@@ -136,17 +137,17 @@ describe('turn-runner', () => {
 		);
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
-		expect(turnRunner.runningConversationIds()).toEqual(new Set([conv.id]));
+		expect(turnRunner.runningConversationIds()).toEqual(new Set([convCodec.parse(conv.id)]));
 
 		resolveAcquire(makeFakeSession([{ type: 'done' }], conv.id, wd));
 		for await (const { event } of turn.subscribe()) {
@@ -203,27 +204,27 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		await expect(
 			turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'second',
-				conversationId: conv.id
+				conversationId: convCodec.parse(conv.id)
 			})
 		).rejects.toBeInstanceOf(turnRunner.TurnAlreadyInProgressError);
 
@@ -245,22 +246,22 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.delta', messageId: 1, text: 'hi' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'M1', text: 'hi' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'Help me write a haiku about TypeScript',
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			initialEvents: [
 				{
 					type: 'conversation.update',
@@ -303,22 +304,22 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.delta', messageId: 1, text: 'hi' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'M1', text: 'hi' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'Anything goes here',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const received: PortalEvent[] = [];
@@ -344,15 +345,15 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.delta', messageId: 1, text: 'ok' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'M1', text: 'ok' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
@@ -360,7 +361,7 @@ describe('turn-runner', () => {
 				mode: 'interactive'
 			},
 			prompt: 'Help me',
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			userMessageId: userMsg.id
 		});
 
@@ -390,14 +391,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -421,24 +422,24 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.delta', messageId: 1, text: 'a' },
-				{ type: 'message.delta', messageId: 1, text: 'b' },
-				{ type: 'message.delta', messageId: 1, text: 'c' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'M1', text: 'a' },
+				{ type: 'message.delta', messageId: 'M1', text: 'b' },
+				{ type: 'message.delta', messageId: 'M1', text: 'c' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		// Drain the full transcript; ids must be 0..N-1 contiguous.
@@ -475,22 +476,22 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.delta', messageId: 1, text: 'hi' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'M1', text: 'hi' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		let done: PortalEvent | undefined;
@@ -513,12 +514,12 @@ describe('turn-runner', () => {
 		// then returns — exercising the server-side interrupt path that emits a
 		// bare terminal `done` (no preceding `error`).
 		acquireMock.mockResolvedValue({
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			providerSessionId: conv.id,
 			workingDirectory: wd,
 			model: 'test-model',
 			async *send(_prompt: string, signal?: AbortSignal): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 1, role: 'assistant' };
+				yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
 				await new Promise<void>((resolve) => {
 					if (signal?.aborted) return resolve();
 					signal?.addEventListener('abort', () => resolve(), { once: true });
@@ -534,14 +535,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -572,13 +573,13 @@ describe('turn-runner', () => {
 		// (provider crash / network drop / rate-limit) without the user issuing
 		// Stop — the case that previously finalized as a false 'complete'.
 		acquireMock.mockResolvedValue({
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			providerSessionId: conv.id,
 			workingDirectory: wd,
 			model: 'test-model',
 			async *send(): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 1, role: 'assistant' };
-				yield { type: 'message.delta', messageId: 1, text: 'partial' };
+				yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
+				yield { type: 'message.delta', messageId: 'M1', text: 'partial' };
 				throw new Error('provider exploded');
 			},
 			async abort() {},
@@ -591,14 +592,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const seen: PortalEvent[] = [];
@@ -616,7 +617,7 @@ describe('turn-runner', () => {
 		// ...and the terminal done now carries the failure, not a false 'complete'.
 		expect(done).toMatchObject({ type: 'done', status: 'error' });
 		// The turn itself ends in the previously-dead 'error' state.
-		expect(turnRunner.getTurn(conv.id)?.status).toBe('error');
+		expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).toBe('error');
 
 		// The persisted assistant message reflects the failure (status + error_code),
 		// so history/export filters keyed on status='complete' won't silently
@@ -643,12 +644,12 @@ describe('turn-runner', () => {
 		// A session whose abort() never settles (subprocess wedged in I/O). The
 		// turn must still escalate to dispose() to avoid orphaning the session.
 		acquireMock.mockResolvedValue({
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			providerSessionId: conv.id,
 			workingDirectory: wd,
 			model: 'test-model',
 			async *send(_prompt: string, signal?: AbortSignal): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 1, role: 'assistant' };
+				yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
 				await new Promise<void>((resolve) => {
 					if (signal?.aborted) return resolve();
 					signal?.addEventListener('abort', () => resolve(), { once: true });
@@ -670,14 +671,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -737,14 +738,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		// Abort while acquire is still pending: session is null here, so the
@@ -752,7 +753,7 @@ describe('turn-runner', () => {
 		void turn.abort();
 
 		resolveAcquire({
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			providerSessionId: conv.id,
 			workingDirectory: wd,
 			model: 'test-model',
@@ -803,35 +804,35 @@ describe('turn-runner', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.delta', messageId: 1, text: 'hi' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.delta', messageId: 'M1', text: 'hi' },
 				{
 					type: 'message.reasoning',
-					messageId: 1,
+					messageId: 'M1',
 					segmentId: 'r1',
 					text: 'think'
 				},
 				{
 					type: 'message.reasoning.end',
-					messageId: 1,
+					messageId: 'M1',
 					segmentId: 'r1',
 					durationMs: 10
 				},
-				{ type: 'message.end', messageId: 1 },
+				{ type: 'message.end', messageId: 'M1' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const received: PortalEvent[] = [];
@@ -864,13 +865,13 @@ describe('turn-runner', () => {
 			release = resolve;
 		});
 		acquireMock.mockResolvedValue({
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			workingDirectory: wd,
 			async *send(): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 1, role: 'assistant' };
-				yield { type: 'message.delta', messageId: 1, text: 'a' };
+				yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
+				yield { type: 'message.delta', messageId: 'M1', text: 'a' };
 				await gate;
-				yield { type: 'message.delta', messageId: 1, text: 'b' };
+				yield { type: 'message.delta', messageId: 'M1', text: 'b' };
 				yield { type: 'done' };
 			},
 			async abort() {},
@@ -883,14 +884,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -925,8 +926,8 @@ describe('turn-runner', () => {
 		acquireMock.mockResolvedValue(
 			makeFakeSession(
 				[
-					{ type: 'message.start', messageId: 1, role: 'assistant' },
-					{ type: 'message.delta', messageId: 1, text: 'hi' },
+					{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'M1', text: 'hi' },
 					{ type: 'done' }
 				],
 				conv.id,
@@ -936,14 +937,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		// Drain the turn to completion so it is no longer running.
@@ -977,18 +978,18 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
-		expect(turnRunner.getTurnById(conv.id, turn.id)).toBeTruthy();
-		expect(turnRunner.getTurnById(conv.id, 'nonexistent')).toBeNull();
+		expect(turnRunner.getTurnById(convCodec.parse(conv.id), turn.id)).toBeTruthy();
+		expect(turnRunner.getTurnById(convCodec.parse(conv.id), 'nonexistent')).toBeNull();
 		expect(turnRunner.getTurnById(999999, turn.id)).toBeNull();
 	});
 
@@ -1009,29 +1010,29 @@ describe('turn-runner', () => {
 		// here.
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.reasoning', messageId: 1, segmentId: 's1', text: 'plan ' },
-				{ type: 'message.reasoning', messageId: 1, segmentId: 's1', text: 'first' },
-				{ type: 'message.reasoning.end', messageId: 1, segmentId: 's1', durationMs: 100 },
-				{ type: 'message.delta', messageId: 1, text: 'hello' },
-				{ type: 'message.reasoning', messageId: 1, segmentId: 's2', text: 'second ' },
-				{ type: 'message.reasoning', messageId: 1, segmentId: 's2', text: 'thought' },
-				{ type: 'message.reasoning.end', messageId: 1, segmentId: 's2', durationMs: 200 },
-				{ type: 'message.delta', messageId: 1, text: ' world' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.reasoning', messageId: 'M1', segmentId: 's1', text: 'plan ' },
+				{ type: 'message.reasoning', messageId: 'M1', segmentId: 's1', text: 'first' },
+				{ type: 'message.reasoning.end', messageId: 'M1', segmentId: 's1', durationMs: 100 },
+				{ type: 'message.delta', messageId: 'M1', text: 'hello' },
+				{ type: 'message.reasoning', messageId: 'M1', segmentId: 's2', text: 'second ' },
+				{ type: 'message.reasoning', messageId: 'M1', segmentId: 's2', text: 'thought' },
+				{ type: 'message.reasoning.end', messageId: 'M1', segmentId: 's2', durationMs: 200 },
+				{ type: 'message.delta', messageId: 'M1', text: ' world' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -1070,21 +1071,21 @@ describe('turn-runner', () => {
 			release = resolve;
 		});
 		acquireMock.mockResolvedValue({
-			conversationId: conv.id,
+			conversationId: convCodec.parse(conv.id),
 			workingDirectory: wd,
 			async *send(): AsyncIterable<PortalEvent> {
-				yield { type: 'message.start', messageId: 1, role: 'assistant' };
-				yield { type: 'message.delta', messageId: 1, text: 'partial' };
+				yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
+				yield { type: 'message.delta', messageId: 'M1', text: 'partial' };
 				yield {
 					type: 'tool.call',
-					toolCallId: 1,
+					toolCallId: 'X1',
 					tool: 'bash',
 					args: { command: 'echo hi', timeoutMs: 30_000 }
 				};
 				await gate;
 				yield {
 					type: 'tool.result',
-					toolCallId: 1,
+					toolCallId: 'X1',
 					ok: true,
 					summary: 'ok',
 					output: 'hi\n'
@@ -1100,14 +1101,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -1119,7 +1120,7 @@ describe('turn-runner', () => {
 		expect(midTurn?.status).toBe('streaming');
 		expect(midTurn?.content).toBe('partial');
 		expect(midTurn?.toolCalls?.[0]).toMatchObject({
-			id: expect.any(Number),
+			id: expect.any(String),
 			tool: 'bash',
 			status: 'pending'
 		});
@@ -1132,7 +1133,7 @@ describe('turn-runner', () => {
 		const done = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
 		expect(done?.status).toBe('complete');
 		expect(done?.toolCalls?.[0]).toMatchObject({
-			id: expect.any(Number),
+			id: expect.any(String),
 			status: 'ok',
 			resultJson: 'hi\n'
 		});
@@ -1155,7 +1156,7 @@ describe('turn-runner', () => {
 		};
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
 				edit,
 				edit,
 				{ type: 'done' }
@@ -1164,14 +1165,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -1195,29 +1196,29 @@ describe('turn-runner', () => {
 		});
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
 				{
 					type: 'tool.call',
-					toolCallId: 2,
+					toolCallId: 'X2',
 					tool: 'task',
 					args: { mode: 'background', prompt: 'do work' }
 				},
 				{
 					type: 'tool.result',
-					toolCallId: 2,
+					toolCallId: 'X2',
 					ok: true,
 					summary: 'launched',
 					output: { agent_id: 'agent-1', content: 'launched' }
 				},
 				{
 					type: 'subagent.lifecycle',
-					toolCallId: 2,
+					toolCallId: 'X2',
 					agentId: 'agent-1',
 					status: 'running'
 				},
 				{
 					type: 'subagent.lifecycle',
-					toolCallId: 2,
+					toolCallId: 'X2',
 					agentId: 'agent-1',
 					status: 'completed'
 				},
@@ -1227,14 +1228,14 @@ describe('turn-runner', () => {
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -1243,7 +1244,7 @@ describe('turn-runner', () => {
 
 		const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
 		expect(assistant?.toolCalls?.[0]).toMatchObject({
-			id: expect.any(Number),
+			id: expect.any(String),
 			status: 'ok',
 			backgroundAgentStatus: 'completed',
 			backgroundAgentId: 'agent-1',
@@ -1323,22 +1324,22 @@ describe('turn-runner', () => {
 
 			acquireMock.mockResolvedValue(
 				makeFakeSession([
-					{ type: 'message.start', messageId: 1, role: 'assistant' },
-					{ type: 'message.delta', messageId: 1, text: 'Done.' },
+					{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'M1', text: 'Done.' },
 					{ type: 'done' }
 				])
 			);
 
 			const turn = await turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'hi',
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				memory: {
 					mode: 'project',
 					userMessageId: userMsg.id,
@@ -1426,7 +1427,7 @@ describe('turn-runner', () => {
 			const prompts: string[] = [];
 			let sendCount = 0;
 			acquireMock.mockResolvedValue({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				workingDirectory: wd,
 				async *send(prompt: string): AsyncIterable<PortalEvent> {
 					prompts.push(prompt);
@@ -1434,23 +1435,23 @@ describe('turn-runner', () => {
 					if (sendCount === 1) {
 						// First turn: only a memory recall tool, no user-facing text —
 						// the "checked memory then ended the turn" failure mode.
-						yield { type: 'message.start', messageId: 1, role: 'assistant' };
+						yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
 						yield {
 							type: 'tool.call',
-							toolCallId: 3,
+							toolCallId: 'X3',
 							tool: 'memory_search',
 							args: { query: 'Mara' }
 						};
 						yield {
 							type: 'tool.result',
-							toolCallId: 3,
+							toolCallId: 'X3',
 							ok: true,
 							summary: 'found',
 							output: 'Mara is in the tower.'
 						};
 					} else {
 						// Continuation after the nudge: now actually answer.
-						yield { type: 'message.delta', messageId: 1, text: 'Mara is in the tower.' };
+						yield { type: 'message.delta', messageId: 'M1', text: 'Mara is in the tower.' };
 					}
 				},
 				async abort() {},
@@ -1463,14 +1464,14 @@ describe('turn-runner', () => {
 
 			const turn = await turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'where is Mara?',
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				memory: { mode: 'project', userMessageId: userMsg.id, userContent: 'where is Mara?' }
 			});
 
@@ -1485,7 +1486,7 @@ describe('turn-runner', () => {
 			const assistant = messages.listByConversation(conv.id).find((m) => m.role === 'assistant');
 			expect(assistant?.content).toContain('Mara is in the tower.');
 			expect(assistant?.toolCalls?.[0]).toMatchObject({
-				id: expect.any(Number),
+				id: expect.any(String),
 				tool: 'memory_search'
 			});
 		} finally {
@@ -1521,23 +1522,23 @@ describe('turn-runner', () => {
 
 			let sendCount = 0;
 			acquireMock.mockResolvedValue({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				workingDirectory: wd,
 				async *send(): AsyncIterable<PortalEvent> {
 					sendCount += 1;
 					// A write tool (memory_global_record) with no user-facing
 					// text is NOT the recall-then-nothing failure mode, so the
 					// guard must leave it alone.
-					yield { type: 'message.start', messageId: 1, role: 'assistant' };
+					yield { type: 'message.start', messageId: 'M1', role: 'assistant' };
 					yield {
 						type: 'tool.call',
-						toolCallId: 4,
+						toolCallId: 'X4',
 						tool: 'memory_global_record',
 						args: { text: 'user prefers metric units' }
 					};
 					yield {
 						type: 'tool.result',
-						toolCallId: 4,
+						toolCallId: 'X4',
 						ok: true,
 						summary: 'stored',
 						output: 'ok'
@@ -1553,14 +1554,14 @@ describe('turn-runner', () => {
 
 			const turn = await turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'note this globally',
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				memory: {
 					mode: 'project',
 					userMessageId: userMsg.id,
@@ -1623,22 +1624,22 @@ describe('turn-runner', () => {
 
 			acquireMock.mockResolvedValue(
 				makeFakeSession([
-					{ type: 'message.start', messageId: 1, role: 'assistant' },
-					{ type: 'message.delta', messageId: 1, text: 'Done.' },
+					{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'M1', text: 'Done.' },
 					{ type: 'done' }
 				])
 			);
 
 			const turn = await turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'hi',
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				memory: { mode: 'project', userMessageId: userMsg.id, userContent: 'remember this' }
 			});
 
@@ -1679,7 +1680,7 @@ describe('turn-runner', () => {
 			});
 			expect(parent?.backgroundAgentStatus).toBe('failed');
 			// Turn freed: it is no longer `running`, so a fresh send is accepted.
-			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
+			expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).not.toBe('running');
 		} finally {
 			vi.doUnmock('../src/lib/server/memory/extractor');
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
@@ -1725,22 +1726,22 @@ describe('turn-runner', () => {
 
 			acquireMock.mockResolvedValue(
 				makeFakeSession([
-					{ type: 'message.start', messageId: 1, role: 'assistant' },
-					{ type: 'message.delta', messageId: 1, text: 'Done.' },
+					{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+					{ type: 'message.delta', messageId: 'M1', text: 'Done.' },
 					{ type: 'done' }
 				])
 			);
 
 			const turn = await turnRunner.startTurn({
 				bridge: {
-					conversationId: conv.id,
+					conversationId: convCodec.parse(conv.id),
 					userId: user.id,
 					workingDirectory: wd,
 					model: 'gpt-4',
 					policy: 'prompt'
 				},
 				prompt: 'hi',
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				memory: { mode: 'project', userMessageId: userMsg.id, userContent: 'remember this' }
 			});
 
@@ -1761,7 +1762,7 @@ describe('turn-runner', () => {
 			).toBeTruthy();
 			// The watchdog aborted the extractor, so its commit path is fenced off.
 			expect(capturedSignal?.aborted).toBe(true);
-			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
+			expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).not.toBe('running');
 		} finally {
 			vi.doUnmock('../src/lib/server/memory/extractor');
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
@@ -1835,7 +1836,7 @@ describe('turn-runner', () => {
 			const assistantMsg = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
 
 			const turn = await turnRunner.startExtractionRetryTurn({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				assistantMessageId: assistantMsg.id,
 				assistantContent: assistantMsg.content,
@@ -1889,7 +1890,7 @@ describe('turn-runner', () => {
 			);
 
 			// Turn freed.
-			expect(turnRunner.getTurn(conv.id)?.status).not.toBe('running');
+			expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).not.toBe('running');
 		} finally {
 			delete process.env.MEMORY_EXTRACTOR_BACKEND;
 			vi.unstubAllGlobals();
@@ -1965,7 +1966,7 @@ describe('turn-runner', () => {
 
 			// A prior committed patch for the same logical turn.
 			const prior = commitPatch({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				mode: 'project',
 				turnId: 'turn-1',
 				sourceMessageId: assistantMsg.id,
@@ -1978,7 +1979,7 @@ describe('turn-runner', () => {
 			expect(memory.listFacts(conv.id).map((f) => f.value)).toContain('Stale decision.');
 
 			const turn = await turnRunner.startExtractionRetryTurn({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				assistantMessageId: assistantMsg.id,
 				assistantContent: assistantMsg.content,
@@ -2088,7 +2089,7 @@ describe('turn-runner', () => {
 			// assistant message. A naive re-extraction packet would surface this
 			// stale fact as already-recorded; the turn-start view must NOT.
 			const prior = commitPatch({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				mode: 'project',
 				turnId: 'turn-1',
 				sourceMessageId: assistantMsg.id,
@@ -2100,7 +2101,7 @@ describe('turn-runner', () => {
 			expect(prior.patch.status).toBe('committed');
 
 			const turn = await turnRunner.startExtractionRetryTurn({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				assistantMessageId: assistantMsg.id,
 				assistantContent: assistantMsg.content,
@@ -2177,7 +2178,7 @@ describe('turn-runner', () => {
 			const assistantMsg = messages.append(conv.id, { role: 'assistant', content: 'Done.' });
 
 			const prior = commitPatch({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				mode: 'project',
 				turnId: 'turn-1',
 				sourceMessageId: assistantMsg.id,
@@ -2189,7 +2190,7 @@ describe('turn-runner', () => {
 			expect(prior.patch.status).toBe('committed');
 
 			const turn = await turnRunner.startExtractionRetryTurn({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				assistantMessageId: assistantMsg.id,
 				assistantContent: assistantMsg.content,
@@ -2258,23 +2259,23 @@ describe('turn-runner', () => {
 		});
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'tool.call', toolCallId: 2, tool: 'bash', args },
-				{ type: 'tool.result', toolCallId: 2, ok: true, summary: 'ok', output: 'ok' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'tool.call', toolCallId: 'X2', tool: 'bash', args },
+				{ type: 'tool.result', toolCallId: 'X2', ok: true, summary: 'ok', output: 'ok' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'rerun',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		for await (const { event } of turn.subscribe()) {
@@ -2282,10 +2283,10 @@ describe('turn-runner', () => {
 		}
 
 		const toolCalls = messages.listByConversation(conv.id).flatMap((m) => m.toolCalls ?? []);
-		expect(toolCalls.find((t) => t.id === 1)).toMatchObject({
+		expect(toolCalls.find((t) => t.id === 'X1')).toMatchObject({
 			status: 'denied'
 		});
-		expect(toolCalls.find((t) => t.id === 2)).toMatchObject({
+		expect(toolCalls.find((t) => t.id === 'X2')).toMatchObject({
 			status: 'ok'
 		});
 	});
@@ -2304,18 +2305,18 @@ describe('turn-runner', () => {
 		// runPrompt's finally synthesizes `message.end` when the SDK produced
 		// no assistant message at all — the "fresh chat, first reply" empty
 		// case. No `message.start`, no deltas, no tools, no reasoning.
-		acquireMock.mockResolvedValue(makeFakeSession([{ type: 'message.end', messageId: 0 }]));
+		acquireMock.mockResolvedValue(makeFakeSession([{ type: 'message.end', messageId: 'M0' }]));
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const seen: PortalEvent[] = [];
@@ -2332,7 +2333,7 @@ describe('turn-runner', () => {
 		// a terminal done carrying status 'error' — never a silent 'complete'.
 		expect(seen.some((e) => e.type === 'error' && e.code === 'empty_response')).toBe(true);
 		expect(done).toMatchObject({ type: 'done', status: 'error' });
-		expect(turnRunner.getTurn(conv.id)?.status).toBe('error');
+		expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).toBe('error');
 
 		// Exactly one assistant row, persisted as error/empty_response. The
 		// message.end-only path must NOT have created an empty `complete`
@@ -2360,21 +2361,21 @@ describe('turn-runner', () => {
 		// emitting a text delta — a provider that "responded" with nothing.
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
-				{ type: 'message.end', messageId: 1 }
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
+				{ type: 'message.end', messageId: 'M1' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const seen: PortalEvent[] = [];
@@ -2422,20 +2423,20 @@ describe('turn-runner', () => {
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
 				{ type: 'error', code: 'pi_send_failed', message: 'provider refused' },
-				{ type: 'message.end', messageId: 0 }
+				{ type: 'message.end', messageId: 'M0' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: wd,
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const seen: PortalEvent[] = [];

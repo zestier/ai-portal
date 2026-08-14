@@ -118,7 +118,7 @@ describe('request_permission_grant', () => {
 			.listGrantsForUser(harness.user.id)
 			.filter((g) => g.tool === 'shell' && g.source === 'prompt');
 		expect(grants.length).toBe(1);
-		expect(grants[0].conversationId).toBe(harness.conversationId);
+		expect(grants[0].conversationId).toBe(convCodec.encode(harness.conversationId));
 		expect(grants[0].scope).toEqual(SHELL_SCOPE);
 	});
 

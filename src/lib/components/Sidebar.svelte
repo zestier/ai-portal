@@ -597,7 +597,8 @@
 			await invalidateAll();
 			if (action === 'delete') {
 				const currentId = location.pathname.match(/^\/conversations\/([^/]+)/)?.[1];
-				const currentIdNum = currentId === undefined ? undefined : conversationId.tryParse(currentId);
+				const currentIdNum =
+					currentId === undefined ? undefined : conversationId.tryParse(currentId);
 				if (
 					currentIdNum !== undefined &&
 					results.some((result) => result.id === currentId && result.ok)

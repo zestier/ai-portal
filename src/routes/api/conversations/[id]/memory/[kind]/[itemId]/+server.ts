@@ -60,7 +60,10 @@ const OpenLoopPatch = z
 		description: z.string().max(4000).optional(),
 		status: OpenLoopStatus.optional(),
 		priority: z.number().int().min(-100).max(100).optional(),
-		relatedEntityIds: z.array(z.union([z.string(), z.number()])).max(100).optional()
+		relatedEntityIds: z
+			.array(z.union([z.string(), z.number()]))
+			.max(100)
+			.optional()
 	})
 	.strict();
 
@@ -77,7 +80,12 @@ const GlobalMemoryPatch = z
 // (kind-scoped, server-minted — see `src/lib/ids.ts`).
 function parseMemoryItemId(kind: string, raw: string | undefined): number | null {
 	if (!raw) return null;
-	if (kind === 'globalMemories' || kind === 'openLoops' || kind === 'open-loops' || kind === 'open_loop') {
+	if (
+		kind === 'globalMemories' ||
+		kind === 'openLoops' ||
+		kind === 'open-loops' ||
+		kind === 'open_loop'
+	) {
 		const id = Number(raw);
 		return Number.isSafeInteger(id) && id > 0 ? id : null;
 	}
@@ -91,7 +99,13 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const itemId = parseMemoryItemId(params.kind, params.itemId);
 	if (itemId === null) throw error(404, 'Memory item not found.');
 	const body = await parseBody(request, RawPatchBody);
-	const updated = updateMemoryItem(convCodec.parse(conv.id), conv.userId, params.kind, itemId, body);
+	const updated = updateMemoryItem(
+		convCodec.parse(conv.id),
+		conv.userId,
+		params.kind,
+		itemId,
+		body
+	);
 	if (!updated) throw error(404, 'Memory item not found.');
 	return json({
 		item: updated,

@@ -590,7 +590,10 @@ function deleteMessagesAfter(db: Database.Database, conversationId: number, targ
 	);
 }
 
-export function truncateAfterMessage(conversationId: string | number, messageId: string | number): boolean {
+export function truncateAfterMessage(
+	conversationId: string | number,
+	messageId: string | number
+): boolean {
 	const db = getDb();
 	const intConv = convInt(conversationId);
 	const tx = db.transaction(() => {
@@ -610,10 +613,11 @@ export function truncateAfterMessage(conversationId: string | number, messageId:
 // insert/clone path and failing as a runtime constraint violation instead of a
 // compile error. Id-ish fields stay ints at the storage boundary (handles
 // parse at the caller).
-type ToolCallInsert = Omit<
-	ToolCallRecord,
-	'messageId' | 'id' | 'parentToolCallId' | 'argsJson'
-> & { id: number; parentToolCallId: number | null; argsJson: string };
+type ToolCallInsert = Omit<ToolCallRecord, 'messageId' | 'id' | 'parentToolCallId' | 'argsJson'> & {
+	id: number;
+	parentToolCallId: number | null;
+	argsJson: string;
+};
 
 /**
  * Reserve the next numeric autoincrement id for `table` WITHOUT inserting a row.
@@ -854,7 +858,9 @@ export function getToolCallFieldForOwner(
 			   JOIN conversations c ON c.id = m.conversation_id
 			  WHERE tc.id = ? AND m.conversation_id = ? AND c.user_id = ?`
 		)
-		.get(toolInt(toolCallId), convInt(conversationId), userId) as { value: string | null } | undefined;
+		.get(toolInt(toolCallId), convInt(conversationId), userId) as
+		| { value: string | null }
+		| undefined;
 	return row ?? null;
 }
 
@@ -910,10 +916,10 @@ export function insertFileEdit(
 // Writes always carry real text: `reasoning_blocks.text` is NOT NULL, and only
 // a *trimmed read* (see `inlineMaxBytes`) ever hands back a null. The id-ish
 // fields stay ints at the storage boundary (handles parse at the caller).
-type ReasoningBlockWrite = Omit<
-	ReasoningBlockRecord,
-	'messageId' | 'text' | 'parentToolCallId'
-> & { text: string; parentToolCallId: number | null };
+type ReasoningBlockWrite = Omit<ReasoningBlockRecord, 'messageId' | 'text' | 'parentToolCallId'> & {
+	text: string;
+	parentToolCallId: number | null;
+};
 
 export function upsertReasoningBlock(messageId: string | number, r: ReasoningBlockWrite) {
 	const intMsg = msgInt(messageId);

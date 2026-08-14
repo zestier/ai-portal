@@ -70,7 +70,9 @@ export function makeId(spec: { prefix: string; label: string }): IdCodec {
 		regex,
 		encode(id: number): string {
 			if (!Number.isSafeInteger(id) || id <= 0) {
-				throw new Error(`cannot encode ${label} id: ${String(id)} — expected a positive safe integer`);
+				throw new Error(
+					`cannot encode ${label} id: ${String(id)} — expected a positive safe integer`
+				);
 			}
 			return `${prefix}${id}`;
 		},

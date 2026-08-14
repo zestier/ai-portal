@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
+import { messageId as msgCodec } from '../src/lib/ids';
 import {
 	projectMessageForOwner,
 	projectTranscript,
@@ -206,15 +207,15 @@ describe('projectIndexPage', () => {
 		// client uses — until nothing older remains. Every page is index-only
 		// (no content) and shares no ids with earlier pages.
 		const seen = new Set(all.index.map((e) => e.id));
-		let cursor = all.index[0].id;
+		let cursor = msgCodec.parse(all.index[0].id);
 		for (;;) {
 			const next = projectIndexPage(conv.id, cursor, 6);
 			for (const e of next.entries) {
-				expect(e.id).toBeLessThan(cursor);
+				expect(msgCodec.parse(e.id)).toBeLessThan(cursor);
 				expect(seen.has(e.id)).toBe(false);
 				seen.add(e.id);
 			}
-			cursor = next.entries[0]?.id ?? cursor;
+			cursor = next.entries[0] ? msgCodec.parse(next.entries[0].id) : cursor;
 			if (!next.hasMore) break;
 			expect(next.entries.length).toBeGreaterThan(0);
 		}
@@ -239,7 +240,7 @@ describe('projectMessageForOwner (hydration endpoint)', () => {
 		const all = projectTranscript(conv.id);
 		const midId = all.tail[Math.floor(all.tail.length / 2)].id;
 
-		const hydrated = projectMessageForOwner(conv.id, midId);
+		const hydrated = projectMessageForOwner(conv.id, msgCodec.parse(midId));
 		expect(hydrated).not.toBeNull();
 		expect(hydrated!.id).toBe(midId);
 		const task = hydrated!.toolCalls!.find((t) => t.tool === 'task');

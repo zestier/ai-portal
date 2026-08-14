@@ -32,6 +32,7 @@ import {
 	register as registerInteractive
 } from '../runtime/interactive-requests';
 import * as settings from '../db/repos/settings';
+import { conversationId as convCodec } from '$lib/ids';
 import { err, ok, type PortalTool } from './types';
 
 const CAPABILITY_PERMISSION_KINDS = [...GRANT_TOOLS, 'custom-tool'] as const;
@@ -507,7 +508,9 @@ function permissionCapabilities(opts: {
 }) {
 	const grants = settings
 		.listGrantsForUser(opts.userId)
-		.filter((g) => g.conversationId === null || g.conversationId === opts.conversationId)
+		.filter(
+			(g) => g.conversationId === null || convCodec.parse(g.conversationId) === opts.conversationId
+		)
 		.filter((g) => !g.expiresAt || g.expiresAt >= Date.now())
 		.filter((g) => !opts.toolName || g.tool === opts.toolName || g.tool === '*')
 		.filter((g) => !opts.permissionKind || grantCoversPermissionKind(g, opts.permissionKind));

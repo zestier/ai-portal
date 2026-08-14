@@ -85,7 +85,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const ticket = tickets.create(userId, {
 		workspaceKey: workspace,
 		title: body.title,
-		sourceConversationId: body.sourceConversationId ? convCodec.parse(body.sourceConversationId) : null,
+		sourceConversationId: body.sourceConversationId
+			? convCodec.parse(body.sourceConversationId)
+			: null,
 		sourceMessageId: body.sourceMessageId ? msgCodec.parse(body.sourceMessageId) : null,
 		...(body.body !== undefined ? { body: body.body } : {}),
 		...(body.plan !== undefined ? { plan: body.plan } : {}),

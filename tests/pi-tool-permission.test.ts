@@ -41,7 +41,9 @@ async function openSession(
 	const { openPiSession } = await import('../src/lib/server/pi');
 	const bridge: ProviderOpenOptions = {
 		conversationId:
-			typeof conversationId === 'number' ? conversationId : conversationIdCodec.parse(conversationId),
+			typeof conversationId === 'number'
+				? conversationId
+				: conversationIdCodec.parse(conversationId),
 		userId: USER,
 		workingDirectory: wd,
 		model: 'stub',

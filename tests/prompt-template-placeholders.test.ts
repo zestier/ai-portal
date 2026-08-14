@@ -61,7 +61,7 @@ describe('interpolatePrompt', () => {
 				'Do this: {{ticket.title}} ({{ticket.id}})\n\n{{ticket.body}}\n\n{{ticket.plan}}',
 				values
 			)
-		).toBe('Do this: Fix it (1)\n\nSome details.\n\nStep 1. Step 2.');
+		).toBe('Do this: Fix it (T1)\n\nSome details.\n\nStep 1. Step 2.');
 	});
 
 	it('drops unknown placeholders and trims dangling blanks for an empty body', () => {
@@ -76,7 +76,7 @@ describe('interpolatePrompt', () => {
 				'Do this: {{ticket.title}}\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}',
 				empty
 			)
-		).toBe('Do this: Fix it\n\nTicket ID: 1');
+		).toBe('Do this: Fix it\n\nTicket ID: T1');
 	});
 
 	it('renders an empty plan as (none) and trims a non-empty plan', () => {
@@ -84,7 +84,9 @@ describe('interpolatePrompt', () => {
 			ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'b', plan: '   ' })['ticket.plan']
 		).toBe('(none)');
 		expect(
-			ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'b', plan: '  Step 1.  ' })['ticket.plan']
+			ticketPlaceholderValues({ id: 'T1', title: 'x', body: 'b', plan: '  Step 1.  ' })[
+				'ticket.plan'
+			]
 		).toBe('Step 1.');
 	});
 

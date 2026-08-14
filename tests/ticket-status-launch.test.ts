@@ -75,7 +75,7 @@ describe('createTicketLaunchChat', () => {
 		expect(calls[1].url).toBe('/api/conversations/conv-1/turns');
 		expect(JSON.parse(calls[1].init.body as string)).toEqual({
 			content:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: 1\n\nAdd a launch button.\n\nPlan:\n(none)'
+				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 	});
 
@@ -191,7 +191,7 @@ describe('patchTicketStatus', () => {
 
 		expect(result).toEqual({ ok: true });
 		const [url, init] = fetcher.mock.calls[0];
-		expect(url).toBe('/api/tickets/1');
+		expect(url).toBe('/api/tickets/T1');
 		expect(init.method).toBe('PATCH');
 		expect(JSON.parse(init.body as string)).toEqual({ status: 'done' });
 	});
@@ -217,6 +217,6 @@ describe('patchTicketStatus', () => {
 
 		await patchTicketStatus({ ticketId: 'T12345', status: 'open', fetcher });
 
-		expect(fetcher.mock.calls[0][0]).toBe('/api/tickets/12345');
+		expect(fetcher.mock.calls[0][0]).toBe('/api/tickets/T12345');
 	});
 });

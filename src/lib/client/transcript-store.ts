@@ -87,7 +87,7 @@ export function entryFromMessage(m: DisplayMessage): TranscriptEntry {
 	for (const t of m.toolCalls ?? []) {
 		records.push({
 			kind: 'tool',
-			id: typeof t.id === 'number' ? t.id : 0,
+			id: t.id,
 			tool: t.tool,
 			status: t.status,
 			textOffset: t.textOffset,
@@ -99,7 +99,7 @@ export function entryFromMessage(m: DisplayMessage): TranscriptEntry {
 	for (const e of m.fileEdits ?? []) {
 		records.push({
 			kind: 'edit',
-			id: typeof e.id === 'number' ? e.id : 0,
+			id: e.id,
 			path: e.path,
 			textOffset: e.textOffset,
 			parentToolCallId: e.parentToolCallId,
@@ -110,7 +110,7 @@ export function entryFromMessage(m: DisplayMessage): TranscriptEntry {
 		const preview = clientPreview(r.text, 120);
 		records.push({
 			kind: 'reasoning',
-			id: typeof r.id === 'number' ? r.id : 0,
+			id: r.id,
 			reasoningKind: r.kind,
 			textOffset: r.textOffset,
 			durationMs: r.durationMs,

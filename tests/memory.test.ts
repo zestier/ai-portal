@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { conversationId as convCodec, memoryEntityId } from '../src/lib/ids';
+import { conversationId as convCodec } from '../src/lib/ids';
 import * as users from '../src/lib/server/db/repos/users';
 import * as convs from '../src/lib/server/db/repos/conversations';
 import * as messages from '../src/lib/server/db/repos/messages';
@@ -615,7 +615,7 @@ describe('memory-backed sessions', () => {
 					   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
 					 ) VALUES (?, ?, ?, 'task', 'dup', 'open', ?, ?)`
 				)
-				.run(900001, conv.id, loop.loopKey, Date.now(), Date.now())
+				.run(900001, convCodec.parse(conv.id), loop.loopKey, Date.now(), Date.now())
 		).toThrow(/UNIQUE/i);
 
 		// The empty-key default is exempt, so legacy/pre-039 rows can coexist.
@@ -624,12 +624,12 @@ describe('memory-backed sessions', () => {
 				`INSERT INTO memory_open_loops(
 				   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
 				 ) VALUES (?, ?, '', 'task', 'legacy', 'open', ?, ?)`
-			).run(900002, conv.id, Date.now(), Date.now());
+			).run(900002, convCodec.parse(conv.id), Date.now(), Date.now());
 			db.prepare(
 				`INSERT INTO memory_open_loops(
 				   id, conversation_id, loop_key, loop_type, title, status, created_at, updated_at
 				 ) VALUES (?, ?, '', 'task', 'legacy', 'open', ?, ?)`
-			).run(900003, conv.id, Date.now(), Date.now());
+			).run(900003, convCodec.parse(conv.id), Date.now(), Date.now());
 		}).not.toThrow();
 	});
 
@@ -4537,7 +4537,7 @@ describe('memory-backed sessions', () => {
 			(
 				db
 					.prepare('SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = ?')
-					.get(conv.id) as { n: number }
+					.get(convCodec.parse(conv.id)) as { n: number }
 			).n;
 		expect(ftsRows()).toBeGreaterThan(0);
 
@@ -4562,7 +4562,7 @@ describe('memory-backed sessions', () => {
 			(
 				db
 					.prepare('SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = ?')
-					.get(conv.id) as { n: number }
+					.get(convCodec.parse(conv.id)) as { n: number }
 			).n;
 		const before = ftsRows();
 		expect(before).toBeGreaterThan(0);
@@ -4586,7 +4586,7 @@ describe('memory-backed sessions', () => {
 			(
 				db
 					.prepare('SELECT count(*) AS n FROM memory_search_index WHERE conversation_id = ?')
-					.get(conv.id) as { n: number }
+					.get(convCodec.parse(conv.id)) as { n: number }
 			).n;
 		expect(liveSessionRows()).toBeGreaterThan(0);
 
@@ -4666,13 +4666,13 @@ describe('memory-backed sessions', () => {
 		const db = getDb();
 		const events = db
 			.prepare('SELECT id, parent_id FROM memory_event_log WHERE conversation_id = ? ORDER BY seq')
-			.all(conv.id) as { id: string; parent_id: string | null }[];
+			.all(convCodec.parse(conv.id)) as { id: string; parent_id: string | null }[];
 		expect(events.length).toBeGreaterThan(1);
 
 		// Every non-root event contributes a memory_parent ref to its parent.
 		const parentRefs = db
 			.prepare(`SELECT count(*) AS n FROM memory_refs WHERE conversation_id = ? AND ref_kind = ?`)
-			.get(conv.id, 'memory_parent') as { n: number };
+			.get(convCodec.parse(conv.id), 'memory_parent') as { n: number };
 		expect(parentRefs.n).toBe(events.filter((e) => e.parent_id !== null).length);
 
 		// The latest message pins the chain tip via exactly one message_head ref.
@@ -4681,7 +4681,10 @@ describe('memory-backed sessions', () => {
 				`SELECT source_key, target_event_id FROM memory_refs
 				  WHERE conversation_id = ? AND ref_kind = ?`
 			)
-			.all(conv.id, 'message_head') as { source_key: string; target_event_id: string }[];
+			.all(convCodec.parse(conv.id), 'message_head') as {
+			source_key: string;
+			target_event_id: string;
+		}[];
 		expect(headRefs).toHaveLength(1);
 		expect(headRefs[0].source_key).toBe(String(a1.id));
 		expect(headRefs[0].target_event_id).toBe(events[events.length - 1].id);
@@ -5516,7 +5519,7 @@ describe('memory-backed sessions', () => {
 		const entity = memory.getEntity(conv.id, 'object.brass_key');
 		expect(entity).not.toBeNull();
 		const items = memory.listPatchItems(conv.id, { patchId: patch.id, limit: 100 });
-		expect(items.some((i) => i.itemType === 'entity' && i.itemId === memoryEntityId.parse(entity!.id))).toBe(true);
+		expect(items.some((i) => i.itemType === 'entity' && i.itemId === entity!.id)).toBe(true);
 
 		dropPatchAndRebuild(conv.id, patch.id);
 		// The auto-minted entity must be removed (soft-deleted), not left active.
@@ -6152,7 +6155,9 @@ describe('memory_event_log retention + maintenance', () => {
 		return (
 			getDb()
 				.prepare('SELECT COUNT(*) AS n FROM memory_event_log WHERE conversation_id = ?')
-				.get(typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId)) as { n: number }
+				.get(
+					typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId)
+				) as { n: number }
 		).n;
 	}
 
@@ -6162,7 +6167,9 @@ describe('memory_event_log retention + maintenance', () => {
 				.prepare(
 					'SELECT COUNT(*) AS n FROM memory_event_log WHERE conversation_id = ? AND parent_id IS NULL'
 				)
-				.get(conversationId) as { n: number }
+				.get(
+					typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId)
+				) as { n: number }
 		).n;
 	}
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
+import { conversationId as convCodec } from '../src/lib/ids';
 
 const startExtractionRetryTurnMock = vi.fn();
 const getTurnMock = vi.fn();
@@ -110,7 +111,7 @@ describe('memory retry-extraction endpoint', () => {
 		// told which patch to undo on success.
 		expect(startExtractionRetryTurnMock).toHaveBeenCalledWith(
 			expect.objectContaining({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				assistantMessageId: assistantMsg.id,
 				assistantContent: 'noted',

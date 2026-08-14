@@ -1,7 +1,11 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { conversationId as convCodec, messageId as msgCodec, toolCallId as toolCodec } from '$lib/ids';
+import {
+	conversationId as convCodec,
+	messageId as msgCodec,
+	toolCallId as toolCodec
+} from '$lib/ids';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import * as memoryRepo from '$lib/server/db/repos/memory';
 import * as messages from '$lib/server/db/repos/messages';
@@ -74,9 +78,7 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	);
 
 	const allMessages = messages.listByConversation(convId);
-	const originalMessageIdx = allMessages.findIndex(
-		(message) => message.id === original.messageId
-	);
+	const originalMessageIdx = allMessages.findIndex((message) => message.id === original.messageId);
 	if (originalMessageIdx < 0) throw error(404);
 	memoryRepo.rewindSessionMemoryLogToMessagePrefix(convId, {
 		messageIds: new Set(

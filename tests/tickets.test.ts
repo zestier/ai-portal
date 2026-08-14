@@ -467,7 +467,9 @@ describe('workspace tickets', () => {
 
 		// update() reconciles a side as a desired-state set: replace ui's blockers
 		// with [api, infra] (adds infra, keeps api), and clear ship's via [].
-		tickets.update(ui.id, user.id, { blockedBy: [ticketIdCodec.parse(api.id), ticketIdCodec.parse(infra.id)] });
+		tickets.update(ui.id, user.id, {
+			blockedBy: [ticketIdCodec.parse(api.id), ticketIdCodec.parse(infra.id)]
+		});
 		expect(
 			tickets
 				.dependencyRefs(ui.id, user.id)

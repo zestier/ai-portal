@@ -53,7 +53,7 @@ test('fork by editing a user message produces a new conversation with the edited
 	);
 	expect(forkRes.ok()).toBeTruthy();
 	const { conversationId: newId } = await forkRes.json();
-	expect(typeof newId).toBe('number');
+	expect(typeof newId).toBe('string');
 	expect(newId).not.toBe(sourceId);
 
 	await waitForAssistantMessage(request, newId, /edited prompt/);

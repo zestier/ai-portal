@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { promptTemplateId } from '$lib/ids';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { requireUserId } from '$lib/server/auth/require';
@@ -10,7 +11,9 @@ import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 
 export const GET: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const template = promptTemplates.get(Number(params.id), userId);
+	const id = promptTemplateId.tryParse(params.id);
+	if (id === null) throw error(404);
+	const template = promptTemplates.get(id, userId);
 	if (!template) throw error(404);
 	return json({ template: { ...template, source: 'custom' } });
 };
@@ -51,8 +54,10 @@ const PatchBody = z
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
+	const id = promptTemplateId.tryParse(params.id);
+	if (id === null) throw error(404);
 	const body = await parseBody(request, PatchBody);
-	const current = promptTemplates.get(Number(params.id), userId);
+	const current = promptTemplates.get(id, userId);
 	if (!current) throw error(404);
 	if (body.prompt !== undefined) {
 		const unknown = findUnknownPlaceholders(body.prompt, current.type);
@@ -60,7 +65,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 			throw error(400, unknownPlaceholderMessage(current.type, unknown));
 		}
 	}
-	const template = promptTemplates.update(Number(params.id), userId, {
+	const template = promptTemplates.update(id, userId, {
 		...(body.title !== undefined ? { title: body.title } : {}),
 		...(body.description !== undefined ? { description: body.description } : {}),
 		...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
@@ -82,7 +87,9 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 
 export const DELETE: RequestHandler = ({ params, locals }) => {
 	const userId = requireUserId(locals);
-	const template = promptTemplates.archive(Number(params.id), userId);
+	const id = promptTemplateId.tryParse(params.id);
+	if (id === null) throw error(404);
+	const template = promptTemplates.archive(id, userId);
 	if (!template) throw error(404);
 	return json({ ok: true, template: { ...template, source: 'custom' } });
 };

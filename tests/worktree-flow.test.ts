@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerSingletons, setupLocalEnv } from './helpers/env';
 import { makeTmpDir } from './helpers/tmp';
+import { conversationId as convCodec } from '../src/lib/ids';
 import type { PortalTool, ToolResult } from '../src/lib/server/tools/types';
 
 function git(cwd: string, args: string[]): string {
@@ -61,13 +62,15 @@ describe('orchestrator worktree flow (acceptance)', () => {
 		const users = await import('../src/lib/server/db/repos/users');
 		userId = users.ensureLocalUser().id;
 		const convs = await import('../src/lib/server/db/repos/conversations');
-		conversationId = convs.create(userId, {
-			title: 'orchestrator',
-			workdir: source,
-			model: 'test-model',
-			workspaceKind: 'shared',
-			workspaceKey: source
-		}).id;
+		conversationId = convCodec.parse(
+			convs.create(userId, {
+				title: 'orchestrator',
+				workdir: source,
+				model: 'test-model',
+				workspaceKind: 'shared',
+				workspaceKey: source
+			}).id
+		);
 
 		const { buildWorktreeTools } = await import('../src/lib/server/tools/worktree');
 		tools = new Map(buildWorktreeTools({ userId, conversationId }).map((t) => [t.name, t]));
@@ -208,14 +211,17 @@ describe('orchestrator worktree flow (acceptance)', () => {
 			});
 			const { buildGitTools } = await import('../src/lib/server/tools/git');
 			const otherTools = new Map(
-				buildGitTools(source, { userId, conversationId: other.id }).map((t) => [t.name, t])
+				buildGitTools(source, { userId, conversationId: convCodec.parse(other.id) }).map((t) => [
+					t.name,
+					t
+				])
 			);
 
 			const res = await otherTools
 				.get('git_status')!
 				.handler({ worktree: created.leaseId as string });
 			expect(res).toMatchObject({ ok: false, error: { code: 'lease_not_found' } });
-			expect(await gitTools.get('git_status')!.handler({ worktree: 'nope' })).toMatchObject({
+			expect(await gitTools.get('git_status')!.handler({ worktree: 'L999999' })).toMatchObject({
 				ok: false,
 				error: { code: 'lease_not_found' }
 			});
@@ -305,7 +311,10 @@ describe('orchestrator worktree flow (acceptance)', () => {
 			});
 			const { buildGitTools } = await import('../src/lib/server/tools/git');
 			const otherTools = new Map(
-				buildGitTools(source, { userId, conversationId: other.id }).map((t) => [t.name, t])
+				buildGitTools(source, { userId, conversationId: convCodec.parse(other.id) }).map((t) => [
+					t.name,
+					t
+				])
 			);
 
 			const res = await otherTools.get('git_commit')!.handler({

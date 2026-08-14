@@ -34,7 +34,11 @@
 //  - System messages can never be the fork target.
 
 import { getDb } from './db';
-import { conversationId as convCodec, messageId as msgCodec, toolCallId as toolCodec } from '$lib/ids';
+import {
+	conversationId as convCodec,
+	messageId as msgCodec,
+	toolCallId as toolCodec
+} from '$lib/ids';
 import * as convs from './db/repos/conversations';
 import * as messages from './db/repos/messages';
 import * as memoryRepo from './db/repos/memory';
@@ -99,9 +103,14 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 	const source = convs.get(input.sourceConversationId, input.userId);
 	if (!source) throw new ForkRejected('source_not_found');
 
-	const sourceConvInt = typeof input.sourceConversationId === 'number' ? input.sourceConversationId : convCodec.parse(input.sourceConversationId);
+	const sourceConvInt =
+		typeof input.sourceConversationId === 'number'
+			? input.sourceConversationId
+			: convCodec.parse(input.sourceConversationId);
 	const all = messages.listByConversation(sourceConvInt);
-	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === input.messageId);
+	const targetMsgId =
+		typeof input.messageId === 'number' ? input.messageId : msgCodec.parse(input.messageId);
+	const targetIdx = all.findIndex((m) => msgCodec.parse(m.id) === targetMsgId);
 	if (targetIdx < 0) throw new ForkRejected('message_not_found');
 	const target = all[targetIdx];
 
@@ -196,7 +205,7 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
 		managedWorktree = await createManagedWorktreeFromSnapshot({
 			sourceWorkdir,
 			userId: String(input.userId),
-			conversationId: String(convCodec.parse(newConv.id)),
+			conversationId: newConv.id,
 			...(snapshot.baseCommitSha ? { baseCommitSha: snapshot.baseCommitSha } : {}),
 			treeSha: snapshot.treeSha
 		});
@@ -355,7 +364,8 @@ function cloneMessagePrefix(targetConvId: number, prefix: Message[]): Map<number
 			for (const t of m.toolCalls ?? []) {
 				if (t.parentToolCallId) {
 					const parent = toolIdRemap.get(toolCodec.parse(t.parentToolCallId));
-					if (parent !== undefined) setToolParent.run(parent, toolIdRemap.get(toolCodec.parse(t.id))!);
+					if (parent !== undefined)
+						setToolParent.run(parent, toolIdRemap.get(toolCodec.parse(t.id))!);
 				}
 			}
 			for (const e of m.fileEdits ?? []) {

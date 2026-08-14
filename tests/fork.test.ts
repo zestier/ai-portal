@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setupLocalEnv } from './helpers/env';
-import { conversationId as conversationIdCodec } from '../src/lib/ids';
+import { conversationId as conversationIdCodec, messageId as msgCodec } from '../src/lib/ids';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../src/lib/server/global-singleton';
 
 // Register a fake "running" turn for `conversationId` in the shared turn
@@ -234,7 +234,7 @@ describe('fork.forkAtMessage', () => {
 		await snapshots.snapshot(wd, target.id, 'pre');
 		db.getDb()
 			.prepare('UPDATE turn_snapshots SET base_commit_sha = NULL WHERE message_id = ?')
-			.run(target.id);
+			.run(msgCodec.parse(target.id));
 		writeFileSync(join(wd, 'state.txt'), 'new head\n');
 		execFileSync('git', ['add', 'state.txt'], { cwd: wd });
 		execFileSync('git', ['commit', '-q', '-m', 'new head'], { cwd: wd });
@@ -294,7 +294,7 @@ describe('fork.forkAtMessage', () => {
 			convs.setManagedWorktree(parent.id, parentWorktree);
 			db.getDb()
 				.prepare('UPDATE conversations SET workspace_kind = ? WHERE id = ?')
-				.run('managed-worktree', parent.id);
+				.run('managed-worktree', conversationIdCodec.parse(parent.id));
 		})();
 		const target = messages.append(parent.id, { role: 'user', content: 'change it' });
 		await snapshots.snapshot(parent.workdir, target.id, 'pre');

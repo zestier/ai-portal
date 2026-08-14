@@ -25,7 +25,8 @@ import { audit } from '$lib/server/audit';
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const conversation = authorizeConversation(params.id, locals.userId);
 	const leases = [];
-	for (const lease of listLeases(conversation.id, conversation.userId)) {		let available = true;
+	for (const lease of listLeases(conversation.id, conversation.userId)) {
+		let available = true;
 		let dirtyCount: number | null = null;
 		let ahead: number | null = null;
 		let behind: number | null = null;

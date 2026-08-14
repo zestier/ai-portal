@@ -55,7 +55,7 @@ export function decisionLabel(d: PermissionDecision['decision']): string {
 }
 
 export function grantScopeLabel(g: {
-	conversationId: number | null;
+	conversationId: string | null;
 	conversationTitle: string | null;
 }) {
 	if (!g.conversationId) return 'Global';

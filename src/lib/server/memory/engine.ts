@@ -224,11 +224,14 @@ export function resolveForgetTarget(
 		const factId =
 			typeof target.factId === 'number'
 				? target.factId
-				: memoryFactId.tryParse(target.factId) ?? Number(target.factId);
+				: (memoryFactId.tryParse(target.factId) ?? Number(target.factId));
 		if (!Number.isInteger(factId) || factId <= 0) return null; // stale/hallucinated handle
 		const fact = memoryRepo.getFact(conversationId, factId);
 		if (!fact || fact.status !== 'active') return null;
-		return { factId: memoryFactId.parse(fact.id), isDirective: isDirectivePredicate(fact.predicate) };
+		return {
+			factId: memoryFactId.parse(fact.id),
+			isDirective: isDirectivePredicate(fact.predicate)
+		};
 	}
 	if (target.entityKey && target.predicate) {
 		const entity = memoryRepo.getEntity(conversationId, target.entityKey);
@@ -242,7 +245,10 @@ export function resolveForgetTarget(
 			})
 			.at(0);
 		if (!fact) return null;
-		return { factId: memoryFactId.parse(fact.id), isDirective: isDirectivePredicate(fact.predicate) };
+		return {
+			factId: memoryFactId.parse(fact.id),
+			isDirective: isDirectivePredicate(fact.predicate)
+		};
 	}
 	return null;
 }
@@ -323,7 +329,8 @@ export function buildInitialPacket(
 	mode: MemoryMode,
 	opts: BuildInitialPacketOptions = {}
 ): TurnMemoryPacket {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const strict = mode === 'strict';
 	const query = (opts.query ?? '').trim();
 	const budget = opts.tokenBudget ?? packetTokenBudget(mode);
@@ -517,7 +524,9 @@ export function buildPromptWithMemory(params: {
 	extractorPresent?: boolean | undefined;
 }): string {
 	const intConv =
-		typeof params.conversationId === 'number' ? params.conversationId : convCodec.parse(params.conversationId);
+		typeof params.conversationId === 'number'
+			? params.conversationId
+			: convCodec.parse(params.conversationId);
 	const recent = params.includeRecentTranscript
 		? recentTranscript(intConv, params.userMsg.id, 6)
 		: '';
@@ -862,7 +871,9 @@ export function commitPatch(
 	};
 } {
 	const intConv =
-		typeof input.conversationId === 'number' ? input.conversationId : convCodec.parse(input.conversationId);
+		typeof input.conversationId === 'number'
+			? input.conversationId
+			: convCodec.parse(input.conversationId);
 	const intSourceMessageId =
 		input.sourceMessageId == null
 			? null
@@ -1253,7 +1264,8 @@ export function ageOpenLoops(
 		turnId?: string | null | undefined;
 	}
 ): AgeOpenLoopsResult {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	return memoryRepo.recordOpenLoopLiveness(intConv, {
 		presentedLoopIds: [...opts.presentedLoopIds],
 		keptLoopIds: opts.keptLoopIds ? [...opts.keptLoopIds] : [],

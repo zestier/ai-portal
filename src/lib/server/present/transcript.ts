@@ -33,7 +33,7 @@ import type {
 	TranscriptProjection,
 	TranscriptRecordDescriptor
 } from '$lib/types';
-import { messageId as msgCodec } from '$lib/ids';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { summarizeToolCall } from '$lib/tool-summary';
 import * as messagesRepo from '$lib/server/db/repos/messages';
 import {
@@ -356,7 +356,8 @@ function indexEntryOf(msg: Message): TranscriptIndexEntry {
  * Bounded regardless of conversation length.
  */
 export function projectTranscript(conversationId: string | number): TranscriptProjection {
-	const intConv = typeof conversationId === 'number' ? conversationId : msgCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const tail = messagesRepo.listRecent(intConv, TRANSCRIPT_HYDRATED_TAIL);
 	if (tail.length === 0) return { tail: [], index: [], hasMoreOlder: false };
 	const tailOldestId = msgCodec.parse(tail[0].id);
@@ -375,7 +376,7 @@ export function projectIndexPage(
 	limit: number
 ): { entries: TranscriptIndexEntry[]; hasMore: boolean } {
 	const page = messagesRepo.listIndexPage(
-		typeof conversationId === 'number' ? conversationId : msgCodec.parse(conversationId),
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId),
 		beforeId,
 		limit
 	);
@@ -393,7 +394,7 @@ export function projectMessageForOwner(
 	messageId: number
 ): Message | null {
 	const msg = messagesRepo.getMessage(
-		typeof conversationId === 'number' ? conversationId : msgCodec.parse(conversationId),
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId),
 		messageId
 	);
 	if (!msg) return null;

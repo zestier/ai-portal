@@ -159,7 +159,7 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
 				owner: {
 					kind: 'conversation',
 					userId: String(conv.userId),
-					conversationId: String(convId)
+					conversationId: conv.id
 				}
 			});
 		} catch (cause) {

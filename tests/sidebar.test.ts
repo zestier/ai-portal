@@ -70,7 +70,11 @@ describe('orderSidebarTickets', () => {
 	) => ({
 		id: `T${id}`,
 		priority,
-		blockers: blockerIds.map((bid) => ({ id: `T${bid}`, title: String(bid), status: 'open' as const }))
+		blockers: blockerIds.map((bid) => ({
+			id: `T${bid}`,
+			title: String(bid),
+			status: 'open' as const
+		}))
 	});
 
 	it('sorts ready (unblocked) tickets ahead of blocked ones', () => {
@@ -109,7 +113,7 @@ describe('orderSidebarTickets', () => {
 
 	it('keeps recency order within a shared priority (stable sort)', () => {
 		const ordered = orderSidebarTickets([t(1, [], 'P2'), t(2, [], 'P2'), t(3, [], 'P1')]);
-		expect(ordered.map((o) => o.id)).toEqual([3, 1, 2]);
+		expect(ordered.map((o) => o.id)).toEqual(['T3', 'T1', 'T2']);
 	});
 });
 

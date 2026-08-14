@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
 import { argsHash } from '../src/lib/server/tool-invocation';
+import { conversationId as convCodec } from '../src/lib/ids';
 
 const startTurnMock = vi.fn();
 const getTurnMock = vi.fn();
@@ -63,7 +64,7 @@ describe('tool-call rerun endpoint', () => {
 			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
 
 		const response = await POST({
-			params: { id: conv.id, toolCallId: 1 },
+			params: { id: conv.id, toolCallId: 'X1' },
 			locals: { userId: user.id },
 			request: request({ confirmed: true })
 		} as never);
@@ -84,7 +85,7 @@ describe('tool-call rerun endpoint', () => {
 		});
 		expect(startTurnMock).toHaveBeenCalledWith(
 			expect.objectContaining({
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				prompt: expect.stringContaining('Invoke exactly the tool below')
 			})
 		);
@@ -116,7 +117,7 @@ describe('tool-call rerun endpoint', () => {
 			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
 
 		const response = await POST({
-			params: { id: conv.id, toolCallId: 2 },
+			params: { id: conv.id, toolCallId: 'X2' },
 			locals: { userId: user.id },
 			request: request({ confirmed: true })
 		} as never);
@@ -141,7 +142,7 @@ describe('tool-call rerun endpoint', () => {
 				.flatMap((m) => m.toolCalls ?? [])
 				.find((t) => t.id === 'X2')
 		).toMatchObject({
-			id: 2,
+			id: 'X2',
 			status: 'error',
 			resultJson: JSON.stringify('File not found')
 		});
@@ -199,7 +200,7 @@ describe('tool-call rerun endpoint', () => {
 			await import('../src/routes/api/conversations/[id]/tool-calls/[toolCallId]/rerun/+server');
 
 		const response = await POST({
-			params: { id: conv.id, toolCallId: 3 },
+			params: { id: conv.id, toolCallId: 'X3' },
 			locals: { userId: user.id },
 			request: request({ confirmed: true })
 		} as never);

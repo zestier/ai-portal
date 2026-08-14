@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PortalEvent } from '../src/lib/types';
+import { conversationId as convCodec } from '../src/lib/ids';
 import { setupLocalEnv } from './helpers/env';
 import { makeFakeSession } from './helpers/fake-session';
 
@@ -90,7 +91,7 @@ describe('turn-runner persists context.usage', () => {
 
 		acquireMock.mockResolvedValue(
 			makeFakeSession([
-				{ type: 'message.start', messageId: 1, role: 'assistant' },
+				{ type: 'message.start', messageId: 'M1', role: 'assistant' },
 				{
 					type: 'context.usage',
 					currentTokens: 4242,
@@ -101,21 +102,21 @@ describe('turn-runner persists context.usage', () => {
 					toolDefinitionsTokens: 42,
 					isInitial: false
 				},
-				{ type: 'message.delta', messageId: 1, text: 'hello' },
+				{ type: 'message.delta', messageId: 'M1', text: 'hello' },
 				{ type: 'done' }
 			])
 		);
 
 		const turn = await turnRunner.startTurn({
 			bridge: {
-				conversationId: conv.id,
+				conversationId: convCodec.parse(conv.id),
 				userId: user.id,
 				workingDirectory: '/tmp',
 				model: 'gpt-4',
 				policy: 'prompt'
 			},
 			prompt: 'hi',
-			conversationId: conv.id
+			conversationId: convCodec.parse(conv.id)
 		});
 
 		const received: PortalEvent[] = [];

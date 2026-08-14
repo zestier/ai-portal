@@ -13,6 +13,13 @@ import {
 	FIELDS_NOTE
 } from './project';
 
+/** Parse a ticket-handle edge id; an unresolvable handle reads as "not found". */
+function parseEdgeId(id: string): number {
+	const int = ticketId.tryParse(id);
+	if (int === null) throw new Error(`ticket not found: ${id}`);
+	return int;
+}
+
 // Model-relevant ticket fields; provenance ids and timestamps are dropped from
 // the compact default and recoverable via the `fields` selector. `blockedBy`
 // (open blockers) and `blocks` (the tickets this one blocks) are part of the
@@ -29,8 +36,8 @@ const TICKET_KEEP = ['id', 'title', 'body', 'priority', 'status', 'blockedBy', '
 // unknown-field error) even on a ticket that currently has no such edges.
 function withDeps(ticket: WorkspaceTicket) {
 	const id = ticketId.parse(ticket.id);
-	const blockedBy = tickets.openBlockers(id).map((blockerId) => ticketId.encode(blockerId));
-	const blocks = tickets.listDependents(id).map((dependentId) => ticketId.encode(dependentId));
+	const blockedBy = tickets.openBlockers(id);
+	const blocks = tickets.listDependents(id);
 	return {
 		...ticket,
 		...(blockedBy.length ? { blockedBy } : {}),
@@ -111,7 +118,9 @@ export function buildTicketTools(opts: {
 	conversationId: string | number;
 }): PortalTool[] {
 	const conversationIdInt =
-		typeof opts.conversationId === 'number' ? opts.conversationId : conversationCodec.parse(opts.conversationId);
+		typeof opts.conversationId === 'number'
+			? opts.conversationId
+			: conversationCodec.parse(opts.conversationId);
 	return [
 		{
 			name: 'ticket_add',
@@ -160,8 +169,10 @@ export function buildTicketTools(opts: {
 						...(parsed.body !== undefined ? { body: parsed.body } : {}),
 						...(parsed.plan !== undefined ? { plan: parsed.plan } : {}),
 						...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
-						...(parsed.blockedBy !== undefined ? { blockedBy: parsed.blockedBy.map(Number) } : {}),
-						...(parsed.blocks !== undefined ? { blocks: parsed.blocks.map(Number) } : {}),
+						...(parsed.blockedBy !== undefined
+							? { blockedBy: parsed.blockedBy.map(parseEdgeId) }
+							: {}),
+						...(parsed.blocks !== undefined ? { blocks: parsed.blocks.map(parseEdgeId) } : {}),
 						sourceConversationId: conversationIdInt
 					});
 					return ok(
@@ -225,9 +236,7 @@ export function buildTicketTools(opts: {
 				}
 				const rendered = rows
 					.map((t) => {
-						const blockers = tickets.openBlockers(ticketId.parse(t.id)).map((blockerId) =>
-							ticketId.encode(blockerId)
-						);
+						const blockers = tickets.openBlockers(ticketId.parse(t.id));
 						const blockedNote = blockers.length ? ` (blocked by: ${blockers.join(', ')})` : '';
 						return `- ${t.id} [${t.priority}] [${t.status}] ${t.title}${blockedNote}${t.body ? `\n  ${t.body}` : ''}`;
 					})

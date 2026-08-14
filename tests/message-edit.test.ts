@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
+import { conversationId as convCodec } from '../src/lib/ids';
 
 async function freshImports() {
 	const users = await import('../src/lib/server/db/repos/users');
@@ -122,7 +123,7 @@ describe('message-edit.inlineEditMessage', () => {
 		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual(['topic.keep']);
 		expect(memory.listFacts(conv.id).map((fact) => fact.value)).toEqual(['kept']);
 		expect(messages.listByConversation(conv.id).map((message) => message.id)).toEqual([
-			expect.any(Number),
+			expect.any(String),
 			a1.id,
 			u2.id
 		]);
@@ -164,13 +165,13 @@ describe('message-edit.inlineEditMessage', () => {
 			(
 				database
 					.prepare('SELECT count(*) AS n FROM memory_event_log WHERE conversation_id = ?')
-					.get(conv.id) as { n: number }
+					.get(convCodec.parse(conv.id)) as { n: number }
 			).n;
 		const refCount = () =>
 			(
 				database
 					.prepare('SELECT count(*) AS n FROM memory_refs WHERE conversation_id = ?')
-					.get(conv.id) as { n: number }
+					.get(convCodec.parse(conv.id)) as { n: number }
 			).n;
 		const beforeEvents = eventCount();
 		expect(beforeEvents).toBeGreaterThan(0);
@@ -199,7 +200,7 @@ describe('message-edit.inlineEditMessage', () => {
 				       WHERE e.id = r.target_event_id
 				    )`
 			)
-			.get(conv.id) as { n: number };
+			.get(convCodec.parse(conv.id)) as { n: number };
 		expect(danglingRefs.n).toBe(0);
 	});
 
@@ -244,7 +245,7 @@ describe('message-edit.inlineEditMessage', () => {
 			(
 				database
 					.prepare('SELECT count(*) AS n FROM memory_event_log WHERE conversation_id = ?')
-					.get(conv.id) as { n: number }
+					.get(convCodec.parse(conv.id)) as { n: number }
 			).n;
 		const beforeEvents = eventCount();
 
@@ -271,7 +272,7 @@ describe('message-edit.inlineEditMessage', () => {
 				      SELECT 1 FROM memory_refs r WHERE r.target_event_id = e.id
 				    )`
 			)
-			.get(conv.id) as { n: number };
+			.get(convCodec.parse(conv.id)) as { n: number };
 		expect(orphanedEvents.n).toBe(0);
 
 		// And no reference points at a deleted event.
@@ -284,7 +285,7 @@ describe('message-edit.inlineEditMessage', () => {
 				      SELECT 1 FROM memory_event_log e WHERE e.id = r.target_event_id
 				    )`
 			)
-			.get(conv.id) as { n: number };
+			.get(convCodec.parse(conv.id)) as { n: number };
 		expect(danglingRefs.n).toBe(0);
 	});
 
@@ -403,7 +404,7 @@ describe('message-edit.regenerateFromAssistant', () => {
 		expect(memory.listEntities(conv.id).map((entity) => entity.entityKey)).toEqual(['topic.keep']);
 		expect(memory.listFacts(conv.id).map((fact) => fact.value)).toEqual(['kept']);
 		expect(messages.listByConversation(conv.id).map((message) => message.id)).toEqual([
-			expect.any(Number),
+			expect.any(String),
 			a1.id,
 			u2.id
 		]);

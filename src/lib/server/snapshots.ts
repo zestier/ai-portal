@@ -35,7 +35,7 @@ const SNAPSHOT_IDENTITY = {
 export type SnapshotKind = 'pre' | 'post';
 
 export interface SnapshotRow {
-	messageId: number;
+	messageId: string;
 	kind: SnapshotKind;
 	gitRef: string;
 	commitSha: string;
@@ -150,7 +150,7 @@ async function withLock<T>(workdir: string, fn: () => Promise<T>): Promise<T> {
 const REF_PREFIX = 'refs/portal/turns';
 const MESSAGE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-function refFor(messageId: number, kind: SnapshotKind): string {
+function refFor(messageId: string, kind: SnapshotKind): string {
 	const s = String(messageId);
 	if (!MESSAGE_ID_RE.test(s)) {
 		throw new Error(`invalid message id for snapshot ref: ${s}`);
@@ -180,6 +180,7 @@ export async function snapshot(
 ): Promise<SnapshotRow | null> {
 	const db = getDb();
 	const intMsg = typeof messageId === 'number' ? messageId : msgCodec.parse(messageId);
+	const handleMsg = msgCodec.encode(intMsg);
 
 	return withLock(workdir, async () => {
 		// Existence check runs inside the per-workdir lock so that
@@ -201,7 +202,7 @@ export async function snapshot(
 			| undefined;
 		if (existing) {
 			return {
-				messageId: existing.message_id,
+				messageId: msgCodec.encode(existing.message_id),
 				kind: existing.kind,
 				gitRef: existing.git_ref,
 				commitSha: existing.commit_sha,
@@ -212,7 +213,7 @@ export async function snapshot(
 		}
 
 		if (!(await isSnapshotRepo(workdir))) return null;
-		const ref = refFor(intMsg, kind);
+		const ref = refFor(handleMsg, kind);
 		// Use a private index file so the user's staging area (if any) is
 		// not disturbed. We pick a path inside .git so concurrent processes
 		// using a different convention don't conflict.
@@ -237,7 +238,7 @@ export async function snapshot(
 			await runOk(['update-ref', ref, commit], { cwd: workdir });
 
 			const row: SnapshotRow = {
-				messageId: intMsg,
+				messageId: handleMsg,
 				kind,
 				gitRef: ref,
 				commitSha: commit,
@@ -257,7 +258,7 @@ export async function snapshot(
 					   message_id, kind, git_ref, commit_sha, tree_sha, base_commit_sha, created_at
 					 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
 				).run(
-					row.messageId,
+					intMsg,
 					row.kind,
 					row.gitRef,
 					row.commitSha,
@@ -304,7 +305,7 @@ export function getSnapshot(messageId: string | number, kind: SnapshotKind): Sna
 		| undefined;
 	if (!r) return null;
 	return {
-		messageId: r.message_id,
+		messageId: msgCodec.encode(r.message_id),
 		kind: r.kind,
 		gitRef: r.git_ref,
 		commitSha: r.commit_sha,

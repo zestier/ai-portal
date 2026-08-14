@@ -3,7 +3,7 @@
 // don't each re-implement the same `userId / convs.get / 404` dance.
 
 import { error } from '@sveltejs/kit';
-import { conversationId } from '$lib/ids';
+import { conversationId, leaseId as leaseIdCodec } from '$lib/ids';
 import * as convs from '$lib/server/db/repos/conversations';
 import { resolveWorkspaceRoot } from '$lib/server/files';
 import { resolveConversationWorkspace, WorkspaceUnavailableError } from '$lib/server/workdir';
@@ -54,7 +54,10 @@ export function authorizeConversationWorkspace(
 	if (!leaseId) {
 		return { conversation, workdir: resolveWorkspace(conversation), lease: null };
 	}
-	const lease = getLease(leaseId, conversation.userId);
+	// A malformed lease handle is a 404 (unknown resource), not a 500.
+	const intLease = leaseIdCodec.tryParse(leaseId);
+	if (intLease === null) throw error(404);
+	const lease = getLease(intLease, conversation.userId);
 	if (!lease || lease.heldByConversationId !== conversation.id) throw error(404);
 	let workdir: string;
 	try {

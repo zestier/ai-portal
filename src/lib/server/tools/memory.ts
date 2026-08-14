@@ -428,7 +428,10 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_query_clues',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: [...loops.map((loop) => loop.id), ...clueFacts.map((fact) => memoryFactId.parse(fact.id))]
+					resultIds: [
+						...loops.map((loop) => loop.id),
+						...clueFacts.map((fact) => memoryFactId.parse(fact.id))
+					]
 				});
 				assertFieldsKnown(parsed.fields, [
 					{ input: loops, keep: OPEN_LOOP_KEEP },
@@ -480,7 +483,10 @@ export function buildMemoryTools(opts: {
 					toolName: 'memory_get_character_knowledge',
 					arguments: parsed,
 					resultSummary: summary,
-					resultIds: [...facts.map((fact) => memoryFactId.parse(fact.id)), ...events.map((event) => event.id)]
+					resultIds: [
+						...facts.map((fact) => memoryFactId.parse(fact.id)),
+						...events.map((event) => event.id)
+					]
 				});
 				assertFieldsKnown(parsed.fields, [
 					{ input: entity, keep: ENTITY_KEEP },

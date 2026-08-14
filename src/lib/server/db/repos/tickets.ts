@@ -296,7 +296,11 @@ export interface UpdateInput {
 	blocks?: number[];
 }
 
-export function update(id: string | number, userId: number, patch: UpdateInput): WorkspaceTicket | null {
+export function update(
+	id: string | number,
+	userId: number,
+	patch: UpdateInput
+): WorkspaceTicket | null {
 	const intId = ticketInt(id);
 	const current = get(intId, userId);
 	if (!current) return null;
@@ -347,7 +351,9 @@ function reconcileEdges(
 	side: 'blockedBy' | 'blocks'
 ): void {
 	const desired = new Set(desiredRaw);
-	const current = side === 'blockedBy' ? listDependencies(id) : listDependents(id);
+	const current = (side === 'blockedBy' ? listDependencies(id) : listDependents(id)).map((h) =>
+		ticketCodec.parse(h)
+	);
 	const currentSet = new Set(current);
 	for (const other of current) {
 		if (desired.has(other)) continue;
@@ -380,7 +386,7 @@ export function remove(id: string | number, userId: number): boolean {
 // are plain lookups.
 
 /** depends_on ids for a ticket (its prerequisites), newest edge first. */
-export function listDependencies(ticketId: string | number): number[] {
+export function listDependencies(ticketId: string | number): string[] {
 	const intId = ticketInt(ticketId);
 	return (
 		getDb()
@@ -388,11 +394,11 @@ export function listDependencies(ticketId: string | number): number[] {
 				`SELECT depends_on FROM ticket_deps WHERE ticket_id = ? ORDER BY created_at DESC, depends_on`
 			)
 			.all(intId) as { depends_on: number }[]
-	).map((r) => r.depends_on);
+	).map((r) => ticketCodec.encode(r.depends_on));
 }
 
 /** ids of tickets that depend on this ticket (its dependents). */
-export function listDependents(ticketId: string | number): number[] {
+export function listDependents(ticketId: string | number): string[] {
 	const intId = ticketInt(ticketId);
 	return (
 		getDb()
@@ -400,7 +406,7 @@ export function listDependents(ticketId: string | number): number[] {
 				`SELECT ticket_id FROM ticket_deps WHERE depends_on = ? ORDER BY created_at DESC, ticket_id`
 			)
 			.all(intId) as { ticket_id: number }[]
-	).map((r) => r.ticket_id);
+	).map((r) => ticketCodec.encode(r.ticket_id));
 }
 
 /**
@@ -408,7 +414,7 @@ export function listDependents(ticketId: string | number): number[] {
  * that actively block it. A ticket with an empty list is "ready". Done/archived
  * prerequisites are satisfied and excluded.
  */
-export function openBlockers(ticketId: string | number): number[] {
+export function openBlockers(ticketId: string | number): string[] {
 	const intId = ticketInt(ticketId);
 	return (
 		getDb()
@@ -419,7 +425,7 @@ export function openBlockers(ticketId: string | number): number[] {
 				 ORDER BY d.created_at DESC, d.depends_on`
 			)
 			.all(intId) as { depends_on: number }[]
-	).map((r) => r.depends_on);
+	).map((r) => ticketCodec.encode(r.depends_on));
 }
 
 // Would adding `ticketId depends_on dependsOn` create a cycle? It does iff

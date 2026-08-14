@@ -135,7 +135,9 @@ describe('nested-prefix safety', () => {
 	it('a fact parser rejects a handle that merely starts with its prefix', () => {
 		// 'FE7' starts with the fact prefix 'F' but is really a (hypothetical)
 		// file-edit id: the anchored regex refuses 'E7' as a numeric part.
-		expect(() => memoryFactId.parse('FE7')).toThrow('not a memory fact id: FE7 — expected F<number>');
+		expect(() => memoryFactId.parse('FE7')).toThrow(
+			'not a memory fact id: FE7 — expected F<number>'
+		);
 		expect(memoryFactId.is('FE7')).toBe(false);
 		expect(() => memoryFactId.parse('F7E')).toThrow();
 	});

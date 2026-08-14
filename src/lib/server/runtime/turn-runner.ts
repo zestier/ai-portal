@@ -12,7 +12,11 @@
 
 import { ulid } from 'ulid';
 import { log } from '../log';
-import { conversationId as convCodec, messageId as msgCodec, toolCallId as toolCodec } from '$lib/ids';
+import {
+	conversationId as convCodec,
+	messageId as msgCodec,
+	toolCallId as toolCodec
+} from '$lib/ids';
 import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
 import * as messages from '../db/repos/messages';
 import * as convs from '../db/repos/conversations';
@@ -559,7 +563,11 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			}
 		} else if (ev.type === 'subagent.lifecycle') {
 			emit(ev);
-			messages.updateBackgroundAgentLifecycle(toolCodec.parse(ev.toolCallId), ev.agentId, ev.status);
+			messages.updateBackgroundAgentLifecycle(
+				toolCodec.parse(ev.toolCallId),
+				ev.agentId,
+				ev.status
+			);
 		} else if (ev.type === 'file.edit') {
 			const isChild = !!ev.parentToolCallId;
 			const persistedId = ensurePersistedAssistant();
@@ -810,7 +818,11 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			// post-turn diff views. Non-fatal on failure.
 			if (persistedAssistantId) {
 				try {
-					await takeSnapshot(opts.bridge.workingDirectory, msgCodec.parse(persistedAssistantId), 'post');
+					await takeSnapshot(
+						opts.bridge.workingDirectory,
+						msgCodec.parse(persistedAssistantId),
+						'post'
+					);
 				} catch (snapErr) {
 					log.warn('snapshot.post.failed', {
 						conversationId: opts.conversationId,
@@ -1085,7 +1097,11 @@ function makeExtractorCardDispatch(
 			});
 		} else if (ev.type === 'subagent.lifecycle') {
 			emit(ev);
-			messages.updateBackgroundAgentLifecycle(toolCodec.parse(ev.toolCallId), ev.agentId, ev.status);
+			messages.updateBackgroundAgentLifecycle(
+				toolCodec.parse(ev.toolCallId),
+				ev.agentId,
+				ev.status
+			);
 		} else if (ev.type === 'message.reasoning') {
 			let seg = pendingReasoning.get(ev.segmentId);
 			if (!seg) {

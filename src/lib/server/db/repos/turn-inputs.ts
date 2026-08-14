@@ -3,7 +3,7 @@
 // migration and the `TurnInput` type for the contract.
 
 import { getDb } from '../index';
-import { conversationId, messageId } from '$lib/ids';
+import { conversationId as convIdCodec, messageId as msgIdCodec } from '$lib/ids';
 import type { InitialMessagePreview, TurnInput } from '$lib/types';
 
 interface TurnInputRow {
@@ -35,8 +35,12 @@ export interface RecordTurnInput {
 
 export function record(input: RecordTurnInput): void {
 	const db = getDb();
-	const intMsg = typeof input.messageId === 'number' ? input.messageId : messageId.parse(input.messageId);
-	const intConv = typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
+	const intMsg =
+		typeof input.messageId === 'number' ? input.messageId : msgIdCodec.parse(input.messageId);
+	const intConv =
+		typeof input.conversationId === 'number'
+			? input.conversationId
+			: convIdCodec.parse(input.conversationId);
 	db.prepare(
 		`INSERT INTO turn_inputs(
 		   message_id, conversation_id, turn_id, full_input, prompt_body, prelude,
@@ -69,11 +73,14 @@ export function record(input: RecordTurnInput): void {
 	);
 }
 
-export function get(conversationId: number, messageId: number): TurnInput | null {
+export function get(conversationId: string | number, messageId: string | number): TurnInput | null {
 	const db = getDb();
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convIdCodec.parse(conversationId);
+	const intMsg = typeof messageId === 'number' ? messageId : msgIdCodec.parse(messageId);
 	const row = db
 		.prepare('SELECT * FROM turn_inputs WHERE conversation_id = ? AND message_id = ?')
-		.get(conversationId, messageId) as TurnInputRow | undefined;
+		.get(intConv, intMsg) as TurnInputRow | undefined;
 	if (!row) return null;
 	return rowToTurnInput(row);
 }
@@ -88,8 +95,8 @@ function rowToTurnInput(r: TurnInputRow): TurnInput {
 		}
 	}
 	return {
-		messageId: messageId.encode(r.message_id),
-		conversationId: conversationId.encode(r.conversation_id),
+		messageId: msgIdCodec.encode(r.message_id),
+		conversationId: convIdCodec.encode(r.conversation_id),
 		turnId: r.turn_id,
 		fullInput: r.full_input,
 		promptBody: r.prompt_body,

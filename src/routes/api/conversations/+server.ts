@@ -136,7 +136,7 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 		managedWorktree = await createManagedWorktree({
 			sourceWorkdir: workdir,
 			userId: String(userId),
-			conversationId: String(convId),
+			conversationId: conv.id,
 			...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
 		});
 	} catch (cause) {

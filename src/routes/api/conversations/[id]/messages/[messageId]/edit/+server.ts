@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
+import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { inlineEditMessage, InlineEditRejected } from '$lib/server/message-edit';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
@@ -28,10 +29,10 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 	const userId = requireUserId(locals);
 	const { content } = await parseBody(request, Body);
 
-	const conversationId = Number(params.id);
-	const messageId = Number(params.messageId);
-	if (!Number.isInteger(conversationId) || conversationId <= 0) throw error(404);
-	if (!Number.isInteger(messageId) || messageId <= 0) throw error(400, 'missing message id');
+	const conversationId = convCodec.tryParse(params.id);
+	const messageId = msgCodec.tryParse(params.messageId);
+	if (conversationId === null) throw error(404);
+	if (messageId === null) throw error(400, 'missing message id');
 
 	// Synchronously claim the turn slot before the busy-check + edit. In memory
 	// mode `startTurnFromUserMessage` awaits `pool.release(...)` before the turn

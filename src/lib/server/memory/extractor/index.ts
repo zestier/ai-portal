@@ -224,7 +224,9 @@ export class ToolCallingMemoryExtractor implements MemoryExtractor {
 
 	async extractPatch(input: ExtractPatchInput): Promise<ExtractPatchResult> {
 		const intConv =
-			typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
+			typeof input.conversationId === 'number'
+				? input.conversationId
+				: conversationId.parse(input.conversationId);
 		// Resolve the pi model selection once, then drive the whole loop over it.
 		// An unresolvable selection (typo, unconfigured provider) falls back to
 		// the heuristic extractor for THIS turn rather than failing the turn —
@@ -1002,7 +1004,9 @@ export async function extractAndCommitMemory(
 	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
 > {
 	const intConv =
-		typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
+		typeof input.conversationId === 'number'
+			? input.conversationId
+			: conversationId.parse(input.conversationId);
 	const extractor = createMemoryExtractor({
 		model: input.extractorModel
 	});
@@ -1052,7 +1056,9 @@ async function runExtractionAndCommit(
 	ReturnType<typeof commitPatch> & { extraction: ExtractPatchResult; extractorKind: string }
 > {
 	const intConv =
-		typeof input.conversationId === 'number' ? input.conversationId : conversationId.parse(input.conversationId);
+		typeof input.conversationId === 'number'
+			? input.conversationId
+			: conversationId.parse(input.conversationId);
 	// extractor must see the existing durable state — crucially the open-loop
 	// ids — to reuse keys and to keep/close loops by id. Callers (tests) may
 	// supply their own packet; production does not, so build one here keyed on
@@ -1074,7 +1080,8 @@ async function runExtractionAndCommit(
 		// docstring for the mechanism and failure-safety rationale.
 		input.initialPacket = input.priorPatchId
 			? memoryRepo.readMemoryAtTurnStart(intConv, input.assistantMessage.id, build)
-			: build();	}
+			: build();
+	}
 	const presentedLoopIds = input.initialPacket.openLoops.map((loop) => loop.id);
 
 	const extraction = await extractor.extractPatch(input);

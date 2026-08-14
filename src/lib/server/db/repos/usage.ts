@@ -40,7 +40,8 @@ export interface UsageSnapshot {
 }
 
 export function get(conversationId: string | number): ConversationUsage | null {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	const r = getDb()
 		.prepare('SELECT * FROM conversation_usage WHERE conversation_id = ?')
 		.get(intConv) as UsageRow | undefined;
@@ -48,7 +49,8 @@ export function get(conversationId: string | number): ConversationUsage | null {
 }
 
 export function upsert(conversationId: string | number, s: UsageSnapshot): void {
-	const intConv = typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
+	const intConv =
+		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
 	getDb()
 		.prepare(
 			`INSERT INTO conversation_usage(
@@ -77,7 +79,7 @@ export function upsert(conversationId: string | number, s: UsageSnapshot): void 
 }
 
 export function remove(conversationId: string | number): void {
-	getDb().prepare('DELETE FROM conversation_usage WHERE conversation_id = ?').run(
-		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId)
-	);
+	getDb()
+		.prepare('DELETE FROM conversation_usage WHERE conversation_id = ?')
+		.run(typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId));
 }

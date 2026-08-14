@@ -216,7 +216,9 @@ export function listIdle(before: number): LeaseRow[] {
 }
 
 export function touch(id: string | number, now = Date.now()): void {
-	getDb().prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`).run(now, leaseInt(id));
+	getDb()
+		.prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`)
+		.run(now, leaseInt(id));
 }
 
 export function setState(id: string | number, state: 'active' | 'releasing'): void {

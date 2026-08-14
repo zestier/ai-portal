@@ -60,9 +60,9 @@ describe('createTicketDraftChat', () => {
 
 		expect(result).toEqual({
 			ok: true,
-			href: '/conversations/conv-1?draftTicketId=1&ticketActionId=100',
+			href: '/conversations/conv-1?draftTicketId=T1&ticketActionId=PT100',
 			prompt:
-				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: 1\n\nAdd a launch button.\n\nPlan:\n(none)'
+				'Do this workspace ticket: Fix sidebar actions\n\nTicket ID: T1\n\nAdd a launch button.\n\nPlan:\n(none)'
 		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const [url, init] = fetcher.mock.calls[0];
@@ -90,7 +90,7 @@ describe('createTicketDraftChat', () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.href).toBe('/conversations/conv-2?draftTicketId=1&ticketActionId=101');
+			expect(result.href).toBe('/conversations/conv-2?draftTicketId=T1&ticketActionId=PT101');
 		}
 		const [, init] = fetcher.mock.calls[0];
 		expect(JSON.parse(init?.body as string)).toEqual({

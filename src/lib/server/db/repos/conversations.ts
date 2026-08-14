@@ -96,7 +96,9 @@ function rowToConv(r: ConvRow): Conversation {
 		updatedAt: r.updated_at,
 		archivedAt: r.archived_at,
 		forkedFromConversationId:
-			r.forked_from_conversation_id === null ? null : conversationId.encode(r.forked_from_conversation_id),
+			r.forked_from_conversation_id === null
+				? null
+				: conversationId.encode(r.forked_from_conversation_id),
 		forkedFromMessageId:
 			r.forked_from_message_id === null ? null : messageId.encode(r.forked_from_message_id),
 		draftPrompt: r.draft_prompt ?? null,
@@ -260,8 +262,7 @@ export function create(userId: number, input: CreateInput): Conversation {
 		createdAt: now,
 		updatedAt: now,
 		archivedAt: null,
-		forkedFromConversationId:
-			forkConv === null ? null : conversationId.encode(forkConv),
+		forkedFromConversationId: forkConv === null ? null : conversationId.encode(forkConv),
 		forkedFromMessageId: forkMsg === null ? null : messageId.encode(forkMsg),
 		draftPrompt,
 		workspaceKind,
@@ -301,7 +302,10 @@ export function setManagedWorktree(id: string | number, worktree: ManagedWorktre
 		);
 }
 
-export function getManagedWorktree(id: string | number, userId: number): ManagedWorktreeMetadata | null {
+export function getManagedWorktree(
+	id: string | number,
+	userId: number
+): ManagedWorktreeMetadata | null {
 	const intId = convInt(id);
 	const row = getDb()
 		.prepare(
@@ -445,7 +449,7 @@ export function markRead(id: string | number, userId: number, at: number = Date.
  * than the last time the user looked at them — the "unseen response" half of the
  * sidebar's active indicator. See {@link HAS_UNSEEN_ASSISTANT}.
  */
-export function unreadConversationIds(userId: number): Set<number> {
+export function unreadConversationIds(userId: number): Set<string> {
 	const rows = getDb()
 		.prepare(
 			`SELECT c.id AS id
@@ -455,7 +459,7 @@ export function unreadConversationIds(userId: number): Set<number> {
 			    AND ${HAS_UNSEEN_ASSISTANT}`
 		)
 		.all(userId) as Array<{ id: number }>;
-	return new Set(rows.map((r) => r.id));
+	return new Set(rows.map((r) => conversationId.encode(r.id)));
 }
 
 /** Single-conversation form of {@link unreadConversationIds}. */
@@ -474,7 +478,9 @@ export function hasUnread(id: string | number, userId: number): boolean {
 }
 
 export function touch(id: string | number) {
-	getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(Date.now(), convInt(id));
+	getDb()
+		.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+		.run(Date.now(), convInt(id));
 }
 
 /**
@@ -525,7 +531,9 @@ export function remove(id: string | number, userId: number): boolean {
 	const intId = convInt(id);
 	const db = getDb();
 	return db.transaction(() => {
-		const r = db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(intId, userId);
+		const r = db
+			.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?')
+			.run(intId, userId);
 		if (r.changes > 0) {
 			// FK `ON DELETE CASCADE` cleans the relational memory_* tables, but the
 			// memory_search_index FTS5 virtual table can't be a cascade target, so
