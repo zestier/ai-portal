@@ -2,12 +2,18 @@
 -- Note: schema_migrations table is bootstrapped by the migration runner.
 -- Single live migration: cumulative schema of the former 001-075 chain (deleted).
 --
--- Entity tables use SQLite-global INTEGER PRIMARY KEY AUTOINCREMENT ids. The pi
--- agent echoes these ids through portal tool args/results every turn; int ids are
--- cheaper to emit, robust to echo (no truncated-id retries), and order naturally.
--- Opaque/external handles (agent_id, turn_id, session_file, workspace_key,
--- entity_key, loop_key, hashes) and the memory_event_log's event-store handles
--- (id/parent_id, its own seq counter) stay TEXT.
+-- Entity ids are SQLite-global INTEGER PRIMARY KEY AUTOINCREMENT ids — STORAGE
+-- ONLY. Everything above the storage layer speaks opaque prefixed handles
+-- (`src/lib/ids.ts`: T ticket, C conversation, M message, X tool call, L lease,
+-- PT prompt template, E memory entity, F memory fact, PC memory patch item).
+-- Repos encode at the rowTo* boundary and parse handles on the way in; no raw
+-- int id escapes the repo boundary, and a handle is never sorted or compared
+-- lexically — parse it (or sort by created_at). Deliberate exceptions that stay
+-- raw ints: `userId`, kind-scoped record refs (fields/[kind]/[recordId], open
+-- loops, permission-grant rowids), SSE event ids, turn ids, agent ids, action
+-- slugs. Opaque/external TEXT handles (agent_id, turn_id, session_file,
+-- workspace_key, entity_key, loop_key, hashes) and the memory_event_log's
+-- event-store handles (id/parent_id, its own seq counter) stay TEXT.
 
 CREATE TABLE users (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
