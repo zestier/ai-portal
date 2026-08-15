@@ -300,6 +300,40 @@ Data flow:
   dropdowns), `--z-sidebar` (mobile drawer + scrim), `--z-overlay` (floating
   menus / popovers), `--z-modal` (Modal dialogs), `--z-toast` (toasts).
 
+## Settings → Extensions
+
+Operator-managed pi extensions, added at runtime from the **Extensions** tab
+(`/settings?tab=extensions`, backed by `/api/admin/extensions`) with no source
+edits or server restart — the change applies to every conversation on its next
+turn (the session pool re-matches on an extension fingerprint, disposing and
+recreating cached sessions). The tab is gated like Models (`canRedeployUser`):
+admin-only in multi-user mode.
+
+Three kinds of sources:
+
+- `file` — path to a `.ts` file/dir (`index.ts`), resolved against
+  `PROJECT_ROOT` (absolute paths pass through).
+- `inline` — TS source stored in the DB, materialized to
+  `DATA_DIR/extensions/portal-ext-<id>.ts`.
+- `package` — a pi spec `npm:<name>@<version>` / `git:<repo>@<ref>`, passed
+  through `additionalExtensionPaths` unchanged; the SDK installs/clones it on
+  demand into `<agentDir>/tmp/extensions/` (NOT the portal `DATA_DIR`). Pinning
+  an explicit `@version`/`@ref` is **mandatory** — unpinned git sources re-pull
+  on every session open.
+
+Load semantics: only operator-listed sources load (`noExtensions: true` is
+retained — no auto-discovery of `~/.pi/agent/extensions` or `.pi/extensions`).
+Load failures are non-fatal: a broken/missing source logs and surfaces under
+"Verify" (`{loaded, errors}`) but never blocks session creation. The tab warns
+that extensions run with full system permissions and may execute arbitrary
+remote code.
+
+Known limitation: extension `ctx.ui` dialogs don't render in the headless
+session (their promises resolve cancelled/undefined); event handlers and
+`registerTool` work fully. Extension factories must not start long-lived
+background resources — sessions are recreated whenever the extension set
+changes.
+
 ## Accessibility
 
 - All interactive components keyboard-operable.

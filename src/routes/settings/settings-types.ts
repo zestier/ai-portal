@@ -14,6 +14,7 @@ export type SettingsTab =
 	| 'memory'
 	| 'permissions'
 	| 'models'
+	| 'extensions'
 	| 'activity'
 	| 'update';
 

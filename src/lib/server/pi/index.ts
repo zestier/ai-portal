@@ -10,6 +10,7 @@
 
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { loadConfig } from '../config';
+import * as portalExtensions from '../extensions';
 import { PortalCredentialStore } from '../models/credential-store';
 import { modelsJsonPath, writeModelsJsonFile } from '../models/models-json';
 import type { ProviderOpenOptions, ProviderSession } from './session-contract';
@@ -60,6 +61,13 @@ export function isPiMode(): boolean {
 export async function openPiSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
 	const runtime = await getModelRuntime();
 	const model = await resolvePiModel(runtime, opts.model);
+	// Compute the operator-managed extension set (paths/specs) and its
+	// fingerprint in one pass over the same repo state, so the pool's acquire
+	// re-match (which independently fingerprints) is consistent.
+	const [extensionPaths, extensionFingerprint] = await Promise.all([
+		portalExtensions.enabledExtensionPaths(opts.userId),
+		portalExtensions.fingerprint(opts.userId)
+	]);
 	return createPiProviderSession({
 		cwd: opts.workingDirectory,
 		model,
@@ -70,6 +78,8 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
 		providerSessionId: opts.providerSessionId ?? String(opts.conversationId),
 		userId: opts.userId,
 		policy: opts.policy,
+		additionalExtensionPaths: extensionPaths,
+		extensionFingerprint,
 		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {}),
 		...(opts.mode !== undefined ? { mode: opts.mode } : {}),
 		...(opts.approvalMode !== undefined ? { approvalMode: opts.approvalMode } : {}),

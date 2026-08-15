@@ -112,6 +112,12 @@ export interface ProviderSession {
 	 * resume the same tree.
 	 */
 	sessionFile?: string;
+	/**
+	 * sha1 over the operator-managed extension set this session was opened
+	 * with (see `extensions.fingerprint`). The session pool re-matches on it:
+	 * a change disposes+recreates the session on the next acquire.
+	 */
+	extensionFingerprint?: string;
 	lastUsed: number;
 	send(prompt: string, signal: AbortSignal): AsyncIterable<PortalEvent>;
 	abort(): Promise<void>;

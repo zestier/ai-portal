@@ -92,7 +92,10 @@ redeploy logs identify failures clearly.
 
 - Multi-tenant SaaS. Single-user, optionally with a small allowlist of GitHub
   accounts later.
-- An extensions marketplace / `@agent` registry.
+- An extensions marketplace / `@agent` registry. Operator-managed local and
+  remote extensions (files, pasted code, or pinned npm/git packages) are
+  supported instead via **Settings → Extensions** — no marketplace/registry,
+  no auto-discovery, only sources the operator lists explicitly.
 - Full feature parity with a desktop chat pane (no native diff view editor,
   no inline-edit-in-file UX beyond showing the diff produced by the agent).
 - Mobile-native apps. Web is responsive; that's enough.

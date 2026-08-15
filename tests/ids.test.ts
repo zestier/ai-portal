@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	conversationId,
+	extensionId,
 	makeId,
 	messageId,
 	memoryEntityId,
@@ -128,6 +129,24 @@ describe('prefixed handle instances', () => {
 		expect(() => conversationId.parse('M5')).toThrow('not a conversation id: M5');
 		expect(() => messageId.parse('C5')).toThrow('not a message id: C5');
 		expect(() => toolCallId.parse('X')).toThrow('not a tool call id: X');
+	});
+});
+
+describe('portal extension id (EX)', () => {
+	it('encodes/parses/is the EX handle', () => {
+		expect(extensionId.encode(1)).toBe('EX1');
+		expect(extensionId.parse('EX7')).toBe(7);
+		expect(extensionId.is('EX7')).toBe(true);
+		expect(extensionId.tryParse('EX42')).toBe(42);
+	});
+
+	it('rejects the memory-entity E prefix (anchored)', () => {
+		// 'E' is the memory-entity prefix; the anchored EX regex must reject a
+		// bare 'E7' (numeric part must be digits).
+		expect(extensionId.is('E7')).toBe(false);
+		expect(extensionId.is('E')).toBe(false);
+		expect(extensionId.is('EX')).toBe(false);
+		expect(() => extensionId.parse('E7')).toThrow('not a extension id: E7');
 	});
 });
 

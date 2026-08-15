@@ -100,6 +100,7 @@ export const messageId = makeId({ prefix: 'M', label: 'message' });
 export const toolCallId = makeId({ prefix: 'X', label: 'tool call' });
 export const leaseId = makeId({ prefix: 'L', label: 'lease' });
 export const promptTemplateId = makeId({ prefix: 'PT', label: 'prompt template' });
+export const extensionId = makeId({ prefix: 'EX', label: 'extension' });
 export const memoryEntityId = makeId({ prefix: 'E', label: 'memory entity' });
 export const memoryFactId = makeId({ prefix: 'F', label: 'memory fact' });
 export const memoryPatchItemId = makeId({ prefix: 'PC', label: 'memory patch item' });

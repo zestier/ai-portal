@@ -11,6 +11,7 @@ import {
 import { hasPending, expireConversation } from './interactive-requests';
 import { log } from '../log';
 import { openPiSession } from '../pi';
+import * as portalExtensions from '../extensions';
 import type { ProviderOpenOptions, ProviderSession } from '../pi/session-contract';
 
 interface Entry {
@@ -150,6 +151,19 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 		context: { conversationId: number; reason: string };
 	}> = [];
 
+	// Fingerprint the user's operator-managed extension set once per acquire:
+	// the cached session is reused only when the extensions it was opened with
+	// match the current set, so a Settings → Extensions change takes effect on
+	// the next turn (this acquire) without a restart — the stale session is
+	// disposed below and a fresh one opened.
+	const extensionFingerprint = await portalExtensions.fingerprint(opts.userId);
+	// Re-coalesce after the await: a racing acquire may have set the in-flight
+	// entry while this one was fingerprinting, so a concurrent pair can never
+	// both pass the session check below and open two sessions for one
+	// conversation. Everything from here to `inflight.set` is synchronous.
+	const coalesced = inflight.get(opts.conversationId);
+	if (coalesced) return coalesced;
+
 	const existing = sessions.get(opts.conversationId);
 	if (existing) {
 		const cachedProvider = existing.session.provider ?? 'pi';
@@ -160,7 +174,8 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 			existing.session.workingDirectory === opts.workingDirectory &&
 			existing.session.model === opts.model &&
 			cachedProviderSessionId === requestedProviderSessionId &&
-			cachedProvider === requestedProvider
+			cachedProvider === requestedProvider &&
+			existing.session.extensionFingerprint === extensionFingerprint
 		) {
 			existing.lastUsed = Date.now();
 			return existing.session;
@@ -174,7 +189,9 @@ export async function acquire(opts: ProviderOpenOptions): Promise<ProviderSessio
 			cachedModel: existing.session.model,
 			requestedModel: opts.model,
 			cachedProviderSessionId,
-			requestedProviderSessionId
+			requestedProviderSessionId,
+			cachedExtensionFingerprint: existing.session.extensionFingerprint ?? null,
+			requestedExtensionFingerprint: extensionFingerprint
 		});
 		// Claim the stale entry synchronously, then dispose it inside the
 		// coalesced open below.

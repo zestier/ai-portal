@@ -2,9 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setupLocalEnv } from './helpers/env';
 
 const openMock = vi.fn();
+const fingerprintMock = vi.fn();
 
 vi.mock('../src/lib/server/pi', () => ({
 	openPiSession: (...args: unknown[]) => openMock(...args)
+}));
+
+vi.mock('../src/lib/server/extensions', () => ({
+	fingerprint: (...args: unknown[]) => fingerprintMock(...args)
 }));
 
 async function importPool() {
@@ -16,6 +21,11 @@ describe('session pool', () => {
 	beforeEach(async () => {
 		await setupLocalEnv('portal-pool-test-');
 		openMock.mockReset();
+		// Default: the pool fingerprints the extension set on every acquire; a
+		// mock session carries no fingerprint (undefined), so undefined matches
+		// the undefined fingerprint and reuse proceeds exactly as before.
+		fingerprintMock.mockReset();
+		fingerprintMock.mockResolvedValue(undefined);
 	});
 
 	afterEach(async () => {
@@ -224,6 +234,10 @@ describe('session pool', () => {
 			model: 'gpt-4',
 			policy: 'prompt'
 		});
+		// Each acquire awaits the (mocked) extension fingerprint before invoking
+		// open(); wait for the single open() call so the resolver is set before
+		// we resolve it.
+		await vi.waitFor(() => expect(openMock).toHaveBeenCalledTimes(1));
 		resolveOpen(session);
 		const [r1, r2] = await Promise.all([a, b]);
 
@@ -374,5 +388,89 @@ describe('session pool', () => {
 			// test (the registry survives via globalThis).
 			openMock.mockReset();
 		}
+	});
+
+	it('recreates a live session when the extension fingerprint changes', async () => {
+		const firstSession = {
+			conversationId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			extensionFingerprint: 'fp-a',
+			lastUsed: Date.now(),
+			send: vi.fn(),
+			abort: vi.fn(),
+			dispose: vi.fn().mockResolvedValue(undefined),
+			setMode: vi.fn(),
+			setApproveAll: vi.fn(),
+			resetSessionApprovals: vi.fn()
+		};
+		const secondSession = {
+			...firstSession,
+			extensionFingerprint: 'fp-b',
+			dispose: vi.fn().mockResolvedValue(undefined)
+		};
+		// Extension set changed between the two acquires → the cached session is
+		// disposed and a fresh one opened (the Settings → Extensions effect).
+		fingerprintMock.mockResolvedValueOnce('fp-a').mockResolvedValueOnce('fp-b');
+		openMock.mockResolvedValueOnce(firstSession).mockResolvedValueOnce(secondSession);
+		const pool = await importPool();
+
+		const first = await pool.acquire({
+			conversationId: 1,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+		const second = await pool.acquire({
+			conversationId: 1,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+
+		expect(first).not.toBe(second);
+		expect(firstSession.dispose).toHaveBeenCalledTimes(1);
+		expect(openMock).toHaveBeenCalledTimes(2);
+		expect(second.extensionFingerprint).toBe('fp-b');
+	});
+
+	it('reuses a live session when the extension fingerprint is unchanged', async () => {
+		const session = {
+			conversationId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			extensionFingerprint: 'fp-same',
+			lastUsed: Date.now(),
+			send: vi.fn(),
+			abort: vi.fn(),
+			dispose: vi.fn().mockResolvedValue(undefined),
+			setMode: vi.fn(),
+			setApproveAll: vi.fn(),
+			resetSessionApprovals: vi.fn()
+		};
+		fingerprintMock.mockResolvedValue('fp-same');
+		openMock.mockResolvedValue(session);
+		const pool = await importPool();
+
+		const first = await pool.acquire({
+			conversationId: 1,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+		const second = await pool.acquire({
+			conversationId: 1,
+			userId: 1,
+			workingDirectory: '/tmp/work-a',
+			model: 'gpt-4',
+			policy: 'prompt'
+		});
+
+		expect(first).toBe(second);
+		expect(openMock).toHaveBeenCalledTimes(1);
+		expect(session.dispose).not.toHaveBeenCalled();
 	});
 });

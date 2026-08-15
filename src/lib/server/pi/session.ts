@@ -88,6 +88,12 @@ export interface CreatePiSessionOptions {
 	 * and memory-mode turns.
 	 */
 	sessionFilePath?: string | null;
+	/**
+	 * Operator-managed extension paths/specs (see `extensions.enabledExtensionPaths`).
+	 * Loaded via the SDK's `additionalExtensionPaths` even with `noExtensions:true`;
+	 * load failures are non-fatal (the session still opens with the valid ones).
+	 */
+	additionalExtensionPaths?: string[];
 }
 
 /**
@@ -172,6 +178,7 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		cwd: opts.cwd,
 		agentDir,
 		extensionFactories: [createPiPermissionBridge(opts.permissionResolver)],
+		additionalExtensionPaths: opts.additionalExtensionPaths ?? [],
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
@@ -212,6 +219,10 @@ export interface PiProviderSessionOptions {
 	globalMemoryEnabled?: boolean;
 	/** Durable session file to resume, or `null` to create one; see `CreatePiSessionOptions`. */
 	sessionFilePath?: string | null;
+	/** Operator-managed extension paths/specs to load (see `CreatePiSessionOptions`). */
+	additionalExtensionPaths?: string[];
+	/** sha1 over the extension set this session is opened with (pool re-match). */
+	extensionFingerprint?: string;
 	onEvent?: (e: PortalEvent) => void;
 }
 
@@ -271,7 +282,10 @@ export async function createPiProviderSession(
 		portalToolsByName,
 		permissionResolver,
 		conversationId: opts.conversationId,
-		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {})
+		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {}),
+		...(opts.additionalExtensionPaths !== undefined
+			? { additionalExtensionPaths: opts.additionalExtensionPaths }
+			: {})
 	});
 	return makePiProviderSession(piSession, opts, {
 		state,
@@ -304,6 +318,9 @@ function makePiProviderSession(
 		workingDirectory: opts.cwd,
 		model: opts.providerLabel,
 		...(sessionFile ? { sessionFile } : {}),
+		...(opts.extensionFingerprint !== undefined
+			? { extensionFingerprint: opts.extensionFingerprint }
+			: {}),
 		lastUsed: Date.now(),
 		async rewindToUserMessageOrdinal(ordinal: number) {
 			// The portal stream ends on `agent_end`, but pi clears its streaming

@@ -208,6 +208,32 @@ export interface SidebarTicket extends WorkspaceTicket {
 
 export type PromptTemplateStatus = 'open' | 'archived';
 
+/** The kind of a portal-managed pi extension source (operator-listed). */
+export type PortalExtensionKind = 'file' | 'inline' | 'package';
+
+export type PortalExtensionStatus = 'open' | 'archived';
+
+/**
+ * An operator-managed pi extension source, loaded into every pi session via
+ * `additionalExtensionPaths` on the next turn after a change. `value` semantics
+ * depend on `kind` (see the service in `src/lib/server/extensions.ts`).
+ */
+export interface PortalExtension {
+	id: string;
+	userId: number;
+	name: string;
+	kind: PortalExtensionKind;
+	/** Path (file), TS source (inline), or `npm:`/`git:` spec (package). */
+	value: string;
+	enabled: boolean;
+	status: PortalExtensionStatus;
+	/** Load order within a user's enabled set (ASC, then id ASC). */
+	sortOrder: number;
+	createdAt: number;
+	updatedAt: number;
+	archivedAt: number | null;
+}
+
 /**
  * Prompt templates are typed. The type governs which `{{placeholders}}` may be
  * injected at launch and how/where the template surfaces in the UI:

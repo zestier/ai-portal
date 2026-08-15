@@ -117,10 +117,12 @@ async function decidePermission(
 ): Promise<{ allow: boolean; reason?: string }> {
 	const tool = opts.portalToolsByName.get(toolName);
 	if (!tool) {
-		return {
-			allow: false,
-			reason: `Tool "${toolName}" is not a portal tool; the call was blocked by the portal permission gate.`
-		};
+		// Not a portal tool ⇒ an operator-installed extension tool: the pi
+		// session has no other tool sources (builtins are disabled via
+		// `noTools: 'builtin'`). The operator trusted the extension when they
+		// added it (Settings → Extensions), so its tools run — the bridge still
+		// intercepts the call, but no portal grant applies to it.
+		return { allow: true };
 	}
 
 	// A tool may declare its permission as a filesystem request on a derived

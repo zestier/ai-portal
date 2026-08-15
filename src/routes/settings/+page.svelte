@@ -4,6 +4,7 @@
 	import { type FormResult, type SettingsTab } from './settings-types';
 	import type { PageData } from './$types';
 	import ActivityPanel from './ActivityPanel.svelte';
+	import ExtensionsSettings from './ExtensionsSettings.svelte';
 	import GeneralSettings from './GeneralSettings.svelte';
 	import MemoryProfilesSettings from './MemoryProfilesSettings.svelte';
 	import ModelsSettings from './ModelsSettings.svelte';
@@ -93,6 +94,8 @@
 		/>
 	{:else if activeTab === 'models'}
 		<ModelsSettings />
+	{:else if activeTab === 'extensions'}
+		<ExtensionsSettings />
 	{:else if activeTab === 'activity'}
 		<ActivityPanel decisions={data.recentDecisions} />
 	{:else if activeTab === 'update' && data.enableRedeploy}

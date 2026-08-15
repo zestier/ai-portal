@@ -25,6 +25,8 @@
 				return `Permissions (${grantCount})`;
 			case 'models':
 				return 'Models';
+			case 'extensions':
+				return 'Extensions';
 			case 'activity':
 				return 'Activity';
 			case 'update':
