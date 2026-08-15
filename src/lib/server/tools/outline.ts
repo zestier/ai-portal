@@ -135,29 +135,31 @@ export function computeOutline(content: string): FileOutline {
 	return { format: 'normal', totalLines, headerLines, tailLines, blocks, truncatedBlocks };
 }
 
-export function renderOutline(rel: string, o: FileOutline, size: number, hash: string): string {
+// The identity line (path, line count, size, hash) is the caller's banner; this
+// renders only structure. Blocks are top-level (depth 0) only and any block
+// whose body is already in the tail range is skipped — the model drills into a
+// listed block's extent, it never needs a block re-shown as an index entry.
+export function renderOutline(o: FileOutline): string {
 	const out: string[] = [];
-	out.push(
-		`outline: ${rel} — ${o.totalLines} lines, ${size} bytes, format ${o.format}, hash ${hash}`
-	);
 	if (o.headerLines.length > 0) {
 		out.push(`header (1-${o.headerLines.length}):`);
 		out.push(...o.headerLines.map((l, i) => `${i + 1}\t${l}`));
 	}
-	if (o.blocks.length > 0) {
-		out.push('blocks (depth 0 = top level; line-extent):');
-		for (const b of o.blocks) {
-			out.push(
-				`${String(b.line).padStart(4)}\t${'  '.repeat(b.depth)}${b.text}  (${b.line}-${b.extent})`
-			);
-		}
-		if (o.truncatedBlocks > 0) out.push(`… ${o.truncatedBlocks} more blocks (depth ≤ 1)`);
-	}
 	const tailStart = o.totalLines - o.tailLines.length + 1;
+	const blocks = o.blocks.filter((b) => b.depth === 0 && b.line < tailStart);
+	if (blocks.length > 0) {
+		out.push('blocks (top-level; line-extent):');
+		for (const b of blocks) {
+			out.push(`${String(b.line).padStart(4)}\t${b.text}  (${b.line}-${b.extent})`);
+		}
+		if (o.truncatedBlocks > 0) out.push(`… ${o.truncatedBlocks} more blocks`);
+	}
 	if (o.tailLines.length > 0) {
 		out.push(`tail (${tailStart}-${o.totalLines}):`);
 		out.push(...o.tailLines.map((l, i) => `${tailStart + i}\t${l}`));
 	}
-	out.push('Outline only — read an offset:limit range to see a block body.');
+	out.push(
+		"Outline only — read an offset:limit range for a block body, or mode:'content' for raw."
+	);
 	return out.join('\n');
 }

@@ -217,11 +217,9 @@ async function outlineRead(
 ): Promise<ToolResult | null> {
 	const outline = computeOutline(content);
 	if (outline.format !== 'normal' || outline.blocks.length === 0) return null;
-	const banner =
-		`read: ${rel} — ${totalLines} lines. Returning an indentation outline instead of full ` +
-		`content — read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block ` +
-		`body, or pass mode:'content' for raw content.\n\n`;
-	const body = banner + renderOutline(rel, outline, size, hash);
+	// Identity only; the drill-in instruction lives once, at the outline's end.
+	const banner = `read: ${rel} — ${totalLines} lines (outline, ${size} bytes, hash ${hash}).\n\n`;
+	const body = banner + renderOutline(outline);
 	return ok(
 		{
 			type: 'text',

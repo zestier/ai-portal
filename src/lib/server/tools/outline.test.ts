@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeOutline } from './outline';
+import { computeOutline, renderOutline } from './outline';
 
 describe('computeOutline (pure-indent, no keyword list)', () => {
 	it('finds block headers at depth 0 and 1, filters depth-2 control flow', () => {
@@ -52,5 +52,35 @@ describe('computeOutline (pure-indent, no keyword list)', () => {
 		const o = computeOutline(`let x = '${'y'.repeat(2500)}';\nfoo(x);`);
 		expect(o.format).toBe('minified');
 		expect(o.blocks).toEqual([]);
+	});
+});
+
+describe('renderOutline (dedup, top-level only)', () => {
+	const src = [
+		'export function a(): void {',
+		'  for (let i = 0; i < 10; i++) {',
+		'    work(i);',
+		'  }',
+		'}',
+		'',
+		'export function b(): void {',
+		'  return 1;',
+		'}',
+		'',
+		'export function c(): void {',
+		'  return 2;',
+		'}'
+	].join('\n');
+
+	it('lists top-level blocks only and drops any block already in the tail body', () => {
+		const text = renderOutline(computeOutline(src));
+		// Small file: header (1-13) echoes the whole file, so scope the checks
+		// to the block index — the section between the two markers.
+		const blocksSection = text.split('blocks (top-level')[1]!.split('tail (')[0];
+		expect(blocksSection).toContain('export function a(): void {');
+		expect(blocksSection).not.toContain('for (let i = 0'); // nested child not listed
+		expect(blocksSection).not.toContain('export function b(): void {'); // tail region, not listed twice
+		expect(text).toContain('export function b(): void {'); // still in the tail body
+		expect(text).toContain('Outline only'); // single drill-in instruction
 	});
 });
