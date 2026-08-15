@@ -30,13 +30,11 @@ describe('read + edit range flow (consolidated)', () => {
 		const block = blocks[1];
 		expect(block.text).toBe('def method_0(self):');
 
-		// 2. edit mode range with outline-derived line numbers + header checksum.
+		// 2. edit range with outline-derived line numbers + header checksum.
 		const er = await edit.handler({
 			file_path: 'svc.py',
-			mode: 'range',
-			start_line: block.line,
-			end_line: block.extent,
-			checksum: block.text,
+			anchor: block.text,
+			lines: block.extent - block.line + 1,
 			new_string: '    def method_0(self):\n        return -1\n        print("x")'
 		});
 		if (!er.ok) throw new Error(er.error.message);

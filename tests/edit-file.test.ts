@@ -397,7 +397,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'gamma three',
+				anchor: 'gamma three',
 				new_string: 'gamma THREE'
 			});
 
@@ -425,7 +425,7 @@ describe('edit', () => {
 			await writeFile(join(workspace, 'sample.txt'), 'gamma three\n');
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'gamma three',
+				anchor: 'gamma three',
 				new_string: 'gamma THREE'
 			});
 			expect(result).toMatchObject({ ok: true });
@@ -445,7 +445,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'twenty',
+				anchor: 'twenty',
 				new_string: 'TWENTY',
 				replace_all: true
 			});
@@ -461,14 +461,14 @@ describe('edit', () => {
 		});
 	});
 
-	it('fails with the SDK error text when old_string is absent, leaving the file unchanged', async () => {
+	it('fails with the SDK error text when the anchor is not found, leaving the file unchanged', async () => {
 		await withWorkspace(async (workspace) => {
 			const path = join(workspace, 'sample.txt');
 			await writeFile(path, 'unchanged\n');
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'does not exist anywhere',
+				anchor: 'does not exist anywhere',
 				new_string: 'nope'
 			});
 
@@ -497,7 +497,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'gamma tree',
+				anchor: 'gamma tree',
 				new_string: 'gamma FOUR'
 			});
 
@@ -523,7 +523,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'gamma tree\nbeta two',
+				anchor: 'gamma tree\nbeta two',
 				new_string: 'x'
 			});
 
@@ -548,7 +548,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'gamma  three',
+				anchor: 'gamma  three',
 				new_string: 'x'
 			});
 
@@ -570,7 +570,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'big.txt',
-				old_string: 'gamma tree',
+				anchor: 'gamma tree',
 				new_string: 'x'
 			});
 
@@ -595,7 +595,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: 'alpha one\nbeta too\ngamma three\ndelta four\nepsilon five',
+				anchor: 'alpha one\nbeta too\ngamma three\ndelta four\nepsilon five',
 				new_string: 'x'
 			});
 
@@ -625,7 +625,7 @@ describe('edit', () => {
 			await writeFile(join(workspace, 'abs.txt'), 'before\n');
 			const result = await tool(workspace, 'edit').handler({
 				file_path: join(workspace, 'abs.txt'),
-				old_string: 'before',
+				anchor: 'before',
 				new_string: 'after'
 			});
 			expect(result).toMatchObject({ ok: true });
@@ -637,7 +637,7 @@ describe('edit', () => {
 		await withWorkspace(async (workspace) => {
 			const result = await tool(workspace, 'edit').handler({
 				file_path: join(tmpdir(), 'portal-edit-escape', 'escape.txt'),
-				old_string: 'x',
+				anchor: 'x',
 				new_string: 'y'
 			});
 			expect(result).toMatchObject({ ok: false, error: { code: 'invalid_path' } });
@@ -651,7 +651,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'app.ts',
-				old_string: 'return value;',
+				anchor: 'return value;',
 				new_string: 'return value.toUpperCase();'
 			});
 
@@ -670,19 +670,19 @@ describe('edit', () => {
 			const derive = tool(workspace, 'edit').derivePermissionRequest;
 			expect(derive).toBeDefined();
 			expect(
-				derive?.({ file_path: join(workspace, 'file.txt'), old_string: 'old', new_string: 'new' })
+				derive?.({ file_path: join(workspace, 'file.txt'), anchor: 'old', new_string: 'new' })
 			).toEqual({ permissionKind: 'edit', path: join(workspace, 'file.txt') });
 			// Out-of-workspace absolute paths still derive a request — the
 			// permission gateway denies it against the user's grants — mirroring
 			// the `write` tool. Unresolvable paths fall back to the custom-tool
 			// request (null).
 			expect(
-				derive?.({ file_path: '/not/in/workspace.txt', old_string: 'a', new_string: 'b' })
+				derive?.({ file_path: '/not/in/workspace.txt', anchor: 'a', new_string: 'b' })
 			).toEqual({
 				permissionKind: 'edit',
 				path: '/not/in/workspace.txt'
 			});
-			expect(derive?.({ file_path: 'bad\0path', old_string: 'a', new_string: 'b' })).toBeNull();
+			expect(derive?.({ file_path: 'bad\0path', anchor: 'a', new_string: 'b' })).toBeNull();
 		});
 	});
 
@@ -695,7 +695,7 @@ describe('edit', () => {
 				file_path: 'sample.ts',
 				// Stray tab from numbered read ("7\t\treturn;") and a new_string
 				// copied with the same stray tab.
-				old_string: '\t\treturn;',
+				anchor: '\t\treturn;',
 				new_string: '\t\treturn value;'
 			});
 
@@ -716,7 +716,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.ts',
-				old_string: '\t\treturn;',
+				anchor: '\t\treturn;',
 				new_string: '\treturn value;' // hand-typed at the correct depth
 			});
 
@@ -732,7 +732,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: '\t\tfoo',
+				anchor: '\t\tfoo',
 				new_string: '\t\tBAR'
 			});
 
@@ -750,7 +750,7 @@ describe('edit', () => {
 
 			const result = await tool(workspace, 'edit').handler({
 				file_path: 'sample.txt',
-				old_string: '\t\tfoo',
+				anchor: '\t\tfoo',
 				new_string: 'x'
 			});
 

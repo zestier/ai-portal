@@ -35,20 +35,18 @@ const WriteArgs = z
 	})
 	.strict();
 
-// Mirrors the SDK FileEditInput so the aliased SDK `Edit` tool (which sends
-// `file_path`/`old_string`/`new_string`/`replace_all` verbatim) parses cleanly.
-// `file_path` is absolute per the SDK contract; `resolveWriteTarget` below also
-// accepts workspace-relative paths so tests (which pass relative paths) work unchanged.
+// Portal-native schema for the `edit` tool. The SDK's built-in tools are
+// disabled (`noTools: 'builtin'`), so the field names are ours: `anchor` locates
+// the edit by content, and optional `lines` extends it to a whole-line block
+// (replace the anchor's line plus the following lines). No line numbers, no
+// checksum — the content anchor self-verifies and survives line drift.
 const EditArgs = z
 	.object({
 		file_path: z.string().min(1).max(4096),
-		mode: z.enum(['exact', 'range']).optional().default('exact'),
-		old_string: z.string().min(1).max(MAX_EDIT_FILE_BYTES).optional(),
+		anchor: z.string().min(1).max(MAX_EDIT_FILE_BYTES),
+		lines: z.number().int().min(1).optional(),
 		new_string: z.string().max(MAX_EDIT_FILE_BYTES),
 		replace_all: z.boolean().optional().default(false),
-		start_line: z.number().int().min(1).optional(),
-		end_line: z.number().int().min(1).optional(),
-		checksum: z.string().min(1).optional(),
 		worktree: WorktreeSelector
 	})
 	.strict();
@@ -100,97 +98,11 @@ export interface FileEditOutput {
 	// whose stray leading numbering tab was dropped; `new_string` was written
 	// with the same tabs removed, so the file carries no artifact.
 	lenientTabEating?: { ateLines: number[] };
-}
-
-// ---- Range mode (T38 experiment) ----
-// edit mode:'range' replaces a 1-indexed line range guarded by a `checksum`
-// (the block header line as `read`'s outline shows it). The model navigates by
-// line numbers, so it can edit without echoing the old block and without
-// re-reading the whole file. Returns the diff and how lines shifted.
-
-export interface RangeEditResult {
-	file_path: string;
-	requested_range: { start: number; end: number };
-	applied_range: { start: number; end: number };
-	shift: { after: number; by: number };
-	total_lines: number;
-	old_lines: number;
-	new_lines: number;
-	hunks: Hunk[];
-	gitDiff?: FileWriteGitDiff;
-}
-
-export type RangeEditOutcome =
-	| {
-			ok: true;
-			content: string;
-			applied_range: { start: number; end: number };
-			shift: { after: number; by: number };
-			old_lines: number;
-			new_lines: number;
-	  }
-	| { ok: false; reason: 'out_of_range' | 'stale'; message: string; details: unknown };
-
-// Pure, exported for tests. Line numbers are 1-based inclusive, matching
-// read/outline. The checksum is compared trimmed so the model can pass the
-// trimmed header text the outline showed.
-export function applyRangeEdit(
-	content: string,
-	startLine: number,
-	endLine: number,
-	checksum: string,
-	newText: string
-): RangeEditOutcome {
-	const nl = content.includes('\r\n') ? '\r\n' : '\n';
-	const lines = content.split(/\r?\n/);
-	const totalLines = lines.length;
-
-	if (startLine < 1 || endLine < startLine || endLine > totalLines) {
-		return {
-			ok: false,
-			reason: 'out_of_range',
-			message: `range ${startLine}-${endLine} is out of bounds (file has ${totalLines} lines)`,
-			details: { totalLines, max_end: Math.min(endLine, totalLines) }
-		};
-	}
-
-	const current = lines[startLine - 1].trim();
-	if (current !== checksum.trim()) {
-		let matched: number | null = null;
-		for (let i = 0; i < lines.length; i++) {
-			if (lines[i].trim() === checksum.trim()) {
-				matched = i + 1;
-				break;
-			}
-		}
-		const corrected =
-			matched === null
-				? null
-				: { start: matched, end: Math.min(totalLines, matched + (endLine - startLine)) };
-		return {
-			ok: false,
-			reason: 'stale',
-			message: corrected
-				? `stale range: line ${startLine} is '${current}', expected '${checksum.trim()}'. Checksum line found at line ${matched}; retry with start_line ${corrected.start}, end_line ${corrected.end}.`
-				: `stale range: line ${startLine} is '${current}', expected '${checksum.trim()}'. Checksum line not found; re-read the file for current line numbers.`,
-			details: { current, matched_line: matched, corrected }
-		};
-	}
-
-	const oldLines = endLine - startLine + 1;
-	// Empty new_text deletes the range; split on the same line model as read.
-	const newLinesArr = newText === '' ? [] : newText.split(/\r?\n/);
-	lines.splice(startLine - 1, oldLines, ...newLinesArr);
-	const content2 = lines.join(nl);
-	const newLines = newLinesArr.length;
-	return {
-		ok: true,
-		content: content2,
-		applied_range: { start: startLine, end: startLine + newLines - 1 },
-		shift: { after: endLine, by: newLines - oldLines },
-		old_lines: oldLines,
-		new_lines: newLines
-	};
+	// Present when the edit extended the anchor to whole lines (the `lines`
+	// parameter): how many lines were replaced and how lines after the block
+	// moved (`after` = 1-based last replaced line).
+	replacedLines?: number;
+	shift?: { after: number; by: number };
 }
 
 // Resolve a Write `file_path` to an absolute, symlink-resolved target inside
@@ -479,40 +391,110 @@ export function mirrorNumberingTabEating(
 // calls it against the in-memory batch content instead of a file, which is what
 // makes the sequential intra-file semantics identical to repeated `edit` calls.
 export type EditContentResult =
-	| { ok: true; content: string; lenient?: { ateLines: number[] } }
+	| {
+			ok: true;
+			content: string;
+			lenient?: { ateLines: number[] };
+			replacedLines?: number;
+			shift?: { after: number; by: number };
+	  }
 	| { ok: false; reason: 'not_found' | 'no_change' };
+
+// 0-based start offset of every line in `content`.
+function lineStarts(content: string): number[] {
+	const starts = [0];
+	for (let i = 0; i < content.length; i += 1) if (content[i] === '\n') starts.push(i + 1);
+	return starts;
+}
+
+// Index of the greatest element of the ascending array `sorted` that is <= target.
+function lastIndexAtOrBefore(sorted: number[], target: number): number {
+	let lo = 0;
+	let hi = sorted.length - 1;
+	let res = 0;
+	while (lo <= hi) {
+		const mid = (lo + hi) >> 1;
+		if (sorted[mid]! <= target) {
+			res = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	return res;
+}
 
 export function applyEditToContent(
 	content: string,
 	oldString: string,
 	newString: string,
-	replaceAll: boolean
+	replaceAll: boolean,
+	lines?: number
 ): EditContentResult {
-	if (oldString === newString) return { ok: false, reason: 'no_change' };
-	if (content.includes(oldString)) {
-		return {
-			ok: true,
-			content: replaceAll
-				? content.replaceAll(oldString, newString)
-				: content.replace(oldString, newString)
-		};
+	// `lines` present => whole-line replacement: replace the anchor's line plus
+	// enough following lines to cover `lines` total. Omitted => exact text
+	// replace (with the numbering-tab fallback for numbered `read` output).
+	if (lines === undefined) {
+		if (oldString === newString) return { ok: false, reason: 'no_change' };
+		if (content.includes(oldString)) {
+			return {
+				ok: true,
+				content: replaceAll
+					? content.replaceAll(oldString, newString)
+					: content.replace(oldString, newString)
+			};
+		}
+		// Exact match failed. If `old_string` carries a stray leading tab from
+		// numbered `read` output, match the tab-stripped form instead — but only
+		// when that form is unambiguous (exactly one occurrence), so a wrong-line
+		// edit is never silently applied. Mirror the strip onto `new_string` so
+		// the artifact is not reinserted.
+		const plan = planNumberingTabEating(oldString);
+		if (plan !== null && countOccurrences(content, plan.normalized) === 1) {
+			const mirrored = mirrorNumberingTabEating(newString, plan.ate, plan.oldTabs);
+			const ateLines = plan.ate.map((ate, i) => (ate ? i + 1 : -1)).filter((line) => line > 0);
+			return {
+				ok: true,
+				content: content.replace(plan.normalized, mirrored),
+				lenient: { ateLines }
+			};
+		}
+		return { ok: false, reason: 'not_found' };
 	}
-	// Exact match failed. If `old_string` carries a stray leading tab from
-	// numbered `read` output, match the tab-stripped form instead — but only
-	// when that form is unambiguous (exactly one occurrence), so a wrong-line
-	// edit is never silently applied. Mirror the strip onto `new_string` so the
-	// artifact is not reinserted.
-	const plan = planNumberingTabEating(oldString);
-	if (plan !== null && countOccurrences(content, plan.normalized) === 1) {
-		const mirrored = mirrorNumberingTabEating(newString, plan.ate, plan.oldTabs);
-		const ateLines = plan.ate.map((ate, i) => (ate ? i + 1 : -1)).filter((line) => line > 0);
-		return {
-			ok: true,
-			content: content.replace(plan.normalized, mirrored),
-			lenient: { ateLines }
-		};
+
+	// Whole-line path. The anchor may match mid-line (the outline shows trimmed
+	// header text); the replacement covers the WHOLE anchor line plus the lines
+	// after it, up to `total` lines. `total` clamps to at least the number of
+	// lines the anchor itself spans.
+	const linesInMatch = oldString.split(/\r?\n/).length;
+	const total = Math.max(lines, linesInMatch);
+	const matches: number[] = [];
+	for (
+		let idx = content.indexOf(oldString);
+		idx !== -1;
+		idx = content.indexOf(oldString, idx + 1)
+	) {
+		matches.push(idx);
 	}
-	return { ok: false, reason: 'not_found' };
+	if (matches.length === 0) return { ok: false, reason: 'not_found' };
+	const starts = lineStarts(content);
+	const nl = content.includes('\r\n') ? '\r\n' : '\n';
+	const newLinesArr = newString === '' ? [] : newString.split(/\r?\n/);
+	const linesArr = content.split(/\r?\n/);
+	// Apply from the end so earlier offsets stay valid (works for non-overlapping
+	// occurrences; overlapping extended blocks are a pathological edge).
+	const targets = replaceAll ? matches : matches.slice(0, 1);
+	for (const m of [...targets].reverse()) {
+		const startIdx = lastIndexAtOrBefore(starts, m);
+		linesArr.splice(startIdx, total, ...newLinesArr);
+	}
+	const firstStart = lastIndexAtOrBefore(starts, targets[0]!);
+	return {
+		ok: true,
+		content: linesArr.join(nl),
+		replacedLines: total,
+		shift: { after: firstStart + total, by: newLinesArr.length - total }
+	};
 }
 
 // ---- "Did you mean" closest-match suggestion on not-found (Option 2) ----
@@ -684,7 +666,7 @@ async function performEdit(
 	rawFilePath: string,
 	args: z.infer<typeof EditArgs>
 ): Promise<
-	| { result: FileEditOutput | RangeEditResult; text: string }
+	| { result: FileEditOutput; text: string }
 	| {
 			message: string;
 			code?: string;
@@ -692,50 +674,24 @@ async function performEdit(
 			detailsUiOnly?: boolean;
 	  }
 > {
-	if (args.mode === 'range') {
-		if (
-			args.start_line === undefined ||
-			args.end_line === undefined ||
-			args.checksum === undefined
-		) {
-			return {
-				message: "mode 'range' requires start_line, end_line and checksum",
-				code: 'edit_failed'
-			};
-		}
-		return performRangeEdit(
-			cwd,
-			target,
-			rawFilePath,
-			args.start_line,
-			args.end_line,
-			args.checksum,
-			args.new_string
-		);
-	}
-	const oldString = args.old_string;
-	if (oldString === undefined) {
-		return { message: "mode 'exact' requires old_string", code: 'edit_failed' };
-	}
-	const newString = args.new_string;
-	const replaceAll = args.replace_all;
+	const { anchor, new_string: newString, replace_all: replaceAll, lines } = args;
 	try {
 		const existing = await readExisting(target.abs);
 		if (existing === null) {
 			// Edit is edit-only; a missing file has nothing to search, so it
 			// fails like any unmatched string.
-			return { message: editNotFoundError(oldString) };
+			return { message: editNotFoundError(anchor) };
 		}
-		const applied = applyEditToContent(existing, oldString, newString, replaceAll);
+		const applied = applyEditToContent(existing, anchor, newString, replaceAll, lines);
 		if (!applied.ok) {
 			if (applied.reason === 'not_found') {
-				const suggestion = findClosestMatch(existing, oldString);
+				const suggestion = findClosestMatch(existing, anchor);
 				if (suggestion === null) {
 					// No window cleared the thresholds — exactly today's text.
-					return { message: editNotFoundError(oldString) };
+					return { message: editNotFoundError(anchor) };
 				}
 				return {
-					message: editNotFoundError(oldString, suggestionHint(suggestion)),
+					message: editNotFoundError(anchor, suggestionHint(suggestion)),
 					code: 'edit_failed',
 					details: { suggestion },
 					// The message is the complete model-facing text; code/details
@@ -743,14 +699,14 @@ async function performEdit(
 					detailsUiOnly: true
 				};
 			}
-			return { message: 'new_string must be different from old_string' };
+			return { message: 'new_string must be different from anchor' };
 		}
 		const content = applied.content;
 		await writeFile(target.abs, content);
 		const hunks = structuredPatch('a', 'b', existing, content, '', '', { context: 3 }).hunks;
 		const result: FileEditOutput = {
 			filePath: target.abs,
-			oldString,
+			oldString: anchor,
 			newString,
 			originalFile: existing,
 			structuredPatch: hunks,
@@ -758,56 +714,21 @@ async function performEdit(
 			replaceAll
 		};
 		if (applied.lenient !== undefined) result.lenientTabEating = applied.lenient;
+		if (applied.shift !== undefined && applied.replacedLines !== undefined) {
+			result.replacedLines = applied.replacedLines;
+			result.shift = applied.shift;
+		}
 		if (await isGitRepo(cwd)) {
 			result.gitDiff = gitDiffFor('update', target.rel, existing, content, hunks);
 		}
-		return { result, text: editConfirmation(replaceAll, rawFilePath) };
+		const shiftText =
+			applied.shift === undefined
+				? ''
+				: ` Lines after ${applied.shift.after} shift by ${applied.shift.by >= 0 ? '+' : ''}${applied.shift.by}.`;
+		return { result, text: editConfirmation(replaceAll, rawFilePath) + shiftText };
 	} catch (error) {
 		return { message: error instanceof Error ? error.message : String(error), code: 'edit_failed' };
 	}
-}
-
-async function performRangeEdit(
-	cwd: string,
-	target: { abs: string; rel: string },
-	rawFilePath: string,
-	startLine: number,
-	endLine: number,
-	checksum: string,
-	newText: string
-): Promise<
-	{ result: RangeEditResult; text: string } | { message: string; code: string; details: unknown }
-> {
-	const existing = await readExisting(target.abs);
-	if (existing === null)
-		return {
-			message: `File does not exist: ${rawFilePath}`,
-			code: 'edit_failed',
-			details: undefined
-		};
-	const out = applyRangeEdit(existing, startLine, endLine, checksum, newText);
-	if (!out.ok) return { message: out.message, code: out.reason, details: out.details };
-	await writeFile(target.abs, out.content);
-	const hunks = structuredPatch('a', 'b', existing, out.content, '', '', { context: 3 }).hunks;
-	const result: RangeEditResult = {
-		file_path: target.rel,
-		requested_range: { start: startLine, end: endLine },
-		applied_range: out.applied_range,
-		shift: out.shift,
-		total_lines: out.content.split(/\r?\n/).length,
-		old_lines: out.old_lines,
-		new_lines: out.new_lines,
-		hunks
-	};
-	const delta = result.shift.by >= 0 ? `+${result.shift.by}` : String(result.shift.by);
-	let text =
-		`Edit applied: ${rawFilePath} lines ${result.applied_range.start}-${result.applied_range.end} ` +
-		`(${result.old_lines} → ${result.new_lines} lines; lines after ${result.shift.after} shift by ${delta}). File now ${result.total_lines} lines.`;
-	if (await isGitRepo(cwd)) {
-		result.gitDiff = gitDiffFor('update', target.rel, existing, out.content, hunks);
-		text += `\n${result.gitDiff.patch}`;
-	}
-	return { result, text };
 }
 
 export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
@@ -817,9 +738,9 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 			name: 'edit',
 			description: 'Replace exact text in an existing workspace file.',
 			promptGuidelines: [
-				"Fails (leaving the file unchanged) when `old_string` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
-				'Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits. Anchor on content, never line numbers.',
-				"mode 'range' (with start_line/end_line/checksum/new_string) replaces a line range by number, guarded by a checksum on the first line — use line numbers from read's outline; it returns the diff and how lines after the range shifted. On a stale range the error gives the corrected numbers."
+				"Fails (leaving the file unchanged) when the `anchor` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
+				"`anchor` locates the edit (content, not line numbers). Omit `lines` to replace just the anchor text; pass `lines` (total lines counting from the anchor) to replace a whole block — use the block header + size from read's outline. Returns the diff and how lines after the block shifted. Use `multi_edit` for multi-hunk or multi-file edits.",
+				'Pass whole lines as the anchor when using `lines` (the leading indentation of the anchor line is part of the replaced block).'
 			],
 			argsSchema: EditArgs,
 			parameters: {
@@ -829,39 +750,27 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 						type: 'string',
 						description: 'Absolute path; must resolve inside the workspace.'
 					},
-					mode: {
+					anchor: {
 						type: 'string',
-						enum: ['exact', 'range'],
 						description:
-							"Edit mode. 'exact' (default) replaces old_string; 'range' replaces a line range guarded by a checksum on the first line."
+							'Text locating the edit — usually the first line of the block to replace (whole lines work best with `lines`).'
 					},
-					old_string: {
-						type: 'string',
-						description: 'Text to replace (exact mode).'
+					lines: {
+						type: 'number',
+						description:
+							"Total lines to replace, counting from the anchor line. Omit to replace just the anchor text. Use the block header + size from read's outline."
 					},
 					new_string: {
 						type: 'string',
-						description: 'Replacement text (both modes).'
+						description: 'Replacement text.'
 					},
 					replace_all: {
 						type: 'boolean',
-						description: 'Replace every occurrence (exact mode). Default false.'
-					},
-					start_line: {
-						type: 'number',
-						description: '1-indexed first line to replace (range mode, inclusive).'
-					},
-					end_line: {
-						type: 'number',
-						description: '1-indexed last line to replace (range mode, inclusive).'
-					},
-					checksum: {
-						type: 'string',
-						description: 'Expected content of start_line (range mode).'
+						description: 'Replace every occurrence of the anchor. Default false.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
-				required: ['file_path', 'new_string'],
+				required: ['file_path', 'anchor', 'new_string'],
 				additionalProperties: false
 			},
 			derivePermissionRequest(args) {
