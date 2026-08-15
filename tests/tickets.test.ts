@@ -290,31 +290,37 @@ describe('workspace tickets', () => {
 		});
 		const list = tools.find((t) => t.name === 'ticket_list')!;
 		const get = tools.find((t) => t.name === 'ticket_get')!;
-		const block = tools.find((t) => t.name === 'ticket_block')!;
-		const unblock = tools.find((t) => t.name === 'ticket_unblock')!;
+		const update = tools.find((t) => t.name === 'ticket_update')!;
 
 		const api = tickets.create(user.id, { workspaceKey: workspace, title: 'Build API' });
 		const ui = tickets.create(user.id, { workspaceKey: workspace, title: 'Build UI' });
 		const foreign = tickets.create(user.id, { workspaceKey: otherWorkspace, title: 'Elsewhere' });
 
 		// UI depends on API: UI is blocked, API is not.
-		const blocked = await block.handler({ id: String(ui.id), blockedBy: String(api.id) });
+		const blocked = await update.handler({
+			id: String(ui.id),
+			blockedBy: [String(api.id)]
+		});
 		expect(blocked.ok).toBe(true);
 		expect(tickets.openBlockers(ui.id)).toEqual([api.id]);
 		expect(tickets.listDependents(api.id)).toEqual([ui.id]);
 
-		// Re-blocking is an idempotent no-op.
-		const again = await block.handler({ id: String(ui.id), blockedBy: String(api.id) });
-		expect(again.ok && (again.result as { result: string }).result).toBe('exists');
+		// Re-adding the same edge is an idempotent no-op (declarative replace of
+		// an unchanged set).
+		const again = await update.handler({ id: String(ui.id), blockedBy: [String(api.id)] });
+		expect(again.ok).toBe(true);
+		expect(tickets.openBlockers(ui.id)).toEqual([api.id]);
 
 		// Self-edge and cycle are rejected.
-		expect((await block.handler({ id: String(ui.id), blockedBy: String(ui.id) })).ok).toBe(false);
-		const cycle = await block.handler({ id: String(api.id), blockedBy: String(ui.id) });
+		expect((await update.handler({ id: String(ui.id), blockedBy: [String(ui.id)] })).ok).toBe(
+			false
+		);
+		const cycle = await update.handler({ id: String(api.id), blockedBy: [String(ui.id)] });
 		expect(cycle.ok).toBe(false);
 		expect(!cycle.ok && cycle.error.message).toMatch(/cycle/i);
 
 		// Cross-workspace pairing is rejected (foreign ticket isn't in this workspace).
-		expect((await block.handler({ id: String(ui.id), blockedBy: String(foreign.id) })).ok).toBe(
+		expect((await update.handler({ id: String(ui.id), blockedBy: [String(foreign.id)] })).ok).toBe(
 			false
 		);
 
@@ -352,12 +358,11 @@ describe('workspace tickets', () => {
 			'blockedBy'
 		);
 
-		// Unblock removes the edge; a second unblock reports nothing to remove.
-		expect((await unblock.handler({ id: String(ui.id), blockedBy: String(api.id) })).ok).toBe(true);
+		// Clearing the edge set removes it; a second clear is an idempotent no-op
+		// (declarative replace of an already-empty set reports success).
+		expect((await update.handler({ id: String(ui.id), blockedBy: [] })).ok).toBe(true);
 		expect(tickets.listDependencies(ui.id)).toEqual([]);
-		expect((await unblock.handler({ id: String(ui.id), blockedBy: String(api.id) })).ok).toBe(
-			false
-		);
+		expect((await update.handler({ id: String(ui.id), blockedBy: [] })).ok).toBe(true);
 
 		rmSync(otherWorkspace, { recursive: true, force: true });
 	});

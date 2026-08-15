@@ -95,16 +95,6 @@ const GetArgs = z.object({
 	fields: FieldsArg
 });
 
-const BlockArgs = z.object({
-	id: z.string().min(1),
-	blockedBy: z.string().min(1)
-});
-
-const UnblockArgs = z.object({
-	id: z.string().min(1),
-	blockedBy: z.string().min(1)
-});
-
 export function buildTicketTools(opts: {
 	userId: number;
 	workspaceKey: string;
@@ -250,7 +240,7 @@ export function buildTicketTools(opts: {
 					return err(`Ticket not found: ${id}`);
 				}
 				const fields = normalizeFieldSelector(rawFields);
-				// The tool id is a string (it round-trips into ticket_update/ticket_block's
+				// The tool id is a string (it round-trips into ticket_update's
 				// `z.string()` id param), so the result echoes it in that form. Edge lists
 				// are T-handles — they round-trip into the same id params.
 				const ticketView = {
@@ -274,7 +264,7 @@ export function buildTicketTools(opts: {
 			description: "Update a ticket's title, body, plan, priority, status, or blocking edges.",
 			promptGuidelines: [
 				'status=done when completed; archived when hidden without completion.',
-				'`blockedBy`/`blocks` replace the FULL edge set on that side (omit to leave unchanged, [] to clear) — the declarative alternative to ticket_block/ticket_unblock.'
+				'`blockedBy`/`blocks` replace the FULL edge set on that side (omit to leave unchanged, [] to clear) — the declarative way to add or remove blocking edges.'
 			],
 			argsSchema: UpdateArgs,
 			parameters: {
@@ -338,80 +328,6 @@ export function buildTicketTools(opts: {
 				} catch (e) {
 					return err(e instanceof Error ? e.message : String(e));
 				}
-			}
-		},
-		{
-			name: 'ticket_block',
-			description: 'Record that `id` is blocked by `blockedBy`.',
-			promptGuidelines: [
-				'`id` should not be started until `blockedBy` is done; ticket_list flags tickets with open blockers. Rejects self-edges and cycles.'
-			],
-			argsSchema: BlockArgs,
-			parameters: {
-				type: 'object',
-				properties: {
-					id: { type: 'string', description: 'The ticket that is blocked.' },
-					blockedBy: {
-						type: 'string',
-						description: 'The blocking ticket that must be done first.'
-					}
-				},
-				required: ['id', 'blockedBy'],
-				additionalProperties: false
-			},
-			async handler(args) {
-				const { id, blockedBy } = BlockArgs.parse(args);
-				const dependent = tickets.get(ticketId.parse(id), opts.userId);
-				if (!dependent || dependent.workspaceKey !== opts.workspaceKey) {
-					return err(`Ticket not found: ${id}`);
-				}
-				const prereq = tickets.get(ticketId.parse(blockedBy), opts.userId);
-				if (!prereq || prereq.workspaceKey !== opts.workspaceKey) {
-					return err(`Ticket not found: ${blockedBy}`);
-				}
-				try {
-					const result = tickets.addDependency(
-						opts.userId,
-						ticketId.parse(id),
-						ticketId.parse(blockedBy)
-					);
-					const verb = result === 'added' ? 'now blocked by' : 'already blocked by';
-					return ok({ id, blockedBy, result }, `Ticket ${id} ${verb} ${blockedBy}.`);
-				} catch (e) {
-					return err(e instanceof Error ? e.message : String(e));
-				}
-			}
-		},
-		{
-			name: 'ticket_unblock',
-			description: 'Remove a blocking edge added by ticket_block.',
-			argsSchema: UnblockArgs,
-			parameters: {
-				type: 'object',
-				properties: {
-					id: { type: 'string', description: 'The ticket that is blocked.' },
-					blockedBy: { type: 'string', description: 'The blocking ticket to detach.' }
-				},
-				required: ['id', 'blockedBy'],
-				additionalProperties: false
-			},
-			async handler(args) {
-				const { id, blockedBy } = UnblockArgs.parse(args);
-				const dependent = tickets.get(ticketId.parse(id), opts.userId);
-				if (!dependent || dependent.workspaceKey !== opts.workspaceKey) {
-					return err(`Ticket not found: ${id}`);
-				}
-				const removed = tickets.removeDependency(
-					opts.userId,
-					ticketId.parse(id),
-					ticketId.parse(blockedBy)
-				);
-				return removed
-					? ok(
-							{ id, blockedBy, result: 'removed' },
-							`Ticket ${id} no longer blocked by ${blockedBy}.`
-						)
-					: err(`Ticket ${id} is not blocked by ${blockedBy}.`);
 			}
 		}
 	];

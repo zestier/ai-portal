@@ -375,22 +375,10 @@ const GIT_STRUCTURED_TOOLS = [
 	'git_worktree_list'
 ];
 /**
- * Workspace ticket bookkeeping. `ticket_block` / `ticket_unblock` are seeded
- * alongside the rest because they are strictly less capable than the already
- * seeded `ticket_update`, whose `blockedBy` / `blocks` fields replace whole
- * edge sets declaratively — leaving them out withheld nothing and only made
- * ordering follow-up work prompt, which is an auto-deny under the `auto-deny`
- * approval mode even though the portal guidance tells agents to link
- * tickets with `ticket_block`.
+ * Workspace ticket bookkeeping. Edges are wired through `ticket_update`'s
+ * `blockedBy` / `blocks` fields, which replace whole edge sets declaratively.
  */
-const TICKET_STRUCTURED_TOOLS = [
-	'ticket_add',
-	'ticket_list',
-	'ticket_get',
-	'ticket_update',
-	'ticket_block',
-	'ticket_unblock'
-];
+const TICKET_STRUCTURED_TOOLS = ['ticket_add', 'ticket_list', 'ticket_get', 'ticket_update'];
 const PERMISSION_STRUCTURED_TOOLS = ['permission_capabilities'];
 
 /**

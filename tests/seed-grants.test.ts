@@ -216,8 +216,6 @@ describe('seed grants — runtime behaviour', () => {
 		expect(customToolMatch('ticket_list')).toBe('allow');
 		expect(customToolMatch('ticket_get')).toBe('allow');
 		expect(customToolMatch('ticket_update')).toBe('allow');
-		expect(customToolMatch('ticket_block')).toBe('allow');
-		expect(customToolMatch('ticket_unblock')).toBe('allow');
 	});
 
 	it('auto-approves permission capability inspection by default', () => {

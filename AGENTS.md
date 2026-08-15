@@ -20,7 +20,8 @@ Two layers are in play:
   (`ticket_add` / `ticket_list` / `ticket_update`), with the plan and checklist in
   the ticket `plan` field — not a scratch markdown file. Start a non-trivial task
   by checking `ticket_list` and resuming the matching ticket before re-planning;
-  file follow-up work as new tickets and link them with `ticket_block`. The
+  file follow-up work as new tickets and link them with `ticket_update`'s
+  `blockedBy`/`blocks` fields. The
   session `todos` table is within-session scratch that mirrors the active ticket,
   not the source of truth.
 - **Repo layer (this repo tightens it):** **every commit should map to a ticket.**
