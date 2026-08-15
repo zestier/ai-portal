@@ -243,11 +243,11 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					},
 					offset: {
 						type: 'number',
-						description: '1-indexed start line.'
+						description: '1-indexed start line. Required for text.'
 					},
 					limit: {
 						type: 'number',
-						description: 'Lines to read.'
+						description: 'Lines to read. Required for text.'
 					},
 					numbered: {
 						type: 'boolean',
