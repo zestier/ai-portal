@@ -156,6 +156,24 @@ test('settings tab selection survives reload and deep links', async ({ page }) =
 	await expect(page.getByRole('heading', { name: 'Saved permission grants' })).toBeVisible();
 });
 
+test('the Extensions tab renders, deep-links, and lists the admin-managed sources', async ({
+	page
+}) => {
+	// The Extensions tab is admin-gated but present in single-user mode; this
+	// guards against a regression where the tab was omitted from the settings
+	// tab list entirely (the panel + API existed but the tab was unreachable).
+	await page.goto('/settings?tab=extensions');
+	await expect(page.getByRole('tab', { name: 'Extensions', exact: true })).toHaveAttribute(
+		'aria-selected',
+		'true'
+	);
+	await expect(page.getByRole('heading', { name: 'Extensions', exact: true })).toBeVisible();
+	// The warning banner renders (trust model), and the panel self-loads the
+	// (empty) admin-managed list from /api/admin/extensions.
+	await expect(page.getByText(/run with full system permissions/i)).toBeVisible();
+	await expect(page.getByText(/No extensions configured/i)).toBeVisible();
+});
+
 test('the default approval mode is saved and seeds newly created conversations', async ({
 	page,
 	request

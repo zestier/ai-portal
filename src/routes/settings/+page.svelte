@@ -17,8 +17,17 @@
 
 	const visibleTabs = $derived<SettingsTab[]>(
 		data.enableRedeploy
-			? ['general', 'prompts', 'memory', 'permissions', 'models', 'activity', 'update']
-			: ['general', 'prompts', 'memory', 'permissions', 'models', 'activity']
+			? [
+					'general',
+					'prompts',
+					'memory',
+					'permissions',
+					'models',
+					'extensions',
+					'activity',
+					'update'
+				]
+			: ['general', 'prompts', 'memory', 'permissions', 'models', 'extensions', 'activity']
 	);
 
 	function readTab(value: string | null, allowedTabs: SettingsTab[]): SettingsTab {
