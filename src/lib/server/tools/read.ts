@@ -14,15 +14,15 @@ import {
 	type WorktreeToolContext
 } from './worktree-selector';
 import { computeOutline, renderOutline } from './outline';
-import { structuredPatch } from 'diff';
-import type { Hunk } from 'diff';
-
+import {
+	deltaKey,
+	deltaReadResult,
+	deltaStore,
+	storeDelta,
+	unchangedReadResult
+} from './read-delta';
 // Mirrors the Agent SDK's FileReadInput (sdk-tools.d.ts) so the aliased SDK
 // `Read` tool (which sends these field names verbatim) parses cleanly.
-// `file_path` is absolute per the SDK contract; `resolveReadTarget` below also
-// accepts workspace-relative paths so tests pass them unchanged. `offset` and
-// `limit` are NOT schema-required here — image reads must work without them — so
-// they are enforced in the handler for text reads (see `readFileResult`).
 const ReadArgs = z
 	.object({
 		file_path: z.string().min(1).max(4096),
@@ -49,56 +49,6 @@ const MAX_READ_RESULT_BYTES = 200_000;
 // an outline.
 const OUTLINE_READ_FLOOR = 40;
 const OUTLINE_READ_MAX_RANGE = 60;
-
-// Delta reads (T38): keep a per-conversation snapshot so a broad re-read of an
-// unchanged file returns a short marker and a changed file returns only the
-// line-diff hunks — no re-sending whole files. Appends new content instead of
-// rewriting history, so it plays nice with prefix caches.
-// ponytail: module-level Map, process-lifetime, per-conversation+path keys.
-// Ceiling: unbounded growth on a long-lived process if reads never repeat;
-// upgrade to a DB or a per-conversation LRU when sessions get long. Entry cap
-// evicts oldest first (Map preserves insertion order).
-interface DeltaRecord {
-	hash: string;
-	content: string;
-	mtimeMs: number;
-}
-const deltaStore = new Map<string, DeltaRecord>();
-const MAX_DELTA_ENTRIES = 50;
-
-function deltaKey(conversationId: unknown, abs: string): string {
-	return `${conversationId ?? 'default'}:${abs}`;
-}
-
-function storeDelta(key: string, record: DeltaRecord): void {
-	deltaStore.set(key, record);
-	if (deltaStore.size > MAX_DELTA_ENTRIES) {
-		const oldest = deltaStore.keys().next().value;
-		if (oldest !== undefined) deltaStore.delete(oldest);
-	}
-}
-
-function renderDelta(
-	rel: string,
-	oldHash: string,
-	newHash: string,
-	oldLines: number,
-	newLines: number,
-	hunks: Hunk[]
-): string {
-	const shift = newLines - oldLines;
-	const delta = shift >= 0 ? `+${shift}` : String(shift);
-	const out: string[] = [];
-	out.push(
-		`read: ${rel} changed since your last read (${oldHash} → ${newHash}, ${oldLines} → ${newLines} lines, shift ${delta}).`
-	);
-	for (const h of hunks) {
-		out.push(`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`);
-		out.push(...h.lines);
-	}
-	out.push('Delta only — read an offset:limit range for full lines.');
-	return out.join('\n');
-}
 
 // The SDK's FileReadOutput image union only carries these raster mimes. BMP/SVG
 // are recognized images in this portal but fall outside the contract, so they
@@ -236,53 +186,6 @@ async function outlineRead(
 		},
 		`Read file: ${rel} (outline)`,
 		{ views: [{ type: 'text', text: body }] }
-	);
-}
-
-// A broad re-read of an unchanged file: a short marker instead of re-echoing
-// content. The message is guidance (drill in / mode:'content'), not a claim
-// that every body is in context.
-function unchangedReadResult(
-	rel: string,
-	hash: string,
-	totalLines: number,
-	size: number
-): ToolResult {
-	const text =
-		`read: ${rel} unchanged since your last read (hash ${hash}, ${totalLines} lines) — no need to ` +
-		`re-read; use a targeted offset:limit range for a body, or mode:'content' for raw content.`;
-	return ok(
-		{ type: 'unchanged', file_path: rel, hash, total_lines: totalLines, size },
-		`Unchanged: ${rel}`,
-		{ views: [{ type: 'text', text }] }
-	);
-}
-
-// A broad re-read of a changed file: only the line-diff hunks against the
-// previous snapshot.
-function deltaReadResult(
-	rel: string,
-	record: DeltaRecord,
-	content: string,
-	newHash: string,
-	newLines: number
-): ToolResult {
-	const oldLines = record.content.split(/\r?\n/).length;
-	const hunks = structuredPatch('a', 'b', record.content, content, '', '', { context: 2 }).hunks;
-	const text = renderDelta(rel, record.hash, newHash, oldLines, newLines, hunks);
-	return ok(
-		{
-			type: 'delta',
-			file_path: rel,
-			old_hash: record.hash,
-			new_hash: newHash,
-			old_lines: oldLines,
-			new_lines: newLines,
-			shift: newLines - oldLines,
-			hunks
-		},
-		`Delta: ${rel}`,
-		{ views: [{ type: 'text', text }] }
 	);
 }
 

@@ -36,7 +36,7 @@ import {
 	resolveWriteTarget,
 	suggestionHint,
 	type FileEditOutput
-} from './edit-file';
+} from './edit-file/common';
 import { err, ok, type PortalTool, type ToolPermissionRequest, type ToolResult } from './types';
 import {
 	createTreeResolver,
