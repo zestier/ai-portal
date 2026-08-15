@@ -37,6 +37,9 @@ describe('pi stub loop', () => {
 		expect(deltas).toContain('Stubbed reply to: hello stub world');
 		expect(events.some((e) => e.type === 'message.start')).toBe(true);
 		expect(events.some((e) => e.type === 'message.end')).toBe(true);
+		// Per-turn context snapshot emitted at agent_end (stub window 200,000).
+		const usage = events.find((e) => e.type === 'context.usage');
+		expect(usage).toMatchObject({ tokenLimit: 200_000, currentTokens: expect.any(Number) });
 		expect(events.some((e) => e.type === 'error')).toBe(false);
 	}, 30_000);
 });

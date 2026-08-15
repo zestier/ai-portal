@@ -21,7 +21,6 @@
 		modelOptions = [],
 		parent = null,
 		usage = null,
-		recentCompaction = null,
 		mode,
 		memoryMode,
 		memoryExtractorModel,
@@ -44,7 +43,6 @@
 			messageIndex: number | null;
 		} | null;
 		usage?: ConversationUsage | null;
-		recentCompaction?: { tokensRemoved?: number; messagesRemoved?: number } | null;
 		mode: SessionMode;
 		memoryMode: MemoryMode;
 		memoryExtractorModel: string | null;
@@ -565,7 +563,7 @@
 					</div>
 				{/if}
 				{#if showContextMeter}
-					<ContextMeter {usage} {recentCompaction} />
+					<ContextMeter {usage} />
 				{/if}
 				<div class="session-settings" role="group" aria-label="Session settings">
 					<div class="setting-row model-row">

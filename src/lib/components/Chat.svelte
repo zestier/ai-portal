@@ -133,8 +133,6 @@
 		untrack(() => conversation.disabledToolGroups)
 	);
 	let usage = $state<ConversationUsage | null>(untrack(() => initialUsage));
-	let recentCompaction = $state<{ tokensRemoved?: number; messagesRemoved?: number } | null>(null);
-	let compactionTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Child forks of this conversation, keyed by the source message id so
 	// the corresponding <Message_> can render a "Forked → ..." badge.
@@ -160,13 +158,6 @@
 			forksByMessage = map;
 		} catch {
 			/* non-fatal */
-		}
-	}
-
-	function clearCompactionTimer() {
-		if (compactionTimer) {
-			clearTimeout(compactionTimer);
-			compactionTimer = null;
 		}
 	}
 
@@ -222,14 +213,12 @@
 			disabledToolGroups = conversation.disabledToolGroups;
 			usage = initialUsage;
 			composer = initialComposer;
-			recentCompaction = null;
 			pinnedToBottom = true;
 			hasNewBelow = false;
 			forksByMessage = {};
 			pendingInteractive = [...initialPendingInteractive];
 			visibleInteractive = [...initialPendingInteractive];
 			clearInteractiveRevealTimers();
-			clearCompactionTimer();
 			void scrollToBottom({ force: true });
 			// Reattach the EventSource to any in-progress turn so a
 			// refresh-mid-stream resumes seamlessly.
@@ -251,7 +240,6 @@
 	$effect(() => {
 		return () => {
 			closeStream();
-			clearCompactionTimer();
 			clearInteractiveRevealTimers();
 			clearProgrammaticScrollGuard();
 		};
@@ -1029,30 +1017,9 @@
 					conversationId: conversation.id,
 					currentTokens: ev.currentTokens,
 					tokenLimit: ev.tokenLimit,
-					messagesLength: ev.messagesLength,
-					systemTokens: ev.systemTokens ?? null,
-					conversationTokens: ev.conversationTokens ?? null,
-					toolDefinitionsTokens: ev.toolDefinitionsTokens ?? null,
 					updatedAt: Date.now(),
-					...(ev.percentage !== undefined ? { percentage: ev.percentage } : {}),
-					...(ev.categories !== undefined ? { categories: ev.categories } : {}),
-					...(ev.gridRows !== undefined ? { gridRows: ev.gridRows } : {}),
-					...(ev.model !== undefined ? { model: ev.model } : {})
+					...(ev.percentage !== undefined ? { percentage: ev.percentage } : {})
 				};
-				break;
-			}
-			case 'context.compaction': {
-				if (ev.phase === 'complete') {
-					recentCompaction = {
-						...(ev.tokensRemoved !== undefined ? { tokensRemoved: ev.tokensRemoved } : {}),
-						...(ev.messagesRemoved !== undefined ? { messagesRemoved: ev.messagesRemoved } : {})
-					};
-					if (compactionTimer) clearTimeout(compactionTimer);
-					compactionTimer = setTimeout(() => {
-						recentCompaction = null;
-						compactionTimer = null;
-					}, 6000);
-				}
 				break;
 			}
 		}
@@ -1782,7 +1749,6 @@
 		{modelOptions}
 		{parent}
 		{usage}
-		{recentCompaction}
 		mode={sessionMode}
 		{memoryMode}
 		{memoryExtractorModel}

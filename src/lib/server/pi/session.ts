@@ -38,6 +38,7 @@ import type { ApprovalMode, PortalEvent, SessionMode } from '$lib/types';
 import type { PortalTool } from '../tools/types';
 import { assemblePiTools } from '../tools/assemble';
 import { createPiPermissionResolver } from './permission-gate';
+import { piContextUsageToEvent } from './context-usage';
 import { workspaceRootsFor } from '../leases';
 import type { ProviderSession } from './session-contract';
 import { AsyncQueue } from '../runtime/async-queue';
@@ -361,9 +362,18 @@ function makePiProviderSession(
 			const mapper = new PiEventMapper(messageId);
 			const unsub = piSession.subscribe((ev) => {
 				for (const portalEvent of mapper.map(ev)) queue.push(portalEvent);
-				// `agent_end` terminates the run; end the stream here (runPrompt's
-				// finally re-ends as a no-op safety net for aborted runs).
-				if (ev.type === 'agent_end') queue.end();
+				// `agent_end` terminates the run: snapshot this turn's context
+				// usage and emit it before the stream closes (one per turn), then
+				// end the stream here (runPrompt's finally re-ends as a no-op
+				// safety net for aborted runs).
+				if (ev.type === 'agent_end') {
+					const portalUsage = piSession.getContextUsage();
+					if (portalUsage) {
+						const mapped = piContextUsageToEvent(portalUsage);
+						if (mapped) queue.push(mapped);
+					}
+					queue.end();
+				}
 			});
 			active = { queue, unsub };
 			runtime.setActiveQueue(queue);

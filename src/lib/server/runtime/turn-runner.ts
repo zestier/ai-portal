@@ -590,11 +590,7 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
 			try {
 				usageRepo.upsert(opts.conversationId, {
 					currentTokens: ev.currentTokens,
-					tokenLimit: ev.tokenLimit,
-					messagesLength: ev.messagesLength,
-					systemTokens: ev.systemTokens ?? null,
-					conversationTokens: ev.conversationTokens ?? null,
-					toolDefinitionsTokens: ev.toolDefinitionsTokens ?? null
+					tokenLimit: ev.tokenLimit
 				});
 			} catch (usageErr) {
 				log.warn('turn.usage.persist_failed', {

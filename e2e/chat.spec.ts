@@ -23,6 +23,25 @@ test('streamed assistant reply (stubbed) appears and persists across reloads', a
 	await expect(page.getByText('Stubbed reply to: hello world').first()).toBeVisible();
 });
 
+test('context meter appears in the chat header after a turn', async ({ page, request }) => {
+	const id = await createConversation(request, uniqueTitle('E2E context meter'));
+	await page.goto(`/conversations/${id}`);
+
+	const composer = page.getByPlaceholder(/Message…/);
+	await composer.click();
+	await composer.fill('hello world');
+	await composer.press('Enter');
+
+	await waitForAssistantMessage(request, id, 'Stubbed reply to: hello world');
+
+	// The per-turn usage snapshot (stub model contextWindow 200,000) lights up
+	// the meter. It lives in the collapsed header details; expand to see it.
+	await page.locator('button.chat-header-row').click();
+	await expect(
+		page.getByRole('img', { name: /Context window usage: .* of 200000 tokens/ })
+	).toBeVisible();
+});
+
 test('a worktree fork failure is visible on the assistant message', async ({ page, request }) => {
 	const id = await createConversation(request, uniqueTitle('E2E worktree fork failure'));
 	await page.goto(`/conversations/${id}`);

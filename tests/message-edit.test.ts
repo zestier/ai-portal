@@ -52,8 +52,7 @@ describe('message-edit.inlineEditMessage', () => {
 		messages.append(conv.id, { role: 'user', content: 'later user' });
 		usage.upsert(conv.id, {
 			currentTokens: 9000,
-			tokenLimit: 128_000,
-			messagesLength: 3
+			tokenLimit: 128_000
 		});
 
 		const result = edit.inlineEditMessage({
@@ -340,7 +339,7 @@ describe('message-edit.regenerateFromAssistant', () => {
 			parentToolCallId: null
 		});
 		messages.append(conv.id, { role: 'user', content: 'later user' });
-		usage.upsert(conv.id, { currentTokens: 9000, tokenLimit: 128_000, messagesLength: 3 });
+		usage.upsert(conv.id, { currentTokens: 9000, tokenLimit: 128_000 });
 
 		const result = edit.regenerateFromAssistant({
 			userId: u.id,

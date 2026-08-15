@@ -107,10 +107,6 @@ CREATE TABLE conversation_usage (
   conversation_id          INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   current_tokens           INTEGER NOT NULL,
   token_limit              INTEGER NOT NULL,
-  messages_length          INTEGER NOT NULL,
-  system_tokens            INTEGER,
-  conversation_tokens      INTEGER,
-  tool_definitions_tokens  INTEGER,
   updated_at               INTEGER NOT NULL
 );
 

@@ -269,21 +269,25 @@ would only detach this client).
 
 The chat header renders a `ContextMeter` next to the conversation title showing
 `currentTokens / tokenLimit` plus a percentage. The bar fill is color-coded by
-threshold: green below 70%, amber 70–90%, red above 90%. Clicking the bar
-toggles a per-bucket breakdown (system / conversation / tools / messages) when
-the SDK provided one.
+threshold: green below 70%, amber 70–90%, red above 90%. The meter is a simple
+bar — no per-category breakdown (pi exposes only tokens / context window /
+percent, so there is nothing richer to show).
 
 Data flow:
 
 - Initial value comes from `+page.server.ts`, which reads the latest snapshot
   from the `conversation_usage` table and passes it to `Chat.svelte` as
-  `initialUsage`.
-- Live updates arrive on the SSE stream as `context.usage` events (translated
-  from `session.usage_info` by the server-side bridge) and are merged into
-  local component state.
-- `context.compaction` events with `phase: 'complete'` show a transient
-  "✨ compacted · −N tokens" notice next to the meter that auto-dismisses
-  after a few seconds.
+  `initialUsage`, so the meter survives reloads.
+- Live updates arrive on the SSE stream as `context.usage` events: once per
+  turn, the pi session calls `AgentSession.getContextUsage()` at `agent_end`
+  and maps the result (`currentTokens = tokens`, `tokenLimit = contextWindow`,
+  `percentage = percent`) through `piContextUsageToEvent` before the turn
+  stream closes. When `tokens` is unknown (e.g. right after compaction) the
+  snapshot is skipped and the meter keeps its last value.
+- No live compaction notice: pi auto-compacts in post-run processing *after*
+  the portal turn stream closes, so a `compaction_end` signal can't reach the
+  client without changing turn-done timing. The meter self-corrects on the
+  next turn, since each snapshot reflects the current session tree.
 
 ## Theming
 
