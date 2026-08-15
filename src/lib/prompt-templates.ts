@@ -321,15 +321,20 @@ const REFINE_PROMPT =
 	'Write both artifacts into the ticket with `ticket_update` (id {{ticket.id}}), keeping any important ' +
 	'details from the current body:\n\n' +
 	'1. Spec (ticket body) — goal, verifiable acceptance criteria, requirements and edge cases, explicit ' +
-	'in/out of scope, constraints (dependencies, versions, conventions, performance, security), and every ' +
-	'decision with its rationale. No open questions left.\n\n' +
+	'in/out of scope, constraints, and every decision with its rationale. No open questions left.\n\n' +
 	'2. Plan (ticket plan) — an ordered, dependency-sorted checklist of small, independently verifiable ' +
 	'steps: file paths, symbols, the exact change, and how to verify each. The executor should only follow ' +
 	'it, not design it.\n\n' +
 	'Research the code first so file paths and approaches are accurate. Ask me the questions needed to drive ' +
-	'each open decision to a concrete choice. Match depth to the ticket — a small change needs a tight spec ' +
-	'and short checklist, not a padded one. Do not implement anything — refine only writes the spec and plan.' +
-	'\n\nTicket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
+	'each open decision to a concrete choice. Do not implement anything — refine only writes the spec and plan.' +
+	'\n\nWrite both artifacts tight:\n' +
+	'- Bullets and fragments, not full-sentence prose. No filler; never restate the ticket title or ID.\n' +
+	"- Include a section only if it carries new information; skip or merge ones that don't apply.\n" +
+	'- One line per decision; give rationale only when the choice is non-obvious — one sentence of ' +
+	'rationale is a paragraph.\n' +
+	'- Every path, symbol, and verification step stays exact; terse wording never cuts content.\n' +
+	'- Match depth to the ticket: small change → tight spec and short checklist, not a padded one.\n\n' +
+	'Ticket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
 
 export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 	{
