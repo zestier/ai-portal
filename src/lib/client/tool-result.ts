@@ -12,6 +12,8 @@
 // Older shapes (plain string, raw error object) also occur — we normalize them
 // all into a Block[].
 
+import { parseEnvelopeJson, deriveToolResultViews } from '$lib/tool-result-views';
+
 export type ResultBlock =
 	| { kind: 'text'; text: string }
 	| { kind: 'terminal'; text: string; exitCode?: number | undefined; cwd?: string | undefined }
@@ -30,6 +32,11 @@ export interface DecodedResult {
 	// ToolCall.svelte. (Git cards read the hint off the envelope themselves via
 	// parseGitToolResult, so they don't go through this field.)
 	followUpHint?: string | undefined;
+	// Best-effort exact text that was fed back to the model on the next turn,
+	// recomputed from the persisted envelope with the same pure projection the
+	// server uses — present for portal envelopes and plain strings, undefined
+	// for other shapes (native SDK `{content, …}` records, invalid JSON, null).
+	modelText?: string | undefined;
 }
 
 const markdownResultTools = new Set(['ask_user', 'read_agent', 'report_intent', 'task_complete']);
@@ -103,14 +110,18 @@ export function decodeToolResult(resultJson: string | null): DecodedResult {
 		return { blocks: [{ kind: 'text', text: resultJson }], fallbackText: resultJson };
 	}
 	if (typeof v === 'string') {
-		return { blocks: [{ kind: 'text', text: v }], fallbackText: v };
+		return { blocks: [{ kind: 'text', text: v }], fallbackText: v, modelText: v };
 	}
 	if (!isRecord(v)) {
 		const txt = JSON.stringify(v, null, 2);
 		return { blocks: [{ kind: 'text', text: txt }], fallbackText: txt };
 	}
 	const envelope = decodeEnvelope(v);
-	if (envelope) return envelope;
+	if (envelope) {
+		const parsed = parseEnvelopeJson(resultJson);
+		if (parsed) envelope.modelText = deriveToolResultViews(parsed).modelText;
+		return envelope;
+	}
 	if (Array.isArray(v.contents) && v.contents.length > 0) {
 		const blocks = decodeContents(v.contents);
 		if (blocks.length > 0) {

@@ -453,6 +453,44 @@ describe('Svelte component regression coverage', () => {
 		expect(withoutHint).not.toContain('remember to reconcile your tickets');
 	});
 
+	test('ToolCall surfaces a "Sent to model" disclosure for an envelope result', () => {
+		const toolCall = {
+			id: 'X1',
+			messageId: 'M1',
+			tool: 'git_log',
+			argsJson: '{}',
+			resultJson: JSON.stringify({
+				ok: true,
+				result: { commits: [{ sha: 'a1', subject: 'first' }] }
+			}),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		expect(body).toContain('Sent to model');
+		expect(body).toContain('sha: a1');
+	});
+
+	test('ToolCall hides "Sent to model" for a non-envelope result', () => {
+		const toolCall = {
+			id: 'X1',
+			messageId: 'M1',
+			tool: 'bash',
+			argsJson: '{}',
+			resultJson: JSON.stringify({ content: 'x', detailedContent: 'y' }),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		expect(body).not.toContain('Sent to model');
+	});
+
 	test('ToolCall injects <wbr> break points after slashes in a long path summary', () => {
 		const toolCall = {
 			id: 'X2',

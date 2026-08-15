@@ -310,6 +310,12 @@
 					<div class="muted">{decoded.followUpHint}</div>
 				{/if}
 			{/if}
+			{#if decoded.modelText !== undefined}
+				<details class="raw">
+					<summary class="disclosure eyebrow">Sent to model</summary>
+					<pre><code>{decoded.modelText}</code></pre>
+				</details>
+			{/if}
 			<details class="raw">
 				<summary class="disclosure eyebrow">Raw output</summary>
 				<pre><code>{resultJson}</code></pre>

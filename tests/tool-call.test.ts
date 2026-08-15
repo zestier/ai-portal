@@ -499,6 +499,48 @@ describe('decodeToolResult', () => {
 	});
 });
 
+describe('decodeToolResult modelText', () => {
+	it('derives modelText from a plain-string success envelope', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: true, result: 'plain text' }));
+		expect(r.modelText).toBe('plain text');
+	});
+
+	it('derives modelText from an object-result envelope (readable projection)', () => {
+		const r = decodeToolResult(
+			JSON.stringify({ ok: true, result: { commits: [{ sha: 'a1', subject: 'first' }] } })
+		);
+		expect(r.modelText).toContain('commits:');
+		expect(r.modelText).toContain('sha: a1');
+	});
+
+	it('prefers a tool-provided text view as modelText', () => {
+		const r = decodeToolResult(
+			JSON.stringify({ ok: true, views: [{ type: 'text', text: 'rendered' }] })
+		);
+		expect(r.modelText).toBe('rendered');
+	});
+
+	it('derives modelText from an error envelope', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: false, error: { message: 'boom' } }));
+		expect(r.modelText).toBe('boom');
+	});
+
+	it('uses the string itself as modelText for a plain-string result', () => {
+		const r = decodeToolResult(JSON.stringify('plain output'));
+		expect(r.modelText).toBe('plain output');
+	});
+
+	it('leaves modelText undefined for non-envelope records', () => {
+		const r = decodeToolResult(JSON.stringify({ content: 'x', detailedContent: 'y' }));
+		expect(r.modelText).toBeUndefined();
+	});
+
+	it('leaves modelText undefined for invalid JSON and null', () => {
+		expect(decodeToolResult('not valid json').modelText).toBeUndefined();
+		expect(decodeToolResult(null).modelText).toBeUndefined();
+	});
+});
+
 describe('shouldRenderToolResultAsMarkdown', () => {
 	it('uses markdown for human-facing prose tools', () => {
 		for (const tool of ['ask_user', 'read_agent', 'report_intent', 'task_complete']) {
