@@ -13,6 +13,9 @@ import {
 	WORKTREE_PARAM,
 	type WorktreeToolContext
 } from './worktree-selector';
+import { computeOutline, renderOutline } from './outline';
+import { structuredPatch } from 'diff';
+import type { Hunk } from 'diff';
 
 // Mirrors the Agent SDK's FileReadInput (sdk-tools.d.ts) so the aliased SDK
 // `Read` tool (which sends these field names verbatim) parses cleanly.
@@ -46,6 +49,56 @@ const MAX_READ_RESULT_BYTES = 200_000;
 // an outline.
 const OUTLINE_READ_FLOOR = 40;
 const OUTLINE_READ_MAX_RANGE = 60;
+
+// Delta reads (T38): keep a per-conversation snapshot so a broad re-read of an
+// unchanged file returns a short marker and a changed file returns only the
+// line-diff hunks — no re-sending whole files. Appends new content instead of
+// rewriting history, so it plays nice with prefix caches.
+// ponytail: module-level Map, process-lifetime, per-conversation+path keys.
+// Ceiling: unbounded growth on a long-lived process if reads never repeat;
+// upgrade to a DB or a per-conversation LRU when sessions get long. Entry cap
+// evicts oldest first (Map preserves insertion order).
+interface DeltaRecord {
+	hash: string;
+	content: string;
+	mtimeMs: number;
+}
+const deltaStore = new Map<string, DeltaRecord>();
+const MAX_DELTA_ENTRIES = 50;
+
+function deltaKey(conversationId: unknown, abs: string): string {
+	return `${conversationId ?? 'default'}:${abs}`;
+}
+
+function storeDelta(key: string, record: DeltaRecord): void {
+	deltaStore.set(key, record);
+	if (deltaStore.size > MAX_DELTA_ENTRIES) {
+		const oldest = deltaStore.keys().next().value;
+		if (oldest !== undefined) deltaStore.delete(oldest);
+	}
+}
+
+function renderDelta(
+	rel: string,
+	oldHash: string,
+	newHash: string,
+	oldLines: number,
+	newLines: number,
+	hunks: Hunk[]
+): string {
+	const shift = newLines - oldLines;
+	const delta = shift >= 0 ? `+${shift}` : String(shift);
+	const out: string[] = [];
+	out.push(
+		`read: ${rel} changed since your last read (${oldHash} → ${newHash}, ${oldLines} → ${newLines} lines, shift ${delta}).`
+	);
+	for (const h of hunks) {
+		out.push(`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`);
+		out.push(...h.lines);
+	}
+	out.push('Delta only — read an offset:limit range for full lines.');
+	return out.join('\n');
+}
 
 // The SDK's FileReadOutput image union only carries these raster mimes. BMP/SVG
 // are recognized images in this portal but fall outside the contract, so they
@@ -159,12 +212,11 @@ async function outlineRead(
 	rel: string,
 	content: string,
 	totalLines: number,
-	size: number
+	size: number,
+	hash: string
 ): Promise<ToolResult | null> {
-	const { computeOutline, renderOutline } = await import('./outline');
 	const outline = computeOutline(content);
 	if (outline.format !== 'normal' || outline.blocks.length === 0) return null;
-	const hash = createHash('sha1').update(content).digest('hex').slice(0, 8);
 	const banner =
 		`read: ${rel} — ${totalLines} lines. Returning an indentation outline instead of full ` +
 		`content — read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block ` +
@@ -189,6 +241,53 @@ async function outlineRead(
 	);
 }
 
+// A broad re-read of an unchanged file: a short marker instead of re-echoing
+// content. The message is guidance (drill in / mode:'content'), not a claim
+// that every body is in context.
+function unchangedReadResult(
+	rel: string,
+	hash: string,
+	totalLines: number,
+	size: number
+): ToolResult {
+	const text =
+		`read: ${rel} unchanged since your last read (hash ${hash}, ${totalLines} lines) — no need to ` +
+		`re-read; use a targeted offset:limit range for a body, or mode:'content' for raw content.`;
+	return ok(
+		{ type: 'unchanged', file_path: rel, hash, total_lines: totalLines, size },
+		`Unchanged: ${rel}`,
+		{ views: [{ type: 'text', text }] }
+	);
+}
+
+// A broad re-read of a changed file: only the line-diff hunks against the
+// previous snapshot.
+function deltaReadResult(
+	rel: string,
+	record: DeltaRecord,
+	content: string,
+	newHash: string,
+	newLines: number
+): ToolResult {
+	const oldLines = record.content.split(/\r?\n/).length;
+	const hunks = structuredPatch('a', 'b', record.content, content, '', '', { context: 2 }).hunks;
+	const text = renderDelta(rel, record.hash, newHash, oldLines, newLines, hunks);
+	return ok(
+		{
+			type: 'delta',
+			file_path: rel,
+			old_hash: record.hash,
+			new_hash: newHash,
+			old_lines: oldLines,
+			new_lines: newLines,
+			shift: newLines - oldLines,
+			hunks
+		},
+		`Delta: ${rel}`,
+		{ views: [{ type: 'text', text }] }
+	);
+}
+
 export async function readFileResult(
 	cwd: string,
 	filePath: string,
@@ -197,6 +296,7 @@ export async function readFileResult(
 		limit?: number;
 		numbered?: boolean;
 		mode?: 'auto' | 'outline' | 'content';
+		conversationId?: unknown;
 	} = {}
 ): Promise<ToolResult> {
 	const resolved = resolveReadTarget(cwd, filePath);
@@ -221,12 +321,31 @@ export async function readFileResult(
 		if (content.includes('\0')) {
 			return err(`File contains null bytes and is likely binary: ${rel}`);
 		}
+		const hash = createHash('sha1').update(content).digest('hex').slice(0, 8);
 		const lines = content.split(/\r?\n/);
 		const totalLines = lines.length;
 		if (req.offset === undefined || req.limit === undefined) {
 			return err(
 				`Reads of text files require both offset and limit (file has ${totalLines} lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`
 			);
+		}
+		// Delta reads (T38): every text read refreshes the per-conversation
+		// snapshot, and a broad re-read (not a targeted drill-in) returns the
+		// delta — an `unchanged` marker, or line-diff hunks when the file
+		// changed. mode 'content'/'outline' explicitly opt out.
+		const key = deltaKey(req.conversationId, abs);
+		const record = deltaStore.get(key);
+		storeDelta(key, { hash, content, mtimeMs: fileStat.mtimeMs });
+		if (
+			req.mode !== 'content' &&
+			req.mode !== 'outline' &&
+			record !== undefined &&
+			req.limit > OUTLINE_READ_MAX_RANGE
+		) {
+			if (record.hash === hash) {
+				return unchangedReadResult(rel, hash, totalLines, fileStat.size);
+			}
+			return deltaReadResult(rel, record, content, hash, totalLines);
 		}
 		// mode: 'outline' always outlines; 'content' always returns raw; auto
 		// (default) outlines non-tiny files read broadly, keeping targeted
@@ -237,7 +356,7 @@ export async function readFileResult(
 				totalLines > OUTLINE_READ_FLOOR &&
 				req.limit > OUTLINE_READ_MAX_RANGE);
 		if (wantOutline) {
-			const outlined = await outlineRead(rel, content, totalLines, fileStat.size);
+			const outlined = await outlineRead(rel, content, totalLines, fileStat.size, hash);
 			if (outlined !== null) return outlined;
 		}
 		const numbered = req.numbered === true;
@@ -300,7 +419,8 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 			promptGuidelines: [
 				'Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`.',
 				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`; `pages` is unsupported. Errors on binary files or directories.',
-				`Files over ${OUTLINE_READ_FLOOR} lines return an indentation outline (header + blocks + tail) by default (mode auto). Pass mode:'content' for raw content, mode:'outline' to force structure, or read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.`
+				`Files over ${OUTLINE_READ_FLOOR} lines return an indentation outline (header + blocks + tail) by default (mode auto). Pass mode:'content' for raw content, mode:'outline' to force structure, or read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.`,
+				`A broad re-read (range over ${OUTLINE_READ_MAX_RANGE} lines) of a file you have read before returns a delta: an \`unchanged\` marker or the line-diff hunks, not the full content. Use mode:'content' to force raw, or a targeted range to drill in.`
 			],
 			argsSchema: ReadArgs,
 			parameters: {
@@ -362,7 +482,8 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
 					...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
 					...(parsed.numbered !== undefined ? { numbered: parsed.numbered } : {}),
-					...(parsed.mode !== undefined ? { mode: parsed.mode } : {})
+					...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
+					conversationId: ctx?.conversationId
 				});
 			}
 		}

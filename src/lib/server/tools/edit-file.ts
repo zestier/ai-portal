@@ -42,9 +42,13 @@ const WriteArgs = z
 const EditArgs = z
 	.object({
 		file_path: z.string().min(1).max(4096),
-		old_string: z.string().min(1).max(MAX_EDIT_FILE_BYTES),
+		mode: z.enum(['exact', 'range']).optional().default('exact'),
+		old_string: z.string().min(1).max(MAX_EDIT_FILE_BYTES).optional(),
 		new_string: z.string().max(MAX_EDIT_FILE_BYTES),
 		replace_all: z.boolean().optional().default(false),
+		start_line: z.number().int().min(1).optional(),
+		end_line: z.number().int().min(1).optional(),
+		checksum: z.string().min(1).optional(),
 		worktree: WorktreeSelector
 	})
 	.strict();
@@ -96,6 +100,97 @@ export interface FileEditOutput {
 	// whose stray leading numbering tab was dropped; `new_string` was written
 	// with the same tabs removed, so the file carries no artifact.
 	lenientTabEating?: { ateLines: number[] };
+}
+
+// ---- Range mode (T38 experiment) ----
+// edit mode:'range' replaces a 1-indexed line range guarded by a `checksum`
+// (the block header line as `read`'s outline shows it). The model navigates by
+// line numbers, so it can edit without echoing the old block and without
+// re-reading the whole file. Returns the diff and how lines shifted.
+
+export interface RangeEditResult {
+	file_path: string;
+	requested_range: { start: number; end: number };
+	applied_range: { start: number; end: number };
+	shift: { after: number; by: number };
+	total_lines: number;
+	old_lines: number;
+	new_lines: number;
+	hunks: Hunk[];
+	gitDiff?: FileWriteGitDiff;
+}
+
+export type RangeEditOutcome =
+	| {
+			ok: true;
+			content: string;
+			applied_range: { start: number; end: number };
+			shift: { after: number; by: number };
+			old_lines: number;
+			new_lines: number;
+	  }
+	| { ok: false; reason: 'out_of_range' | 'stale'; message: string; details: unknown };
+
+// Pure, exported for tests. Line numbers are 1-based inclusive, matching
+// read/outline. The checksum is compared trimmed so the model can pass the
+// trimmed header text the outline showed.
+export function applyRangeEdit(
+	content: string,
+	startLine: number,
+	endLine: number,
+	checksum: string,
+	newText: string
+): RangeEditOutcome {
+	const nl = content.includes('\r\n') ? '\r\n' : '\n';
+	const lines = content.split(/\r?\n/);
+	const totalLines = lines.length;
+
+	if (startLine < 1 || endLine < startLine || endLine > totalLines) {
+		return {
+			ok: false,
+			reason: 'out_of_range',
+			message: `range ${startLine}-${endLine} is out of bounds (file has ${totalLines} lines)`,
+			details: { totalLines, max_end: Math.min(endLine, totalLines) }
+		};
+	}
+
+	const current = lines[startLine - 1].trim();
+	if (current !== checksum.trim()) {
+		let matched: number | null = null;
+		for (let i = 0; i < lines.length; i++) {
+			if (lines[i].trim() === checksum.trim()) {
+				matched = i + 1;
+				break;
+			}
+		}
+		const corrected =
+			matched === null
+				? null
+				: { start: matched, end: Math.min(totalLines, matched + (endLine - startLine)) };
+		return {
+			ok: false,
+			reason: 'stale',
+			message: corrected
+				? `stale range: line ${startLine} is '${current}', expected '${checksum.trim()}'. Checksum line found at line ${matched}; retry with start_line ${corrected.start}, end_line ${corrected.end}.`
+				: `stale range: line ${startLine} is '${current}', expected '${checksum.trim()}'. Checksum line not found; re-read the file for current line numbers.`,
+			details: { current, matched_line: matched, corrected }
+		};
+	}
+
+	const oldLines = endLine - startLine + 1;
+	// Empty new_text deletes the range; split on the same line model as read.
+	const newLinesArr = newText === '' ? [] : newText.split(/\r?\n/);
+	lines.splice(startLine - 1, oldLines, ...newLinesArr);
+	const content2 = lines.join(nl);
+	const newLines = newLinesArr.length;
+	return {
+		ok: true,
+		content: content2,
+		applied_range: { start: startLine, end: startLine + newLines - 1 },
+		shift: { after: endLine, by: newLines - oldLines },
+		old_lines: oldLines,
+		new_lines: newLines
+	};
 }
 
 // Resolve a Write `file_path` to an absolute, symlink-resolved target inside
@@ -587,18 +682,43 @@ async function performEdit(
 	cwd: string,
 	target: { abs: string; rel: string },
 	rawFilePath: string,
-	oldString: string,
-	newString: string,
-	replaceAll: boolean
+	args: z.infer<typeof EditArgs>
 ): Promise<
-	| { result: FileEditOutput; text: string }
+	| { result: FileEditOutput | RangeEditResult; text: string }
 	| {
 			message: string;
-			code?: 'edit_failed';
-			details?: { suggestion: Suggestion };
+			code?: string;
+			details?: unknown;
 			detailsUiOnly?: boolean;
 	  }
 > {
+	if (args.mode === 'range') {
+		if (
+			args.start_line === undefined ||
+			args.end_line === undefined ||
+			args.checksum === undefined
+		) {
+			return {
+				message: "mode 'range' requires start_line, end_line and checksum",
+				code: 'edit_failed'
+			};
+		}
+		return performRangeEdit(
+			cwd,
+			target,
+			rawFilePath,
+			args.start_line,
+			args.end_line,
+			args.checksum,
+			args.new_string
+		);
+	}
+	const oldString = args.old_string;
+	if (oldString === undefined) {
+		return { message: "mode 'exact' requires old_string", code: 'edit_failed' };
+	}
+	const newString = args.new_string;
+	const replaceAll = args.replace_all;
 	try {
 		const existing = await readExisting(target.abs);
 		if (existing === null) {
@@ -647,6 +767,49 @@ async function performEdit(
 	}
 }
 
+async function performRangeEdit(
+	cwd: string,
+	target: { abs: string; rel: string },
+	rawFilePath: string,
+	startLine: number,
+	endLine: number,
+	checksum: string,
+	newText: string
+): Promise<
+	{ result: RangeEditResult; text: string } | { message: string; code: string; details: unknown }
+> {
+	const existing = await readExisting(target.abs);
+	if (existing === null)
+		return {
+			message: `File does not exist: ${rawFilePath}`,
+			code: 'edit_failed',
+			details: undefined
+		};
+	const out = applyRangeEdit(existing, startLine, endLine, checksum, newText);
+	if (!out.ok) return { message: out.message, code: out.reason, details: out.details };
+	await writeFile(target.abs, out.content);
+	const hunks = structuredPatch('a', 'b', existing, out.content, '', '', { context: 3 }).hunks;
+	const result: RangeEditResult = {
+		file_path: target.rel,
+		requested_range: { start: startLine, end: endLine },
+		applied_range: out.applied_range,
+		shift: out.shift,
+		total_lines: out.content.split(/\r?\n/).length,
+		old_lines: out.old_lines,
+		new_lines: out.new_lines,
+		hunks
+	};
+	const delta = result.shift.by >= 0 ? `+${result.shift.by}` : String(result.shift.by);
+	let text =
+		`Edit applied: ${rawFilePath} lines ${result.applied_range.start}-${result.applied_range.end} ` +
+		`(${result.old_lines} → ${result.new_lines} lines; lines after ${result.shift.after} shift by ${delta}). File now ${result.total_lines} lines.`;
+	if (await isGitRepo(cwd)) {
+		result.gitDiff = gitDiffFor('update', target.rel, existing, out.content, hunks);
+		text += `\n${result.gitDiff.patch}`;
+	}
+	return { result, text };
+}
+
 export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(workspaceRoot, ctx);
 	return [
@@ -655,7 +818,8 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 			description: 'Replace exact text in an existing workspace file.',
 			promptGuidelines: [
 				"Fails (leaving the file unchanged) when `old_string` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
-				'Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits. Anchor on content, never line numbers.'
+				'Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits. Anchor on content, never line numbers.',
+				"mode 'range' (with start_line/end_line/checksum/new_string) replaces a line range by number, guarded by a checksum on the first line — use line numbers from read's outline; it returns the diff and how lines after the range shifted. On a stale range the error gives the corrected numbers."
 			],
 			argsSchema: EditArgs,
 			parameters: {
@@ -665,15 +829,39 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 						type: 'string',
 						description: 'Absolute path; must resolve inside the workspace.'
 					},
-					old_string: { type: 'string' },
-					new_string: { type: 'string' },
+					mode: {
+						type: 'string',
+						enum: ['exact', 'range'],
+						description:
+							"Edit mode. 'exact' (default) replaces old_string; 'range' replaces a line range guarded by a checksum on the first line."
+					},
+					old_string: {
+						type: 'string',
+						description: 'Text to replace (exact mode).'
+					},
+					new_string: {
+						type: 'string',
+						description: 'Replacement text (both modes).'
+					},
 					replace_all: {
 						type: 'boolean',
-						description: 'Replace every occurrence. Default false.'
+						description: 'Replace every occurrence (exact mode). Default false.'
+					},
+					start_line: {
+						type: 'number',
+						description: '1-indexed first line to replace (range mode, inclusive).'
+					},
+					end_line: {
+						type: 'number',
+						description: '1-indexed last line to replace (range mode, inclusive).'
+					},
+					checksum: {
+						type: 'string',
+						description: 'Expected content of start_line (range mode).'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
-				required: ['file_path', 'old_string', 'new_string'],
+				required: ['file_path', 'new_string'],
 				additionalProperties: false
 			},
 			derivePermissionRequest(args) {
@@ -691,14 +879,7 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 				if (tree.error) return tree.error;
 				const target = resolveWriteTarget(tree.cwd, parsed.file_path);
 				if (!target.ok) return err(target.message, { code: 'invalid_path' });
-				const outcome = await performEdit(
-					tree.cwd,
-					target,
-					parsed.file_path,
-					parsed.old_string,
-					parsed.new_string,
-					parsed.replace_all
-				);
+				const outcome = await performEdit(tree.cwd, target, parsed.file_path, parsed);
 				if ('message' in outcome) {
 					if (!outcome.code) return err(outcome.message);
 					return err(outcome.message, {
