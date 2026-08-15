@@ -26,6 +26,7 @@ const ReadArgs = z
 		offset: z.number().int().min(1).optional(),
 		limit: z.number().int().min(1).optional(),
 		numbered: z.boolean().optional(),
+		mode: z.enum(['auto', 'outline', 'content']).optional(),
 		pages: z.string().max(64).optional(),
 		worktree: WorktreeSelector
 	})
@@ -37,10 +38,13 @@ const MAX_READ_FILE_BYTES = 5_000_000;
 // Numbered rendering of a selected range larger than this is paginated to a
 // first page with a continuation banner (the SDK's token-cap auto-pagination).
 const MAX_READ_RESULT_BYTES = 200_000;
-// T38 experiment: a broad read of a large file returns an indentation outline
-// instead of raw content, so the model's default `read` reflex becomes cheap
-// without it learning to reach for a new tool. Targeted ranges stay raw.
-const OUTLINE_READ_MIN_TOTAL = 200;
+// T38 experiment: reads return an indentation outline by default — the model's
+// `read` reflex becomes cheap without it learning to reach for a new tool, and
+// intent (not file size) drives the behavior. Exceptions: `full: true` asks for
+// raw content; files at or below FLOOR lines (an outline can't beat a full read
+// there); and targeted ranges (<= MAX_RANGE lines) which are the drill-in after
+// an outline.
+const OUTLINE_READ_FLOOR = 40;
 const OUTLINE_READ_MAX_RANGE = 60;
 
 // The SDK's FileReadOutput image union only carries these raster mimes. BMP/SVG
@@ -162,8 +166,9 @@ async function outlineRead(
 	if (outline.format !== 'normal' || outline.blocks.length === 0) return null;
 	const hash = createHash('sha1').update(content).digest('hex').slice(0, 8);
 	const banner =
-		`read: ${rel} is large (${totalLines} lines). Returning an indentation outline instead of full ` +
-		`content — read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.\n\n`;
+		`read: ${rel} — ${totalLines} lines. Returning an indentation outline instead of full ` +
+		`content — read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block ` +
+		`body, or pass mode:'content' for raw content.\n\n`;
 	const body = banner + renderOutline(rel, outline, size, hash);
 	return ok(
 		{
@@ -187,7 +192,12 @@ async function outlineRead(
 export async function readFileResult(
 	cwd: string,
 	filePath: string,
-	req: { offset?: number; limit?: number; numbered?: boolean } = {}
+	req: {
+		offset?: number;
+		limit?: number;
+		numbered?: boolean;
+		mode?: 'auto' | 'outline' | 'content';
+	} = {}
 ): Promise<ToolResult> {
 	const resolved = resolveReadTarget(cwd, filePath);
 	if (!resolved.ok) return err(resolved.message);
@@ -218,8 +228,15 @@ export async function readFileResult(
 				`Reads of text files require both offset and limit (file has ${totalLines} lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`
 			);
 		}
-		// T38: a broad read of a large file switches to an indentation outline.
-		if (totalLines > OUTLINE_READ_MIN_TOTAL && req.limit > OUTLINE_READ_MAX_RANGE) {
+		// mode: 'outline' always outlines; 'content' always returns raw; auto
+		// (default) outlines non-tiny files read broadly, keeping targeted
+		// ranges (<= MAX_RANGE lines) raw as the drill-in.
+		const wantOutline =
+			req.mode === 'outline' ||
+			((req.mode === undefined || req.mode === 'auto') &&
+				totalLines > OUTLINE_READ_FLOOR &&
+				req.limit > OUTLINE_READ_MAX_RANGE);
+		if (wantOutline) {
 			const outlined = await outlineRead(rel, content, totalLines, fileStat.size);
 			if (outlined !== null) return outlined;
 		}
@@ -283,7 +300,7 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 			promptGuidelines: [
 				'Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`.',
 				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`; `pages` is unsupported. Errors on binary files or directories.',
-				`Files over ${OUTLINE_READ_MIN_TOTAL} lines read with a range wider than ${OUTLINE_READ_MAX_RANGE} lines return an indentation outline (header + blocks + tail) instead of raw content — read a targeted offset:limit range for a block body.`
+				`Files over ${OUTLINE_READ_FLOOR} lines return an indentation outline (header + blocks + tail) by default (mode auto). Pass mode:'content' for raw content, mode:'outline' to force structure, or read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.`
 			],
 			argsSchema: ReadArgs,
 			parameters: {
@@ -304,6 +321,12 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					numbered: {
 						type: 'boolean',
 						description: 'Prefix each line with `<lineNumber>\t`.'
+					},
+					mode: {
+						type: 'string',
+						enum: ['auto', 'outline', 'content'],
+						description:
+							"Read mode. 'auto' (default) outlines non-tiny files read with a broad range; 'outline' always returns the structure; 'content' returns raw content for the requested range."
 					},
 					pages: {
 						type: 'string',
@@ -338,7 +361,8 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 				return readFileResult(tree.cwd, parsed.file_path, {
 					...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
 					...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-					...(parsed.numbered !== undefined ? { numbered: parsed.numbered } : {})
+					...(parsed.numbered !== undefined ? { numbered: parsed.numbered } : {}),
+					...(parsed.mode !== undefined ? { mode: parsed.mode } : {})
 				});
 			}
 		}

@@ -213,4 +213,49 @@ describe('read tool', () => {
 		expect(file.file.outlined).toBeUndefined();
 		expect(file.file.content).toBe('def f():\n    return 1\n');
 	});
+
+	it('returns an outline for a medium file too (not size-gated to huge files)', async () => {
+		const root = makeTmpDir('read-tool-');
+		const lines: string[] = [];
+		for (let i = 0; i < 25; i++) lines.push(`def g${i}():`, `    return ${i}`);
+		writeFileSync(join(root, 'med.py'), lines.join('\n'));
+		const result = await readTool(root).handler({ file_path: 'med.py', offset: 1, limit: 100 });
+		if (!result.ok) throw new Error(result.error.message);
+		const file = result.result as { file: { outlined?: boolean; totalLines: number } };
+		expect(file.file.outlined).toBe(true);
+		expect(file.file.totalLines).toBe(50);
+	});
+
+	it('honors mode content and returns raw content even for a large file', async () => {
+		const root = makeTmpDir('read-tool-');
+		const lines: string[] = ['def f():', '    return 1', ''];
+		for (let i = 0; i < 300; i++) lines.push(`def g${i}():`, `    return ${i}`);
+		writeFileSync(join(root, 'big.py'), lines.join('\n'));
+		const result = await readTool(root).handler({
+			file_path: 'big.py',
+			offset: 1,
+			limit: 500,
+			mode: 'content'
+		});
+		if (!result.ok) throw new Error(result.error.message);
+		const file = result.result as { file: { outlined?: boolean; content: string } };
+		expect(file.file.outlined).toBeUndefined();
+		expect(file.file.content).toContain('return 150'); // raw body present
+	});
+
+	it('mode outline forces an outline even when auto would return raw', async () => {
+		const root = makeTmpDir('read-tool-');
+		const lines: string[] = [];
+		for (let i = 0; i < 25; i++) lines.push(`def g${i}():`, `    return ${i}`);
+		writeFileSync(join(root, 'med.py'), lines.join('\n'));
+		// limit 20 <= MAX_RANGE would be raw under auto
+		const result = await readTool(root).handler({
+			file_path: 'med.py',
+			offset: 1,
+			limit: 20,
+			mode: 'outline'
+		});
+		if (!result.ok) throw new Error(result.error.message);
+		expect((result.result as { file: { outlined?: boolean } }).file.outlined).toBe(true);
+	});
 });
