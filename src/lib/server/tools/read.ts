@@ -74,8 +74,9 @@ export interface FileReadImageOutput {
 // workspace. Accepts both the SDK contract's absolute paths and
 // workspace-relative paths (as the tests use), rejecting any `..` escape that
 // resolves outside the root. Mirrors `resolveWriteTarget` in edit-file.ts — same
-// resolver, different tool.
-function resolveReadTarget(
+// resolver, different tool. Exported so the outline tool reuses the same
+// workspace-containment rules.
+export function resolveReadTarget(
 	workspaceRoot: string,
 	rawPath: string
 ): { ok: true; abs: string; rel: string } | { ok: false; message: string } {
