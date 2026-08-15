@@ -8,6 +8,7 @@ import { getDeployMetadata } from '$lib/server/deploy';
 import { log } from '$lib/server/log';
 import { audit } from '$lib/server/audit';
 import { canRedeployUser } from '$lib/server/redeploy';
+import { promptTemplateId } from '$lib/ids';
 import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
@@ -106,7 +107,7 @@ const PromptTemplateSchema = z
 
 const UpdatePromptTemplateSchema = z
 	.object({
-		id: z.coerce.number().int(),
+		id: z.string().min(1).refine(promptTemplateId.is, { message: 'Invalid prompt template id' }),
 		type: z.enum(['chat', 'ticket-action']).optional().default('chat'),
 		title: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(500).optional(),
@@ -315,8 +316,8 @@ export const actions: Actions = {
 		if (!locals.userId)
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'archivePromptTemplate' });
 		const data = await request.formData();
-		const id = Number(data.get('id'));
-		if (!Number.isInteger(id)) {
+		const id = promptTemplateId.tryParse(String(data.get('id') ?? ''));
+		if (id === null) {
 			return fail(400, {
 				ok: false,
 				error: 'Invalid prompt template id',
