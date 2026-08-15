@@ -16,6 +16,7 @@ import type { PortalTool } from './types';
 import { buildGitTools } from './git';
 import { buildCreateDirectoryTools, buildMoveTools, buildTrashTools } from './filesystem';
 import { buildReadTools } from './read';
+import { buildReadDeltaTools } from './read-delta';
 import { buildOutlineTools } from './outline';
 import { buildWorktreeTools } from './worktree';
 import { buildTicketTools } from './tickets';
@@ -26,6 +27,7 @@ import { buildShellTools } from './shell';
 import { buildMultiEditTools } from './multi-edit';
 import { buildGrepTools } from './grep';
 import { buildEditFileTools } from './edit-file';
+import { buildEditRangeTools } from './edit-range';
 import { buildLsTools } from './ls';
 import { buildFindTools } from './find';
 
@@ -60,6 +62,14 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 				conversationId: STUB.conversationId
 			}),
 			...buildOutlineTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildReadDeltaTools(STUB.cwd, {
+				userId: STUB.userId,
+				conversationId: STUB.conversationId
+			}),
+			...buildEditRangeTools(STUB.cwd, {
 				userId: STUB.userId,
 				conversationId: STUB.conversationId
 			}),
