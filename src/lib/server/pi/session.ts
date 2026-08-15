@@ -45,6 +45,7 @@ import { log } from '../log';
 import { PiEventMapper } from './events';
 import { loadConfig } from '../config';
 import * as messagesRepo from '../db/repos/messages';
+import { PORTAL_SYSTEM_GUIDANCE } from '../runtime/system-guidance';
 
 export type PiModel = NonNullable<CreateAgentSessionOptions['model']>;
 
@@ -183,7 +184,12 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,
-		noContextFiles: true
+		noContextFiles: true,
+		// Global portal guidance rides the loader's `appendSystemPrompt` channel
+		// so pi appends it to the system prompt once at session setup (system
+		// tokens, cache-friendly). Per-tool caveats come from each tool's
+		// `promptGuidelines` instead — nothing tool-specific belongs here.
+		appendSystemPrompt: [PORTAL_SYSTEM_GUIDANCE]
 	});
 	await loader.reload();
 	const sessionManager = buildPiSessionManager(opts);

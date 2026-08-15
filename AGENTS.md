@@ -10,8 +10,10 @@ no longer loads repo skill files, so the guidance lives in this file.
 ## Ticket-first workflow
 
 This repo runs a **ticket-first** workflow, and the portal nudges every agent the
-same way (see `PORTAL_SYSTEM_GUIDANCE` in
-[`src/lib/server/runtime/system-guidance.ts`](src/lib/server/runtime/system-guidance.ts)).
+same way: the ticket-first bullets live on the ticket tools' `promptGuidelines`
+(pi injects them into the system prompt while the tickets group is active), and
+the global, tool-agnostic guidance rides the loader's `appendSystemPrompt`
+channel from [`src/lib/server/runtime/system-guidance.ts`](src/lib/server/runtime/system-guidance.ts)).
 Two layers are in play:
 
 - **Portal layer (universal):** durable work belongs in tickets

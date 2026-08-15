@@ -187,6 +187,9 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 		{
 			name: 'git_status',
 			description: 'Git status: head, changes, and any in-progress merge.',
+			promptGuidelines: [
+				'Use git_status/git_diff/git_log/git_show_commit/git_show_file/git_commit instead of shell git.'
+			],
 			argsSchema: GitStatusArgs,
 			parameters: {
 				type: 'object',

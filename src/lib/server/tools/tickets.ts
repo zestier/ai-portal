@@ -179,6 +179,10 @@ export function buildTicketTools(opts: {
 		{
 			name: 'ticket_list',
 			description: 'List durable workspace tickets for the current workspace (defaults to open).',
+			promptGuidelines: [
+				'For substantial work spanning multiple steps or sessions, prefer a durable ticket over ephemeral session state: check ticket_list first and resume the matching ticket (read its `plan`) before re-planning, or open one if none fits. Keep the plan and checklist in the ticket `plan` field and update status as you work.',
+				'Ticketing is a convenience for durable work, not a blanket requirement — skip it for lighter, one-off, or non-engineering tasks where a ticket would add overhead without payoff.'
+			],
 			argsSchema: ListArgs,
 			parameters: {
 				type: 'object',

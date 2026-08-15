@@ -187,7 +187,8 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 			description:
 				"Create an isolated Git worktree of this conversation's repository on its own branch.",
 			promptGuidelines: [
-				"Returns an absolute `path` that already exists and is writable; changes stay isolated until the branch is merged. One worktree per unit of work; the repo is always this conversation's own."
+				"Returns an absolute `path` that already exists and is writable; changes stay isolated until the branch is merged. One worktree per unit of work; the repo is always this conversation's own.",
+				'Never point two sub-agents at the same worktree. Tell each sub-agent to `git_commit` when done (uncommitted changes cannot be merged), then merge it back with `worktree_merge` + `squash` and `worktree_remove` it. Worktrees are for parallelism — a single sequential task belongs in the normal workspace.'
 			],
 			argsSchema: CreateArgs,
 			parameters: {
