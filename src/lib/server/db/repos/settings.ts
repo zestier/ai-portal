@@ -17,6 +17,7 @@ interface SettingsRow {
 	default_policy: string;
 	theme: string;
 	accent: string;
+	default_prompt_template_id: string | null;
 	updated_at: number;
 }
 
@@ -33,7 +34,8 @@ function rowToSettings(r: SettingsRow): UserSettings {
 		defaultApprovalMode: normalizeApprovalMode(r.default_approval_mode),
 		defaultPolicy: policy,
 		theme: r.theme === 'light' ? 'light' : r.theme === 'system' ? 'system' : 'dark',
-		accent: normalizeThemeAccent(r.accent)
+		accent: normalizeThemeAccent(r.accent),
+		defaultPromptTemplateId: r.default_prompt_template_id
 	};
 }
 
@@ -57,7 +59,8 @@ export function defaults(): UserSettings {
 		defaultApprovalMode: 'ask',
 		defaultPolicy: 'prompt',
 		theme: 'system',
-		accent: 'default'
+		accent: 'default',
+		defaultPromptTemplateId: null
 	};
 }
 
@@ -65,9 +68,9 @@ export function save(userId: number, s: UserSettings) {
 	getDb()
 		.prepare(
 			`INSERT INTO user_settings(
-			   user_id, default_model, default_workdir, default_mode, default_approval_mode, default_policy, theme, accent, updated_at
+			   user_id, default_model, default_workdir, default_mode, default_approval_mode, default_policy, theme, accent, default_prompt_template_id, updated_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(user_id) DO UPDATE SET
 			   default_model = excluded.default_model,
 			   default_workdir = excluded.default_workdir,
@@ -76,6 +79,7 @@ export function save(userId: number, s: UserSettings) {
 			   default_policy = excluded.default_policy,
 			   theme = excluded.theme,
 			   accent = excluded.accent,
+			   default_prompt_template_id = excluded.default_prompt_template_id,
 			   updated_at = excluded.updated_at`
 		)
 		.run(
@@ -87,6 +91,7 @@ export function save(userId: number, s: UserSettings) {
 			s.defaultPolicy,
 			s.theme,
 			s.accent,
+			s.defaultPromptTemplateId,
 			Date.now()
 		);
 }

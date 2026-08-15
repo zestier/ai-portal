@@ -2,9 +2,16 @@
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
-	import type { FormResult, PromptTemplate } from './settings-types';
+	import LaunchReviewDialog from '$lib/components/LaunchReviewDialog.svelte';
+	import type { FormResult, PromptTemplate, SettingsData } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
-	import { placeholdersForType, launchBehaviorLabel } from '$lib/prompt-templates';
+	import {
+		buildRefinePromptSeed,
+		placeholdersForType,
+		launchBehaviorLabel,
+		templateLaunchDefaults,
+		type TemplateLaunchOptions
+	} from '$lib/prompt-templates';
 	import { PORTAL_TOOL_GROUPS } from '$lib/tools/groups';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { createPromptTemplateRefineChat } from '$lib/client/prompt-template-launch';
@@ -14,11 +21,13 @@
 		builtInTemplates,
 		promptTemplates,
 		modelOptions = [],
+		settings,
 		form
 	}: {
 		builtInTemplates: PromptTemplateListItem[];
 		promptTemplates: PromptTemplate[];
 		modelOptions?: string[];
+		settings: SettingsData;
 		form: FormResult | null;
 	} = $props();
 
@@ -69,17 +78,43 @@
 	let refineError = $state<string | null>(null);
 	let refineErrorId = $state<string | null>(null);
 	let refineController: AbortController | null = null;
+	// A refine launch awaiting review-dialog confirmation, with the options that
+	// seed the dialog (prompt = the refine seed).
+	let reviewingRefine = $state<{ template: PromptTemplate; options: TemplateLaunchOptions } | null>(
+		null
+	);
 
-	async function refineTemplate(template: Pick<PromptTemplate, 'id' | 'title'>) {
+	async function refineTemplate(template: PromptTemplate) {
 		if (refiningId) return;
 		refiningId = template.id;
 		refineError = null;
 		refineErrorId = null;
+		// Declared up front so the catch can inspect it (the review branch
+		// returns early before any request uses it; onDestroy still aborts it,
+		// which is a no-op then).
 		const controller = new AbortController();
 		refineController = controller;
 		try {
+			const seed = buildRefinePromptSeed({
+				id: template.id,
+				type: template.type,
+				title: template.title
+			});
+			const options = templateLaunchDefaults(template, seed);
+			// Carve-out (D8): a refine chat must keep the `prompt-templates` group
+			// enabled so the agent can read/update the saved template. Filter it
+			// from the seed AND from the confirmed review options below.
+			options.disabledToolGroups = options.disabledToolGroups.filter(
+				(g) => g !== 'prompt-templates'
+			);
+			if (template.launchBehavior === 'review') {
+				reviewingRefine = { template, options };
+				return;
+			}
 			const result = await createPromptTemplateRefineChat({
 				template,
+				options,
+				launchBehavior: template.launchBehavior,
 				fetcher: fetch,
 				signal: controller.signal
 			});
@@ -98,12 +133,57 @@
 			refineError = 'Could not start refine chat';
 			refineErrorId = template.id;
 		} finally {
-			if (refineController === controller) refineController = null;
 			if (refiningId === template.id) refiningId = null;
 		}
 	}
 
-	onDestroy(() => refineController?.abort());
+	/** Confirmed `review` refine launch: send the seed as the first turn. */
+	async function launchRefineSend(options: TemplateLaunchOptions) {
+		const pending = reviewingRefine;
+		if (!pending) return;
+		reviewingRefine = null;
+		refiningId = pending.template.id;
+		refineError = null;
+		refineErrorId = null;
+		const controller = new AbortController();
+		refineController = controller;
+		try {
+			// The dialog starts from the already-filtered options, but re-apply
+			// the carve-out so a user toggling it back on can't disable
+			// `prompt-templates` on a refine chat (D8).
+			options.disabledToolGroups = options.disabledToolGroups.filter(
+				(g) => g !== 'prompt-templates'
+			);
+			const result = await createPromptTemplateRefineChat({
+				template: pending.template,
+				options,
+				launchBehavior: 'send',
+				fetcher: fetch,
+				signal: controller.signal
+			});
+			if (controller.signal.aborted) return;
+			if (!result.ok) {
+				refineError = `Could not start refine chat (${result.status ?? 'network'})`;
+				refineErrorId = pending.template.id;
+				return;
+			}
+			await invalidateAll();
+			await goto(result.href);
+		} catch (err) {
+			if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+				return;
+			}
+			refineError = 'Could not start refine chat';
+			refineErrorId = pending.template.id;
+		} finally {
+			if (refiningId === pending.template.id) refiningId = null;
+		}
+	}
+
+	onDestroy(() => {
+		refineController?.abort();
+		refineController = null;
+	});
 </script>
 
 {#snippet launchFields(
@@ -178,11 +258,11 @@
 
 {#snippet toolGroupFieldset(disabled: string[])}
 	<fieldset class="tool-groups-fieldset">
-		<legend>Portal tools for launched chats</legend>
+		<legend>Portal tools for launched chats/actions</legend>
 		<p class="muted small">
 			Checked groups are disabled up front in chats started from this template (a seed — the chat
 			can re-enable them). Unchecked groups stay available. Native CLI tools (bash, view, edit…) are
-			always available and unaffected.
+			always available and unaffected. Applies to chat templates and ticket actions alike.
 		</p>
 		<div class="tool-groups-checks">
 			{#each PORTAL_TOOL_GROUPS as group (group.id)}
@@ -256,6 +336,36 @@
 			</div>
 			{@render toolGroupFieldset([])}
 			<button class="btn primary" type="submit">Save template</button>
+		</form>
+	</section>
+
+	<section aria-labelledby="default-template-heading" class="card">
+		<h3 id="default-template-heading">Default template for New chat</h3>
+		<p class="muted small">
+			Choose a template the New chat buttons launch by default (a blank chat when None). The
+			template's launch behavior applies — a draft pre-fills the composer, a send posts the prompt
+			immediately, and a review opens the launch dialog first.
+		</p>
+		<form method="POST" action="?/saveDefaultPromptTemplate" class="default-template-form">
+			<label>
+				Template
+				<select name="defaultPromptTemplateId">
+					<option value="" selected={!settings.defaultPromptTemplateId}>
+						(None — blank chat)
+					</option>
+					{#each builtInTemplates as template (template.id)}
+						<option value={template.id} selected={settings.defaultPromptTemplateId === template.id}>
+							Built-in: {template.title}
+						</option>
+					{/each}
+					{#each openChatTemplates as template (template.id)}
+						<option value={template.id} selected={settings.defaultPromptTemplateId === template.id}>
+							{template.title}
+						</option>
+					{/each}
+				</select>
+			</label>
+			<button class="btn primary" type="submit">Save</button>
 		</form>
 	</section>
 
@@ -415,6 +525,7 @@
 									<input name="orderIndex" type="number" value={action.orderIndex} />
 								</label>
 							</div>
+							{@render toolGroupFieldset(action.disabledToolGroups ?? [])}
 							<div class="actions">
 								<button class="btn primary" type="submit">Save changes</button>
 								<button
@@ -476,6 +587,7 @@
 						<input name="orderIndex" type="number" value="0" />
 					</label>
 				</div>
+				{@render toolGroupFieldset([])}
 				<button class="btn primary" type="submit">Add action</button>
 			</form>
 		</details>
@@ -494,6 +606,22 @@
 		</section>
 	{/if}
 </div>
+
+{#if reviewingRefine}
+	<LaunchReviewDialog
+		open
+		templateTitle={reviewingRefine.template.title}
+		defaults={reviewingRefine.options}
+		busy={refiningId !== null}
+		error={refineError}
+		onLaunch={(options) => void launchRefineSend(options)}
+		onCancel={() => {
+			reviewingRefine = null;
+			refineError = null;
+			refiningId = null;
+		}}
+	/>
+{/if}
 
 <style>
 	.prompts {
@@ -535,6 +663,16 @@
 		align-items: center;
 		gap: var(--space-3);
 		flex-wrap: wrap;
+	}
+	.default-template-form {
+		display: flex;
+		align-items: end;
+		gap: var(--space-3);
+		flex-wrap: wrap;
+	}
+	.default-template-form label {
+		flex: 1;
+		min-width: 240px;
 	}
 	code {
 		font-family: var(--font-mono, monospace);

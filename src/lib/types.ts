@@ -303,11 +303,11 @@ export interface ChatPromptTemplate {
 	 */
 	model: string | null;
 	/**
-	 * Portal tool groups to seed as *disabled* on the conversation a `chat`
-	 * template launches (ids from `$lib/tools/groups`). `[]` for chat templates
-	 * with no preset and always `[]` for ticket-action templates. This is only a
-	 * seed — the created conversation's own `disabledToolGroups` remains the
-	 * source of truth and the user can change it afterward.
+	 * Portal tool groups to seed as *disabled* on the conversation this
+	 * template launches (ids from `$lib/tools/groups`). Supported by both
+	 * template types (chat and ticket-action). `[]` means no preset. This is
+	 * only a seed — the created conversation's own `disabledToolGroups`
+	 * remains the source of truth and the user can change it afterward.
 	 */
 	disabledToolGroups: PortalToolGroupId[];
 	/**
@@ -649,6 +649,13 @@ export interface UserSettings {
 	theme: 'dark' | 'light' | 'system';
 	/** Accent palette, applied on top of the dark/light mode (see ThemeAccent). */
 	accent: ThemeAccent;
+	/**
+	 * Chat prompt template the New-chat buttons launch via the full
+	 * prompt-template machinery. A built-in template's handle id (`-1`..`-4`)
+	 * or a custom template's `PT<number>` handle; NULL keeps the blank-chat
+	 * behavior. Stale / archived / other-user ids fall back to blank silently.
+	 */
+	defaultPromptTemplateId: string | null;
 }
 
 // 'prompt' is the default: auto-approves `url` requests and file-system

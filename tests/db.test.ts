@@ -647,7 +647,8 @@ describe('db migrations + repos', () => {
 			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
-			accent: 'violet'
+			accent: 'violet',
+			defaultPromptTemplateId: null
 		});
 		expect(settings.get(u.id)).toEqual({
 			defaultModel: 'claude',
@@ -656,7 +657,8 @@ describe('db migrations + repos', () => {
 			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
-			accent: 'violet'
+			accent: 'violet',
+			defaultPromptTemplateId: null
 		});
 		// '(use server default)' round-trips as NULL for every optional default.
 		settings.save(u.id, {
@@ -666,7 +668,8 @@ describe('db migrations + repos', () => {
 			defaultApprovalMode: 'auto-deny',
 			defaultPolicy: 'allow-all',
 			theme: 'light',
-			accent: 'default'
+			accent: 'default',
+			defaultPromptTemplateId: null
 		});
 		expect(settings.get(u.id)?.accent).toBe('default');
 	});
@@ -680,7 +683,8 @@ describe('db migrations + repos', () => {
 			defaultApprovalMode: 'ask',
 			defaultPolicy: 'prompt',
 			theme: 'dark',
-			accent: 'default'
+			accent: 'default',
+			defaultPromptTemplateId: null
 		});
 		// Simulate a row that escaped migration 008.
 		getDb()

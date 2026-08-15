@@ -31,7 +31,8 @@ describe('prompt template chat launcher', () => {
 		expect(String(url)).not.toContain('/turns');
 		expect(JSON.parse(init?.body as string)).toEqual({
 			title: 'Debug an error',
-			promptTemplateId: '-2'
+			promptTemplateId: '-2',
+			disabledToolGroups: []
 		});
 	});
 
@@ -81,7 +82,16 @@ describe('prompt template chat launcher', () => {
 });
 
 describe('prompt template refine launcher', () => {
-	it('creates a conversation titled "Refine: <title>" and returns a refine URL', async () => {
+	const refineOptions = {
+		prompt: 'Refine seed prompt',
+		workspace: 'shared' as const,
+		conversationMode: null,
+		approvalMode: null,
+		model: null,
+		disabledToolGroups: []
+	};
+
+	it('draft refine creates a conversation titled "Refine: <title>" and returns a refine URL', async () => {
 		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
 			void url;
 			void init;
@@ -90,6 +100,8 @@ describe('prompt template refine launcher', () => {
 
 		const result = await createPromptTemplateRefineChat({
 			template: { id: 'PT1', title: 'My helper' },
+			options: refineOptions,
+			launchBehavior: 'draft',
 			fetcher
 		});
 
@@ -97,20 +109,79 @@ describe('prompt template refine launcher', () => {
 			ok: true,
 			href: '/conversations/conv-9?refinePromptTemplateId=PT1'
 		});
+		// Draft refine creates the conversation (with the template id + settings)
+		// but never posts a turn — the composer is pre-filled server-side.
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const [url, init] = fetcher.mock.calls[0];
 		expect(String(url)).toBe('/api/conversations');
 		expect(String(url)).not.toContain('/turns');
-		expect(JSON.parse(init?.body as string)).toEqual({ title: 'Refine: My helper' });
+		expect(JSON.parse(init?.body as string)).toEqual({
+			title: 'Refine: My helper',
+			promptTemplateId: 'PT1',
+			disabledToolGroups: []
+		});
 	});
 
-	it('reports a non-ok conversation create as a failure', async () => {
+	it('send refine posts the seed as the first turn', async () => {
+		const calls: Array<{ url: string; init?: RequestInit }> = [];
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push({ url: String(url), ...(init !== undefined ? { init } : {}) });
+			if (String(url) === '/api/conversations') {
+				return Response.json({ conversation: { id: 'conv-9' } }, { status: 201 });
+			}
+			return new Response(null, { status: 200 });
+		});
+
+		const result = await createPromptTemplateRefineChat({
+			template: { id: 'PT1', title: 'My helper' },
+			options: refineOptions,
+			launchBehavior: 'send',
+			fetcher
+		});
+
+		expect(result).toEqual({ ok: true, href: '/conversations/conv-9' });
+		expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+			title: 'Refine: My helper',
+			promptTemplateId: 'PT1',
+			disabledToolGroups: []
+		});
+		expect(calls[1].url).toBe('/api/conversations/conv-9/turns');
+		expect(JSON.parse(calls[1].init?.body as string)).toEqual({ content: 'Refine seed prompt' });
+	});
+
+	it('deletes the new conversation when the refine turn fails', async () => {
+		const calls: string[] = [];
+		const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
+			if (String(url) === '/api/conversations' && init?.method === 'POST') {
+				return Response.json({ conversation: { id: 'conv-9' } }, { status: 201 });
+			}
+			if (String(url).endsWith('/turns')) return new Response(null, { status: 500 });
+			return new Response(null, { status: 200 });
+		});
+
+		const result = await createPromptTemplateRefineChat({
+			template: { id: 'PT1', title: 'My helper' },
+			options: refineOptions,
+			launchBehavior: 'send',
+			fetcher
+		});
+
+		expect(result).toEqual({ ok: false, stage: 'launch', status: 500 });
+		// No orphan chat is left behind when the refine turn fails.
+		expect(calls).toContain('DELETE /api/conversations/conv-9');
+	});
+
+	it('reports a non-ok conversation create as the create stage without posting a turn', async () => {
 		const fetcher = vi.fn(async () => new Response(null, { status: 500 }));
 		const result = await createPromptTemplateRefineChat({
 			template: { id: 'PT1', title: 'My helper' },
+			options: refineOptions,
+			launchBehavior: 'send',
 			fetcher
 		});
-		expect(result).toEqual({ ok: false, status: 500 });
+		expect(result).toEqual({ ok: false, stage: 'create', status: 500 });
+		expect(fetcher).toHaveBeenCalledTimes(1);
 	});
 
 	it('forwards an AbortSignal to the conversations fetch init', async () => {
@@ -123,6 +194,8 @@ describe('prompt template refine launcher', () => {
 
 		await createPromptTemplateRefineChat({
 			template: { id: 'PT2', title: 'Another' },
+			options: refineOptions,
+			launchBehavior: 'draft',
 			fetcher,
 			signal: controller.signal
 		});
@@ -145,7 +218,8 @@ describe('prompt template send/review launcher', () => {
 		workspace: 'worktree' as const,
 		conversationMode: 'autopilot' as const,
 		approvalMode: 'auto-deny' as const,
-		model: 'claude-sonnet-4.6'
+		model: 'claude-sonnet-4.6',
+		disabledToolGroups: []
 	};
 
 	it('creates a conversation with the resolved options and posts the prompt as a turn', async () => {
@@ -164,6 +238,7 @@ describe('prompt template send/review launcher', () => {
 		expect(JSON.parse(calls[0].init?.body as string)).toEqual({
 			title: 'Weekly review',
 			promptTemplateId: 'PT1',
+			disabledToolGroups: [],
 			workspace: { kind: 'worktree' },
 			mode: 'autopilot',
 			approvalMode: 'auto-deny',
@@ -203,7 +278,13 @@ describe('templateLaunchDefaults', () => {
 	it('collapses a missing workspace preference to the shared checkout', () => {
 		expect(
 			templateLaunchDefaults(
-				{ workspaceMode: null, conversationMode: null, approvalMode: null, model: null },
+				{
+					workspaceMode: null,
+					conversationMode: null,
+					approvalMode: null,
+					model: null,
+					disabledToolGroups: []
+				},
 				'Prompt'
 			)
 		).toEqual({
@@ -211,7 +292,8 @@ describe('templateLaunchDefaults', () => {
 			workspace: 'shared',
 			conversationMode: null,
 			approvalMode: null,
-			model: null
+			model: null,
+			disabledToolGroups: []
 		});
 	});
 
@@ -222,7 +304,8 @@ describe('templateLaunchDefaults', () => {
 					workspaceMode: 'worktree',
 					conversationMode: 'autopilot',
 					approvalMode: 'auto-deny',
-					model: 'gpt-5.5'
+					model: 'gpt-5.5',
+					disabledToolGroups: ['git']
 				},
 				'Prompt'
 			)
@@ -231,7 +314,30 @@ describe('templateLaunchDefaults', () => {
 			workspace: 'worktree',
 			conversationMode: 'autopilot',
 			approvalMode: 'auto-deny',
-			model: 'gpt-5.5'
+			model: 'gpt-5.5',
+			disabledToolGroups: ['git']
+		});
+	});
+
+	it('carries the template’s disabled tool groups', () => {
+		expect(
+			templateLaunchDefaults(
+				{
+					workspaceMode: null,
+					conversationMode: null,
+					approvalMode: null,
+					model: null,
+					disabledToolGroups: ['shell', 'git']
+				},
+				'Prompt'
+			)
+		).toEqual({
+			prompt: 'Prompt',
+			workspace: 'shared',
+			conversationMode: null,
+			approvalMode: null,
+			model: null,
+			disabledToolGroups: ['shell', 'git']
 		});
 	});
 });

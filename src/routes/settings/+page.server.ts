@@ -9,7 +9,7 @@ import { log } from '$lib/server/log';
 import { audit } from '$lib/server/audit';
 import { canRedeployUser } from '$lib/server/redeploy';
 import { promptTemplateId } from '$lib/ids';
-import { listBuiltInPromptTemplates } from '$lib/prompt-templates';
+import { listBuiltInPromptTemplates, getBuiltInPromptTemplate } from '$lib/prompt-templates';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import * as memoryProfiles from '$lib/server/memory/profiles';
@@ -191,6 +191,11 @@ export const actions: Actions = {
 				detail: { context: 'settings_default_workdir' }
 			});
 		}
+		// The general settings save schema intentionally has no
+		// `defaultPromptTemplateId` field (the Prompts tab owns it via
+		// `?/saveDefaultPromptTemplate`), so preserve whatever is currently
+		// stored rather than wiping it back to null on an unrelated save.
+		const current = settings.get(locals.userId) ?? settings.defaults();
 		const next: UserSettings = {
 			defaultModel: parsed.data.defaultModel ?? null,
 			defaultWorkdir: parsed.data.defaultWorkdir ?? null,
@@ -198,7 +203,8 @@ export const actions: Actions = {
 			defaultApprovalMode: parsed.data.defaultApprovalMode as ApprovalMode,
 			defaultPolicy: parsed.data.defaultPolicy as PermissionPolicy,
 			theme: parsed.data.theme,
-			accent: normalizeThemeAccent(parsed.data.accent)
+			accent: normalizeThemeAccent(parsed.data.accent),
+			defaultPromptTemplateId: current.defaultPromptTemplateId
 		};
 		settings.save(locals.userId, next);
 		return { ok: true, formId: 'save' };
@@ -217,8 +223,7 @@ export const actions: Actions = {
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			approvalMode: (data.get('approvalMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
-			disabledToolGroups:
-				type === 'chat' ? data.getAll('disabledToolGroups').map(String) : undefined,
+			disabledToolGroups: data.getAll('disabledToolGroups').map(String),
 			workspaceMode: (data.get('workspaceMode') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
@@ -237,9 +242,7 @@ export const actions: Actions = {
 			conversationMode: parsed.data.conversationMode ?? null,
 			approvalMode: parsed.data.approvalMode ?? null,
 			model: parsed.data.model ?? null,
-			...(parsed.data.type === 'chat'
-				? { disabledToolGroups: sanitizeDisabledToolGroups(parsed.data.disabledToolGroups) }
-				: {}),
+			disabledToolGroups: sanitizeDisabledToolGroups(parsed.data.disabledToolGroups),
 			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
 			workspaceMode: parsed.data.workspaceMode ?? null,
 			...(parsed.data.launchBehavior !== undefined
@@ -265,8 +268,7 @@ export const actions: Actions = {
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			approvalMode: (data.get('approvalMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
-			disabledToolGroups:
-				type === 'chat' ? data.getAll('disabledToolGroups').map(String) : undefined,
+			disabledToolGroups: data.getAll('disabledToolGroups').map(String),
 			workspaceMode: (data.get('workspaceMode') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
@@ -278,7 +280,7 @@ export const actions: Actions = {
 				formId: 'updatePromptTemplate'
 			});
 		}
-		const { id, type: parsedType, ...patch } = parsed.data;
+		const { id, ...patch } = parsed.data;
 		const updated = promptTemplates.update(id, locals.userId, {
 			title: patch.title,
 			prompt: patch.prompt,
@@ -288,9 +290,7 @@ export const actions: Actions = {
 			conversationMode: patch.conversationMode ?? null,
 			approvalMode: patch.approvalMode ?? null,
 			model: patch.model ?? null,
-			...(parsedType === 'chat'
-				? { disabledToolGroups: sanitizeDisabledToolGroups(patch.disabledToolGroups) }
-				: {}),
+			disabledToolGroups: sanitizeDisabledToolGroups(patch.disabledToolGroups),
 			...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
 			...(patch.orderIndex !== undefined ? { orderIndex: patch.orderIndex } : {})
 		});
@@ -332,6 +332,43 @@ export const actions: Actions = {
 				formId: 'archivePromptTemplate'
 			});
 		return { ok: true, formId: 'archivePromptTemplate' };
+	},
+	/**
+	 * Set the user's default chat template for the New chat buttons. Empty id
+	 * clears it (back to a blank chat). The id must resolve to an open chat
+	 * template — either a custom one owned by the caller (`PT<number>`) or a
+	 * built-in (`-1`..`-4`); stale / archived / other-type / other-user ids are
+	 * rejected rather than stored (the launcher would silently fall back to
+	 * blank anyway, but failing here surfaces the mistake).
+	 */
+	saveDefaultPromptTemplate: async ({ request, locals }) => {
+		if (!locals.userId)
+			return fail(401, {
+				ok: false,
+				error: 'Not authenticated',
+				formId: 'saveDefaultPromptTemplate'
+			});
+		const data = await request.formData();
+		const raw = String(data.get('defaultPromptTemplateId') ?? '').trim();
+		let id: string | null = null;
+		if (raw !== '') {
+			const intId = promptTemplateId.tryParse(raw);
+			const custom = intId === null ? null : promptTemplates.get(intId, locals.userId);
+			const isOpenChatCustom = custom?.type === 'chat' && custom?.status === 'open';
+			if (!isOpenChatCustom && !getBuiltInPromptTemplate(raw)) {
+				return fail(400, {
+					ok: false,
+					error: 'Unknown template',
+					formId: 'saveDefaultPromptTemplate'
+				});
+			}
+			id = raw;
+		}
+		settings.save(locals.userId, {
+			...(settings.get(locals.userId) ?? settings.defaults()),
+			defaultPromptTemplateId: id
+		});
+		return { ok: true, formId: 'saveDefaultPromptTemplate' };
 	},
 	createMemoryProfile: async ({ request, locals }) => {
 		if (!locals.userId)

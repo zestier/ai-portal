@@ -79,6 +79,7 @@
 			builtInTemplates={data.builtInPromptTemplates}
 			promptTemplates={data.promptTemplates}
 			modelOptions={data.modelOptions}
+			settings={data.settings}
 			{form}
 		/>
 	{:else if activeTab === 'memory'}

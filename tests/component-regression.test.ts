@@ -638,6 +638,16 @@ describe('Svelte component regression coverage', () => {
 	test('Prompts settings lists built-ins and user-managed templates', () => {
 		const body = render(PromptsSettings, {
 			props: {
+				settings: {
+					defaultModel: null,
+					defaultWorkdir: null,
+					defaultConversationMode: 'interactive',
+					defaultApprovalMode: 'ask',
+					defaultPolicy: 'prompt',
+					theme: 'system',
+					accent: 'default',
+					defaultPromptTemplateId: null
+				},
 				builtInTemplates: listBuiltInPromptTemplates(),
 				promptTemplates: [
 					{
@@ -709,7 +719,8 @@ describe('Svelte component regression coverage', () => {
 					workspace: 'worktree',
 					conversationMode: 'autopilot',
 					approvalMode: 'auto-deny',
-					model: 'gpt-5.5'
+					model: 'gpt-5.5',
+					disabledToolGroups: []
 				},
 				onLaunch: () => {},
 				onCancel: () => {}

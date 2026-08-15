@@ -282,7 +282,7 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 						type: 'array',
 						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
 						description:
-							'chat only: tool groups to disable on launched conversations (seed, not a lock).'
+							'chat + ticket-action: tool groups to disable on launched conversations (seed, not a lock).'
 					},
 					workspaceMode: {
 						type: 'string',
@@ -356,7 +356,7 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 						type: 'array',
 						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
 						description:
-							'chat only: new tool group set to disable on launched conversations (replaces existing).'
+							'chat + ticket-action: new tool group set to disable on launched conversations (replaces existing).'
 					},
 					workspaceMode: {
 						type: 'string',

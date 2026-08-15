@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { LaunchWorkspaceKind, TemplateLaunchOptions } from '$lib/prompt-templates';
 	import type { ApprovalMode, SessionMode } from '$lib/types';
+	import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
 	import { untrack } from 'svelte';
 	import Modal from './ui/Modal.svelte';
 
@@ -36,6 +37,7 @@
 	let conversationMode = $state<string>(untrack(() => defaults.conversationMode ?? ''));
 	let approvalMode = $state<string>(untrack(() => defaults.approvalMode ?? ''));
 	let model = $state<string>(untrack(() => defaults.model ?? ''));
+	let disabledToolGroups = $state<PortalToolGroupId[]>(untrack(() => defaults.disabledToolGroups));
 
 	// Re-seed whenever a different launch opens the dialog so a second launch
 	// never inherits the previous one's edits.
@@ -45,7 +47,14 @@
 		conversationMode = defaults.conversationMode ?? '';
 		approvalMode = defaults.approvalMode ?? '';
 		model = defaults.model ?? '';
+		disabledToolGroups = defaults.disabledToolGroups;
 	});
+
+	function toggleDisabledGroup(id: PortalToolGroupId) {
+		disabledToolGroups = disabledToolGroups.includes(id)
+			? disabledToolGroups.filter((group) => group !== id)
+			: [...disabledToolGroups, id];
+	}
 
 	// The model list is not discoverable without the provider layer; the select
 	// offers the template's stored override (kept so reviewing a launch never
@@ -77,7 +86,8 @@
 			workspace,
 			conversationMode: (conversationMode || null) as SessionMode | null,
 			approvalMode: (approvalMode || null) as ApprovalMode | null,
-			model: model || null
+			model: model || null,
+			disabledToolGroups
 		});
 	}
 </script>
@@ -138,6 +148,28 @@
 			</label>
 		</div>
 
+		<fieldset class="tool-groups-fieldset" disabled={busy}>
+			<legend>Portal tool groups</legend>
+			<p class="muted small">
+				Checked groups are disabled up front in this chat (a seed — the chat can re-enable them).
+				Unchecked groups stay available. Native CLI tools (bash, view, edit…) are always available
+				and unaffected.
+			</p>
+			<div class="tool-groups-checks">
+				{#each PORTAL_TOOL_GROUPS as group (group.id)}
+					<label class="checkbox" title={group.hint}>
+						<input
+							type="checkbox"
+							checked={disabledToolGroups.includes(group.id)}
+							onchange={() => toggleDisabledGroup(group.id)}
+							disabled={busy}
+						/>
+						Disable {group.label}
+					</label>
+				{/each}
+			</div>
+		</fieldset>
+
 		<div class="actions">
 			<button type="button" class="btn sm ghost" onclick={onCancel} disabled={busy}>Cancel</button>
 			<button
@@ -184,6 +216,32 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: var(--space-3);
+	}
+	.tool-groups-fieldset {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		padding: var(--space-3);
+		display: grid;
+		gap: var(--space-2);
+		min-width: 0;
+	}
+	.tool-groups-fieldset legend {
+		font-size: var(--fs-sm);
+		font-weight: 600;
+		padding: 0 var(--space-2);
+	}
+	.tool-groups-checks {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+		gap: var(--space-2);
+	}
+	.checkbox {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+	.checkbox input {
+		width: auto;
 	}
 	.review-error {
 		margin: 0;

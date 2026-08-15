@@ -1,4 +1,28 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './helpers/fixtures';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The server runs with cwd=DATA_DIR, so PROJECT_ROOT is e2e/.tmp-data — a
+// repository created inside it is a legal worktree source path.
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '.tmp-data');
+
+function git(cwd: string, args: string[]): string {
+	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+function committedRepository(): string {
+	const repo = mkdtempSync(join(workspaceRoot, 'default-tpl-src-'));
+	git(repo, ['init', '-q', '-b', 'main']);
+	git(repo, ['config', 'user.name', 'E2E']);
+	git(repo, ['config', 'user.email', 'e2e@localhost']);
+	git(repo, ['config', 'commit.gpgsign', 'false']);
+	writeFileSync(join(repo, 'README.md'), 'base\n');
+	git(repo, ['add', 'README.md']);
+	git(repo, ['commit', '-q', '-m', 'initial']);
+	return repo;
+}
 
 test('home page renders and creates a new conversation', async ({ page }) => {
 	await page.goto('/');
@@ -127,4 +151,66 @@ test('health endpoint is public', async ({ request }) => {
 	const res = await request.get('/api/health');
 	expect(res.status()).toBe(200);
 	expect(await res.json()).toMatchObject({ ok: true });
+});
+
+// R1: a per-user default chat template makes the New chat buttons launch it
+// through the full machinery — a draft template pre-fills the composer, and
+// the New worktree chat button forces a managed worktree regardless of the
+// template's workspace mode.
+test('a default chat template drives the New chat buttons', async ({ page, request }) => {
+	// A committed repo so "New worktree chat" has a git source to check out.
+	const repo = committedRepository();
+
+	// A draft chat template to act as the default.
+	const tplRes = await request.post('/api/prompt-templates', {
+		data: {
+			type: 'chat',
+			title: 'Default draft',
+			prompt: 'The default prompt body.',
+			launchBehavior: 'draft'
+		}
+	});
+	expect(tplRes.ok()).toBeTruthy();
+	const { template } = await tplRes.json();
+
+	// Point this test user's default workdir at the repo (so a worktree launch
+	// has a git source) and set the default template via the real form actions.
+	const saveRes = await request.post('/settings?/save', {
+		form: {
+			defaultModel: '',
+			defaultWorkdir: repo,
+			defaultConversationMode: 'interactive',
+			defaultApprovalMode: 'ask',
+			defaultPolicy: 'prompt',
+			theme: 'system',
+			accent: 'default'
+		}
+	});
+	expect(saveRes.ok()).toBeTruthy();
+	const defRes = await request.post('/settings?/saveDefaultPromptTemplate', {
+		form: { defaultPromptTemplateId: template.id }
+	});
+	expect(defRes.ok()).toBeTruthy();
+
+	// "New shared chat" launches the default template: draft URL + a composer
+	// pre-filled with the template prompt.
+	await page.goto('/');
+	await page.getByRole('button', { name: 'New shared chat' }).first().click();
+	await page.waitForURL(
+		/\/conversations\/[A-Z0-9]+\?promptTemplateSource=custom&promptTemplateId=/
+	);
+	await expect(page.getByPlaceholder(/Message…/)).toHaveValue('The default prompt body.');
+
+	// "New worktree chat" forces a managed worktree for the same template.
+	const sharedPath = new URL(page.url()).pathname;
+	await page.goto('/');
+	await page.getByRole('button', { name: 'New worktree chat' }).first().click();
+	await page.waitForURL(
+		/\/conversations\/[A-Z0-9]+\?promptTemplateSource=custom&promptTemplateId=/
+	);
+	const worktreePath = new URL(page.url()).pathname;
+	expect(worktreePath).not.toBe(sharedPath);
+	const worktreeConvId = worktreePath.split('/').filter(Boolean).pop()!;
+	const convBody = await (await request.get(`/api/conversations/${worktreeConvId}`)).json();
+	expect(convBody.conversation.workspaceKind).toBe('managed-worktree');
 });

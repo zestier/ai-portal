@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/stores';
 	import {
 		createPromptTemplateDraftChat,
 		createPromptTemplateLaunchChat
@@ -33,6 +34,14 @@
 	let launchError = $state<string | null>(null);
 	// Template awaiting a `review` launch, with the values seeding the dialog.
 	let reviewing = $state<PromptTemplateListItem | null>(null);
+	// The launch options seeding the review dialog (the template's own settings
+	// for a picker launch, or an overridden workspace for a default-template
+	// New-chat launch). Null when the dialog should seed from `reviewing` alone.
+	let reviewingOptions = $state<TemplateLaunchOptions | null>(null);
+
+	// Per-user default chat template for the New chat buttons (R1). Resolved on
+	// the server from user_settings; NULL means "blank chat".
+	const defaultTemplateId = $derived($page.data.defaultPromptTemplateId ?? null);
 
 	const builtIns = $derived(templates?.filter((template) => template.source === 'builtin') ?? []);
 	const customTemplates = $derived(
@@ -58,6 +67,24 @@
 		busy = true;
 		localError = null;
 		try {
+			// R1: when the user has a default chat template set, the New chat
+			// buttons launch it through the full machinery (its launchBehavior,
+			// tool groups, workspace mode, conversation/approval mode, model).
+			// The worktree button forces a worktree over the template's
+			// workspaceMode, matching the API's explicit-workspace-wins rule.
+			// A stale / archived / other-user / unresolvable default id falls
+			// back to the existing blank-chat behavior, silently.
+			if (defaultTemplateId) {
+				await loadTemplates();
+				const tpl = templates?.find((template) => template.id === defaultTemplateId);
+				if (tpl) {
+					await startLaunch(tpl, {
+						...templateLaunchDefaults(tpl, tpl.prompt),
+						...(kind === 'worktree' ? { workspace: 'worktree' as const } : {})
+					});
+					return;
+				}
+			}
 			const res = await fetch('/api/conversations', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -116,24 +143,30 @@
 			launchController = null;
 		}
 		reviewing = null;
+		reviewingOptions = null;
 		launchingTemplateId = null;
 		launchError = null;
 		pickerOpen = false;
 	}
 
 	/**
-	 * Entry point for the template cards. `review` templates open the review
-	 * dialog first; everything else launches straight away with the template's
-	 * own settings.
+	 * Entry point for the template cards (and the default-template New-chat
+	 * path). `review` templates open the review dialog first (seeded from the
+	 * supplied options); everything else launches straight away with those
+	 * options.
 	 */
-	function startLaunch(template: PromptTemplateListItem) {
+	async function startLaunch(
+		template: PromptTemplateListItem,
+		options: TemplateLaunchOptions = templateLaunchDefaults(template, template.prompt)
+	): Promise<void> {
 		if (launchingTemplateId) return;
 		launchError = null;
 		if (template.launchBehavior === 'review') {
 			reviewing = template;
+			reviewingOptions = options;
 			return;
 		}
-		void launchTemplate(template, templateLaunchDefaults(template, template.prompt));
+		await launchTemplate(template, options);
 	}
 
 	async function launchTemplate(template: PromptTemplateListItem, options: TemplateLaunchOptions) {
@@ -168,6 +201,7 @@
 				return;
 			}
 			reviewing = null;
+			reviewingOptions = null;
 			await invalidateAll();
 			onNavigate?.();
 			pickerOpen = false;
@@ -341,7 +375,7 @@
 	<LaunchReviewDialog
 		open
 		templateTitle={reviewing.title}
-		defaults={templateLaunchDefaults(reviewing, reviewing.prompt)}
+		defaults={reviewingOptions ?? templateLaunchDefaults(reviewing, reviewing.prompt)}
 		busy={launchingTemplateId !== null}
 		error={launchError}
 		onLaunch={(options) => {
@@ -350,6 +384,7 @@
 		}}
 		onCancel={() => {
 			reviewing = null;
+			reviewingOptions = null;
 			launchError = null;
 		}}
 	/>

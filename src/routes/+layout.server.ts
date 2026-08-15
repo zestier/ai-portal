@@ -3,6 +3,7 @@ import { conversationId as convCodec, ticketId as ticketIdCodec } from '$lib/ids
 import * as convs from '$lib/server/db/repos/conversations';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
+import * as settings from '$lib/server/db/repos/settings';
 import { awaitingInputConversationIds } from '$lib/server/runtime/interactive-requests';
 import { runningConversationIds } from '$lib/server/runtime/turn-runner';
 import type { SidebarTicket } from '$lib/types';
@@ -77,6 +78,12 @@ export const load: LayoutServerLoad = ({ locals, params }) => {
 		ticketCount:
 			locals.userId && ticketWorkspace ? tickets.count(locals.userId, ticketWorkspace) : 0,
 		ticketWorkspace,
-		ticketActions
+		ticketActions,
+		// Per-user default chat template for the New chat buttons. NULL when
+		// unset (blank chat). Only read, never cached — the launcher re-checks
+		// it after any save via invalidateAll.
+		defaultPromptTemplateId: locals.userId
+			? (settings.get(locals.userId)?.defaultPromptTemplateId ?? null)
+			: null
 	};
 };

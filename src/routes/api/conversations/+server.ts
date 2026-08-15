@@ -8,6 +8,7 @@ import * as settings from '$lib/server/db/repos/settings';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
 import { loadConfig } from '$lib/server/config';
 import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
+import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
 import { requireUserId } from '$lib/server/auth/require';
@@ -40,10 +41,21 @@ const CreateBody = z
 		adversaryModel: z.string().min(1).optional(),
 		/**
 		 * Optional chat prompt-template to seed conversation settings from. When it
-		 * resolves to one of the caller's own chat templates, its
-		 * `disabledToolGroups` preset is copied onto the new conversation.
+		 * resolves to one of the caller's own templates (chat or ticket-action),
+		 * its `disabledToolGroups` preset is copied onto the new conversation
+		 * unless the request carries an explicit `disabledToolGroups` body field
+		 * (which always wins).
 		 */
 		promptTemplateId: z.string().optional(),
+		/**
+		 * Explicit tool groups to disable on the new conversation. When present,
+		 * WINS over any preset seeded from `promptTemplateId`; clients always
+		 * send this from their resolved launch options (possibly `[]`) so a
+		 * review-dialog edit can clear a template preset.
+		 */
+		disabledToolGroups: z
+			.array(z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]))
+			.optional(),
 		workspace: WorkspaceInput.optional()
 	})
 	.refine((body) => !(body.workdir && body.workspace), {
@@ -57,20 +69,25 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 	const userSettings = settings.get(userId) ?? settings.defaults();
 	const model = body.model ?? userSettings.defaultModel ?? cfg.DEFAULT_MODEL;
 
-	// Seed tool-group scoping from a chat template when one is supplied and owned
-	// by the caller. Non-chat / missing / other-user templates seed nothing.
-	// A template that pins `workspaceMode: 'worktree'` also seeds the workspace
-	// when the request didn't state one explicitly (an explicit `workspace`
-	// always wins — that's how a resolved `ask` launch is expressed).
-	let disabledToolGroups: string[] = [];
-	let workspace = body.workspace;
+	// Seed tool-group scoping from a supplied template when one is owned by the
+	// caller (chat OR ticket-action — both support a preset). Missing /
+	// other-user templates seed nothing. An explicit `disabledToolGroups` body
+	// field always wins over the template preset (that's how a review-dialog
+	// edit clears or replaces it). A template that pins
+	// `workspaceMode: 'worktree'` also seeds the workspace when the request
+	// didn't state one explicitly (an explicit `workspace` always wins — that's
+	// how a resolved `ask` launch is expressed).
 	const tplId = body.promptTemplateId ? promptTemplateId.tryParse(body.promptTemplateId) : null;
-	if (tplId) {
-		const tpl = promptTemplates.get(tplId, userId);
-		if (tpl && tpl.type === 'chat') disabledToolGroups = tpl.disabledToolGroups;
-		if (tpl && !workspace && !body.workdir && tpl.workspaceMode === 'worktree') {
-			workspace = { kind: 'worktree' };
-		}
+	const tpl = tplId ? promptTemplates.get(tplId, userId) : null;
+	const disabledToolGroups =
+		body.disabledToolGroups !== undefined
+			? sanitizeDisabledToolGroups(body.disabledToolGroups)
+			: tpl
+				? tpl.disabledToolGroups
+				: [];
+	let workspace = body.workspace;
+	if (tpl && !workspace && !body.workdir && tpl.workspaceMode === 'worktree') {
+		workspace = { kind: 'worktree' };
 	}
 
 	// Precedence: explicit body.workdir > user's defaultWorkdir > PROJECT_ROOT.

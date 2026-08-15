@@ -6,6 +6,7 @@ import type {
 	SessionMode,
 	WorkspaceTicket
 } from './types';
+import type { PortalToolGroupId } from './tools/groups';
 
 export type PromptTemplateSource = 'builtin' | 'custom';
 
@@ -127,6 +128,12 @@ export interface TemplateLaunchOptions {
 	conversationMode: SessionMode | null;
 	approvalMode: ApprovalMode | null;
 	model: string | null;
+	/**
+	 * Portal tool groups disabled on the launched conversation. Seeded from the
+	 * template's preset; the review dialog can edit it (a launch always sends
+	 * this array to the API — even when empty — so a cleared preset sticks).
+	 */
+	disabledToolGroups: PortalToolGroupId[];
 }
 
 /** A template's effective workspace, collapsing "no preference" to `shared`. */
@@ -149,7 +156,7 @@ export function templateNeedsReview(template: Pick<ChatPromptTemplate, 'launchBe
 export function templateLaunchDefaults(
 	template: Pick<
 		ChatPromptTemplate,
-		'workspaceMode' | 'conversationMode' | 'approvalMode' | 'model'
+		'workspaceMode' | 'conversationMode' | 'approvalMode' | 'model' | 'disabledToolGroups'
 	>,
 	prompt: string
 ): TemplateLaunchOptions {
@@ -158,7 +165,8 @@ export function templateLaunchDefaults(
 		workspace: templateWorkspace(template),
 		conversationMode: template.conversationMode ?? null,
 		approvalMode: template.approvalMode ?? null,
-		model: template.model ?? null
+		model: template.model ?? null,
+		disabledToolGroups: template.disabledToolGroups ?? []
 	};
 }
 

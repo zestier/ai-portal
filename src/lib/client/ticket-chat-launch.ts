@@ -17,21 +17,27 @@ type TicketActionTemplate = Pick<
 	| 'approvalMode'
 	| 'model'
 	| 'workspaceMode'
+	| 'disabledToolGroups'
 >;
 
 /**
  * Conversation-create body describing where a ticket chat runs and with which
  * settings. The API rejects `workdir` and `workspace` together, so a worktree
  * launch passes the ticket's workspace as the worktree *source* instead of as
- * the workdir.
+ * the workdir. `promptTemplateId` is always sent so the conversation seeds any
+ * settings (including tool groups) the template pins, and `disabledToolGroups`
+ * is always sent (possibly `[]`) so a review-dialog edit can clear the preset.
  */
 function createBody(
 	ticket: WorkspaceTicket,
 	workdir: string | null | undefined,
-	options: TemplateLaunchOptions
+	options: TemplateLaunchOptions,
+	template: TicketActionTemplate
 ): Record<string, unknown> {
 	return {
 		title: ticketActionChatTitle(ticket),
+		promptTemplateId: template.id,
+		disabledToolGroups: options.disabledToolGroups,
 		...(options.workspace === 'worktree'
 			? { workspace: { kind: 'worktree', ...(workdir ? { sourcePath: workdir } : {}) } }
 			: { workdir: workdir ?? undefined }),
@@ -78,7 +84,7 @@ export async function createTicketLaunchChat({
 		const convRes = await fetcher('/api/conversations', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(createBody(ticket, workdir, resolved))
+			body: JSON.stringify(createBody(ticket, workdir, resolved, template))
 		});
 		if (!convRes.ok) return { ok: false, stage: 'create', status: convRes.status };
 		const body = await convRes.json();
@@ -134,7 +140,7 @@ export async function createTicketDraftChat({
 	const convRes = await fetcher('/api/conversations', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(createBody(ticket, workdir, resolved))
+		body: JSON.stringify(createBody(ticket, workdir, resolved, template))
 	});
 	if (!convRes.ok) return { ok: false, status: convRes.status };
 	const body = await convRes.json();

@@ -70,7 +70,9 @@ describe('createTicketLaunchChat', () => {
 		expect(calls[0].url).toBe('/api/conversations');
 		expect(JSON.parse(calls[0].init.body as string)).toEqual({
 			title: 'Fix sidebar actions',
-			workdir: '/workspace'
+			workdir: '/workspace',
+			promptTemplateId: 'PT100',
+			disabledToolGroups: []
 		});
 		expect(calls[1].url).toBe('/api/conversations/conv-1/turns');
 		expect(JSON.parse(calls[1].init.body as string)).toEqual({
@@ -99,6 +101,8 @@ describe('createTicketLaunchChat', () => {
 		expect(JSON.parse(init.body as string)).toEqual({
 			title: 'Fix sidebar actions',
 			workdir: '/workspace',
+			promptTemplateId: 'PT100',
+			disabledToolGroups: [],
 			mode: 'interactive'
 		});
 	});
@@ -123,6 +127,8 @@ describe('createTicketLaunchChat', () => {
 		expect(JSON.parse(init.body as string)).toEqual({
 			title: 'Fix sidebar actions',
 			workdir: '/workspace',
+			promptTemplateId: 'PT100',
+			disabledToolGroups: [],
 			model: 'claude-sonnet-4.6'
 		});
 	});

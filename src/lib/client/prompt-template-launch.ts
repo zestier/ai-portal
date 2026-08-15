@@ -4,6 +4,7 @@ import type {
 	PromptTemplateSource,
 	TemplateLaunchOptions
 } from '$lib/prompt-templates';
+import type { PromptLaunchBehavior } from '$lib/types';
 
 type TemplateFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -29,7 +30,10 @@ async function createConversation(
 	fetcher: TemplateFetch,
 	signal?: AbortSignal,
 	promptTemplateId?: string,
-	options?: Pick<TemplateLaunchOptions, 'workspace' | 'conversationMode' | 'approvalMode' | 'model'>
+	options?: Pick<
+		TemplateLaunchOptions,
+		'workspace' | 'conversationMode' | 'approvalMode' | 'model' | 'disabledToolGroups'
+	>
 ): Promise<{ ok: true; id: string } | { ok: false; status?: number }> {
 	const convRes = await fetcher('/api/conversations', {
 		method: 'POST',
@@ -37,6 +41,9 @@ async function createConversation(
 		body: JSON.stringify({
 			title,
 			...(promptTemplateId !== undefined ? { promptTemplateId } : {}),
+			// Always send the resolved groups — an explicit `[]` clears a
+			// template preset server-side instead of re-seeding it (D6).
+			disabledToolGroups: options?.disabledToolGroups ?? [],
 			...workspacePayload(options?.workspace),
 			...(options?.conversationMode ? { mode: options.conversationMode } : {}),
 			...(options?.approvalMode ? { approvalMode: options.approvalMode } : {}),
@@ -121,19 +128,56 @@ export function promptTemplateRefineUrl(conversationId: string, templateId: stri
 	return `/conversations/${conversationId}?${params.toString()}`;
 }
 
+/**
+ * "Refine this prompt" launch — a full prompt-template launch whose prompt is
+ * the refine seed (R4). Respects the template's `launchBehavior` and stored
+ * settings like any other launch:
+ *   - `draft`: create the conversation (with the template's settings) and
+ *     return the refine URL; the conversation load pre-fills the composer with
+ *     the seed server-side (kept in `+page.server.ts`).
+ *   - `send` (and any non-draft): create the conversation, then post the seed
+ *     as the first turn. A failed turn deletes the conversation so a refine
+ *     launch never leaves an orphan chat behind.
+ * `review` is handled by the caller (it opens the review dialog and confirms
+ * via this same function with `launchBehavior: 'send'`).
+ */
 export async function createPromptTemplateRefineChat({
 	template,
+	options,
+	launchBehavior,
 	fetcher = fetch,
 	signal
 }: {
 	template: Pick<PromptTemplateListItem, 'id' | 'title'>;
+	/** Resolved launch settings — the refine seed is `options.prompt`. */
+	options: TemplateLaunchOptions;
+	launchBehavior: PromptLaunchBehavior;
 	fetcher?: TemplateFetch;
 	signal?: AbortSignal;
-}): Promise<{ ok: true; href: string } | { ok: false; status?: number }> {
-	const conv = await createConversation(`Refine: ${template.title}`, fetcher, signal);
-	if (!conv.ok) return conv;
-	return {
-		ok: true,
-		href: promptTemplateRefineUrl(conv.id, template.id)
-	};
+}): Promise<
+	{ ok: true; href: string } | { ok: false; stage: 'create' | 'launch'; status?: number }
+> {
+	const conv = await createConversation(
+		`Refine: ${template.title}`,
+		fetcher,
+		signal,
+		template.id,
+		options
+	);
+	if (!conv.ok)
+		return { ok: false, stage: 'create', ...(conv.status ? { status: conv.status } : {}) };
+	if (launchBehavior === 'draft') {
+		return { ok: true, href: promptTemplateRefineUrl(conv.id, template.id) };
+	}
+	const turnRes = await fetcher(`/api/conversations/${conv.id}/turns`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ content: options.prompt }),
+		...(signal !== undefined ? { signal } : {})
+	});
+	if (!turnRes.ok) {
+		await fetcher(`/api/conversations/${conv.id}`, { method: 'DELETE' }).catch(() => undefined);
+		return { ok: false, stage: 'launch', status: turnRes.status };
+	}
+	return { ok: true, href: `/conversations/${conv.id}` };
 }

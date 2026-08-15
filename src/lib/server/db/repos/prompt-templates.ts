@@ -76,7 +76,7 @@ function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 		conversationMode: row.conversation_mode ? normalizeSessionMode(row.conversation_mode) : null,
 		approvalMode: row.approval_mode ? normalizeApprovalMode(row.approval_mode) : null,
 		model: row.model ?? null,
-		disabledToolGroups: type === 'chat' ? parseDisabledToolGroups(row.disabled_tool_groups) : [],
+		disabledToolGroups: parseDisabledToolGroups(row.disabled_tool_groups),
 		workspaceMode: normalizePromptTemplateWorkspaceMode(row.workspace_mode),
 		status: normalizeStatus(row.status),
 		pinned: row.pinned === 1,
@@ -168,8 +168,7 @@ export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 	const conversationMode = input.conversationMode ?? null;
 	const approvalMode = input.approvalMode ?? null;
 	const model = normalizeModelOverride(input.model);
-	const disabledToolGroups =
-		type === 'chat' ? sanitizeDisabledToolGroups(input.disabledToolGroups) : [];
+	const disabledToolGroups = sanitizeDisabledToolGroups(input.disabledToolGroups);
 	const workspaceMode = normalizePromptTemplateWorkspaceMode(input.workspaceMode);
 	const now = Date.now();
 	const orderIndex = Number.isFinite(input.orderIndex) ? Math.trunc(input.orderIndex ?? 0) : 0;
@@ -267,11 +266,9 @@ export function update(
 	const approvalMode = patch.approvalMode !== undefined ? patch.approvalMode : current.approvalMode;
 	const model = patch.model !== undefined ? normalizeModelOverride(patch.model) : current.model;
 	const disabledToolGroups =
-		current.type === 'chat'
-			? patch.disabledToolGroups !== undefined
-				? sanitizeDisabledToolGroups(patch.disabledToolGroups)
-				: current.disabledToolGroups
-			: [];
+		patch.disabledToolGroups !== undefined
+			? sanitizeDisabledToolGroups(patch.disabledToolGroups)
+			: current.disabledToolGroups;
 	const workspaceMode =
 		patch.workspaceMode !== undefined
 			? normalizePromptTemplateWorkspaceMode(patch.workspaceMode)

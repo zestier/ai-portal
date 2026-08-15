@@ -65,7 +65,7 @@ describe('chat template tool-group presets', () => {
 			expect(templates.get(tpl.id, user.id)?.disabledToolGroups).toEqual([]);
 		});
 
-		it('keeps ticket-action templates empty even if a preset is passed', async () => {
+		it('persists a ticket-action preset through create/get/update', async () => {
 			const users = await import('../src/lib/server/db/repos/users');
 			const templates = await import('../src/lib/server/db/repos/prompt-templates');
 			const user = users.ensureLocalUser();
@@ -75,10 +75,11 @@ describe('chat template tool-group presets', () => {
 				prompt: 'Do the ticket.',
 				disabledToolGroups: ['git']
 			});
-			expect(tpl.disabledToolGroups).toEqual([]);
-			// And an update on a ticket-action template can't set it either.
-			templates.update(tpl.id, user.id, { disabledToolGroups: ['git'] });
-			expect(templates.get(tpl.id, user.id)?.disabledToolGroups).toEqual([]);
+			expect(tpl.disabledToolGroups).toEqual(['git']);
+			expect(templates.get(tpl.id, user.id)?.disabledToolGroups).toEqual(['git']);
+			// And an update on a ticket-action template can change the preset too.
+			templates.update(tpl.id, user.id, { disabledToolGroups: ['memory'] });
+			expect(templates.get(tpl.id, user.id)?.disabledToolGroups).toEqual(['memory']);
 		});
 	});
 
@@ -156,6 +157,90 @@ describe('chat template tool-group presets', () => {
 			} as unknown as Parameters<typeof POST>[0]);
 			const body = await (res as Response).json();
 			expect(body.conversation.disabledToolGroups).toEqual(['git', 'tickets']);
+		});
+
+		it('seeds a ticket-action template preset onto the conversation too', async () => {
+			const users = await import('../src/lib/server/db/repos/users');
+			const templates = await import('../src/lib/server/db/repos/prompt-templates');
+			const { POST } = await import('../src/routes/api/conversations/+server');
+			const user = users.ensureLocalUser();
+			const tpl = templates.create(user.id, {
+				type: 'ticket-action',
+				title: 'Do',
+				prompt: 'Do the ticket.',
+				disabledToolGroups: ['git']
+			});
+
+			const res = await POST({
+				locals: { userId: user.id, user: { githubLogin: 'local' } },
+				request: new Request('http://localhost/api/conversations', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ title: 'Do chat', promptTemplateId: tpl.id })
+				}),
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof POST>[0]);
+			const body = await (res as Response).json();
+			expect(body.conversation.disabledToolGroups).toEqual(['git']);
+		});
+
+		it('lets an explicit disabledToolGroups body win over the template preset', async () => {
+			const users = await import('../src/lib/server/db/repos/users');
+			const templates = await import('../src/lib/server/db/repos/prompt-templates');
+			const { POST } = await import('../src/routes/api/conversations/+server');
+			const user = users.ensureLocalUser();
+			const tpl = templates.create(user.id, {
+				title: 'Story',
+				prompt: 'Tell a story.',
+				disabledToolGroups: ['git']
+			});
+
+			// A review-dialog edit that switched to memory must beat the preset.
+			const res = await POST({
+				locals: { userId: user.id, user: { githubLogin: 'local' } },
+				request: new Request('http://localhost/api/conversations', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						title: 'Story chat',
+						promptTemplateId: tpl.id,
+						disabledToolGroups: ['memory']
+					})
+				}),
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof POST>[0]);
+			const body = await (res as Response).json();
+			expect(body.conversation.disabledToolGroups).toEqual(['memory']);
+		});
+
+		it('lets an explicit empty disabledToolGroups clear the template preset', async () => {
+			const users = await import('../src/lib/server/db/repos/users');
+			const templates = await import('../src/lib/server/db/repos/prompt-templates');
+			const { POST } = await import('../src/routes/api/conversations/+server');
+			const user = users.ensureLocalUser();
+			const tpl = templates.create(user.id, {
+				title: 'Story',
+				prompt: 'Tell a story.',
+				disabledToolGroups: ['git']
+			});
+
+			// Clients always send the resolved groups; an explicit `[]` must not
+			// silently re-seed from the template (D6).
+			const res = await POST({
+				locals: { userId: user.id, user: { githubLogin: 'local' } },
+				request: new Request('http://localhost/api/conversations', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						title: 'Story chat',
+						promptTemplateId: tpl.id,
+						disabledToolGroups: []
+					})
+				}),
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof POST>[0]);
+			const body = await (res as Response).json();
+			expect(body.conversation.disabledToolGroups).toEqual([]);
 		});
 
 		it('seeds nothing when the template belongs to another user', async () => {

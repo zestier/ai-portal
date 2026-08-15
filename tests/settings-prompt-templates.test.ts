@@ -116,4 +116,28 @@ describe('settings prompt-template forms — prefixed handle ids', () => {
 		expect(result.status).toBe(400);
 		expect(result.data?.error).toBe('Invalid prompt template id');
 	});
+
+	// T30/R2: ticket-action templates now support a tool-group preset, so the
+	// real update action must persist it (previously force-emptied by design).
+	it('persists a disabledToolGroups preset on a ticket action through the real action', async () => {
+		const promptTemplates = await import('../src/lib/server/db/repos/prompt-templates');
+		const action = promptTemplates.create(userId, {
+			type: 'ticket-action',
+			title: 'Do the thing',
+			prompt: 'Do the thing.',
+			launchBehavior: 'send'
+		});
+
+		const result = (await runAction('updatePromptTemplate', userId, {
+			id: action.id,
+			type: 'ticket-action',
+			title: 'Do the thing',
+			prompt: 'Do the thing.',
+			launchBehavior: 'send',
+			disabledToolGroups: 'git'
+		})) as { ok: boolean };
+		expect(result.ok).toBe(true);
+
+		expect(promptTemplates.get(action.id, userId)?.disabledToolGroups).toEqual(['git']);
+	});
 });

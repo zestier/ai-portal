@@ -70,7 +70,9 @@ describe('createTicketDraftChat', () => {
 		expect(String(url)).not.toContain('/turns');
 		expect(JSON.parse(init?.body as string)).toEqual({
 			title: 'Fix sidebar actions',
-			workdir: '/workspace'
+			workdir: '/workspace',
+			promptTemplateId: 'PT100',
+			disabledToolGroups: []
 		});
 	});
 
@@ -96,6 +98,8 @@ describe('createTicketDraftChat', () => {
 		expect(JSON.parse(init?.body as string)).toEqual({
 			title: 'Fix sidebar actions',
 			workdir: '/workspace',
+			promptTemplateId: 'PT101',
+			disabledToolGroups: [],
 			mode: 'interactive'
 		});
 	});
@@ -119,7 +123,9 @@ describe('createTicketDraftChat', () => {
 		const [, init] = fetcher.mock.calls[0];
 		expect(JSON.parse(init?.body as string)).toEqual({
 			title: 'Fix sidebar actions',
-			workspace: { kind: 'worktree', sourcePath: '/workspace' }
+			workspace: { kind: 'worktree', sourcePath: '/workspace' },
+			promptTemplateId: 'PT100',
+			disabledToolGroups: []
 		});
 	});
 
@@ -140,7 +146,8 @@ describe('createTicketDraftChat', () => {
 				workspace: 'shared',
 				conversationMode: 'interactive',
 				approvalMode: null,
-				model: 'claude-sonnet-4.6'
+				model: 'claude-sonnet-4.6',
+				disabledToolGroups: ['git']
 			},
 			fetcher
 		});
@@ -150,6 +157,8 @@ describe('createTicketDraftChat', () => {
 		expect(JSON.parse(init?.body as string)).toEqual({
 			title: 'Fix sidebar actions',
 			workdir: '/workspace',
+			promptTemplateId: 'PT100',
+			disabledToolGroups: ['git'],
 			mode: 'interactive',
 			model: 'claude-sonnet-4.6'
 		});
