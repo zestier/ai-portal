@@ -48,7 +48,6 @@ export function buildLsTools(workspaceRoot: string, ctx?: WorktreeToolContext): 
 			name: 'ls',
 			description:
 				'List a single workspace directory (sorted, `/` suffix for dirs, includes dotfiles).',
-			promptGuidelines: ['Use `find` for glob-pattern searches and `grep` for content search.'],
 			argsSchema: LsArgs,
 			parameters: {
 				type: 'object',

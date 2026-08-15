@@ -305,8 +305,7 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 			name: 'template_update',
 			description: 'Update one of the user\u2019s stored prompt templates.',
 			promptGuidelines: [
-				'`status: "archived"` soft-deletes (reversible; no hard delete). Built-ins not editable.',
-				'Validates `{{placeholders}}` by type and rejects unknown ones. ' + placeholderHint()
+				'`status: "archived"` soft-deletes (reversible; no hard delete). Built-ins not editable.'
 			],
 			argsSchema: UpdateArgs,
 			permissionBehavior: 'always-prompt',

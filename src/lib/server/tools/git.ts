@@ -479,9 +479,6 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 			name: 'git_worktree_status',
 			description:
 				'Report GIT worktree state for the selected tree: linked?, branch, ahead/behind, and unmerged work. Read-only.',
-			promptGuidelines: [
-				'This is the git-level view of a checkout; use `worktree_status` (portal lease tools) to inspect a portal worktree lease this conversation holds.'
-			],
 			argsSchema: GitWorktreeStatusArgs,
 			parameters: {
 				type: 'object',
@@ -533,8 +530,7 @@ export function buildGitTools(cwd: string, ctx?: GitToolContext): PortalTool[] {
 			name: 'git_worktree_merge',
 			description: 'Merge this linked GIT worktree’s branch with the main checkout’s branch.',
 			promptGuidelines: [
-				'Prefer `squash` for one commit per unit of work. Refuses with uncommitted changes on either side; never leaves the main checkout mid-merge.',
-				'This is the git-level merge; the portal `worktree_merge` (lease tools) operates on worktree leases this conversation created and expects sub-agents to commit first.'
+				'Prefer `squash` for one commit per unit of work. Refuses with uncommitted changes on either side; never leaves the main checkout mid-merge.'
 			],
 			argsSchema: GitWorktreeMergeArgs,
 			permissionBehavior: 'always-prompt',

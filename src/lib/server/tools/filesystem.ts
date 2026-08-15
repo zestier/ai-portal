@@ -312,10 +312,7 @@ export function buildTrashTools(workspaceRoot: string, ctx?: WorktreeToolContext
 			name: 'trash',
 			description:
 				'Safely delete a file or directory by moving it into the workspace trash (`.zap/scratch/trash/`), reversible.',
-			promptGuidelines: [
-				'Paths must be workspace-relative; absolute paths and `..` escapes are rejected.',
-				'Refuses to trash the trash store itself or a parent that contains it.'
-			],
+			promptGuidelines: ['Refuses to trash the trash store itself or a parent that contains it.'],
 			argsSchema: TrashArgs,
 			parameters: {
 				type: 'object',

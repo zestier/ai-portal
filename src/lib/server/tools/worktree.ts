@@ -280,9 +280,6 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		{
 			name: 'worktree_status',
 			description: 'Report one PORTAL worktree lease this conversation holds.',
-			promptGuidelines: [
-				'The git-level `git_worktree_status` instead reports the git state of a checkout.'
-			],
 			argsSchema: StatusArgs,
 			parameters: {
 				type: 'object',
@@ -321,8 +318,7 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 			description: 'Merge a PORTAL worktree lease back into this conversation.',
 			promptGuidelines: [
 				"`to-source` (default) merges a sub-agent's committed work; pass `squash` with a subject to collapse commits into one.",
-				'Refuses with uncommitted changes on either side. `to-source` always rolls back on conflict; a `from-source` conflict can be left (`keep`) for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort.',
-				"This is the lease tool; `git_worktree_merge` operates on the repository's own worktrees instead."
+				'Refuses with uncommitted changes on either side. `to-source` always rolls back on conflict; a `from-source` conflict can be left (`keep`) for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort.'
 			],
 			argsSchema: MergeArgs,
 			// Always prompts, matching `git_worktree_merge` and `git_commit`.

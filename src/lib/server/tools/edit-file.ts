@@ -654,9 +654,7 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 			name: 'edit',
 			description: 'Replace exact text in an existing workspace file.',
 			promptGuidelines: [
-				'`file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `new_string` must differ from `old_string`.',
 				"Fails (leaving the file unchanged) when `old_string` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
-				'A stray leading tab per line (as copied from numbered `read` output) is ignored when matching `old_string` and stripped from `new_string`.',
 				'Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits. Anchor on content, never line numbers.'
 			],
 			argsSchema: EditArgs,
@@ -718,7 +716,7 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 			name: 'write',
 			description: 'Write text content to a file, creating or replacing it.',
 			promptGuidelines: [
-				'`file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `content` is the complete new text. Result reports created/updated plus a structured diff.'
+				'`content` is the complete new text. Result reports created/updated plus a structured diff.'
 			],
 			argsSchema: WriteArgs,
 			parameters: {

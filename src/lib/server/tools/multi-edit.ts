@@ -120,8 +120,8 @@ export function buildMultiEditTools(
 			description: 'Apply an atomic batch (1–100) of exact-text edits; all-or-nothing.',
 			promptGuidelines: [
 				"Every `old_string` must match the file contents; if any edit fails, nothing is written (the error names the failing edit index, path, and unmatched string — a 'Did you mean' closest-match hint may be included).",
-				'Edits apply sequentially per file — edit N matches content after edits 1..N−1 — and `new_string` may be empty to delete text. A stray leading tab from numbered `read` output is ignored when matching `old_string` and stripped from `new_string`.',
-				'Replacement-only: use `write`/`trash`/`move` for create/delete/rename. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace. Anchor on content, never line numbers. `dryRun` validates without writing.'
+				'Edits apply sequentially per file — edit N matches content after edits 1..N−1 — and `new_string` may be empty to delete text.',
+				'Replacement-only: use `write`/`trash`/`move` for create/delete/rename. Anchor on content, never line numbers. `dryRun` validates without writing.'
 			],
 			argsSchema: MultiEditArgs,
 			parameters: {
