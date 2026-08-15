@@ -164,8 +164,9 @@ export function buildReadDeltaTools(
 			name: 'read_delta',
 			description:
 				'Read a file, returning only the changes if you have read it before in this session (or a short marker if unchanged). Use for re-reads to avoid re-sending whole files.',
+			promptSnippet: 'read_delta: re-read a file; returns only the changes since your last read.',
 			promptGuidelines: [
-				'First read returns the full file (and records its hash). Later reads: `unchanged` marker or delta hunks only.',
+				'First read returns the file (an outline for large files) and records its hash. Later reads: `unchanged` marker or delta hunks only.',
 				'If you dropped the earlier content from context and need it again, read an offset:limit range — the delta alone may not be enough.',
 				'Line numbers from a `delta` are the new ones; combine with `outline`/`edit_range` for navigation.'
 			],

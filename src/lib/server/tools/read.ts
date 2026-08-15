@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPathInWorkspace, resolveWithParentFallback } from '../permissions/workspace';
@@ -36,6 +37,11 @@ const MAX_READ_FILE_BYTES = 5_000_000;
 // Numbered rendering of a selected range larger than this is paginated to a
 // first page with a continuation banner (the SDK's token-cap auto-pagination).
 const MAX_READ_RESULT_BYTES = 200_000;
+// T38 experiment: a broad read of a large file returns an indentation outline
+// instead of raw content, so the model's default `read` reflex becomes cheap
+// without it learning to reach for a new tool. Targeted ranges stay raw.
+const OUTLINE_READ_MIN_TOTAL = 200;
+const OUTLINE_READ_MAX_RANGE = 60;
 
 // The SDK's FileReadOutput image union only carries these raster mimes. BMP/SVG
 // are recognized images in this portal but fall outside the contract, so they
@@ -139,6 +145,45 @@ function readImageResult(rel: string, mime: string, buf: Buffer, originalSize: n
 	});
 }
 
+// T38 experiment: broad reads of large files return an indentation outline
+// (header + blocks + tail) instead of the raw content, so the model navigates a
+// big file without pulling it whole into context. Returns null when the file has
+// no usable indentation structure (flat/minified), so the caller falls back to
+// the normal paginated read. Dynamic import avoids a static cycle with
+// outline.ts (which imports readFileResult).
+async function outlineRead(
+	rel: string,
+	content: string,
+	totalLines: number,
+	size: number
+): Promise<ToolResult | null> {
+	const { computeOutline, renderOutline } = await import('./outline');
+	const outline = computeOutline(content);
+	if (outline.format !== 'normal' || outline.blocks.length === 0) return null;
+	const hash = createHash('sha1').update(content).digest('hex').slice(0, 8);
+	const banner =
+		`read: ${rel} is large (${totalLines} lines). Returning an indentation outline instead of full ` +
+		`content — read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.\n\n`;
+	const body = banner + renderOutline(rel, outline, size, hash);
+	return ok(
+		{
+			type: 'text',
+			file: {
+				filePath: rel,
+				content: body,
+				numLines: body.split('\n').length,
+				startLine: 1,
+				totalLines,
+				size,
+				outlined: true,
+				outline: outline.blocks
+			}
+		},
+		`Read file: ${rel} (outline)`,
+		{ views: [{ type: 'text', text: body }] }
+	);
+}
+
 export async function readFileResult(
 	cwd: string,
 	filePath: string,
@@ -172,6 +217,11 @@ export async function readFileResult(
 			return err(
 				`Reads of text files require both offset and limit (file has ${totalLines} lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`
 			);
+		}
+		// T38: a broad read of a large file switches to an indentation outline.
+		if (totalLines > OUTLINE_READ_MIN_TOTAL && req.limit > OUTLINE_READ_MAX_RANGE) {
+			const outlined = await outlineRead(rel, content, totalLines, fileStat.size);
+			if (outlined !== null) return outlined;
 		}
 		const numbered = req.numbered === true;
 		const startLine = req.offset;
@@ -232,7 +282,8 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 			description: "Read a file's content (text paging or an image).",
 			promptGuidelines: [
 				'Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`.',
-				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`; `pages` is unsupported. Errors on binary files or directories.'
+				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`; `pages` is unsupported. Errors on binary files or directories.',
+				`Files over ${OUTLINE_READ_MIN_TOTAL} lines read with a range wider than ${OUTLINE_READ_MAX_RANGE} lines return an indentation outline (header + blocks + tail) instead of raw content — read a targeted offset:limit range for a block body.`
 			],
 			argsSchema: ReadArgs,
 			parameters: {

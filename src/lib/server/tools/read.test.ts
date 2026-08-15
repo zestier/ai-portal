@@ -184,4 +184,33 @@ describe('read tool', () => {
 		if (result.ok) return;
 		expect(result.error.message).toContain('directory');
 	});
+
+	it('returns an outline for a broad read of a large file', async () => {
+		const root = makeTmpDir('read-tool-');
+		const lines: string[] = ['def f():', '    return 1', ''];
+		for (let i = 0; i < 300; i++) lines.push(`def g${i}():`, `    return ${i}`);
+		writeFileSync(join(root, 'big.py'), lines.join('\n'));
+		const result = await readTool(root).handler({ file_path: 'big.py', offset: 1, limit: 500 });
+		if (!result.ok) throw new Error(result.error.message);
+		const file = result.result as {
+			file: { outlined: boolean; totalLines: number; content: string };
+		};
+		expect(file.file.outlined).toBe(true);
+		expect(file.file.totalLines).toBe(603);
+		expect(file.file.content).toContain('def g0():');
+		expect(file.file.content).toContain('header (1-');
+		expect(file.file.content).not.toContain('return 150'); // mid-file body not re-sent
+	});
+
+	it('keeps targeted ranges raw even in large files', async () => {
+		const root = makeTmpDir('read-tool-');
+		const lines: string[] = ['def f():', '    return 1', ''];
+		for (let i = 0; i < 300; i++) lines.push(`def g${i}():`, `    return ${i}`);
+		writeFileSync(join(root, 'big.py'), lines.join('\n'));
+		const result = await readTool(root).handler({ file_path: 'big.py', offset: 1, limit: 3 });
+		if (!result.ok) throw new Error(result.error.message);
+		const file = result.result as { file: { outlined?: boolean; content: string } };
+		expect(file.file.outlined).toBeUndefined();
+		expect(file.file.content).toBe('def f():\n    return 1\n');
+	});
 });

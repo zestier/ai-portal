@@ -165,6 +165,8 @@ export function buildEditRangeTools(
 			name: 'edit_range',
 			description:
 				'Replace a line range in a file, guarded by a checksum on the first line. Returns the diff and how line numbers shifted — no old-block echo, no post-edit re-read.',
+			promptSnippet:
+				'edit_range: replace a line range by line numbers + a header checksum; returns the diff and line shift.',
 			promptGuidelines: [
 				'Get the range and header text from `outline`; pass the header line as `checksum`. Use `read` only when you need a block body.',
 				'On `stale` (checksum mismatch) the error gives the corrected line range — retry with it, no full re-read.',

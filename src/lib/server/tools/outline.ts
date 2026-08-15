@@ -256,6 +256,8 @@ export function buildOutlineTools(workspaceRoot: string, ctx?: WorktreeToolConte
 			name: 'outline',
 			description:
 				'Return a structural outline of a large file (indentation-based blocks, no full content) so you can navigate to the parts you need without reading the whole file.',
+			promptSnippet:
+				'outline: structural block list of a large file — navigate without reading it whole.',
 			promptGuidelines: [
 				'Small files (≤40 lines), minified files, and images return the full read result instead of an outline.',
 				'`blocks` list block headers at depth ≤ 1 with line ranges; read a specific offset:limit range when you need a block body.',
