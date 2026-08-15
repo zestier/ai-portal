@@ -95,23 +95,25 @@ export function buildFindTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 	return [
 		{
 			name: 'find',
-			description:
-				'Search the workspace for files by glob pattern (e.g. `*.ts`, `src/**/*.spec.ts`). Returns matching paths relative to the search root; respects .gitignore and excludes node_modules. `path` is workspace-relative (defaults to the workspace root); `limit` caps results (default 1000). Pass `worktree` to search inside a held worktree instead. Use `grep` to search file CONTENTS, not names.',
+			description: 'Find workspace files by glob pattern (e.g. `*.ts`).',
+			promptGuidelines: [
+				'Respects .gitignore and excludes node_modules. Use `grep` for file contents.'
+			],
 			argsSchema: FindArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					pattern: {
 						type: 'string',
-						description: 'Glob pattern to match file paths, e.g. `*.ts` or `src/**/*.spec.ts`.'
+						description: 'Glob pattern, e.g. `*.ts`.'
 					},
 					path: {
 						type: 'string',
-						description: 'Workspace-relative directory to search in (default: workspace root).'
+						description: 'Directory to search (default: root).'
 					},
 					limit: {
 						type: 'number',
-						description: 'Maximum number of results (default 1000).'
+						description: 'Max results.'
 					},
 					worktree: WORKTREE_PARAM
 				},

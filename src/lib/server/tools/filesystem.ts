@@ -166,15 +166,17 @@ export function buildCreateDirectoryTools(
 	return [
 		{
 			name: 'create_directory',
-			description:
-				"Create a directory inside the workspace. Recursive and idempotent like `mkdir -p`. Path must be workspace-relative (absolute paths and `..` escapes rejected). Pass `worktree` to act inside a held worktree instead. Prefer this over `bash mkdir` so creation routes through the auto-approved write path. On success returns `{ path, outcome }` where `outcome` is `'created'` or `'already-present'`.",
+			description: 'Create a directory recursively (idempotent like `mkdir -p`).',
+			promptGuidelines: [
+				'Paths must be workspace-relative; absolute paths and `..` escapes are rejected.'
+			],
 			argsSchema: CreateDirectoryArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					path: {
 						type: 'string',
-						description: 'Workspace-relative path; parent directories created as needed.'
+						description: 'Workspace-relative path.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -225,24 +227,26 @@ export function buildMoveTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 	return [
 		{
 			name: 'move',
-			description:
-				'Move (rename) a file or directory within the workspace. Both `source` and `destination` must be workspace-relative (absolute paths and `..` escapes rejected). Pass `worktree` to act inside a held worktree instead. Missing destination parent directories are created. Refuses to overwrite an existing destination unless `overwrite` is true; never overwrites a directory. Prefer this over `bash mv`. Permission gated on BOTH paths: a move touching anything outside the workspace prompts.',
+			description: 'Move (rename) a file or directory within the workspace.',
+			promptGuidelines: [
+				'Refuses to overwrite an existing destination unless `overwrite`; never overwrites a directory.',
+				'A move touching anything outside the workspace is gated on BOTH source and destination paths and prompts.'
+			],
 			argsSchema: MoveArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					source: {
 						type: 'string',
-						description: 'Workspace-relative path of the file/directory to move.'
+						description: 'Source path.'
 					},
 					destination: {
 						type: 'string',
-						description: 'Workspace-relative destination; parent directories created as needed.'
+						description: 'Destination path.'
 					},
 					overwrite: {
 						type: 'boolean',
-						description:
-							'Replace an existing destination FILE when true. Directories never overwritten. Default false.'
+						description: 'Replace an existing destination file when true. Default false.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -307,14 +311,18 @@ export function buildTrashTools(workspaceRoot: string, ctx?: WorktreeToolContext
 		{
 			name: 'trash',
 			description:
-				"Safely delete a file or directory by moving it into the workspace `.zap/scratch/trash/` instead of unlinking. Reversible: each entry lands under `.zap/scratch/trash/<entryId>/` with a `meta.json` recording its original path, so it can be restored or purged later. Path must be workspace-relative (absolute paths and `..` escapes rejected); the trash store itself cannot be trashed. Pass `worktree` to delete inside a held worktree instead — the entry travels with that tree's own store. Prefer this over `bash rm`.",
+				'Safely delete a file or directory by moving it into the workspace trash (`.zap/scratch/trash/`), reversible.',
+			promptGuidelines: [
+				'Paths must be workspace-relative; absolute paths and `..` escapes are rejected.',
+				'Refuses to trash the trash store itself or a parent that contains it.'
+			],
 			argsSchema: TrashArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					path: {
 						type: 'string',
-						description: 'Workspace-relative path of the file/directory to delete.'
+						description: 'Workspace-relative path to delete.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},

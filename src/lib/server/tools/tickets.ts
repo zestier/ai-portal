@@ -4,14 +4,7 @@ import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
 import type { WorkspaceTicket } from '$lib/types';
 import { err, ok, type PortalTool } from './types';
-import {
-	project,
-	withOmitted,
-	normalizeFieldSelector,
-	FieldsArg,
-	FIELDS_PARAM,
-	FIELDS_NOTE
-} from './project';
+import { project, withOmitted, normalizeFieldSelector, FieldsArg, FIELDS_PARAM } from './project';
 
 /** Parse a ticket-handle edge id; an unresolvable handle reads as "not found". */
 function parseEdgeId(id: string): number {
@@ -124,8 +117,7 @@ export function buildTicketTools(opts: {
 	return [
 		{
 			name: 'ticket_add',
-			description:
-				'Add a durable workspace ticket for later work. Use when asked to add a ticket, remember a task, or stash follow-up work between sessions. Set `priority` (P0 highest … P3 lowest, default P2) to express relative urgency.',
+			description: 'Add a durable workspace ticket for later work.',
 			argsSchema: AddArgs,
 			parameters: {
 				type: 'object',
@@ -134,27 +126,22 @@ export function buildTicketTools(opts: {
 					body: { type: 'string', description: 'Optional details, notes, or acceptance criteria.' },
 					plan: {
 						type: 'string',
-						description:
-							'Optional durable implementation plan / design notes / checklist. Use this ' +
-							'(not a scratch markdown file) to persist a worked-out plan with the ticket. ' +
-							'Supports `- [ ]` / `- [x]` checklist items for subtasks.'
+						description: 'Optional plan / design notes / checklist.'
 					},
 					priority: {
 						type: 'string',
 						enum: ['P0', 'P1', 'P2', 'P3'],
-						description: 'P0 highest, P3 lowest. Default P2 (normal).'
+						description: 'P0 highest, P3 lowest. Default P2.'
 					},
 					blockedBy: {
 						type: 'array',
 						items: { type: 'string' },
-						description:
-							'Ids of existing tickets that block this one (must be done first). Lets you ' +
-							'create a ticket with its ordering in one call instead of a follow-up ticket_block.'
+						description: 'Ids of blocking tickets.'
 					},
 					blocks: {
 						type: 'array',
 						items: { type: 'string' },
-						description: 'Ids of tickets this ticket blocks (reverse direction).'
+						description: 'Ids of tickets this one blocks.'
 					}
 				},
 				required: ['title'],
@@ -191,12 +178,7 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_list',
-			description:
-				'List durable workspace tickets for the current workspace. Defaults to open tickets. ' +
-				'Each line is tagged with its priority (`[P0]` highest … `[P3]` lowest). ' +
-				'Blocked tickets are annotated with the open tickets blocking them, so a ticket ' +
-				'with no such annotation is ready to start. ' +
-				FIELDS_NOTE,
+			description: 'List durable workspace tickets for the current workspace (defaults to open).',
 			argsSchema: ListArgs,
 			parameters: {
 				type: 'object',
@@ -204,11 +186,11 @@ export function buildTicketTools(opts: {
 					status: {
 						type: 'string',
 						enum: ['open', 'done', 'archived', 'all'],
-						description: 'Ticket status to list. Defaults to open.'
+						description: 'Default: open.'
 					},
 					limit: {
 						type: 'number',
-						description: 'Maximum tickets to return, 1-50. Defaults to 20.'
+						description: '1-50 (default 20).'
 					},
 					fields: FIELDS_PARAM
 				},
@@ -246,7 +228,7 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_get',
-			description: 'Read one durable workspace ticket by id. ' + FIELDS_NOTE,
+			description: 'Read one durable workspace ticket by id.',
 			argsSchema: GetArgs,
 			parameters: {
 				type: 'object',
@@ -285,8 +267,11 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_update',
-			description:
-				'Update a ticket’s title, body, plan, priority, status, or blocking edges. status=done when completed; archived when hidden without completion. `plan` persists a worked-out implementation plan or checklist. `priority` re-prioritizes (P0 highest … P3 lowest). `blockedBy`/`blocks` replace the full edge set on that side (omit to leave unchanged, [] to clear) — declarative alternative to ticket_block/ticket_unblock.',
+			description: "Update a ticket's title, body, plan, priority, status, or blocking edges.",
+			promptGuidelines: [
+				'status=done when completed; archived when hidden without completion.',
+				'`blockedBy`/`blocks` replace the FULL edge set on that side (omit to leave unchanged, [] to clear) — the declarative alternative to ticket_block/ticket_unblock.'
+			],
 			argsSchema: UpdateArgs,
 			parameters: {
 				type: 'object',
@@ -296,9 +281,7 @@ export function buildTicketTools(opts: {
 					body: { type: 'string', description: 'New details/body.' },
 					plan: {
 						type: 'string',
-						description:
-							'New durable implementation plan / design notes / checklist (replaces the ' +
-							'existing plan). Supports `- [ ]` / `- [x]` checklist items for subtasks.'
+						description: 'New plan / design notes / checklist.'
 					},
 					priority: {
 						type: 'string',
@@ -313,15 +296,12 @@ export function buildTicketTools(opts: {
 					blockedBy: {
 						type: 'array',
 						items: { type: 'string' },
-						description:
-							'Replace the complete set of tickets this one is blocked by. Omit to leave ' +
-							'unchanged; pass [] to clear all blockers.'
+						description: 'Replace all tickets blocking this one ([] to clear).'
 					},
 					blocks: {
 						type: 'array',
 						items: { type: 'string' },
-						description:
-							'Replace the complete set of tickets this one blocks (the reverse direction).'
+						description: 'Replace all tickets this one blocks.'
 					}
 				},
 				required: ['id'],
@@ -358,8 +338,10 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_block',
-			description:
-				'Record that one ticket is blocked by another (a blocking / ordering edge): `id` should not be started until `blockedBy` is done. Use this to model the order work should happen in — ticket_list then flags what is blocked, and a ticket with no open blockers is ready to start. Rejects self-edges and cycles.',
+			description: 'Record that `id` is blocked by `blockedBy`.',
+			promptGuidelines: [
+				'`id` should not be started until `blockedBy` is done; ticket_list flags tickets with open blockers. Rejects self-edges and cycles.'
+			],
 			argsSchema: BlockArgs,
 			parameters: {
 				type: 'object',
@@ -398,8 +380,7 @@ export function buildTicketTools(opts: {
 		},
 		{
 			name: 'ticket_unblock',
-			description:
-				'Remove a blocking edge added by ticket_block, so `id` is no longer blocked by `blockedBy`.',
+			description: 'Remove a blocking edge added by ticket_block.',
 			argsSchema: UnblockArgs,
 			parameters: {
 				type: 'object',

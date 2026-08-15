@@ -228,31 +228,34 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 	return [
 		{
 			name: 'read',
-			description:
-				'Read the content of a file in the workspace. `file_path` is the absolute path (workspace-relative also resolves). Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`. Images (jpeg/png/gif/webp) return as an image and ignore offset/limit. `pages` is unsupported. Pass `worktree` to read inside a held worktree instead. Errors on binary files or directories.',
+			description: "Read a file's content (text paging or an image).",
+			promptGuidelines: [
+				'Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`.',
+				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`; `pages` is unsupported. Errors on binary files or directories.'
+			],
 			argsSchema: ReadArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					file_path: {
 						type: 'string',
-						description: 'Absolute path (workspace-relative also accepted).'
+						description: 'Path (absolute or workspace-relative).'
 					},
 					offset: {
 						type: 'number',
-						description: 'Required for text reads. 1-indexed line number to start from.'
+						description: '1-indexed start line.'
 					},
 					limit: {
 						type: 'number',
-						description: 'Required for text reads. Number of lines to read.'
+						description: 'Lines to read.'
 					},
 					numbered: {
 						type: 'boolean',
-						description: 'Prefix each line with `<lineNumber>\t`. Default false.'
+						description: 'Prefix each line with `<lineNumber>\t`.'
 					},
 					pages: {
 						type: 'string',
-						description: 'PDF page range. Unsupported: this read tool does not render PDFs.'
+						description: 'Unsupported (no PDF rendering).'
 					},
 					worktree: WORKTREE_PARAM
 				},

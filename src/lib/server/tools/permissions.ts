@@ -89,8 +89,8 @@ export function buildPermissionTools(opts: {
 	return [
 		{
 			name: 'permission_capabilities',
-			description:
-				'Read-only summary of allowed permission capabilities and recovery options. Use after a rejection to find allowed alternatives before escalating.',
+			description: 'Read-only summary of allowed permission capabilities.',
+			promptGuidelines: ['Use after a rejection to find allowed alternatives before escalating.'],
 			argsSchema: CapabilitiesArgs,
 			parameters: {
 				type: 'object',
@@ -98,15 +98,15 @@ export function buildPermissionTools(opts: {
 					permissionKind: {
 						type: 'string',
 						enum: PermissionKind.options,
-						description: 'Optional permission kind to inspect.'
+						description: 'Optional permission kind.'
 					},
 					toolName: {
 						type: 'string',
-						description: 'Tool name to inspect, e.g. shell, git_status, or view.'
+						description: 'Tool name to inspect.'
 					},
 					intent: {
 						type: 'string',
-						description: 'Short description of what you were trying to do.'
+						description: 'What you were trying to do.'
 					}
 				},
 				additionalProperties: false
@@ -173,7 +173,12 @@ function buildGrantRequestTool(opts: {
 	return {
 		name: GRANT_REQUEST_TOOL_NAME,
 		description:
-			'Ask the human to save a PERMANENT permission grant pre-approving all future matching calls. ONLY when there is explicit persistence intent — a durable, saved rule. For a one-off unblock call `force_retry_tool` with the denial’s token instead. Request the NARROWEST scope that covers the need. ALWAYS opens a human dialog and is never auto-approved, even with approvals bypassed. Provide `tool` (permission kind), a structured `scope`, and a `reason`.',
+			'Ask the human to save a PERMANENT permission grant pre-approving all future matching calls.',
+		promptGuidelines: [
+			"ONLY when there is explicit persistence intent — a durable, saved rule. For a one-off unblock call `force_retry_tool` with the denial's token instead.",
+			'Request the NARROWEST scope that covers the need.',
+			'ALWAYS opens a human dialog and is never auto-approved, even with approvals bypassed.'
+		],
 		argsSchema: GrantRequestArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -182,16 +187,15 @@ function buildGrantRequestTool(opts: {
 				tool: {
 					type: 'string',
 					enum: [...GRANT_TOOLS],
-					description: 'Permission kind: `shell`, `read`/`write`/`edit` (filesystem), or `url`.'
+					description: 'Permission kind.'
 				},
 				reason: {
 					type: 'string',
-					description: 'Short justification (>=20 chars) for the human.'
+					description: 'Justification (>=20 chars).'
 				},
 				scope: {
 					type: 'object',
-					description:
-						'Structured grant scope; its `kind` must match the tool (shell, fs, or url). Prefer the narrowest shape that covers the need.',
+					description: 'Grant scope; `kind` must match the tool.',
 					additionalProperties: true
 				}
 			},
@@ -347,8 +351,12 @@ function buildForceRetryTool(opts: {
 }): PortalTool {
 	return {
 		name: FORCE_RETRY_TOOL_NAME,
-		description:
-			'Escalate ONE previously denied tool call to a fresh human approval prompt. Pass the one-shot token from the denial feedback plus a concise reason. If the human approves, the exact denied call (portal-owned tools) executes immediately with the originally captured args; other tools require retrying the same call (same command/path/url; incidental args may differ), which is then auto-allowed. Either way it executes exactly once — it saves nothing. Default way to override a denial; use `request_permission_grant` only for a durable, saved rule.',
+		description: 'Escalate ONE previously denied tool call to a fresh human approval prompt.',
+		promptGuidelines: [
+			'Pass the one-shot token from the denial feedback plus a concise reason.',
+			'If the human approves, the exact denied call (portal-owned tools) executes immediately with the originally captured args; other tools require retrying the same call (same command/path/url), which is then auto-allowed. Either way it executes exactly once — it saves nothing.',
+			'Default way to override a denial; use `request_permission_grant` only for a durable, saved rule.'
+		],
 		argsSchema: ForceRetryArgs,
 		permissionBehavior: 'never-prompt',
 		parameters: {
@@ -356,11 +364,11 @@ function buildForceRetryTool(opts: {
 			properties: {
 				token: {
 					type: 'string',
-					description: 'One-shot token from the denial feedback.'
+					description: 'One-shot token from the denial.'
 				},
 				reason: {
 					type: 'string',
-					description: 'Short justification (>=20 chars) for the human.'
+					description: 'Justification (>=20 chars).'
 				}
 			},
 			required: ['token', 'reason'],

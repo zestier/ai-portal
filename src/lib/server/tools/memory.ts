@@ -12,8 +12,7 @@ import {
 	assertFieldsKnown,
 	type FieldSelector,
 	FieldsArg,
-	FIELDS_PARAM,
-	FIELDS_NOTE
+	FIELDS_PARAM
 } from './project';
 
 // Per-shape allowlists of model-relevant fields. Everything else (provenance
@@ -162,15 +161,13 @@ export function buildMemoryTools(opts: {
 	const tools: PortalTool[] = [
 		{
 			name: 'memory_search',
-			description:
-				'Search durable session memory. Mandatory when prior details are relevant but absent from the initial packet. ' +
-				FIELDS_NOTE,
+			description: 'Search durable session memory.',
 			argsSchema: SearchArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
 				type: 'object',
 				properties: {
-					query: { type: 'string', description: 'Text to search for in durable memory.' },
+					query: { type: 'string', description: 'Text to search for.' },
 					types: {
 						type: 'array',
 						items: { type: 'string', enum: ['entity', 'event', 'fact', 'open_loop'] },
@@ -206,8 +203,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_get_entity',
 			description:
-				'Fetch canonical durable state for one entity by entity id or key, including active facts and recent events. ' +
-				FIELDS_NOTE,
+				'Fetch canonical durable state for one entity (by id or key), including active facts and recent events.',
 			argsSchema: EntityArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -256,8 +252,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_get_open_loops',
 			description:
-				'Fetch unresolved durable open loops: tasks, promises, plot threads, clues, questions, or commitments. ' +
-				FIELDS_NOTE,
+				'Fetch unresolved durable open loops (tasks, promises, plot threads, clues, questions, commitments).',
 			argsSchema: OpenLoopsArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -287,8 +282,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_get_recent_events',
 			description:
-				'Fetch recent durable memory events, optionally filtered by entity or event type. ' +
-				FIELDS_NOTE,
+				'Fetch recent durable memory events, optionally filtered by entity or event type.',
 			argsSchema: RecentEventsArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -321,9 +315,7 @@ export function buildMemoryTools(opts: {
 		},
 		{
 			name: 'memory_get_transcript',
-			description:
-				'Search exact prior conversation wording. Use when phrasing, quotes, or an old user/assistant statement matters. ' +
-				FIELDS_NOTE,
+			description: 'Search exact prior conversation wording (phrasing, quotes, old statements).',
 			argsSchema: TranscriptLookupArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -356,8 +348,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_query_timeline',
 			description:
-				'Return ordered memory events for timeline reasoning. Use in strict mode for alibis, chronology, and continuity checks. ' +
-				FIELDS_NOTE,
+				'Return ordered memory events for timeline reasoning (alibis, chronology, continuity).',
 			argsSchema: TimelineArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -392,9 +383,7 @@ export function buildMemoryTools(opts: {
 		},
 		{
 			name: 'memory_query_clues',
-			description:
-				'Return clue-ledger records stored as open loops or facts. Use in mystery/strict sessions to preserve fair-play clues. ' +
-				FIELDS_NOTE,
+			description: 'Return clue-ledger records (open loops or facts) for mystery/strict sessions.',
 			argsSchema: ClueArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -448,9 +437,7 @@ export function buildMemoryTools(opts: {
 		},
 		{
 			name: 'memory_get_character_knowledge',
-			description:
-				'Return facts/events describing what a character or participant knows. Use to prevent impossible knowledge leakage. ' +
-				FIELDS_NOTE,
+			description: 'Return facts/events describing what a character or participant knows.',
 			argsSchema: CharacterKnowledgeArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -505,8 +492,7 @@ export function buildMemoryTools(opts: {
 		},
 		{
 			name: 'memory_check_claims',
-			description:
-				'Check proposed claims against active durable facts; use before making continuity-sensitive claims.',
+			description: 'Check proposed claims against active durable facts.',
 			argsSchema: CheckClaimsArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -545,7 +531,7 @@ export function buildMemoryTools(opts: {
 		{
 			name: 'memory_merge_entities',
 			description:
-				"Fold a duplicate entity into a canonical one when two keys denote the same real referent. Reassigns the duplicate's facts, events, and open-loop links onto the canonical entity and retires it. Confirm with memory_get_entity first that they truly match.",
+				'Fold a duplicate entity into a canonical one when two keys denote the same real referent.',
 			argsSchema: MergeEntitiesArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -553,12 +539,11 @@ export function buildMemoryTools(opts: {
 				properties: {
 					from: {
 						type: 'string',
-						description:
-							'Duplicate entity to retire, by id or key, e.g. character.firstname_lastname.'
+						description: 'Duplicate entity to retire (id or key).'
 					},
 					into: {
 						type: 'string',
-						description: 'Canonical entity to keep, by id or key, e.g. character.firstname.'
+						description: 'Canonical entity to keep (id or key).'
 					}
 				},
 				required: ['from', 'into'],
@@ -585,9 +570,7 @@ export function buildMemoryTools(opts: {
 		},
 		{
 			name: 'memory_global_record',
-			description:
-				'Explicitly store a user-scoped global memory recallable across conversations. Only when the user asks to remember something beyond this session. ' +
-				FIELDS_NOTE,
+			description: 'Explicitly store a user-scoped global memory recallable across conversations.',
 			argsSchema: GlobalRememberArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -627,9 +610,7 @@ export function buildMemoryTools(opts: {
 		},
 		{
 			name: 'memory_global_search',
-			description:
-				'Search explicit user-scoped global memories. Use for opt-in cross-session preferences, decisions, facts, style, and constraints. ' +
-				FIELDS_NOTE,
+			description: 'Search explicit user-scoped global memories.',
 			argsSchema: GlobalSearchArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {

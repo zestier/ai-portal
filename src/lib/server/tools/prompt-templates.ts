@@ -13,14 +13,7 @@ import {
 } from '$lib/types';
 import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
 import { err, ok, type PortalTool } from './types';
-import {
-	project,
-	withOmitted,
-	normalizeFieldSelector,
-	FieldsArg,
-	FIELDS_PARAM,
-	FIELDS_NOTE
-} from './project';
+import { project, withOmitted, normalizeFieldSelector, FieldsArg, FIELDS_PARAM } from './project';
 
 // Model-relevant template fields kept in the compact default. Provenance
 // timestamps and `userId` are dropped (recoverable via the `fields` selector);
@@ -49,13 +42,10 @@ const ApprovalModeArg = z.enum(APPROVAL_MODES);
 const ToolGroupId = z.enum(PORTAL_TOOL_GROUP_IDS as unknown as [string, ...string[]]);
 const WorkspaceMode = z.enum(['shared', 'worktree']);
 
-const WORKSPACE_MODE_DESCRIPTION =
-	'"shared" (shared checkout) or "worktree" (fresh isolated worktree) for launched chats. ' +
-	'Omit/null = shared.';
+const WORKSPACE_MODE_DESCRIPTION = '"shared" | "worktree" for launched chats. Omit/null = shared.';
 
 const APPROVAL_MODE_DESCRIPTION =
-	'"ask" (prompt), "auto-approve" (settle as approval), or "auto-deny" (reject with ' +
-	'feedback) for launched chats. Omit/null = user default.';
+	'"ask" | "auto-approve" | "auto-deny" for launched chats. Omit/null = user default.';
 
 const ListArgs = z
 	.object({
@@ -130,8 +120,7 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 	return [
 		{
 			name: 'template_list',
-			description:
-				'List the user\u2019s stored prompt templates (chat + ticket-action). ' + FIELDS_NOTE,
+			description: 'List the user\u2019s stored prompt templates (chat + ticket-action).',
 			argsSchema: ListArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -140,16 +129,16 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 					status: {
 						type: 'string',
 						enum: ['open', 'archived', 'all'],
-						description: 'Template status to list. Defaults to open.'
+						description: 'Default: open.'
 					},
 					type: {
 						type: 'string',
 						enum: ['chat', 'ticket-action'],
-						description: 'Filter by template type. Omit for both.'
+						description: 'chat | ticket-action.'
 					},
 					limit: {
 						type: 'number',
-						description: 'Maximum templates to return, 1-50. Defaults to 20.'
+						description: '1-50 (default 20).'
 					},
 					fields: FIELDS_PARAM
 				},
@@ -177,7 +166,7 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 		},
 		{
 			name: 'template_get',
-			description: 'Read one of the user\u2019s stored prompt templates by id. ' + FIELDS_NOTE,
+			description: 'Read one of the user\u2019s stored prompt templates by id.',
 			argsSchema: GetArgs,
 			permissionBehavior: 'never-prompt',
 			parameters: {
@@ -212,8 +201,7 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 			description:
 				'List the read-only built-in default templates (chat presets + Do/Draft/Refine ' +
 				'ticket-action defaults); reference for creating/refining stored templates, not ' +
-				'editable. ' +
-				placeholderHint(),
+				'editable.',
 			argsSchema: z.object({}).optional().default({}),
 			permissionBehavior: 'never-prompt',
 			parameters: { type: 'object', properties: {}, additionalProperties: false },
@@ -242,10 +230,10 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 		},
 		{
 			name: 'template_create',
-			description:
-				'Create a new stored prompt template. Validates `{{placeholders}}` by type, ' +
-				'rejects unknown ones. ' +
-				placeholderHint(),
+			description: 'Create a new stored prompt template.',
+			promptGuidelines: [
+				'Validates `{{placeholders}}` by type and rejects unknown ones. ' + placeholderHint()
+			],
 			argsSchema: CreateArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -259,30 +247,25 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 					title: { type: 'string', description: 'Short template title.' },
 					description: { type: 'string', description: 'Optional one-line description.' },
 					prompt: {
-						type: 'string',
-						description: 'The prompt body. Placeholders validated by type.'
+						type: 'string'
 					},
 					launchBehavior: {
 						type: 'string',
-						enum: ['send', 'draft', 'review'],
-						description: 'send | draft | review. Defaults: draft for chat, send for ticket-action.'
+						enum: ['send', 'draft', 'review']
 					},
 					conversationMode: {
 						type: 'string',
-						enum: [...SESSION_MODES],
-						description: 'Conversation mode override for launched chats.'
+						enum: [...SESSION_MODES]
 					},
 					approvalMode: {
 						type: 'string',
 						enum: [...APPROVAL_MODES],
 						description: APPROVAL_MODE_DESCRIPTION
 					},
-					model: { type: 'string', description: 'Model override for launched chats.' },
+					model: { type: 'string' },
 					disabledToolGroups: {
 						type: 'array',
-						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
-						description:
-							'chat + ticket-action: tool groups to disable on launched conversations (seed, not a lock).'
+						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] }
 					},
 					workspaceMode: {
 						type: 'string',
@@ -320,10 +303,11 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 		},
 		{
 			name: 'template_update',
-			description:
-				'Update one of the user\u2019s stored prompt templates. `status: "archived"` soft-deletes (reversible; ' +
-				'no hard delete). Built-ins not editable. Validates placeholders by type. ' +
-				placeholderHint(),
+			description: 'Update one of the user\u2019s stored prompt templates.',
+			promptGuidelines: [
+				'`status: "archived"` soft-deletes (reversible; no hard delete). Built-ins not editable.',
+				'Validates `{{placeholders}}` by type and rejects unknown ones. ' + placeholderHint()
+			],
 			argsSchema: UpdateArgs,
 			permissionBehavior: 'always-prompt',
 			parameters: {
@@ -333,30 +317,25 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 					title: { type: 'string', description: 'New title.' },
 					description: { type: 'string', description: 'New description.' },
 					prompt: {
-						type: 'string',
-						description: 'New prompt body. Placeholders validated by type.'
+						type: 'string'
 					},
 					launchBehavior: {
 						type: 'string',
-						enum: ['send', 'draft', 'review'],
-						description: 'New launch behavior: send, draft, or review before sending.'
+						enum: ['send', 'draft', 'review']
 					},
 					conversationMode: {
 						type: 'string',
-						enum: [...SESSION_MODES],
-						description: 'New conversation mode override for launched chats.'
+						enum: [...SESSION_MODES]
 					},
 					approvalMode: {
 						type: 'string',
 						enum: [...APPROVAL_MODES],
-						description: `New approval mode override. ${APPROVAL_MODE_DESCRIPTION}`
+						description: `New approval mode override: ${APPROVAL_MODE_DESCRIPTION}`
 					},
-					model: { type: 'string', description: 'New model override for launched chats.' },
+					model: { type: 'string' },
 					disabledToolGroups: {
 						type: 'array',
-						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] },
-						description:
-							'chat + ticket-action: new tool group set to disable on launched conversations (replaces existing).'
+						items: { type: 'string', enum: [...PORTAL_TOOL_GROUP_IDS] }
 					},
 					workspaceMode: {
 						type: 'string',

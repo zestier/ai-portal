@@ -31,7 +31,7 @@
 import { z } from 'zod';
 import { conversationId as convCodec } from '$lib/ids';
 import { err, ok, type PortalTool } from './types';
-import { project, withOmitted, FieldsArg, FIELDS_PARAM, FIELDS_NOTE } from './project';
+import { project, withOmitted, FieldsArg, FIELDS_PARAM } from './project';
 import {
 	createLease,
 	getLease,
@@ -185,19 +185,21 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		{
 			name: 'worktree_create',
 			description:
-				"Create an isolated Git worktree of this conversation's repository on its own branch, for parallel sub-agent work. Returns an absolute `path` that already exists and is writable. Changes stay isolated until the branch is merged. One worktree per unit of work; the repo is always this conversation's own.",
+				"Create an isolated Git worktree of this conversation's repository on its own branch.",
+			promptGuidelines: [
+				"Returns an absolute `path` that already exists and is writable; changes stay isolated until the branch is merged. One worktree per unit of work; the repo is always this conversation's own."
+			],
 			argsSchema: CreateArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					label: {
 						type: 'string',
-						description:
-							'Short slug for the unit of work (lowercase, digits, dashes); used in the branch name.'
+						description: 'Slug for the unit of work (lowercase, digits, dashes).'
 					},
 					baseRef: {
 						type: 'string',
-						description: 'Optional commit/branch/tag to branch from. Defaults to the current HEAD.'
+						description: 'Optional base commit/branch/tag. Defaults to current HEAD.'
 					}
 				},
 				required: ['label'],
@@ -229,7 +231,10 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		},
 		{
 			name: 'worktree_list',
-			description: `List the PORTAL worktree leases this conversation currently holds. \`dirtyCount\` is uncommitted files; \`ahead\` is committed work waiting to be merged back. Unlike the git-level \`git_worktree_list\`, this only sees leases this conversation created. ${FIELDS_NOTE}`,
+			description: 'List the PORTAL worktree leases this conversation currently holds.',
+			promptGuidelines: [
+				'Unlike the git-level `git_worktree_list`, this only sees leases this conversation created. `dirtyCount` is uncommitted files; `ahead` is committed work waiting to be merged back.'
+			],
 			argsSchema: ListArgs,
 			parameters: {
 				type: 'object',
@@ -273,13 +278,15 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		},
 		{
 			name: 'worktree_status',
-			description:
-				'Report one PORTAL worktree lease this conversation holds: its path, branch, and how many files have uncommitted changes. The git-level `git_worktree_status` instead reports the git state of a checkout.',
+			description: 'Report one PORTAL worktree lease this conversation holds.',
+			promptGuidelines: [
+				'The git-level `git_worktree_status` instead reports the git state of a checkout.'
+			],
 			argsSchema: StatusArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					leaseId: { type: 'string', description: 'Worktree id from worktree_create.' }
+					leaseId: { type: 'string', description: 'Worktree id.' }
 				},
 				required: ['leaseId'],
 				additionalProperties: false
@@ -310,8 +317,12 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		},
 		{
 			name: 'worktree_merge',
-			description:
-				'Merge a PORTAL worktree lease back into this conversation. "to-source" (default) merges its branch in after a sub-agent has COMMITTED work; pass `squash` with a subject to collapse commits into one. "from-source" refreshes the worktree with newer commits from this conversation. Refuses with uncommitted changes on either side. "to-source" always rolls back on conflict; a "from-source" conflict can be left ("keep") for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort. The git-level `git_worktree_merge` operates on the repository\'s own worktrees instead.',
+			description: 'Merge a PORTAL worktree lease back into this conversation.',
+			promptGuidelines: [
+				"`to-source` (default) merges a sub-agent's committed work; pass `squash` with a subject to collapse commits into one.",
+				'Refuses with uncommitted changes on either side. `to-source` always rolls back on conflict; a `from-source` conflict can be left (`keep`) for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort.',
+				"This is the lease tool; `git_worktree_merge` operates on the repository's own worktrees instead."
+			],
 			argsSchema: MergeArgs,
 			// Always prompts, matching `git_worktree_merge` and `git_commit`.
 			//
@@ -329,24 +340,22 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 			parameters: {
 				type: 'object',
 				properties: {
-					leaseId: { type: 'string', description: 'Worktree id from worktree_create.' },
+					leaseId: { type: 'string', description: 'Worktree id.' },
 					direction: {
 						type: 'string',
 						enum: ['to-source', 'from-source'],
-						description:
-							'"to-source" (default) worktree into this conversation; "from-source" this conversation into the worktree.'
+						description: 'to-source (default) | from-source.'
 					},
 					allowMergeCommit: {
 						type: 'boolean',
-						description:
-							'direction="to-source" only. Default false (fast-forward). Set true to allow a merge commit when collecting multiple worktrees; prefer `squash` for linear history.'
+						description: 'to-source only. Default false (fast-forward).'
 					},
 					squash: SQUASH_PARAM,
 					onConflict: {
 						type: 'string',
 						enum: ['abort', 'keep'],
 						description:
-							'direction="from-source" only. "abort" (default) rolls back; "keep" leaves the conflict for a sub-agent to finish with git_commit { paths: "all" } or discard with git_merge_abort.'
+							'from-source only. abort (default) rolls back; keep leaves the conflict to finish with git_commit or discard with git_merge_abort.'
 					}
 				},
 				required: ['leaseId'],
@@ -406,7 +415,10 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 		{
 			name: 'worktree_remove',
 			description:
-				'Remove a worktree created by worktree_create. Refuses with uncommitted changes unless `force: true` (permanently discards them). Committed unmerged work is never lost: the branch is kept and its name returned.',
+				'Remove a worktree created by worktree_create. Refuses with uncommitted changes unless `force: true` (permanently discards them).',
+			promptGuidelines: [
+				'Committed unmerged work is never lost: the branch is kept and its name returned.'
+			],
 			argsSchema: RemoveArgs,
 			// Always prompts. PortalTool exposes a static behavior rather than an
 			// arg-dependent one, so the only way to guarantee `force: true` (which
@@ -426,11 +438,10 @@ export function buildWorktreeTools(ctx: { userId: number; conversationId: number
 			parameters: {
 				type: 'object',
 				properties: {
-					leaseId: { type: 'string', description: 'Worktree id from worktree_create.' },
+					leaseId: { type: 'string', description: 'Worktree id.' },
 					force: {
 						type: 'boolean',
-						description:
-							'Discard uncommitted changes and remove anyway. Destructive. Default false.'
+						description: 'Discard uncommitted changes and remove anyway. Destructive.'
 					}
 				},
 				required: ['leaseId'],

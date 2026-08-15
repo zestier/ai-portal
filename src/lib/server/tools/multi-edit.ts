@@ -117,15 +117,19 @@ export function buildMultiEditTools(
 	return [
 		{
 			name: 'multi_edit',
-			description:
-				"Apply an atomic batch of exact-text edits. `edits` is an array (1-100) of the same objects `edit` takes — `{file_path, old_string, new_string, replace_all?}` — and the batch is all-or-nothing: every `old_string` must match the file contents, and if any edit fails nothing is written (the error names the failing edit index, path, and unmatched string — when `old_string` isn't found, the error may include the closest matching region ('Did you mean') to help correct the edit). A stray leading tab per line (as copied from numbered `read` output) is tolerated exactly like `edit`: ignored when matching `old_string` and stripped from `new_string`. Edits apply sequentially per file — edit N matches the content after edits 1..N−1 — and `new_string` may be empty to delete text. Replacement-only: use `write`/`trash`/`move` for create/delete/rename. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace. Anchor on content, never line numbers. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. dryRun validates without writing.",
+			description: 'Apply an atomic batch (1–100) of exact-text edits; all-or-nothing.',
+			promptGuidelines: [
+				"Every `old_string` must match the file contents; if any edit fails, nothing is written (the error names the failing edit index, path, and unmatched string — a 'Did you mean' closest-match hint may be included).",
+				'Edits apply sequentially per file — edit N matches content after edits 1..N−1 — and `new_string` may be empty to delete text. A stray leading tab from numbered `read` output is ignored when matching `old_string` and stripped from `new_string`.',
+				'Replacement-only: use `write`/`trash`/`move` for create/delete/rename. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace. Anchor on content, never line numbers. `dryRun` validates without writing.'
+			],
 			argsSchema: MultiEditArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					edits: {
 						type: 'array',
-						description: 'Exact-text edit objects, applied in order (at most 100 per call).',
+						description: 'Exact-text edits (1–100).',
 						items: {
 							type: 'object',
 							properties: {
@@ -134,14 +138,12 @@ export function buildMultiEditTools(
 									description: 'Absolute path; must resolve inside the workspace.'
 								},
 								old_string: {
-									type: 'string',
-									description: 'Exact literal text to find and replace.'
+									type: 'string'
 								},
 								new_string: { type: 'string', description: 'Replacement text (may be empty).' },
 								replace_all: {
 									type: 'boolean',
-									description:
-										'Replace every occurrence of old_string instead of the first. Default false.'
+									description: 'Replace every occurrence. Default false.'
 								}
 							},
 							required: ['file_path', 'old_string', 'new_string'],
@@ -149,7 +151,7 @@ export function buildMultiEditTools(
 						}
 					},
 					worktree: WORKTREE_WRITE_PARAM,
-					dryRun: { type: 'boolean', description: 'Validate and report changes without writing.' }
+					dryRun: { type: 'boolean', description: 'Validate without writing.' }
 				},
 				required: ['edits'],
 				additionalProperties: false

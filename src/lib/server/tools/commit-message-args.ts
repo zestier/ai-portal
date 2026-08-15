@@ -60,13 +60,13 @@ export const SquashArg = z
 export const SQUASH_PARAM = {
 	type: 'object',
 	description:
-		'direction="to-source" only. Collapse this worktree\'s commits into ONE commit before merging, so the target branch gains one commit per unit of work. Worktree must be level with the source — sync "from-source" first if behind. Forces a fast-forward; allowMergeCommit has no effect.',
+		"to-source only. Collapse this worktree's commits into ONE commit before merging. Forces a fast-forward.",
 	properties: {
 		subject: {
 			type: 'string',
-			description: 'Required single-line subject for the squashed commit.'
+			description: 'Required single-line subject.'
 		},
-		body: { type: 'string', description: 'Optional body for the squashed commit.' },
+		body: { type: 'string', description: 'Optional body.' },
 		trailers: {
 			type: 'array',
 			items: {
@@ -75,7 +75,7 @@ export const SQUASH_PARAM = {
 				required: ['token', 'value'],
 				additionalProperties: false
 			},
-			description: 'Optional structured commit trailers.'
+			description: 'Optional structured trailers.'
 		}
 	},
 	required: ['subject'],

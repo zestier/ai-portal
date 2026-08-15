@@ -312,34 +312,34 @@ export function buildShellTools(workspaceRoot: string): PortalTool[] {
 	return [
 		{
 			name: 'bash',
-			description:
-				'Run a non-interactive Bash command in the current workspace (pipelines and shell syntax OK). `timeout` is ms (default 120000, max 600000); `cwd` is a workspace-relative working directory (portal extension) that cannot escape the workspace. Output past the in-context cap is spilled to `.zap/scratch/tool_results/` and the path returned for the model to read. `run_in_background` and `dangerouslyDisableSandbox` are not supported.',
+			description: 'Run a non-interactive Bash command in the workspace. Foreground only.',
+			promptGuidelines: [
+				'`timeout` is ms (default 120000, max 600000); `cwd` is a workspace-relative working directory (portal extension) that cannot escape the workspace. Output past the in-context cap is spilled to `.zap/scratch/tool_results/` and the path returned for the model to read.',
+				'`run_in_background` and `dangerouslyDisableSandbox` are not supported.'
+			],
 			argsSchema: ShellArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					command: { type: 'string', description: 'Bash command to run.' },
+					command: { type: 'string' },
 					timeout: {
 						type: 'number',
-						description: 'Milliseconds, 100-600000 (default 120000).'
+						description: 'Timeout in ms.'
 					},
 					description: {
 						type: 'string',
-						description: 'Accepted for SDK compatibility and ignored.'
+						description: 'Ignored (SDK compatibility).'
 					},
 					run_in_background: {
-						type: 'boolean',
-						description: 'Not supported: commands always run in the foreground.'
+						type: 'boolean'
 					},
 					dangerouslyDisableSandbox: {
-						type: 'boolean',
-						description: 'Not supported: the portal never disables the sandbox.'
+						type: 'boolean'
 					},
-					cwd: { type: 'string', description: 'Optional workspace-relative working directory.' },
+					cwd: { type: 'string', description: 'Optional cwd (workspace-relative).' },
 					maxOutputBytes: {
 						type: 'number',
-						description:
-							'In-context output cap in bytes (1024-65536, default 32768); overflow spills to disk.'
+						description: 'In-context output cap in bytes.'
 					}
 				},
 				required: ['command'],

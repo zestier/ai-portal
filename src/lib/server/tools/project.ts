@@ -70,14 +70,8 @@ export const FIELDS_PARAM = {
 	type: 'array',
 	items: { type: 'string' },
 	description:
-		'Optional. Omit for a compact view (dropped names in `_omitted`); pass an array of ' +
-		'top-level field names to return exactly those, e.g. ["plan"]. Unknown names are rejected.'
+		'Optional. Omit for compact view; pass array of top-level field names to return exactly those (`_omitted` lists dropped).'
 } as const;
-
-// Prose variant of `FIELDS_PARAM.description` for appending to tool descriptions.
-export const FIELDS_NOTE =
-	'Defaults to a compact view; pass `fields` (array of field names) to select fields — ' +
-	'`_omitted` lists what is available. Unknown names are rejected.';
 
 export interface Projection<T> {
 	value: T;

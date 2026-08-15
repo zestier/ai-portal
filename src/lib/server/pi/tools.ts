@@ -44,6 +44,12 @@ export function portalToolToPiTool(portalTool: PortalTool): ToolDefinition {
 		name: portalTool.name,
 		label: portalTool.name,
 		description: portalTool.description,
+		// Load-bearing in-context caveats that don't belong in the (token-heavy)
+		// tool `description`; pi surfaces them in the system prompt instead.
+		...(portalTool.promptSnippet !== undefined ? { promptSnippet: portalTool.promptSnippet } : {}),
+		...(portalTool.promptGuidelines !== undefined && portalTool.promptGuidelines.length > 0
+			? { promptGuidelines: portalTool.promptGuidelines }
+			: {}),
 		// Portal tools declare plain JSON schemas; pi's `parameters` slot is
 		// typed `TSchema`, so cast through unknown. Runtime validation still runs:
 		// pi's validateToolArguments coerces + checks plain JSON schemas.

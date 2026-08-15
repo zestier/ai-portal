@@ -652,8 +652,13 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 	return [
 		{
 			name: 'edit',
-			description:
-				"Replace exact text in an existing text file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `old_string` is the literal text to find; `new_string` replaces it (must differ); `replace_all` (default false) replaces every occurrence instead of the first. Fails when old_string is not found, leaving the file unchanged — when `old_string` isn't found, the error may include the closest matching region ('Did you mean') to help correct the edit. A stray leading tab per line (as copied from numbered `read` output) is tolerated: it is ignored when matching `old_string` and stripped from `new_string` so no extra indentation is written. Pass worktree to edit a held worktree; use `.` or omit it for the local workspace. Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits (line-number edits are drift-prone — anchor on content, not line numbers).",
+			description: 'Replace exact text in an existing workspace file.',
+			promptGuidelines: [
+				'`file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `new_string` must differ from `old_string`.',
+				"Fails (leaving the file unchanged) when `old_string` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
+				'A stray leading tab per line (as copied from numbered `read` output) is ignored when matching `old_string` and stripped from `new_string`.',
+				'Prefer this exact-text form for a single replacement; use `multi_edit` for multi-hunk or multi-file edits. Anchor on content, never line numbers.'
+			],
 			argsSchema: EditArgs,
 			parameters: {
 				type: 'object',
@@ -662,12 +667,11 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 						type: 'string',
 						description: 'Absolute path; must resolve inside the workspace.'
 					},
-					old_string: { type: 'string', description: 'Exact literal text to find and replace.' },
-					new_string: { type: 'string', description: 'Replacement text.' },
+					old_string: { type: 'string' },
+					new_string: { type: 'string' },
 					replace_all: {
 						type: 'boolean',
-						description:
-							'Replace every occurrence of old_string instead of the first. Default false.'
+						description: 'Replace every occurrence. Default false.'
 					},
 					worktree: WORKTREE_WRITE_PARAM
 				},
@@ -712,8 +716,10 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 		},
 		{
 			name: 'write',
-			description:
-				'Write text content to a file, creating it or replacing an existing file. `file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `content` is the complete new text. Result reports created/updated plus a structured diff. Missing parent directories are created automatically. Pass worktree to write in a held worktree; use `.` or omit it for the local workspace.',
+			description: 'Write text content to a file, creating or replacing it.',
+			promptGuidelines: [
+				'`file_path` is absolute (workspace-relative also accepted) and must resolve inside the workspace; `content` is the complete new text. Result reports created/updated plus a structured diff.'
+			],
 			argsSchema: WriteArgs,
 			parameters: {
 				type: 'object',
@@ -722,7 +728,7 @@ export function buildEditFileTools(workspaceRoot: string, ctx?: WorktreeToolCont
 						type: 'string',
 						description: 'Absolute path; must resolve inside the workspace.'
 					},
-					content: { type: 'string', description: 'Complete text content to write.' },
+					content: { type: 'string' },
 					worktree: WORKTREE_WRITE_PARAM
 				},
 				required: ['file_path', 'content'],

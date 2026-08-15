@@ -244,55 +244,55 @@ export function buildGrepTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 	return [
 		{
 			name: 'grep',
-			description:
-				'Search workspace text with ripgrep. output_mode: "content" (matching lines with -B/-A/-C context and line numbers), "files_with_matches" (unique file paths), or "count" (per-file match counts). head_limit/offset bound results; `path` limits traversal; `glob`/`type` filter files. Respects .gitignore. Stays inside the selected workspace or held worktree.',
+			description: 'Search workspace text with ripgrep (content | files_with_matches | count).',
+			promptGuidelines: [
+				'Respects .gitignore and stays inside the selected workspace or held worktree.'
+			],
 			argsSchema: GrepArgs,
 			parameters: {
 				type: 'object',
 				properties: {
-					pattern: { type: 'string', description: 'Regular expression to search for.' },
+					pattern: { type: 'string' },
 					path: { type: 'string', description: 'Workspace-relative file or directory.' },
-					glob: { type: 'string', description: 'File glob, e.g. **/*.ts.' },
+					glob: { type: 'string' },
 					output_mode: {
 						type: 'string',
-						enum: GrepOutputMode.options,
-						description: 'content | files_with_matches | count (see tool description).'
+						enum: GrepOutputMode.options
 					},
 					'-B': {
 						type: 'number',
-						description: 'Context lines before each match (content mode).'
+						description: 'Lines before a match.'
 					},
 					'-A': {
 						type: 'number',
-						description: 'Context lines after each match (content mode).'
+						description: 'Lines after a match.'
 					},
 					'-C': {
 						type: 'number',
-						description: 'Context lines before and after each match (content mode).'
+						description: 'Lines around a match.'
 					},
 					context: {
 						type: 'number',
-						description: 'Context lines before and after each match (content mode).'
+						description: 'Lines around each match.'
 					},
-					'-n': { type: 'boolean', description: 'Show line numbers in content mode.' },
-					'-i': { type: 'boolean', description: 'Case-insensitive matching.' },
+					'-n': { type: 'boolean' },
+					'-i': { type: 'boolean' },
 					'-o': {
 						type: 'boolean',
-						description: 'Only matched parts, one per line (content mode).'
+						description: 'Only matched parts, one per line.'
 					},
 					type: {
 						type: 'string',
-						description: 'File type to search (rg --type), e.g. js, py.'
+						description: 'rg --type, e.g. js.'
 					},
 					head_limit: {
 						type: 'number',
-						description: 'First N lines/entries; 0 unlimited.'
+						description: 'Max lines/entries; 0 = unlimited.'
 					},
 					offset: {
-						type: 'number',
-						description: 'Skip N lines/entries before head_limit.'
+						type: 'number'
 					},
-					multiline: { type: 'boolean', description: 'Enable multiline matching.' },
+					multiline: { type: 'boolean' },
 					worktree: WORKTREE_PARAM
 				},
 				required: ['pattern'],

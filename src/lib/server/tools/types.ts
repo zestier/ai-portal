@@ -110,6 +110,12 @@ export interface PortalTool {
 	name: string;
 	description: string;
 	parameters: Record<string, unknown>;
+	// Optional system-prompt contributions (pi `ToolDefinition` carries both).
+	// Load-bearing usage/security caveats that must stay in-context live here
+	// instead of bloating `description` (T31): `promptSnippet` is a one-line
+	// "Available tools" entry; `promptGuidelines` are short guideline bullets.
+	promptSnippet?: string;
+	promptGuidelines?: string[];
 	argsSchema?: z.ZodTypeAny;
 	permissionBehavior?: 'normal' | 'always-prompt' | 'never-prompt';
 	// Optional, pure (no IO) hook: when present and it returns a request, the

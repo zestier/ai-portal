@@ -47,18 +47,19 @@ export function buildLsTools(workspaceRoot: string, ctx?: WorktreeToolContext): 
 		{
 			name: 'ls',
 			description:
-				'List a single directory inside the workspace. Returns entries sorted alphabetically, with a `/` suffix for directories; includes dotfiles. `path` is workspace-relative (defaults to the workspace root); `limit` caps the entry count (default 500). Pass `worktree` to list inside a held worktree instead. Errors when the path is not a directory. Use `find` for glob-pattern searches and `grep` for content search.',
+				'List a single workspace directory (sorted, `/` suffix for dirs, includes dotfiles).',
+			promptGuidelines: ['Use `find` for glob-pattern searches and `grep` for content search.'],
 			argsSchema: LsArgs,
 			parameters: {
 				type: 'object',
 				properties: {
 					path: {
 						type: 'string',
-						description: 'Workspace-relative directory to list (default: workspace root).'
+						description: 'Directory (default: root).'
 					},
 					limit: {
 						type: 'number',
-						description: 'Maximum number of entries to return (default 500).'
+						description: 'Max entries.'
 					},
 					worktree: WORKTREE_PARAM
 				},
