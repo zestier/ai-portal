@@ -37,6 +37,8 @@ const CreateBody = z
 		title: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
+		systemPrompt: z.string().trim().max(20_000).optional(),
+		appendSystemPrompt: z.string().trim().max(20_000).optional(),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
 		conversationMode: z.enum(SESSION_MODES).optional(),
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
@@ -67,6 +69,10 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		prompt: body.prompt,
 		type: body.type,
 		...(body.description !== undefined ? { description: body.description } : {}),
+		...(body.systemPrompt !== undefined ? { systemPrompt: body.systemPrompt } : {}),
+		...(body.appendSystemPrompt !== undefined
+			? { appendSystemPrompt: body.appendSystemPrompt }
+			: {}),
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
 		...(body.approvalMode !== undefined ? { approvalMode: body.approvalMode } : {}),

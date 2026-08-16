@@ -280,6 +280,32 @@
 	</fieldset>
 {/snippet}
 
+{#snippet systemPromptFields(current: {
+	systemPrompt?: string | null;
+	appendSystemPrompt?: string | null;
+})}
+	<label>
+		System prompt (persona)
+		<textarea
+			name="systemPrompt"
+			rows="3"
+			maxlength="20000"
+			placeholder="Optional. Replaces the default &quot;You are an expert coding assistant...&quot; block for chats launched from this template."
+			>{current.systemPrompt ?? ''}</textarea
+		>
+	</label>
+	<label>
+		Append to system prompt
+		<textarea
+			name="appendSystemPrompt"
+			rows="3"
+			maxlength="20000"
+			placeholder="Optional. Appended under whatever system prompt is active for launched chats."
+			>{current.appendSystemPrompt ?? ''}</textarea
+		>
+	</label>
+{/snippet}
+
 <div
 	id="settings-panel-prompts"
 	class="tab-panel prompts"
@@ -323,6 +349,7 @@
 					placeholder="Describe the recurring task or workflow..."
 				></textarea>
 			</label>
+			{@render systemPromptFields({})}
 			{@render launchFields({}, 'draft')}
 			<div class="inline-fields">
 				<label class="checkbox">
@@ -398,6 +425,8 @@
 								<small>{template.description || 'Custom prompt template'}</small>
 							</span>
 							{#if template.pinned}<Pill tone="accent">Pinned</Pill>{/if}
+							{#if template.systemPrompt}<Pill tone="accent">Persona</Pill>{/if}
+							{#if template.appendSystemPrompt}<Pill tone="accent">Sys append</Pill>{/if}
 						</summary>
 						<form method="POST" action="?/updatePromptTemplate" class="settings-form compact">
 							<input type="hidden" name="id" value={template.id} />
@@ -416,6 +445,7 @@
 									>{template.prompt}</textarea
 								>
 							</label>
+							{@render systemPromptFields(template)}
 							{@render launchFields(template, 'draft')}
 							<div class="inline-fields">
 								<label class="checkbox">
@@ -495,6 +525,8 @@
 								</small>
 							</span>
 							{#if action.pinned}<Pill tone="accent">Pinned</Pill>{/if}
+							{#if action.systemPrompt}<Pill tone="accent">Persona</Pill>{/if}
+							{#if action.appendSystemPrompt}<Pill tone="accent">Sys append</Pill>{/if}
 						</summary>
 						<form method="POST" action="?/updatePromptTemplate" class="settings-form compact">
 							<input type="hidden" name="id" value={action.id} />
@@ -514,6 +546,7 @@
 								>
 							</label>
 							<p class="muted small">Placeholders: <code>{ticketPlaceholderHint}</code></p>
+							{@render systemPromptFields(action)}
 							{@render launchFields(action, 'send')}
 							<div class="inline-fields">
 								<label class="checkbox">
@@ -576,6 +609,7 @@
 					></textarea>
 				</label>
 				<p class="muted small">Placeholders: <code>{ticketPlaceholderHint}</code></p>
+				{@render systemPromptFields({})}
 				{@render launchFields({}, 'send')}
 				<div class="inline-fields">
 					<label class="checkbox">

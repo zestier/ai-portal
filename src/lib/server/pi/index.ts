@@ -86,6 +86,10 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
 		...(opts.disabledToolGroups !== undefined
 			? { disabledToolGroups: opts.disabledToolGroups }
 			: {}),
+		...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
+		...(opts.appendSystemPrompt !== undefined
+			? { appendSystemPrompt: opts.appendSystemPrompt }
+			: {}),
 		...(opts.workspaceKey !== undefined ? { workspaceKey: opts.workspaceKey } : {}),
 		...(opts.memoryMode !== undefined ? { memoryMode: opts.memoryMode } : {}),
 		...(opts.globalMemoryEnabled !== undefined

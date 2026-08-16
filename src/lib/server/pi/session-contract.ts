@@ -64,6 +64,13 @@ export interface ProviderOpenOptions {
 	approvalMode?: ApprovalMode;
 	/** Portal tool groups disabled for this conversation. */
 	disabledToolGroups?: string[];
+	/**
+	 * Optional system-prompt override seeded from the launching prompt template
+	 * (pi ResourceLoader `systemPrompt`). Absent = default coding identity.
+	 */
+	systemPrompt?: string;
+	/** Optional system-prompt suffix from the launching prompt template. */
+	appendSystemPrompt?: string;
 	/** Portal-managed memory mode. */
 	memoryMode?: MemoryMode;
 	/** Explicit opt-in for user-scoped global memory tools. */

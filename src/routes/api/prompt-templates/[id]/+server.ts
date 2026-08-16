@@ -23,6 +23,8 @@ const PatchBody = z
 		title: z.string().trim().min(1).max(120).optional(),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000).optional(),
+		systemPrompt: z.string().trim().max(20_000).nullable().optional(),
+		appendSystemPrompt: z.string().trim().max(20_000).nullable().optional(),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
 		conversationMode: z.enum(SESSION_MODES).nullable().optional(),
 		approvalMode: z.enum(APPROVAL_MODES).nullable().optional(),
@@ -40,6 +42,8 @@ const PatchBody = z
 			body.title !== undefined ||
 			body.description !== undefined ||
 			body.prompt !== undefined ||
+			body.systemPrompt !== undefined ||
+			body.appendSystemPrompt !== undefined ||
 			body.launchBehavior !== undefined ||
 			body.conversationMode !== undefined ||
 			body.approvalMode !== undefined ||
@@ -69,6 +73,10 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 		...(body.title !== undefined ? { title: body.title } : {}),
 		...(body.description !== undefined ? { description: body.description } : {}),
 		...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
+		...(body.systemPrompt !== undefined ? { systemPrompt: body.systemPrompt } : {}),
+		...(body.appendSystemPrompt !== undefined
+			? { appendSystemPrompt: body.appendSystemPrompt }
+			: {}),
 		...(body.launchBehavior !== undefined ? { launchBehavior: body.launchBehavior } : {}),
 		...(body.conversationMode !== undefined ? { conversationMode: body.conversationMode } : {}),
 		...(body.approvalMode !== undefined ? { approvalMode: body.approvalMode } : {}),

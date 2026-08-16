@@ -46,6 +46,8 @@ const PromptTemplateSchema = z
 		title: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
+		systemPrompt: z.string().trim().max(20_000).optional(),
+		appendSystemPrompt: z.string().trim().max(20_000).optional(),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
 		conversationMode: z.enum(SESSION_MODES).optional(),
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
@@ -75,6 +77,8 @@ const UpdatePromptTemplateSchema = z
 		title: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(500).optional(),
 		prompt: z.string().trim().min(1).max(20_000),
+		systemPrompt: z.string().trim().max(20_000).optional(),
+		appendSystemPrompt: z.string().trim().max(20_000).optional(),
 		launchBehavior: z.enum(['send', 'draft', 'review']).optional(),
 		conversationMode: z.enum(SESSION_MODES).optional(),
 		approvalMode: z.enum(APPROVAL_MODES).optional(),
@@ -182,6 +186,8 @@ export const actions: Actions = {
 			title: data.get('title'),
 			description: (data.get('description') as string) || undefined,
 			prompt: data.get('prompt'),
+			systemPrompt: (data.get('systemPrompt') as string) || undefined,
+			appendSystemPrompt: (data.get('appendSystemPrompt') as string) || undefined,
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			approvalMode: (data.get('approvalMode') as string) || undefined,
@@ -207,6 +213,10 @@ export const actions: Actions = {
 			model: parsed.data.model ?? null,
 			disabledToolGroups: sanitizeDisabledToolGroups(parsed.data.disabledToolGroups),
 			...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
+			...(parsed.data.systemPrompt !== undefined ? { systemPrompt: parsed.data.systemPrompt } : {}),
+			...(parsed.data.appendSystemPrompt !== undefined
+				? { appendSystemPrompt: parsed.data.appendSystemPrompt }
+				: {}),
 			workspaceMode: parsed.data.workspaceMode ?? null,
 			...(parsed.data.launchBehavior !== undefined
 				? { launchBehavior: parsed.data.launchBehavior }
@@ -227,6 +237,8 @@ export const actions: Actions = {
 			title: data.get('title'),
 			description: (data.get('description') as string) || undefined,
 			prompt: data.get('prompt'),
+			systemPrompt: (data.get('systemPrompt') as string) || undefined,
+			appendSystemPrompt: (data.get('appendSystemPrompt') as string) || undefined,
 			launchBehavior: (data.get('launchBehavior') as string) || undefined,
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			approvalMode: (data.get('approvalMode') as string) || undefined,
@@ -248,6 +260,10 @@ export const actions: Actions = {
 			title: patch.title,
 			prompt: patch.prompt,
 			...(patch.description !== undefined ? { description: patch.description } : {}),
+			...(patch.systemPrompt !== undefined ? { systemPrompt: patch.systemPrompt } : {}),
+			...(patch.appendSystemPrompt !== undefined
+				? { appendSystemPrompt: patch.appendSystemPrompt }
+				: {}),
 			workspaceMode: patch.workspaceMode ?? null,
 			...(patch.launchBehavior !== undefined ? { launchBehavior: patch.launchBehavior } : {}),
 			conversationMode: patch.conversationMode ?? null,

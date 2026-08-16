@@ -139,7 +139,9 @@ export const POST: RequestHandler = async ({ locals, request, getClientAddress }
 			approvalMode: body.approvalMode ?? userSettings.defaultApprovalMode,
 			memoryExtractorModel: body.memoryExtractorModel ?? null,
 			adversaryModel: body.adversaryModel ?? null,
-			disabledToolGroups
+			disabledToolGroups,
+			systemPrompt: tpl?.systemPrompt ?? null,
+			appendSystemPrompt: tpl?.appendSystemPrompt ?? null
 		});
 
 	if (workspace?.kind !== 'worktree') {

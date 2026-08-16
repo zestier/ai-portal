@@ -29,6 +29,8 @@ interface PromptTemplateRow {
 	title: string;
 	description: string;
 	prompt: string;
+	system_prompt: string | null;
+	append_system_prompt: string | null;
 	launch_behavior: string | null;
 	conversation_mode: string | null;
 	approval_mode: string | null;
@@ -53,6 +55,12 @@ function normalizeModelOverride(raw: string | null | undefined): string | null {
 	return trimmed ? trimmed : null;
 }
 
+/** Trim an optional text override, collapsing empty/whitespace to `null` (unset). */
+function normalizeOptionalText(raw: string | null | undefined): string | null {
+	const trimmed = raw?.trim();
+	return trimmed ? trimmed : null;
+}
+
 /** Parse the `disabled_tool_groups` JSON column into a validated id list. */
 function parseDisabledToolGroups(raw: string | null): PortalToolGroupId[] {
 	if (!raw) return [];
@@ -72,6 +80,8 @@ function rowToTemplate(row: PromptTemplateRow): ChatPromptTemplate {
 		title: row.title,
 		description: row.description,
 		prompt: row.prompt,
+		systemPrompt: row.system_prompt ?? null,
+		appendSystemPrompt: row.append_system_prompt ?? null,
 		launchBehavior: normalizeLaunchBehavior(row.launch_behavior, type),
 		conversationMode: row.conversation_mode ? normalizeSessionMode(row.conversation_mode) : null,
 		approvalMode: row.approval_mode ? normalizeApprovalMode(row.approval_mode) : null,
@@ -146,6 +156,8 @@ export interface CreateInput {
 	title: string;
 	description?: string;
 	prompt: string;
+	systemPrompt?: string | null;
+	appendSystemPrompt?: string | null;
 	launchBehavior?: PromptLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
 	approvalMode?: ApprovalMode | null;
@@ -161,6 +173,8 @@ export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 	const title = input.title.trim();
 	const description = input.description?.trim() ?? '';
 	const prompt = input.prompt.trim();
+	const systemPrompt = normalizeOptionalText(input.systemPrompt);
+	const appendSystemPrompt = normalizeOptionalText(input.appendSystemPrompt);
 	if (!title) throw new Error('prompt template title cannot be empty');
 	if (!prompt) throw new Error('prompt template body cannot be empty');
 	assertPlaceholders(prompt, type);
@@ -176,10 +190,10 @@ export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 		getDb()
 			.prepare(
 				`INSERT INTO prompt_templates(
-				   user_id, type, title, description, prompt, launch_behavior, conversation_mode,
-				   approval_mode, model, disabled_tool_groups, workspace_mode, status, pinned, order_index,
-				   created_at, updated_at, archived_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
+				   user_id, type, title, description, prompt, system_prompt, append_system_prompt,
+				   launch_behavior, conversation_mode, approval_mode, model, disabled_tool_groups,
+				   workspace_mode, status, pinned, order_index, created_at, updated_at, archived_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, NULL)`
 			)
 			.run(
 				userId,
@@ -187,6 +201,8 @@ export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 				title,
 				description,
 				prompt,
+				systemPrompt,
+				appendSystemPrompt,
 				launchBehavior,
 				conversationMode,
 				approvalMode,
@@ -206,6 +222,8 @@ export function create(userId: number, input: CreateInput): ChatPromptTemplate {
 		title,
 		description,
 		prompt,
+		systemPrompt,
+		appendSystemPrompt,
 		launchBehavior,
 		conversationMode,
 		approvalMode,
@@ -225,6 +243,8 @@ export interface UpdateInput {
 	title?: string;
 	description?: string;
 	prompt?: string;
+	systemPrompt?: string | null;
+	appendSystemPrompt?: string | null;
 	launchBehavior?: PromptLaunchBehavior | null;
 	conversationMode?: SessionMode | null;
 	approvalMode?: ApprovalMode | null;
@@ -265,6 +285,14 @@ export function update(
 		patch.conversationMode !== undefined ? patch.conversationMode : current.conversationMode;
 	const approvalMode = patch.approvalMode !== undefined ? patch.approvalMode : current.approvalMode;
 	const model = patch.model !== undefined ? normalizeModelOverride(patch.model) : current.model;
+	const systemPrompt =
+		patch.systemPrompt !== undefined
+			? normalizeOptionalText(patch.systemPrompt)
+			: (current.systemPrompt ?? null);
+	const appendSystemPrompt =
+		patch.appendSystemPrompt !== undefined
+			? normalizeOptionalText(patch.appendSystemPrompt)
+			: (current.appendSystemPrompt ?? null);
 	const disabledToolGroups =
 		patch.disabledToolGroups !== undefined
 			? sanitizeDisabledToolGroups(patch.disabledToolGroups)
@@ -277,7 +305,8 @@ export function update(
 	getDb()
 		.prepare(
 			`UPDATE prompt_templates
-			 SET title = ?, description = ?, prompt = ?, launch_behavior = ?, conversation_mode = ?,
+			 SET title = ?, description = ?, prompt = ?, system_prompt = ?, append_system_prompt = ?,
+			     launch_behavior = ?, conversation_mode = ?,
 			     approval_mode = ?, model = ?, disabled_tool_groups = ?, workspace_mode = ?, status = ?,
 			     pinned = ?, order_index = ?,
 			     updated_at = ?, archived_at = ?
@@ -287,6 +316,8 @@ export function update(
 			title ?? current.title,
 			patch.description?.trim() ?? current.description,
 			prompt ?? current.prompt,
+			systemPrompt,
+			appendSystemPrompt,
 			launchBehavior,
 			conversationMode,
 			approvalMode,

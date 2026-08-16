@@ -69,6 +69,8 @@ export async function startTurnFromUserMessage(
 			mode: conv.mode,
 			approvalMode: conv.approvalMode,
 			disabledToolGroups: conv.disabledToolGroups,
+			...(conv.systemPrompt ? { systemPrompt: conv.systemPrompt } : {}),
+			...(conv.appendSystemPrompt ? { appendSystemPrompt: conv.appendSystemPrompt } : {}),
 			memoryMode: conv.memoryMode,
 			globalMemoryEnabled: conv.globalMemoryEnabled,
 			// Persistent pi session: resume the conversation's file, or create one

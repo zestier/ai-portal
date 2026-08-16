@@ -89,6 +89,18 @@ export interface Conversation {
 	 * the session's portal tools, and a change forces a session recreate.
 	 */
 	disabledToolGroups: PortalToolGroupId[];
+	/**
+	 * System-prompt override copied from the launching prompt template at
+	 * create time (pi ResourceLoader `systemPrompt`). Null when the launch used
+	 * no template override — the default coding-assistant identity. Fixed at
+	 * launch; no mid-session switch (v1).
+	 */
+	systemPrompt?: string | null;
+	/**
+	 * System-prompt suffix copied from the launching prompt template at create
+	 * time (pi ResourceLoader `appendSystemPrompt`). Null when unset.
+	 */
+	appendSystemPrompt?: string | null;
 	createdAt: number;
 	updatedAt: number;
 	archivedAt: number | null;
@@ -307,6 +319,22 @@ export interface ChatPromptTemplate {
 	title: string;
 	description: string;
 	prompt: string;
+	/**
+	 * Optional system-prompt override (Markdown), mirrors the pi SDK
+	 * ResourceLoader `systemPrompt` 1:1. When set, replaces the default
+	 * "You are an expert coding assistant..." system block for chats launched
+	 * from this template (persona/identity). Applies to both template types
+	 * (chat and ticket-action). Null/absent = unset (today's default identity).
+	 */
+	systemPrompt?: string | null;
+	/**
+	 * Optional system-prompt suffix (Markdown), mirrors the pi SDK
+	 * ResourceLoader `appendSystemPrompt` 1:1 (a single string, wrapped as
+	 * `[value]` at launch). When set, appended under whatever system prompt is
+	 * active — composes with `systemPrompt` (replace, then append). Null/absent
+	 * = unset.
+	 */
+	appendSystemPrompt?: string | null;
 	/**
 	 * How this template launches its chat (`send` | `draft` | `review`). Applies
 	 * to both template types; always resolved (never `null`) on a loaded row.

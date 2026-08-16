@@ -51,6 +51,8 @@ interface ConvRow {
 	draft_prompt: string | null;
 	workspace_kind: WorkspaceKind;
 	workspace_key: string | null;
+	system_prompt: string | null;
+	append_system_prompt: string | null;
 	worktree_branch: string | null;
 	worktree_base_sha: string | null;
 }
@@ -104,6 +106,8 @@ function rowToConv(r: ConvRow): Conversation {
 		draftPrompt: r.draft_prompt ?? null,
 		workspaceKind: r.workspace_kind ?? 'shared',
 		workspaceKey: r.workspace_key ?? effectiveWorkdir(r.workdir),
+		systemPrompt: r.system_prompt ?? null,
+		appendSystemPrompt: r.append_system_prompt ?? null,
 		worktreeBranch: r.worktree_branch ?? null,
 		worktreeBaseSha: r.worktree_base_sha ?? null
 	};
@@ -171,6 +175,8 @@ export interface CreateInput {
 	workspaceKind?: WorkspaceKind;
 	workspaceKey?: string;
 	managedWorktree?: ManagedWorktreeMetadata;
+	systemPrompt?: string | null;
+	appendSystemPrompt?: string | null;
 }
 
 /**
@@ -192,6 +198,10 @@ export function create(userId: number, input: CreateInput): Conversation {
 	const draftPrompt = input.draftPrompt ?? null;
 	const workspaceKind = input.workspaceKind ?? 'shared';
 	const workspaceKey = input.workspaceKey ?? effectiveWorkdir(input.workdir);
+	const systemPrompt = input.systemPrompt?.trim() ? input.systemPrompt.trim() : null;
+	const appendSystemPrompt = input.appendSystemPrompt?.trim()
+		? input.appendSystemPrompt.trim()
+		: null;
 	const db = getDb();
 	let id = 0;
 	db.transaction(() => {
@@ -201,8 +211,8 @@ export function create(userId: number, input: CreateInput): Conversation {
 				   user_id, title, workdir, model, mode, approval_mode, memory_mode, memory_extractor_model,
 				   adversary_model, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
 				   forked_from_conversation_id, forked_from_message_id, draft_prompt,
-				   workspace_kind, workspace_key
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				   workspace_kind, workspace_key, system_prompt, append_system_prompt
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				userId,
@@ -222,7 +232,9 @@ export function create(userId: number, input: CreateInput): Conversation {
 				forkMsg,
 				draftPrompt,
 				workspaceKind,
-				workspaceKey
+				workspaceKey,
+				systemPrompt,
+				appendSystemPrompt
 			);
 		id = Number(info.lastInsertRowid);
 		if (workspaceKind === 'managed-worktree') {
@@ -267,6 +279,8 @@ export function create(userId: number, input: CreateInput): Conversation {
 		draftPrompt,
 		workspaceKind,
 		workspaceKey,
+		systemPrompt,
+		appendSystemPrompt,
 		worktreeBranch: input.managedWorktree?.branch ?? null,
 		worktreeBaseSha: input.managedWorktree?.baseSha ?? null
 	};

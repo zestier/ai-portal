@@ -96,6 +96,10 @@ export interface CreatePiSessionOptions {
 	 * load failures are non-fatal (the session still opens with the valid ones).
 	 */
 	additionalExtensionPaths?: string[];
+	/** Optional system-prompt override (pi ResourceLoader `systemPrompt`). */
+	systemPrompt?: string;
+	/** Optional system-prompt suffix (pi ResourceLoader `appendSystemPrompt`). */
+	appendSystemPrompt?: string;
 }
 
 /**
@@ -176,7 +180,7 @@ function seedSessionFromMessages(
 /** Create a pi `AgentSession` over the shared runtime with session state. */
 export async function createPiSession(opts: CreatePiSessionOptions): Promise<AgentSession> {
 	const agentDir = getAgentDir();
-	const loader = new DefaultResourceLoader({
+	const loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
 		cwd: opts.cwd,
 		agentDir,
 		extensionFactories: [createPiPermissionBridge(opts.permissionResolver)],
@@ -191,7 +195,20 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		// tokens, cache-friendly). Per-tool caveats come from each tool's
 		// `promptGuidelines` instead — nothing tool-specific belongs here.
 		appendSystemPrompt: [PORTAL_SYSTEM_GUIDANCE]
-	});
+	};
+	// Template system-prompt overrides (ticket #41). `systemPrompt` replaces the
+	// default coding-assistant block; `appendSystemPrompt` is appended UNDER the
+	// portal guidance. Both absent → today's path, byte-for-byte.
+	if (opts.systemPrompt !== undefined) {
+		loaderOptions.systemPrompt = opts.systemPrompt;
+	}
+	if (opts.appendSystemPrompt !== undefined) {
+		loaderOptions.appendSystemPrompt = [
+			...(loaderOptions.appendSystemPrompt ?? []),
+			opts.appendSystemPrompt
+		];
+	}
+	const loader = new DefaultResourceLoader(loaderOptions);
 	await loader.reload();
 	const sessionManager = buildPiSessionManager(opts);
 	const { session } = await createAgentSession({
@@ -221,6 +238,13 @@ export interface PiProviderSessionOptions {
 	mode?: SessionMode;
 	approvalMode?: ApprovalMode;
 	disabledToolGroups?: string[];
+	/**
+	 * Optional system-prompt override seeded from the launching prompt template
+	 * (pi ResourceLoader `systemPrompt`). Absent = default coding identity.
+	 */
+	systemPrompt?: string;
+	/** Optional system-prompt suffix from the launching prompt template. */
+	appendSystemPrompt?: string;
 	workspaceKey?: string;
 	memoryMode?: import('$lib/types').MemoryMode;
 	globalMemoryEnabled?: boolean;
@@ -292,6 +316,10 @@ export async function createPiProviderSession(
 		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {}),
 		...(opts.additionalExtensionPaths !== undefined
 			? { additionalExtensionPaths: opts.additionalExtensionPaths }
+			: {}),
+		...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
+		...(opts.appendSystemPrompt !== undefined
+			? { appendSystemPrompt: opts.appendSystemPrompt }
 			: {})
 	});
 	return makePiProviderSession(piSession, opts, {

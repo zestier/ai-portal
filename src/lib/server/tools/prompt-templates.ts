@@ -24,6 +24,8 @@ const TEMPLATE_KEEP = [
 	'title',
 	'description',
 	'prompt',
+	'systemPrompt',
+	'appendSystemPrompt',
 	'launchBehavior',
 	'conversationMode',
 	'approvalMode',
@@ -67,6 +69,8 @@ const CreateArgs = z.object({
 	title: z.string().trim().min(1).max(200),
 	description: z.string().trim().max(2000).optional(),
 	prompt: z.string().trim().min(1).max(100000),
+	systemPrompt: z.string().trim().max(100000).nullable().optional(),
+	appendSystemPrompt: z.string().trim().max(100000).nullable().optional(),
 	launchBehavior: LaunchBehavior.optional(),
 	conversationMode: ConversationMode.nullable().optional(),
 	approvalMode: ApprovalModeArg.nullable().optional(),
@@ -82,6 +86,8 @@ const UpdateArgs = z
 		title: z.string().trim().min(1).max(200).optional(),
 		description: z.string().trim().max(2000).optional(),
 		prompt: z.string().trim().min(1).max(100000).optional(),
+		systemPrompt: z.string().trim().max(100000).nullable().optional(),
+		appendSystemPrompt: z.string().trim().max(100000).nullable().optional(),
 		launchBehavior: LaunchBehavior.optional(),
 		conversationMode: ConversationMode.nullable().optional(),
 		approvalMode: ApprovalModeArg.nullable().optional(),
@@ -96,6 +102,8 @@ const UpdateArgs = z
 			a.title !== undefined ||
 			a.description !== undefined ||
 			a.prompt !== undefined ||
+			a.systemPrompt !== undefined ||
+			a.appendSystemPrompt !== undefined ||
 			a.launchBehavior !== undefined ||
 			a.conversationMode !== undefined ||
 			a.approvalMode !== undefined ||
@@ -249,6 +257,14 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 					prompt: {
 						type: 'string'
 					},
+					systemPrompt: {
+						type: 'string',
+						description: 'Optional Markdown; replaces the default system prompt (persona).'
+					},
+					appendSystemPrompt: {
+						type: 'string',
+						description: 'Optional Markdown; appended under the active system prompt.'
+					},
 					launchBehavior: {
 						type: 'string',
 						enum: ['send', 'draft', 'review']
@@ -285,6 +301,10 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 						title: p.title,
 						...(p.description !== undefined ? { description: p.description } : {}),
 						prompt: p.prompt,
+						...(p.systemPrompt !== undefined ? { systemPrompt: p.systemPrompt } : {}),
+						...(p.appendSystemPrompt !== undefined
+							? { appendSystemPrompt: p.appendSystemPrompt }
+							: {}),
 						...(p.launchBehavior !== undefined ? { launchBehavior: p.launchBehavior } : {}),
 						...(p.conversationMode !== undefined ? { conversationMode: p.conversationMode } : {}),
 						...(p.approvalMode !== undefined ? { approvalMode: p.approvalMode } : {}),
@@ -317,6 +337,16 @@ export function buildPromptTemplateTools(opts: { userId: number }): PortalTool[]
 					description: { type: 'string', description: 'New description.' },
 					prompt: {
 						type: 'string'
+					},
+					systemPrompt: {
+						type: 'string',
+						description:
+							'Optional Markdown; replaces the default system prompt (persona). Pass null to clear.'
+					},
+					appendSystemPrompt: {
+						type: 'string',
+						description:
+							'Optional Markdown; appended under the active system prompt. Pass null to clear.'
 					},
 					launchBehavior: {
 						type: 'string',
