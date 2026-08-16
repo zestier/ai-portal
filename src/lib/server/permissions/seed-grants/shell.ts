@@ -160,6 +160,28 @@ export const FS_READ_TOOLS: ReaderSeed[] = [
 ];
 
 /**
+ * cwd-moving builtins. Seeded on the `workspace-paths` FLOOR with a `min: 1`
+ * guard, so a cd is auto-allowed only to a concrete target inside the
+ * workspace (workdir, worktree leases, subdirectories) — agents' reflexive
+ * `cd /workspace` — while bare `cd`/`popd` and out-of-workspace targets fall
+ * through to the prompt seed. No `readable-paths` growth: the sole operand is
+ * the directory to move to, and the matcher's `cwdMoved` guard already makes
+ * fs-deferred relative operands fail closed after a real move. These tokens
+ * must mirror `CWD_MOVING_BUILTINS` in `matcher.ts`; the seed-grants test
+ * asserts the two stay in sync.
+ */
+export const CWD_MOVERS: ReaderSeed[] = [
+	{
+		token: 'cd',
+		audit:
+			'single directory operand, no file-valued options; seeded on workspace-paths + min:1 so it only reaches the workdir/leases/subdirs.'
+	},
+	{ token: 'pushd', audit: 'same as `cd` — only a concrete in-workspace target auto-allows.' },
+	{ token: 'popd', audit: 'no operands — never passes the min:1 guard, so always prompts.' },
+	{ token: 'chdir', audit: 'same as `cd` — only a concrete in-workspace target auto-allows.' }
+];
+
+/**
  * Path-search tools. Like the fs-read tools above they get a `workspace-paths`
  * floor plus a `readable-paths` seed, so searching somewhere the user granted
  * `read` no longer needs a hand-mirrored shell grant. An explicit opt-in prompt
@@ -217,10 +239,9 @@ export const PATH_SEARCH_TOOLS: ReaderSeed[] = [
 export const AUDITED_PATH_SHAPED_TOOLS: Readonly<
 	Record<string, { audit: string; maxPositionals?: number | undefined }>
 > = Object.fromEntries(
-	[...FS_READ_TOOLS, ...PATH_SEARCH_TOOLS].map(({ token, audit, maxPositionals }) => [
-		token,
-		{ audit, maxPositionals }
-	])
+	[...FS_READ_TOOLS, ...PATH_SEARCH_TOOLS, ...CWD_MOVERS].map(
+		({ token, audit, maxPositionals }) => [token, { audit, maxPositionals }]
+	)
 );
 
 /**

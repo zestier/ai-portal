@@ -262,8 +262,11 @@ function matchShellSegments(
 	return withFeedback('allow', null);
 }
 
-/** Builtins that relocate the shell for every segment that follows them. */
-const CWD_MOVING_BUILTINS = new Set(['cd', 'pushd', 'popd', 'chdir']);
+/**
+ * Builtins that relocate the shell for every segment that follows them.
+ * Exported so the seed-grants test can keep the seeded cwd-mover list in sync.
+ */
+export const CWD_MOVING_BUILTINS = new Set(['cd', 'pushd', 'popd', 'chdir']);
 
 function movesWorkingDirectory(seg: ParsedSegment): boolean {
 	return CWD_MOVING_BUILTINS.has(seg.argv[0]);

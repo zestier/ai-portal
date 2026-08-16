@@ -7,8 +7,10 @@ import {
 	ensureSeedGrantsForUser,
 	defaultSeedGrants,
 	restoreSeedGrantsForUser,
-	AUDITED_PATH_SHAPED_TOOLS
+	AUDITED_PATH_SHAPED_TOOLS,
+	CWD_MOVERS
 } from '../../../src/lib/server/permissions/seed-grants';
+import { CWD_MOVING_BUILTINS } from '../../../src/lib/server/permissions/matcher';
 import { parseShellCommand } from '../../../src/lib/server/permissions/shell-parser';
 import { setupLocalEnv } from '../../helpers/env';
 
@@ -173,6 +175,41 @@ describe('seed grants — runtime behaviour', () => {
 		expect(shellMatch('echo hello')).toBe('allow');
 		expect(shellMatch('pwd')).toBe('allow');
 		expect(shellMatch('whoami')).toBe('allow');
+	});
+
+	it('allows cd within the workspace; prompts cd that leaves it', () => {
+		// Workdir, worktree leases, and subdirectories are all reachable —
+		// including the reflexive `cd /workspace` from a subdirectory.
+		expect(shellMatch('cd /workspace', '/workspace')).toBe('allow');
+		expect(shellMatch('cd src', '/tmp', '/tmp')).toBe('allow');
+		expect(shellMatch('cd /tmp/leases/one', '/tmp', '/tmp')).toBe('allow');
+		expect(shellMatch('cd .', '/tmp', '/tmp')).toBe('allow');
+		expect(shellMatch('pushd .', '/tmp', '/tmp')).toBe('allow');
+		expect(shellMatch('chdir .', '/tmp', '/tmp')).toBe('allow');
+		// Out-of-workspace targets and uncheckable invocations (bare `cd` →
+		// $HOME, `popd`) are not auto-allowed and get a steer.
+		expect(shellMatch('cd /etc', '/tmp', '/tmp')).not.toBe('allow');
+		expect(shellMatch('cd ..', '/tmp', '/tmp')).not.toBe('allow');
+		expect(shellMatch('cd', '/tmp', '/tmp')).not.toBe('allow');
+		expect(shellMatch('popd', '/tmp', '/tmp')).not.toBe('allow');
+		expect(shellMatchDetailed('cd /etc', '/tmp', '/tmp').feedback).toContain('`cwd` argument');
+		// A cd leading into a denied command must not mask the deny.
+		expect(shellMatch('cd / && git -C /etc status')).toBe('deny');
+	});
+
+	it('handles cd edge spellings: `--`/trailing slash allow, OLDPWD and wrappers do not', () => {
+		// Trailing slash and `--` are still inside the workspace — allow.
+		expect(shellMatch('cd /tmp/', '/tmp', '/tmp')).toBe('allow');
+		expect(shellMatch('cd -- /tmp', '/tmp', '/tmp')).toBe('allow');
+		// `cd -` is treated as the in-workspace path `-` (a bare `-` is not an
+		// option token); real `cd -` goes to OLDPWD, which is the previous cwd —
+		// itself in-workspace, since every allowed cd stays in the workspace.
+		expect(shellMatch('cd -', '/tmp', '/tmp')).toBe('allow');
+		// `cd ~` is refused even earlier: the parser rejects tilde expansion.
+		expect(shellMatch('cd ~', '/tmp', '/tmp')).not.toBe('allow');
+		// Wrapping cd in another builtin escapes the matcher's argv0 check but
+		// matches no grant either — still not allowed.
+		expect(shellMatch('command cd /etc', '/tmp', '/tmp')).not.toBe('allow');
 	});
 
 	it('auto-approves structured git tools by default', () => {
@@ -558,6 +595,14 @@ describe('seed grants — runtime behaviour', () => {
 		for (const [token, entry] of Object.entries(AUDITED_PATH_SHAPED_TOOLS)) {
 			expect(entry.audit.length, `audit note for ${token}`).toBeGreaterThan(20);
 		}
+	});
+
+	it('keeps the seeded cwd-movers in sync with the matcher cwd set', () => {
+		// `CWD_MOVERS` (which tokens get a seed) and `CWD_MOVING_BUILTINS` (which
+		// argv0s trip the matcher's `cwdMoved` guard) are two lists for one
+		// concept; a cwd-mover with a seed but no guard (or vice versa) would
+		// quietly diverge.
+		expect(new Set(CWD_MOVERS.map((m) => m.token))).toEqual(CWD_MOVING_BUILTINS);
 	});
 
 	it('carries every audited operand bound onto EVERY seed of that tool', () => {

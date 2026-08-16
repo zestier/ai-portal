@@ -21,6 +21,7 @@ import {
 	riskyGitGlobalOptionFeedback
 } from './git';
 import {
+	CWD_MOVERS,
 	FS_READ_TOOLS,
 	PATH_SEARCH_TOOLS,
 	PROMPT_SEEDS,
@@ -58,6 +59,26 @@ export function defaultSeedGrants(): SeedSpec[] {
 
 	for (const argv0 of PURE_UTILS) {
 		seeds.push(shellGrant(shellCommand(argv0, { kind: 'any' })));
+	}
+	// cwd-moving builtins (`cd`, `pushd`, `popd`, `chdir`): auto-allowed only
+	// to a concrete target inside the workspace roots — workdir, worktree
+	// leases, and their subdirectories — which is what this `workspace-paths`
+	// seed expresses. The `min: 1` guard (as with the deferred readers) means
+	// bare `cd` / `popd`, which would move to $HOME / the saved dir, do not
+	// auto-approve on a rule that checked no path. Agents' reflexive
+	// `cd /workspace` is always valid.
+	for (const { token } of CWD_MOVERS) {
+		seeds.push(shellGrant(deferredReader(shellCommand(token, { kind: 'workspace-paths' }))));
+	}
+	// Anything else — out-of-workspace targets, bare `cd`, `popd` — gets a
+	// prompt with a steer instead of silence.
+	for (const { token } of CWD_MOVERS) {
+		seeds.push(
+			shellPrompt(
+				shellCommand(token, { kind: 'any' }),
+				`\`${token}\` outside the workspace requires approval. \`cd\` is only useful inside the workspace (workdir, worktree leases, subdirectories); elsewhere it moves the shell somewhere the matcher cannot track, so relative paths in later commands resolve differently than checked. Prefer the tool's \`cwd\` argument.`
+			)
+		);
 	}
 	// Read-only shell tools get TWO allow seeds, and the pair is the whole
 	// design:
