@@ -4,6 +4,7 @@
 	import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
 	import { untrack } from 'svelte';
 	import Modal from './ui/Modal.svelte';
+	import ModelPicker from './ui/ModelPicker.svelte';
 
 	let {
 		open = false,
@@ -55,15 +56,6 @@
 			? disabledToolGroups.filter((group) => group !== id)
 			: [...disabledToolGroups, id];
 	}
-
-	// The model list is not discoverable without the provider layer; the select
-	// offers the template's stored override (kept so reviewing a launch never
-	// silently drops it) or the server default.
-	const modelChoices = $derived.by(() => {
-		const ids: string[] = [];
-		if (model) ids.push(model);
-		return ids;
-	});
 
 	const conversationModeOptions: { value: string; label: string }[] = [
 		{ value: '', label: 'Use my default mode' },
@@ -137,15 +129,14 @@
 					{/each}
 				</select>
 			</label>
-			<label>
-				Model
-				<select bind:value={model} disabled={busy}>
-					<option value="">Use my default model</option>
-					{#each modelChoices as modelId (modelId)}
-						<option value={modelId}>{modelId}</option>
-					{/each}
-				</select>
-			</label>
+			<ModelPicker
+				label="Model"
+				value={model}
+				options={[]}
+				emptyLabel="Use my default model"
+				disabled={busy}
+				onchange={(v) => (model = v)}
+			/>
 		</div>
 
 		<fieldset class="tool-groups-fieldset" disabled={busy}>

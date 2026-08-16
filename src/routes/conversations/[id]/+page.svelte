@@ -122,7 +122,6 @@
 	>
 		<Chat
 			conversation={data.conversation}
-			defaultModelPlaceholder={data.defaultModelPlaceholder}
 			effectiveModel={data.effectiveModel}
 			modelOptions={data.modelOptions}
 			chatPlaceholder={data.chatPlaceholder}

@@ -127,7 +127,6 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	return {
 		conversation: conv,
 		effectiveModel: conv.model ?? cfg.DEFAULT_MODEL,
-		defaultModelPlaceholder: cfg.PI_MODEL ?? 'provider/model',
 		modelOptions: listEnabledModelOptions(),
 		chatPlaceholder: 'Message…',
 		// Backend-projected transcript: bounded hydrated tail + older index.

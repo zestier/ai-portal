@@ -63,13 +63,11 @@
 		initialActiveTurnId = null,
 		initialPendingInteractive = [],
 		initialComposer = '',
-		defaultModelPlaceholder,
 		effectiveModel,
 		chatPlaceholder,
 		modelOptions = []
 	}: {
 		conversation: Conversation;
-		defaultModelPlaceholder: string;
 		effectiveModel: string;
 		chatPlaceholder: string;
 		modelOptions?: string[];
@@ -1745,7 +1743,6 @@
 		{title}
 		{conversation}
 		model={sessionModel}
-		{defaultModelPlaceholder}
 		{modelOptions}
 		{parent}
 		{usage}

@@ -2,6 +2,7 @@
 	import Alert from '$lib/components/ui/Alert.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
+	import ModelPicker from '$lib/components/ui/ModelPicker.svelte';
 	import LaunchReviewDialog from '$lib/components/LaunchReviewDialog.svelte';
 	import type { FormResult, PromptTemplate, SettingsData } from './settings-types';
 	import type { PromptTemplateListItem } from '$lib/prompt-templates';
@@ -53,15 +54,6 @@
 		{ value: 'auto-approve', label: 'Auto-approve prompts' },
 		{ value: 'auto-deny', label: 'Auto-deny prompts (best effort)' }
 	];
-
-	// Model-override options for ticket actions. Always include the currently
-	// stored override (even if the provider no longer lists it) so editing a
-	// stale id doesn't silently drop it.
-	function modelOptionsFor(current: string | null | undefined): string[] {
-		const ids = [...modelOptions];
-		if (current && !ids.includes(current)) ids.unshift(current);
-		return ids;
-	}
 
 	const workspaceModeOptions: { value: string; label: string }[] = [
 		{ value: '', label: 'Shared checkout (default)' },
@@ -242,12 +234,12 @@
 		</label>
 		<label>
 			Model
-			<select name="model">
-				<option value="" selected={!current.model}>Use my default model</option>
-				{#each modelOptionsFor(current.model) as modelId (modelId)}
-					<option value={modelId} selected={current.model === modelId}>{modelId}</option>
-				{/each}
-			</select>
+			<ModelPicker
+				name="model"
+				value={current.model ?? ''}
+				options={modelOptions}
+				emptyLabel="Use my default model"
+			/>
 		</label>
 	</div>
 	<p class="muted small">

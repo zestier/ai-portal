@@ -11,13 +11,13 @@
 	import { invalidateWorktreeStatus, worktreeStatusRevision } from '$lib/client/worktree-status';
 	import ContextMeter from './ContextMeter.svelte';
 	import ConfirmDialog from './ui/ConfirmDialog.svelte';
+	import ModelPicker from './ui/ModelPicker.svelte';
 	import { PORTAL_TOOL_GROUPS, type PortalToolGroupId } from '$lib/tools/groups';
 
 	let {
 		title,
 		conversation,
 		model,
-		defaultModelPlaceholder,
 		modelOptions = [],
 		parent = null,
 		usage = null,
@@ -33,7 +33,6 @@
 		title: string;
 		conversation: Conversation;
 		model: string;
-		defaultModelPlaceholder: string;
 		/** Enabled portal models as `providerId/modelId`, offered as suggestions. */
 		modelOptions?: string[];
 		parent?: {
@@ -72,11 +71,6 @@
 	let savingApprove = $state(false);
 	let savingToolGroups = $state(false);
 	let approveConfirmOpen = $state(false);
-	let customModel = $state('');
-	let selectedHarvesterChoice = $state('');
-	let customHarvesterModel = $state('');
-	const CUSTOM_MODEL_OPTION = '__custom__';
-	const DEFAULT_HARVESTER_OPTION = '__default__';
 
 	const MODES: { value: SessionMode; label: string; hint: string }[] = [
 		{
@@ -135,26 +129,7 @@
 		APPROVAL_MODE_OPTIONS.find((opt) => opt.value === approvalMode)?.note ?? ''
 	);
 	const showContextMeter = $derived(usage !== null);
-	const selectedCustomModel = $derived(customModel.trim());
-	const customModelUnchanged = $derived(selectedCustomModel === model);
-	const customModelInvalid = $derived(selectedCustomModel.length === 0 || customModelUnchanged);
 	const currentHarvesterModel = $derived(memoryExtractorModel ?? '');
-	const selectedCustomHarvester = $derived(customHarvesterModel.trim());
-	const customHarvesterUnchanged = $derived(selectedCustomHarvester === currentHarvesterModel);
-	const customHarvesterInvalid = $derived(
-		selectedCustomHarvester.length === 0 || customHarvesterUnchanged
-	);
-
-	$effect(() => {
-		customModel = model;
-		if (!memoryExtractorModel) {
-			selectedHarvesterChoice = DEFAULT_HARVESTER_OPTION;
-			customHarvesterModel = '';
-		} else {
-			selectedHarvesterChoice = CUSTOM_MODEL_OPTION;
-			customHarvesterModel = memoryExtractorModel;
-		}
-	});
 
 	async function patchSession(body: {
 		model?: string;
@@ -228,16 +203,6 @@
 			onSettingsChange?.({ memoryExtractorModel: prev });
 		} finally {
 			savingHarvester = false;
-		}
-	}
-
-	function selectHarvesterModel(e: Event) {
-		const next = (e.currentTarget as HTMLSelectElement).value;
-		selectedHarvesterChoice = next;
-		if (next === DEFAULT_HARVESTER_OPTION) {
-			void chooseHarvesterModel(null);
-		} else if (next !== CUSTOM_MODEL_OPTION) {
-			void chooseHarvesterModel(next);
 		}
 	}
 
@@ -567,33 +532,13 @@
 				{/if}
 				<div class="session-settings" role="group" aria-label="Session settings">
 					<div class="setting-row model-row">
-						<span class="setting-label">Model</span>
-						<input
-							class="model-input"
-							bind:value={customModel}
-							placeholder={defaultModelPlaceholder}
-							list={modelOptions.length > 0 ? 'chat-model-options' : undefined}
+						<ModelPicker
+							label="Model"
+							value={model}
+							options={modelOptions}
 							disabled={savingModel || modelChangeDisabled}
-							aria-label="Session model id"
-							onkeydown={(e) => {
-								if (e.key === 'Enter' && !customModelInvalid) void chooseModel(selectedCustomModel);
-							}}
+							onchange={(v) => void chooseModel(v)}
 						/>
-						{#if modelOptions.length > 0}
-							<datalist id="chat-model-options">
-								{#each modelOptions as opt (opt)}
-									<option value={opt}></option>
-								{/each}
-							</datalist>
-						{/if}
-						<button
-							type="button"
-							class="save-model-btn"
-							disabled={savingModel || modelChangeDisabled || customModelInvalid}
-							onclick={() => chooseModel(selectedCustomModel)}
-						>
-							{savingModel ? 'Saving…' : 'Save model'}
-						</button>
 						{#if modelChangeDisabled}
 							<span class="unsupported-chip">model locked during turn</span>
 						{/if}
@@ -653,41 +598,14 @@
 					</div>
 					{#if memoryMode !== 'off'}
 						<div class="setting-row model-row">
-							<span class="setting-label">Harvester</span>
-							<select
-								class="model-select"
-								aria-label="Memory harvester model"
-								bind:value={selectedHarvesterChoice}
+							<ModelPicker
+								label="Harvester"
+								value={currentHarvesterModel}
+								options={modelOptions}
+								emptyLabel="Server default harvester"
 								disabled={savingHarvester || modelChangeDisabled}
-								onchange={selectHarvesterModel}
-							>
-								<option value={DEFAULT_HARVESTER_OPTION}>Server default harvester</option>
-								<option value={CUSTOM_MODEL_OPTION}>Enter a custom harvester model id…</option>
-							</select>
-							{#if selectedHarvesterChoice === CUSTOM_MODEL_OPTION}
-								<div class="model-custom">
-									<input
-										class="model-input"
-										bind:value={customHarvesterModel}
-										placeholder="harvester-model-id"
-										list={modelOptions.length > 0 ? 'chat-model-options' : undefined}
-										disabled={savingHarvester || modelChangeDisabled}
-										aria-label="Custom memory harvester model id"
-										onkeydown={(e) => {
-											if (e.key === 'Enter' && !customHarvesterInvalid)
-												void chooseHarvesterModel(selectedCustomHarvester);
-										}}
-									/>
-									<button
-										type="button"
-										class="save-model-btn"
-										disabled={savingHarvester || modelChangeDisabled || customHarvesterInvalid}
-										onclick={() => chooseHarvesterModel(selectedCustomHarvester)}
-									>
-										{savingHarvester ? 'Saving…' : 'Save harvester'}
-									</button>
-								</div>
-							{/if}
+								onchange={(v) => chooseHarvesterModel(v || null)}
+							/>
 							<span
 								class="unsupported-chip"
 								title="Overrides the model-backed memory extractor when one is configured. Leave default to use server settings."
@@ -971,8 +889,7 @@
 	.model-row {
 		align-items: flex-start;
 	}
-	.model-select,
-	.model-input {
+	.model-select {
 		min-width: min(26rem, 100%);
 		max-width: 100%;
 		background: var(--surface-2);
@@ -994,19 +911,8 @@
 		background-position: right 8px center;
 		background-size: 14px;
 	}
-	.model-select:hover:not(:disabled),
-	.model-input:hover:not(:disabled) {
+	.model-select:hover:not(:disabled) {
 		border-color: var(--accent);
-	}
-	.model-input::placeholder {
-		color: var(--text-muted, inherit);
-		opacity: 0.7;
-	}
-	.model-custom {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-1);
-		flex-wrap: wrap;
 	}
 	.seg {
 		display: inline-flex;
@@ -1047,22 +953,7 @@
 	.approve-toggle input[type='checkbox'] {
 		margin: 0;
 	}
-	.save-model-btn {
-		background: var(--surface-2);
-		border: 1px solid var(--border);
-		color: inherit;
-		font: inherit;
-		font-size: var(--fs-xs);
-		padding: 2px 8px;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	.save-model-btn:hover:not(:disabled) {
-		background: var(--surface-3, var(--surface-2));
-	}
-	.model-select:disabled,
-	.model-input:disabled,
-	.save-model-btn:disabled {
+	.model-select:disabled {
 		opacity: 0.5;
 		cursor: progress;
 	}

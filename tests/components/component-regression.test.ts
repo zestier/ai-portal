@@ -324,7 +324,6 @@ describe('Svelte component regression coverage', () => {
 				conversation,
 				initialTranscript: { tail: [], index: [], hasMoreOlder: false },
 				initialPendingInteractive: [pending],
-				defaultModelPlaceholder: 'claude-sonnet-4.5',
 				effectiveModel: 'claude-sonnet-4.5',
 				chatPlaceholder: 'Ask the agent'
 			}
