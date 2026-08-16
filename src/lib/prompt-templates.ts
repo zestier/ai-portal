@@ -311,7 +311,10 @@ const DO_PROMPT =
 	'Execute the spec and plan below. When the plan is detailed, follow it as written — make the ' +
 	'changes each step describes, verify each step as it specifies, and do not redesign it. If ' +
 	'something is genuinely missing or impossible, stop and ask rather than improvising.\n\n' +
-	'Ticket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
+	'Ticket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}\n\n' +
+	'When done, review your own work before stopping: re-read the diff for correctness and ' +
+	'regressions, confirm every acceptance criterion in the spec, then report what you changed, ' +
+	'how you verified it, and anything you skipped or left undone.';
 
 const REFINE_PROMPT =
 	'Refine this workspace ticket: {{ticket.title}}\n\n' +
