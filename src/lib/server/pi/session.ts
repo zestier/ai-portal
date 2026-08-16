@@ -189,7 +189,7 @@ export async function createPiSession(opts: CreatePiSessionOptions): Promise<Age
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,
-		noContextFiles: true,
+		noContextFiles: false,
 		// Global portal guidance rides the loader's `appendSystemPrompt` channel
 		// so pi appends it to the system prompt once at session setup (system
 		// tokens, cache-friendly). Per-tool caveats come from each tool's
