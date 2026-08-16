@@ -167,15 +167,6 @@ describe('read tool', () => {
 		]);
 	});
 
-	it('rejects pages as unsupported', async () => {
-		const root = makeTmpDir('read-tool-');
-		writeFileSync(join(root, 'doc.pdf'), 'pdf');
-		const result = await readTool(root).handler({ file_path: 'doc.pdf', pages: '1-5' });
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error.message).toContain('pages');
-	});
-
 	it('errors on a directory', async () => {
 		const root = makeTmpDir('read-tool-');
 		mkdirSync(join(root, 'sub'));

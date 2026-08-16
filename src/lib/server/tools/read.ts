@@ -30,7 +30,6 @@ const ReadArgs = z
 		limit: z.number().int().min(1).optional(),
 		numbered: z.boolean().optional(),
 		mode: z.enum(['auto', 'outline', 'content']).optional(),
-		pages: z.string().max(64).optional(),
 		worktree: WorktreeSelector
 	})
 	.strict();
@@ -319,7 +318,7 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 			description: "Read a file's content (text paging or an image).",
 			promptGuidelines: [
 				'Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`.',
-				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`; `pages` is unsupported. Errors on binary files or directories.',
+				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`. Errors on binary files or directories.',
 				`Files over ${OUTLINE_READ_FLOOR} lines return an indentation outline (header + blocks + tail) by default (mode auto). Pass mode:'content' for raw content, mode:'outline' to force structure, or read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.`,
 				`A broad re-read (range over ${OUTLINE_READ_MAX_RANGE} lines) of a file you have read before returns a delta: an \`unchanged\` marker or the line-diff hunks, not the full content. Use mode:'content' to force raw, or a targeted range to drill in.`
 			],
@@ -349,10 +348,6 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 						description:
 							"Read mode. 'auto' (default) outlines non-tiny files read with a broad range; 'outline' always returns the structure; 'content' returns raw content for the requested range."
 					},
-					pages: {
-						type: 'string',
-						description: 'Unsupported (no PDF rendering).'
-					},
 					worktree: WORKTREE_PARAM
 				},
 				// offset/limit are intentionally NOT in `required`: image reads
@@ -372,11 +367,6 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 			},
 			async handler(args) {
 				const parsed = ReadArgs.parse(args);
-				if (parsed.pages !== undefined) {
-					return err(
-						'pages is only supported for PDF files, which this read tool does not render.'
-					);
-				}
 				const tree = treeFor(parsed.worktree);
 				if (tree.error) return tree.error;
 				return readFileResult(tree.cwd, parsed.file_path, {
