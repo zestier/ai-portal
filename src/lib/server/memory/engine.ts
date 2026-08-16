@@ -6,3 +6,4 @@ export * from './engine/continuity';
 export * from './engine/heuristics';
 export * from './engine/recent';
 export * from './engine/patch';
+export * from './engine/schemas';
