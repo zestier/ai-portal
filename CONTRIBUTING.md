@@ -38,12 +38,17 @@ What "add a test" means in practice here:
 
 - Live in `tests/` as `*.test.ts` (co-located `src/**/*.test.ts` also works; see
   the `include` glob in [`vite.config.ts`](vite.config.ts)). Name the file after
-  the module under test — `tests/title.test.ts` covers `src/lib/server/title.ts`.
-- Run them with `pnpm test` (whole suite) or `pnpm test tests/title.test.ts` (one
+  the module under test — `tests/server/title.test.ts` covers `src/lib/server/title.ts`.
+- Run them with `pnpm test` (whole suite) or `pnpm test tests/server/title.test.ts` (one
   file). `pnpm run test:watch` for a watch loop; `pnpm run test:coverage` for the
   v8 coverage report.
+- Place each test under the `tests/` subfolder mirroring its `src` target: tests
+  for `src/lib/server/*` go in `tests/server/<sub>/` (loose `src/lib/server/*` in
+  `tests/server/`), `src/lib/client/*` in `tests/client/`, `src/lib/components/*`
+  in `tests/components/`, route/`+page.server` tests in `tests/routes/<area>/`.
+  Tests with no `src` target (scripts, repo-wide audits) stay at `tests/` root.
 - Structure with `describe` / `it` and plain `expect` assertions. See
-  [`tests/title.test.ts`](tests/title.test.ts) for the house style: one `describe`
+  [`tests/server/title.test.ts`](tests/server/title.test.ts) for the house style: one `describe`
   per exported function, small focused `it`s, and a comment on any assertion that
   encodes a deliberate trade-off (so the next person doesn't "fix" it blindly).
 - The environment is Node (`environment: 'node'`), and each test **file** runs in
