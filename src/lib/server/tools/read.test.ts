@@ -74,20 +74,29 @@ describe('read tool', () => {
 		]);
 	});
 
-	it('errors on text reads missing offset or limit with the true line count', async () => {
+	it('defaults a range-less read to the whole file (offset 1, limit = total)', async () => {
 		const root = makeTmpDir('read-tool-');
 		writeFileSync(join(root, 'sample.txt'), 'a\nb\nc');
-		const expected = `Reads of text files require both offset and limit (file has 3 lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`;
-		for (const args of [
-			{ file_path: 'sample.txt' },
-			{ file_path: 'sample.txt', offset: 2 },
-			{ file_path: 'sample.txt', limit: 2 }
-		]) {
-			const result = await readTool(root).handler(args);
-			expect(result.ok).toBe(false);
-			if (result.ok) return;
-			expect(result.error.message).toBe(expected);
-		}
+		const result = await readTool(root).handler({ file_path: 'sample.txt' });
+		if (!result.ok) throw new Error(result.error.message);
+		// small file: raw full content
+		expect(result.result).toMatchObject({
+			type: 'text',
+			file: { content: 'a\nb\nc', startLine: 1, numLines: 3, totalLines: 3 }
+		});
+		expect(result.views).toEqual([{ type: 'text', text: 'a\nb\nc\n(file has 3 total lines)' }]);
+	});
+
+	it('defaults a range-less read of a large file to an outline', async () => {
+		const root = makeTmpDir('read-tool-');
+		const lines: string[] = ['def f():', '    return 1', ''];
+		for (let i = 0; i < 300; i++) lines.push(`def g${i}():`, `    return ${i}`);
+		writeFileSync(join(root, 'big.py'), lines.join('\n'));
+		const result = await readTool(root).handler({ file_path: 'big.py' });
+		if (!result.ok) throw new Error(result.error.message);
+		const file = result.result as { file: { outlined?: boolean; content: string } };
+		expect(file.file.outlined).toBe(true);
+		expect(file.file.content).toContain('header (1-');
 	});
 
 	it('paginates a huge page with the continuation banner', async () => {

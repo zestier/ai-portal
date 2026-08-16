@@ -11,7 +11,7 @@
 // - single-line declarations (no indent change) are invisible;
 // - depth ≤ 1 hides helpers nested 2+ levels;
 // - multi-line signatures / mixed tabs-and-spaces are best-effort.
-const MAX_HEADER_LINES = 20;
+const MAX_HEADER_LINES = 10;
 const MAX_TAIL_LINES = 10;
 const MAX_BLOCKS = 80;
 // A line longer than this flags the file as minified/one-giant-line: no indent

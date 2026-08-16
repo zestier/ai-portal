@@ -224,11 +224,11 @@ export async function readFileResult(
 		const hash = createHash('sha1').update(content).digest('hex').slice(0, 8);
 		const lines = content.split(/\r?\n/);
 		const totalLines = lines.length;
-		if (req.offset === undefined || req.limit === undefined) {
-			return err(
-				`Reads of text files require both offset and limit (file has ${totalLines} lines) — e.g. offset: 1, limit: 100 reads the first 100 lines.`
-			);
-		}
+		// offset/limit default to the whole file: a range-less read is broad, so
+		// auto-mode outlines large files anyway and small files just return
+		// their full content.
+		const offset = req.offset ?? 1;
+		const limit = req.limit ?? totalLines;
 		// Delta reads (T38): every text read refreshes the per-conversation
 		// snapshot, and a broad re-read (not a targeted drill-in) returns the
 		// delta — an `unchanged` marker, or line-diff hunks when the file
@@ -240,7 +240,7 @@ export async function readFileResult(
 			req.mode !== 'content' &&
 			req.mode !== 'outline' &&
 			record !== undefined &&
-			req.limit > OUTLINE_READ_MAX_RANGE
+			limit > OUTLINE_READ_MAX_RANGE
 		) {
 			if (record.hash === hash) {
 				return unchangedReadResult(rel, hash, totalLines, fileStat.size);
@@ -254,14 +254,14 @@ export async function readFileResult(
 			req.mode === 'outline' ||
 			((req.mode === undefined || req.mode === 'auto') &&
 				totalLines > OUTLINE_READ_FLOOR &&
-				req.limit > OUTLINE_READ_MAX_RANGE);
+				limit > OUTLINE_READ_MAX_RANGE);
 		if (wantOutline) {
 			const outlined = await outlineRead(rel, content, totalLines, fileStat.size, hash);
 			if (outlined !== null) return outlined;
 		}
 		const numbered = req.numbered === true;
-		const startLine = req.offset;
-		let end = Math.min(totalLines, startLine + req.limit - 1);
+		const startLine = offset;
+		let end = Math.min(totalLines, startLine + limit - 1);
 		let truncatedByTokenCap = false;
 		if (
 			Buffer.byteLength(
@@ -317,7 +317,7 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 			name: 'read',
 			description: "Read a file's content (text paging or an image).",
 			promptGuidelines: [
-				'Text reads require both `offset` and `limit` (a 1-indexed line range) and end with `(file has N total lines)` so you can page. Plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`.',
+				'Reads return plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`. For text, `offset`/`limit` are optional and default to the whole file (a range-less read of a large file returns an outline).',
 				'Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`. Errors on binary files or directories.',
 				`Files over ${OUTLINE_READ_FLOOR} lines return an indentation outline (header + blocks + tail) by default (mode auto). Pass mode:'content' for raw content, mode:'outline' to force structure, or read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.`,
 				`A broad re-read (range over ${OUTLINE_READ_MAX_RANGE} lines) of a file you have read before returns a delta: an \`unchanged\` marker or the line-diff hunks, not the full content. Use mode:'content' to force raw, or a targeted range to drill in.`
@@ -332,11 +332,11 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					},
 					offset: {
 						type: 'number',
-						description: '1-indexed start line. Required for text.'
+						description: '1-indexed start line. Optional; defaults to 1.'
 					},
 					limit: {
 						type: 'number',
-						description: 'Lines to read. Required for text.'
+						description: 'Lines to read. Optional; defaults to the whole file.'
 					},
 					numbered: {
 						type: 'boolean',
@@ -350,9 +350,9 @@ export function buildReadTools(workspaceRoot: string, ctx?: WorktreeToolContext)
 					},
 					worktree: WORKTREE_PARAM
 				},
-				// offset/limit are intentionally NOT in `required`: image reads
-				// must work without them. They are enforced in the handler for
-				// text reads (conditional on text-vs-image), not here.
+				// offset/limit are optional: a range-less read defaults to the whole
+				// file (and auto-mode outlines large files), and image reads always
+				// ignore them.
 				required: ['file_path'],
 				additionalProperties: false
 			},
