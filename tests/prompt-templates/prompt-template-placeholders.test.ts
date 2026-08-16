@@ -19,7 +19,8 @@ describe('placeholder registry', () => {
 			'ticket.title',
 			'ticket.id',
 			'ticket.body',
-			'ticket.plan'
+			'ticket.plan',
+			'ticket.all'
 		]);
 	});
 
@@ -53,6 +54,27 @@ describe('interpolatePrompt', () => {
 		title: 'Fix it',
 		body: 'Some details.',
 		plan: 'Step 1. Step 2.'
+	});
+
+	it('renders ticket.all as the serialized ticket_get view (fields + plan), dropping empties', () => {
+		expect(
+			ticketPlaceholderValues({
+				id: 'T1',
+				title: 'Fix it',
+				body: 'Some details.',
+				plan: 'Step 1. Step 2.',
+				priority: 'P1',
+				status: 'open'
+			})['ticket.all']
+		).toBe(
+			'{"id":"T1","title":"Fix it","priority":"P1","status":"open","body":"Some details.","plan":"Step 1. Step 2."}'
+		);
+	});
+
+	it('drops empty fields from ticket.all', () => {
+		expect(
+			ticketPlaceholderValues({ id: 'T1', title: 'Fix it', body: '', plan: '' })['ticket.all']
+		).toBe('{"id":"T1","title":"Fix it"}');
 	});
 
 	it('substitutes known placeholders', () => {

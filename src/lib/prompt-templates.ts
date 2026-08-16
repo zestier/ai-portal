@@ -7,6 +7,7 @@ import type {
 	WorkspaceTicket
 } from './types';
 import type { PortalToolGroupId } from './tools/groups';
+import { ticketModelView } from '$lib/tickets/view';
 
 export type PromptTemplateSource = 'builtin' | 'custom';
 
@@ -197,7 +198,7 @@ const PLACEHOLDER_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
 
 const PLACEHOLDERS_BY_TYPE: Record<PromptTemplateType, readonly string[]> = {
 	chat: [],
-	'ticket-action': ['ticket.title', 'ticket.id', 'ticket.body', 'ticket.plan']
+	'ticket-action': ['ticket.title', 'ticket.id', 'ticket.body', 'ticket.plan', 'ticket.all']
 };
 
 export function placeholdersForType(type: PromptTemplateType): readonly string[] {
@@ -308,10 +309,12 @@ export interface TicketActionDefault {
 
 const DO_PROMPT =
 	'Do this workspace ticket: {{ticket.title}}\n\n' +
-	'Execute the spec and plan below. When the plan is detailed, follow it as written — make the ' +
-	'changes each step describes, verify each step as it specifies, and do not redesign it. If ' +
-	'something is genuinely missing or impossible, stop and ask rather than improvising.\n\n' +
-	'Ticket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}\n\n' +
+	'The complete ticket (id, status, priority, body, plan) is inlined below, current as of launch — ' +
+	'work from it directly, you do not need to call `ticket_get` again.\n\n' +
+	'{{ticket.all}}\n\n' +
+	'Follow the plan: make the changes each step describes, verify each step as it specifies, and ' +
+	'do not redesign it. If something is genuinely missing or impossible, stop and ask rather than ' +
+	'improvising.\n\n' +
 	'When done, review your own work before stopping: re-read the diff for correctness and ' +
 	'regressions, confirm every acceptance criterion in the spec, then report what you changed, ' +
 	'how you verified it, and anything you skipped or left undone.';
@@ -321,8 +324,10 @@ const REFINE_PROMPT =
 	'Turn this ticket into a complete, self-contained spec and implementation plan that a later "Do" ' +
 	'run can execute without making any decisions. You are the strong model doing the thinking up front; ' +
 	'the executor that follows may be much weaker, so resolve everything now and leave nothing to infer.\n\n' +
-	'Write both artifacts into the ticket with `ticket_update` (id {{ticket.id}}), keeping any important ' +
-	'details from the current body:\n\n' +
+	'The complete ticket (id, status, priority, body, plan) is inlined below, current as of launch — ' +
+	'keep every important detail from its current body and plan (you do not need to fetch it again).\n\n' +
+	'{{ticket.all}}\n\n' +
+	'Write both artifacts into the ticket with `ticket_update` (id {{ticket.id}}):\n\n' +
 	'1. Spec (ticket body) — goal, verifiable acceptance criteria, requirements and edge cases, explicit ' +
 	'in/out of scope, constraints, and every decision with its rationale. No open questions left.\n\n' +
 	'2. Plan (ticket plan) — an ordered, dependency-sorted checklist of small, independently verifiable ' +
@@ -336,8 +341,7 @@ const REFINE_PROMPT =
 	'- One line per decision; give rationale only when the choice is non-obvious — one sentence of ' +
 	'rationale is a paragraph.\n' +
 	'- Every path, symbol, and verification step stays exact; terse wording never cuts content.\n' +
-	'- Match depth to the ticket: small change → tight spec and short checklist, not a padded one.\n\n' +
-	'Ticket ID: {{ticket.id}}\n\n{{ticket.body}}\n\nPlan:\n{{ticket.plan}}';
+	'- Match depth to the ticket: small change → tight spec and short checklist, not a padded one.';
 
 export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 	{
@@ -381,12 +385,19 @@ export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
 
 /** Placeholder values for interpolating a ticket-action prompt. */
 export function ticketPlaceholderValues(
-	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body' | 'plan'>
+	ticket: Pick<WorkspaceTicket, 'id' | 'title' | 'body' | 'plan'> &
+		Partial<Pick<WorkspaceTicket, 'priority' | 'status'>>
 ): Record<string, string> {
+	const body = ticket.body.trim();
+	const plan = ticket.plan.trim();
 	return {
 		'ticket.title': ticket.title,
 		'ticket.id': String(ticket.id),
-		'ticket.body': ticket.body.trim(),
-		'ticket.plan': ticket.plan.trim() || '(none)'
+		'ticket.body': body,
+		'ticket.plan': plan || '(none)',
+		// The exact serialized `ticket_get` view — the same projection the tool
+		// returns, so an inlined action prompt and a tool fetch can't show
+		// different data.
+		'ticket.all': JSON.stringify(ticketModelView(ticket))
 	};
 }

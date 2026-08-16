@@ -3,6 +3,7 @@ import { conversationId as conversationCodec, ticketId } from '$lib/ids';
 import * as tickets from '../db/repos/tickets';
 import type { UpdateInput } from '../db/repos/tickets';
 import type { WorkspaceTicket } from '$lib/types';
+import { TICKET_MODEL_FIELDS } from '$lib/tickets/view';
 import { err, ok, type PortalTool } from './types';
 import { project, withOmitted, normalizeFieldSelector, FieldsArg, FIELDS_PARAM } from './project';
 
@@ -13,13 +14,12 @@ function parseEdgeId(id: string): number {
 	return int;
 }
 
-// Model-relevant ticket fields; provenance ids and timestamps are dropped from
-// the compact default and recoverable via the `fields` selector. `blockedBy`
-// (open blockers) and `blocks` (the tickets this one blocks) are part of the
-// compact view so ordering is visible on a plain read — they are small, bounded
-// id lists — but `withDeps` only attaches them when non-empty, so a ticket with
-// no edges shows neither rather than empty arrays.
-const TICKET_KEEP = ['id', 'title', 'body', 'priority', 'status', 'blockedBy', 'blocks'] as const;
+// Compact tool view: the shared model-relevant field set minus `plan` (deliberately
+// omitted from the compact default — it's the longest field — and recoverable via
+// the `fields` selector). Keeping the allowlist in lockstep with `TICKET_MODEL_FIELDS`
+// means the tool's projection and the action prompt's `{{ticket.all}}` block can't
+// drift apart.
+const TICKET_KEEP = TICKET_MODEL_FIELDS.filter((f) => f !== 'plan');
 
 // Enrich a ticket with its blocking edges for the agent tools. `blockedBy` is
 // the actionable subset (blockers that are still open); `blocks` lists the
