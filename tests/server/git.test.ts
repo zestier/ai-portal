@@ -646,4 +646,45 @@ describe('commitChanges streaming context', () => {
 			rmSync(tmp, { recursive: true, force: true });
 		}
 	});
+
+	it('bounds the error message from a verbose failing pre-commit hook', async () => {
+		const { tmp } = initRepo();
+		try {
+			installHook(
+				tmp,
+				'pre-commit',
+				'#!/bin/sh\ni=0\nwhile [ $i -lt 3000 ]; do echo "hook error line $i"; i=$((i+1)); done\nexit 1\n'
+			);
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			const err = await git.commitChanges(tmp, { paths: 'all', subject: 'x' }).catch((e) => e);
+			expect(err).toBeInstanceOf(git.GitError);
+			const message = (err as git.GitError).message;
+			expect(message.length).toBeLessThan(16_000);
+			expect(message).toMatch(/hook error line 2999$/);
+			expect(message).toContain('bytes of stderr omitted — showing tail');
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it('small git error stderr is passed through unmodified', async () => {
+		const { tmp } = initRepo();
+		try {
+			installHook(
+				tmp,
+				'pre-commit',
+				'#!/bin/sh\necho "small line 1"\necho "small line 2"\necho "small line 3"\nexit 1\n'
+			);
+			writeFileSync(join(tmp, 'a.txt'), 'one\nchanged\n');
+			const err = await git.commitChanges(tmp, { paths: 'all', subject: 'x' }).catch((e) => e);
+			expect(err).toBeInstanceOf(git.GitError);
+			const message = (err as git.GitError).message;
+			expect(message).toContain('small line 1');
+			expect(message).toContain('small line 2');
+			expect(message).toContain('small line 3');
+			expect(message).not.toContain('omitted');
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
 });

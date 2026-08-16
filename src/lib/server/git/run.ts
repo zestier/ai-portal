@@ -20,6 +20,20 @@ export class GitError extends Error {
 	}
 }
 
+// pre-commit/commit-msg/test hooks can dump huge stderr into a GitError.message,
+// which is rendered verbatim to the model. Keep the TRAILING stderr (hook/test
+// failure reasons print last) at a bounded size so a roaring hook can't pump
+// tens of KiB into context.
+export const MAX_ERROR_STDERR_CHARS = 8_192;
+
+function gitErrorStderrTail(stderr: string): string {
+	const trimmed = stderr.trim();
+	if (trimmed.length <= MAX_ERROR_STDERR_CHARS) return trimmed;
+	const omitted = trimmed.length - MAX_ERROR_STDERR_CHARS;
+	const tail = trimmed.slice(-MAX_ERROR_STDERR_CHARS);
+	return `[${omitted} bytes of stderr omitted — showing tail]\n${tail}`;
+}
+
 export interface RunOptions {
 	cwd: string;
 	timeoutMs?: number | undefined;
@@ -169,7 +183,8 @@ export { runGit as runGitRaw };
 async function runGitOk(args: string[], opts: RunOptions): Promise<string> {
 	const r = await runGit(args, opts);
 	if (r.timedOut) throw new GitError('git command timed out', r);
-	if (r.code !== 0) throw new GitError(`git ${args[0]} exited ${r.code}: ${r.stderr.trim()}`, r);
+	if (r.code !== 0)
+		throw new GitError(`git ${args[0]} exited ${r.code}: ${gitErrorStderrTail(r.stderr)}`, r);
 	return r.stdout;
 }
 
