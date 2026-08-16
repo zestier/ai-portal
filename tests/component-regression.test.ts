@@ -453,6 +453,93 @@ describe('Svelte component regression coverage', () => {
 		expect(withoutHint).not.toContain('remember to reconcile your tickets');
 	});
 
+	test('ToolCall renders a read text envelope via its tool-provided view, not JSON', () => {
+		const toolCall = {
+			id: 'X1',
+			messageId: 'M1',
+			tool: 'read',
+			argsJson: '{}',
+			resultJson: JSON.stringify({
+				ok: true,
+				result: { type: 'text', file: { path: 'a.ts', startLine: 1, numLines: 2, size: 4 } },
+				views: [{ type: 'text', text: 'alpha\nbeta\n(file has 2 total lines)' }]
+			}),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		expect(body).toContain('alpha');
+		expect(body).toContain('beta');
+		expect(body).not.toContain('"content"');
+	});
+
+	test('ToolCall renders a read image envelope as a zoomable img, not JSON', () => {
+		const toolCall = {
+			id: 'X1',
+			messageId: 'M1',
+			tool: 'read',
+			argsJson: '{}',
+			resultJson: JSON.stringify({
+				ok: true,
+				result: { type: 'image', file: { base64: 'aGk=', type: 'image/png', originalSize: 3 } },
+				views: [{ type: 'image', data: 'aGk=', mimeType: 'image/png' }]
+			}),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		expect(body).toContain('<img');
+		expect(body).toContain('data:image/png;base64,aGk=');
+	});
+
+	test('ToolCall renders a bash envelope via its tool-provided view text', () => {
+		const toolCall = {
+			id: 'X1',
+			messageId: 'M1',
+			tool: 'bash',
+			argsJson: '{}',
+			resultJson: JSON.stringify({
+				ok: true,
+				result: { command: 'echo hi', exitCode: 0 },
+				views: [{ type: 'text', text: 'hi\n' }]
+			}),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		expect(body).toContain('hi');
+		expect(body).not.toContain('"stdout"');
+	});
+
+	test('ToolCall still renders JSON for a structured envelope without views', () => {
+		const toolCall = {
+			id: 'X1',
+			messageId: 'M1',
+			tool: 'read',
+			argsJson: '{}',
+			resultJson: JSON.stringify({
+				ok: true,
+				result: { type: 'text', content: 'hello', file: { path: 'a.ts' } }
+			}),
+			status: 'ok' as const,
+			startedAt: 0,
+			endedAt: 1,
+			textOffset: null,
+			parentToolCallId: null
+		};
+		const body = render(ToolCall, { props: { toolCall } }).body;
+		expect(body).toContain('"content"');
+	});
+
 	test('ToolCall surfaces a "Sent to model" disclosure for an envelope result', () => {
 		const toolCall = {
 			id: 'X1',

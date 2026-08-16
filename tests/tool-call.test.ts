@@ -429,6 +429,81 @@ describe('decodeToolResult envelope', () => {
 	});
 });
 
+describe('decodeToolResult views', () => {
+	it('renders a text view for a read envelope instead of the JSON payload', () => {
+		const r = decodeToolResult(
+			JSON.stringify({
+				ok: true,
+				result: {
+					type: 'text',
+					file: { path: 'a.ts', content: 'alpha\nbeta', startLine: 1, numLines: 2, size: 4 }
+				},
+				views: [{ type: 'text', text: 'alpha\nbeta\n(file has 2 total lines)' }]
+			})
+		);
+		expect(r.blocks).toEqual([{ kind: 'text', text: 'alpha\nbeta\n(file has 2 total lines)' }]);
+		expect(JSON.stringify(r.blocks)).not.toContain('content');
+		// fallbackText stays the JSON payload.
+		expect(r.fallbackText).toContain('"content"');
+	});
+
+	it('renders an image view as a zoomable image block', () => {
+		const r = decodeToolResult(
+			JSON.stringify({
+				ok: true,
+				result: { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+				views: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]
+			})
+		);
+		expect(r.blocks).toEqual([{ kind: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
+	});
+
+	it('uses the tool-rendered text over the matches JSON for grep-style results', () => {
+		const r = decodeToolResult(
+			JSON.stringify({
+				ok: true,
+				result: { matches: [{ path: 'a.ts', line: 3, text: 'foo' }] },
+				views: [{ type: 'text', text: 'a.ts:3:  foo\n' }]
+			})
+		);
+		expect(r.blocks).toEqual([{ kind: 'text', text: 'a.ts:3:  foo\n' }]);
+		expect(JSON.stringify(r.blocks)).not.toContain('matches');
+		expect(r.fallbackText).toContain('"matches"');
+	});
+
+	it('falls back to JSON when a structured result has no views', () => {
+		const r = decodeToolResult(JSON.stringify({ ok: true, result: { commits: [] } }));
+		expect(r.blocks).toEqual([{ kind: 'text', text: JSON.stringify({ commits: [] }, null, 2) }]);
+		expect(r.fallbackText).toBe(JSON.stringify({ commits: [] }, null, 2));
+	});
+
+	it('falls back to JSON when only unknown view types are present', () => {
+		const r = decodeToolResult(
+			JSON.stringify({
+				ok: true,
+				result: { foo: 1 },
+				views: [
+					{ type: 'unknown', text: 'x' },
+					{ type: 'image', data: 'x' } // missing mimeType
+				]
+			})
+		);
+		expect(r.blocks).toEqual([{ kind: 'text', text: JSON.stringify({ foo: 1 }, null, 2) }]);
+		expect(r.fallbackText).toBe(JSON.stringify({ foo: 1 }, null, 2));
+	});
+
+	it('still shows only the error message for an error envelope even with views', () => {
+		const r = decodeToolResult(
+			JSON.stringify({
+				ok: false,
+				error: { message: 'Ticket not found' },
+				views: [{ type: 'text', text: 'rendered' }]
+			})
+		);
+		expect(r.blocks).toEqual([{ kind: 'text', text: 'Ticket not found' }]);
+	});
+});
+
 describe('decodeToolResult', () => {
 	it('returns empty for null', () => {
 		expect(decodeToolResult(null)).toEqual({ blocks: [], fallbackText: null });

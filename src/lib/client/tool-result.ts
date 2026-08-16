@@ -101,6 +101,26 @@ function decodeContents(arr: unknown[]): ResultBlock[] {
 	return out;
 }
 
+// Map a tool's own rendered views (text/image content blocks) to ResultBlocks.
+// Persisted data is untrusted: unknown/malformed entries are skipped. Text views
+// render as `<pre><code>`, image views render zoomable.
+function viewBlocks(views: unknown[]): ResultBlock[] {
+	const out: ResultBlock[] = [];
+	for (const item of views) {
+		if (!isRecord(item)) continue;
+		if (item.type === 'text' && typeof item.text === 'string') {
+			out.push({ kind: 'text', text: item.text });
+		} else if (
+			item.type === 'image' &&
+			typeof item.data === 'string' &&
+			typeof item.mimeType === 'string'
+		) {
+			out.push({ kind: 'image', data: item.data, mimeType: item.mimeType });
+		}
+	}
+	return out;
+}
+
 export function decodeToolResult(resultJson: string | null): DecodedResult {
 	if (!resultJson) return { blocks: [], fallbackText: null };
 	let v: unknown;
@@ -170,5 +190,10 @@ function decodeEnvelope(v: Record<string, unknown>): DecodedResult | null {
 		return withHint({ blocks: [{ kind: 'text', text: result }], fallbackText: result });
 	}
 	const txt = JSON.stringify(result, null, 2);
+	// The tool's own rendered views (read text/images, grep, bash, …) win over
+	// dumping the payload as JSON. `fallbackText` stays the JSON so the Raw
+	// disclosure and downstream consumers are byte-identical.
+	const blocks = Array.isArray(v.views) && v.views.length > 0 ? viewBlocks(v.views) : [];
+	if (blocks.length > 0) return withHint({ blocks, fallbackText: txt });
 	return withHint({ blocks: [{ kind: 'text', text: txt }], fallbackText: txt });
 }
