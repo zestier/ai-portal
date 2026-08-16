@@ -83,7 +83,7 @@
 	/>
 
 	{#if activeTab === 'general'}
-		<GeneralSettings settings={data.settings} {form} />
+		<GeneralSettings settings={data.settings} modelOptions={data.modelOptions} {form} />
 	{:else if activeTab === 'prompts'}
 		<PromptsSettings
 			builtInTemplates={data.builtInPromptTemplates}

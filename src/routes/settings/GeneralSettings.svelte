@@ -2,6 +2,7 @@
 	import { type FormResult, type SettingsData } from './settings-types';
 	import { THEME_ACCENTS, type ApprovalMode, type SessionMode, type ThemeAccent } from '$lib/types';
 	import PanelHeader from '$lib/components/ui/PanelHeader.svelte';
+	import ModelPicker from '$lib/components/ui/ModelPicker.svelte';
 	import { applyLiveThemePreference, type ThemeMode } from '$lib/client/theme-preview';
 
 	const MODE_OPTIONS: { value: SessionMode; label: string; hint: string }[] = [
@@ -37,9 +38,11 @@
 
 	let {
 		settings,
+		modelOptions = [],
 		form
 	}: {
 		settings: SettingsData;
+		modelOptions?: string[];
 		form: FormResult | null;
 	} = $props();
 
@@ -74,14 +77,14 @@
 	<form method="POST" action="?/save" class="settings-form">
 		<label>
 			Default model
-			<input
+			<ModelPicker
 				name="defaultModel"
 				value={settings.defaultModel ?? ''}
-				placeholder="(server default) — provider/model id"
+				options={modelOptions}
+				emptyLabel="(server default)"
 			/>
 			<span class="muted small">
-				Seeds the model id for newly created conversations, in the <code>provider/model</code> form the
-				pi runtime expects. Leave blank to use the server default.
+				Seeds the model id for newly created conversations. Leave blank to use the server default.
 			</span>
 		</label>
 		<label>
