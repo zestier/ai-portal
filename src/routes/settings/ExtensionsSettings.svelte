@@ -359,8 +359,7 @@
 								bind:value={formValue}
 								rows="8"
 								spellcheck="false"
-								placeholder="export default (pi) => pi.on('session_start', handler)"
-							></textarea>
+								placeholder="export default (pi) => pi.on('session_start', handler)"></textarea>
 						{/if}
 					</label>
 					<label>

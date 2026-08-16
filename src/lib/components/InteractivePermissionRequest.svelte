@@ -611,8 +611,7 @@
 				maxlength="500"
 				rows="3"
 				disabled={busy}
-				placeholder="Tell the agent why this is denied or what to try instead..."
-			></textarea>
+				placeholder="Tell the agent why this is denied or what to try instead..."></textarea>
 			<span class="muted small">{denialFeedback.length}/500 characters</span>
 		</label>
 	</div>

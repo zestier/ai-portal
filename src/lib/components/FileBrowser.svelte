@@ -617,8 +617,7 @@
 							e.preventDefault();
 							cancelComment();
 						}
-					}}
-				></textarea>
+					}}></textarea>
 				<div class="review-draft-actions">
 					<span class="kbd-hint muted small">⌘/Ctrl+Enter to add</span>
 					<button class="btn ghost" type="button" onclick={cancelComment}>Cancel</button>

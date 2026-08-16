@@ -502,8 +502,7 @@
 							maxlength="500"
 							placeholder={newGrantDecision === 'prompt'
 								? 'e.g. This command requires human review; use a safer structured tool if possible.'
-								: 'e.g. Prefer the structured `view` tool instead of `cat`.'}
-						></textarea>
+								: 'e.g. Prefer the structured `view` tool instead of `cat`.'}></textarea>
 						{#if newGrantDecision === 'prompt'}
 							<span class="muted small"
 								>Prefills the permission dialog's deny feedback and is sent to the agent if the

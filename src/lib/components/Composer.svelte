@@ -78,8 +78,7 @@
 			oninput={autoGrow}
 			{placeholder}
 			aria-label={placeholder}
-			rows="1"
-		></textarea>
+			rows="1"></textarea>
 		<div class="composer-actions">
 			<span class="kbd-hint muted" aria-hidden="true">
 				<kbd>Shift</kbd>+<kbd>Enter</kbd> for newline

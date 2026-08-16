@@ -338,8 +338,7 @@
 					rows="7"
 					maxlength="20000"
 					required
-					placeholder="Describe the recurring task or workflow..."
-				></textarea>
+					placeholder="Describe the recurring task or workflow..."></textarea>
 			</label>
 			{@render systemPromptFields({})}
 			{@render launchFields({}, 'draft')}

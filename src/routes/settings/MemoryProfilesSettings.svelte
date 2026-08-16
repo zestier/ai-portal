@@ -65,8 +65,7 @@
 					rows="5"
 					maxlength="8000"
 					required
-					placeholder="Describe what this profile should remember and validate..."
-				></textarea>
+					placeholder="Describe what this profile should remember and validate..."></textarea>
 			</label>
 			<label>
 				Schema JSON
