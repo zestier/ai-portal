@@ -151,20 +151,20 @@
 		<fieldset class="tool-groups-fieldset" disabled={busy}>
 			<legend>Portal tool groups</legend>
 			<p class="muted small">
-				Checked groups are disabled up front in this chat (a seed — the chat can re-enable them).
-				Unchecked groups stay available. Native CLI tools (bash, view, edit…) are always available
-				and unaffected.
+				Unchecked groups are disabled up front in this chat (a seed — the chat can re-enable them).
+				Checked groups stay available. Native CLI tools (bash, view, edit…) are always available and
+				unaffected.
 			</p>
 			<div class="tool-groups-checks">
 				{#each PORTAL_TOOL_GROUPS as group (group.id)}
 					<label class="checkbox" title={group.hint}>
 						<input
 							type="checkbox"
-							checked={disabledToolGroups.includes(group.id)}
+							checked={!disabledToolGroups.includes(group.id)}
 							onchange={() => toggleDisabledGroup(group.id)}
 							disabled={busy}
 						/>
-						Disable {group.label}
+						{group.label}
 					</label>
 				{/each}
 			</div>

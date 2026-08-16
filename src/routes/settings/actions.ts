@@ -181,6 +181,8 @@ export const actions: Actions = {
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'createPromptTemplate' });
 		const data = await request.formData();
 		const type = data.get('type') === 'ticket-action' ? 'ticket-action' : 'chat';
+		// Form posts enabled groups (checked = available); store the complement.
+		const enabled = new Set(data.getAll('enabledToolGroups').map(String));
 		const parsed = PromptTemplateSchema.safeParse({
 			type,
 			title: data.get('title'),
@@ -192,7 +194,7 @@ export const actions: Actions = {
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			approvalMode: (data.get('approvalMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
-			disabledToolGroups: data.getAll('disabledToolGroups').map(String),
+			disabledToolGroups: PORTAL_TOOL_GROUP_IDS.filter((id) => !enabled.has(id)),
 			workspaceMode: (data.get('workspaceMode') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined
@@ -231,6 +233,8 @@ export const actions: Actions = {
 			return fail(401, { ok: false, error: 'Not authenticated', formId: 'updatePromptTemplate' });
 		const data = await request.formData();
 		const type = data.get('type') === 'ticket-action' ? 'ticket-action' : 'chat';
+		// Form posts enabled groups (checked = available); store the complement.
+		const enabled = new Set(data.getAll('enabledToolGroups').map(String));
 		const parsed = UpdatePromptTemplateSchema.safeParse({
 			id: data.get('id'),
 			type,
@@ -243,7 +247,7 @@ export const actions: Actions = {
 			conversationMode: (data.get('conversationMode') as string) || undefined,
 			approvalMode: (data.get('approvalMode') as string) || undefined,
 			model: (data.get('model') as string) || undefined,
-			disabledToolGroups: data.getAll('disabledToolGroups').map(String),
+			disabledToolGroups: PORTAL_TOOL_GROUP_IDS.filter((id) => !enabled.has(id)),
 			workspaceMode: (data.get('workspaceMode') as string) || undefined,
 			pinned: data.get('pinned') === 'on',
 			orderIndex: (data.get('orderIndex') as string) || undefined

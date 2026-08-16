@@ -15,9 +15,12 @@ async function loadActions() {
 	return mod.actions;
 }
 
-function formRequest(fields: Record<string, string>): Request {
+function formRequest(fields: Record<string, string | string[]>): Request {
 	const body = new FormData();
-	for (const [k, v] of Object.entries(fields)) body.append(k, v);
+	for (const [k, v] of Object.entries(fields)) {
+		if (Array.isArray(v)) for (const item of v) body.append(k, item);
+		else body.append(k, v);
+	}
 	return new Request('http://localhost/settings', { method: 'POST', body });
 }
 
@@ -25,7 +28,7 @@ function formRequest(fields: Record<string, string>): Request {
 async function runAction(
 	name: 'updatePromptTemplate' | 'archivePromptTemplate',
 	userId: number,
-	fields: Record<string, string>
+	fields: Record<string, string | string[]>
 ) {
 	const actions = await loadActions();
 	return actions[name]({
@@ -119,8 +122,9 @@ describe('settings prompt-template forms — prefixed handle ids', () => {
 
 	// T30/R2: ticket-action templates now support a tool-group preset, so the
 	// real update action must persist it (previously force-emptied by design).
-	it('persists a disabledToolGroups preset on a ticket action through the real action', async () => {
+	it('persists an enabledToolGroups preset (inverts to disabledToolGroups) on a ticket action', async () => {
 		const promptTemplates = await import('../../../src/lib/server/db/repos/prompt-templates');
+		const { PORTAL_TOOL_GROUP_IDS } = await import('../../../src/lib/tools/groups');
 		const action = promptTemplates.create(userId, {
 			type: 'ticket-action',
 			title: 'Do the thing',
@@ -134,7 +138,7 @@ describe('settings prompt-template forms — prefixed handle ids', () => {
 			title: 'Do the thing',
 			prompt: 'Do the thing.',
 			launchBehavior: 'send',
-			disabledToolGroups: 'git'
+			enabledToolGroups: PORTAL_TOOL_GROUP_IDS.filter((id) => id !== 'git')
 		})) as { ok: boolean };
 		expect(result.ok).toBe(true);
 

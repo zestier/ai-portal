@@ -260,20 +260,20 @@
 	<fieldset class="tool-groups-fieldset">
 		<legend>Portal tools for launched chats/actions</legend>
 		<p class="muted small">
-			Checked groups are disabled up front in chats started from this template (a seed — the chat
-			can re-enable them). Unchecked groups stay available. Native CLI tools (bash, view, edit…) are
+			Unchecked groups are disabled up front in chats started from this template (a seed — the chat
+			can re-enable them). Checked groups stay available. Native CLI tools (bash, view, edit…) are
 			always available and unaffected. Applies to chat templates and ticket actions alike.
 		</p>
 		<div class="tool-groups-checks">
 			{#each PORTAL_TOOL_GROUPS as group (group.id)}
 				<label class="checkbox" title={group.hint}>
 					<input
-						name="disabledToolGroups"
+						name="enabledToolGroups"
 						type="checkbox"
 						value={group.id}
-						checked={disabled.includes(group.id)}
+						checked={!disabled.includes(group.id)}
 					/>
-					Disable {group.label}
+					{group.label}
 				</label>
 			{/each}
 		</div>
