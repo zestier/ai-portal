@@ -13,7 +13,8 @@ export const CapabilitiesArgs = z
 	.object({
 		permissionKind: PermissionKind.optional(),
 		toolName: z.string().trim().min(1).max(200).optional(),
-		intent: z.string().trim().min(1).max(500).optional()
+		intent: z.string().trim().min(1).max(500).optional(),
+		detail: z.boolean().optional()
 	})
 	.optional()
 	.default({});
@@ -80,7 +81,8 @@ export function buildCapabilitiesTool(opts: CapabilitiesToolOpts): PortalTool {
 					policy: opts.policy,
 					...(parsed.permissionKind !== undefined ? { permissionKind: parsed.permissionKind } : {}),
 					...(parsed.toolName !== undefined ? { toolName: parsed.toolName } : {}),
-					...(parsed.intent !== undefined ? { intent: parsed.intent } : {})
+					...(parsed.intent !== undefined ? { intent: parsed.intent } : {}),
+					verbose: parsed.detail ?? false
 				})
 			);
 		}
@@ -96,6 +98,7 @@ export function permissionCapabilities(opts: {
 	permissionKind?: string;
 	toolName?: string;
 	intent?: string;
+	verbose?: boolean;
 }) {
 	const grants = settings
 		.listGrantsForUser(opts.userId)
@@ -114,6 +117,25 @@ export function permissionCapabilities(opts: {
 	const capabilities = kinds.map((permissionKind) =>
 		capabilityForKind(permissionKind, grants, opts.policy)
 	);
+
+	if (!opts.verbose) {
+		return {
+			capabilities: capabilities.map((c) => ({
+				permissionKind: c.permissionKind,
+				status: c.status
+			})),
+			escalation: {
+				forceRetry: {
+					supported: true,
+					guidance: 'one-off unblock → force_retry_tool(token)'
+				},
+				requestPermissionGrant: {
+					supported: true,
+					guidance: 'durable rule → request_permission_grant'
+				}
+			}
+		};
+	}
 
 	return {
 		mode: opts.mode,
