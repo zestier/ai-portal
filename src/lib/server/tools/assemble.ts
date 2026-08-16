@@ -32,6 +32,7 @@ import { buildReadTools } from './read';
 import { buildShellTools } from './shell';
 import { buildTicketTools } from './tickets';
 import { buildWorktreeTools } from './worktree';
+import { buildAskUserTool } from './ask-user';
 import type { PortalTool } from './types';
 
 export interface AssemblePiToolsOptions {
@@ -98,7 +99,8 @@ export function assemblePiTools(opts: AssemblePiToolsOptions): AssembledPiTools 
 				? { globalMemoryEnabled: opts.globalMemoryEnabled }
 				: {})
 		}),
-		'prompt-templates': buildPromptTemplateTools({ userId })
+		'prompt-templates': buildPromptTemplateTools({ userId }),
+		interaction: [buildAskUserTool({ userId, conversationId, emit: opts.emit })]
 	};
 
 	const portalToolsByName = new Map<string, PortalTool>();

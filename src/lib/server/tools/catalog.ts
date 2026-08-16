@@ -27,6 +27,7 @@ import { buildGrepTools } from './grep';
 import { buildEditFileTools } from './edit-file';
 import { buildLsTools } from './ls';
 import { buildFindTools } from './find';
+import { buildAskUserTool } from './ask-user';
 
 export type { PortalToolCatalogEntry };
 
@@ -101,7 +102,14 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
 			mode: 'strict',
 			globalMemoryEnabled: true
 		}),
-		'prompt-templates': buildPromptTemplateTools({ userId: STUB.userId })
+		'prompt-templates': buildPromptTemplateTools({ userId: STUB.userId }),
+		interaction: [
+			buildAskUserTool({
+				userId: STUB.userId,
+				conversationId: STUB.conversationId,
+				emit: () => {}
+			})
+		]
 	};
 }
 

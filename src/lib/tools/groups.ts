@@ -22,7 +22,8 @@ export type PortalToolGroupId =
 	| 'tickets'
 	| 'permissions'
 	| 'memory'
-	| 'prompt-templates';
+	| 'prompt-templates'
+	| 'interaction';
 
 export const PORTAL_TOOL_GROUPS: readonly PortalToolGroup[] = [
 	{ id: 'shell', label: 'Shell', hint: 'Run supervised, workspace-scoped Bash commands.' },
@@ -52,6 +53,11 @@ export const PORTAL_TOOL_GROUPS: readonly PortalToolGroup[] = [
 		id: 'prompt-templates',
 		label: 'Prompt templates',
 		hint: 'Stored chat/ticket prompt-template management tools.'
+	},
+	{
+		id: 'interaction',
+		label: 'Ask user',
+		hint: 'Let the agent pause to ask you a question mid-turn (question dialog, no permission effect).'
 	}
 ] as const;
 

@@ -28,7 +28,8 @@ function grouped(): Record<PortalToolGroupId, PortalTool[]> {
 		tickets: [tool('ticket_add'), tool('ticket_list')],
 		permissions: [tool('request_permission_grant')],
 		memory: [tool('memory_upsert')],
-		'prompt-templates': [tool('template_list')]
+		'prompt-templates': [tool('template_list')],
+		interaction: [tool('ask_user')]
 	};
 }
 
@@ -47,7 +48,8 @@ describe('filterPortalToolGroups', () => {
 			'ticket_list',
 			'request_permission_grant',
 			'memory_upsert',
-			'template_list'
+			'template_list',
+			'ask_user'
 		]);
 	});
 
@@ -71,7 +73,8 @@ describe('filterPortalToolGroups', () => {
 			'create_directory',
 			'worktree_create',
 			'request_permission_grant',
-			'template_list'
+			'template_list',
+			'ask_user'
 		]);
 	});
 
@@ -95,7 +98,8 @@ describe('filterPortalToolGroups', () => {
 			tickets: [tool('ticket_add')],
 			worktree: [tool('worktree_create')],
 			filesystem: [tool('create_directory')],
-			git: [tool('git_status')]
+			git: [tool('git_status')],
+			interaction: [tool('ask_user')]
 		} as Record<PortalToolGroupId, PortalTool[]>;
 		expect(names(filterPortalToolGroups(shuffled, []))).toEqual([
 			'bash',
@@ -105,7 +109,8 @@ describe('filterPortalToolGroups', () => {
 			'ticket_add',
 			'request_permission_grant',
 			'memory_upsert',
-			'template_list'
+			'template_list',
+			'ask_user'
 		]);
 	});
 });
