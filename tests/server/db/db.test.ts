@@ -74,12 +74,7 @@ describe('db migrations + repos', () => {
 		expect(list.map((m) => m.content)).toEqual(['hello', 'world']);
 
 		// Authorization: another user can't read it.
-		const other = users.upsertGithub({
-			githubLogin: 'other',
-			githubId: 42,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('other');
 		expect(convs.get(c.id, other.id)).toBeNull();
 		expect(convs.get(c.id, u.id)?.title).toBe('t');
 	});
@@ -413,12 +408,7 @@ describe('db migrations + repos', () => {
 
 	it('lists and revokes grants per user; prune drops expired rows', () => {
 		const u = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'rival',
-			githubId: 7,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('rival');
 		const c = convs.create(u.id, { title: 'main', workdir: '/tmp', model: null });
 		settings.addGrant({ userId: u.id, conversationId: c.id, tool: 'shell' });
 		settings.addGrant({
@@ -430,8 +420,8 @@ describe('db migrations + repos', () => {
 		settings.addGrant({ userId: other.id, conversationId: null, tool: 'shell' });
 
 		// Each user only sees their own grants. Filter out the structured
-		// seed grants that ensureLocalUser / upsertGithub install — this
-		// test exercises the legacy `addGrant` path, not the seeded set.
+		// seed grants that ensureLocalUser installs — this test exercises the
+		// legacy `addGrant` path, not the seeded set.
 		const mine = settings
 			.listGrantsForUser(u.id)
 			.filter((g) => g.scope === null && g.source !== 'seed');
@@ -473,12 +463,7 @@ describe('db migrations + repos', () => {
 
 	it('updateGrant edits matchable fields in place, scoped to owner', () => {
 		const u = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'rival2',
-			githubId: 11,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('rival2');
 		settings.addGrant({
 			userId: u.id,
 			conversationId: null,
@@ -622,12 +607,7 @@ describe('db migrations + repos', () => {
 		expect(convs.get(a.id, u.id)?.archivedAt).toBeTypeOf('number');
 
 		// Authorization: another user cannot archive/unarchive.
-		const other = users.upsertGithub({
-			githubLogin: 'other2',
-			githubId: 43,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('other2');
 		expect(convs.unarchive(a.id, other.id)).toBe(false);
 
 		expect(convs.unarchive(a.id, u.id)).toBe(true);

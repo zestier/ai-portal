@@ -7,12 +7,7 @@ async function setup() {
 	const { buildPromptTemplateTools } =
 		await import('../../../src/lib/server/tools/prompt-templates');
 	const user = users.ensureLocalUser();
-	const other = users.upsertGithub({
-		githubLogin: 'template-rival',
-		githubId: 909,
-		displayName: null,
-		avatarUrl: null
-	});
+	const other = users.ensureLocalUser('template-rival');
 	const tools = buildPromptTemplateTools({ userId: user.id });
 	const byName = (n: string) => tools.find((t) => t.name === n)!;
 	return { user, other, tools, byName };

@@ -5,7 +5,6 @@ import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { inlineEditMessage, InlineEditRejected } from '$lib/server/message-edit';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
-import { requireUserId } from '$lib/server/auth/require';
 import { authorizeConversation } from '$lib/server/conversation-auth';
 import { throwRerunFailure } from '$lib/server/rerun-error';
 import {
@@ -26,7 +25,7 @@ const REJECT_STATUS: Record<string, number> = {
 
 export const POST: RequestHandler = async ({ params, locals, request }) => {
 	authorizeConversation(params.id, locals.userId);
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const { content } = await parseBody(request, Body);
 
 	const conversationId = convCodec.tryParse(params.id);

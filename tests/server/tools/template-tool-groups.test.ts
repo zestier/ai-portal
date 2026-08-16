@@ -248,12 +248,7 @@ describe('chat template tool-group presets', () => {
 			const templates = await import('../../../src/lib/server/db/repos/prompt-templates');
 			const { POST } = await import('../../../src/routes/api/conversations/+server');
 			const user = users.ensureLocalUser();
-			const other = users.upsertGithub({
-				githubLogin: 'other',
-				githubId: 555,
-				displayName: null,
-				avatarUrl: null
-			});
+			const other = users.ensureLocalUser('other');
 			const tpl = templates.create(other.id, {
 				title: 'Story',
 				prompt: 'Tell a story.',

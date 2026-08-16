@@ -5,7 +5,6 @@ import { ensureSeedGrantsForUser } from '../../permissions/seed-grants';
 interface UserRow {
 	id: number;
 	github_login: string;
-	github_id: number | null;
 	display_name: string | null;
 	avatar_url: string | null;
 	created_at: number;
@@ -26,70 +25,8 @@ export function getById(id: number): User | null {
 	return r ? rowToUser(r) : null;
 }
 
-export function getByGithubLogin(login: string): User | null {
-	const r = getDb().prepare('SELECT * FROM users WHERE github_login = ?').get(login) as
-		| UserRow
-		| undefined;
-	return r ? rowToUser(r) : null;
-}
-
-export interface UpsertGithubInput {
-	githubLogin: string;
-	githubId: number;
-	displayName: string | null;
-	avatarUrl: string | null;
-}
-
-export function upsertGithub(input: UpsertGithubInput): User {
-	const db = getDb();
-	return db.transaction((): User => {
-		// Match on github_id alone: it is stable and never recycled, whereas a
-		// github_login can be vacated and reclaimed by a different account. Using
-		// the login in the lookup would let a new user be merged onto the row of an
-		// unrelated user who once held that username (account takeover).
-		const existing = db.prepare('SELECT * FROM users WHERE github_id = ?').get(input.githubId) as
-			| UserRow
-			| undefined;
-		const now = Date.now();
-		if (existing) {
-			db.prepare(
-				`UPDATE users SET github_login = ?, github_id = ?, display_name = ?, avatar_url = ?, last_login_at = ? WHERE id = ?`
-			).run(
-				input.githubLogin,
-				input.githubId,
-				input.displayName,
-				input.avatarUrl,
-				now,
-				existing.id
-			);
-			return rowToUser({
-				...existing,
-				github_login: input.githubLogin,
-				github_id: input.githubId,
-				display_name: input.displayName,
-				avatar_url: input.avatarUrl,
-				last_login_at: now
-			});
-		}
-		const info = db
-			.prepare(
-				`INSERT INTO users(github_login, github_id, display_name, avatar_url, created_at, last_login_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
-			)
-			.run(input.githubLogin, input.githubId, input.displayName, input.avatarUrl, now, now);
-		const id = Number(info.lastInsertRowid);
-		ensureSeedGrantsForUser(id);
-		return {
-			id,
-			githubLogin: input.githubLogin,
-			displayName: input.displayName,
-			avatarUrl: input.avatarUrl
-		};
-	})();
-}
-
 /**
- * Idempotently get-or-create a local user used in AUTH_MODE=none.
+ * Idempotently get-or-create the single shared local user.
  *
  * The optional key is reserved for isolated e2e users; normal local mode
  * continues to use the single `local` user.

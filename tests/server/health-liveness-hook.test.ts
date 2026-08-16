@@ -3,7 +3,7 @@ import type { Handle } from '@sveltejs/kit';
 import { setupLocalEnv } from '../helpers/env';
 
 // Simulate a DB that fails the way a transient hiccup / mid-migration lock
-// would: AUTH_MODE=none calls users.ensureLocalUser() on every request, and
+// would: hooks.server.ts calls users.ensureLocalUser() on every request, and
 // that helper runs a sync DB query. If the liveness probe routed through it,
 // the container HEALTHCHECK would flap and restart the container. Mock the
 // helper to throw so we can prove the liveness path never reaches it.

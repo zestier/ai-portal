@@ -3,25 +3,29 @@
 Zestier's AI Portal (ZAP) is a self-hosted web portal for interacting with an
 agentic coding runtime, built on top of the
 [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-SDK. Intended to be run on a personal/home machine and exposed via a
-Cloudflare Tunnel (or similar) for remote access from a phone or laptop.
+SDK. Intended to be run on a personal/home machine over loopback (127.0.0.1);
+for remote access, expose it over a **Tailscale tailnet** (or another
+authenticating private network) — never directly on the public internet.
+
+> **Security posture: this app has NO authentication layer.**
+> There is one shared local user and no login/session machinery. Bind it to
+> loopback (the default) and put a more robust tool in front — e.g. a
+> Tailscale tailnet — if you need remote access. Do **not** expose the port
+> publicly as-is. See [docs/auth-and-security.md](docs/auth-and-security.md).
 
 > **Status:** Phases 0–3 of the roadmap are implemented (single-user
-> local chat, tools/permissions/diffs, OAuth + Cloudflare Tunnel
-> deployment, plus a read-only git-aware file browser and edit/retry
-> forking). Sessions are pi SDK sessions against the configured `PI_MODEL`
-> (`providerId/modelId`); `PI_STUB=1` swaps in an in-process stub model
-> for e2e tests.
+> local chat, tools/permissions/diffs, plus a read-only git-aware file
+> browser and edit/retry forking). Sessions are pi SDK sessions against the
+> configured `PI_MODEL` (`providerId/modelId`); `PI_STUB=1` swaps in an
+> in-process stub model for e2e tests.
 
 ## Quick start (local, no auth)
 
 ```bash
 cp .env.example .env
-# Edit .env: set ENCRYPTION_KEY (and SESSION_SECRET if not AUTH_MODE=none).
-#   openssl rand -base64 32   # ENCRYPTION_KEY
-#   openssl rand -base64 48   # SESSION_SECRET
-# For pure-local dev, leave AUTH_MODE=none and set HOST=127.0.0.1 +
+# Edit .env: set ENCRYPTION_KEY, and (for local dev) HOST=127.0.0.1 +
 # I_KNOW_THIS_IS_LOCAL=1.
+#   openssl rand -base64 32   # ENCRYPTION_KEY (encrypts stored API keys)
 #
 # Point PI_MODEL at a model id your pi SDK provider can serve, or set
 # PI_STUB=1 to run against the in-process stub (no credentials needed).
@@ -31,13 +35,15 @@ pnpm install
 pnpm run dev   # http://127.0.0.1:5173
 ```
 
-## Production (Docker + Cloudflare Tunnel)
+## Production (Docker)
 
 ```bash
 docker compose up -d --build
 ```
 
-See [docs/deployment.md](docs/deployment.md) for the OAuth + tunnel setup.
+Loopback publish is the default. For remote access, install Tailscale on the
+host and reach the portal over the tailnet (see
+[docs/deployment.md](docs/deployment.md)).
 
 ## Scripts
 
@@ -86,12 +92,11 @@ redeploy logs identify failures clearly.
 - Use the official pi coding-agent SDK only. No reverse-engineered endpoints,
   no ToS gray areas.
 - Persist conversations locally so sessions survive restarts and can be resumed.
-- Trivial to deploy: `docker compose up` + a Cloudflare Tunnel.
+- Trivial to deploy: `docker compose up`, exposed over loopback or Tailscale.
 
 ## Non-goals (initially)
 
-- Multi-tenant SaaS. Single-user, optionally with a small allowlist of GitHub
-  accounts later.
+- Multi-tenant SaaS. Single shared local user only.
 - An extensions marketplace / `@agent` registry. Operator-managed local and
   remote extensions (files, pasted code, or pinned npm/git packages) are
   supported instead via **Settings → Extensions** — no marketplace/registry,
@@ -138,17 +143,19 @@ with a terminal in the configured `PROJECT_ROOT`: agents can request shell
 commands, edit files, mutate git state, and perform external side effects. Use
 loopback binding or an authenticating proxy/tunnel as the real access boundary;
 inside the portal, permission prompts are confirmation and audit UX, not a
-host-sandbox guarantee. See [docs/auth-and-security.md](docs/auth-and-security.md).
+host-sandbox guarantee. There is **no authentication** — keep it on loopback
+or behind a Tailscale tailnet; do not expose it on the public internet. See
+[docs/auth-and-security.md](docs/auth-and-security.md).
 
 ## Document index
 
 1. [docs/architecture.md](docs/architecture.md) — Components and data flow.
 2. [docs/tech-stack.md](docs/tech-stack.md) — SvelteKit, rationale, dependencies.
 3. [docs/frontend-ui.md](docs/frontend-ui.md) — Routes, components, UX details.
-4. [docs/auth-and-security.md](docs/auth-and-security.md) — Login, tunnel exposure,
-   threat model.
+4. [docs/auth-and-security.md](docs/auth-and-security.md) — No auth layer; loopback
+   - Tailscale exposure, hardening.
 5. [docs/persistence.md](docs/persistence.md) — SQLite schema, conversation storage.
-6. [docs/deployment.md](docs/deployment.md) — Dockerfile, compose, Cloudflare Tunnel.
+6. [docs/deployment.md](docs/deployment.md) — Dockerfile, compose, Tailscale exposure.
 7. [docs/roadmap.md](docs/roadmap.md) — Phases / MVP scope.
 8. [docs/memory-backed-sessions.md](docs/memory-backed-sessions.md) — Persistent memory
    and the memory extractor.

@@ -4,13 +4,12 @@ import type { RequestHandler } from './$types';
 import { promptTemplateId } from '$lib/ids';
 import { findUnknownPlaceholders, unknownPlaceholderMessage } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
-import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
 import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
 import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 
 export const GET: RequestHandler = ({ params, locals }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const id = promptTemplateId.tryParse(params.id);
 	if (id === null) throw error(404);
 	const template = promptTemplates.get(id, userId);
@@ -57,7 +56,7 @@ const PatchBody = z
 	);
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const id = promptTemplateId.tryParse(params.id);
 	if (id === null) throw error(404);
 	const body = await parseBody(request, PatchBody);
@@ -94,7 +93,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 };
 
 export const DELETE: RequestHandler = ({ params, locals }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const id = promptTemplateId.tryParse(params.id);
 	if (id === null) throw error(404);
 	const template = promptTemplates.archive(id, userId);

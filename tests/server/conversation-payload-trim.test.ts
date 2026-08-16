@@ -320,12 +320,7 @@ describe('lazy field lookups', () => {
 	it('denies a different user, an unknown id, and a foreign conversation alike', async () => {
 		const users = await import('../../src/lib/server/db/repos/users');
 		const { conv, messages } = await seed();
-		const other = users.upsertGithub({
-			githubLogin: 'intruder',
-			githubId: 4242,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('intruder');
 		expect(messages.getToolCallFieldForOwner(conv.id, 2, other.id, 'args')).toBeNull();
 		expect(messages.getToolCallFieldForOwner(conv.id, 999999, conv.userId, 'args')).toBeNull();
 		expect(messages.getToolCallFieldForOwner(999999, 2, conv.userId, 'args')).toBeNull();
@@ -345,12 +340,7 @@ describe('lazy field lookups', () => {
 		const users = await import('../../src/lib/server/db/repos/users');
 		const { conv, bigReasoning, messages } = await seed();
 		expect(messages.getReasoningTextForOwner(conv.id, 6, conv.userId)?.value).toBe(bigReasoning);
-		const other = users.upsertGithub({
-			githubLogin: 'reasoning-intruder',
-			githubId: 4343,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('reasoning-intruder');
 		expect(messages.getReasoningTextForOwner(conv.id, 6, other.id)).toBeNull();
 		expect(messages.getReasoningTextForOwner(conv.id, 999999, conv.userId)).toBeNull();
 		expect(messages.getReasoningTextForOwner(999999, 6, conv.userId)).toBeNull();

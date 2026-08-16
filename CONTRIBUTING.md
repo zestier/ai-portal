@@ -56,7 +56,7 @@ What "add a test" means in practice here:
   — the config singleton, the SQLite handle, mocked modules — does not leak
   between files. Don't rely on state set up by another file.
 - `tests/setup.ts` snapshots and restores `process.env` around every test, so you
-  may freely set `DATA_DIR`, `AUTH_MODE`, etc. inside a test without cleaning up.
+  may freely set `DATA_DIR`, `ENCRYPTION_KEY`, etc. inside a test without cleaning up.
   Shared helpers (temp dirs, etc.) live in `tests/helpers/`.
 
 ### End-to-end tests (Playwright)
@@ -67,8 +67,8 @@ What "add a test" means in practice here:
 - The e2e server runs the **production build** with `PI_STUB=1`, so tests
   never hit a real model provider — assert against the stub's deterministic
   behavior rather than live model output.
-- Each run gets an isolated `DATA_DIR` (`e2e/.tmp-data`) and `AUTH_MODE=none`; the
-  config in [`playwright.config.ts`](playwright.config.ts) documents the
+- Each run gets an isolated `DATA_DIR` (`e2e/.tmp-data`); the config in
+  [`playwright.config.ts`](playwright.config.ts) documents the
   CSRF/Origin and `GIT_CEILING_DIRECTORIES` setup it relies on.
 - For API-driven specs, import `test`/`expect` from
   [`e2e/helpers/fixtures.ts`](e2e/helpers/fixtures.ts) rather than

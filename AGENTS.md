@@ -42,7 +42,7 @@ pnpm exec playwright-cli screenshot  # eyeball visual changes, tweak, repeat
 
 ## Local dev — isolated data dir
 
-Never `pnpm dev` for exploratory work — writes into live `./data` and pollutes the real user's sidebar (`AUTH_MODE=none` = one shared local-dev user).
+Never `pnpm dev` for exploratory work — writes into live `./data` and pollutes the real user's sidebar (there's one shared local user; no auth layer).
 
 ```bash
 pnpm dev:isolated            # fresh tmp DATA_DIR

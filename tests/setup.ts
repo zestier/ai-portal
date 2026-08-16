@@ -3,7 +3,7 @@ import { cleanupTmpDirs } from './helpers/tmp';
 
 /**
  * Per-test env snapshot/restore. Many tests mutate process.env (DATA_DIR,
- * AUTH_MODE, SESSION_SECRET, …); without restoration the leaks can change
+ * ENCRYPTION_KEY, …); without restoration the leaks can change
  * the behavior of unrelated tests. Snapshot once per test and roll back.
  */
 let envSnapshot: Record<string, string | undefined> = {};

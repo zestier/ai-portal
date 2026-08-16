@@ -3,7 +3,6 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SidebarRail from '$lib/components/SidebarRail.svelte';
 	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
-	import { page } from '$app/stores';
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { setAwaitingInput } from '$lib/client/awaiting-input';
@@ -27,8 +26,6 @@
 	// localStorage and matchMedia are available.
 	let sidebarOpen = $state(true);
 	let hydrated = $state(false);
-
-	const isLoginPage = $derived($page.url.pathname === '/login');
 
 	function closeOnMobileNavigate() {
 		if (window.matchMedia(`(max-width: ${SIDEBAR_MOBILE_MAX_WIDTH}px)`).matches) {
@@ -165,7 +162,7 @@
 	});
 </script>
 
-{#if isLoginPage || !data.user}
+{#if !data.user}
 	{@render children()}
 {:else}
 	<div class="layout" class:collapsed={!sidebarOpen} class:preload={!hydrated}>

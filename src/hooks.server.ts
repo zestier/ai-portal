@@ -6,12 +6,11 @@ import { getDb } from '$lib/server/db';
 import * as users from '$lib/server/db/repos/users';
 import * as settings from '$lib/server/db/repos/settings';
 import {
-	read as readSession,
 	generateCsrfToken,
 	readCsrfCookie,
 	issueCsrfCookie,
 	csrfTokensMatch
-} from '$lib/server/auth/session';
+} from '$lib/server/csrf';
 import { apiErrorResponse } from '$lib/server/http';
 import { startIdleReaper } from '$lib/server/runtime/pool';
 import { startMemoryMaintenance } from '$lib/server/runtime/memory-maintenance';
@@ -38,33 +37,25 @@ function boot() {
 }
 boot();
 
-// `/api/health/liveness` is also short-circuited at the top of `handle` (it
-// returns before the auth gate is ever consulted); it's listed here too as
-// defense-in-depth so the path stays public if that short-circuit is removed.
-const PUBLIC_PATHS = new Set(['/login', '/auth/callback', '/api/health', '/api/health/liveness']);
-const PUBLIC_PREFIXES = ['/_app/', '/favicon'];
-
-function isPublic(pathname: string): boolean {
-	if (PUBLIC_PATHS.has(pathname)) return true;
-	return PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
-}
-
 export const handle: Handle = async ({ event, resolve }) => {
-	// Liveness probe must be process-only. Short-circuit ahead of any
-	// DB-touching work below (AUTH_MODE=none calls users.ensureLocalUser() on
-	// every request) so a DB hiccup or an in-flight startup migration can't
-	// make the container HEALTHCHECK fail and trigger a restart mid-migration.
-	// It's an unauthenticated GET that sets no cookies and reads no state.
+	// Liveness probe must be process-only. Short-circuit ahead of any DB-touching
+	// work below (users.ensureLocalUser() runs on every request) so a DB hiccup
+	// or an in-flight startup migration can't make the container HEALTHCHECK
+	// fail and trigger a restart mid-migration. It's an unauthenticated GET that
+	// sets no cookies and reads no state.
 	if (event.url.pathname === '/api/health/liveness') {
 		return resolve(event);
 	}
 
-	const cfg = loadConfig();
 	const secure = event.url.protocol === 'https:';
 
-	// Default locals
-	event.locals.userId = null;
-	event.locals.user = null;
+	// Single shared local user — no auth layer. Every request maps to it. The
+	// E2E_ISOLATED variant swaps in per-spec isolated users so e2e tests don't
+	// share state across specs running in parallel.
+	const e2eUser = process.env.E2E_ISOLATED === '1' ? event.request.headers.get('x-e2e-user') : null;
+	const u = users.ensureLocalUser(e2eUser ?? 'local');
+	event.locals.userId = u.id;
+	event.locals.user = u;
 
 	// CSRF double-submit token: reuse the value already pinned in the browser's
 	// cookie so the token rendered into the <meta> tag (and echoed back by the
@@ -77,39 +68,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 	event.locals.csrfToken = csrf;
 
-	// AUTH_MODE=none: auto-login the local user.
-	if (cfg.AUTH_MODE === 'none') {
-		const e2eUser =
-			process.env.E2E_ISOLATED === '1' ? event.request.headers.get('x-e2e-user') : null;
-		const u = users.ensureLocalUser(e2eUser ?? 'local');
-		event.locals.userId = u.id;
-		event.locals.user = u;
-	} else {
-		const claims = readSession(event.cookies, secure);
-		if (claims) {
-			const u = users.getById(Number(claims.sub));
-			if (u) {
-				event.locals.userId = u.id;
-				event.locals.user = u;
-			}
-		}
-	}
-
-	// Auth gate.
-	const path = event.url.pathname;
-	if (!isPublic(path) && !event.locals.userId) {
-		if (path.startsWith('/api/')) {
-			return apiErrorResponse(401, 'unauthorized');
-		}
-		return new Response(null, {
-			status: 302,
-			headers: { location: '/login' }
-		});
-	}
-
 	// Origin check for mutating JSON API calls. SvelteKit covers form
 	// actions; this keeps JSON API mutations on the same boundary.
-	if (path.startsWith('/api/') && event.request.method !== 'GET') {
+	if (event.url.pathname.startsWith('/api/') && event.request.method !== 'GET') {
 		const origin = event.request.headers.get('origin');
 		const referer = event.request.headers.get('referer');
 		const expectedOrigin = event.url.origin;
@@ -140,12 +101,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 		transformPageChunk: ({ html }) => {
 			let themeMode: 'dark' | 'light' | 'system' = 'system';
 			let accent: ThemeAccent = 'default';
-			if (event.locals.userId) {
-				const s = settings.get(event.locals.userId);
-				if (s) {
-					themeMode = s.theme;
-					accent = normalizeThemeAccent(s.accent);
-				}
+			const s = settings.get(event.locals.userId);
+			if (s) {
+				themeMode = s.theme;
+				accent = normalizeThemeAccent(s.accent);
 			}
 			const initialTheme = themeMode === 'light' ? 'light' : 'dark';
 			return html

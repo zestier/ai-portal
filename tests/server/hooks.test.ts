@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Handle } from '@sveltejs/kit';
-import { setupAuthedEnv, setupLocalEnv } from '../helpers/env';
+import { setupLocalEnv } from '../helpers/env';
 
 type HandleEvent = Parameters<Handle>[0]['event'];
 
@@ -58,30 +58,9 @@ async function loadHandle() {
 	return mod.handle;
 }
 
-describe('hooks auth gate', () => {
+describe('hooks request handling (no auth gate)', () => {
 	beforeEach(async () => {
-		await setupAuthedEnv('portal-hooks-test-');
-	});
-
-	it('returns 401 for unauthenticated /api/* requests', async () => {
-		const handle = await loadHandle();
-		const event = makeEvent({ path: '/api/conversations' });
-		const res = await handle({
-			event,
-			resolve: async () => new Response('should not reach handler', { status: 200 })
-		});
-		expect(res.status).toBe(401);
-	});
-
-	it('redirects unauthenticated page requests to /login', async () => {
-		const handle = await loadHandle();
-		const event = makeEvent({ path: '/' });
-		const res = await handle({
-			event,
-			resolve: async () => new Response('should not reach handler', { status: 200 })
-		});
-		expect(res.status).toBe(302);
-		expect(res.headers.get('location')).toBe('/login');
+		await setupLocalEnv('portal-hooks-test-');
 	});
 
 	it('allows /api/health without auth', async () => {
@@ -104,21 +83,7 @@ describe('hooks auth gate', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('allows /login without auth', async () => {
-		const handle = await loadHandle();
-		const event = makeEvent({ path: '/login' });
-		const res = await handle({
-			event,
-			resolve: async () => new Response('login page', { status: 200 })
-		});
-		expect(res.status).toBe(200);
-	});
-
-	it('blocks cross-origin mutating /api/* even when authenticated', async () => {
-		// Switch to AUTH_MODE=none so the request is authorized via the
-		// local user; this lets us reach the origin gate.
-		await setupLocalEnv('portal-hooks-test-');
-
+	it('blocks cross-origin mutating /api/*', async () => {
 		const handle = await loadHandle();
 		const event = makeEvent({
 			path: '/api/conversations',

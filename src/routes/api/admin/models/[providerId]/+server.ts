@@ -5,14 +5,12 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { requireUserId } from '$lib/server/auth/require';
 import { loadConfig } from '$lib/server/config';
 import { canRedeployUser } from '$lib/server/redeploy';
 import { deleteProvider, saveProviderKey } from '$lib/server/models/catalog-service';
 import * as providersRepo from '$lib/server/db/repos/providers';
 
 function admin(locals: App.Locals): void {
-	requireUserId(locals);
 	const cfg = loadConfig();
 	if (!canRedeployUser(locals.user, cfg)) {
 		throw error(403, 'Model configuration requires admin access.');

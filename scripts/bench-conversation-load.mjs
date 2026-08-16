@@ -538,7 +538,6 @@ async function main() {
 			HOST: '127.0.0.1',
 			PORT: String(port),
 			DATA_DIR: dataDir,
-			AUTH_MODE: 'none',
 			I_KNOW_THIS_IS_LOCAL: '1',
 			ENCRYPTION_KEY: randomBytes(32).toString('base64'),
 			PI_STUB: '1',

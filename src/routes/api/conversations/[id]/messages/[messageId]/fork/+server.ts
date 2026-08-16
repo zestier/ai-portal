@@ -5,7 +5,6 @@ import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
 import { forkAtMessage, ForkRejected } from '$lib/server/fork';
 import { startTurnFromUserMessage } from '$lib/server/turn-start';
 import { parseBody } from '$lib/server/validate';
-import { requireUserId } from '$lib/server/auth/require';
 import { throwRerunFailure } from '$lib/server/rerun-error';
 import * as convs from '$lib/server/db/repos/conversations';
 import * as pool from '$lib/server/runtime/pool';
@@ -44,7 +43,7 @@ const REJECT_STATUS: Record<string, number> = {
  * client just navigates and lets the user press Send.
  */
 export const POST: RequestHandler = async ({ params, locals, request }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const sourceId = convCodec.tryParse(params.id);
 	const messageId = msgCodec.tryParse(params.messageId);
 	if (sourceId === null) throw error(404);

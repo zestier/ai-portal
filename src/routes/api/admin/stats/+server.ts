@@ -1,7 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { statSync } from 'node:fs';
 import type { RequestHandler } from './$types';
-import { requireUserId } from '$lib/server/auth/require';
 import { loadConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db';
 import { canRedeployUser } from '$lib/server/redeploy';
@@ -24,7 +23,6 @@ const WAL_FRAME_HEADER_BYTES = 24;
  *               WAL frame count and WAL size_bytes
  */
 export const GET: RequestHandler = ({ locals }) => {
-	requireUserId(locals);
 	const cfg = loadConfig();
 	if (!canRedeployUser(locals.user, cfg)) {
 		throw error(403, 'Admin stats require an authorized admin.');

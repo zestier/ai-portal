@@ -35,8 +35,8 @@ that deleted chain; the schema they introduced is folded into `001_init.sql`.
 
 CREATE TABLE users (
   id              TEXT PRIMARY KEY,         -- ULID
-  github_login    TEXT UNIQUE NOT NULL,
-  github_id       INTEGER UNIQUE,           -- null for the local-only `AUTH_MODE=none` user
+  github_login    TEXT UNIQUE NOT NULL,     -- 'local' or 'local:<key>' (single shared user)
+  github_id       INTEGER UNIQUE,           -- legacy column; always NULL now (no auth)
   display_name    TEXT,
   avatar_url      TEXT,
   created_at      INTEGER NOT NULL,         -- unix ms
@@ -426,19 +426,17 @@ export function unarchive(id: string, userId: string): boolean { ... }
 ## Admin and operations endpoints
 
 A small set of endpoints exists outside the per-conversation CRUD surface.
-They are authenticated like the rest of `/api/*` (session cookie required)
-and live alongside the data routes:
+They are reachable like the rest of `/api/*` (no auth — the app has a single
+shared local user) and live alongside the data routes:
 
 - `POST /api/admin/redeploy` — streams a Server-Sent Events feed of a
    `git fetch` / `git pull` / `pnpm install` / `pnpm run verify` pipeline,
    then exits the process so the supervisor (`scripts/serve.mjs`) can
    relaunch from the refreshed `build/`. Body: `{pull?: boolean}` (defaults
    to `true`). Gated by the `ENABLE_REDEPLOY` env flag — returns `403`
-   when disabled and `409` if a redeploy is already in flight. Under
-   `AUTH_MODE=github`, redeploy is limited to `REDEPLOY_ADMIN_GITHUB_LOGINS`
-   (or the sole `ALLOWED_GITHUB_LOGINS` entry in single-user installs);
-   shared-secret and local auth modes treat the authenticated operator as the
-   admin. Only meaningful when the portal is started via `pnpm run serve`.
+   when disabled and `409` if a redeploy is already in flight. The single
+   local user is the operator and is allowed to trigger it. Only meaningful
+   when the portal is started via `pnpm run serve`.
 - `POST /api/conversations/:id/permissions/:requestId` — resolves a
   pending tool-permission prompt. Body:
   `{decision: 'allow-once' | 'allow-always' | 'deny'}`. Returns

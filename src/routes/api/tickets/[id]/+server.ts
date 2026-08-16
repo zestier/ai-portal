@@ -5,7 +5,6 @@ import { ticketId } from '$lib/ids';
 import * as tickets from '$lib/server/db/repos/tickets';
 import { ticketWorkspaceFromInput } from '$lib/server/ticket-workspace';
 import { parseBody } from '$lib/server/validate';
-import { requireUserId } from '$lib/server/auth/require';
 
 const PatchBody = z
 	.object({
@@ -29,7 +28,7 @@ const PatchBody = z
 	);
 
 export const GET: RequestHandler = ({ params, locals }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const ticketIdInt = ticketId.tryParse(params.id);
 	if (ticketIdInt === null) throw error(404);
 	const ticket = tickets.get(ticketIdInt, userId);
@@ -38,7 +37,7 @@ export const GET: RequestHandler = ({ params, locals }) => {
 };
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const body = await parseBody(request, PatchBody);
 	const ticketIdInt = ticketId.tryParse(params.id);
 	if (ticketIdInt === null) throw error(404);
@@ -60,7 +59,7 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
 };
 
 export const DELETE: RequestHandler = ({ params, locals, url }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const ticketIdInt = ticketId.tryParse(params.id);
 	if (ticketIdInt === null) throw error(404);
 	const current = tickets.get(ticketIdInt, userId);

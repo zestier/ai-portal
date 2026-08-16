@@ -19,12 +19,7 @@ describe('portal extensions repo', () => {
 		const users = await import('../../src/lib/server/db/repos/users');
 		const exts = await import('../../src/lib/server/db/repos/extensions');
 		const user = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'ext-rival',
-			githubId: 991,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('ext-rival');
 
 		const a = exts.create(user.id, {
 			name: 'A',

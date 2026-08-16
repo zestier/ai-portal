@@ -2,7 +2,9 @@
 declare global {
 	namespace App {
 		interface Locals {
-			userId: number | null;
+			// Single shared local user, always logged in — the app ships no auth
+			// layer, so `userId` is never null (see hooks.server.ts).
+			userId: number;
 			user: import('$lib/types').User | null;
 			csrfToken: string;
 		}

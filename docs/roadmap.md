@@ -26,7 +26,8 @@ Phased plan. Each phase ends in a usable artifact.
 
 ## Phase 1 — Single-user local chat (MVP)
 
-- `AUTH_MODE=none` (localhost-only, gated by `I_KNOW_THIS_IS_LOCAL=1`).
+- Loopback-only server (`HOST=127.0.0.1` + `I_KNOW_THIS_IS_LOCAL=1`) — the
+  app has **no auth layer** by design.
 - SQLite + initial migration (`users`, `conversations`, `messages`).
 - Auto-create a single local user on first run.
 - Session module opening pi sessions against the configured `PI_MODEL`
@@ -57,15 +58,17 @@ a browser tab on my laptop, persistent across restarts.
 **Exit criteria:** I can let the agent edit files in a sandboxed working dir
 with explicit approval, and review the diffs in the UI.
 
-## Phase 3 — Remote-safe auth and deploy
+## Phase 3 — Remote access over a private network, no auth
 
-- GitHub OAuth flow + `ALLOWED_GITHUB_LOGINS`.
-- Session cookie + CSRF + CSP.
-- Encrypted token storage.
-- Cloudflare Tunnel docs verified end-to-end.
+- No authentication layer by design (single shared local user).
+- Request hardening: same-origin + CSRF double-submit on `/api/*` mutations,
+  strict CSP and browser-hardening headers (these are anti-cross-site
+  hardening, not access control).
+- Remote access = Tailscale (or a private VPN) in front; Tailscale Serve docs
+  verified end-to-end.
 
-**Exit criteria:** I can expose the portal at
-`zap.example.com` behind CF Access and use it from my phone safely.
+**Exit criteria:** I can reach the portal from my phone over my **Tailscale
+tailnet** without publishing any port to the public internet.
 
 ## Phase 4 — Quality of life
 
@@ -98,8 +101,8 @@ with explicit approval, and review the diffs in the UI.
    against the version we pin.
 2. **Long-running tools.** Some tool calls (test runs, builds) can run
    minutes. SSE is fine but HTTP/1.1 proxies sometimes idle-time out;
-   confirm Cloudflare Tunnel's default streaming timeout (currently 100 s
-   for HTTP, configurable). Heartbeat events every 15 s on the SSE stream.
+   confirm whatever proxy fronts the tailnet keeps streams alive.
+   Heartbeat events every 15 s on the SSE stream.
 3. **Workspace strategy.** Do we ever want to let a conversation operate
    against a *bare-cloned* repo we manage, vs. a directory the user
    provides? See the "Caveat: conversations are not independent" section

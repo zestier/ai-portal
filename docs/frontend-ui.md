@@ -9,11 +9,11 @@ Svelte 5, SvelteKit file-based routing. Mobile-first responsive layout.
 | `/`                          | Conversation list + "New chat" CTA.                    |
 | `/conversations/[id]`        | Chat view for a single conversation.                   |
 | `/settings`                  | User settings, provider status, model defaults, default workdir, etc. |
-| `/login`                     | OAuth entry point.                                     |
-| `/auth/callback`             | OAuth callback target.                                 |
 
-All routes except `/login` and `/auth/callback` require an authenticated
-session (enforced in `hooks.server.ts`).
+There are **no** `/login` or `/auth/callback` routes — the app has no auth
+layer. `hooks.server.ts` auto-creates the single shared local user on every
+request; it only enforces same-origin + CSRF on `/api/*` mutations (request
+hardening, not access control).
 
 ## Layout
 

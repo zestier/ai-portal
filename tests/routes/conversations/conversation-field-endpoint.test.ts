@@ -115,12 +115,7 @@ describe('conversation field endpoint', () => {
 
 	it('404s (not 403) for another user, so ids stay non-enumerable', async () => {
 		const { users, conv } = await seed();
-		const other = users.upsertGithub({
-			githubLogin: 'intruder',
-			githubId: 909,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('intruder');
 		expect(await status(callGet(conv.id, 'tool-args', '1', other.id))).toBe(404);
 	});
 

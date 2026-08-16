@@ -28,12 +28,7 @@ describe('prompt templates', () => {
 		const users = await import('../../../src/lib/server/db/repos/users');
 		const promptTemplates = await import('../../../src/lib/server/db/repos/prompt-templates');
 		const user = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'prompt-rival',
-			githubId: 909,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('prompt-rival');
 
 		const template = promptTemplates.create(user.id, {
 			title: 'Release checklist',
@@ -179,12 +174,7 @@ describe('prompt templates', () => {
 		const { GET, POST } = await import('../../../src/routes/api/prompt-templates/+server');
 		const { PATCH, DELETE } = await import('../../../src/routes/api/prompt-templates/[id]/+server');
 		const user = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'prompt-api-rival',
-			githubId: 910,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('prompt-api-rival');
 
 		const builtInsResponse = await GET(event({ userId: user.id }) as never);
 		const builtIns = await builtInsResponse.json();
@@ -311,12 +301,7 @@ describe('prompt templates', () => {
 		const promptTemplates = await import('../../../src/lib/server/db/repos/prompt-templates');
 		const { load } = await import('../../../src/routes/conversations/[id]/+page.server');
 		const user = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'prompt-load-rival',
-			githubId: 911,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('prompt-load-rival');
 		const conv = convs.create(user.id, { title: 'Prompt draft', workdir: '/tmp', model: null });
 		const custom = promptTemplates.create(user.id, {
 			title: 'Custom launch',

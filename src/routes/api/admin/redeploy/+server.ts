@@ -3,7 +3,6 @@ import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { loadConfig } from '$lib/server/config';
 import { log } from '$lib/server/log';
-import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
 import { sseResponse } from '$lib/server/sse';
 import { audit } from '$lib/server/audit';
@@ -28,7 +27,7 @@ const Body = z.object({ pull: z.boolean().optional().default(true) });
 let inFlight = false;
 
 export const POST: RequestHandler = async ({ request, locals, getClientAddress }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const cfg = loadConfig();
 	const actorLogin = locals.user?.githubLogin ?? null;
 	const actorIp = getClientAddress();

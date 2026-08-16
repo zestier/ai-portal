@@ -7,7 +7,6 @@ describe('crypto', () => {
 	beforeEach(() => {
 		process.env.ENCRYPTION_KEY = randomBytes(32).toString('base64');
 		process.env.HOST = '127.0.0.1';
-		process.env.AUTH_MODE = 'none';
 		process.env.I_KNOW_THIS_IS_LOCAL = '1';
 		resetConfigForTests();
 	});

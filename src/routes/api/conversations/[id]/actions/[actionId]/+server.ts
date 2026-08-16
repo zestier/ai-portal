@@ -1,7 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { requireUserId } from '$lib/server/auth/require';
 import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
 import { loadConfig } from '$lib/server/config';
 import { canRedeployUser } from '$lib/server/redeploy';
@@ -34,7 +33,7 @@ const Body = z
  * disconnect, killing any running step so an action does not outlive the press.
  */
 export const POST: RequestHandler = async ({ params, locals, request, getClientAddress }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const { conversation, workdir } = authorizeConversationWorkdir(params.id, locals.userId);
 	const actionId = params.actionId;
 	const cfg = loadConfig();

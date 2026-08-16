@@ -9,7 +9,6 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { requireUserId } from '$lib/server/auth/require';
 import { loadConfig } from '$lib/server/config';
 import { canRedeployUser } from '$lib/server/redeploy';
 import { extensionId } from '$lib/ids';
@@ -17,7 +16,7 @@ import * as extensions from '$lib/server/extensions';
 import * as extensionsRepo from '$lib/server/db/repos/extensions';
 
 function admin(locals: App.Locals): number {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const cfg = loadConfig();
 	if (!canRedeployUser(locals.user, cfg)) {
 		throw error(403, 'Extension configuration requires admin access.');

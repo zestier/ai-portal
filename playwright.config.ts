@@ -97,7 +97,6 @@ export default defineConfig({
 			// it to the isolated dataDir so test writes (e.g. the view-image stub
 			// fixtures) never land in the repo root.
 			PROJECT_ROOT: dataDir,
-			AUTH_MODE: 'none',
 			I_KNOW_THIS_IS_LOCAL: '1',
 			E2E_ISOLATED: '1',
 			ENCRYPTION_KEY: randomBytes(32).toString('base64'),

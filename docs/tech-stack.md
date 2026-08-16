@@ -31,8 +31,7 @@ specifics beyond file conventions.)
 | Schema/validation        | `zod`                                              |
 | Markdown rendering       | `marked` + `dompurify` (sanitize on client)        |
 | Diff rendering           | `diff` + custom Svelte component                   |
-| Auth (OAuth)             | Hand-rolled GitHub OAuth web flow (no octokit dep) |
-| Cookie/session           | SvelteKit's `cookies` API + signed JWT             |
+| Request hardening        | Same-origin + CSRF double-submit (no auth layer)   |
 | Crypto for at-rest       | Node `crypto` (AES-256-GCM)                        |
 | ID generation            | `ulid` (monotonic factory)                         |
 | Testing (unit)           | `vitest`                                           |
@@ -80,10 +79,7 @@ zap/
 │  │  │  │  ├─ migrations/
 │  │  │  │  └─ repos/             # conversations, messages, settings,
 │  │  │  │                       # tokens, usage, users
-│  │  │  ├─ auth/
-│  │  │  │  ├─ github.ts          # OAuth web flow
-│  │  │  │  ├─ session.ts         # cookie/JWT helpers
-│  │  │  │  └─ require.ts         # route guards
+│  │  │  ├─ csrf.ts             # CSRF double-submit helpers
 │  │  │  ├─ files.ts            # FS read / tree (workspace-rooted)
 │  │  │  ├─ git.ts              # git plumbing (status, log, diff)
 │  │  │  ├─ snapshots.ts        # per-turn pre/post git snapshots
@@ -100,11 +96,8 @@ zap/
 │  │  └─ types.ts
 │  └─ routes/
 │     ├─ +layout.svelte
-│     ├─ +layout.server.ts        # auth gate, user info
+│     ├─ +layout.server.ts        # user info / sidebar data
 │     ├─ +page.svelte             # conversation list / new chat
-│     ├─ login/
-│     ├─ logout/
-│     ├─ auth/callback/           # OAuth callback
 │     ├─ conversations/[id]/      # chat view
 │     ├─ settings/
 │     └─ api/
@@ -134,7 +127,6 @@ zap/
 ├─ tests/                      # vitest unit specs
 ├─ Dockerfile
 ├─ compose.yaml
-├─ compose.tunnel.yaml
 ├─ package.json
 ├─ svelte.config.js
 ├─ vite.config.ts
@@ -152,15 +144,9 @@ invalid config.
 | `HOST`                    | `127.0.0.1`              | Listen address.                      |
 | `DATA_DIR`                | `./data`                 | DB root (`portal.db` + legacy workspaces dir). |
 | `PROJECT_ROOT`            | *(process cwd)*          | The directory the pi agent and the FS/git tabs operate inside. Shared by all conversations. |
-| `SESSION_SECRET`          | *(required unless `AUTH_MODE=none`)* | Signs session cookies (≥ 32 chars). |
-| `SESSION_TTL_SECONDS`     | `2592000` (30 days)      | Lifetime of an issued session cookie. Shorten for security-sensitive deployments; existing cookies keep their own `exp` and aren't invalidated early. |
-| `ENCRYPTION_KEY`          | *(required, base64 of 32 raw bytes)* | At-rest encryption for tokens. |
-| `AUTH_MODE`               | `none`                   | `github` \| `shared-secret` \| `none`. |
-| `I_KNOW_THIS_IS_LOCAL`    | —                        | Must be `1` together with `HOST=127.0.0.1` (or `0.0.0.0`) for `AUTH_MODE=none`. |
-| `GITHUB_CLIENT_ID`        | —                        | OAuth app client id (`github` mode). |
-| `GITHUB_CLIENT_SECRET`    | —                        | OAuth app secret (`github` mode).    |
-| `ALLOWED_GITHUB_LOGINS`   | —                        | Comma-separated allowlist (`github` mode, non-empty). |
-| `SHARED_SECRET`           | —                        | If `AUTH_MODE=shared-secret`.        |
+| `ENCRYPTION_KEY`          | *(required, base64 of 32 raw bytes)* | At-rest encryption for provider/BYOK API keys. |
+| `I_KNOW_THIS_IS_LOCAL`    | —                        | Must be `1` for `HOST=127.0.0.1` (loopback is the safe default — the app has no auth). |
+| `I_KNOW_THIS_IS_NETWORK_ACCESSIBLE` | —             | Must be `1` for `HOST=0.0.0.0`. Stronger assertion, stands alone; only for a fenced reachability boundary (private network / Tailscale / no published port). |
 | `DEFAULT_MODEL`           | `claude-sonnet-4.5`      | Default model id for new conversations (a pi model id, `providerId/modelId`). |
 | `PI_MODEL`                | `anthropic/claude-sonnet-4-5` | Pi model id (`providerId/modelId`) for the pi path, used when `PI_STUB` is unset. |
 | `PI_STUB`                 | —                        | Set to `1` to run the pi path against the in-process stub model. Used by e2e tests. |

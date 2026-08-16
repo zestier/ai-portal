@@ -1,21 +1,8 @@
 import { z } from 'zod';
 import { resolve } from 'node:path';
 
-const commaList = z
-	.string()
-	.optional()
-	.transform((v) =>
-		v
-			? v
-					.split(',')
-					.map((s) => s.trim().toLowerCase())
-					.filter(Boolean)
-			: []
-	);
-
-// Like commaList but preserves case — filesystem paths are case-sensitive on
-// the platforms we target, so lowercasing them would silently break the
-// allowlist on a case-sensitive root.
+// Comma-separated list of absolute paths, preserving case (filesystem paths
+// are case-sensitive on the platforms we target).
 const pathList = z
 	.string()
 	.optional()
@@ -45,10 +32,7 @@ const Schema = z
 		// Allowlist of roots a user-supplied workdir may resolve inside. Empty
 		// (the default) means "only PROJECT_ROOT". Comma-separated absolute
 		// paths widen it for a trusted single operator who wants to point
-		// conversations at several project trees. In multi-user GitHub mode
-		// (AUTH_MODE=github with >1 allowed login) the effective roots are
-		// always clamped to PROJECT_ROOT regardless of this value, so one
-		// operator can never browse another's data or the host's secrets.
+		// conversations at several project trees.
 		ALLOWED_WORKDIRS: pathList,
 		// Portal-owned linked worktrees live outside the user-selectable workdir
 		// allowlist. The final default is derived from DATA_DIR after parsing.
@@ -67,38 +51,26 @@ const Schema = z
 			.default(24 * 60 * 60_000),
 		LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
-		AUTH_MODE: z.enum(['github', 'shared-secret', 'none']).default('none'),
-		SESSION_SECRET: z.string().min(32).optional(),
-		// Lifetime of an issued session cookie, in seconds. Security-sensitive
-		// deployments can shorten this; the default is 30 days. Existing cookies
-		// carry their own `exp` claim, so changing this only affects newly issued
-		// sessions and never invalidates already-valid cookies early.
-		SESSION_TTL_SECONDS: z.coerce
-			.number()
-			.int()
-			.positive()
-			.default(60 * 60 * 24 * 30),
-		ENCRYPTION_KEY: z.string().optional(), // base64, 32 bytes raw
+		// AES-256-GCM key (base64, 32 raw bytes) for encrypting provider/BYOK
+		// API secrets at rest in the DB. Not authentication — the app ships no
+		// auth layer; this only keeps stored keys non-plaintext on disk.
+		ENCRYPTION_KEY: z.string().optional(),
 		I_KNOW_THIS_IS_LOCAL: z
 			.string()
 			.optional()
 			.transform((v) => v === '1' || v === 'true'),
-		// Opt-in required to bind every interface (HOST=0.0.0.0) under
-		// AUTH_MODE=none. Binding all interfaces with zero auth is far riskier
-		// than loopback, so it demands its own unmistakable acknowledgement.
-		// It is the *stronger* assertion and stands alone — operators on
-		// 0.0.0.0 set this instead of (not in addition to) I_KNOW_THIS_IS_LOCAL.
+		// Opt-in required to bind every interface (HOST=0.0.0.0). The app has
+		// NO auth layer, so binding all interfaces is far riskier than loopback
+		// and demands its own unmistakable acknowledgement. It is the *stronger*
+		// assertion and stands alone — operators on 0.0.0.0 set this instead of
+		// (not in addition to) I_KNOW_THIS_IS_LOCAL. Only acceptable when
+		// reachability is fenced off another way (no published port, a private
+		// network, or an authenticating reverse proxy / Tailscale in front) —
+		// 0.0.0.0 must never be reachable publicly as-is.
 		I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: z
 			.string()
 			.optional()
 			.transform((v) => v === '1' || v === 'true'),
-
-		GITHUB_CLIENT_ID: z.string().optional(),
-		GITHUB_CLIENT_SECRET: z.string().optional(),
-		ALLOWED_GITHUB_LOGINS: commaList,
-		REDEPLOY_ADMIN_GITHUB_LOGINS: commaList,
-
-		SHARED_SECRET: z.string().min(32).optional(),
 
 		// Default model id when a conversation has no model of its own. Display
 		// default on the pi path: the runtime maps a conversation model equal to
@@ -216,89 +188,38 @@ const Schema = z
 		DB_MIGRATIONS_DIR: z.string().optional()
 	})
 	.superRefine((cfg, ctx) => {
-		if (cfg.AUTH_MODE === 'none') {
-			// Each bind address has exactly one acknowledgement flag:
-			//   127.0.0.1 (loopback, the safe default) -> I_KNOW_THIS_IS_LOCAL
-			//   0.0.0.0   (every interface)             -> I_KNOW_THIS_IS_NETWORK_ACCESSIBLE
-			// The network flag is the stronger assertion and stands on its own
-			// (no need to also set I_KNOW_THIS_IS_LOCAL). 0.0.0.0 is only
-			// acceptable when reachability is fenced off some other way — a
-			// container with no published port, a private network, or an
-			// authenticating reverse proxy in front. Any other HOST is rejected.
-			if (cfg.HOST === '0.0.0.0') {
-				if (!cfg.I_KNOW_THIS_IS_NETWORK_ACCESSIBLE) {
-					ctx.addIssue({
-						code: z.ZodIssueCode.custom,
-						message:
-							'AUTH_MODE=none with HOST=0.0.0.0 binds every interface with no auth; ' +
-							'set I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1 to acknowledge, or use ' +
-							'HOST=127.0.0.1 with I_KNOW_THIS_IS_LOCAL=1 for loopback-only access.'
-					});
-				}
-			} else if (cfg.HOST === '127.0.0.1') {
-				if (!cfg.I_KNOW_THIS_IS_LOCAL) {
-					ctx.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: 'AUTH_MODE=none (loopback, no auth) requires I_KNOW_THIS_IS_LOCAL=1.'
-					});
-				}
-			} else {
+		// The app ships NO auth layer, so each bind address demands an explicit
+		// acknowledgement flag:
+		//   127.0.0.1 (loopback, the safe default) -> I_KNOW_THIS_IS_LOCAL
+		//   0.0.0.0   (every interface)             -> I_KNOW_THIS_IS_NETWORK_ACCESSIBLE
+		// The network flag is the stronger assertion and stands on its own (no
+		// need to also set I_KNOW_THIS_IS_LOCAL). 0.0.0.0 is only acceptable when
+		// reachability is fenced off some other way — a container with no
+		// published port, a private network, or an authenticating reverse proxy /
+		// Tailscale in front. Any other HOST is rejected.
+		if (cfg.HOST === '0.0.0.0') {
+			if (!cfg.I_KNOW_THIS_IS_NETWORK_ACCESSIBLE) {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
 					message:
-						'AUTH_MODE=none requires HOST=127.0.0.1 (with I_KNOW_THIS_IS_LOCAL=1) ' +
-						'or HOST=0.0.0.0 (with I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1).'
+						'HOST=0.0.0.0 binds every interface with no auth; set ' +
+						'I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1 to acknowledge, or use ' +
+						'HOST=127.0.0.1 with I_KNOW_THIS_IS_LOCAL=1 for loopback-only access.'
+				});
+			}
+		} else if (cfg.HOST === '127.0.0.1') {
+			if (!cfg.I_KNOW_THIS_IS_LOCAL) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'No auth (loopback) requires I_KNOW_THIS_IS_LOCAL=1.'
 				});
 			}
 		} else {
-			if (!cfg.SESSION_SECRET) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: 'SESSION_SECRET is required unless AUTH_MODE=none.'
-				});
-			}
-		}
-		if (cfg.AUTH_MODE === 'github') {
-			if (!cfg.GITHUB_CLIENT_ID || !cfg.GITHUB_CLIENT_SECRET) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: 'GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are required for AUTH_MODE=github.'
-				});
-			}
-			if (!cfg.ALLOWED_GITHUB_LOGINS || cfg.ALLOWED_GITHUB_LOGINS.length === 0) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: 'ALLOWED_GITHUB_LOGINS must be a non-empty list for AUTH_MODE=github.'
-				});
-			}
-			const unknownRedeployAdmins = cfg.REDEPLOY_ADMIN_GITHUB_LOGINS.filter(
-				(login) => !cfg.ALLOWED_GITHUB_LOGINS.includes(login)
-			);
-			if (unknownRedeployAdmins.length > 0) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ['REDEPLOY_ADMIN_GITHUB_LOGINS'],
-					message:
-						'REDEPLOY_ADMIN_GITHUB_LOGINS entries must also be present in ALLOWED_GITHUB_LOGINS.'
-				});
-			}
-			if (
-				cfg.ENABLE_REDEPLOY &&
-				cfg.ALLOWED_GITHUB_LOGINS.length > 1 &&
-				cfg.REDEPLOY_ADMIN_GITHUB_LOGINS.length === 0
-			) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ['REDEPLOY_ADMIN_GITHUB_LOGINS'],
-					message:
-						'REDEPLOY_ADMIN_GITHUB_LOGINS is required when ENABLE_REDEPLOY=1 and multiple GitHub logins are allowed.'
-				});
-			}
-		}
-		if (cfg.AUTH_MODE === 'shared-secret' && !cfg.SHARED_SECRET) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: 'SHARED_SECRET is required for AUTH_MODE=shared-secret.'
+				message:
+					'No auth requires HOST=127.0.0.1 (with I_KNOW_THIS_IS_LOCAL=1) ' +
+					'or HOST=0.0.0.0 (with I_KNOW_THIS_IS_NETWORK_ACCESSIBLE=1).'
 			});
 		}
 		if (cfg.ENCRYPTION_KEY) {
@@ -316,11 +237,6 @@ const Schema = z
 					message: 'ENCRYPTION_KEY must be valid base64.'
 				});
 			}
-		} else if (cfg.AUTH_MODE === 'github') {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'ENCRYPTION_KEY is required for AUTH_MODE=github (encrypts stored tokens).'
-			});
 		}
 	})
 	.transform((cfg) => ({

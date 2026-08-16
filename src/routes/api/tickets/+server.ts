@@ -10,14 +10,13 @@ import {
 	ticketWorkspaceFromInput
 } from '$lib/server/ticket-workspace';
 import { parseBody } from '$lib/server/validate';
-import { requireUserId } from '$lib/server/auth/require';
 
 const Status = z.enum(['open', 'done', 'archived', 'all']);
 const Sort = z.enum(['recency', 'priority']);
 const Priority = z.enum(['P0', 'P1', 'P2', 'P3']);
 
 export const GET: RequestHandler = ({ locals, url }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const workspace = ticketWorkspaceFromInput(
 		url.searchParams.get('workspace') ?? undefined,
 		userId
@@ -60,7 +59,7 @@ const CreateBody = z.object({
 });
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const body = await parseBody(request, CreateBody);
 	let workspace = ticketWorkspaceFromInput(body.workspace, userId);
 

@@ -91,12 +91,7 @@ describe('parseActionsConfig — fail closed', () => {
 	});
 
 	it('rejects an env entry that names one of the portal\u2019s own secrets', () => {
-		for (const name of [
-			'SESSION_SECRET',
-			'ENCRYPTION_KEY',
-			'GITHUB_CLIENT_SECRET',
-			'SHARED_SECRET'
-		]) {
+		for (const name of ['ENCRYPTION_KEY']) {
 			const res = parseActionsConfig({
 				version: 1,
 				actions: [{ id: 'x', label: 'X', env: [name], steps: [{ command: 'ls' }] }]

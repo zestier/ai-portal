@@ -51,26 +51,17 @@ describe('buildActionEnv (default-deny)', () => {
 		expect('NOT_SET' in env).toBe(false);
 	});
 
-	it('drops the portal\u2019s own secret names even when allowlisted (defense-in-depth)', () => {
+	it('drops the portal\u2019s own secret name even when allowlisted (defense-in-depth)', () => {
 		const source = {
 			PATH: '/usr/bin',
 			VERCEL_TOKEN: 'vercel-value',
-			SESSION_SECRET: 'portal-session',
-			ENCRYPTION_KEY: 'portal-key',
-			GITHUB_CLIENT_SECRET: 'portal-oauth',
-			SHARED_SECRET: 'portal-shared'
+			ENCRYPTION_KEY: 'portal-key'
 		};
-		const env = buildActionEnv(
-			['VERCEL_TOKEN', 'SESSION_SECRET', 'ENCRYPTION_KEY', 'GITHUB_CLIENT_SECRET', 'SHARED_SECRET'],
-			source
-		);
+		const env = buildActionEnv(['VERCEL_TOKEN', 'ENCRYPTION_KEY'], source);
 		// The legitimate project secret still comes through.
 		expect(env.VERCEL_TOKEN).toBe('vercel-value');
-		// None of the portal's own credentials are copied in.
-		expect(env.SESSION_SECRET).toBeUndefined();
+		// The portal's at-rest encryption key is never copied into the child.
 		expect(env.ENCRYPTION_KEY).toBeUndefined();
-		expect(env.GITHUB_CLIENT_SECRET).toBeUndefined();
-		expect(env.SHARED_SECRET).toBeUndefined();
 	});
 });
 

@@ -62,17 +62,11 @@ export const BUILD_STEPS: Step[] = [
 ];
 
 export function canRedeployUser(user: User | null, cfg: AppConfig): boolean {
-	if (!user) return false;
-	if (cfg.AUTH_MODE !== 'github') return true;
-
-	const login = user.githubLogin.toLowerCase();
-	const adminLogins =
-		cfg.REDEPLOY_ADMIN_GITHUB_LOGINS.length > 0
-			? cfg.REDEPLOY_ADMIN_GITHUB_LOGINS
-			: cfg.ALLOWED_GITHUB_LOGINS.length === 1
-				? cfg.ALLOWED_GITHUB_LOGINS
-				: [];
-	return adminLogins.includes(login);
+	// Single trusted local user — there's no admin allow-list to consult.
+	// `cfg` is retained for call-site compatibility (previously it named the
+	// GitHub admin allow-list).
+	void cfg;
+	return !!user;
 }
 
 /**

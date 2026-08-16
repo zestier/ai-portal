@@ -40,12 +40,10 @@ services:
 
 ```bash
 PROJECT_DIR=/home/me/projects/foo
-SESSION_SECRET=$(openssl rand -base64 48)
 ENCRYPTION_KEY=$(openssl rand -base64 32)
-AUTH_MODE=github
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-ALLOWED_GITHUB_LOGINS=you
+# Loopback default — the app has no auth, so keep it there unless you
+# are exposing it over Tailscale (see below).
+PORTAL_BIND=127.0.0.1
 ```
 
 Start:
@@ -54,8 +52,8 @@ Start:
 docker compose up -d
 ```
 
-The portal is now reachable on `http://127.0.0.1:3000`. For public
-access, see "Cloudflare Tunnel" below.
+The portal is now reachable on `http://127.0.0.1:3000`. For remote
+access, see "Tailscale exposure" below.
 
 ### Managed worktrees
 
@@ -154,69 +152,44 @@ the same files in the background.
 ## Secrets
 
 ```bash
-export SESSION_SECRET=$(openssl rand -base64 48)
 export ENCRYPTION_KEY=$(openssl rand -base64 32)
 ```
 
-Both are required for any non-trivial auth mode. `ENCRYPTION_KEY` must
-decode to exactly 32 raw bytes (the default `openssl rand -base64 32`
-produces this). `compose.yaml` reads them via `${VAR:?required}` so the
-stack refuses to start if either is missing.
+`ENCRYPTION_KEY` encrypts stored provider/BYOK API keys at rest and must decode
+to exactly 32 raw bytes (the default `openssl rand -base64 32` produces this).
+`compose.yaml` reads it via `${VAR:?required}` so the stack refuses to start if
+it is missing. There is no session secret — the app has no auth.
 
-## GitHub OAuth App setup
+## Tailscale exposure (for remote access)
 
-1. Create an OAuth app at <https://github.com/settings/developers>.
-2. Homepage URL: `https://zap.example.com` (your tunnel hostname).
-3. Authorization callback URL: `https://zap.example.com/auth/callback`.
-4. Copy client id / secret into `.env`.
-5. *(Optional)* Require this app to be approved by your organization if
-   you want an org approval gate on the GitHub identity.
+The portal ships **no authentication**, so do not publish it to the public
+internet. To reach it from another device, put Tailscale in front:
 
-## Cloudflare Tunnel
+1. Install and start Tailscale on the host: `curl -fsSL
+   https://tailscale.com/install.sh | sh && sudo tailscale up`.
+2. Expose the portal over the tailnet with
+   [Tailscale Serve](https://tailscale.com/kb/1312/serve):
+   `sudo tailscale serve --bg 3000`. This binds `127.0.0.1:3000` to a
+   `https://<machine>-<tailnet>` URL reachable **only** by your tailnet's
+   ACLs — the portal's port is never opened to the broader network.
+3. Leave `PORTAL_BIND=127.0.0.1` (the default) so the listener itself is
+   loopback-only. Tailscale's ACLs are your access control; the portal adds
+   none.
 
-Use the `compose.tunnel.yaml` overlay:
-
-```bash
-docker compose -f compose.yaml -f compose.tunnel.yaml up -d
-```
-
-This wires both services onto a shared `appnet` bridge so `cloudflared`
-reaches the portal at `http://portal:3000` — no host networking, so the
-container's port namespace stays isolated (child processes binding ports
-aren't exposed on host interfaces). The portal isn't published to the host;
-public reachability comes solely from the tunnel. `cloudflared` is pinned and
-waits for the portal's `service_healthy` state, so it won't forward traffic to
-a not-yet-bound origin on cold boot.
-
-Cloudflare side:
-
-1. Cloudflare dashboard → Zero Trust → Networks → Tunnels → Create tunnel.
-2. Install method: Docker → copy the `TUNNEL_TOKEN` into `.env` as
-   `CLOUDFLARE_TUNNEL_TOKEN`.
-3. Public Hostname: `zap.example.com` → Service `http://portal:3000`.
-4. *(Strongly recommended)* Zero Trust → Access → Applications →
-   Self-hosted. Cover the same hostname; policy: "Emails are one of:
-   you@example.com" with GitHub or Google identity provider.
-
-With Access in front, the portal is doubly protected: CF gates at the
-network edge, and the portal's own login still applies.
-
-When fronted by a tunnel or reverse proxy, set SvelteKit's `ORIGIN` environment
-variable to the public origin (for example, `https://zap.example.com`) so
-same-origin checks compare against the browser-visible URL.
+When fronted by any proxy/tailnet that changes the origin seen by the browser,
+set SvelteKit's `ORIGIN` environment variable to the browser-visible URL so
+same-origin checks compare correctly.
 
 ## Local development
 
 ```bash
-cp .env.example .env             # fill in dev OAuth app values
+cp .env.example .env             # set ENCRYPTION_KEY / I_KNOW_THIS_IS_LOCAL
 pnpm install
 pnpm run dev                     # SvelteKit dev server on :5173
 ```
 
-For dev, use a separate GitHub OAuth app pointing at
-`http://127.0.0.1:5173/auth/callback`. Set `AUTH_MODE=shared-secret` or
-`AUTH_MODE=none` (loopback dev: `HOST=127.0.0.1` + `I_KNOW_THIS_IS_LOCAL=1`)
-for faster iteration.
+No auth to configure — the app runs as the single local user. Loopback dev
+needs `HOST=127.0.0.1` + `I_KNOW_THIS_IS_LOCAL=1` (see `.env.example`).
 
 For agent-driven exploratory testing, use `pnpm run dev:isolated` so
 the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).
@@ -233,10 +206,9 @@ the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).
    rolling over onto the live server. The e2e phase runs with `E2E_ISOLATED=1`
    so it never reuses/attaches to the live server, spinning up its own
    throwaway server + DB instead and leaving the running portal untouched. Disabled by default;
-   set `ENABLE_REDEPLOY=1` to opt in. With `AUTH_MODE=github`, set
-   `REDEPLOY_ADMIN_GITHUB_LOGINS` to the GitHub logins allowed to trigger
-   redeploys when more than one login can sign in. Not used in the container
-   image (the image ships only the built tree, not the source).
+   set `ENABLE_REDEPLOY=1` to opt in. The single local user is allowed to
+   trigger redeploys (there is no admin allow-list to configure). Not used in
+   the container image (the image ships only the built tree, not the source).
 - Migrations run automatically on startup; DB schema is forward-only.
   Rolling back across a migration requires restoring a pre-update DB
   backup.
@@ -250,7 +222,7 @@ the local DB isn't polluted. See [`AGENTS.md`](../AGENTS.md).
   first-boot migrations room to finish.
 - `GET /api/health` → readiness. `200 {"ok":true}` if DB reachable and
   migrations current. `503 {"ok":false,"error":"…"}` on failure. Use it for
-  traffic-routing / Cloudflare Tunnel origin checks — not as the restart
+  traffic-routing / Tailscale-Serve origin checks — not as the restart
   trigger.
 - Logs to stdout as structured JSON. `docker logs -f portal` is
   sufficient for personal use; pipe to Loki/Vector if you have one.

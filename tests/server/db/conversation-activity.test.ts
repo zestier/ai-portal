@@ -91,12 +91,7 @@ describe('conversation read tracking', () => {
 	it('does not leak another user\u2019s unseen conversations', async () => {
 		const { users, convs, messages } = await freshImports();
 		const user = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'other',
-			githubId: 4242,
-			displayName: 'Other',
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('other');
 		const conv = convs.create(other.id, { title: 'c', workdir: '/tmp', model: null });
 		messages.append(conv.id, { role: 'assistant', content: 'hi' });
 

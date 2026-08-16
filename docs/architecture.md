@@ -8,7 +8,7 @@ Runs under `@sveltejs/adapter-node`. Serves:
 
 - **Client routes** — chat UI, session list, settings.
 - **Server endpoints** (`+server.ts`) — REST-ish JSON API and SSE streams.
-- **Hooks** (`hooks.server.ts`) — auth gate, request logging.
+- **Hooks** (`hooks.server.ts`) — single local user, CSRF/origin hardening, headers, request logging.
 
 A single Node process. No separate API server.
 
@@ -203,10 +203,12 @@ turn ending or a merge landing bumps `worktreeStatusRevision`
 (`$lib/client/worktree-status`) and they refetch, since git changes underneath
 the UI and a badge that only updates on reload is worse than no badge.
 
-### 5. Cloudflare Tunnel (optional, deployment-time)
+### 5. Remote access (deployment-time, no auth)
 
-`cloudflared` runs as a sidecar container, exposing the SvelteKit port over
-a named tunnel. See [deployment.md](deployment.md).
+The app has **no authentication layer**; remote access is a networking concern.
+The recommended path is to expose the loopback port over a **Tailscale tailnet**
+(Tailscale Serve). See [deployment.md](deployment.md) and
+[auth-and-security.md](auth-and-security.md).
 
 ## Data flow: sending a message
 

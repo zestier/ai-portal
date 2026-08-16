@@ -8,13 +8,12 @@ import {
 	type PromptTemplateListItem
 } from '$lib/prompt-templates';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
-import { requireUserId } from '$lib/server/auth/require';
 import { parseBody } from '$lib/server/validate';
 import { PORTAL_TOOL_GROUP_IDS } from '$lib/tools/groups';
 import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 
 export const GET: RequestHandler = ({ locals }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const builtInTemplates = listBuiltInPromptTemplates();
 	// The launcher only deals with chat templates; ticket-action templates are
 	// surfaced as ticket buttons, not in the chat-template picker.
@@ -62,7 +61,7 @@ const CreateBody = z
 	});
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const body = await parseBody(request, CreateBody);
 	const template = promptTemplates.create(userId, {
 		title: body.title,

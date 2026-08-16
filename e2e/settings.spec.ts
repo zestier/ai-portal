@@ -183,8 +183,8 @@ test('the default approval mode is saved and seeds newly created conversations',
 	// form field -> user_settings row -> POST /api/conversations fallback.
 	await page.goto('/settings');
 	const select = page.locator('select[name="defaultApprovalMode"]');
-	// AUTH_MODE=none gives parallel workers one local user. Normalize the
-	// shared setting before the assertion and clean it up even on failure.
+	// Parallel workers share one local user. Normalize the shared setting
+	// before the assertion and clean it up even on failure.
 	await select.selectOption('ask');
 	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(page.getByText('Saved.')).toBeVisible();

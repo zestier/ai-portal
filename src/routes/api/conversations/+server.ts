@@ -11,7 +11,6 @@ import { APPROVAL_MODES, SESSION_MODES } from '$lib/types';
 import { PORTAL_TOOL_GROUP_IDS, sanitizeDisabledToolGroups } from '$lib/tools/groups';
 import { projectRoot, resolveAndValidate } from '$lib/server/workdir';
 import { parseBody } from '$lib/server/validate';
-import { requireUserId } from '$lib/server/auth/require';
 import { audit } from '$lib/server/audit';
 import { createManagedWorktree, WorktreeError } from '$lib/server/worktrees';
 
@@ -25,7 +24,7 @@ const WorkspaceInput = z.discriminatedUnion('kind', [
 ]);
 
 export const GET: RequestHandler = ({ locals, url }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const includeArchived = url.searchParams.get('archived') === '1';
 	return json({ conversations: convs.list(userId, { includeArchived }) });
 };
@@ -63,7 +62,7 @@ const CreateBody = z
 	});
 
 export const POST: RequestHandler = async ({ locals, request, getClientAddress }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const body = await parseBody(request, CreateBody);
 	const cfg = loadConfig();
 	const userSettings = settings.get(userId) ?? settings.defaults();

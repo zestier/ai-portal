@@ -1,7 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import * as convs from '$lib/server/db/repos/conversations';
-import { requireUserId } from '$lib/server/auth/require';
 import { resolveConversationWorkspace } from '$lib/server/workdir';
 import { cachedWorktreeIntegrationStatus } from '$lib/server/worktree-integration';
 
@@ -22,7 +21,7 @@ import { cachedWorktreeIntegrationStatus } from '$lib/server/worktree-integratio
  * something (a turn ending, a merge) that changes the answer.
  */
 export const GET: RequestHandler = async ({ locals, url }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	// A client refreshing in response to an event (a turn ended, a merge landed)
 	// is asking precisely because the answer just changed, so it opts out of the
 	// TTL — otherwise the refresh can return the stale value it was sent to fix.

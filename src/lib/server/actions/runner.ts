@@ -65,19 +65,14 @@ export const ABORT_KILL_GRACE_MS = 2000;
 // The portal's OWN secret-bearing config env vars (see src/lib/server/config.ts).
 // A project action's `env` allowlist can name an operator-provisioned project
 // secret (e.g. VERCEL_TOKEN), but it must NEVER be able to name one of these and
-// pull the portal's session/encryption/OAuth/agent credentials into a child it
-// otherwise can't read. These names look just like legitimate project secrets
-// (they match the secret-shaped name heuristic too), so the only correct gate is
-// an explicit denylist of the portal's own names rather than a pattern. This is
-// the load-bearing half of "default-deny env": it keeps the allowlist from
+// pull the portal's encryption credentials into a child it otherwise can't read.
+// These names look just like legitimate project secrets (they match the
+// secret-shaped name heuristic too), so the only correct gate is an explicit
+// denylist of the portal's own names rather than a pattern. This is the
+// load-bearing half of "default-deny env": it keeps the allowlist from
 // re-widening the exfil surface the design exists to shrink. Names are compared
 // case-insensitively. Keep in sync with the secret fields in config.ts.
-export const PORTAL_SECRET_ENV_NAMES: readonly string[] = [
-	'SESSION_SECRET',
-	'ENCRYPTION_KEY',
-	'GITHUB_CLIENT_SECRET',
-	'SHARED_SECRET'
-] as const;
+export const PORTAL_SECRET_ENV_NAMES: readonly string[] = ['ENCRYPTION_KEY'] as const;
 
 const PORTAL_SECRET_ENV_SET = new Set(PORTAL_SECRET_ENV_NAMES.map((n) => n.toUpperCase()));
 

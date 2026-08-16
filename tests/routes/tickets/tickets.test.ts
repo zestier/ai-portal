@@ -47,12 +47,7 @@ describe('workspace tickets', () => {
 		const { getDb } = await import('../../../src/lib/server/db');
 		const tickets = await import('../../../src/lib/server/db/repos/tickets');
 		const user = users.ensureLocalUser();
-		const other = users.upsertGithub({
-			githubLogin: 'ticket-rival',
-			githubId: 808,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('ticket-rival');
 
 		const a = tickets.create(user.id, { workspaceKey: workspace, title: 'Improve nav' });
 		tickets.create(user.id, { workspaceKey: `${workspace}-other`, title: 'Other workspace' });
@@ -441,12 +436,7 @@ describe('workspace tickets', () => {
 		expect(tickets.openBlockers(ui.id)).toEqual([]);
 
 		// Scoped by user: another user sees none of these edges' refs.
-		const other = users.upsertGithub({
-			githubLogin: 'deps-rival',
-			githubId: 717,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('deps-rival');
 		expect(tickets.dependencyRefs(ui.id, other.id)).toEqual([]);
 		expect(tickets.dependentRefs(api.id, other.id)).toEqual([]);
 	});
@@ -548,12 +538,7 @@ describe('workspace tickets', () => {
 
 		// A ticket the user doesn't own 404s. `load` is sync and `error()` throws
 		// synchronously, so assert via a direct catch rather than `.rejects`.
-		const other = users.upsertGithub({
-			githubLogin: 'page-rival',
-			githubId: 909,
-			displayName: null,
-			avatarUrl: null
-		});
+		const other = users.ensureLocalUser('page-rival');
 		let status = 0;
 		try {
 			load({ params: { id: String(ui.id) }, locals: { userId: other.id } } as never);

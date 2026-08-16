@@ -3,10 +3,9 @@ import type { PageServerLoad } from './$types';
 import { ticketId } from '$lib/ids';
 import * as tickets from '$lib/server/db/repos/tickets';
 import * as promptTemplates from '$lib/server/db/repos/prompt-templates';
-import { requireUserId } from '$lib/server/auth/require';
 
 export const load: PageServerLoad = ({ params, locals }) => {
-	const userId = requireUserId(locals);
+	const userId = locals.userId;
 	const ticketIdInt = ticketId.tryParse(params.id);
 	if (ticketIdInt === null) throw error(404, 'Ticket not found');
 	const ticket = tickets.get(ticketIdInt, userId);

@@ -1,4 +1,3 @@
-import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import * as settings from '$lib/server/db/repos/settings';
 import { effectiveWorkdir } from '$lib/server/workdir';
@@ -17,7 +16,6 @@ import { markSeedGrants } from './actions';
 export { actions } from './actions';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.userId) throw redirect(302, '/login');
 	const userId = locals.userId;
 	const cfg = loadConfig();
 	const currentSettings = settings.get(userId) ?? settings.defaults();

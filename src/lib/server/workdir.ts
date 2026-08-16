@@ -162,22 +162,9 @@ function isWithin(root: string, candidate: string): boolean {
  * Defaults to `[PROJECT_ROOT]`. An operator running a single trusted account
  * can widen it with the `ALLOWED_WORKDIRS` env var (comma-separated absolute
  * paths) to point conversations at several project trees.
- *
- * In multi-user GitHub mode (`AUTH_MODE=github` with more than one allowed
- * login) the roots are *clamped* to PROJECT_ROOT: any configured root that is
- * not inside PROJECT_ROOT is dropped, and if that leaves nothing we fall back
- * to PROJECT_ROOT. This guarantees that — regardless of how `ALLOWED_WORKDIRS`
- * is set — no operator can browse outside PROJECT_ROOT into another operator's
- * data or the host's secrets.
  */
 export function allowedWorkdirRoots(cfg: AppConfig = loadConfig()): string[] {
 	const configured = cfg.ALLOWED_WORKDIRS.length > 0 ? cfg.ALLOWED_WORKDIRS : [cfg.PROJECT_ROOT];
-	let roots = configured.map((r) => safeRealpath(resolve(r)));
-	const multiUserGithub = cfg.AUTH_MODE === 'github' && cfg.ALLOWED_GITHUB_LOGINS.length > 1;
-	if (multiUserGithub) {
-		const pr = safeRealpath(projectRoot());
-		roots = roots.filter((r) => isWithin(pr, r));
-		if (roots.length === 0) roots = [pr];
-	}
+	const roots = configured.map((r) => safeRealpath(resolve(r)));
 	return [...new Set(roots)];
 }

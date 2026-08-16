@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireUserId } from '$lib/server/auth/require';
+
 import { authorizeConversationWorkdir } from '$lib/server/conversation-auth';
 import { loadConfig } from '$lib/server/config';
 import { canRedeployUser } from '$lib/server/redeploy';
@@ -16,7 +16,6 @@ import { loadActionsConfig } from '$lib/server/actions/config';
  * failure, so a broken config doesn't blank the whole panel.
  */
 export const GET: RequestHandler = async ({ params, locals }) => {
-	requireUserId(locals);
 	const { workdir } = authorizeConversationWorkdir(params.id, locals.userId);
 	const cfg = loadConfig();
 	const canRunAdmin = canRedeployUser(locals.user, cfg);

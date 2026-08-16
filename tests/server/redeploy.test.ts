@@ -28,17 +28,9 @@ const baseCfg: AppConfig = {
 	WORKTREE_MAX_LEASES_PER_USER: 32,
 	WORKTREE_LEASE_TTL_MS: 24 * 60 * 60_000,
 	LOG_LEVEL: 'info',
-	AUTH_MODE: 'github',
-	SESSION_SECRET: 'x'.repeat(32),
-	SESSION_TTL_SECONDS: 60 * 60 * 24 * 30,
 	ENCRYPTION_KEY: undefined,
 	I_KNOW_THIS_IS_LOCAL: false,
 	I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: false,
-	GITHUB_CLIENT_ID: 'client',
-	GITHUB_CLIENT_SECRET: 'secret',
-	ALLOWED_GITHUB_LOGINS: ['alice', 'bob'],
-	REDEPLOY_ADMIN_GITHUB_LOGINS: ['alice'],
-	SHARED_SECRET: undefined,
 	DEFAULT_MODEL: 'claude-sonnet-4.5',
 	MEMORY_EXTRACTOR_BACKEND: 'heuristic',
 	MEMORY_EXTRACTOR_TIMEOUT_MS: 20_000,
@@ -82,26 +74,13 @@ describe('redeploy build steps', () => {
 });
 
 describe('redeploy authorization', () => {
-	it('requires the GitHub user to be in the redeploy admin allowlist', () => {
-		expect(canRedeployUser(user('alice'), baseCfg)).toBe(true);
-		expect(canRedeployUser(user('bob'), baseCfg)).toBe(false);
+	it('allows any logged-in user — no admin allow-list in single-local-user mode', () => {
+		expect(canRedeployUser(user('local'), baseCfg)).toBe(true);
+		expect(canRedeployUser(user('anyone'), baseCfg)).toBe(true);
 	});
 
-	it('defaults a single allowed GitHub login to redeploy admin', () => {
-		const cfg = {
-			...baseCfg,
-			ALLOWED_GITHUB_LOGINS: ['alice'],
-			REDEPLOY_ADMIN_GITHUB_LOGINS: []
-		};
-		expect(canRedeployUser(user('alice'), cfg)).toBe(true);
-		expect(canRedeployUser(user('bob'), cfg)).toBe(false);
-	});
-
-	it('treats shared-secret and local modes as single-operator admin modes', () => {
-		expect(canRedeployUser(user('local'), { ...baseCfg, AUTH_MODE: 'none' })).toBe(true);
-		expect(canRedeployUser(user('operator'), { ...baseCfg, AUTH_MODE: 'shared-secret' })).toBe(
-			true
-		);
+	it('denies when there is no user at all', () => {
+		expect(canRedeployUser(null, baseCfg)).toBe(false);
 	});
 });
 

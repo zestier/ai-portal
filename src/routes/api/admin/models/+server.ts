@@ -5,7 +5,6 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { requireUserId } from '$lib/server/auth/require';
 import { loadConfig } from '$lib/server/config';
 import { canRedeployUser } from '$lib/server/redeploy';
 import {
@@ -78,7 +77,6 @@ const ModelSchema = z.object({
 });
 
 function admin(locals: App.Locals): void {
-	requireUserId(locals);
 	const cfg = loadConfig();
 	if (!canRedeployUser(locals.user, cfg)) {
 		throw error(403, 'Model configuration requires admin access.');
