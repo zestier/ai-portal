@@ -31,8 +31,7 @@ export interface AskUserToolOpts {
 export function buildAskUserTool(opts: AskUserToolOpts): PortalTool {
 	return {
 		name: ASK_USER_TOOL_NAME,
-		description:
-			'Pause the turn and ask the human a question; returns their answer. Use when the task blocks on information only the human can provide.',
+		description: 'Ask the human a question mid-turn; returns their answer.',
 		promptGuidelines: [
 			'Ask ONE clear, self-contained question; the human waits on it.',
 			'Add `choices` only when a fixed set fits; free-form typing always works.'
@@ -42,11 +41,11 @@ export function buildAskUserTool(opts: AskUserToolOpts): PortalTool {
 		parameters: {
 			type: 'object',
 			properties: {
-				question: { type: 'string', description: 'The question.' },
+				question: { type: 'string', description: 'The question to ask.' },
 				choices: {
 					type: 'array',
 					items: { type: 'string' },
-					description: 'Preset answers.'
+					description: 'Preset answer choices.'
 				}
 			},
 			required: ['question'],

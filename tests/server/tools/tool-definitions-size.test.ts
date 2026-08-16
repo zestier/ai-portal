@@ -23,10 +23,11 @@ import { setupLocalEnv } from '../../helpers/env';
 // recorded in ticket T31.
 
 // Budget (bytes) for the serialized tool definitions of the default-active set.
-// 24_000 → 24_600 to admit the new `interaction`/`ask_user` tool (T58), which is
-// inherently additive to the per-turn cost and can't be trimmed into the old
-// headroom (the pre-T58 default set already sat within ~15 bytes of 24_000).
-const TOOL_DEFINITIONS_BYTES_BUDGET = 24_600;
+// 24_000 → 24_400 to admit the new `interaction`/`ask_user` tool (T58), which is
+// inherently additive to the per-turn cost (the pre-T58 default set already sat
+// within ~69 bytes of 24_000, so a new tool can't be trimmed into the old
+// headroom). Bumped only far enough to cover the leanest ask_user definition.
+const TOOL_DEFINITIONS_BYTES_BUDGET = 24_400;
 
 // A representative options object matching a real conversation: no disabled
 // groups, memory off (the default — buildMemoryTools returns [] for 'off').
