@@ -261,3 +261,48 @@ test('theme and accent settings preview immediately and revert when abandoned', 
 	await expect(page.locator('select[name="theme"]')).toHaveValue('system');
 	await expect(page.locator('select[name="accent"]')).toHaveValue('default');
 });
+
+test('provider cards in the Models tab collapse by default and toggle', async ({
+	page,
+	request
+}) => {
+	// Create a fresh provider via the API so the assertion is unambiguous
+	// against the shared DB; clean it up even on failure.
+	const pid = `e2e${randomUUID().slice(0, 8)}`;
+	try {
+		const created = await request.post('/api/admin/models', {
+			data: {
+				action: 'provider',
+				id: pid,
+				name: pid,
+				api: 'openai-completions',
+				baseUrl: 'http://localhost:1/v1',
+				authHeader: false,
+				builtin: false,
+				enabled: true
+			}
+		});
+		expect(created.ok()).toBe(true);
+
+		await page.goto('/settings?tab=models');
+		const card = page.locator('section.provider-card').filter({ hasText: pid });
+
+		// Collapsed by default: header visible, body hidden.
+		await expect(card.locator(`#provider-body-${pid}`)).toBeHidden();
+		const toggle = card.locator('button.collapse-toggle');
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		await expect(toggle).toHaveAttribute('aria-label', `Expand ${pid}`);
+
+		// Expand round-trip.
+		await toggle.click();
+		await expect(card.locator(`#provider-body-${pid}`)).toBeVisible();
+		await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+		await expect(toggle).toHaveAttribute('aria-label', `Collapse ${pid}`);
+
+		await toggle.click();
+		await expect(card.locator(`#provider-body-${pid}`)).toBeHidden();
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+	} finally {
+		await request.delete('/api/admin/models/' + pid);
+	}
+});

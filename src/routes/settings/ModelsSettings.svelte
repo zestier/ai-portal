@@ -49,6 +49,11 @@
 	const modelsFor = (providerId: string): ManagedModel[] =>
 		models.filter((m) => m.providerId === providerId);
 
+	let collapsed = $state<Record<string, boolean>>({});
+	function toggleCollapsed(id: string) {
+		collapsed = { ...collapsed, [id]: !(collapsed[id] ?? true) };
+	}
+
 	function flash(kind: 'ok' | 'err', text: string) {
 		notice = { kind, text };
 		setTimeout(() => {
@@ -362,8 +367,18 @@
 			{/if}
 
 			{#each providers as p (p.id)}
+				{@const isCollapsed = collapsed[p.id] ?? true}
 				<section class="provider-card">
 					<header class="provider-head">
+						<button
+							type="button"
+							class="collapse-toggle"
+							aria-expanded={!isCollapsed}
+							aria-controls="provider-body-{p.id}"
+							aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${p.name}`}
+							onclick={() => toggleCollapsed(p.id)}
+							><span class="chevron" class:open={!isCollapsed} aria-hidden="true">▸</span></button
+						>
 						<div>
 							<strong>{p.name}</strong>
 							<span class="muted small">{p.id} · {p.api}{p.builtin ? ' · built-in' : ''}</span>
@@ -405,122 +420,133 @@
 						</div>
 					</header>
 
-					{#if p.baseUrl}
-						<p class="muted small">baseUrl: <code>{p.baseUrl}</code></p>
-					{/if}
+					{#if !isCollapsed}
+						<div id="provider-body-{p.id}">
+							{#if p.baseUrl}
+								<p class="muted small">baseUrl: <code>{p.baseUrl}</code></p>
+							{/if}
 
-					<div class="key-row">
-						<span class="muted small">
-							API key: {p.hasKey ? 'stored (encrypted)' : 'not set'}
-						</span>
-						<input
-							type="password"
-							placeholder={p.hasKey ? 'Replace key…' : 'Paste key…'}
-							value={keyDrafts[p.id] ?? ''}
-							oninput={(e) => (keyDrafts = { ...keyDrafts, [p.id]: e.currentTarget.value })}
-						/>
-						<button
-							type="button"
-							disabled={savingKey[p.id] || (keyDrafts[p.id] ?? '') === ''}
-							onclick={() => saveKey(p.id)}
-						>
-							{savingKey[p.id] ? 'Saving…' : p.hasKey ? 'Save' : 'Set key'}
-						</button>
-						{#if p.hasKey}
-							<button type="button" class="danger" onclick={() => saveKey(p.id)}>Remove</button>
-						{/if}
-					</div>
-
-					<div class="provider-actions">
-						<button
-							type="button"
-							disabled={!p.hasKey || fetching[p.id]}
-							title={p.hasKey ? undefined : 'Save an API key first to fetch the catalog.'}
-							onclick={() => fetchCatalog(p.id)}
-						>
-							{fetching[p.id] ? 'Fetching…' : 'Fetch catalog from provider'}
-						</button>
-						{#if p.builtin}
-							<button
-								type="button"
-								disabled={importingPi[p.id]}
-								onclick={() => importPiCatalog(p.id)}
-							>
-								{importingPi[p.id] ? 'Importing…' : 'Import from pi catalog'}
-							</button>
-						{/if}
-					</div>
-
-					<div class="models-list">
-						{#each modelsFor(p.id) as m (m.id)}
-							<div class="model-row">
-								<label class="toggle">
-									<input type="checkbox" checked={m.enabled} onchange={() => toggleModel(m)} />
-									<span>
-										<strong>{m.name}</strong>
-										<span class="muted small">
-											{m.id}{m.purpose ? ` · ${m.purpose}` : ''}
-											{m.contextWindow ? ` · ${m.contextWindow.toLocaleString()} ctx` : ''}
-											{m.reasoning ? ' · reasoning' : ''}
-										</span>
-										<span class="muted small cost">{formatCost(m.cost)}</span>
-									</span>
-								</label>
-								<button type="button" class="danger" onclick={() => removeModel(p.id, m.id)}>
-									Remove
-								</button>
-							</div>
-						{/each}
-						{#if modelsFor(p.id).length === 0}
-							<p class="muted small">
-								No models yet — add one, fetch the provider catalog, or
-								{#if p.builtin}import from pi's catalog{/if}.
-							</p>
-						{/if}
-					</div>
-
-					{#if modelFormFor === p.id}
-						<div class="model-form">
-							<div class="grid">
-								<label>Model id <input bind:value={mId} placeholder="claude-sonnet-4-5" /></label>
-								<label>Name <input bind:value={mName} placeholder="Claude Sonnet 4.5" /></label>
-								<label
-									>Purpose <input
-										bind:value={mPurpose}
-										placeholder="daily driver, cheap, vision…"
-									/></label
+							<div class="key-row">
+								<span class="muted small">
+									API key: {p.hasKey ? 'stored (encrypted)' : 'not set'}
+								</span>
+								<input
+									type="password"
+									placeholder={p.hasKey ? 'Replace key…' : 'Paste key…'}
+									value={keyDrafts[p.id] ?? ''}
+									oninput={(e) => (keyDrafts = { ...keyDrafts, [p.id]: e.currentTarget.value })}
+								/>
+								<button
+									type="button"
+									disabled={savingKey[p.id] || (keyDrafts[p.id] ?? '') === ''}
+									onclick={() => saveKey(p.id)}
 								>
-								<label>
-									Cost
-									<input
-										bind:value={mCostInput}
-										placeholder="input=3, output=15, cacheRead=0.3, cacheWrite=3.75"
-									/>
-								</label>
-								<label>
-									Context window
-									<input bind:value={mContextWindow} type="number" min="1" placeholder="200000" />
-								</label>
-								<label>
-									Max output tokens
-									<input bind:value={mMaxTokens} type="number" min="1" placeholder="64000" />
-								</label>
-							</div>
-							<div class="checks">
-								<label><input type="checkbox" bind:checked={mReasoning} /> reasoning</label>
-								<label><input type="checkbox" bind:checked={mEnabled} /> enabled</label>
-							</div>
-							<div class="form-actions">
-								<button type="button" disabled={savingModel} onclick={() => saveModel(p.id)}>
-									{savingModel ? 'Saving…' : 'Save model'}
+									{savingKey[p.id] ? 'Saving…' : p.hasKey ? 'Save' : 'Set key'}
 								</button>
-								<button type="button" onclick={resetModelForm}>Cancel</button>
+								{#if p.hasKey}
+									<button type="button" class="danger" onclick={() => saveKey(p.id)}>Remove</button>
+								{/if}
 							</div>
+
+							<div class="provider-actions">
+								<button
+									type="button"
+									disabled={!p.hasKey || fetching[p.id]}
+									title={p.hasKey ? undefined : 'Save an API key first to fetch the catalog.'}
+									onclick={() => fetchCatalog(p.id)}
+								>
+									{fetching[p.id] ? 'Fetching…' : 'Fetch catalog from provider'}
+								</button>
+								{#if p.builtin}
+									<button
+										type="button"
+										disabled={importingPi[p.id]}
+										onclick={() => importPiCatalog(p.id)}
+									>
+										{importingPi[p.id] ? 'Importing…' : 'Import from pi catalog'}
+									</button>
+								{/if}
+							</div>
+
+							<div class="models-list">
+								{#each modelsFor(p.id) as m (m.id)}
+									<div class="model-row">
+										<label class="toggle">
+											<input type="checkbox" checked={m.enabled} onchange={() => toggleModel(m)} />
+											<span>
+												<strong>{m.name}</strong>
+												<span class="muted small">
+													{m.id}{m.purpose ? ` · ${m.purpose}` : ''}
+													{m.contextWindow ? ` · ${m.contextWindow.toLocaleString()} ctx` : ''}
+													{m.reasoning ? ' · reasoning' : ''}
+												</span>
+												<span class="muted small cost">{formatCost(m.cost)}</span>
+											</span>
+										</label>
+										<button type="button" class="danger" onclick={() => removeModel(p.id, m.id)}>
+											Remove
+										</button>
+									</div>
+								{/each}
+								{#if modelsFor(p.id).length === 0}
+									<p class="muted small">
+										No models yet — add one, fetch the provider catalog, or
+										{#if p.builtin}import from pi's catalog{/if}.
+									</p>
+								{/if}
+							</div>
+
+							{#if modelFormFor === p.id}
+								<div class="model-form">
+									<div class="grid">
+										<label
+											>Model id <input bind:value={mId} placeholder="claude-sonnet-4-5" /></label
+										>
+										<label>Name <input bind:value={mName} placeholder="Claude Sonnet 4.5" /></label>
+										<label
+											>Purpose <input
+												bind:value={mPurpose}
+												placeholder="daily driver, cheap, vision…"
+											/></label
+										>
+										<label>
+											Cost
+											<input
+												bind:value={mCostInput}
+												placeholder="input=3, output=15, cacheRead=0.3, cacheWrite=3.75"
+											/>
+										</label>
+										<label>
+											Context window
+											<input
+												bind:value={mContextWindow}
+												type="number"
+												min="1"
+												placeholder="200000"
+											/>
+										</label>
+										<label>
+											Max output tokens
+											<input bind:value={mMaxTokens} type="number" min="1" placeholder="64000" />
+										</label>
+									</div>
+									<div class="checks">
+										<label><input type="checkbox" bind:checked={mReasoning} /> reasoning</label>
+										<label><input type="checkbox" bind:checked={mEnabled} /> enabled</label>
+									</div>
+									<div class="form-actions">
+										<button type="button" disabled={savingModel} onclick={() => saveModel(p.id)}>
+											{savingModel ? 'Saving…' : 'Save model'}
+										</button>
+										<button type="button" onclick={resetModelForm}>Cancel</button>
+									</div>
+								</div>
+							{:else}
+								<button type="button" class="add" onclick={() => (modelFormFor = p.id)}
+									>+ Add model</button
+								>
+							{/if}
 						</div>
-					{:else}
-						<button type="button" class="add" onclick={() => (modelFormFor = p.id)}
-							>+ Add model</button
-						>
 					{/if}
 				</section>
 			{/each}
@@ -599,6 +625,24 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+	}
+	.collapse-toggle {
+		background: none;
+		border: none;
+		padding: 0.2rem;
+		cursor: pointer;
+		color: var(--text-muted);
+		border-radius: 0.25rem;
+	}
+	.collapse-toggle:hover {
+		color: var(--fg, inherit);
+	}
+	.chevron {
+		display: inline-block;
+		transition: transform 0.15s ease;
+	}
+	.chevron.open {
+		transform: rotate(90deg);
 	}
 	.key-row {
 		display: flex;
