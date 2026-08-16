@@ -179,8 +179,11 @@ describe('seed grants — runtime behaviour', () => {
 
 	it('allows cd within the workspace; prompts cd that leaves it', () => {
 		// Workdir, worktree leases, and subdirectories are all reachable —
-		// including the reflexive `cd /workspace` from a subdirectory.
-		expect(shellMatch('cd /workspace', '/workspace')).toBe('allow');
+		// including the reflexive `cd <root>` from a subdirectory. Uses the real
+		// cwd (not a hardcoded `/workspace`) so realpath resolves regardless of
+		// where the repo is checked out.
+		const root = process.cwd();
+		expect(shellMatch(`cd ${root}`, root)).toBe('allow');
 		expect(shellMatch('cd src', '/tmp', '/tmp')).toBe('allow');
 		expect(shellMatch('cd /tmp/leases/one', '/tmp', '/tmp')).toBe('allow');
 		expect(shellMatch('cd .', '/tmp', '/tmp')).toBe('allow');
