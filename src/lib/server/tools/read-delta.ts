@@ -1,5 +1,5 @@
 import { structuredPatch } from 'diff';
-import type { Hunk } from 'diff';
+import type { StructuredPatchHunk } from 'diff';
 import { ok, type ToolResult } from './types';
 
 // Delta reads (T38): keep a per-conversation snapshot so a broad re-read of an
@@ -36,7 +36,7 @@ export function renderDelta(
 	newHash: string,
 	oldLines: number,
 	newLines: number,
-	hunks: Hunk[]
+	hunks: StructuredPatchHunk[]
 ): string {
 	const shift = newLines - oldLines;
 	const delta = shift >= 0 ? `+${shift}` : String(shift);

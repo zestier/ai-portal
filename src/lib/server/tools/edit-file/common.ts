@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { createTwoFilesPatch } from 'diff';
-import type { Hunk } from 'diff';
+import type { StructuredPatchHunk } from 'diff';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { isPathInWorkspace, resolveWithParentFallback } from '../../permissions/workspace';
 
@@ -123,7 +123,7 @@ export function gitDiffFor(
 	filename: string,
 	oldContent: string,
 	newContent: string,
-	hunks: Hunk[]
+	hunks: StructuredPatchHunk[]
 ): FileWriteGitDiff {
 	let additions = 0;
 	let deletions = 0;
