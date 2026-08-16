@@ -7,6 +7,7 @@ import {
 	type MatchOutcome,
 	type DetailedMatchOutcome
 } from '../../../permissions/matcher';
+import { canonicalWorkspaceRoot } from '../../../permissions/repo-root';
 import { decodeScope, encodeScope } from '$lib/permissions/scope-codec';
 import { FS_PERMISSIONS, type GrantScope } from '$lib/permissions/scope-types';
 import { isGrantTool } from '$lib/permissions/metadata';
@@ -142,7 +143,10 @@ export function matchGrantDetailed(
 			// see `buildFsPathPermitted` in the matcher.
 			...(permissionKind === 'shell' ? FS_PERMISSIONS : [])
 		],
-		ctx.workspaceRoots ?? null
+		// File rows are keyed by the repository's canonical root (see
+		// `applyWorkspaceFile`), so the request roots are canonicalized too —
+		// one approval applies to every worktree/lease of the repo.
+		ctx.workspaceRoots ? ctx.workspaceRoots.map(canonicalWorkspaceRoot) : null
 	);
 	return matchGrantsDetailed(rows, {
 		tool,

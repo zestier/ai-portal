@@ -7,6 +7,7 @@
 // last approved snapshot keeps the OLD state active (fail-closed) while a
 // review dialog shows a unified diff.
 import { describe, it, expect, beforeEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -20,6 +21,7 @@ import {
 	hashWorkspaceFile,
 	workspacePermissionsFilePath
 } from '../../../src/lib/server/permissions/workspace-file-gate';
+import { canonicalWorkspaceRoot } from '../../../src/lib/server/permissions/repo-root';
 import { parseWorkspaceGrantFile } from '../../../src/lib/server/permissions/workspace-file-format';
 import { parseShellCommand } from '../../../src/lib/server/permissions/shell-parser';
 import type { PortalEvent } from '../../../src/lib/types';
@@ -531,5 +533,70 @@ describe('apply — workspace permissions', () => {
 		expect(
 			settings.listGrantsForUser(userId).filter((g) => g.source === 'workspace-file').length
 		).toBe(0);
+	});
+});
+
+// One approval per repository: the gate and the matcher canonicalize every
+// root to the repo's main checkout, so a worktree shares the main root's
+// approval instead of re-reviewing the file (AC2) and its grants apply there
+// (AC3).
+function makeGitRepoWithWorktree(): { base: string; main: string; wt: string } {
+	const base = realpathSync(mkdtempSync(join(tmpdir(), 'portal-wf-repo-')));
+	const main = join(base, 'main');
+	const wt = join(base, 'wt');
+	mkdirSync(main);
+	const git = (args: string[]) => execFileSync('git', args, { cwd: main, stdio: 'pipe' });
+	git(['init', '-q', '-b', 'main']);
+	git(['config', 'user.email', 'portal-test@localhost']);
+	git(['config', 'user.name', 'Portal Test']);
+	writeFileSync(join(main, 'a.txt'), 'x');
+	git(['add', 'a.txt']);
+	git(['commit', '-q', '-m', 'base']);
+	git(['worktree', 'add', '-q', '-b', 'wt-branch', wt, 'HEAD']);
+	return { base, main, wt };
+}
+
+describe('worktree — one approval per repository', () => {
+	it('shares the main root approval and applies its grants in the worktree', () => {
+		const { base, main, wt } = makeGitRepoWithWorktree();
+		try {
+			writeFile(main, `[[tool]]\nname = "git_commit"\ndecision = "deny"\n`);
+			// First gate on the main root raises the import review; approve it.
+			const first = driveGate(main);
+			const reqs = workspaceFileRequests(first.events);
+			expect(reqs.length).toBe(1);
+			expect(approve(reqs[0].requestId)).toBe(true);
+			expect(toolMatch(main, 'git_commit')).toBe('deny');
+
+			// The same repo's worktree root must NOT re-review the file (AC2).
+			const wtEmitter = driveGate(wt);
+			expect(workspaceFileRequests(wtEmitter.events)).toEqual([]);
+
+			// The approved file grant fires for requests scoped to the worktree (AC3).
+			expect(toolMatch(wt, 'git_commit')).toBe('deny');
+			// And the approval state is keyed by the canonical (main) root.
+			expect(
+				settings.getWorkspacePermissionState(userId, canonicalWorkspaceRoot(wt))
+			).not.toBeNull();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it('an approval raised while the worktree is primary applies repo-wide', () => {
+		const { base, main, wt } = makeGitRepoWithWorktree();
+		try {
+			// The gate reads the main checkout copy even when the primary root is
+			// the worktree — canonicalized to the repo root.
+			writeFile(main, `[[tool]]\nname = "git_merge_abort"\ndecision = "deny"\n`);
+			const reqs = workspaceFileRequests(driveGate(wt).events);
+			expect(reqs.length).toBe(1);
+			expect(approve(reqs[0].requestId)).toBe(true);
+			// Approved from the worktree, applies to the whole repo (main included).
+			expect(toolMatch(main, 'git_merge_abort')).toBe('deny');
+			expect(toolMatch(wt, 'git_merge_abort')).toBe('deny');
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
 	});
 });

@@ -57,6 +57,7 @@ import {
 import * as settingsRepo from '../db/repos/settings';
 import { argsHash } from '../tool-invocation';
 import { log } from '../log';
+import { checkWorkspaceFileGate } from '../permissions/workspace-file-gate';
 import type { PortalTool } from '../tools/types';
 import type { PiPermissionResolver } from './session';
 
@@ -123,6 +124,25 @@ async function decidePermission(
 		// added it (Settings → Extensions), so its tools run — the bridge still
 		// intercepts the call, but no portal grant applies to it.
 		return { allow: true };
+	}
+
+	// Fire-and-forget workspace-file gate: drift from the last approved
+	// `.zap/permissions.toml` snapshot raises a review dialog on this request
+	// without influencing it. Only the PRIMARY workspace root is gated — the
+	// gate canonicalizes it to the repository root, so worktrees/leases of the
+	// same repo share the one review.
+	try {
+		checkWorkspaceFileGate({
+			userId: opts.userId,
+			conversationId: opts.conversationId,
+			workspaceRoot: opts.getWorkspaceRoots()[0] ?? null,
+			emit: opts.emit
+		});
+	} catch (e) {
+		log.warn('pi.workspace_file_gate_failed', {
+			conversationId: opts.conversationId,
+			err: String(e)
+		});
 	}
 
 	// A tool may declare its permission as a filesystem request on a derived

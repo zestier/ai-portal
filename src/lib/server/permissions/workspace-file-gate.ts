@@ -21,10 +21,10 @@
 // deliberate, conversation-scoped, TTL'd human gesture — so it is outside
 // this feature's threat model by design.
 //
-// Only the PRIMARY workspace root is gated (see the adapter). A worktree lease
-// root is never gated, but its file rows can only exist in the DB through an
-// approval raised while that root WAS primary (or a Settings import), so no
-// ungated lease root can introduce a file grant that a human never saw.
+// The gate canonicalizes every root to its repository's main checkout root
+// (`canonicalWorkspaceRoot`), so one approval covers the main checkout AND all
+// its worktrees/leases — no per-path re-review, no silently-inert grants. A
+// non-git root canonicalizes to itself, unchanged.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
@@ -38,6 +38,7 @@ import {
 	parseWorkspaceGrantFile,
 	type ParseWorkspaceGrantFileResult
 } from './workspace-file-format';
+import { canonicalWorkspaceRoot } from './repo-root';
 import type { PortalEvent } from '$lib/types';
 import type { InteractiveRequestView, InteractiveRequestViewBody } from '$lib/types';
 
@@ -167,8 +168,9 @@ const PENDING = new Set<string>();
 export function checkWorkspaceFileGate(opts: WorkspaceFileGateOptions): void {
 	if (!opts.workspaceRoot) return;
 	// Local const: the early-return narrowing of `opts.workspaceRoot` doesn't
-	// survive into the resolve/reject closures below.
-	const workspaceRoot = opts.workspaceRoot;
+	// survive into the resolve/reject closures below. Canonicalized to the
+	// repository root so a worktree/lease of the same repo shares one approval.
+	const workspaceRoot = canonicalWorkspaceRoot(opts.workspaceRoot);
 	const file = readWorkspacePermissionsFile(workspaceRoot);
 	const state = settingsRepo.getWorkspacePermissionState(opts.userId, workspaceRoot);
 	const acceptedHash = state?.contentHash ?? null;
@@ -270,7 +272,10 @@ export interface ApplyWorkspaceFileOptions {
 export function applyWorkspaceFile(
 	opts: ApplyWorkspaceFileOptions
 ): { ok: true; applied: number } | { ok: false; error: string } {
-	const current = readWorkspacePermissionsFile(opts.workspaceRoot);
+	// Canonical root: file rows + approval state live per-repository, so an
+	// approval raised in a worktree applies to the whole repo (and vice versa).
+	const root = canonicalWorkspaceRoot(opts.workspaceRoot);
+	const current = readWorkspacePermissionsFile(root);
 	const hash = current?.hash ?? null;
 	if (opts.expectedHash !== undefined && opts.expectedHash !== hash) {
 		return {
@@ -280,7 +285,7 @@ export function applyWorkspaceFile(
 		};
 	}
 	if (current === null) {
-		const removed = settingsRepo.clearWorkspaceFileState(opts.userId, opts.workspaceRoot);
+		const removed = settingsRepo.clearWorkspaceFileState(opts.userId, root);
 		return { ok: true, applied: removed };
 	}
 	const parsed = parseWorkspaceGrantFile(current.text);
@@ -289,7 +294,7 @@ export function applyWorkspaceFile(
 	}
 	const applied = settingsRepo.replaceWorkspaceFileGrants(
 		opts.userId,
-		opts.workspaceRoot,
+		root,
 		parsed.grants,
 		current.text,
 		current.hash
@@ -315,19 +320,20 @@ export interface WorkspaceFileStatus {
 
 /** Read-only status for the Settings page: gate state + the drift diff. */
 export function getWorkspaceFileStatus(userId: number, workspaceRoot: string): WorkspaceFileStatus {
-	const file = readWorkspacePermissionsFile(workspaceRoot);
-	const state = settingsRepo.getWorkspacePermissionState(userId, workspaceRoot);
+	const root = canonicalWorkspaceRoot(workspaceRoot);
+	const file = readWorkspacePermissionsFile(root);
+	const state = settingsRepo.getWorkspacePermissionState(userId, root);
 	const acceptedHash = state?.contentHash ?? null;
 	const accepted = !needsReview(file, acceptedHash);
 	const parsed = file !== null ? parseCached(file.text, file.hash) : null;
 	const diff = accepted ? null : capDiff(buildDiff(state?.snapshotText ?? null, file?.text ?? ''));
 	return {
 		fileName: `.zap/${WORKSPACE_PERMISSIONS_FILE}`,
-		workspaceRoot,
+		workspaceRoot: root,
 		present: file !== null,
 		currentHash: file?.hash ?? null,
 		acceptedHash,
-		activeGrantCount: settingsRepo.countWorkspaceFileGrants(userId, workspaceRoot),
+		activeGrantCount: settingsRepo.countWorkspaceFileGrants(userId, root),
 		accepted,
 		drift: !accepted,
 		parseError: parsed && !parsed.ok ? parsed.error : null,
