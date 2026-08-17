@@ -133,10 +133,6 @@ positionals = "any"
 command = ["pnpm", "verify:failure-probe"]
 positionals = "any"
 
-[[shell]]
-command = ["pnpm", "release:bump-actions"]
-positionals = "any"
-
 # `pnpm install` / `pnpm i` with NO positional package args — `pnpm install
 # <pkg>` is an alias for `pnpm add <pkg>` (which is prompted, below) and is
 # refused by the 0-positional bound. Safe flags (`--frozen-lockfile`,

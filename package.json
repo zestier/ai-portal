@@ -34,7 +34,6 @@
     "verify:sequential": "node scripts/verify.mjs --concurrency 1",
     "verify:failure-probe": "node scripts/verify.mjs --failure-probe",
     "release:pack": "node scripts/pack-release.mjs",
-    "release:bump-actions": "node scripts/bump-actions.mjs",
     "prepare": "node scripts/install-git-hooks.mjs"
   },
   "dependencies": {
@@ -82,5 +81,5 @@
     "node": ">=24",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.1.1"
+  "packageManager": "pnpm@11.20.0"
 }

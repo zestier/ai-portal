@@ -6,8 +6,7 @@ version: 2
 #   - npm: the application's JS dependencies (resolved via pnpm-lock.yaml).
 #   - github-actions: the SHA-pinned actions in .github/workflows/*. Pinning
 #     to a SHA freezes you on a vulnerable version until something bumps it;
-#     Dependabot is that something. See `pnpm run release:bump-actions` for
-#     the manual path.
+#     Dependabot updates both the SHA and its exact-version comment.
 #
 # Updates are grouped to keep PR volume sane: one PR for routine version
 # bumps per ecosystem. Security updates are not throttled by the open-PR
