@@ -63,7 +63,6 @@ host and reach the portal over the tailnet (see
 | `pnpm run verify`                    | Serial lint/unit/build/check/e2e gate used by redeploy and pre-commit.             |
 | `pnpm run verify -- --concurrency 3` | Run the same gate with up to three independent phases in parallel.                 |
 | `pnpm run verify:sequential`         | Explicit serial alias for the same verify phases.                                  |
-| `pnpm run release:bump-actions`      | Pin GitHub Actions in `.github/workflows/` to current SHAs.                        |
 
 This project uses **pnpm** (declared via `packageManager` in `package.json`).
 Use `corepack enable` once to make pnpm available without a global install.

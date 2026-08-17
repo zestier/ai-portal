@@ -121,7 +121,6 @@ zap/
 │  ├─ serve.mjs                # supervisor with build.live/ swap
 │  ├─ dev-isolated.mjs         # dev with throwaway DATA_DIR
 │  ├─ install-git-hooks.mjs
-│  ├─ bump-actions.mjs
 │  └─ git-hooks/pre-commit
 ├─ e2e/                        # Playwright specs
 ├─ tests/                      # vitest unit specs

@@ -94,25 +94,42 @@ function dropLegacyEmbeddingTables(db: Database.Database) {
   }
 }
 
-function migrationsDir(): string {
-  const cfg = loadConfig();
-  // Explicit override (used by tests / non-standard layouts where cwd is
-  // not the repository root).
-  if (cfg.DB_MIGRATIONS_DIR && existsSync(cfg.DB_MIGRATIONS_DIR)) {
-    return cfg.DB_MIGRATIONS_DIR;
+export function resolveMigrationsDir(
+  explicit: string | undefined,
+  moduleDir: string,
+  cwd: string,
+): string {
+  if (explicit && existsSync(explicit)) {
+    return explicit;
   }
   // At runtime under SvelteKit/Vite, import.meta.url points into compiled output.
-  // Try alongside this file first; fall back to source path during dev.
-  const here = dirname(fileURLToPath(import.meta.url));
+  // Walk upward from that output so an npm-installed package can find the
+  // migrations shipped at its package root without depending on consumer cwd.
   const candidates = [
-    join(here, "migrations"),
-    join(here, "..", "migrations"),
-    resolve(process.cwd(), "src/lib/server/db/migrations"),
+    join(moduleDir, "migrations"),
+    join(moduleDir, "..", "migrations"),
   ];
+  let parent = moduleDir;
+  while (true) {
+    candidates.push(join(parent, "src/lib/server/db/migrations"));
+    const next = dirname(parent);
+    if (next === parent) break;
+    parent = next;
+  }
+  candidates.push(resolve(cwd, "src/lib/server/db/migrations"));
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
   throw new Error("Could not locate db migrations directory");
+}
+
+function migrationsDir(): string {
+  const cfg = loadConfig();
+  return resolveMigrationsDir(
+    cfg.DB_MIGRATIONS_DIR,
+    dirname(fileURLToPath(import.meta.url)),
+    process.cwd(),
+  );
 }
 
 function runMigrations(db: Database.Database) {
