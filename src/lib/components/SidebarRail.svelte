@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  import { resolve } from "$app/paths";
   import PromptTemplateLauncher from "$lib/components/PromptTemplateLauncher.svelte";
   import type { User } from "$lib/types";
 
@@ -63,7 +64,7 @@
   <a
     class="rail-btn"
     class:active={isSettings}
-    href="/settings"
+    href={resolve("/settings")}
     title="Settings"
     aria-label="Settings"
     onclick={onnavigate}

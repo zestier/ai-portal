@@ -524,7 +524,7 @@
           <label>
             Tool
             <select name="tool" bind:value={newGrantTool}>
-              {#each GRANT_FORM_TOOLS as tool}
+              {#each GRANT_FORM_TOOLS as tool (tool)}
                 <option value={tool}>{grantToolLabel(tool)}</option>
               {/each}
             </select>
@@ -592,7 +592,7 @@
               </span>
             </label>
             <datalist id="portal-tool-names">
-              {#each portalTools as tool}
+              {#each portalTools as tool (tool.name)}
                 <option value={tool.name}>{tool.group}</option>
               {/each}
             </datalist>
@@ -702,7 +702,7 @@
   {#if grants.length === 0}
     <EmptyState
       title="No saved grants yet"
-      description={`No saved grants. When you click "Allow always" or "Deny always" on a tool prompt, the resulting approve or hard-deny rule shows up here so you can revoke it later. You can also add prompt-required rules here to force interactive approval for matching requests. The button above re-installs the built-in defaults (file/dir reads, structured tools, and safety rules).`}
+      description="No saved grants. When you click &quot;Allow always&quot; or &quot;Deny always&quot; on a tool prompt, the resulting approve or hard-deny rule shows up here so you can revoke it later. You can also add prompt-required rules here to force interactive approval for matching requests. The button above re-installs the built-in defaults (file/dir reads, structured tools, and safety rules)."
     />
   {:else}
     <form
@@ -747,7 +747,7 @@
           Tool filter
           <select bind:value={toolFilter}>
             <option value="all">All tools</option>
-            {#each toolOptions as tool}
+            {#each toolOptions as tool (tool)}
               <option value={tool}>{tool}</option>
             {/each}
           </select>
@@ -756,7 +756,7 @@
           Permission kind filter
           <select bind:value={kindFilter}>
             <option value="all">All kinds</option>
-            {#each kindOptions as kind}
+            {#each kindOptions as kind (kind)}
               <option value={kind}>{kind}</option>
             {/each}
           </select>

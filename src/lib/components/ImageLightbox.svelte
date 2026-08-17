@@ -20,7 +20,7 @@
         class="btn sm ghost"
         href={imageLightbox.src}
         target="_blank"
-        rel="noopener noreferrer"
+        rel="external noopener noreferrer"
       >
         Open original
       </a>

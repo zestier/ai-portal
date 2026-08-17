@@ -14,6 +14,7 @@
   import { renderMarkdown } from "$lib/client/markdown";
   import { copyableCodeBlocks } from "$lib/client/copyable-code-blocks";
   import { goto, invalidateAll } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import {
     ticketStatusActions,
     type TicketStatusAction,
@@ -169,7 +170,7 @@
         flashError(`Could not delete ticket (${result.status ?? "network"})`);
         return;
       }
-      await goto("/tickets");
+      await goto(resolve("/tickets"));
     } catch {
       flashError("Could not delete ticket");
     } finally {
@@ -250,7 +251,7 @@
 <svelte:head><title>{ticket.title} — Ticket</title></svelte:head>
 
 <div class="wrap">
-  <a class="back eyebrow" href="/">← Back to portal</a>
+  <a class="back eyebrow" href={resolve("/")}>← Back to portal</a>
 
   <header class="ticket-header">
     <div class="heading">
@@ -378,7 +379,9 @@
       <ul class="dep-list">
         {#each data.dependsOn as dep (dep.id)}
           <li>
-            <a class="dep-link" href={`/tickets/${dep.id}`}>{dep.title}</a>
+            <a class="dep-link" href={resolve(`/tickets/${dep.id}`)}
+              >{dep.title}</a
+            >
             <Pill tone={dep.status === "open" ? "warning" : "success"}>
               {statusLabel[dep.status]}
             </Pill>
@@ -398,7 +401,9 @@
       <ul class="dep-list">
         {#each data.dependents as dep (dep.id)}
           <li>
-            <a class="dep-link" href={`/tickets/${dep.id}`}>{dep.title}</a>
+            <a class="dep-link" href={resolve(`/tickets/${dep.id}`)}
+              >{dep.title}</a
+            >
             <Pill tone={statusTone[dep.status]}>{statusLabel[dep.status]}</Pill>
           </li>
         {/each}

@@ -42,7 +42,7 @@
     {#if emptyLabel}
       <option value="">{emptyLabel}</option>
     {/if}
-    {#each effectiveOptions as opt}
+    {#each effectiveOptions as opt (opt)}
       <option value={opt}>{opt}</option>
     {/each}
   </select>

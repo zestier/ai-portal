@@ -53,7 +53,7 @@
   <div class="body-wrap">
     <pre class="body">{#if command}<span class="prompt">$ </span><span
           class="command">{command}</span
-        >{#if rendered}{"\n"}{/if}{/if}<code>{rendered}</code
+        >{#if rendered}&#10;{/if}{/if}<code>{rendered}</code
       >{#if streaming}<span class="cursor" aria-hidden="true">▍</span
         >{/if}</pre>
     {#if copyState === "failed"}<span class="copy-status">Copy failed</span

@@ -27,7 +27,7 @@
   <p>{request.question}</p>
   {#if request.choices && request.choices.length > 0}
     <div class="choices">
-      {#each request.choices as choice}
+      {#each request.choices as choice, i (`${choice}\0${i}`)}
         <button
           type="button"
           class="btn"

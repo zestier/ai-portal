@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import Chat from "$lib/components/Chat.svelte";
   import ChangesTabIndicator from "$lib/components/ChangesTabIndicator.svelte";
@@ -38,11 +39,16 @@
     const nextUrl = new URL($page.url);
     if (leaseId) nextUrl.searchParams.set("worktree", leaseId);
     else nextUrl.searchParams.delete("worktree");
-    await goto(nextUrl, {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: true,
-    });
+    await goto(
+      resolve(
+        `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` as `/${string}`,
+      ),
+      {
+        keepFocus: true,
+        noScroll: true,
+        replaceState: true,
+      },
+    );
   }
 
   async function selectTab(nextTab: Tab) {
@@ -50,11 +56,16 @@
     const nextUrl = new URL($page.url);
     if (nextTab === "chat") nextUrl.searchParams.delete("tab");
     else nextUrl.searchParams.set("tab", nextTab);
-    await goto(nextUrl, {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: true,
-    });
+    await goto(
+      resolve(
+        `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` as `/${string}`,
+      ),
+      {
+        keepFocus: true,
+        noScroll: true,
+        replaceState: true,
+      },
+    );
   }
 </script>
 

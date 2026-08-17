@@ -5,6 +5,7 @@
     type PermissionDecision,
   } from "./settings-types";
   import PanelHeader from "$lib/components/ui/PanelHeader.svelte";
+  import { resolve } from "$app/paths";
 
   let { decisions }: { decisions: PermissionDecision[] } = $props();
 </script>
@@ -38,7 +39,7 @@
             >{/if}
           <span class="meta">
             in
-            <a href="/conversations/{d.conversationId}"
+            <a href={resolve(`/conversations/${d.conversationId}`)}
               >{d.conversationTitle ?? d.conversationId}</a
             >
             · {formatTime(d.decidedAt)}

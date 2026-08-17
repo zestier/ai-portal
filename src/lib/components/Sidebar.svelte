@@ -1,7 +1,9 @@
 <script lang="ts">
   import { invalidateAll } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import { onMount, onDestroy, tick } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { conversationId } from "$lib/ids";
   import type {
     ChatPromptTemplate,
@@ -63,7 +65,7 @@
   let renameValue = $state("");
   let archivedOpen = $state(false);
   let selectMode = $state(false);
-  let selected = $state(new Set<string>());
+  const selected = new SvelteSet<string>();
   let bulkBusy = $state(false);
   let ticketsOpen = $state(false);
   let ticketDraftOpen = $state(false);
@@ -76,7 +78,7 @@
     ticket: WorkspaceTicket;
     action: ChatPromptTemplate;
   } | null>(null);
-  let expandedTicketIds = $state(new Set<string>());
+  const expandedTicketIds = new SvelteSet<string>();
   let errorMsg = $state<string | null>(null);
   let mounted = $state(false);
   // Unmerged-work state for managed-worktree sessions, keyed by conversation id.
@@ -292,19 +294,15 @@
   }
 
   function toggleTicketExpanded(ticketId: string) {
-    const next = new Set(expandedTicketIds);
-    if (next.has(ticketId)) {
-      next.delete(ticketId);
+    if (expandedTicketIds.has(ticketId)) {
+      expandedTicketIds.delete(ticketId);
     } else {
-      next.add(ticketId);
+      expandedTicketIds.add(ticketId);
     }
-    expandedTicketIds = next;
   }
 
   function collapseTicket(ticketId: string) {
-    const next = new Set(expandedTicketIds);
-    next.delete(ticketId);
-    expandedTicketIds = next;
+    expandedTicketIds.delete(ticketId);
   }
 
   async function launchTicketChat(
@@ -558,24 +556,20 @@
 
   function toggleSelectMode() {
     selectMode = !selectMode;
-    selected = new Set();
+    selected.clear();
   }
 
   function toggleSelected(id: string) {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    selected = next;
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
   }
 
   function toggleSelectAllActive() {
-    const next = new Set(selected);
     if (allActiveSelected) {
-      for (const c of active) next.delete(c.id);
+      for (const c of active) selected.delete(c.id);
     } else {
-      for (const c of active) next.add(c.id);
+      for (const c of active) selected.add(c.id);
     }
-    selected = next;
   }
 
   async function bulk(action: "archive" | "unarchive" | "delete") {
@@ -663,7 +657,8 @@
           location.href = "/";
         }
       }
-      selected = new Set(failedIds);
+      selected.clear();
+      for (const id of failedIds) selected.add(id);
       selectMode = failed > 0;
     } catch {
       flashError(`${action[0].toUpperCase()}${action.slice(1)} failed`);
@@ -816,7 +811,7 @@
                     >
                       <a
                         class="ticket-action"
-                        href={`/tickets/${ticket.id}`}
+                        href={resolve(`/tickets/${ticket.id}`)}
                         title="Open ticket page"
                         aria-label={`Open ticket page: ${ticket.title}`}
                         onclick={() => onnavigate?.()}
@@ -872,7 +867,11 @@
           </div>
         {/if}
         {#if ticketWorkspace}
-          <a class="ticket-all" href="/tickets" onclick={() => onnavigate?.()}>
+          <a
+            class="ticket-all"
+            href={resolve("/tickets")}
+            onclick={() => onnavigate?.()}
+          >
             View all tickets →
           </a>
         {/if}
@@ -929,7 +928,7 @@
         {:else}
           <a
             class="title-area"
-            href={`/conversations/${c.id}`}
+            href={resolve(`/conversations/${c.id}`)}
             onclick={(e) => {
               if (selectMode) {
                 e.preventDefault();
@@ -1054,7 +1053,7 @@
             {:else}
               <a
                 class="title-area"
-                href={`/conversations/${c.id}`}
+                href={resolve(`/conversations/${c.id}`)}
                 onclick={(e) => {
                   if (selectMode) {
                     e.preventDefault();
@@ -1167,7 +1166,8 @@
   {/if}
 
   <div class="bottom">
-    <a class="settings-link" href="/settings" onclick={onnavigate}>⚙ Settings</a
+    <a class="settings-link" href={resolve("/settings")} onclick={onnavigate}
+      >⚙ Settings</a
     >
     {#if user}
       <div class="user muted">

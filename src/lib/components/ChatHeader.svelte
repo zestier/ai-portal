@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from "$app/paths";
   import type {
     ApprovalMode,
     Conversation,
@@ -557,7 +558,7 @@
               <path d="M3 6h7a3 3 0 013 3v4" />
             </svg>
             <span>Forked from</span>
-            <a href={`/conversations/${parent.id}`}>{parent.title}</a>
+            <a href={resolve(`/conversations/${parent.id}`)}>{parent.title}</a>
             {#if parent.messageIndex != null}
               <span>· at message {parent.messageIndex + 1}</span>
             {/if}

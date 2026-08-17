@@ -73,7 +73,7 @@
       class="resource-link"
       href={linkHref}
       target="_blank"
-      rel="noopener noreferrer"
+      rel="external noopener noreferrer"
     >
       {block.name}{block.description ? ` — ${block.description}` : ""}
     </a>
@@ -87,7 +87,7 @@
 {:else if block.kind === "resource"}
   <div class="resource">
     {#if linkHref}
-      <a href={linkHref} target="_blank" rel="noopener noreferrer"
+      <a href={linkHref} target="_blank" rel="external noopener noreferrer"
         ><code>{block.uri}</code></a
       >
     {:else}

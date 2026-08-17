@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import { type FormResult, type SettingsTab } from "./settings-types";
   import type { PageData } from "./$types";
@@ -74,11 +75,16 @@
     const nextUrl = new URL($page.url);
     if (tab === "general") nextUrl.searchParams.delete("tab");
     else nextUrl.searchParams.set("tab", tab);
-    await goto(nextUrl, {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: true,
-    });
+    await goto(
+      resolve(
+        `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` as `/${string}`,
+      ),
+      {
+        keepFocus: true,
+        noScroll: true,
+        replaceState: true,
+      },
+    );
   }
 </script>
 
