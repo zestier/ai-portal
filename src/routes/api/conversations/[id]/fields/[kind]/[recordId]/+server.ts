@@ -1,8 +1,8 @@
-import { error } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { conversationId as convCodec } from '$lib/ids';
-import { authorizeConversation } from '$lib/server/conversation-auth';
-import * as messages from '$lib/server/db/repos/messages';
+import { error } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import { conversationId as convCodec } from "$lib/ids";
+import { authorizeConversation } from "$lib/server/conversation-auth";
+import * as messages from "$lib/server/db/repos/messages";
 
 // Lazy fetch for the large fields the conversation page payload omits (see
 // `src/lib/payload-limits.ts`): a tool call's `args_json` / `result_json`, a
@@ -18,44 +18,49 @@ import * as messages from '$lib/server/db/repos/messages';
 // gets byte-identical content to what the inline path would have carried, with
 // no double-encoding cost on a field that can be hundreds of KB.
 
-const FIELD_KINDS = ['tool-args', 'tool-result', 'file-diff', 'reasoning-text'] as const;
+const FIELD_KINDS = [
+  "tool-args",
+  "tool-result",
+  "file-diff",
+  "reasoning-text",
+] as const;
 type FieldKind = (typeof FIELD_KINDS)[number];
 
 function isFieldKind(v: string | undefined): v is FieldKind {
-	return !!v && (FIELD_KINDS as readonly string[]).includes(v);
+  return !!v && (FIELD_KINDS as readonly string[]).includes(v);
 }
 
 export const GET: RequestHandler = async ({ params, locals }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const convId = convCodec.parse(conv.id);
-	const kind = params.kind;
-	const recordId = Number(params.recordId);
-	if (!isFieldKind(kind)) throw error(404);
-	if (!params.recordId) throw error(400, 'missing record id');
-	if (!Number.isInteger(recordId) || recordId <= 0) throw error(404);
+  const conv = authorizeConversation(params.id, locals.userId);
+  const convId = convCodec.parse(conv.id);
+  const kind = params.kind;
+  const recordId = Number(params.recordId);
+  if (!isFieldKind(kind)) throw error(404);
+  if (!params.recordId) throw error(400, "missing record id");
+  if (!Number.isInteger(recordId) || recordId <= 0) throw error(404);
 
-	const row =
-		kind === 'file-diff'
-			? messages.getFileEditDiffForOwner(convId, recordId, conv.userId)
-			: kind === 'reasoning-text'
-				? messages.getReasoningTextForOwner(convId, recordId, conv.userId)
-				: messages.getToolCallFieldForOwner(
-						convId,
-						recordId,
-						conv.userId,
-						kind === 'tool-args' ? 'args' : 'result'
-					);
-	// No such record for this owner, or the column is genuinely NULL (e.g. a
-	// tool call that never produced a result) — nothing to hand back either way.
-	if (!row || row.value === null) throw error(404);
+  const row =
+    kind === "file-diff"
+      ? messages.getFileEditDiffForOwner(convId, recordId, conv.userId)
+      : kind === "reasoning-text"
+        ? messages.getReasoningTextForOwner(convId, recordId, conv.userId)
+        : messages.getToolCallFieldForOwner(
+            convId,
+            recordId,
+            conv.userId,
+            kind === "tool-args" ? "args" : "result",
+          );
+  // No such record for this owner, or the column is genuinely NULL (e.g. a
+  // tool call that never produced a result) — nothing to hand back either way.
+  if (!row || row.value === null) throw error(404);
 
-	return new Response(row.value, {
-		headers: {
-			'content-type': 'text/plain; charset=utf-8',
-			// Persisted tool args/results, file-edit diffs and reasoning text are
-			// immutable once written (a rerun creates a new record), so the browser
-			// can keep them privately for the life of the tab.
-			'cache-control': 'private, max-age=31536000, immutable'
-		}
-	});
+  return new Response(row.value, {
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      // Persisted tool args/results, file-edit diffs and reasoning text are
+      // immutable once written (a rerun creates a new record), so the browser
+      // can keep them privately for the life of the tab.
+      "cache-control": "private, max-age=31536000, immutable",
+    },
+  });
 };

@@ -1,7 +1,10 @@
-import { error, json } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { authorizeConversationWorkspace, leaseIdFromUrl } from '$lib/server/conversation-auth';
-import { discardAllLocalChanges, GitError } from '$lib/server/git';
+import { error, json } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import {
+  authorizeConversationWorkspace,
+  leaseIdFromUrl,
+} from "$lib/server/conversation-auth";
+import { discardAllLocalChanges, GitError } from "$lib/server/git";
 
 /**
  * Discard all uncommitted changes in the selected workspace.
@@ -12,12 +15,16 @@ import { discardAllLocalChanges, GitError } from '$lib/server/git';
  * looking at while leaving the work they *were* looking at untouched.
  */
 export const POST: RequestHandler = async ({ params, locals, url }) => {
-	const { workdir } = authorizeConversationWorkspace(params.id, locals.userId, leaseIdFromUrl(url));
-	try {
-		await discardAllLocalChanges(workdir);
-		return json({ ok: true });
-	} catch (e) {
-		if (e instanceof GitError) throw error(400, e.message);
-		throw e;
-	}
+  const { workdir } = authorizeConversationWorkspace(
+    params.id,
+    locals.userId,
+    leaseIdFromUrl(url),
+  );
+  try {
+    await discardAllLocalChanges(workdir);
+    return json({ ok: true });
+  } catch (e) {
+    if (e instanceof GitError) throw error(400, e.message);
+    throw e;
+  }
 };

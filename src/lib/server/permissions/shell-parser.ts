@@ -50,122 +50,125 @@
 // segment is a plain argv (string[]); callers can then check whether
 // every segment is safe according to a safe-list.
 
-import { randomBytes } from 'node:crypto';
-import { parse as shellQuoteParse } from 'shell-quote';
+import { randomBytes } from "node:crypto";
+import { parse as shellQuoteParse } from "shell-quote";
 
-export type SequencingOp = '&&' | '||' | ';' | '|';
+export type SequencingOp = "&&" | "||" | ";" | "|";
 
 export interface ParsedSegment {
-	argv: string[];
-	/** Operator that separates this segment from the next. `null` on the
-	 * final segment. */
-	followingOp: SequencingOp | null;
+  argv: string[];
+  /** Operator that separates this segment from the next. `null` on the
+   * final segment. */
+  followingOp: SequencingOp | null;
 }
 
 export type ParseResult =
-	| { kind: 'parsed'; segments: ParsedSegment[] }
-	| { kind: 'unsafe'; reason: string };
+  | { kind: "parsed"; segments: ParsedSegment[] }
+  | { kind: "unsafe"; reason: string };
 
-const ALLOWED_OPS: ReadonlySet<string> = new Set(['&&', '||', ';', '|']);
+const ALLOWED_OPS: ReadonlySet<string> = new Set(["&&", "||", ";", "|"]);
 
 // shell-quote represents an unresolved variable reference as `{op: '@',
 // pattern: name}` when the env callback returns an object instead of a
 // string. We use this to refuse any command that depends on a variable
 // we can't evaluate.
-const VAR_SENTINEL = (name: string) => ({ op: '@' as const, pattern: name });
+const VAR_SENTINEL = (name: string) => ({ op: "@" as const, pattern: name });
 
 const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 export function parseShellCommand(command: string): ParseResult {
-	const sentinel = makeRedirSentinel(command);
-	const trimmed = elideSafeRedirections(command, sentinel).trim();
-	if (trimmed === '') return { kind: 'unsafe', reason: 'empty command' };
+  const sentinel = makeRedirSentinel(command);
+  const trimmed = elideSafeRedirections(command, sentinel).trim();
+  if (trimmed === "") return { kind: "unsafe", reason: "empty command" };
 
-	let tokens: unknown[];
-	try {
-		tokens = shellQuoteParse(trimmed, VAR_SENTINEL as never) as unknown[];
-	} catch (e) {
-		return { kind: 'unsafe', reason: `parse error: ${(e as Error).message}` };
-	}
+  let tokens: unknown[];
+  try {
+    tokens = shellQuoteParse(trimmed, VAR_SENTINEL as never) as unknown[];
+  } catch (e) {
+    return { kind: "unsafe", reason: `parse error: ${(e as Error).message}` };
+  }
 
-	const segments: ParsedSegment[] = [];
-	let current: string[] = [];
+  const segments: ParsedSegment[] = [];
+  let current: string[] = [];
 
-	for (const tok of tokens) {
-		if (typeof tok === 'string') {
-			if (tok === sentinel) continue;
-			const verdict = classifyStringToken(tok, current.length === 0);
-			if (verdict !== 'ok') return { kind: 'unsafe', reason: verdict };
-			current.push(tok);
-			continue;
-		}
+  for (const tok of tokens) {
+    if (typeof tok === "string") {
+      if (tok === sentinel) continue;
+      const verdict = classifyStringToken(tok, current.length === 0);
+      if (verdict !== "ok") return { kind: "unsafe", reason: verdict };
+      current.push(tok);
+      continue;
+    }
 
-		if (tok && typeof tok === 'object' && 'op' in tok) {
-			const op = (tok as { op: string }).op;
-			if (ALLOWED_OPS.has(op)) {
-				if (current.length === 0) {
-					return { kind: 'unsafe', reason: `empty segment before '${op}'` };
-				}
-				segments.push({ argv: current, followingOp: op as SequencingOp });
-				current = [];
-				continue;
-			}
-			return { kind: 'unsafe', reason: unsafeOpReason(op) };
-		}
+    if (tok && typeof tok === "object" && "op" in tok) {
+      const op = (tok as { op: string }).op;
+      if (ALLOWED_OPS.has(op)) {
+        if (current.length === 0) {
+          return { kind: "unsafe", reason: `empty segment before '${op}'` };
+        }
+        segments.push({ argv: current, followingOp: op as SequencingOp });
+        current = [];
+        continue;
+      }
+      return { kind: "unsafe", reason: unsafeOpReason(op) };
+    }
 
-		return { kind: 'unsafe', reason: 'unknown token shape' };
-	}
+    return { kind: "unsafe", reason: "unknown token shape" };
+  }
 
-	if (current.length === 0) {
-		return { kind: 'unsafe', reason: 'trailing operator with no command' };
-	}
-	segments.push({ argv: current, followingOp: null });
+  if (current.length === 0) {
+    return { kind: "unsafe", reason: "trailing operator with no command" };
+  }
+  segments.push({ argv: current, followingOp: null });
 
-	return { kind: 'parsed', segments };
+  return { kind: "parsed", segments };
 }
 
-function classifyStringToken(tok: string, isFirstOfSegment: boolean): 'ok' | string {
-	if (tok.length === 0) return 'empty token';
-	// shell-quote leaves backticks in literal tokens (it doesn't parse
-	// backtick command substitution). Reject any token containing one.
-	if (tok.includes('`')) return 'backtick command substitution';
-	// A bare `$` token shows up as the prefix of `$(...)` in shell-quote's
-	// output (the subsequent `(`/`)` ops would also trip us, but catch it
-	// early for a clearer error).
-	if (tok === '$') return 'command substitution';
-	if (tok.startsWith('~')) return 'tilde expansion';
-	if (isFirstOfSegment) {
-		if (ENV_ASSIGN_RE.test(tok)) return 'env-assignment prefix';
-		if (tok.includes('/')) return 'path-qualified command';
-		if (tok.startsWith('.')) return 'relative-path command';
-	}
-	return 'ok';
+function classifyStringToken(
+  tok: string,
+  isFirstOfSegment: boolean,
+): "ok" | string {
+  if (tok.length === 0) return "empty token";
+  // shell-quote leaves backticks in literal tokens (it doesn't parse
+  // backtick command substitution). Reject any token containing one.
+  if (tok.includes("`")) return "backtick command substitution";
+  // A bare `$` token shows up as the prefix of `$(...)` in shell-quote's
+  // output (the subsequent `(`/`)` ops would also trip us, but catch it
+  // early for a clearer error).
+  if (tok === "$") return "command substitution";
+  if (tok.startsWith("~")) return "tilde expansion";
+  if (isFirstOfSegment) {
+    if (ENV_ASSIGN_RE.test(tok)) return "env-assignment prefix";
+    if (tok.includes("/")) return "path-qualified command";
+    if (tok.startsWith(".")) return "relative-path command";
+  }
+  return "ok";
 }
 
 function unsafeOpReason(op: string): string {
-	switch (op) {
-		case '@':
-			return 'variable expansion';
-		case 'glob':
-			return 'unexpanded glob';
-		case 'comment':
-			return 'shell comment';
-		case '(':
-		case ')':
-			return 'subshell or command substitution';
-		case '>':
-		case '>>':
-		case '<':
-		case '<<':
-		case '>&':
-		case '<&':
-		case '&>':
-			return 'redirection';
-		case '&':
-			return 'background execution';
-		default:
-			return `unsafe operator '${op}'`;
-	}
+  switch (op) {
+    case "@":
+      return "variable expansion";
+    case "glob":
+      return "unexpanded glob";
+    case "comment":
+      return "shell comment";
+    case "(":
+    case ")":
+      return "subshell or command substitution";
+    case ">":
+    case ">>":
+    case "<":
+    case "<<":
+    case ">&":
+    case "<&":
+    case "&>":
+      return "redirection";
+    case "&":
+      return "background execution";
+    default:
+      return `unsafe operator '${op}'`;
+  }
 }
 
 // Quote-agnostic elision of no-op redirections, applied before
@@ -187,8 +190,9 @@ function unsafeOpReason(op: string): string {
 // The sentinel is a per-parse random nonce (see makeRedirSentinel) made
 // of `[A-Za-z0-9_]` only — no shell metacharacters — so the substitution
 // cannot perturb shell-quote's view of where strings begin or end.
-const SAFE_REDIR_SENTINEL_PREFIX = '__ZAP_SAFE_REDIR_';
-const SAFE_REDIR_RE = /(?<=\s|^)(?:\d?>&(?:\d|-)|(?:\d?>>?|&>|\d?<)\s*\/dev\/null)(?=\s|$)/g;
+const SAFE_REDIR_SENTINEL_PREFIX = "__ZAP_SAFE_REDIR_";
+const SAFE_REDIR_RE =
+  /(?<=\s|^)(?:\d?>&(?:\d|-)|(?:\d?>>?|&>|\d?<)\s*\/dev\/null)(?=\s|$)/g;
 
 // Build the elision marker for a single parse: a fixed prefix plus a
 // fresh random suffix, rerolled until it does not occur anywhere in the
@@ -197,14 +201,14 @@ const SAFE_REDIR_RE = /(?<=\s|^)(?:\d?>&(?:\d|-)|(?:\d?>>?|&>|\d?<)\s*\/dev\/nul
 // step in parseShellCommand can never remove a caller-supplied token. The
 // loop effectively never iterates more than once (64 random bits).
 function makeRedirSentinel(command: string): string {
-	for (;;) {
-		const sentinel = `${SAFE_REDIR_SENTINEL_PREFIX}${randomBytes(8).toString('hex')}__`;
-		if (!command.includes(sentinel)) return sentinel;
-	}
+  for (;;) {
+    const sentinel = `${SAFE_REDIR_SENTINEL_PREFIX}${randomBytes(8).toString("hex")}__`;
+    if (!command.includes(sentinel)) return sentinel;
+  }
 }
 
 function elideSafeRedirections(input: string, sentinel: string): string {
-	return input.replace(SAFE_REDIR_RE, sentinel);
+  return input.replace(SAFE_REDIR_RE, sentinel);
 }
 
 // Hardcoded shell misuse: shapes that are unambiguously the wrong tool
@@ -219,14 +223,14 @@ function elideSafeRedirections(input: string, sentinel: string): string {
 // grant should ever auto-approve this and no user should ever be asked
 // about it.
 export interface ShellMisuse {
-	/** Stable identifier for tests / audit. */
-	code: 'cat-write-redirect';
-	/** Forwarded as `feedback` on the SDK reject. */
-	feedback: string;
+  /** Stable identifier for tests / audit. */
+  code: "cat-write-redirect";
+  /** Forwarded as `feedback` on the SDK reject. */
+  feedback: string;
 }
 
 const MISUSE_SEGMENT_SPLIT_RE = /&&|\|\||;|\|/;
-const MISUSE_WRITE_TOOLS = new Set(['cat', 'head', 'tail']);
+const MISUSE_WRITE_TOOLS = new Set(["cat", "head", "tail"]);
 // A write redirect (`>` or `>>`) that isn't an fd-dup (`>&`) and isn't
 // preceded by `<` (so `<<EOF` heredocs don't trip it via the second `<`
 // being parsed as `<` `<`). Allow an optional single leading digit (the
@@ -234,26 +238,26 @@ const MISUSE_WRITE_TOOLS = new Set(['cat', 'head', 'tail']);
 const MISUSE_WRITE_REDIR_RE = /(?:^|[^<>&])\d?>>?(?!&)/;
 
 export function detectShellMisuse(command: string): ShellMisuse | null {
-	// Split on sequencing operators so we only flag the segment that
-	// actually contains the offending argv0. A pipeline like
-	// `git log | cat` is fine; `cat > file.ts` is not.
-	for (const raw of command.split(MISUSE_SEGMENT_SPLIT_RE)) {
-		const seg = raw.trim();
-		if (seg === '') continue;
-		const first = /^(\S+)/.exec(seg)?.[1];
-		if (!first || !MISUSE_WRITE_TOOLS.has(first)) continue;
-		if (!MISUSE_WRITE_REDIR_RE.test(seg)) continue;
-		return {
-			code: 'cat-write-redirect',
-			feedback:
-				`Using \`${first}\` with a write redirect (\`>\` or \`>>\`) to create or ` +
-				`modify a file is never appropriate in this portal. Use the structured ` +
-				`\`create\` tool to write a new file or the \`edit\` tool to modify an ` +
-				`existing one — they handle auditing, permissions, and atomic writes ` +
-				`correctly. (This refusal is hardcoded and not configurable via ` +
-				`grants; only a human approving a \`force_retry_tool\` ` +
-				`escalation can override it.)`
-		};
-	}
-	return null;
+  // Split on sequencing operators so we only flag the segment that
+  // actually contains the offending argv0. A pipeline like
+  // `git log | cat` is fine; `cat > file.ts` is not.
+  for (const raw of command.split(MISUSE_SEGMENT_SPLIT_RE)) {
+    const seg = raw.trim();
+    if (seg === "") continue;
+    const first = /^(\S+)/.exec(seg)?.[1];
+    if (!first || !MISUSE_WRITE_TOOLS.has(first)) continue;
+    if (!MISUSE_WRITE_REDIR_RE.test(seg)) continue;
+    return {
+      code: "cat-write-redirect",
+      feedback:
+        `Using \`${first}\` with a write redirect (\`>\` or \`>>\`) to create or ` +
+        `modify a file is never appropriate in this portal. Use the structured ` +
+        `\`create\` tool to write a new file or the \`edit\` tool to modify an ` +
+        `existing one — they handle auditing, permissions, and atomic writes ` +
+        `correctly. (This refusal is hardcoded and not configurable via ` +
+        `grants; only a human approving a \`force_retry_tool\` ` +
+        `escalation can override it.)`,
+    };
+  }
+  return null;
 }

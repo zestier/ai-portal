@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { describe, it, expect, beforeAll } from "vitest";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
-	assemblePiTools,
-	type AssemblePiToolsOptions
-} from '../../../src/lib/server/tools/assemble';
-import { setupLocalEnv } from '../../helpers/env';
+  assemblePiTools,
+  type AssemblePiToolsOptions,
+} from "../../../src/lib/server/tools/assemble";
+import { setupLocalEnv } from "../../helpers/env";
 
 // Regression guard for per-turn token cost (T31): every portal tool's
 // `description` + per-parameter descriptions are re-serialized and sent to the
@@ -32,16 +32,16 @@ const TOOL_DEFINITIONS_BYTES_BUDGET = 24_400;
 // A representative options object matching a real conversation: no disabled
 // groups, memory off (the default — buildMemoryTools returns [] for 'off').
 function defaultOptions(cwd: string): AssemblePiToolsOptions {
-	return {
-		cwd,
-		userId: 1,
-		conversationId: 1,
-		workspaceKey: 'tool-defs-size',
-		policy: 'prompt',
-		getMode: () => 'interactive',
-		getApprovalMode: () => 'ask',
-		emit: () => {}
-	};
+  return {
+    cwd,
+    userId: 1,
+    conversationId: 1,
+    workspaceKey: "tool-defs-size",
+    policy: "prompt",
+    getMode: () => "interactive",
+    getApprovalMode: () => "ask",
+    emit: () => {},
+  };
 }
 
 // The provider-facing tool JSON: name + description + parameters schema.
@@ -49,29 +49,29 @@ function defaultOptions(cwd: string): AssemblePiToolsOptions {
 // `promptSnippet`/`promptGuidelines` live in the system prompt, not in the
 // tool-definition JSON the provider re-reads each turn.
 function toolDefinitionsBytes(tools: ToolDefinition[]): number {
-	const encoder = new TextEncoder();
-	let total = 0;
-	for (const tool of tools) {
-		total += encoder.encode(
-			JSON.stringify({
-				name: tool.name,
-				description: tool.description,
-				parameters: tool.parameters
-			})
-		).length;
-	}
-	return total;
+  const encoder = new TextEncoder();
+  let total = 0;
+  for (const tool of tools) {
+    total += encoder.encode(
+      JSON.stringify({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      }),
+    ).length;
+  }
+  return total;
 }
 
-describe('portal tool-definition size', () => {
-	beforeAll(async () => {
-		await setupLocalEnv('tool-defs-size-');
-	});
+describe("portal tool-definition size", () => {
+  beforeAll(async () => {
+    await setupLocalEnv("tool-defs-size-");
+  });
 
-	it('keeps the default-active tool set under the token-cost budget', () => {
-		const { customTools } = assemblePiTools(defaultOptions('/'));
-		const bytes = toolDefinitionsBytes(customTools);
-		expect(customTools.length).toBeGreaterThan(20);
-		expect(bytes).toBeLessThanOrEqual(TOOL_DEFINITIONS_BYTES_BUDGET);
-	});
+  it("keeps the default-active tool set under the token-cost budget", () => {
+    const { customTools } = assemblePiTools(defaultOptions("/"));
+    const bytes = toolDefinitionsBytes(customTools);
+    expect(customTools.length).toBeGreaterThan(20);
+    expect(bytes).toBeLessThanOrEqual(TOOL_DEFINITIONS_BYTES_BUDGET);
+  });
 });

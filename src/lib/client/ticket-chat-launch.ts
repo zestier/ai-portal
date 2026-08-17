@@ -1,23 +1,26 @@
 import {
-	interpolateTicketPrompt,
-	ticketActionChatTitle,
-	ticketActionDraftUrl
-} from '$lib/tickets/chat';
-import { templateLaunchDefaults, type TemplateLaunchOptions } from '$lib/prompt-templates';
-import type { ChatPromptTemplate, WorkspaceTicket } from '$lib/types';
+  interpolateTicketPrompt,
+  ticketActionChatTitle,
+  ticketActionDraftUrl,
+} from "$lib/tickets/chat";
+import {
+  templateLaunchDefaults,
+  type TemplateLaunchOptions,
+} from "$lib/prompt-templates";
+import type { ChatPromptTemplate, WorkspaceTicket } from "$lib/types";
 
 type TicketDraftFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 type TicketActionTemplate = Pick<
-	ChatPromptTemplate,
-	| 'id'
-	| 'prompt'
-	| 'launchBehavior'
-	| 'conversationMode'
-	| 'approvalMode'
-	| 'model'
-	| 'workspaceMode'
-	| 'disabledToolGroups'
+  ChatPromptTemplate,
+  | "id"
+  | "prompt"
+  | "launchBehavior"
+  | "conversationMode"
+  | "approvalMode"
+  | "model"
+  | "workspaceMode"
+  | "disabledToolGroups"
 >;
 
 /**
@@ -29,22 +32,27 @@ type TicketActionTemplate = Pick<
  * is always sent (possibly `[]`) so a review-dialog edit can clear the preset.
  */
 function createBody(
-	ticket: WorkspaceTicket,
-	workdir: string | null | undefined,
-	options: TemplateLaunchOptions,
-	template: TicketActionTemplate
+  ticket: WorkspaceTicket,
+  workdir: string | null | undefined,
+  options: TemplateLaunchOptions,
+  template: TicketActionTemplate,
 ): Record<string, unknown> {
-	return {
-		title: ticketActionChatTitle(ticket),
-		promptTemplateId: template.id,
-		disabledToolGroups: options.disabledToolGroups,
-		...(options.workspace === 'worktree'
-			? { workspace: { kind: 'worktree', ...(workdir ? { sourcePath: workdir } : {}) } }
-			: { workdir: workdir ?? undefined }),
-		mode: options.conversationMode ?? undefined,
-		approvalMode: options.approvalMode ?? undefined,
-		model: options.model ?? undefined
-	};
+  return {
+    title: ticketActionChatTitle(ticket),
+    promptTemplateId: template.id,
+    disabledToolGroups: options.disabledToolGroups,
+    ...(options.workspace === "worktree"
+      ? {
+          workspace: {
+            kind: "worktree",
+            ...(workdir ? { sourcePath: workdir } : {}),
+          },
+        }
+      : { workdir: workdir ?? undefined }),
+    mode: options.conversationMode ?? undefined,
+    approvalMode: options.approvalMode ?? undefined,
+    model: options.model ?? undefined,
+  };
 }
 
 /**
@@ -62,58 +70,66 @@ function createBody(
  * lets each surface produce its own message (create vs. launch).
  */
 export async function createTicketLaunchChat({
-	ticket,
-	template,
-	workdir,
-	options,
-	fetcher = fetch
+  ticket,
+  template,
+  workdir,
+  options,
+  fetcher = fetch,
 }: {
-	ticket: WorkspaceTicket;
-	template: TicketActionTemplate;
-	workdir?: string | null;
-	/** Resolved launch settings; defaults to the template's own values. */
-	options?: TemplateLaunchOptions;
-	fetcher?: TicketDraftFetch;
+  ticket: WorkspaceTicket;
+  template: TicketActionTemplate;
+  workdir?: string | null;
+  /** Resolved launch settings; defaults to the template's own values. */
+  options?: TemplateLaunchOptions;
+  fetcher?: TicketDraftFetch;
 }): Promise<
-	| { ok: true; conversationId: string; href: string }
-	| { ok: false; stage: 'create' | 'launch'; status?: number }
+  | { ok: true; conversationId: string; href: string }
+  | { ok: false; stage: "create" | "launch"; status?: number }
 > {
-	const resolved = options ?? defaultOptions(template, ticket);
-	let conversationId: string | null = null;
-	try {
-		const convRes = await fetcher('/api/conversations', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(createBody(ticket, workdir, resolved, template))
-		});
-		if (!convRes.ok) return { ok: false, stage: 'create', status: convRes.status };
-		const body = await convRes.json();
-		conversationId = body.conversation.id as string;
-		const turnRes = await fetcher(`/api/conversations/${conversationId}/turns`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ content: resolved.prompt })
-		});
-		if (!turnRes.ok) {
-			await deleteConversation(fetcher, conversationId);
-			return { ok: false, stage: 'launch', status: turnRes.status };
-		}
-		return { ok: true, conversationId, href: `/conversations/${conversationId}` };
-	} catch (err) {
-		if (conversationId) await deleteConversation(fetcher, conversationId);
-		throw err;
-	}
+  const resolved = options ?? defaultOptions(template, ticket);
+  let conversationId: string | null = null;
+  try {
+    const convRes = await fetcher("/api/conversations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(createBody(ticket, workdir, resolved, template)),
+    });
+    if (!convRes.ok)
+      return { ok: false, stage: "create", status: convRes.status };
+    const body = await convRes.json();
+    conversationId = body.conversation.id as string;
+    const turnRes = await fetcher(
+      `/api/conversations/${conversationId}/turns`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: resolved.prompt }),
+      },
+    );
+    if (!turnRes.ok) {
+      await deleteConversation(fetcher, conversationId);
+      return { ok: false, stage: "launch", status: turnRes.status };
+    }
+    return {
+      ok: true,
+      conversationId,
+      href: `/conversations/${conversationId}`,
+    };
+  } catch (err) {
+    if (conversationId) await deleteConversation(fetcher, conversationId);
+    throw err;
+  }
 }
 
 async function deleteConversation(
-	fetcher: TicketDraftFetch,
-	conversationId: string
+  fetcher: TicketDraftFetch,
+  conversationId: string,
 ): Promise<void> {
-	try {
-		await fetcher(`/api/conversations/${conversationId}`, { method: 'DELETE' });
-	} catch {
-		// Best-effort cleanup; surfacing this error would mask the original failure.
-	}
+  try {
+    await fetcher(`/api/conversations/${conversationId}`, { method: "DELETE" });
+  } catch {
+    // Best-effort cleanup; surfacing this error would mask the original failure.
+  }
 }
 
 /**
@@ -123,32 +139,34 @@ async function deleteConversation(
  * prompt is also computed here so callers/tests can verify it without a round trip.
  */
 export async function createTicketDraftChat({
-	ticket,
-	template,
-	workdir,
-	options,
-	fetcher = fetch
+  ticket,
+  template,
+  workdir,
+  options,
+  fetcher = fetch,
 }: {
-	ticket: WorkspaceTicket;
-	template: TicketActionTemplate;
-	workdir?: string | null;
-	/** Resolved launch settings; defaults to the template's own values. */
-	options?: TemplateLaunchOptions;
-	fetcher?: TicketDraftFetch;
-}): Promise<{ ok: true; href: string; prompt: string } | { ok: false; status?: number }> {
-	const resolved = options ?? defaultOptions(template, ticket);
-	const convRes = await fetcher('/api/conversations', {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(createBody(ticket, workdir, resolved, template))
-	});
-	if (!convRes.ok) return { ok: false, status: convRes.status };
-	const body = await convRes.json();
-	return {
-		ok: true,
-		href: ticketActionDraftUrl(body.conversation.id, ticket.id, template.id),
-		prompt: resolved.prompt
-	};
+  ticket: WorkspaceTicket;
+  template: TicketActionTemplate;
+  workdir?: string | null;
+  /** Resolved launch settings; defaults to the template's own values. */
+  options?: TemplateLaunchOptions;
+  fetcher?: TicketDraftFetch;
+}): Promise<
+  { ok: true; href: string; prompt: string } | { ok: false; status?: number }
+> {
+  const resolved = options ?? defaultOptions(template, ticket);
+  const convRes = await fetcher("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(createBody(ticket, workdir, resolved, template)),
+  });
+  if (!convRes.ok) return { ok: false, status: convRes.status };
+  const body = await convRes.json();
+  return {
+    ok: true,
+    href: ticketActionDraftUrl(body.conversation.id, ticket.id, template.id),
+    prompt: resolved.prompt,
+  };
 }
 
 /**
@@ -157,8 +175,11 @@ export async function createTicketDraftChat({
  * review dialog seeds its form from the same values.
  */
 export function defaultOptions(
-	template: TicketActionTemplate,
-	ticket: WorkspaceTicket
+  template: TicketActionTemplate,
+  ticket: WorkspaceTicket,
 ): TemplateLaunchOptions {
-	return templateLaunchDefaults(template, interpolateTicketPrompt(template, ticket));
+  return templateLaunchDefaults(
+    template,
+    interpolateTicketPrompt(template, ticket),
+  );
 }

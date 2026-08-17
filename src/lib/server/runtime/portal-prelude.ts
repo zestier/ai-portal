@@ -16,8 +16,8 @@
 // enforced by the matcher in `permissions/matcher.ts`.
 
 export const PORTAL_PRELUDE = [
-	'[Portal context — auto-injected; not authored by the user]',
-	'Tool calls run through a permission gateway. On reject, the `feedback` string is',
-	'authoritative — read it and adapt.',
-	'[/Portal context]'
-].join('\n');
+  "[Portal context — auto-injected; not authored by the user]",
+  "Tool calls run through a permission gateway. On reject, the `feedback` string is",
+  "authoritative — read it and adapt.",
+  "[/Portal context]",
+].join("\n");

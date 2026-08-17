@@ -1,2 +1,2 @@
-export * from './tickets/core';
-export * from './tickets/deps';
+export * from "./tickets/core";
+export * from "./tickets/deps";

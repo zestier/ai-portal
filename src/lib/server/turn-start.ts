@@ -1,107 +1,111 @@
-import * as convs from '$lib/server/db/repos/conversations';
-import * as messages from '$lib/server/db/repos/messages';
-import * as settings from '$lib/server/db/repos/settings';
-import * as pool from '$lib/server/runtime/pool';
-import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
-import { loadConfig } from '$lib/server/config';
-import { startTurn } from '$lib/server/runtime/turn-runner';
-import { snapshot as takeSnapshot } from '$lib/server/snapshots';
-import { resolveConversationWorkspace } from '$lib/server/workdir';
-import { log } from '$lib/server/log';
-import { buildPromptWithMemory, isEnabled } from '$lib/server/memory/engine';
-import { isModelBackedExtractorConfigured } from '$lib/server/memory/extractor';
-import type { Conversation, Message, PortalEvent } from '$lib/types';
+import * as convs from "$lib/server/db/repos/conversations";
+import * as messages from "$lib/server/db/repos/messages";
+import * as settings from "$lib/server/db/repos/settings";
+import * as pool from "$lib/server/runtime/pool";
+import { conversationId as convCodec, messageId as msgCodec } from "$lib/ids";
+import { loadConfig } from "$lib/server/config";
+import { startTurn } from "$lib/server/runtime/turn-runner";
+import { snapshot as takeSnapshot } from "$lib/server/snapshots";
+import { resolveConversationWorkspace } from "$lib/server/workdir";
+import { log } from "$lib/server/log";
+import { buildPromptWithMemory, isEnabled } from "$lib/server/memory/engine";
+import { isModelBackedExtractorConfigured } from "$lib/server/memory/extractor";
+import type { Conversation, Message, PortalEvent } from "$lib/types";
 
 export interface StartTurnFromUserMessageOptions {
-	/**
-	 * True for an edit/regenerate/fork rerun: the turn rewinds the persistent pi
-	 * session to the target user message and re-runs from it, matching the
-	 * SQLite truncation. False for a normal continuation.
-	 */
-	rerun?: boolean;
-	initialEvents?: PortalEvent[];
+  /**
+   * True for an edit/regenerate/fork rerun: the turn rewinds the persistent pi
+   * session to the target user message and re-runs from it, matching the
+   * SQLite truncation. False for a normal continuation.
+   */
+  rerun?: boolean;
+  initialEvents?: PortalEvent[];
 }
 
 export async function startTurnFromUserMessage(
-	conv: Conversation,
-	userMsg: Message,
-	opts: StartTurnFromUserMessageOptions = {}
+  conv: Conversation,
+  userMsg: Message,
+  opts: StartTurnFromUserMessageOptions = {},
 ) {
-	const workdir = resolveConversationWorkspace(conv);
+  const workdir = resolveConversationWorkspace(conv);
 
-	const cfg = loadConfig();
-	const userSettings = settings.get(conv.userId) ?? settings.defaults();
-	const memoryEnabled = isEnabled(conv.memoryMode);
-	if (memoryEnabled) {
-		// A memory-backed turn rebuilds the session's prompt from portal state,
-		// so any prior session is released to avoid stale context leaking in.
-		await pool.release(convCodec.parse(conv.id));
-	}
-	const prompt = memoryEnabled
-		? buildPromptWithMemory({
-				conversationId: convCodec.parse(conv.id),
-				mode: conv.memoryMode,
-				userMsg,
-				userId: conv.userId,
-				globalMemoryEnabled: conv.globalMemoryEnabled,
-				includeRecentTranscript: true,
-				extractorPresent: isModelBackedExtractorConfigured({
-					model: conv.memoryExtractorModel
-				})
-			})
-		: userMsg.content;
-	const rerun = opts.rerun === true;
-	const rewindToUserMessageOrdinal =
-		rerun && !memoryEnabled
-			? userMessageOrdinal(convCodec.parse(conv.id), msgCodec.parse(userMsg.id))
-			: undefined;
-	const turn = await startTurn({
-		conversationId: convCodec.parse(conv.id),
-		prompt,
-		userMessageId: userMsg.id,
-		bridge: {
-			conversationId: convCodec.parse(conv.id),
-			userId: conv.userId,
-			workingDirectory: workdir,
-			workspaceKey: conv.workspaceKey,
-			model: conv.model ?? cfg.DEFAULT_MODEL,
-			policy: userSettings.defaultPolicy,
-			mode: conv.mode,
-			approvalMode: conv.approvalMode,
-			disabledToolGroups: conv.disabledToolGroups,
-			...(conv.systemPrompt ? { systemPrompt: conv.systemPrompt } : {}),
-			...(conv.appendSystemPrompt ? { appendSystemPrompt: conv.appendSystemPrompt } : {}),
-			memoryMode: conv.memoryMode,
-			globalMemoryEnabled: conv.globalMemoryEnabled,
-			// Persistent pi session: resume the conversation's file, or create one
-			// on its first turn. Memory-mode turns stay in-memory (the session is
-			// released above and rebuilt from portal memory each turn).
-			...(memoryEnabled ? {} : { sessionFilePath: conv.sessionFile ?? null }),
-			...(rewindToUserMessageOrdinal !== undefined ? { rewindToUserMessageOrdinal } : {})
-		},
-		initialEvents: opts.initialEvents,
-		memory: memoryEnabled
-			? {
-					mode: conv.memoryMode,
-					userMessageId: userMsg.id,
-					userContent: userMsg.content,
-					extractorModel: conv.memoryExtractorModel
-				}
-			: undefined,
-		beforeSend: async () => {
-			try {
-				await takeSnapshot(workdir, msgCodec.parse(userMsg.id), 'pre');
-			} catch (e) {
-				log.warn('snapshot.pre.failed', {
-					conversationId: conv.id,
-					messageId: userMsg.id,
-					err: String(e)
-				});
-			}
-		}
-	});
-	convs.touch(convCodec.parse(conv.id));
-	return turn;
+  const cfg = loadConfig();
+  const userSettings = settings.get(conv.userId) ?? settings.defaults();
+  const memoryEnabled = isEnabled(conv.memoryMode);
+  if (memoryEnabled) {
+    // A memory-backed turn rebuilds the session's prompt from portal state,
+    // so any prior session is released to avoid stale context leaking in.
+    await pool.release(convCodec.parse(conv.id));
+  }
+  const prompt = memoryEnabled
+    ? buildPromptWithMemory({
+        conversationId: convCodec.parse(conv.id),
+        mode: conv.memoryMode,
+        userMsg,
+        userId: conv.userId,
+        globalMemoryEnabled: conv.globalMemoryEnabled,
+        includeRecentTranscript: true,
+        extractorPresent: isModelBackedExtractorConfigured({
+          model: conv.memoryExtractorModel,
+        }),
+      })
+    : userMsg.content;
+  const rerun = opts.rerun === true;
+  const rewindToUserMessageOrdinal =
+    rerun && !memoryEnabled
+      ? userMessageOrdinal(convCodec.parse(conv.id), msgCodec.parse(userMsg.id))
+      : undefined;
+  const turn = await startTurn({
+    conversationId: convCodec.parse(conv.id),
+    prompt,
+    userMessageId: userMsg.id,
+    bridge: {
+      conversationId: convCodec.parse(conv.id),
+      userId: conv.userId,
+      workingDirectory: workdir,
+      workspaceKey: conv.workspaceKey,
+      model: conv.model ?? cfg.DEFAULT_MODEL,
+      policy: userSettings.defaultPolicy,
+      mode: conv.mode,
+      approvalMode: conv.approvalMode,
+      disabledToolGroups: conv.disabledToolGroups,
+      ...(conv.systemPrompt ? { systemPrompt: conv.systemPrompt } : {}),
+      ...(conv.appendSystemPrompt
+        ? { appendSystemPrompt: conv.appendSystemPrompt }
+        : {}),
+      memoryMode: conv.memoryMode,
+      globalMemoryEnabled: conv.globalMemoryEnabled,
+      // Persistent pi session: resume the conversation's file, or create one
+      // on its first turn. Memory-mode turns stay in-memory (the session is
+      // released above and rebuilt from portal memory each turn).
+      ...(memoryEnabled ? {} : { sessionFilePath: conv.sessionFile ?? null }),
+      ...(rewindToUserMessageOrdinal !== undefined
+        ? { rewindToUserMessageOrdinal }
+        : {}),
+    },
+    initialEvents: opts.initialEvents,
+    memory: memoryEnabled
+      ? {
+          mode: conv.memoryMode,
+          userMessageId: userMsg.id,
+          userContent: userMsg.content,
+          extractorModel: conv.memoryExtractorModel,
+        }
+      : undefined,
+    beforeSend: async () => {
+      try {
+        await takeSnapshot(workdir, msgCodec.parse(userMsg.id), "pre");
+      } catch (e) {
+        log.warn("snapshot.pre.failed", {
+          conversationId: conv.id,
+          messageId: userMsg.id,
+          err: String(e),
+        });
+      }
+    },
+  });
+  convs.touch(convCodec.parse(conv.id));
+  return turn;
 }
 
 /**
@@ -110,13 +114,16 @@ export async function startTurnFromUserMessage(
  * to this entry. Returns undefined when the message can't be located — the turn
  * then runs without a rewind (a fresh/legacy conversation with no tree yet).
  */
-function userMessageOrdinal(conversationId: number, userMessageId: number): number | undefined {
-	const all = messages.listByConversation(conversationId);
-	const idx = all.findIndex((m) => msgCodec.parse(m.id) === userMessageId);
-	if (idx < 0) return undefined;
-	let ordinal = -1;
-	for (let i = 0; i <= idx; i++) {
-		if (all[i].role === 'user') ordinal++;
-	}
-	return ordinal >= 0 ? ordinal : undefined;
+function userMessageOrdinal(
+  conversationId: number,
+  userMessageId: number,
+): number | undefined {
+  const all = messages.listByConversation(conversationId);
+  const idx = all.findIndex((m) => msgCodec.parse(m.id) === userMessageId);
+  if (idx < 0) return undefined;
+  let ordinal = -1;
+  for (let i = 0; i <= idx; i++) {
+    if (all[i].role === "user") ordinal++;
+  }
+  return ordinal >= 0 ? ordinal : undefined;
 }

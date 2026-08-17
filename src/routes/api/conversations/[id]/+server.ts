@@ -1,198 +1,214 @@
-import { json } from '@sveltejs/kit';
-import { z } from 'zod';
-import type { RequestHandler } from './$types';
-import { conversationId as convCodec } from '$lib/ids';
-import * as convs from '$lib/server/db/repos/conversations';
-import * as pool from '$lib/server/runtime/pool';
-import { getTurn } from '$lib/server/runtime/turn-runner';
-import { listForConversation as listPendingInteractive } from '$lib/server/runtime/interactive-requests';
-import { projectTranscript } from '$lib/server/present/transcript';
-import { parseBody } from '$lib/server/validate';
-import { authorizeConversation } from '$lib/server/conversation-auth';
-import { getManagedWorktree } from '$lib/server/db/repos/conversations';
-import { removeManagedWorktree, WorktreeError } from '$lib/server/worktrees';
-import { removeLeasesForConversation } from '$lib/server/leases';
-import { worktreeIntegrationStatus } from '$lib/server/worktree-integration';
-import { error } from '@sveltejs/kit';
-import { audit } from '$lib/server/audit';
+import { json } from "@sveltejs/kit";
+import { z } from "zod";
+import type { RequestHandler } from "./$types";
+import { conversationId as convCodec } from "$lib/ids";
+import * as convs from "$lib/server/db/repos/conversations";
+import * as pool from "$lib/server/runtime/pool";
+import { getTurn } from "$lib/server/runtime/turn-runner";
+import { listForConversation as listPendingInteractive } from "$lib/server/runtime/interactive-requests";
+import { projectTranscript } from "$lib/server/present/transcript";
+import { parseBody } from "$lib/server/validate";
+import { authorizeConversation } from "$lib/server/conversation-auth";
+import { getManagedWorktree } from "$lib/server/db/repos/conversations";
+import { removeManagedWorktree, WorktreeError } from "$lib/server/worktrees";
+import { removeLeasesForConversation } from "$lib/server/leases";
+import { worktreeIntegrationStatus } from "$lib/server/worktree-integration";
+import { error } from "@sveltejs/kit";
+import { audit } from "$lib/server/audit";
 
 export const GET: RequestHandler = ({ params, locals }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const convId = convCodec.parse(conv.id);
-	// Surface any in-flight turn so the client can reattach its
-	// EventSource on page load without a separate round-trip. Only
-	// running turns count — finished-but-still-cached turns are not
-	// useful to reattach to (replay then immediate done).
-	const turn = getTurn(convId);
-	const activeTurnId = turn && turn.status === 'running' ? turn.id : null;
-	return json({
-		conversation: conv,
-		// Backend-projected transcript: a bounded hydrated tail + an index of
-		// older messages (see $lib/server/present/transcript.ts). Refresh /
-		// recovery refetch exactly the shape the page `load` produced, so the
-		// client's sparse store merges either source identically.
-		transcript: projectTranscript(convId),
-		activeTurnId,
-		// Outstanding prompts so a refresh / SSE blip can rehydrate the
-		// dialog rather than stranding the agent on a request the user can
-		// no longer see.
-		pendingInteractive: listPendingInteractive(convId)
-	});
+  const conv = authorizeConversation(params.id, locals.userId);
+  const convId = convCodec.parse(conv.id);
+  // Surface any in-flight turn so the client can reattach its
+  // EventSource on page load without a separate round-trip. Only
+  // running turns count — finished-but-still-cached turns are not
+  // useful to reattach to (replay then immediate done).
+  const turn = getTurn(convId);
+  const activeTurnId = turn && turn.status === "running" ? turn.id : null;
+  return json({
+    conversation: conv,
+    // Backend-projected transcript: a bounded hydrated tail + an index of
+    // older messages (see $lib/server/present/transcript.ts). Refresh /
+    // recovery refetch exactly the shape the page `load` produced, so the
+    // client's sparse store merges either source identically.
+    transcript: projectTranscript(convId),
+    activeTurnId,
+    // Outstanding prompts so a refresh / SSE blip can rehydrate the
+    // dialog rather than stranding the agent on a request the user can
+    // no longer see.
+    pendingInteractive: listPendingInteractive(convId),
+  });
 };
 
 const PatchBody = z
-	.object({
-		title: z.string().min(1).max(200).optional(),
-		archived: z.boolean().optional()
-	})
-	.refine((b) => b.title !== undefined || b.archived !== undefined, {
-		message: 'No fields to update'
-	});
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    archived: z.boolean().optional(),
+  })
+  .refine((b) => b.title !== undefined || b.archived !== undefined, {
+    message: "No fields to update",
+  });
 
 export const PATCH: RequestHandler = async ({ params, locals, request }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const body = await parseBody(request, PatchBody);
-	const convId = convCodec.parse(conv.id);
+  const conv = authorizeConversation(params.id, locals.userId);
+  const body = await parseBody(request, PatchBody);
+  const convId = convCodec.parse(conv.id);
 
-	if (body.title !== undefined) {
-		convs.rename(convId, conv.userId, body.title);
-	}
-	if (body.archived !== undefined) {
-		if (body.archived) {
-			convs.archive(convId, conv.userId);
-			await pool.release(convId);
-		} else {
-			convs.unarchive(convId, conv.userId);
-		}
-	}
-	return json({ ok: true });
+  if (body.title !== undefined) {
+    convs.rename(convId, conv.userId, body.title);
+  }
+  if (body.archived !== undefined) {
+    if (body.archived) {
+      convs.archive(convId, conv.userId);
+      await pool.release(convId);
+    } else {
+      convs.unarchive(convId, conv.userId);
+    }
+  }
+  return json({ ok: true });
 };
 
-export const DELETE: RequestHandler = async ({ params, locals, url, getClientAddress }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const convId = convCodec.parse(conv.id);
-	// A provider subprocess may have this directory as its cwd. Dispose it
-	// before asking Git to remove the linked worktree.
-	await pool.release(convId);
-	const forced = url.searchParams.get('forceWorktree') === '1';
+export const DELETE: RequestHandler = async ({
+  params,
+  locals,
+  url,
+  getClientAddress,
+}) => {
+  const conv = authorizeConversation(params.id, locals.userId);
+  const convId = convCodec.parse(conv.id);
+  // A provider subprocess may have this directory as its cwd. Dispose it
+  // before asking Git to remove the linked worktree.
+  await pool.release(convId);
+  const forced = url.searchParams.get("forceWorktree") === "1";
 
-	// Leases first: they are children of the same repository, and failing after
-	// the conversation's own checkout is gone would leave a messier state to
-	// reconcile. A lease blocks deletion on the same two counts the primary
-	// does — uncommitted changes, or commits not merged into the source branch.
-	const leaseResult = await removeLeasesForConversation(convId, conv.userId, { force: forced });
-	for (const leaseId of leaseResult.removed) {
-		audit({
-			event_type: 'worktree_remove',
-			actor_login: locals.user?.githubLogin ?? null,
-			actor_ip: getClientAddress(),
-			resource: String(leaseId),
-			outcome: 'success',
-			detail: { conversationId: conv.id, leaseId, forced }
-		});
-	}
-	if (leaseResult.retained.length > 0) {
-		// Report the stricter-sounding reason when both kinds are present: losing
-		// uncommitted work is worse than orphaning a branch, so it should lead.
-		const anyDirty = leaseResult.retained.some((r) => r.reason === 'dirty');
-		const code = anyDirty ? 'worktree_dirty' : 'worktree_unmerged';
-		for (const retained of leaseResult.retained) {
-			audit({
-				event_type: 'worktree_remove',
-				actor_login: locals.user?.githubLogin ?? null,
-				actor_ip: getClientAddress(),
-				resource: String(retained.lease.id),
-				outcome: 'denied',
-				detail: {
-					conversationId: conv.id,
-					leaseId: retained.lease.id,
-					code: retained.reason === 'dirty' ? 'worktree_dirty' : 'worktree_unmerged'
-				}
-			});
-		}
-		throw error(409, {
-			message: anyDirty
-				? 'conversation holds worktrees with uncommitted changes'
-				: 'conversation holds worktrees with unmerged commits',
-			code,
-			// Name the holdouts, with the per-lease reason, so the client can
-			// explain precisely what would be lost rather than offering an
-			// all-or-nothing force.
-			leases: leaseResult.retained.map(({ lease, reason, dirtyCount, ahead }) => ({
-				id: lease.id,
-				label: lease.label,
-				branch: lease.branch,
-				reason,
-				dirtyCount,
-				ahead
-			}))
-		} as App.Error);
-	}
+  // Leases first: they are children of the same repository, and failing after
+  // the conversation's own checkout is gone would leave a messier state to
+  // reconcile. A lease blocks deletion on the same two counts the primary
+  // does — uncommitted changes, or commits not merged into the source branch.
+  const leaseResult = await removeLeasesForConversation(convId, conv.userId, {
+    force: forced,
+  });
+  for (const leaseId of leaseResult.removed) {
+    audit({
+      event_type: "worktree_remove",
+      actor_login: locals.user?.githubLogin ?? null,
+      actor_ip: getClientAddress(),
+      resource: String(leaseId),
+      outcome: "success",
+      detail: { conversationId: conv.id, leaseId, forced },
+    });
+  }
+  if (leaseResult.retained.length > 0) {
+    // Report the stricter-sounding reason when both kinds are present: losing
+    // uncommitted work is worse than orphaning a branch, so it should lead.
+    const anyDirty = leaseResult.retained.some((r) => r.reason === "dirty");
+    const code = anyDirty ? "worktree_dirty" : "worktree_unmerged";
+    for (const retained of leaseResult.retained) {
+      audit({
+        event_type: "worktree_remove",
+        actor_login: locals.user?.githubLogin ?? null,
+        actor_ip: getClientAddress(),
+        resource: String(retained.lease.id),
+        outcome: "denied",
+        detail: {
+          conversationId: conv.id,
+          leaseId: retained.lease.id,
+          code:
+            retained.reason === "dirty"
+              ? "worktree_dirty"
+              : "worktree_unmerged",
+        },
+      });
+    }
+    throw error(409, {
+      message: anyDirty
+        ? "conversation holds worktrees with uncommitted changes"
+        : "conversation holds worktrees with unmerged commits",
+      code,
+      // Name the holdouts, with the per-lease reason, so the client can
+      // explain precisely what would be lost rather than offering an
+      // all-or-nothing force.
+      leases: leaseResult.retained.map(
+        ({ lease, reason, dirtyCount, ahead }) => ({
+          id: lease.id,
+          label: lease.label,
+          branch: lease.branch,
+          reason,
+          dirtyCount,
+          ahead,
+        }),
+      ),
+    } as App.Error);
+  }
 
-	const managed = getManagedWorktree(convId, conv.userId);
-	if (managed) {
-		// Removing the checkout leaves the branch behind, so commits are not
-		// destroyed — but the conversation that named them is, which turns them
-		// into an orphan branch nobody will look for. Treat that like the dirty
-		// case: refuse once, and let the client re-confirm.
-		if (!forced) {
-			const unmerged = await unmergedCommitCount(managed.path);
-			if (unmerged > 0) {
-				audit({
-					event_type: 'worktree_remove',
-					actor_login: locals.user?.githubLogin ?? null,
-					actor_ip: getClientAddress(),
-					resource: managed.path,
-					outcome: 'denied',
-					detail: { conversationId: conv.id, code: 'worktree_unmerged', ahead: unmerged }
-				});
-				throw error(409, {
-					message: `this worktree has ${unmerged} commit(s) not merged into the source branch`,
-					code: 'worktree_unmerged',
-					detail: { ahead: unmerged, branch: managed.branch }
-				});
-			}
-		}
-		try {
-			await removeManagedWorktree(managed, {
-				force: forced,
-				owner: {
-					kind: 'conversation',
-					userId: String(conv.userId),
-					conversationId: conv.id
-				}
-			});
-		} catch (cause) {
-			if (cause instanceof WorktreeError) {
-				audit({
-					event_type: 'worktree_remove',
-					actor_login: locals.user?.githubLogin ?? null,
-					actor_ip: getClientAddress(),
-					resource: managed.path,
-					outcome: cause.code === 'worktree_dirty' ? 'denied' : 'failure',
-					detail: { conversationId: conv.id, code: cause.code }
-				});
-				throw error(cause.code === 'worktree_dirty' ? 409 : 500, {
-					message: cause.message,
-					code: cause.code
-				});
-			}
-			throw cause;
-		}
-		audit({
-			event_type: 'worktree_remove',
-			actor_login: locals.user?.githubLogin ?? null,
-			actor_ip: getClientAddress(),
-			resource: managed.path,
-			outcome: 'success',
-			detail: {
-				conversationId: conv.id,
-				forced: url.searchParams.get('forceWorktree') === '1'
-			}
-		});
-	}
-	convs.remove(convId, conv.userId);
-	return json({ ok: true });
+  const managed = getManagedWorktree(convId, conv.userId);
+  if (managed) {
+    // Removing the checkout leaves the branch behind, so commits are not
+    // destroyed — but the conversation that named them is, which turns them
+    // into an orphan branch nobody will look for. Treat that like the dirty
+    // case: refuse once, and let the client re-confirm.
+    if (!forced) {
+      const unmerged = await unmergedCommitCount(managed.path);
+      if (unmerged > 0) {
+        audit({
+          event_type: "worktree_remove",
+          actor_login: locals.user?.githubLogin ?? null,
+          actor_ip: getClientAddress(),
+          resource: managed.path,
+          outcome: "denied",
+          detail: {
+            conversationId: conv.id,
+            code: "worktree_unmerged",
+            ahead: unmerged,
+          },
+        });
+        throw error(409, {
+          message: `this worktree has ${unmerged} commit(s) not merged into the source branch`,
+          code: "worktree_unmerged",
+          detail: { ahead: unmerged, branch: managed.branch },
+        });
+      }
+    }
+    try {
+      await removeManagedWorktree(managed, {
+        force: forced,
+        owner: {
+          kind: "conversation",
+          userId: String(conv.userId),
+          conversationId: conv.id,
+        },
+      });
+    } catch (cause) {
+      if (cause instanceof WorktreeError) {
+        audit({
+          event_type: "worktree_remove",
+          actor_login: locals.user?.githubLogin ?? null,
+          actor_ip: getClientAddress(),
+          resource: managed.path,
+          outcome: cause.code === "worktree_dirty" ? "denied" : "failure",
+          detail: { conversationId: conv.id, code: cause.code },
+        });
+        throw error(cause.code === "worktree_dirty" ? 409 : 500, {
+          message: cause.message,
+          code: cause.code,
+        });
+      }
+      throw cause;
+    }
+    audit({
+      event_type: "worktree_remove",
+      actor_login: locals.user?.githubLogin ?? null,
+      actor_ip: getClientAddress(),
+      resource: managed.path,
+      outcome: "success",
+      detail: {
+        conversationId: conv.id,
+        forced: url.searchParams.get("forceWorktree") === "1",
+      },
+    });
+  }
+  convs.remove(convId, conv.userId);
+  return json({ ok: true });
 };
 
 /**
@@ -201,9 +217,9 @@ export const DELETE: RequestHandler = async ({ params, locals, url, getClientAdd
  * guard exists to prevent surprise, not to strand the user.
  */
 async function unmergedCommitCount(path: string): Promise<number> {
-	try {
-		return (await worktreeIntegrationStatus(path)).ahead;
-	} catch {
-		return 0;
-	}
+  try {
+    return (await worktreeIntegrationStatus(path)).ahead;
+  } catch {
+    return 0;
+  }
 }

@@ -5,25 +5,32 @@
 // timeoutMs of 0 disables the guard.
 
 export class TimeoutError extends Error {
-	constructor(label: string, timeoutMs: number) {
-		super(`${label} timed out after ${timeoutMs}ms`);
-		this.name = 'TimeoutError';
-	}
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = "TimeoutError";
+  }
 }
 
-export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-	if (timeoutMs <= 0) return promise;
-	return new Promise<T>((resolve, reject) => {
-		const handle = setTimeout(() => reject(new TimeoutError(label, timeoutMs)), timeoutMs);
-		promise.then(
-			(value) => {
-				clearTimeout(handle);
-				resolve(value);
-			},
-			(err) => {
-				clearTimeout(handle);
-				reject(err);
-			}
-		);
-	});
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  if (timeoutMs <= 0) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const handle = setTimeout(
+      () => reject(new TimeoutError(label, timeoutMs)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(handle);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(handle);
+        reject(err);
+      },
+    );
+  });
 }

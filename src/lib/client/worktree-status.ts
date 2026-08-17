@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable } from "svelte/store";
 
 /**
  * Revision counter for "a worktree's merge state may have just changed".
@@ -20,5 +20,5 @@ export const worktreeStatusRevision = writable(0);
 
 /** Signal that worktree merge state may have changed; indicators refetch. */
 export function invalidateWorktreeStatus(): void {
-	worktreeStatusRevision.update((n) => n + 1);
+  worktreeStatusRevision.update((n) => n + 1);
 }

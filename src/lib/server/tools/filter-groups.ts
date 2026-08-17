@@ -1,5 +1,8 @@
-import type { PortalTool } from './types';
-import { PORTAL_TOOL_GROUP_IDS, type PortalToolGroupId } from '$lib/tools/groups';
+import type { PortalTool } from "./types";
+import {
+  PORTAL_TOOL_GROUP_IDS,
+  type PortalToolGroupId,
+} from "$lib/tools/groups";
 
 export type GroupedPortalTools = Record<PortalToolGroupId, PortalTool[]>;
 
@@ -14,14 +17,14 @@ export type GroupedPortalTools = Record<PortalToolGroupId, PortalTool[]>;
  * so callers may pass raw persisted values without pre-sanitizing.
  */
 export function filterPortalToolGroups(
-	grouped: GroupedPortalTools,
-	disabledGroupIds: readonly string[] = []
+  grouped: GroupedPortalTools,
+  disabledGroupIds: readonly string[] = [],
 ): PortalTool[] {
-	const disabled = new Set(disabledGroupIds);
-	const out: PortalTool[] = [];
-	for (const id of PORTAL_TOOL_GROUP_IDS) {
-		if (disabled.has(id)) continue;
-		out.push(...grouped[id]);
-	}
-	return out;
+  const disabled = new Set(disabledGroupIds);
+  const out: PortalTool[] = [];
+  for (const id of PORTAL_TOOL_GROUP_IDS) {
+    if (disabled.has(id)) continue;
+    out.push(...grouped[id]);
+  }
+  return out;
 }

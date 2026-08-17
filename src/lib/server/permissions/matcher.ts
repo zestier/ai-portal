@@ -9,87 +9,87 @@
 // When both are present on a row, structured wins; we never glob over a
 // row that has a typed shape.
 
-export { deriveScopeKey } from '../../permissions/scope-key';
+export { deriveScopeKey } from "../../permissions/scope-key";
 
-import type { GrantScope, FsPermission } from '../../permissions/scope-types';
-import type { ParsedSegment } from './shell-parser';
+import type { GrantScope, FsPermission } from "../../permissions/scope-types";
+import type { ParsedSegment } from "./shell-parser";
 import {
-	shellRuleMatches,
-	shellRuleMatchesSegment,
-	type ShellMatchContext,
-	type ShellMatchExplain
-} from './predicates/shell';
-import { fsScopeMatches } from './predicates/fs';
-import { urlScopeMatches } from './predicates/url';
-import { isAbsolute, resolve } from 'node:path';
+  shellRuleMatches,
+  shellRuleMatchesSegment,
+  type ShellMatchContext,
+  type ShellMatchExplain,
+} from "./predicates/shell";
+import { fsScopeMatches } from "./predicates/fs";
+import { urlScopeMatches } from "./predicates/url";
+import { isAbsolute, resolve } from "node:path";
 
-export type GrantDecision = 'allow' | 'force-allow' | 'deny' | 'prompt';
-export type MatchOutcome = 'allow' | 'deny' | 'prompt' | 'none';
+export type GrantDecision = "allow" | "force-allow" | "deny" | "prompt";
+export type MatchOutcome = "allow" | "deny" | "prompt" | "none";
 
 export interface DetailedMatchOutcome {
-	outcome: MatchOutcome;
-	/** Agent-facing feedback from the matched deny or prompt-required grant. */
-	feedback: string | null;
-	/** @deprecated use `feedback`. */
-	denyReason: string | null;
+  outcome: MatchOutcome;
+  /** Agent-facing feedback from the matched deny or prompt-required grant. */
+  feedback: string | null;
+  /** @deprecated use `feedback`. */
+  denyReason: string | null;
 }
 
 export interface GrantRow {
-	tool: string;
-	permissionKind: string | null;
-	scopePattern: string | null;
-	/** Structured grant. When set, the legacy `scopePattern` is ignored
-	 * for this row. NULL on legacy rows. */
-	scope: GrantScope | null;
-	decision: GrantDecision;
-	expiresAt: number | null;
-	argsHash: string | null;
-	/** Optional feedback for deny grants and prompt-required auto-rejects —
-	 * surfaced to the agent via the SDK's `PermissionDecisionReject.feedback`
-	 * field. Ignored on allow rows. NULL means no custom feedback. */
-	denyReason: string | null;
-	/**
-	 * NULL = user-global grant. Used by callers that mix conversation-scoped
-	 * and user-global rows; matchGrants does not itself filter on this.
-	 */
-	conversationId: number | null;
+  tool: string;
+  permissionKind: string | null;
+  scopePattern: string | null;
+  /** Structured grant. When set, the legacy `scopePattern` is ignored
+   * for this row. NULL on legacy rows. */
+  scope: GrantScope | null;
+  decision: GrantDecision;
+  expiresAt: number | null;
+  argsHash: string | null;
+  /** Optional feedback for deny grants and prompt-required auto-rejects —
+   * surfaced to the agent via the SDK's `PermissionDecisionReject.feedback`
+   * field. Ignored on allow rows. NULL means no custom feedback. */
+  denyReason: string | null;
+  /**
+   * NULL = user-global grant. Used by callers that mix conversation-scoped
+   * and user-global rows; matchGrants does not itself filter on this.
+   */
+  conversationId: number | null;
 }
 
 export interface MatchQuery {
-	tool: string;
-	permissionKind: string;
-	/** Legacy scope-key (string). NULL when the caller couldn't derive
-	 * one; only wildcard legacy grants will match. */
-	scopeKey: string | null;
-	/** Parsed shell command for structured shell grants. Omitted for
-	 * non-shell requests or when the parser rejected the command. */
-	shellSegments?: ParsedSegment[] | null;
-	/** Target path for fs requests (`read` / `write` / `edit`). */
-	target?: string | null;
-	/** Target URL for `url` requests. */
-	url?: string | null;
-	/** Every root the conversation may act inside — its own workspace plus any
-	 * worktree leases it holds. Used by structured predicates that constrain to
-	 * the workspace. */
-	workspaceRoots?: readonly string[] | null;
-	/** SDK session workspace directory, used by session-workspace predicates. */
-	sessionWorkspaceRoot?: string | null;
-	/**
-	 * Directory that relative shell operands resolve against — the shell's cwd.
-	 * Used only by the `readable-paths` / `writable-paths` positional kinds.
-	 *
-	 * NOT interchangeable with `sessionWorkspaceRoot`. That one is the SDK's
-	 * long-lived session-state directory, which is a different place from the
-	 * checkout shell commands actually run in.
-	 * Resolving a relative operand against it would ask about a file the shell
-	 * will never open — and could approve it, since that directory is readable
-	 * under its own seed. Fails closed when absent.
-	 */
-	shellCwd?: string | null;
-	/** Unix ms. Grants with `expiresAt < now` are ignored. */
-	now: number;
-	/** Canonical SHA-256 of the requested tool args. */
-	argsHash?: string | null;
+  tool: string;
+  permissionKind: string;
+  /** Legacy scope-key (string). NULL when the caller couldn't derive
+   * one; only wildcard legacy grants will match. */
+  scopeKey: string | null;
+  /** Parsed shell command for structured shell grants. Omitted for
+   * non-shell requests or when the parser rejected the command. */
+  shellSegments?: ParsedSegment[] | null;
+  /** Target path for fs requests (`read` / `write` / `edit`). */
+  target?: string | null;
+  /** Target URL for `url` requests. */
+  url?: string | null;
+  /** Every root the conversation may act inside — its own workspace plus any
+   * worktree leases it holds. Used by structured predicates that constrain to
+   * the workspace. */
+  workspaceRoots?: readonly string[] | null;
+  /** SDK session workspace directory, used by session-workspace predicates. */
+  sessionWorkspaceRoot?: string | null;
+  /**
+   * Directory that relative shell operands resolve against — the shell's cwd.
+   * Used only by the `readable-paths` / `writable-paths` positional kinds.
+   *
+   * NOT interchangeable with `sessionWorkspaceRoot`. That one is the SDK's
+   * long-lived session-state directory, which is a different place from the
+   * checkout shell commands actually run in.
+   * Resolving a relative operand against it would ask about a file the shell
+   * will never open — and could approve it, since that directory is readable
+   * under its own seed. Fails closed when absent.
+   */
+  shellCwd?: string | null;
+  /** Unix ms. Grants with `expiresAt < now` are ignored. */
+  now: number;
+  /** Canonical SHA-256 of the requested tool args. */
+  argsHash?: string | null;
 }
 
 /**
@@ -122,7 +122,7 @@ export interface MatchQuery {
  * only covers the segment(s) it actually matches.
  */
 export function matchGrants(rows: GrantRow[], q: MatchQuery): MatchOutcome {
-	return matchGrantsDetailed(rows, q).outcome;
+  return matchGrantsDetailed(rows, q).outcome;
 }
 
 /**
@@ -131,49 +131,65 @@ export function matchGrants(rows: GrantRow[], q: MatchQuery): MatchOutcome {
  * precedence order (force-allow, deny, allow, prompt), preserving input order
  * within each tier.
  */
-export function matchGrantsDetailed(rows: GrantRow[], q: MatchQuery): DetailedMatchOutcome {
-	const orderedRows = sortGrantRows(rows);
-	if (q.permissionKind === 'shell' && q.shellSegments && q.shellSegments.length > 0) {
-		// Shell chains/pipelines are evaluated per segment, with force-allow,
-		// deny, allow and prompt all resolved inside matchShellSegments so that
-		// force-allow can override a deny on the same segment and an uncovered
-		// segment can pull the whole chain down to `none`.
-		return matchShellSegments(orderedRows, q, q.shellSegments);
-	}
-	const forceAllow = matchFirst(orderedRows, q, (r) => r.decision === 'force-allow');
-	if (forceAllow) return withFeedback('allow', null);
-	const hardDeny = matchHardDeny(orderedRows, q);
-	if (hardDeny) return hardDeny;
-	const match = matchFirst(orderedRows, q, (r) => !r.argsHash);
-	if (!match) return withFeedback('none', null);
-	return withFeedback(
-		match.decision === 'force-allow' ? 'allow' : match.decision,
-		match.decision === 'allow' || match.decision === 'force-allow' ? null : match.denyReason
-	);
+export function matchGrantsDetailed(
+  rows: GrantRow[],
+  q: MatchQuery,
+): DetailedMatchOutcome {
+  const orderedRows = sortGrantRows(rows);
+  if (
+    q.permissionKind === "shell" &&
+    q.shellSegments &&
+    q.shellSegments.length > 0
+  ) {
+    // Shell chains/pipelines are evaluated per segment, with force-allow,
+    // deny, allow and prompt all resolved inside matchShellSegments so that
+    // force-allow can override a deny on the same segment and an uncovered
+    // segment can pull the whole chain down to `none`.
+    return matchShellSegments(orderedRows, q, q.shellSegments);
+  }
+  const forceAllow = matchFirst(
+    orderedRows,
+    q,
+    (r) => r.decision === "force-allow",
+  );
+  if (forceAllow) return withFeedback("allow", null);
+  const hardDeny = matchHardDeny(orderedRows, q);
+  if (hardDeny) return hardDeny;
+  const match = matchFirst(orderedRows, q, (r) => !r.argsHash);
+  if (!match) return withFeedback("none", null);
+  return withFeedback(
+    match.decision === "force-allow" ? "allow" : match.decision,
+    match.decision === "allow" || match.decision === "force-allow"
+      ? null
+      : match.denyReason,
+  );
 }
 
-function matchHardDeny(rows: GrantRow[], q: MatchQuery): DetailedMatchOutcome | null {
-	for (const r of rows) {
-		if (r.decision !== 'deny') continue;
-		if (!grantApplies(r, q)) continue;
-		if (!rowScopeMatches(r, q)) continue;
-		return withFeedback('deny', r.denyReason);
-	}
-	return null;
+function matchHardDeny(
+  rows: GrantRow[],
+  q: MatchQuery,
+): DetailedMatchOutcome | null {
+  for (const r of rows) {
+    if (r.decision !== "deny") continue;
+    if (!grantApplies(r, q)) continue;
+    if (!rowScopeMatches(r, q)) continue;
+    return withFeedback("deny", r.denyReason);
+  }
+  return null;
 }
 
 function matchFirst(
-	rows: GrantRow[],
-	q: MatchQuery,
-	filter: (r: GrantRow) => boolean
+  rows: GrantRow[],
+  q: MatchQuery,
+  filter: (r: GrantRow) => boolean,
 ): GrantRow | null {
-	for (const r of rows) {
-		if (!filter(r)) continue;
-		if (!grantApplies(r, q)) continue;
-		if (!rowScopeMatches(r, q)) continue;
-		return r;
-	}
-	return null;
+  for (const r of rows) {
+    if (!filter(r)) continue;
+    if (!grantApplies(r, q)) continue;
+    if (!rowScopeMatches(r, q)) continue;
+    return r;
+  }
+  return null;
 }
 
 /**
@@ -191,103 +207,106 @@ function matchFirst(
  * dialog for a benign segment silently approving the uncovered one.
  */
 function matchShellSegments(
-	rows: GrantRow[],
-	q: MatchQuery,
-	segments: ParsedSegment[]
+  rows: GrantRow[],
+  q: MatchQuery,
+  segments: ParsedSegment[],
 ): DetailedMatchOutcome {
-	let sawDeny = false;
-	let sawUncovered = false;
-	let sawPrompt = false;
-	let denyFeedback: string | null = null;
-	let uncoveredFeedback: string | null = null;
-	let promptFeedback: string | null = null;
-	const pathPermittedFor = buildFsPathPermitted(rows, q);
-	// A `cd` earlier in the chain moves the shell's working directory, so from
-	// that point on a relative operand no longer means what the session cwd says
-	// it means. Rather than model cwd (the target may itself be unresolvable), the
-	// fs-deferred kinds stop accepting relative operands after such a segment.
-	let cwdMoved = false;
-	for (let i = 0; i < segments.length; i++) {
-		const seg = segments[i];
-		const ctx = {
-			workspaceRoots: q.workspaceRoots ?? null,
-			sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
-			pathPermitted: pathPermittedFor(!cwdMoved),
-			inPipeline: segmentInPipeline(segments, i),
-			isPipeTarget: segmentIsPipeTarget(segments, i)
-		};
-		if (movesWorkingDirectory(seg)) cwdMoved = true;
-		let segDecision: GrantDecision | null = null;
-		let segFeedback: string | null = null;
-		let segNearMiss: string | null = null;
-		for (const r of rows) {
-			if (!grantApplies(r, q)) continue;
-			// Only allow-shaped grants produce a near-miss explanation: a deny or
-			// prompt row that fails to match is not a capability the request was
-			// reaching for.
-			const explain: ShellMatchExplain | undefined =
-				r.decision === 'allow' || r.decision === 'force-allow' ? {} : undefined;
-			if (!rowMatchesShellSegment(r, seg, ctx, explain)) {
-				if (explain?.positionalRefusal && segNearMiss === null) {
-					segNearMiss = explain.positionalRefusal;
-				}
-				continue;
-			}
-			segDecision = r.decision;
-			segFeedback = r.denyReason;
-			break;
-		}
-		if (segDecision === 'deny') {
-			sawDeny = true;
-			denyFeedback ??= segFeedback;
-		} else if (segDecision === null) {
-			sawUncovered = true;
-			// Attribution matters: the near-miss is only reported alongside the
-			// outcome of the SAME segment, so a chain can't explain one segment's
-			// refusal with another segment's reason.
-			uncoveredFeedback ??= segNearMiss;
-		} else if (segDecision === 'prompt') {
-			sawPrompt = true;
-			promptFeedback ??= combineFeedback(segFeedback, segNearMiss);
-		}
-		// 'allow' / 'force-allow' contribute the least-restrictive outcome and
-		// need no bookkeeping.
-	}
-	if (sawDeny) return withFeedback('deny', denyFeedback);
-	// An uncovered chain carries no grant feedback, but it may carry the reason
-	// an fs-deferring allow grant declined it — which is what stops the caller
-	// from reporting a workspace-boundary problem for a missing fs permission.
-	if (sawUncovered) return withFeedback('none', uncoveredFeedback);
-	if (sawPrompt) return withFeedback('prompt', promptFeedback);
-	return withFeedback('allow', null);
+  let sawDeny = false;
+  let sawUncovered = false;
+  let sawPrompt = false;
+  let denyFeedback: string | null = null;
+  let uncoveredFeedback: string | null = null;
+  let promptFeedback: string | null = null;
+  const pathPermittedFor = buildFsPathPermitted(rows, q);
+  // A `cd` earlier in the chain moves the shell's working directory, so from
+  // that point on a relative operand no longer means what the session cwd says
+  // it means. Rather than model cwd (the target may itself be unresolvable), the
+  // fs-deferred kinds stop accepting relative operands after such a segment.
+  let cwdMoved = false;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const ctx = {
+      workspaceRoots: q.workspaceRoots ?? null,
+      sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
+      pathPermitted: pathPermittedFor(!cwdMoved),
+      inPipeline: segmentInPipeline(segments, i),
+      isPipeTarget: segmentIsPipeTarget(segments, i),
+    };
+    if (movesWorkingDirectory(seg)) cwdMoved = true;
+    let segDecision: GrantDecision | null = null;
+    let segFeedback: string | null = null;
+    let segNearMiss: string | null = null;
+    for (const r of rows) {
+      if (!grantApplies(r, q)) continue;
+      // Only allow-shaped grants produce a near-miss explanation: a deny or
+      // prompt row that fails to match is not a capability the request was
+      // reaching for.
+      const explain: ShellMatchExplain | undefined =
+        r.decision === "allow" || r.decision === "force-allow" ? {} : undefined;
+      if (!rowMatchesShellSegment(r, seg, ctx, explain)) {
+        if (explain?.positionalRefusal && segNearMiss === null) {
+          segNearMiss = explain.positionalRefusal;
+        }
+        continue;
+      }
+      segDecision = r.decision;
+      segFeedback = r.denyReason;
+      break;
+    }
+    if (segDecision === "deny") {
+      sawDeny = true;
+      denyFeedback ??= segFeedback;
+    } else if (segDecision === null) {
+      sawUncovered = true;
+      // Attribution matters: the near-miss is only reported alongside the
+      // outcome of the SAME segment, so a chain can't explain one segment's
+      // refusal with another segment's reason.
+      uncoveredFeedback ??= segNearMiss;
+    } else if (segDecision === "prompt") {
+      sawPrompt = true;
+      promptFeedback ??= combineFeedback(segFeedback, segNearMiss);
+    }
+    // 'allow' / 'force-allow' contribute the least-restrictive outcome and
+    // need no bookkeeping.
+  }
+  if (sawDeny) return withFeedback("deny", denyFeedback);
+  // An uncovered chain carries no grant feedback, but it may carry the reason
+  // an fs-deferring allow grant declined it — which is what stops the caller
+  // from reporting a workspace-boundary problem for a missing fs permission.
+  if (sawUncovered) return withFeedback("none", uncoveredFeedback);
+  if (sawPrompt) return withFeedback("prompt", promptFeedback);
+  return withFeedback("allow", null);
 }
 
 /**
  * Builtins that relocate the shell for every segment that follows them.
  * Exported so the seed-grants test can keep the seeded cwd-mover list in sync.
  */
-export const CWD_MOVING_BUILTINS = new Set(['cd', 'pushd', 'popd', 'chdir']);
+export const CWD_MOVING_BUILTINS = new Set(["cd", "pushd", "popd", "chdir"]);
 
 function movesWorkingDirectory(seg: ParsedSegment): boolean {
-	return CWD_MOVING_BUILTINS.has(seg.argv[0]);
+  return CWD_MOVING_BUILTINS.has(seg.argv[0]);
 }
 
 /** Keep a matched grant's own steer, but append the more specific near-miss. */
-function combineFeedback(feedback: string | null, nearMiss: string | null): string | null {
-	if (!feedback) return nearMiss;
-	if (!nearMiss) return feedback;
-	return `${feedback} (${nearMiss})`;
+function combineFeedback(
+  feedback: string | null,
+  nearMiss: string | null,
+): string | null {
+  if (!feedback) return nearMiss;
+  if (!nearMiss) return feedback;
+  return `${feedback} (${nearMiss})`;
 }
 
 function sortGrantRows(rows: GrantRow[]): GrantRow[] {
-	return [...rows].sort((a, b) => grantRank(a) - grantRank(b));
+  return [...rows].sort((a, b) => grantRank(a) - grantRank(b));
 }
 
 function grantRank(r: GrantRow): number {
-	if (r.decision === 'force-allow') return 0;
-	if (r.decision === 'deny') return 1;
-	if (r.decision === 'allow') return 2;
-	return 3;
+  if (r.decision === "force-allow") return 0;
+  if (r.decision === "deny") return 1;
+  if (r.decision === "allow") return 2;
+  return 3;
 }
 
 /**
@@ -320,42 +339,50 @@ const MAX_FS_DEFERRED_CHECKS = 64;
  * closure).
  */
 function buildFsPathPermitted(
-	rows: GrantRow[],
-	q: MatchQuery
+  rows: GrantRow[],
+  q: MatchQuery,
 ): (allowRelative: boolean) => (perm: FsPermission, path: string) => boolean {
-	// Built lazily: most shell requests never reach a grant-deferring positional
-	// rule, and this is the permission hot path.
-	let fsRows: GrantRow[] | null = null;
-	const cache = new Map<string, boolean>();
-	let checks = 0;
-	const permitted = (allowRelative: boolean, perm: FsPermission, rawPath: string): boolean => {
-		const key = `${allowRelative ? 'r' : 'a'}\u0000${perm}\u0000${rawPath}`;
-		const cached = cache.get(key);
-		if (cached !== undefined) return cached;
-		if (checks >= MAX_FS_DEFERRED_CHECKS) return false;
-		checks += 1;
-		fsRows ??= rows.filter((r) => r.scope?.kind !== 'shell');
-		const target = absolutePositional(rawPath, allowRelative ? (q.shellCwd ?? null) : null);
-		const ok =
-			target !== null &&
-			matchGrantsDetailed(fsRows, {
-				tool: perm,
-				permissionKind: perm,
-				// fs requests carry the target path as their scope key. Note the
-				// nested key is always ABSOLUTE while a real fs request may pass a
-				// relative one, so a legacy `scope_pattern` grant written against
-				// relative paths simply doesn't fire here — a narrowing, which is
-				// the safe direction for a fail-closed check.
-				scopeKey: target,
-				target,
-				workspaceRoots: q.workspaceRoots ?? null,
-				sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
-				now: q.now
-			}).outcome === 'allow';
-		cache.set(key, ok);
-		return ok;
-	};
-	return (allowRelative) => (perm, rawPath) => permitted(allowRelative, perm, rawPath);
+  // Built lazily: most shell requests never reach a grant-deferring positional
+  // rule, and this is the permission hot path.
+  let fsRows: GrantRow[] | null = null;
+  const cache = new Map<string, boolean>();
+  let checks = 0;
+  const permitted = (
+    allowRelative: boolean,
+    perm: FsPermission,
+    rawPath: string,
+  ): boolean => {
+    const key = `${allowRelative ? "r" : "a"}\u0000${perm}\u0000${rawPath}`;
+    const cached = cache.get(key);
+    if (cached !== undefined) return cached;
+    if (checks >= MAX_FS_DEFERRED_CHECKS) return false;
+    checks += 1;
+    fsRows ??= rows.filter((r) => r.scope?.kind !== "shell");
+    const target = absolutePositional(
+      rawPath,
+      allowRelative ? (q.shellCwd ?? null) : null,
+    );
+    const ok =
+      target !== null &&
+      matchGrantsDetailed(fsRows, {
+        tool: perm,
+        permissionKind: perm,
+        // fs requests carry the target path as their scope key. Note the
+        // nested key is always ABSOLUTE while a real fs request may pass a
+        // relative one, so a legacy `scope_pattern` grant written against
+        // relative paths simply doesn't fire here — a narrowing, which is
+        // the safe direction for a fail-closed check.
+        scopeKey: target,
+        target,
+        workspaceRoots: q.workspaceRoots ?? null,
+        sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
+        now: q.now,
+      }).outcome === "allow";
+    cache.set(key, ok);
+    return ok;
+  };
+  return (allowRelative) => (perm, rawPath) =>
+    permitted(allowRelative, perm, rawPath);
 }
 
 /**
@@ -365,15 +392,21 @@ function buildFsPathPermitted(
  * chain means we no longer know where the command runs — they fail closed,
  * because a relative path has no meaning to compare against an absolute fs rule.
  */
-function absolutePositional(rawPath: string, cwd: string | null): string | null {
-	if (!rawPath || rawPath.includes('\0')) return null;
-	if (isAbsolute(rawPath)) return resolve(rawPath);
-	if (!cwd || cwd.includes('\0')) return null;
-	return resolve(cwd, rawPath);
+function absolutePositional(
+  rawPath: string,
+  cwd: string | null,
+): string | null {
+  if (!rawPath || rawPath.includes("\0")) return null;
+  if (isAbsolute(rawPath)) return resolve(rawPath);
+  if (!cwd || cwd.includes("\0")) return null;
+  return resolve(cwd, rawPath);
 }
 
-function withFeedback(outcome: MatchOutcome, feedback: string | null): DetailedMatchOutcome {
-	return { outcome, feedback, denyReason: feedback };
+function withFeedback(
+  outcome: MatchOutcome,
+  feedback: string | null,
+): DetailedMatchOutcome {
+  return { outcome, feedback, denyReason: feedback };
 }
 
 /**
@@ -383,9 +416,9 @@ function withFeedback(outcome: MatchOutcome, feedback: string | null): DetailedM
  * `pipeline: 'must' | 'forbid'` on a ShellRule.
  */
 function segmentInPipeline(segments: ParsedSegment[], i: number): boolean {
-	if (segments[i].followingOp === '|') return true;
-	if (i > 0 && segments[i - 1].followingOp === '|') return true;
-	return false;
+  if (segments[i].followingOp === "|") return true;
+  if (i > 0 && segments[i - 1].followingOp === "|") return true;
+  return false;
 }
 
 /**
@@ -396,98 +429,105 @@ function segmentInPipeline(segments: ParsedSegment[], i: number): boolean {
  * piped input.
  */
 function segmentIsPipeTarget(segments: ParsedSegment[], i: number): boolean {
-	return i > 0 && segments[i - 1].followingOp === '|';
+  return i > 0 && segments[i - 1].followingOp === "|";
 }
 
 function grantApplies(r: GrantRow, q: MatchQuery): boolean {
-	if (r.expiresAt !== null && r.expiresAt < q.now) return false;
-	if (!toolMatches(r.tool, q.tool, q.permissionKind)) return false;
-	if (!kindMatches(r.permissionKind, q.permissionKind)) return false;
-	if (r.argsHash && r.argsHash !== q.argsHash) return false;
-	return true;
+  if (r.expiresAt !== null && r.expiresAt < q.now) return false;
+  if (!toolMatches(r.tool, q.tool, q.permissionKind)) return false;
+  if (!kindMatches(r.permissionKind, q.permissionKind)) return false;
+  if (r.argsHash && r.argsHash !== q.argsHash) return false;
+  return true;
 }
 
 function rowMatchesShellSegment(
-	r: GrantRow,
-	seg: ParsedSegment,
-	ctx: ShellMatchContext,
-	explain?: ShellMatchExplain
+  r: GrantRow,
+  seg: ParsedSegment,
+  ctx: ShellMatchContext,
+  explain?: ShellMatchExplain,
 ): boolean {
-	if (r.scope) {
-		switch (r.scope.kind) {
-			case 'any':
-				return true;
-			case 'shell':
-				return shellRuleMatchesSegment(r.scope.rule, seg, ctx, explain);
-			default:
-				return false;
-		}
-	}
-	return scopeMatches(r.scopePattern, seg.argv.join(' '));
+  if (r.scope) {
+    switch (r.scope.kind) {
+      case "any":
+        return true;
+      case "shell":
+        return shellRuleMatchesSegment(r.scope.rule, seg, ctx, explain);
+      default:
+        return false;
+    }
+  }
+  return scopeMatches(r.scopePattern, seg.argv.join(" "));
 }
 
 function rowScopeMatches(r: GrantRow, q: MatchQuery): boolean {
-	if (r.scope) return structuredScopeMatches(r.scope, q);
-	return scopeMatches(r.scopePattern, q.scopeKey);
+  if (r.scope) return structuredScopeMatches(r.scope, q);
+  return scopeMatches(r.scopePattern, q.scopeKey);
 }
 
 function structuredScopeMatches(scope: GrantScope, q: MatchQuery): boolean {
-	switch (scope.kind) {
-		case 'any':
-			return true;
-		case 'shell':
-			if (q.permissionKind !== 'shell') return false;
-			if (!q.shellSegments) return false;
-			// Reachable only for an empty segment list (non-empty lists are routed
-			// to `matchShellSegments`, which supplies `pathPermitted`), so the
-			// fs-deferring positional kinds correctly fail closed here.
-			return shellRuleMatches(scope.rule, q.shellSegments, {
-				workspaceRoots: q.workspaceRoots ?? null,
-				sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null
-			});
-		case 'fs': {
-			const kind = q.permissionKind;
-			if (kind !== 'read' && kind !== 'write' && kind !== 'edit') return false;
-			if (!q.target) return false;
-			return fsScopeMatches(scope, {
-				permissionKind: kind,
-				target: q.target,
-				workspaceRoots: q.workspaceRoots ?? null,
-				sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null
-			});
-		}
-		case 'url':
-			if (q.permissionKind !== 'url') return false;
-			if (!q.url) return false;
-			return urlScopeMatches(scope, { url: q.url });
-		default: {
-			const _exhaustive: never = scope;
-			void _exhaustive;
-			return false;
-		}
-	}
+  switch (scope.kind) {
+    case "any":
+      return true;
+    case "shell":
+      if (q.permissionKind !== "shell") return false;
+      if (!q.shellSegments) return false;
+      // Reachable only for an empty segment list (non-empty lists are routed
+      // to `matchShellSegments`, which supplies `pathPermitted`), so the
+      // fs-deferring positional kinds correctly fail closed here.
+      return shellRuleMatches(scope.rule, q.shellSegments, {
+        workspaceRoots: q.workspaceRoots ?? null,
+        sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
+      });
+    case "fs": {
+      const kind = q.permissionKind;
+      if (kind !== "read" && kind !== "write" && kind !== "edit") return false;
+      if (!q.target) return false;
+      return fsScopeMatches(scope, {
+        permissionKind: kind,
+        target: q.target,
+        workspaceRoots: q.workspaceRoots ?? null,
+        sessionWorkspaceRoot: q.sessionWorkspaceRoot ?? null,
+      });
+    }
+    case "url":
+      if (q.permissionKind !== "url") return false;
+      if (!q.url) return false;
+      return urlScopeMatches(scope, { url: q.url });
+    default: {
+      const _exhaustive: never = scope;
+      void _exhaustive;
+      return false;
+    }
+  }
 }
 
-function toolMatches(grant: string, wantTool: string, wantKind: string): boolean {
-	// A grant row is keyed either by the tool's own name (rows persisted from a
-	// permission prompt, e.g. `Bash` or `web_fetch`) or by the canonical
-	// permission vocabulary used by the seeds and the settings form
-	// (`shell`/`read`/`write`/`edit`/`url`). Accept either so a saved grant
-	// matches an SDK built-in request whose tool name differs from its kind
-	// (`Bash` → kind `shell`); the `kindMatches` check below still constrains
-	// which rows actually apply.
-	return grant === '*' || grant === wantTool || grant === wantKind;
+function toolMatches(
+  grant: string,
+  wantTool: string,
+  wantKind: string,
+): boolean {
+  // A grant row is keyed either by the tool's own name (rows persisted from a
+  // permission prompt, e.g. `Bash` or `web_fetch`) or by the canonical
+  // permission vocabulary used by the seeds and the settings form
+  // (`shell`/`read`/`write`/`edit`/`url`). Accept either so a saved grant
+  // matches an SDK built-in request whose tool name differs from its kind
+  // (`Bash` → kind `shell`); the `kindMatches` check below still constrains
+  // which rows actually apply.
+  return grant === "*" || grant === wantTool || grant === wantKind;
 }
 
 function kindMatches(grant: string | null, want: string): boolean {
-	if (grant === null || grant === '*') return true;
-	return grant === want;
+  if (grant === null || grant === "*") return true;
+  return grant === want;
 }
 
-function scopeMatches(pattern: string | null, scopeKey: string | null): boolean {
-	if (pattern === null || pattern === '' || pattern === '*') return true;
-	if (scopeKey === null) return false;
-	return globMatches(pattern, scopeKey);
+function scopeMatches(
+  pattern: string | null,
+  scopeKey: string | null,
+): boolean {
+  if (pattern === null || pattern === "" || pattern === "*") return true;
+  if (scopeKey === null) return false;
+  return globMatches(pattern, scopeKey);
 }
 
 /**
@@ -512,33 +552,33 @@ function scopeMatches(pattern: string | null, scopeKey: string | null): boolean 
  * exponential blow-up, so no compiled-regex cache is needed.
  */
 export function globMatches(pattern: string, value: string): boolean {
-	let p = 0;
-	let s = 0;
-	let starP = -1;
-	let starS = 0;
-	while (s < value.length) {
-		if (p < pattern.length && pattern[p] === '*') {
-			// Record the wildcard position and the point in `value` to resume
-			// from, then tentatively let `*` match zero characters.
-			starP = p;
-			starS = s;
-			p++;
-		} else if (p < pattern.length && pattern[p] === value[s]) {
-			p++;
-			s++;
-		} else if (starP !== -1) {
-			// Mismatch after a `*`: backtrack and let that `*` consume one
-			// more character of `value`.
-			p = starP + 1;
-			starS++;
-			s = starS;
-		} else {
-			return false;
-		}
-	}
-	// Trailing `*`s in the pattern match the empty remainder.
-	while (p < pattern.length && pattern[p] === '*') p++;
-	return p === pattern.length;
+  let p = 0;
+  let s = 0;
+  let starP = -1;
+  let starS = 0;
+  while (s < value.length) {
+    if (p < pattern.length && pattern[p] === "*") {
+      // Record the wildcard position and the point in `value` to resume
+      // from, then tentatively let `*` match zero characters.
+      starP = p;
+      starS = s;
+      p++;
+    } else if (p < pattern.length && pattern[p] === value[s]) {
+      p++;
+      s++;
+    } else if (starP !== -1) {
+      // Mismatch after a `*`: backtrack and let that `*` consume one
+      // more character of `value`.
+      p = starP + 1;
+      starS++;
+      s = starS;
+    } else {
+      return false;
+    }
+  }
+  // Trailing `*`s in the pattern match the empty remainder.
+  while (p < pattern.length && pattern[p] === "*") p++;
+  return p === pattern.length;
 }
 
 /**

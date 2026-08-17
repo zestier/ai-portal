@@ -1,10 +1,10 @@
-import { json } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { conversationId as convCodec } from '$lib/ids';
-import * as convs from '$lib/server/db/repos/conversations';
-import { authorizeConversation } from '$lib/server/conversation-auth';
-import { getTurn } from '$lib/server/runtime/turn-runner';
-import { publishConversationActivity } from '$lib/server/runtime/conversation-activity';
+import { json } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import { conversationId as convCodec } from "$lib/ids";
+import * as convs from "$lib/server/db/repos/conversations";
+import { authorizeConversation } from "$lib/server/conversation-auth";
+import { getTurn } from "$lib/server/runtime/turn-runner";
+import { publishConversationActivity } from "$lib/server/runtime/conversation-activity";
 
 // POST /api/conversations/:id/read — mark the conversation seen up to now.
 //
@@ -14,10 +14,14 @@ import { publishConversationActivity } from '$lib/server/runtime/conversation-ac
 // in after the load). Idempotent, and monotonic in the repo, so redundant calls
 // and out-of-order delivery are both harmless.
 export const POST: RequestHandler = ({ params, locals }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const convId = convCodec.parse(conv.id);
-	const lastReadAt = Date.now();
-	convs.markRead(convId, conv.userId, lastReadAt);
-	publishConversationActivity(conv.userId, convId, getTurn(convId)?.status === 'running');
-	return json({ ok: true, lastReadAt });
+  const conv = authorizeConversation(params.id, locals.userId);
+  const convId = convCodec.parse(conv.id);
+  const lastReadAt = Date.now();
+  convs.markRead(convId, conv.userId, lastReadAt);
+  publishConversationActivity(
+    conv.userId,
+    convId,
+    getTurn(convId)?.status === "running",
+  );
+  return json({ ok: true, lastReadAt });
 };

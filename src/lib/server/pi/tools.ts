@@ -23,92 +23,106 @@
 // `tool.progress`.
 
 import type {
-	AgentToolResult,
-	AgentToolUpdateCallback,
-	ToolDefinition
-} from '@earendil-works/pi-coding-agent';
+  AgentToolResult,
+  AgentToolUpdateCallback,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import {
-	deriveToolResultViews,
-	err,
-	type PortalTool,
-	type ToolResult,
-	type ToolStreamContext
-} from '../tools/types';
+  deriveToolResultViews,
+  err,
+  type PortalTool,
+  type ToolResult,
+  type ToolStreamContext,
+} from "../tools/types";
 
 // The details channel carries either a stream tag (from `onUpdate`) or the
 // final portal envelope.
-type PiToolDetails = ToolResult | { portalStream: 'partial' } | { portalStream: 'progress' };
+type PiToolDetails =
+  ToolResult | { portalStream: "partial" } | { portalStream: "progress" };
 
 export function portalToolToPiTool(portalTool: PortalTool): ToolDefinition {
-	const tool = {
-		name: portalTool.name,
-		label: portalTool.name,
-		description: portalTool.description,
-		// Load-bearing in-context caveats that don't belong in the (token-heavy)
-		// tool `description`; pi surfaces them in the system prompt instead.
-		...(portalTool.promptSnippet !== undefined ? { promptSnippet: portalTool.promptSnippet } : {}),
-		...(portalTool.promptGuidelines !== undefined && portalTool.promptGuidelines.length > 0
-			? { promptGuidelines: portalTool.promptGuidelines }
-			: {}),
-		// Portal tools declare plain JSON schemas; pi's `parameters` slot is
-		// typed `TSchema`, so cast through unknown. Runtime validation still runs:
-		// pi's validateToolArguments coerces + checks plain JSON schemas.
-		parameters: portalTool.parameters as unknown as ToolDefinition['parameters'],
-		async execute(
-			_toolCallId: string,
-			params: unknown,
-			signal: AbortSignal | undefined,
-			onUpdate: AgentToolUpdateCallback<PiToolDetails> | undefined
-		): Promise<AgentToolResult<PiToolDetails>> {
-			const stream: ToolStreamContext = {
-				signal: signal ?? new AbortController().signal,
-				partial(output) {
-					onUpdate?.({
-						content: [{ type: 'text', text: output }],
-						details: { portalStream: 'partial' }
-					});
-				},
-				progress(message) {
-					onUpdate?.({
-						content: [{ type: 'text', text: message }],
-						details: { portalStream: 'progress' }
-					});
-				}
-			};
-			const envelope = await runPortalTool(portalTool, params, stream);
-			return envelopeToAgentToolResult(envelope);
-		}
-	};
-	return tool as unknown as ToolDefinition;
+  const tool = {
+    name: portalTool.name,
+    label: portalTool.name,
+    description: portalTool.description,
+    // Load-bearing in-context caveats that don't belong in the (token-heavy)
+    // tool `description`; pi surfaces them in the system prompt instead.
+    ...(portalTool.promptSnippet !== undefined
+      ? { promptSnippet: portalTool.promptSnippet }
+      : {}),
+    ...(portalTool.promptGuidelines !== undefined &&
+    portalTool.promptGuidelines.length > 0
+      ? { promptGuidelines: portalTool.promptGuidelines }
+      : {}),
+    // Portal tools declare plain JSON schemas; pi's `parameters` slot is
+    // typed `TSchema`, so cast through unknown. Runtime validation still runs:
+    // pi's validateToolArguments coerces + checks plain JSON schemas.
+    parameters:
+      portalTool.parameters as unknown as ToolDefinition["parameters"],
+    async execute(
+      _toolCallId: string,
+      params: unknown,
+      signal: AbortSignal | undefined,
+      onUpdate: AgentToolUpdateCallback<PiToolDetails> | undefined,
+    ): Promise<AgentToolResult<PiToolDetails>> {
+      const stream: ToolStreamContext = {
+        signal: signal ?? new AbortController().signal,
+        partial(output) {
+          onUpdate?.({
+            content: [{ type: "text", text: output }],
+            details: { portalStream: "partial" },
+          });
+        },
+        progress(message) {
+          onUpdate?.({
+            content: [{ type: "text", text: message }],
+            details: { portalStream: "progress" },
+          });
+        },
+      };
+      const envelope = await runPortalTool(portalTool, params, stream);
+      return envelopeToAgentToolResult(envelope);
+    },
+  };
+  return tool as unknown as ToolDefinition;
 }
 
 async function runPortalTool(
-	portalTool: PortalTool,
-	params: unknown,
-	stream: ToolStreamContext
+  portalTool: PortalTool,
+  params: unknown,
+  stream: ToolStreamContext,
 ): Promise<ToolResult> {
-	try {
-		return await portalTool.handler(params, stream);
-	} catch (e) {
-		// Handlers are supposed to return `err(...)`, but a thrown exception is
-		// normalized to the same envelope at the boundary so pi sees the same
-		// shape either way.
-		return err(e instanceof Error ? e.message : String(e));
-	}
+  try {
+    return await portalTool.handler(params, stream);
+  } catch (e) {
+    // Handlers are supposed to return `err(...)`, but a thrown exception is
+    // normalized to the same envelope at the boundary so pi sees the same
+    // shape either way.
+    return err(e instanceof Error ? e.message : String(e));
+  }
 }
 
-function envelopeToAgentToolResult(envelope: ToolResult): AgentToolResult<PiToolDetails> {
-	const content: AgentToolResult<PiToolDetails>['content'] = [];
-	// Image views become image content blocks (the model sees them). Text is
-	// carried by the single modelText block below, which already prefers a
-	// tool's rendered text views, so text views are not emitted separately.
-	if (envelope.ok) {
-		for (const view of envelope.views ?? []) {
-			if (view.type === 'image') {
-				content.push({ type: 'image', data: view.data, mimeType: view.mimeType });
-			}
-		}
-	}
-	content.push({ type: 'text', text: deriveToolResultViews(envelope).modelText });
-	return { content, details: envelope };
+function envelopeToAgentToolResult(
+  envelope: ToolResult,
+): AgentToolResult<PiToolDetails> {
+  const content: AgentToolResult<PiToolDetails>["content"] = [];
+  // Image views become image content blocks (the model sees them). Text is
+  // carried by the single modelText block below, which already prefers a
+  // tool's rendered text views, so text views are not emitted separately.
+  if (envelope.ok) {
+    for (const view of envelope.views ?? []) {
+      if (view.type === "image") {
+        content.push({
+          type: "image",
+          data: view.data,
+          mimeType: view.mimeType,
+        });
+      }
+    }
+  }
+  content.push({
+    type: "text",
+    text: deriveToolResultViews(envelope).modelText,
+  });
+  return { content, details: envelope };
 }

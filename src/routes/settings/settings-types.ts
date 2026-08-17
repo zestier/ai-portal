@@ -1,75 +1,75 @@
-export { describeGrantScope } from '$lib/permissions/scope-summary';
-import type { PageData } from './$types';
+export { describeGrantScope } from "$lib/permissions/scope-summary";
+import type { PageData } from "./$types";
 
 export type FormResult = {
-	ok?: boolean;
-	error?: string;
-	formId?: string;
-	duplicate?: boolean;
+  ok?: boolean;
+  error?: string;
+  formId?: string;
+  duplicate?: boolean;
 };
 
 export type SettingsTab =
-	| 'general'
-	| 'prompts'
-	| 'memory'
-	| 'permissions'
-	| 'models'
-	| 'extensions'
-	| 'activity'
-	| 'update';
+  | "general"
+  | "prompts"
+  | "memory"
+  | "permissions"
+  | "models"
+  | "extensions"
+  | "activity"
+  | "update";
 
-export type SettingsData = PageData['settings'];
-export type PermissionGrant = PageData['grants'][number];
-export type PermissionDecision = PageData['recentDecisions'][number];
-export type PromptTemplate = PageData['promptTemplates'][number];
-export type CustomMemoryProfile = PageData['customMemoryProfiles'][number];
+export type SettingsData = PageData["settings"];
+export type PermissionGrant = PageData["grants"][number];
+export type PermissionDecision = PageData["recentDecisions"][number];
+export type PromptTemplate = PageData["promptTemplates"][number];
+export type CustomMemoryProfile = PageData["customMemoryProfiles"][number];
 
 export function formatTime(ms: number): string {
-	try {
-		return new Date(ms).toLocaleString();
-	} catch {
-		return String(ms);
-	}
+  try {
+    return new Date(ms).toLocaleString();
+  } catch {
+    return String(ms);
+  }
 }
 
-export function decisionLabel(d: PermissionDecision['decision']): string {
-	switch (d) {
-		case 'allow-once':
-			return 'Allow once';
-		case 'allow-always':
-			return 'Allow always';
-		case 'deny':
-			return 'Deny';
-		case 'deny-always':
-			return 'Deny always';
-		case 'auto-allow':
-			return 'Auto-allow';
-		case 'auto-deny':
-			return 'Auto-deny';
-		case 'auto-prompt-required':
-			return 'Auto prompt-required';
-		case 'auto-cancelled':
-			return 'Auto-cancelled';
-		case 'auto-expired':
-			return 'Auto-expired';
-	}
+export function decisionLabel(d: PermissionDecision["decision"]): string {
+  switch (d) {
+    case "allow-once":
+      return "Allow once";
+    case "allow-always":
+      return "Allow always";
+    case "deny":
+      return "Deny";
+    case "deny-always":
+      return "Deny always";
+    case "auto-allow":
+      return "Auto-allow";
+    case "auto-deny":
+      return "Auto-deny";
+    case "auto-prompt-required":
+      return "Auto prompt-required";
+    case "auto-cancelled":
+      return "Auto-cancelled";
+    case "auto-expired":
+      return "Auto-expired";
+  }
 }
 
 export function grantScopeLabel(g: {
-	conversationId: string | null;
-	conversationTitle: string | null;
+  conversationId: string | null;
+  conversationTitle: string | null;
 }) {
-	if (!g.conversationId) return 'Global';
-	return g.conversationTitle ?? g.conversationId;
+  if (!g.conversationId) return "Global";
+  return g.conversationTitle ?? g.conversationId;
 }
 
 export function formatExpiry(ms: number | null): string {
-	if (ms == null) return 'Never';
-	const delta = ms - Date.now();
-	if (delta <= 0) return 'expired';
-	const mins = Math.round(delta / 60_000);
-	if (mins < 60) return `in ${mins}m`;
-	const hours = Math.round(mins / 60);
-	if (hours < 48) return `in ${hours}h`;
-	return `in ${Math.round(hours / 24)}d`;
+  if (ms == null) return "Never";
+  const delta = ms - Date.now();
+  if (delta <= 0) return "expired";
+  const mins = Math.round(delta / 60_000);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `in ${hours}h`;
+  return `in ${Math.round(hours / 24)}d`;
 }

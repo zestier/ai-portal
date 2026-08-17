@@ -18,10 +18,10 @@
  * @returns {boolean}
  */
 export function shouldRollback({ code, uptimeMs, hasPrev, thresholdMs }) {
-	if (!hasPrev) return false;
-	if (code === 0) return false;
-	if (code === null || code === undefined) return false;
-	return uptimeMs < thresholdMs;
+  if (!hasPrev) return false;
+  if (code === 0) return false;
+  if (code === null || code === undefined) return false;
+  return uptimeMs < thresholdMs;
 }
 
 /**
@@ -33,5 +33,5 @@ export function shouldRollback({ code, uptimeMs, hasPrev, thresholdMs }) {
  * @returns {number}
  */
 export function restartDelayMs(code) {
-	return code === 0 ? 250 : 2000;
+  return code === 0 ? 250 : 2000;
 }

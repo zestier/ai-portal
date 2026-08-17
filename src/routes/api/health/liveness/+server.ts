@@ -1,5 +1,5 @@
-import { json } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
+import { json } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
 
 // Liveness probe: "is the process up and serving HTTP?" — deliberately
 // DB-free. The Docker HEALTHCHECK polls this so a transient DB hiccup (or a

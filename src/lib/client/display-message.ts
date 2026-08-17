@@ -1,4 +1,4 @@
-import type { FileEditRecord, Message, ReasoningBlockRecord } from '$lib/types';
+import type { FileEditRecord, Message, ReasoningBlockRecord } from "$lib/types";
 
 /**
  * A message as rendered in the transcript. Persisted rows carry INTEGER ids
@@ -11,11 +11,16 @@ import type { FileEditRecord, Message, ReasoningBlockRecord } from '$lib/types';
  */
 export type DisplayId = number | string;
 
-export type DisplayReasoningBlock = Omit<ReasoningBlockRecord, 'id'> & { id: DisplayId };
-export type DisplayFileEdit = Omit<FileEditRecord, 'id'> & { id: DisplayId };
+export type DisplayReasoningBlock = Omit<ReasoningBlockRecord, "id"> & {
+  id: DisplayId;
+};
+export type DisplayFileEdit = Omit<FileEditRecord, "id"> & { id: DisplayId };
 
-export type DisplayMessage = Omit<Message, 'id' | 'reasoningBlocks' | 'fileEdits'> & {
-	id: DisplayId;
-	reasoningBlocks?: DisplayReasoningBlock[];
-	fileEdits?: DisplayFileEdit[];
+export type DisplayMessage = Omit<
+  Message,
+  "id" | "reasoningBlocks" | "fileEdits"
+> & {
+  id: DisplayId;
+  reasoningBlocks?: DisplayReasoningBlock[];
+  fileEdits?: DisplayFileEdit[];
 };

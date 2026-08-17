@@ -1,11 +1,11 @@
-import { test as base, expect, type APIRequestContext } from '@playwright/test';
-import { createHash } from 'node:crypto';
+import { test as base, expect, type APIRequestContext } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 export { expect };
 
 // hooks.server.ts issues the CSRF token under one of these cookie names
 // (`__Host-` prefix only over HTTPS; the e2e server runs over http).
-const CSRF_COOKIE_NAMES = ['portal_csrf', '__Host-portal_csrf'];
+const CSRF_COOKIE_NAMES = ["portal_csrf", "__Host-portal_csrf"];
 
 /**
  * Overrides the built-in `request` fixture so API-driven specs satisfy the
@@ -19,37 +19,43 @@ const CSRF_COOKIE_NAMES = ['portal_csrf', '__Host-portal_csrf'];
  * `Origin` header (also required by the guard) is re-added here because a
  * freshly created context does not inherit `use.extraHTTPHeaders`.
  */
-export const test = base.extend<{ request: APIRequestContext; testIdentity: string }>({
-	testIdentity: async ({ browserName }, use, testInfo) => {
-		const seed = `${browserName}:${testInfo.testId}:${testInfo.repeatEachIndex}`;
-		const identity = createHash('sha256').update(seed).digest('hex').slice(0, 24);
-		await use(`test-${identity}`);
-	},
-	context: async ({ context, testIdentity }, use) => {
-		await context.setExtraHTTPHeaders({ 'x-e2e-user': testIdentity });
-		await use(context);
-	},
-	request: async ({ playwright, baseURL, testIdentity }, use) => {
-		const origin = baseURL ?? '';
-		const probe = await playwright.request.newContext({
-			baseURL,
-			extraHTTPHeaders: { Origin: origin, 'x-e2e-user': testIdentity }
-		});
-		await probe.get('/api/health');
-		const { cookies } = await probe.storageState();
-		await probe.dispose();
-		const csrf = cookies.find((c) => CSRF_COOKIE_NAMES.includes(c.name));
+export const test = base.extend<{
+  request: APIRequestContext;
+  testIdentity: string;
+}>({
+  testIdentity: async ({ browserName }, use, testInfo) => {
+    const seed = `${browserName}:${testInfo.testId}:${testInfo.repeatEachIndex}`;
+    const identity = createHash("sha256")
+      .update(seed)
+      .digest("hex")
+      .slice(0, 24);
+    await use(`test-${identity}`);
+  },
+  context: async ({ context, testIdentity }, use) => {
+    await context.setExtraHTTPHeaders({ "x-e2e-user": testIdentity });
+    await use(context);
+  },
+  request: async ({ playwright, baseURL, testIdentity }, use) => {
+    const origin = baseURL ?? "";
+    const probe = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: { Origin: origin, "x-e2e-user": testIdentity },
+    });
+    await probe.get("/api/health");
+    const { cookies } = await probe.storageState();
+    await probe.dispose();
+    const csrf = cookies.find((c) => CSRF_COOKIE_NAMES.includes(c.name));
 
-		const ctx = await playwright.request.newContext({
-			baseURL,
-			extraHTTPHeaders: {
-				Origin: origin,
-				'x-e2e-user': testIdentity,
-				...(csrf ? { 'X-CSRF-Token': csrf.value } : {})
-			},
-			storageState: csrf ? { cookies: [csrf], origins: [] } : undefined
-		});
-		await use(ctx);
-		await ctx.dispose();
-	}
+    const ctx = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: {
+        Origin: origin,
+        "x-e2e-user": testIdentity,
+        ...(csrf ? { "X-CSRF-Token": csrf.value } : {}),
+      },
+      storageState: csrf ? { cookies: [csrf], origins: [] } : undefined,
+    });
+    await use(ctx);
+    await ctx.dispose();
+  },
 });

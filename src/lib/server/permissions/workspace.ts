@@ -13,8 +13,16 @@
 // renormalize. This way a non-existent target inside a real-but-symlinked
 // directory is judged against the link's true location.
 
-import { isAbsolute, resolve, sep, relative, dirname, basename, normalize } from 'node:path';
-import { realpathSync } from 'node:fs';
+import {
+  isAbsolute,
+  resolve,
+  sep,
+  relative,
+  dirname,
+  basename,
+  normalize,
+} from "node:path";
+import { realpathSync } from "node:fs";
 
 /**
  * Returns true if `target` resolves to a path equal to or inside
@@ -23,27 +31,32 @@ import { realpathSync } from 'node:fs';
  * empty inputs, paths containing a NUL byte, or any unexpected error
  * from realpath — callers fall back to prompting.
  */
-export function isPathInWorkspace(target: string, workspaceRoot: string): boolean {
-	if (!target || !workspaceRoot) return false;
-	if (target.includes('\0') || workspaceRoot.includes('\0')) return false;
+export function isPathInWorkspace(
+  target: string,
+  workspaceRoot: string,
+): boolean {
+  if (!target || !workspaceRoot) return false;
+  if (target.includes("\0") || workspaceRoot.includes("\0")) return false;
 
-	const root = safeRealpath(resolve(workspaceRoot));
-	if (root === null) return false;
+  const root = safeRealpath(resolve(workspaceRoot));
+  if (root === null) return false;
 
-	const absTarget = isAbsolute(target) ? resolve(target) : resolve(root, target);
-	const resolvedTarget = resolveWithParentFallback(absTarget);
-	if (resolvedTarget === null) return false;
+  const absTarget = isAbsolute(target)
+    ? resolve(target)
+    : resolve(root, target);
+  const resolvedTarget = resolveWithParentFallback(absTarget);
+  if (resolvedTarget === null) return false;
 
-	if (resolvedTarget === root) return true;
-	const rel = relative(root, resolvedTarget);
-	if (rel === '') return true;
-	if (rel.startsWith('..')) return false;
-	if (isAbsolute(rel)) return false; // different drive on Windows
-	// Defense in depth: `relative` returns a non-".."-prefixed string for
-	// contained paths, but verify with an explicit prefix check to guard
-	// against sibling-root false positives like `/work/repo-evil` vs
-	// `/work/repo`.
-	return resolvedTarget.startsWith(root + sep);
+  if (resolvedTarget === root) return true;
+  const rel = relative(root, resolvedTarget);
+  if (rel === "") return true;
+  if (rel.startsWith("..")) return false;
+  if (isAbsolute(rel)) return false; // different drive on Windows
+  // Defense in depth: `relative` returns a non-".."-prefixed string for
+  // contained paths, but verify with an explicit prefix check to guard
+  // against sibling-root false positives like `/work/repo-evil` vs
+  // `/work/repo`.
+  return resolvedTarget.startsWith(root + sep);
 }
 
 /**
@@ -60,19 +73,19 @@ export function isPathInWorkspace(target: string, workspaceRoot: string): boolea
  * silently gain blanket write access.
  */
 export function isPathInAnyWorkspace(
-	target: string,
-	roots: readonly string[] | null | undefined
+  target: string,
+  roots: readonly string[] | null | undefined,
 ): boolean {
-	if (!roots || roots.length === 0) return false;
-	return roots.some((root) => isPathInWorkspace(target, root));
+  if (!roots || roots.length === 0) return false;
+  return roots.some((root) => isPathInWorkspace(target, root));
 }
 
 function safeRealpath(p: string): string | null {
-	try {
-		return realpathSync(p);
-	} catch {
-		return null;
-	}
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -86,22 +99,22 @@ function safeRealpath(p: string): string | null {
  * `prefix` rule) can resolve arbitrary paths the same way.
  */
 export function resolveWithParentFallback(absPath: string): string | null {
-	const direct = safeRealpath(absPath);
-	if (direct !== null) return direct;
+  const direct = safeRealpath(absPath);
+  if (direct !== null) return direct;
 
-	const unresolved: string[] = [];
-	let current = absPath;
-	// Cap iterations to avoid pathological loops (`relative` paths or
-	// symlink cycles in dirname() shouldn't lead here, but be safe).
-	for (let i = 0; i < 4096; i++) {
-		const parent = dirname(current);
-		if (parent === current) return null; // hit the root without finding anything
-		unresolved.unshift(basename(current));
-		const resolvedParent = safeRealpath(parent);
-		if (resolvedParent !== null) {
-			return normalize(resolve(resolvedParent, ...unresolved));
-		}
-		current = parent;
-	}
-	return null;
+  const unresolved: string[] = [];
+  let current = absPath;
+  // Cap iterations to avoid pathological loops (`relative` paths or
+  // symlink cycles in dirname() shouldn't lead here, but be safe).
+  for (let i = 0; i < 4096; i++) {
+    const parent = dirname(current);
+    if (parent === current) return null; // hit the root without finding anything
+    unresolved.unshift(basename(current));
+    const resolvedParent = safeRealpath(parent);
+    if (resolvedParent !== null) {
+      return normalize(resolve(resolvedParent, ...unresolved));
+    }
+    current = parent;
+  }
+  return null;
 }

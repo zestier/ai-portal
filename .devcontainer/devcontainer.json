@@ -1,8 +1,8 @@
 {
-	"name": "Ubuntu",
-	"build": {
-		"dockerfile": "Dockerfile",
-		"context": "."
-	},
-	"remoteUser": "vscode"
+  "name": "Ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode"
 }

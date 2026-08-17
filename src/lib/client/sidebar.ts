@@ -1,13 +1,13 @@
-import type { SidebarTicket, WorkspaceTicketPriority } from '$lib/types';
-import { TICKET_PRIORITIES } from '$lib/types';
+import type { SidebarTicket, WorkspaceTicketPriority } from "$lib/types";
+import { TICKET_PRIORITIES } from "$lib/types";
 
-export const SIDEBAR_STORAGE_KEY = 'sidebarOpen';
+export const SIDEBAR_STORAGE_KEY = "sidebarOpen";
 export const SIDEBAR_DESKTOP_MIN_WIDTH = 769;
 export const SIDEBAR_MOBILE_MAX_WIDTH = 768;
 
 export interface SidebarEnv {
-	getStored: () => string | null;
-	isDesktop: () => boolean;
+  getStored: () => string | null;
+  isDesktop: () => boolean;
 }
 
 /**
@@ -16,10 +16,10 @@ export interface SidebarEnv {
  * and closed on mobile so the sidebar never overlays content on reload.
  */
 export function resolveInitialSidebarOpen(env: SidebarEnv): boolean {
-	const stored = env.getStored();
-	if (stored === 'true') return true;
-	if (stored === 'false') return false;
-	return env.isDesktop();
+  const stored = env.getStored();
+  if (stored === "true") return true;
+  if (stored === "false") return false;
+  return env.isDesktop();
 }
 
 /**
@@ -31,27 +31,33 @@ export function resolveInitialSidebarOpen(env: SidebarEnv): boolean {
  * within a priority via a stable sort. Does not pull in tickets outside the
  * given list.
  */
-export function orderSidebarTickets<T extends Pick<SidebarTicket, 'blockers' | 'priority'>>(
-	tickets: T[]
-): T[] {
-	const ready: T[] = [];
-	const blocked: T[] = [];
-	for (const ticket of tickets) {
-		if (ticket.blockers.length > 0) blocked.push(ticket);
-		else ready.push(ticket);
-	}
-	return [...byPriority(ready), ...byPriority(blocked)];
+export function orderSidebarTickets<
+  T extends Pick<SidebarTicket, "blockers" | "priority">,
+>(tickets: T[]): T[] {
+  const ready: T[] = [];
+  const blocked: T[] = [];
+  for (const ticket of tickets) {
+    if (ticket.blockers.length > 0) blocked.push(ticket);
+    else ready.push(ticket);
+  }
+  return [...byPriority(ready), ...byPriority(blocked)];
 }
 
-const PRIORITY_RANK: Record<WorkspaceTicketPriority, number> = Object.fromEntries(
-	TICKET_PRIORITIES.map((p, i) => [p, i])
-) as Record<WorkspaceTicketPriority, number>;
+const PRIORITY_RANK: Record<WorkspaceTicketPriority, number> =
+  Object.fromEntries(TICKET_PRIORITIES.map((p, i) => [p, i])) as Record<
+    WorkspaceTicketPriority,
+    number
+  >;
 
 /**
  * Stable-sort a group by priority (P0 highest → P3 lowest). `Array.prototype.sort`
  * is required to be stable, so tickets sharing a priority keep their incoming
  * (recency) order.
  */
-function byPriority<T extends Pick<SidebarTicket, 'priority'>>(group: T[]): T[] {
-	return [...group].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
+function byPriority<T extends Pick<SidebarTicket, "priority">>(
+  group: T[],
+): T[] {
+  return [...group].sort(
+    (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+  );
 }

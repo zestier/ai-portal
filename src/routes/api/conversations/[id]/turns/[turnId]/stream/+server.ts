@@ -1,9 +1,9 @@
-import { error } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { conversationId as convCodec } from '$lib/ids';
-import { sseResponse } from '$lib/server/sse';
-import { getTurnById } from '$lib/server/runtime/turn-runner';
-import { authorizeConversation } from '$lib/server/conversation-auth';
+import { error } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import { conversationId as convCodec } from "$lib/ids";
+import { sseResponse } from "$lib/server/sse";
+import { getTurnById } from "$lib/server/runtime/turn-runner";
+import { authorizeConversation } from "$lib/server/conversation-auth";
 
 /**
  * Stream events for an in-flight (or recently-finished, within the
@@ -20,31 +20,31 @@ import { authorizeConversation } from '$lib/server/conversation-auth';
  * permanent end-of-stream — `EventSource` won't auto-retry it.
  */
 export const GET: RequestHandler = ({ params, locals, request, url }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
+  const conv = authorizeConversation(params.id, locals.userId);
 
-	const turn = getTurnById(convCodec.parse(conv.id), params.turnId);
-	if (!turn) throw error(410, 'Turn no longer available');
+  const turn = getTurnById(convCodec.parse(conv.id), params.turnId);
+  if (!turn) throw error(410, "Turn no longer available");
 
-	// Browser auto-reconnect sets this header to the last `id:` it saw.
-	const lastIdHeader = request.headers.get('last-event-id');
-	let sinceId: number | undefined;
-	if (lastIdHeader !== null) {
-		const n = Number(lastIdHeader);
-		if (Number.isFinite(n) && n >= 0) sinceId = Math.floor(n);
-	}
+  // Browser auto-reconnect sets this header to the last `id:` it saw.
+  const lastIdHeader = request.headers.get("last-event-id");
+  let sinceId: number | undefined;
+  if (lastIdHeader !== null) {
+    const n = Number(lastIdHeader);
+    if (Number.isFinite(n) && n >= 0) sinceId = Math.floor(n);
+  }
 
-	return sseResponse(
-		turn.subscribe({
-			signal: request.signal,
-			skipReplay: url.searchParams.get('replay') === '0',
-			...(sinceId !== undefined ? { sinceId } : {})
-		}),
-		{
-			// Negative ids are sentinels for ephemeral events that aren't part
-			// of the replay buffer — omit the `id:` line entirely so the
-			// browser's Last-Event-ID stays pointed at the latest persisted id.
-			extractId: (item) => (item.id < 0 ? undefined : item.id),
-			extractData: (item) => item.event
-		}
-	);
+  return sseResponse(
+    turn.subscribe({
+      signal: request.signal,
+      skipReplay: url.searchParams.get("replay") === "0",
+      ...(sinceId !== undefined ? { sinceId } : {}),
+    }),
+    {
+      // Negative ids are sentinels for ephemeral events that aren't part
+      // of the replay buffer — omit the `id:` line entirely so the
+      // browser's Last-Event-ID stays pointed at the latest persisted id.
+      extractId: (item) => (item.id < 0 ? undefined : item.id),
+      extractData: (item) => item.event,
+    },
+  );
 };

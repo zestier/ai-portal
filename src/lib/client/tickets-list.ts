@@ -1,12 +1,12 @@
-import type { WorkspaceTicket, WorkspaceTicketPriority } from '$lib/types';
+import type { WorkspaceTicket, WorkspaceTicketPriority } from "$lib/types";
 
-export type TicketListStatus = 'open' | 'done' | 'archived' | 'all';
+export type TicketListStatus = "open" | "done" | "archived" | "all";
 
 /** Result ordering for the `/tickets` index list. `recency` is the default. */
-export type TicketListSort = 'recency' | 'priority';
+export type TicketListSort = "recency" | "priority";
 
 /** Priority filter for the index list; `'all'` (the default) includes every priority. */
-export type TicketPriorityFilter = WorkspaceTicketPriority | 'all';
+export type TicketPriorityFilter = WorkspaceTicketPriority | "all";
 
 /** Page size for the `/tickets` index list and its "Load more" pagination. */
 export const TICKETS_PAGE_SIZE = 20;
@@ -14,9 +14,9 @@ export const TICKETS_PAGE_SIZE = 20;
 type TicketsFetch = (url: string) => Promise<Response>;
 
 export interface TicketsPage {
-	tickets: WorkspaceTicket[];
-	/** True when the returned page filled `limit`, so another page may exist. */
-	hasMore: boolean;
+  tickets: WorkspaceTicket[];
+  /** True when the returned page filled `limit`, so another page may exist. */
+  hasMore: boolean;
 }
 
 /**
@@ -28,28 +28,28 @@ export interface TicketsPage {
  * shareable URLs stay clean.
  */
 export function ticketsPageUrl({
-	status,
-	workspace,
-	limit,
-	offset,
-	sort = 'recency',
-	priority = 'all'
+  status,
+  workspace,
+  limit,
+  offset,
+  sort = "recency",
+  priority = "all",
 }: {
-	status: TicketListStatus;
-	workspace?: string | null;
-	limit: number;
-	offset: number;
-	sort?: TicketListSort;
-	priority?: TicketPriorityFilter;
+  status: TicketListStatus;
+  workspace?: string | null;
+  limit: number;
+  offset: number;
+  sort?: TicketListSort;
+  priority?: TicketPriorityFilter;
 }): string {
-	const params = new URLSearchParams();
-	params.set('status', status);
-	if (workspace) params.set('workspace', workspace);
-	params.set('limit', String(limit));
-	params.set('offset', String(offset));
-	if (sort === 'priority') params.set('sort', 'priority');
-	if (priority !== 'all') params.set('priority', priority);
-	return `/api/tickets?${params.toString()}`;
+  const params = new URLSearchParams();
+  params.set("status", status);
+  if (workspace) params.set("workspace", workspace);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  if (sort === "priority") params.set("sort", "priority");
+  if (priority !== "all") params.set("priority", priority);
+  return `/api/tickets?${params.toString()}`;
 }
 
 /**
@@ -59,34 +59,34 @@ export function ticketsPageUrl({
  * are server-side, since the filtered+sorted query itself is what's paged.
  */
 export async function fetchTicketsPage({
-	status,
-	workspace,
-	limit,
-	offset,
-	sort = 'recency',
-	priority = 'all',
-	fetcher = fetch
+  status,
+  workspace,
+  limit,
+  offset,
+  sort = "recency",
+  priority = "all",
+  fetcher = fetch,
 }: {
-	status: TicketListStatus;
-	workspace?: string | null;
-	limit: number;
-	offset: number;
-	sort?: TicketListSort;
-	priority?: TicketPriorityFilter;
-	fetcher?: TicketsFetch;
+  status: TicketListStatus;
+  workspace?: string | null;
+  limit: number;
+  offset: number;
+  sort?: TicketListSort;
+  priority?: TicketPriorityFilter;
+  fetcher?: TicketsFetch;
 }): Promise<TicketsPage> {
-	const res = await fetcher(
-		ticketsPageUrl({
-			status,
-			limit,
-			offset,
-			sort,
-			priority,
-			...(workspace !== undefined ? { workspace } : {})
-		})
-	);
-	if (!res.ok) throw new Error(`Failed to load tickets (${res.status})`);
-	const data = (await res.json()) as { tickets: WorkspaceTicket[] };
-	const tickets = data.tickets ?? [];
-	return { tickets, hasMore: tickets.length === limit };
+  const res = await fetcher(
+    ticketsPageUrl({
+      status,
+      limit,
+      offset,
+      sort,
+      priority,
+      ...(workspace !== undefined ? { workspace } : {}),
+    }),
+  );
+  if (!res.ok) throw new Error(`Failed to load tickets (${res.status})`);
+  const data = (await res.json()) as { tickets: WorkspaceTicket[] };
+  const tickets = data.tickets ?? [];
+  return { tickets, hasMore: tickets.length === limit };
 }

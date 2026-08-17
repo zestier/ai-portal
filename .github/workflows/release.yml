@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
   workflow_dispatch:
 
 # Prevent two release runs from racing for `:latest`.

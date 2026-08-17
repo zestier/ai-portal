@@ -8,11 +8,11 @@
 // check below is the whole reason the selector cannot be used to reach an
 // arbitrary path — so both import this one implementation.
 
-import { z } from 'zod';
-import { conversationId as convCodec } from '$lib/ids';
-import { getLease, resolveLeaseWorkspace, touchLease } from '../leases';
-import { WorkspaceUnavailableError } from '../workdir';
-import { err, type ToolResult } from './types';
+import { z } from "zod";
+import { conversationId as convCodec } from "$lib/ids";
+import { getLease, resolveLeaseWorkspace, touchLease } from "../leases";
+import { WorkspaceUnavailableError } from "../workdir";
+import { err, type ToolResult } from "./types";
 
 /**
  * Optional lease selector accepted by the directory-scoped tools.
@@ -27,28 +27,29 @@ import { err, type ToolResult } from './types';
  * deliberately does not seed those shell grants.
  */
 export const WorktreeSelector = z
-	.string()
-	.trim()
-	.min(1)
-	.max(64)
-	.transform((value) => (value === '.' ? undefined : value))
-	.optional();
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .transform((value) => (value === "." ? undefined : value))
+  .optional();
 
 export const WORKTREE_PARAM = {
-	type: 'string',
-	description: "Optional worktree lease id; omit or use `.` for this conversation's workspace."
+  type: "string",
+  description:
+    "Optional worktree lease id; omit or use `.` for this conversation's workspace.",
 } as const;
 
 export const WORKTREE_COMMIT_PARAM = {
-	type: 'string',
-	description:
-		"Optional worktree lease id to commit in; omit or use `.` for this conversation's workspace."
+  type: "string",
+  description:
+    "Optional worktree lease id to commit in; omit or use `.` for this conversation's workspace.",
 } as const;
 
 export const WORKTREE_WRITE_PARAM = {
-	type: 'string',
-	description:
-		"Optional worktree lease id to act in; omit or use `.` for this conversation's workspace."
+  type: "string",
+  description:
+    "Optional worktree lease id to act in; omit or use `.` for this conversation's workspace.",
 } as const;
 
 /**
@@ -57,14 +58,13 @@ export const WORKTREE_WRITE_PARAM = {
  * without it the selector is rejected rather than silently ignored.
  */
 export interface WorktreeToolContext {
-	userId: number;
-	conversationId: number;
+  userId: number;
+  conversationId: number;
 }
 
 /** Either the directory to act in, or the error envelope to return instead. */
 export type TreeSelection =
-	| { cwd: string; error?: undefined }
-	| { cwd?: undefined; error: ToolResult };
+  { cwd: string; error?: undefined } | { cwd?: undefined; error: ToolResult };
 
 /**
  * Resolve a lease id to its checkout directory, WITHOUT marking the lease used.
@@ -85,18 +85,22 @@ export type TreeSelection =
  * `derivePermissionRequest`, which must not mutate anything) can fail closed.
  */
 export function resolveWorktreeDir(
-	leaseId: string,
-	ctx: WorktreeToolContext | undefined
+  leaseId: string,
+  ctx: WorktreeToolContext | undefined,
 ): string | null {
-	if (!ctx) return null;
-	const lease = getLease(leaseId, ctx.userId);
-	if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) return null;
-	try {
-		return resolveLeaseWorkspace(lease);
-	} catch (cause) {
-		if (!(cause instanceof WorkspaceUnavailableError)) throw cause;
-		return null;
-	}
+  if (!ctx) return null;
+  const lease = getLease(leaseId, ctx.userId);
+  if (
+    !lease ||
+    lease.heldByConversationId !== convCodec.encode(ctx.conversationId)
+  )
+    return null;
+  try {
+    return resolveLeaseWorkspace(lease);
+  } catch (cause) {
+    if (!(cause instanceof WorkspaceUnavailableError)) throw cause;
+    return null;
+  }
 }
 
 /**
@@ -108,38 +112,44 @@ export function resolveWorktreeDir(
  * a lease an orchestrator is actively driving.
  */
 export function createTreeResolver(
-	cwd: string,
-	ctx: WorktreeToolContext | undefined
+  cwd: string,
+  ctx: WorktreeToolContext | undefined,
 ): (leaseId: string | undefined) => TreeSelection {
-	return (leaseId) => {
-		if (!leaseId) return { cwd };
-		if (!ctx) {
-			return {
-				error: err('worktree selection is not available in this session', {
-					code: 'worktree_unavailable'
-				})
-			};
-		}
-		const lease = getLease(leaseId, ctx.userId);
-		if (!lease || lease.heldByConversationId !== convCodec.encode(ctx.conversationId)) {
-			return {
-				error: err(`no worktree with id ${leaseId} in this conversation`, {
-					code: 'lease_not_found'
-				})
-			};
-		}
-		let path: string;
-		try {
-			path = resolveLeaseWorkspace(lease);
-		} catch (cause) {
-			if (!(cause instanceof WorkspaceUnavailableError)) throw cause;
-			return {
-				error: err(`worktree ${leaseId} is no longer available: ${cause.message}`, {
-					code: 'worktree_unavailable'
-				})
-			};
-		}
-		touchLease(lease.id);
-		return { cwd: path };
-	};
+  return (leaseId) => {
+    if (!leaseId) return { cwd };
+    if (!ctx) {
+      return {
+        error: err("worktree selection is not available in this session", {
+          code: "worktree_unavailable",
+        }),
+      };
+    }
+    const lease = getLease(leaseId, ctx.userId);
+    if (
+      !lease ||
+      lease.heldByConversationId !== convCodec.encode(ctx.conversationId)
+    ) {
+      return {
+        error: err(`no worktree with id ${leaseId} in this conversation`, {
+          code: "lease_not_found",
+        }),
+      };
+    }
+    let path: string;
+    try {
+      path = resolveLeaseWorkspace(lease);
+    } catch (cause) {
+      if (!(cause instanceof WorkspaceUnavailableError)) throw cause;
+      return {
+        error: err(
+          `worktree ${leaseId} is no longer available: ${cause.message}`,
+          {
+            code: "worktree_unavailable",
+          },
+        ),
+      };
+    }
+    touchLease(lease.id);
+    return { cwd: path };
+  };
 }

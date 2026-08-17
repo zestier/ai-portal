@@ -10,39 +10,39 @@
 // `Chat.svelte` translates the result into state changes / network calls.
 
 export type ComposerSendAction =
-	| 'send' // start a turn immediately with the current buffer
-	| 'arm' // hold the buffer to auto-send when the active turn finishes
-	| 'disarm' // cancel a previously armed buffer (text is retained)
-	| 'noop'; // nothing to do (empty buffer, or empty while streaming)
+  | "send" // start a turn immediately with the current buffer
+  | "arm" // hold the buffer to auto-send when the active turn finishes
+  | "disarm" // cancel a previously armed buffer (text is retained)
+  | "noop"; // nothing to do (empty buffer, or empty while streaming)
 
 export function decideComposerAction(input: {
-	streaming: boolean;
-	armed: boolean;
-	hasText: boolean;
+  streaming: boolean;
+  armed: boolean;
+  hasText: boolean;
 }): ComposerSendAction {
-	const { streaming, armed, hasText } = input;
-	if (!streaming) {
-		// No turn in progress: behave exactly as a normal composer — send
-		// when there's something to send, otherwise do nothing.
-		return hasText ? 'send' : 'noop';
-	}
-	// A turn is streaming. Pressing the control toggles the armed flag: an
-	// already-armed composer disarms (keeping its text); an unarmed composer
-	// with content arms. An empty composer mid-turn does nothing.
-	if (armed) return 'disarm';
-	return hasText ? 'arm' : 'noop';
+  const { streaming, armed, hasText } = input;
+  if (!streaming) {
+    // No turn in progress: behave exactly as a normal composer — send
+    // when there's something to send, otherwise do nothing.
+    return hasText ? "send" : "noop";
+  }
+  // A turn is streaming. Pressing the control toggles the armed flag: an
+  // already-armed composer disarms (keeping its text); an unarmed composer
+  // with content arms. An empty composer mid-turn does nothing.
+  if (armed) return "disarm";
+  return hasText ? "arm" : "noop";
 }
 
 // Decide what to do with an armed composer when the active turn reaches a
 // terminal state. Only a clean success should auto-send; an errored,
 // interrupted or stopped turn holds (disarm, keep the text for review).
 export function decideArmedFlush(input: {
-	armed: boolean;
-	failed: boolean;
-	hasText: boolean;
-}): 'flush' | 'disarm' | 'noop' {
-	const { armed, failed, hasText } = input;
-	if (!armed) return 'noop';
-	if (failed || !hasText) return 'disarm';
-	return 'flush';
+  armed: boolean;
+  failed: boolean;
+  hasText: boolean;
+}): "flush" | "disarm" | "noop" {
+  const { armed, failed, hasText } = input;
+  if (!armed) return "noop";
+  if (failed || !hasText) return "disarm";
+  return "flush";
 }

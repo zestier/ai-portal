@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable } from "svelte/store";
 
 /**
  * Live, client-side overrides for the sidebar's "active" indicator, keyed by
@@ -13,24 +13,30 @@ import { writable } from 'svelte/store';
  * for the conversations that have one.
  */
 export interface ConversationActivity {
-	running: boolean;
-	unread: boolean;
+  running: boolean;
+  unread: boolean;
 }
 
-export const conversationActivityOverrides = writable<Record<string, ConversationActivity>>({});
+export const conversationActivityOverrides = writable<
+  Record<string, ConversationActivity>
+>({});
 
 /** Record a conversation's live activity state (from an `activity.changed` event). */
 export function setConversationActivity(
-	conversationId: string,
-	activity: ConversationActivity
+  conversationId: string,
+  activity: ConversationActivity,
 ): void {
-	conversationActivityOverrides.update((current) => {
-		const prev = current[conversationId];
-		if (prev && prev.running === activity.running && prev.unread === activity.unread) {
-			return current;
-		}
-		return { ...current, [conversationId]: activity };
-	});
+  conversationActivityOverrides.update((current) => {
+    const prev = current[conversationId];
+    if (
+      prev &&
+      prev.running === activity.running &&
+      prev.unread === activity.unread
+    ) {
+      return current;
+    }
+    return { ...current, [conversationId]: activity };
+  });
 }
 
 /**
@@ -39,11 +45,14 @@ export function setConversationActivity(
  * away immediately instead of after the `/read` round-trip.
  */
 export function clearConversationUnread(conversationId: string): void {
-	conversationActivityOverrides.update((current) => {
-		const prev = current[conversationId];
-		if (prev && !prev.unread) return current;
-		return { ...current, [conversationId]: { running: prev?.running ?? false, unread: false } };
-	});
+  conversationActivityOverrides.update((current) => {
+    const prev = current[conversationId];
+    if (prev && !prev.unread) return current;
+    return {
+      ...current,
+      [conversationId]: { running: prev?.running ?? false, unread: false },
+    };
+  });
 }
 
 /**
@@ -55,7 +64,7 @@ export function clearConversationUnread(conversationId: string): void {
  * always beats the server set. Clearing on reconnect makes the two converge.
  */
 export function clearConversationActivityOverrides(): void {
-	conversationActivityOverrides.set({});
+  conversationActivityOverrides.set({});
 }
 
 /**
@@ -63,17 +72,17 @@ export function clearConversationActivityOverrides(): void {
  * present, otherwise fall back to the server `load` sets.
  */
 export function resolveConversationActivity(
-	conversationId: string,
-	serverRunning: Set<string>,
-	serverUnread: Set<string>,
-	overrides: Record<string, ConversationActivity>
+  conversationId: string,
+  serverRunning: Set<string>,
+  serverUnread: Set<string>,
+  overrides: Record<string, ConversationActivity>,
 ): ConversationActivity {
-	const override = overrides[conversationId];
-	if (override) return override;
-	return {
-		running: serverRunning.has(conversationId),
-		unread: serverUnread.has(conversationId)
-	};
+  const override = overrides[conversationId];
+  if (override) return override;
+  return {
+    running: serverRunning.has(conversationId),
+    unread: serverUnread.has(conversationId),
+  };
 }
 
 /**
@@ -82,11 +91,15 @@ export function resolveConversationActivity(
  * reappears on the next layout `load`, which is strictly better than surfacing
  * an error for a passive read receipt.
  */
-export async function markConversationRead(conversationId: string): Promise<void> {
-	clearConversationUnread(conversationId);
-	try {
-		await fetch(`/api/conversations/${conversationId}/read`, { method: 'POST' });
-	} catch {
-		/* non-fatal */
-	}
+export async function markConversationRead(
+  conversationId: string,
+): Promise<void> {
+  clearConversationUnread(conversationId);
+  try {
+    await fetch(`/api/conversations/${conversationId}/read`, {
+      method: "POST",
+    });
+  } catch {
+    /* non-fatal */
+  }
 }

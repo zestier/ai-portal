@@ -1,31 +1,40 @@
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
-import { loadConfig } from './config';
-import { slotPath, type ManagedWorktreeMetadata, type WorktreeSlot } from './worktrees';
-import { resolveConversationWorkspace, WorkspaceUnavailableError } from './workdir';
-import * as leaseRepo from './db/repos/leases';
-import type { LeaseRow } from './db/repos/leases';
-import * as convs from './db/repos/conversations';
-import { conversationId as convCodec, leaseId as leaseCodec } from '$lib/ids';
-import type { Conversation } from '$lib/types';
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { resolve, sep } from "node:path";
+import { loadConfig } from "./config";
+import {
+  slotPath,
+  type ManagedWorktreeMetadata,
+  type WorktreeSlot,
+} from "./worktrees";
+import {
+  resolveConversationWorkspace,
+  WorkspaceUnavailableError,
+} from "./workdir";
+import * as leaseRepo from "./db/repos/leases";
+import type { LeaseRow } from "./db/repos/leases";
+import * as convs from "./db/repos/conversations";
+import { conversationId as convCodec, leaseId as leaseCodec } from "$lib/ids";
+import type { Conversation } from "$lib/types";
 
 /** The metadata shape the shared worktree helpers operate on. */
 export function toMetadata(lease: LeaseRow): ManagedWorktreeMetadata {
-	return {
-		sourceWorkdir: lease.sourceWorkdir,
-		path: lease.path,
-		gitCommonDir: lease.gitCommonDir,
-		branch: lease.branch,
-		baseSha: lease.baseSha
-	};
+  return {
+    sourceWorkdir: lease.sourceWorkdir,
+    path: lease.path,
+    gitCommonDir: lease.gitCommonDir,
+    branch: lease.branch,
+    baseSha: lease.baseSha,
+  };
 }
 
-export function leaseSlot(lease: Pick<LeaseRow, 'userId' | 'id'>): WorktreeSlot {
-	return {
-		kind: 'lease',
-		userId: String(lease.userId),
-		leaseId: String(leaseCodec.parse(lease.id))
-	};
+export function leaseSlot(
+  lease: Pick<LeaseRow, "userId" | "id">,
+): WorktreeSlot {
+  return {
+    kind: "lease",
+    userId: String(lease.userId),
+    leaseId: String(leaseCodec.parse(lease.id)),
+  };
 }
 
 /**
@@ -46,7 +55,7 @@ export function leaseSlot(lease: Pick<LeaseRow, 'userId' | 'id'>): WorktreeSlot 
  * orchestrator's in-progress work.)
  */
 export function leaseCounterpartWorkspace(conversation: Conversation): string {
-	return resolveConversationWorkspace(conversation);
+  return resolveConversationWorkspace(conversation);
 }
 
 /**
@@ -58,33 +67,35 @@ export function leaseCounterpartWorkspace(conversation: Conversation): string {
  * degrading to a fallback root.
  */
 export function resolveLeaseWorkspace(lease: LeaseRow): string {
-	const expected = resolve(slotPath(leaseSlot(lease)));
-	const stored = resolve(lease.path);
-	if (stored !== expected || !existsSync(stored)) {
-		throw new WorkspaceUnavailableError('lease worktree path is unavailable');
-	}
-	try {
-		const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
-		const storedReal = realpathSync(stored);
-		const expectedReal = resolve(
-			rootReal,
-			String(lease.userId),
-			'leases',
-			String(leaseCodec.parse(lease.id))
-		);
-		if (
-			!statSync(stored).isDirectory() ||
-			storedReal !== expectedReal ||
-			storedReal === rootReal ||
-			!storedReal.startsWith(rootReal + sep)
-		) {
-			throw new WorkspaceUnavailableError('lease worktree path is invalid');
-		}
-		return storedReal;
-	} catch (error) {
-		if (error instanceof WorkspaceUnavailableError) throw error;
-		throw new WorkspaceUnavailableError('lease worktree path is not accessible');
-	}
+  const expected = resolve(slotPath(leaseSlot(lease)));
+  const stored = resolve(lease.path);
+  if (stored !== expected || !existsSync(stored)) {
+    throw new WorkspaceUnavailableError("lease worktree path is unavailable");
+  }
+  try {
+    const rootReal = realpathSync(resolve(loadConfig().WORKTREE_ROOT));
+    const storedReal = realpathSync(stored);
+    const expectedReal = resolve(
+      rootReal,
+      String(lease.userId),
+      "leases",
+      String(leaseCodec.parse(lease.id)),
+    );
+    if (
+      !statSync(stored).isDirectory() ||
+      storedReal !== expectedReal ||
+      storedReal === rootReal ||
+      !storedReal.startsWith(rootReal + sep)
+    ) {
+      throw new WorkspaceUnavailableError("lease worktree path is invalid");
+    }
+    return storedReal;
+  } catch (error) {
+    if (error instanceof WorkspaceUnavailableError) throw error;
+    throw new WorkspaceUnavailableError(
+      "lease worktree path is not accessible",
+    );
+  }
 }
 
 /**
@@ -95,26 +106,28 @@ export function resolveLeaseWorkspace(lease: LeaseRow): string {
  * checkout must not lock the user out of their primary workspace. The primary
  * is always first so callers can treat `[0]` as the main workspace.
  */
-export function conversationWorkspaceRoots(conversation: Conversation): string[] {
-	const roots: string[] = [];
-	try {
-		roots.push(resolveConversationWorkspace(conversation));
-	} catch {
-		// A conversation whose own workspace is unavailable still fails closed at
-		// the point of use; here we simply contribute no root for it.
-	}
-	for (const lease of leaseRepo.listByConversation(
-		convCodec.parse(conversation.id),
-		conversation.userId
-	)) {
-		if (lease.state !== 'active') continue;
-		try {
-			roots.push(resolveLeaseWorkspace(lease));
-		} catch {
-			continue;
-		}
-	}
-	return [...new Set(roots)];
+export function conversationWorkspaceRoots(
+  conversation: Conversation,
+): string[] {
+  const roots: string[] = [];
+  try {
+    roots.push(resolveConversationWorkspace(conversation));
+  } catch {
+    // A conversation whose own workspace is unavailable still fails closed at
+    // the point of use; here we simply contribute no root for it.
+  }
+  for (const lease of leaseRepo.listByConversation(
+    convCodec.parse(conversation.id),
+    conversation.userId,
+  )) {
+    if (lease.state !== "active") continue;
+    try {
+      roots.push(resolveLeaseWorkspace(lease));
+    } catch {
+      continue;
+    }
+  }
+  return [...new Set(roots)];
 }
 
 /**
@@ -127,18 +140,20 @@ export function conversationWorkspaceRoots(conversation: Conversation): string[]
  * must be writable within that same turn.
  */
 export function workspaceRootsFor(
-	conversationId: string | number,
-	userId: number,
-	fallback: string
+  conversationId: string | number,
+  userId: number,
+  fallback: string,
 ): string[] {
-	try {
-		const intConv =
-			typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
-		const conversation = convs.get(intConv, userId);
-		if (!conversation) return [fallback];
-		const roots = conversationWorkspaceRoots(conversation);
-		return roots.length > 0 ? roots : [fallback];
-	} catch {
-		return [fallback];
-	}
+  try {
+    const intConv =
+      typeof conversationId === "number"
+        ? conversationId
+        : convCodec.parse(conversationId);
+    const conversation = convs.get(intConv, userId);
+    if (!conversation) return [fallback];
+    const roots = conversationWorkspaceRoots(conversation);
+    return roots.length > 0 ? roots : [fallback];
+  } catch {
+    return [fallback];
+  }
 }

@@ -12,9 +12,9 @@
  * character. Any further interior or leading newlines are preserved exactly.
  */
 export function trimOneTrailingNewline(text: string): string {
-	if (text.endsWith('\r\n')) return text.slice(0, -2);
-	if (text.endsWith('\n')) return text.slice(0, -1);
-	return text;
+  if (text.endsWith("\r\n")) return text.slice(0, -2);
+  if (text.endsWith("\n")) return text.slice(0, -1);
+  return text;
 }
 
 /**
@@ -24,13 +24,13 @@ export function trimOneTrailingNewline(text: string): string {
  * visible "Copy failed" state on `false` rather than silently swallowing it.
  */
 export async function writeClipboard(text: string): Promise<boolean> {
-	try {
-		if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-			return false;
-		}
-		await navigator.clipboard.writeText(text);
-		return true;
-	} catch {
-		return false;
-	}
+  try {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      return false;
+    }
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }

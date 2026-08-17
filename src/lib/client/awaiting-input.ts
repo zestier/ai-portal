@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable } from "svelte/store";
 
 /**
  * Live, client-side overrides for the sidebar "awaiting input" indicator,
@@ -18,11 +18,14 @@ import { writable } from 'svelte/store';
 export const awaitingInputOverrides = writable<Record<string, boolean>>({});
 
 /** Record (or update) the open conversation's live awaiting-input state. */
-export function setAwaitingInput(conversationId: string, awaiting: boolean): void {
-	awaitingInputOverrides.update((current) => {
-		if (current[conversationId] === awaiting) return current;
-		return { ...current, [conversationId]: awaiting };
-	});
+export function setAwaitingInput(
+  conversationId: string,
+  awaiting: boolean,
+): void {
+  awaitingInputOverrides.update((current) => {
+    if (current[conversationId] === awaiting) return current;
+    return { ...current, [conversationId]: awaiting };
+  });
 }
 
 /**
@@ -30,12 +33,12 @@ export function setAwaitingInput(conversationId: string, awaiting: boolean): voi
  * sidebar falls back to the server `load` value for it.
  */
 export function clearAwaitingInput(conversationId: string): void {
-	awaitingInputOverrides.update((current) => {
-		if (!(conversationId in current)) return current;
-		const next = { ...current };
-		delete next[conversationId];
-		return next;
-	});
+  awaitingInputOverrides.update((current) => {
+    if (!(conversationId in current)) return current;
+    const next = { ...current };
+    delete next[conversationId];
+    return next;
+  });
 }
 
 /**
@@ -43,10 +46,10 @@ export function clearAwaitingInput(conversationId: string): void {
  * override wins when present, otherwise fall back to the server `load` set.
  */
 export function isAwaitingInput(
-	conversationId: string,
-	serverAwaiting: Set<string>,
-	overrides: Record<string, boolean>
+  conversationId: string,
+  serverAwaiting: Set<string>,
+  overrides: Record<string, boolean>,
 ): boolean {
-	if (conversationId in overrides) return overrides[conversationId];
-	return serverAwaiting.has(conversationId);
+  if (conversationId in overrides) return overrides[conversationId];
+  return serverAwaiting.has(conversationId);
 }
