@@ -19,6 +19,7 @@ interface ProviderRow {
   auth_header: number;
   builtin: number;
   enabled: number;
+  compat_json: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -43,9 +44,22 @@ function rowToProvider(r: ProviderRow): ManagedProvider {
     authHeader: r.auth_header === 1,
     builtin: r.builtin === 1,
     enabled: r.enabled === 1,
+    compat: parseJsonRecord(r.compat_json),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+}
+
+function parseJsonRecord(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseJsonObject(raw: string): Record<string, string> {
@@ -79,14 +93,19 @@ export interface ProviderInput {
   authHeader?: boolean;
   builtin?: boolean;
   enabled?: boolean;
+  /** Provider-level compat, merged into every model's compat by pi. */
+  compat?: Record<string, unknown> | null;
 }
 
 export function upsert(input: ProviderInput): ManagedProvider {
   const now = Date.now();
+  const existing = get(input.id);
+  const compat =
+    input.compat !== undefined ? input.compat : (existing?.compat ?? null);
   getDb()
     .prepare(
-      `INSERT INTO providers(id, name, api, base_url, headers_json, auth_header, builtin, enabled, created_at, updated_at)
-			 VALUES (@id, @name, @api, @baseUrl, @headersJson, @authHeader, @builtin, @enabled, @createdAt, @updatedAt)
+      `INSERT INTO providers(id, name, api, base_url, headers_json, auth_header, builtin, enabled, compat_json, created_at, updated_at)
+			 VALUES (@id, @name, @api, @baseUrl, @headersJson, @authHeader, @builtin, @enabled, @compatJson, @createdAt, @updatedAt)
 			 ON CONFLICT(id) DO UPDATE SET
 			   name = excluded.name,
 			   api = excluded.api,
@@ -94,6 +113,7 @@ export function upsert(input: ProviderInput): ManagedProvider {
 			   headers_json = excluded.headers_json,
 			   auth_header = excluded.auth_header,
 			   enabled = excluded.enabled,
+			   compat_json = excluded.compat_json,
 			   updated_at = excluded.updated_at`,
     )
     .run({
@@ -105,6 +125,7 @@ export function upsert(input: ProviderInput): ManagedProvider {
       authHeader: input.authHeader ? 1 : 0,
       builtin: input.builtin ? 1 : 0,
       enabled: (input.enabled ?? true) ? 1 : 0,
+      compatJson: compat ? JSON.stringify(compat) : null,
       createdAt: now,
       updatedAt: now,
     });

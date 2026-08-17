@@ -42,6 +42,7 @@ const ProviderSchema = z
     authHeader: z.boolean().optional(),
     builtin: z.boolean().optional().default(false),
     enabled: z.boolean().optional().default(true),
+    compat: z.record(z.string(), z.unknown()).nullable().optional(),
   })
   .superRefine((v, ctx) => {
     // Custom providers need a base URL to serialize (pi requires it for custom models).
@@ -116,6 +117,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       authHeader: v.authHeader ?? false,
       builtin: v.builtin,
       enabled: v.enabled,
+      compat: v.compat ?? null,
     });
     return json({ ok: true, provider });
   }

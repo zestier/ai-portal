@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import PanelHeader from "$lib/components/ui/PanelHeader.svelte";
+  import RoutingEditor from "$lib/components/ui/RoutingEditor.svelte";
   import type {
     ManagedModel,
     ManagedProvider,
@@ -353,7 +354,80 @@
   function formatCost(c: ModelCost): string {
     const rates = [c.input, c.output, c.cacheRead, c.cacheWrite];
     if (rates.every((r) => r === 0)) return "—";
-    return `$${c.input}/${c.output}/${c.cacheRead}/${c.cacheWrite} (in/out/cacheR/cacheW per 1M)`;
+    return `${c.input}/${c.output}/${c.cacheRead}/${c.cacheWrite} (in/out/cacheR/cacheW per 1M)`;
+  }
+
+  // --- OpenRouter provider-selection routing (compat.openRouterRouting) ---
+
+  const isOpenAiCompat = (p: ManagedProvider): boolean =>
+    p.api === "openai-completions" || p.api === "openai-responses";
+
+  function routingFor(
+    compat: Record<string, unknown> | null,
+  ): Record<string, unknown> | null {
+    const v = compat?.openRouterRouting;
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+  }
+
+  /** Set/replace/clear openRouterRouting inside a compat map, preserving other keys. */
+  function withRouting(
+    compat: Record<string, unknown> | null,
+    routing: Record<string, unknown> | null,
+  ): Record<string, unknown> | null {
+    const base = { ...(compat ?? {}) };
+    if (routing == null) delete base.openRouterRouting;
+    else base.openRouterRouting = routing;
+    return Object.keys(base).length ? base : null;
+  }
+
+  async function saveProviderRouting(
+    p: ManagedProvider,
+    routing: Record<string, unknown> | null,
+  ) {
+    try {
+      await api("/api/admin/models", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "provider",
+          id: p.id,
+          name: p.name,
+          api: p.api,
+          baseUrl: p.baseUrl ?? undefined,
+          headers: p.headers,
+          authHeader: p.authHeader,
+          builtin: p.builtin,
+          enabled: p.enabled,
+          compat: withRouting(p.compat, routing),
+        }),
+      });
+      flash("ok", `Routing updated for provider "${p.name}".`);
+      await reload();
+    } catch (e) {
+      flash("err", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function saveModelRouting(
+    providerId: string,
+    m: ManagedModel,
+    routing: Record<string, unknown> | null,
+  ) {
+    try {
+      await api("/api/admin/models", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "model",
+          providerId,
+          id: m.id,
+          name: m.name,
+          compat: withRouting(m.compat, routing),
+        }),
+      });
+      flash("ok", `Routing updated for model "${m.id}".`);
+      await reload();
+    } catch (e) {
+      flash("err", e instanceof Error ? e.message : String(e));
+    }
   }
 </script>
 
@@ -521,6 +595,16 @@
                 {/if}
               </div>
 
+              {#if isOpenAiCompat(p)}
+                <div class="routing-block">
+                  <RoutingEditor
+                    initial={routingFor(p.compat)}
+                    hint="Applies to all models under this provider by default. Individual models can override it."
+                    onSave={(r) => saveProviderRouting(p, r)}
+                  />
+                </div>
+              {/if}
+
               <div class="models-list">
                 {#each modelsFor(p.id) as m (m.id)}
                   <div class="model-row">
@@ -552,6 +636,15 @@
                       Remove
                     </button>
                   </div>
+                  {#if isOpenAiCompat(p)}
+                    <div class="routing-block">
+                      <RoutingEditor
+                        initial={routingFor(m.compat)}
+                        hint="Overrides provider routing defaults for this model."
+                        onSave={(r) => saveModelRouting(p.id, m, r)}
+                      />
+                    </div>
+                  {/if}
                 {/each}
                 {#if modelsFor(p.id).length === 0}
                   <p class="muted small">
@@ -835,6 +928,11 @@
   }
   button.danger {
     color: var(--err, #dc2626);
+  }
+  .routing-block {
+    margin: 0.5rem 0 0.75rem;
+    padding: 0.4rem 0.5rem;
+    border-left: 2px solid var(--border, #333);
   }
   @media (max-width: 640px) {
     .grid {

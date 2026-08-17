@@ -18,6 +18,7 @@ function provider(overrides: Partial<ManagedProvider> = {}): ManagedProvider {
     authHeader: false,
     builtin: true,
     enabled: true,
+    compat: null,
     createdAt: 0,
     updatedAt: 0,
     ...overrides,
@@ -152,6 +153,69 @@ describe("serializeCatalog", () => {
       ],
     );
     expect(doc.providers.openai.models?.map((m) => m.id)).toEqual(["gpt-4o"]);
+  });
+
+  it("serializes provider-level compat (OpenRouter routing defaults)", () => {
+    const p = provider({
+      id: "openrouter",
+      name: "OpenRouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      builtin: false,
+      compat: {
+        openRouterRouting: {
+          order: ["anthropic", "friendli"],
+          allow_fallbacks: true,
+        },
+      },
+    });
+    const doc = serializeCatalog([p], []);
+    expect(doc.providers.openrouter).toMatchObject({
+      api: "openai-completions",
+      compat: {
+        openRouterRouting: { order: ["anthropic", "friendli"] },
+      },
+    });
+  });
+
+  it("keeps a built-in provider that contributes only compat (skip guard)", () => {
+    const p = provider({
+      id: "openrouter",
+      name: "OpenRouter",
+      api: "openai-completions",
+      builtin: true,
+      compat: { openRouterRouting: { zdr: true } },
+    });
+    // baseUrl/headers/models all absent — compat alone must still serialize.
+    expect(serializeCatalog([p], []).providers.openrouter).toEqual({
+      name: "OpenRouter",
+      api: "openai-completions",
+      compat: { openRouterRouting: { zdr: true } },
+    });
+  });
+
+  it("passes provider compat alongside model compat (pi does the merge)", () => {
+    const p = provider({
+      id: "openrouter",
+      name: "OpenRouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      builtin: false,
+      compat: { openRouterRouting: { allow_fallbacks: true } },
+    });
+    const m = model({
+      providerId: "openrouter",
+      id: "openrouter/anthropic/claude-sonnet-4-5",
+      name: "Claude",
+      compat: { openRouterRouting: { only: ["anthropic"] } },
+    });
+    const doc = serializeCatalog([p], [m]);
+    expect(doc.providers.openrouter.compat).toMatchObject({
+      openRouterRouting: { allow_fallbacks: true },
+    });
+    expect(doc.providers.openrouter.models?.[0].compat).toEqual({
+      openRouterRouting: { only: ["anthropic"] },
+    });
   });
 });
 

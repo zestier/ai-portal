@@ -45,6 +45,7 @@ export interface PiProviderJson {
   baseUrl?: string;
   headers?: Record<string, string>;
   authHeader?: boolean;
+  compat?: Record<string, unknown>;
   models?: PiModelJson[];
 }
 
@@ -115,10 +116,12 @@ export function serializeCatalog(
     }
     const pmodels = enabledByProvider.get(p.id) ?? [];
     const hasHeaders = p.headers && Object.keys(p.headers).length > 0;
+    const hasCompat = p.compat && Object.keys(p.compat).length > 0;
     const entry: PiProviderJson = { name: p.name, api: p.api };
     if (p.baseUrl) entry.baseUrl = p.baseUrl;
     if (hasHeaders) entry.headers = p.headers;
     if (p.authHeader) entry.authHeader = true;
+    if (hasCompat) entry.compat = p.compat ?? {};
     if (pmodels.length > 0) {
       entry.models = pmodels.map(modelToJson);
     } else if (!p.builtin) {
@@ -133,6 +136,7 @@ export function serializeCatalog(
       !p.baseUrl &&
       !hasHeaders &&
       !p.authHeader &&
+      !hasCompat &&
       pmodels.length === 0
     )
       continue;

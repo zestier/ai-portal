@@ -201,6 +201,7 @@ describe("fetchProviderCatalog", () => {
       authHeader: false,
       builtin: false,
       enabled: true,
+      compat: null,
       createdAt: 0,
       updatedAt: 0,
     };

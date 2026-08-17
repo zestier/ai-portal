@@ -1368,6 +1368,8 @@ export interface ManagedProvider {
   /** pi bundled provider — its baseUrl/model defaults come from pi's catalog. */
   builtin: boolean;
   enabled: boolean;
+  /** Provider-level compat, merged into every model's compat by pi. */
+  compat: Record<string, unknown> | null;
   createdAt: number;
   updatedAt: number;
 }
