@@ -61,7 +61,7 @@
 		"@types/better-sqlite3": "^9.6.0",
 		"@types/diff": "^6.0.0",
 		"@types/jsdom": "^28.0.3",
-		"@types/node": "^22.7.0",
+		"@types/node": "^26.2.0",
 		"@types/shell-quote": "^1.7.5",
 		"@vitest/coverage-v8": "2.1.9",
 		"eslint": "^9.12.0",
