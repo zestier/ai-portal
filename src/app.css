@@ -18,142 +18,142 @@
 */
 
 :root {
-	color-scheme: dark;
-	/* palette — dark (default) */
-	--bg: #0d1117;
-	--surface: #161b22;
-	--surface-2: #1c2128;
-	--border: #30363d;
-	--text: #e6edf3;
-	--text-muted: #9da7b3;
+  color-scheme: dark;
+  /* palette — dark (default) */
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #1c2128;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-muted: #9da7b3;
 
-	/* semantic */
-	--accent: #1f6feb;
-	--accent-text: #ffffff;
-	--danger: #f85149;
-	--danger-text: #ffffff;
-	--success: #3fb950;
-	--success-text: #04260f;
-	--warning: #d29922;
-	--warning-text: #1a1300;
+  /* semantic */
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --danger: #f85149;
+  --danger-text: #ffffff;
+  --success: #3fb950;
+  --success-text: #04260f;
+  --warning: #d29922;
+  --warning-text: #1a1300;
 
-	/* derived semantic backgrounds (tinted surfaces for callouts/states) */
-	--accent-bg: color-mix(in srgb, var(--accent) 14%, var(--surface));
-	--danger-bg: color-mix(in srgb, var(--danger) 14%, var(--surface));
-	--success-bg: color-mix(in srgb, var(--success) 14%, var(--surface));
-	--warning-bg: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  /* derived semantic backgrounds (tinted surfaces for callouts/states) */
+  --accent-bg: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  --danger-bg: color-mix(in srgb, var(--danger) 14%, var(--surface));
+  --success-bg: color-mix(in srgb, var(--success) 14%, var(--surface));
+  --warning-bg: color-mix(in srgb, var(--warning) 12%, var(--surface));
 
-	/* hover/active surface tints */
-	--surface-hover: color-mix(in srgb, var(--text) 6%, var(--surface));
-	--surface-active: color-mix(in srgb, var(--text) 10%, var(--surface));
+  /* hover/active surface tints */
+  --surface-hover: color-mix(in srgb, var(--text) 6%, var(--surface));
+  --surface-active: color-mix(in srgb, var(--text) 10%, var(--surface));
 
-	/* spacing scale (4px base, geometric-ish) */
-	--space-1: 0.25rem;
-	--space-2: 0.5rem;
-	--space-3: 0.75rem;
-	--space-4: 1rem;
-	--space-5: 1.5rem;
-	--space-6: 2rem;
+  /* spacing scale (4px base, geometric-ish) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
 
-	/* Horizontal inset that clears the fixed mobile hamburger (top-left at
+  /* Horizontal inset that clears the fixed mobile hamburger (top-left at
 	   --space-2, a 2rem icon button) so page headers/tab strips don't sit
 	   underneath it at <=768px. */
-	--mobile-hamburger-inset: 2.75rem;
+  --mobile-hamburger-inset: 2.75rem;
 
-	/* type scale (rem-based — root-relative, predictable) */
-	--fs-xs: 0.75rem;
-	--fs-sm: 0.8125rem;
-	--fs-md: 0.875rem;
-	--fs-lg: 1rem;
-	--fs-xl: 1.125rem;
-	--fs-2xl: 1.15rem; /* large panel/section headings */
-	--fs-3xl: 1.35rem; /* hero / dialog headings */
+  /* type scale (rem-based — root-relative, predictable) */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.875rem;
+  --fs-lg: 1rem;
+  --fs-xl: 1.125rem;
+  --fs-2xl: 1.15rem; /* large panel/section headings */
+  --fs-3xl: 1.35rem; /* hero / dialog headings */
 
-	/* radii */
-	--radius-sm: 4px;
-	--radius-md: 6px;
-	--radius-lg: 10px;
-	--radius-pill: 999px;
+  /* radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
 
-	/* elevation */
-	--shadow-1: 0 1px 2px rgb(0 0 0 / 0.18);
-	--shadow-2: 0 4px 14px rgb(0 0 0 / 0.28);
+  /* elevation */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.18);
+  --shadow-2: 0 4px 14px rgb(0 0 0 / 0.28);
 
-	/* focus ring (use as box-shadow on inputs / interactive surfaces) */
-	--focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  /* focus ring (use as box-shadow on inputs / interactive surfaces) */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 
-	/* overlay / scrim tint — shared dim behind modals and the mobile sidebar.
+  /* overlay / scrim tint — shared dim behind modals and the mobile sidebar.
 	   Used for <dialog>::backdrop and the layout scrim so every overlay dims
 	   the page identically. */
-	--overlay: rgb(0 0 0 / 0.45);
+  --overlay: rgb(0 0 0 / 0.45);
 
-	/* z-index scale — the single source of truth for stacking. Higher layers
+  /* z-index scale — the single source of truth for stacking. Higher layers
 	   sit above lower ones; never hard-code raw z-index numbers in components.
 	     base    in-flow stacking (sticky sub-headers, local dropdowns)
 	     sidebar mobile sidebar drawer + its scrim
 	     overlay floating menus / popovers above page content
 	     modal   modal dialogs (backdrop + panel)
 	     toast   transient toasts / notifications (top of the stack) */
-	--z-base: 1;
-	--z-sidebar: 100;
-	--z-overlay: 200;
-	--z-modal: 300;
-	--z-toast: 400;
+  --z-base: 1;
+  --z-sidebar: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+  --z-toast: 400;
 
-	/* code surface */
-	--code-bg: var(--surface-2);
-	--code-border: var(--border);
-	--code-fs: 0.8125rem;
-	--syntax-keyword: #ff7b72;
-	--syntax-built-in: #d2a8ff;
-	--syntax-string: #a5d6ff;
-	--syntax-number: #79c0ff;
-	--syntax-comment: #8b949e;
-	--syntax-title: #d2a8ff;
-	--syntax-attr: #7ee787;
-	--syntax-symbol: #ffa657;
-	--syntax-deletion: var(--danger);
-	--syntax-addition: var(--success);
+  /* code surface */
+  --code-bg: var(--surface-2);
+  --code-border: var(--border);
+  --code-fs: 0.8125rem;
+  --syntax-keyword: #ff7b72;
+  --syntax-built-in: #d2a8ff;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-comment: #8b949e;
+  --syntax-title: #d2a8ff;
+  --syntax-attr: #7ee787;
+  --syntax-symbol: #ffa657;
+  --syntax-deletion: var(--danger);
+  --syntax-addition: var(--success);
 
-	/* eyebrow / section label (uppercase small-caps) */
-	--eyebrow-fs: var(--fs-xs);
-	--eyebrow-ls: 0.06em;
+  /* eyebrow / section label (uppercase small-caps) */
+  --eyebrow-fs: var(--fs-xs);
+  --eyebrow-ls: 0.06em;
 
-	/* fonts */
-	--font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	--mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* fonts */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-[data-theme='light'] {
-	color-scheme: light;
-	--bg: #ffffff;
-	--surface: #f6f8fa;
-	--surface-2: #eef1f4;
-	--border: #d0d7de;
-	--text: #1f2328;
-	--text-muted: #57606a;
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --surface-2: #eef1f4;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --text-muted: #57606a;
 
-	--accent: #0969da;
-	--accent-text: #ffffff;
-	--danger: #cf222e;
-	--danger-text: #ffffff;
-	--success: #1a7f37;
-	--success-text: #ffffff;
-	--warning: #9a6700;
-	--warning-text: #ffffff;
+  --accent: #0969da;
+  --accent-text: #ffffff;
+  --danger: #cf222e;
+  --danger-text: #ffffff;
+  --success: #1a7f37;
+  --success-text: #ffffff;
+  --warning: #9a6700;
+  --warning-text: #ffffff;
 
-	--shadow-1: 0 1px 2px rgb(31 35 40 / 0.08);
-	--shadow-2: 0 4px 14px rgb(31 35 40 / 0.12);
-	--syntax-keyword: #cf222e;
-	--syntax-built-in: #8250df;
-	--syntax-string: #0a3069;
-	--syntax-number: #0550ae;
-	--syntax-comment: #6e7781;
-	--syntax-title: #8250df;
-	--syntax-attr: #116329;
-	--syntax-symbol: #953800;
-	--syntax-deletion: var(--danger);
-	--syntax-addition: var(--success);
+  --shadow-1: 0 1px 2px rgb(31 35 40 / 0.08);
+  --shadow-2: 0 4px 14px rgb(31 35 40 / 0.12);
+  --syntax-keyword: #cf222e;
+  --syntax-built-in: #8250df;
+  --syntax-string: #0a3069;
+  --syntax-number: #0550ae;
+  --syntax-comment: #6e7781;
+  --syntax-title: #8250df;
+  --syntax-attr: #116329;
+  --syntax-symbol: #953800;
+  --syntax-deletion: var(--danger);
+  --syntax-addition: var(--success);
 }
 
 /* Accent palettes (orthogonal to dark/light mode). Each overrides only the
@@ -162,85 +162,85 @@
    has no block so the per-mode blue above stays in effect. Hues are chosen to
    read acceptably on both dark and light surfaces. Placed after the light
    block so equal-specificity selectors resolve in this rule's favour. */
-[data-accent='violet'] {
-	--accent: #8957e5;
-	--accent-text: #ffffff;
+[data-accent="violet"] {
+  --accent: #8957e5;
+  --accent-text: #ffffff;
 }
-[data-accent='teal'] {
-	--accent: #1f9c9c;
-	--accent-text: #ffffff;
+[data-accent="teal"] {
+  --accent: #1f9c9c;
+  --accent-text: #ffffff;
 }
-[data-accent='green'] {
-	--accent: #2da44e;
-	--accent-text: #ffffff;
+[data-accent="green"] {
+  --accent: #2da44e;
+  --accent-text: #ffffff;
 }
-[data-accent='amber'] {
-	--accent: #bb8009;
-	--accent-text: #ffffff;
+[data-accent="amber"] {
+  --accent: #bb8009;
+  --accent-text: #ffffff;
 }
-[data-accent='rose'] {
-	--accent: #d6336c;
-	--accent-text: #ffffff;
+[data-accent="rose"] {
+  --accent: #d6336c;
+  --accent-text: #ffffff;
 }
-[data-accent='crimson'] {
-	--accent: #cf222e;
-	--accent-text: #ffffff;
+[data-accent="crimson"] {
+  --accent: #cf222e;
+  --accent-text: #ffffff;
 }
 
 * {
-	box-sizing: border-box;
+  box-sizing: border-box;
 }
 
 html,
 body {
-	margin: 0;
-	padding: 0;
-	height: 100%;
-	background: var(--bg);
-	color: var(--text);
-	font-family: var(--font);
-	font-size: 14px;
-	line-height: 1.55;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 a {
-	color: var(--accent);
-	text-decoration: none;
+  color: var(--accent);
+  text-decoration: none;
 }
 a:hover {
-	text-decoration: underline;
+  text-decoration: underline;
 }
 
 button {
-	font: inherit;
-	color: inherit;
+  font: inherit;
+  color: inherit;
 }
 
 pre,
 code {
-	font-family: var(--mono);
+  font-family: var(--mono);
 }
 
 pre {
-	background: var(--code-bg);
-	border: 1px solid var(--code-border);
-	border-radius: var(--radius-md);
-	padding: var(--space-3);
-	overflow-x: auto;
-	font-size: var(--code-fs);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-size: var(--code-fs);
 }
 
 code {
-	background: var(--code-bg);
-	padding: 0.1rem 0.3rem;
-	border-radius: var(--radius-sm);
-	font-size: 0.92em;
+  background: var(--code-bg);
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.92em;
 }
 
 pre code {
-	background: transparent;
-	padding: 0;
-	font-size: inherit;
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
 }
 
 /* Syntax tokens. Mapped onto theme tokens rather than importing a vendor
@@ -249,38 +249,38 @@ pre code {
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-subst {
-	color: var(--syntax-keyword);
+  color: var(--syntax-keyword);
 }
 
 .hljs-built_in,
 .hljs-type,
 .hljs-class .hljs-title {
-	color: var(--syntax-built-in);
+  color: var(--syntax-built-in);
 }
 
 .hljs-string,
 .hljs-regexp,
 .hljs-template-variable {
-	color: var(--syntax-string);
+  color: var(--syntax-string);
 }
 
 .hljs-number,
 .hljs-literal,
 .hljs-variable,
 .hljs-params {
-	color: var(--syntax-number);
+  color: var(--syntax-number);
 }
 
 .hljs-comment,
 .hljs-quote {
-	color: var(--syntax-comment);
-	font-style: italic;
+  color: var(--syntax-comment);
+  font-style: italic;
 }
 
 .hljs-title,
 .hljs-section,
 .hljs-function .hljs-title {
-	color: var(--syntax-title);
+  color: var(--syntax-title);
 }
 
 .hljs-attr,
@@ -289,52 +289,52 @@ pre code {
 .hljs-property,
 .hljs-selector-class,
 .hljs-selector-id {
-	color: var(--syntax-attr);
+  color: var(--syntax-attr);
 }
 
 .hljs-symbol,
 .hljs-bullet,
 .hljs-link,
 .hljs-meta {
-	color: var(--syntax-symbol);
+  color: var(--syntax-symbol);
 }
 
 .hljs-deletion {
-	color: var(--syntax-deletion);
+  color: var(--syntax-deletion);
 }
 
 .hljs-addition {
-	color: var(--syntax-addition);
+  color: var(--syntax-addition);
 }
 
 input,
 textarea,
 select {
-	font: inherit;
-	background: var(--surface);
-	color: var(--text);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-md);
-	padding: var(--space-2) 0.6rem;
+  font: inherit;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) 0.6rem;
 }
 
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-	outline: none;
-	border-color: var(--accent);
-	box-shadow: var(--focus-ring);
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 textarea {
-	resize: vertical;
+  resize: vertical;
 }
 
 /* Global focus ring for any interactive element that hasn't styled its own. */
 :focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
-	border-radius: var(--radius-sm);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* Warning-panel interactive dialogs (permission prompts, grant requests, etc.)
@@ -345,103 +345,103 @@ textarea {
  * nearly invisible on gold. Custom properties inherit across Svelte component
  * boundaries, so this reaches child components too. */
 .interactive {
-	--border: color-mix(in srgb, var(--warning) 35%, var(--text) 18%);
-	--surface: color-mix(in srgb, var(--warning) 8%, var(--bg));
-	--surface-2: color-mix(in srgb, var(--warning) 12%, var(--bg));
-	--code-bg: var(--surface-2);
-	--code-border: var(--border);
-	/* The gold surface stays light in both themes, so pin the syntax palette to
+  --border: color-mix(in srgb, var(--warning) 35%, var(--text) 18%);
+  --surface: color-mix(in srgb, var(--warning) 8%, var(--bg));
+  --surface-2: color-mix(in srgb, var(--warning) 12%, var(--bg));
+  --code-bg: var(--surface-2);
+  --code-border: var(--border);
+  /* The gold surface stays light in both themes, so pin the syntax palette to
 	   its light-mode values or dark-mode tokens would be unreadable on it. */
-	--syntax-keyword: #cf222e;
-	--syntax-built-in: #8250df;
-	--syntax-string: #0a3069;
-	--syntax-number: #0550ae;
-	--syntax-comment: #6e7781;
-	--syntax-title: #8250df;
-	--syntax-attr: #116329;
-	--syntax-symbol: #953800;
-	--syntax-deletion: var(--danger);
-	--syntax-addition: var(--success);
+  --syntax-keyword: #cf222e;
+  --syntax-built-in: #8250df;
+  --syntax-string: #0a3069;
+  --syntax-number: #0550ae;
+  --syntax-comment: #6e7781;
+  --syntax-title: #8250df;
+  --syntax-attr: #116329;
+  --syntax-symbol: #953800;
+  --syntax-deletion: var(--danger);
+  --syntax-addition: var(--success);
 }
 
 .btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-1);
-	padding: 0.45rem 0.85rem;
-	border-radius: var(--radius-md);
-	border: 1px solid var(--border);
-	background: var(--surface);
-	color: var(--text);
-	cursor: pointer;
-	font-size: var(--fs-md);
-	line-height: 1.2;
-	transition:
-		background 0.12s ease,
-		border-color 0.12s ease,
-		color 0.12s ease,
-		filter 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--fs-md);
+  line-height: 1.2;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    filter 0.12s ease;
 }
 .btn:hover:not([disabled]) {
-	background: var(--surface-hover);
+  background: var(--surface-hover);
 }
 .btn:active:not([disabled]) {
-	background: var(--surface-active);
+  background: var(--surface-active);
 }
 .btn.primary {
-	background: var(--accent);
-	color: var(--accent-text);
-	border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
 }
 .btn.primary:hover:not([disabled]) {
-	background: var(--accent);
-	filter: brightness(1.08);
+  background: var(--accent);
+  filter: brightness(1.08);
 }
 .btn.danger {
-	color: var(--danger);
+  color: var(--danger);
 }
 .btn.danger.primary {
-	background: var(--danger);
-	color: var(--danger-text);
+  background: var(--danger);
+  color: var(--danger-text);
 }
 .btn.ghost {
-	background: transparent;
-	border-color: transparent;
+  background: transparent;
+  border-color: transparent;
 }
 .btn.ghost:hover:not([disabled]) {
-	background: var(--surface-hover);
+  background: var(--surface-hover);
 }
 .btn.sm {
-	padding: 0.3rem 0.55rem;
-	font-size: var(--fs-sm);
+  padding: 0.3rem 0.55rem;
+  font-size: var(--fs-sm);
 }
 .btn.icon {
-	padding: 0;
-	width: 2rem;
-	height: 2rem;
-	border-radius: var(--radius-md);
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-md);
 }
 .btn[disabled] {
-	opacity: 0.5;
-	cursor: not-allowed;
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .muted {
-	color: var(--text-muted);
+  color: var(--text-muted);
 }
 
 /* Uppercase small-caps section label ("eyebrow"). Pair with utility/element
    selectors for spacing, layout, or color-variant overrides. */
 .eyebrow {
-	font-size: var(--eyebrow-fs);
-	font-weight: 700;
-	letter-spacing: var(--eyebrow-ls);
-	text-transform: uppercase;
-	color: var(--text-muted);
+  font-size: var(--eyebrow-fs);
+  font-weight: 700;
+  letter-spacing: var(--eyebrow-ls);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .error-text {
-	color: var(--danger);
+  color: var(--danger);
 }
 
 /* Shared markdown rendering styles.
@@ -458,35 +458,35 @@ textarea {
  *   heading → element : heading.mb (0.25em) = tight / belongs-together feel
  * The :first-child rule zero-outs the top margin regardless of element type. */
 .markdown-body {
-	margin: 0;
-	overflow-wrap: anywhere;
-	line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 .markdown-body > * {
-	margin-top: 0;
+  margin-top: 0;
 }
 .markdown-body > :is(h1, h2, h3, h4, h5, h6) {
-	margin-top: 0.75em;
-	margin-bottom: 0.25em;
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
 }
 .markdown-body > :first-child {
-	margin-top: 0;
+  margin-top: 0;
 }
 .markdown-body > :last-child {
-	margin-bottom: 0;
+  margin-bottom: 0;
 }
 .markdown-body :is(ul, ol) {
-	padding-left: 1.5em;
+  padding-left: 1.5em;
 }
 .markdown-body .contains-task-list {
-	list-style: none;
-	padding-left: 0;
+  list-style: none;
+  padding-left: 0;
 }
 .markdown-body .task-list-item {
-	list-style: none;
+  list-style: none;
 }
 .markdown-body .task-list-item input {
-	margin-right: var(--space-1);
+  margin-right: var(--space-1);
 }
 
 /* Horizontal scroll affordance for overflow-x containers (e.g. tab strips).
@@ -494,22 +494,22 @@ textarea {
    shadow at whichever edge still has scrollable content. Override the cover
    color to match the container's background via --scroll-mask-cover. */
 .scroll-mask {
-	scroll-snap-type: x proximity;
-	background-image:
-		linear-gradient(to right, var(--scroll-mask-cover, var(--bg)), transparent),
-		linear-gradient(to left, var(--scroll-mask-cover, var(--bg)), transparent),
-		radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.4), transparent),
-		radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.4), transparent);
-	background-position:
-		0 0,
-		100% 0,
-		0 0,
-		100% 0;
-	background-repeat: no-repeat;
-	background-size:
-		32px 100%,
-		32px 100%,
-		16px 100%,
-		16px 100%;
-	background-attachment: local, local, scroll, scroll;
+  scroll-snap-type: x proximity;
+  background-image:
+    linear-gradient(to right, var(--scroll-mask-cover, var(--bg)), transparent),
+    linear-gradient(to left, var(--scroll-mask-cover, var(--bg)), transparent),
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.4), transparent),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.4), transparent);
+  background-position:
+    0 0,
+    100% 0,
+    0 0,
+    100% 0;
+  background-repeat: no-repeat;
+  background-size:
+    32px 100%,
+    32px 100%,
+    16px 100%,
+    16px 100%;
+  background-attachment: local, local, scroll, scroll;
 }

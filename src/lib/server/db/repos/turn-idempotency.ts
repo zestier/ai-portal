@@ -4,60 +4,69 @@
 // ids instead of creating a duplicate user message. See the migration for the
 // contract.
 
-import { getDb } from '../index';
-import { messageId } from '$lib/ids';
+import { getDb } from "../index";
+import { messageId } from "$lib/ids";
 
 export interface TurnIdempotencyRecord {
-	turnId: string;
-	userMessageId: string;
-	title: string | null;
+  turnId: string;
+  userMessageId: string;
+  title: string | null;
 }
 
 interface TurnIdempotencyRow {
-	message_id: number;
-	turn_id: string;
-	title: string | null;
+  message_id: number;
+  turn_id: string;
+  title: string | null;
 }
 
 // Look up the original result for a previously-seen key, or null if this key
 // hasn't been recorded for the conversation yet.
-export function lookup(conversationId: number, key: string): TurnIdempotencyRecord | null {
-	const row = getDb()
-		.prepare(
-			`SELECT message_id, turn_id, title
+export function lookup(
+  conversationId: number,
+  key: string,
+): TurnIdempotencyRecord | null {
+  const row = getDb()
+    .prepare(
+      `SELECT message_id, turn_id, title
 			   FROM turn_idempotency
-			  WHERE conversation_id = ? AND idempotency_key = ?`
-		)
-		.get(conversationId, key) as TurnIdempotencyRow | undefined;
-	if (!row) return null;
-	return { turnId: row.turn_id, userMessageId: messageId.encode(row.message_id), title: row.title };
+			  WHERE conversation_id = ? AND idempotency_key = ?`,
+    )
+    .get(conversationId, key) as TurnIdempotencyRow | undefined;
+  if (!row) return null;
+  return {
+    turnId: row.turn_id,
+    userMessageId: messageId.encode(row.message_id),
+    title: row.title,
+  };
 }
 
 // Record the result of a successfully-started turn against its key. Uses
 // INSERT OR IGNORE so a concurrent winner that already claimed the key is never
 // clobbered — the first write wins and later retries read it back via `lookup`.
 export function record(input: {
-	conversationId: number;
-	key: string;
-	messageId: string | number;
-	turnId: string;
-	title?: string | null;
+  conversationId: number;
+  key: string;
+  messageId: string | number;
+  turnId: string;
+  title?: string | null;
 }): void {
-	const messageIdInt =
-		typeof input.messageId === 'number' ? input.messageId : messageId.parse(input.messageId);
-	getDb()
-		.prepare(
-			`INSERT OR IGNORE INTO turn_idempotency(
+  const messageIdInt =
+    typeof input.messageId === "number"
+      ? input.messageId
+      : messageId.parse(input.messageId);
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO turn_idempotency(
 			   conversation_id, idempotency_key, message_id, turn_id, title, created_at
 			 )
-			 VALUES (?, ?, ?, ?, ?, ?)`
-		)
-		.run(
-			input.conversationId,
-			input.key,
-			messageIdInt,
-			input.turnId,
-			input.title ?? null,
-			Date.now()
-		);
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.conversationId,
+      input.key,
+      messageIdInt,
+      input.turnId,
+      input.title ?? null,
+      Date.now(),
+    );
 }

@@ -2,47 +2,52 @@
 // turn (keyed by the triggering user message). Pure observability — see the
 // migration and the `TurnInput` type for the contract.
 
-import { getDb } from '../index';
-import { conversationId as convIdCodec, messageId as msgIdCodec } from '$lib/ids';
-import type { InitialMessagePreview, TurnInput } from '$lib/types';
+import { getDb } from "../index";
+import {
+  conversationId as convIdCodec,
+  messageId as msgIdCodec,
+} from "$lib/ids";
+import type { InitialMessagePreview, TurnInput } from "$lib/types";
 
 interface TurnInputRow {
-	message_id: number;
-	conversation_id: number;
-	turn_id: string | null;
-	full_input: string;
-	prompt_body: string;
-	prelude: string;
-	model: string | null;
-	mode: string | null;
-	memory_mode: string | null;
-	initial_messages: string | null;
-	created_at: number;
+  message_id: number;
+  conversation_id: number;
+  turn_id: string | null;
+  full_input: string;
+  prompt_body: string;
+  prelude: string;
+  model: string | null;
+  mode: string | null;
+  memory_mode: string | null;
+  initial_messages: string | null;
+  created_at: number;
 }
 
 export interface RecordTurnInput {
-	messageId: string | number;
-	conversationId: string | number;
-	turnId?: string | null;
-	fullInput: string;
-	promptBody: string;
-	prelude: string;
-	model?: string | null;
-	mode?: string | null;
-	memoryMode?: string | null;
-	initialMessages?: InitialMessagePreview[] | null;
+  messageId: string | number;
+  conversationId: string | number;
+  turnId?: string | null;
+  fullInput: string;
+  promptBody: string;
+  prelude: string;
+  model?: string | null;
+  mode?: string | null;
+  memoryMode?: string | null;
+  initialMessages?: InitialMessagePreview[] | null;
 }
 
 export function record(input: RecordTurnInput): void {
-	const db = getDb();
-	const intMsg =
-		typeof input.messageId === 'number' ? input.messageId : msgIdCodec.parse(input.messageId);
-	const intConv =
-		typeof input.conversationId === 'number'
-			? input.conversationId
-			: convIdCodec.parse(input.conversationId);
-	db.prepare(
-		`INSERT INTO turn_inputs(
+  const db = getDb();
+  const intMsg =
+    typeof input.messageId === "number"
+      ? input.messageId
+      : msgIdCodec.parse(input.messageId);
+  const intConv =
+    typeof input.conversationId === "number"
+      ? input.conversationId
+      : convIdCodec.parse(input.conversationId);
+  db.prepare(
+    `INSERT INTO turn_inputs(
 		   message_id, conversation_id, turn_id, full_input, prompt_body, prelude,
 		   model, mode, memory_mode, initial_messages, created_at
 		 )
@@ -57,54 +62,64 @@ export function record(input: RecordTurnInput): void {
 		   mode = excluded.mode,
 		   memory_mode = excluded.memory_mode,
 		   initial_messages = excluded.initial_messages,
-		   created_at = excluded.created_at`
-	).run(
-		intMsg,
-		intConv,
-		input.turnId ?? null,
-		input.fullInput,
-		input.promptBody,
-		input.prelude,
-		input.model ?? null,
-		input.mode ?? null,
-		input.memoryMode ?? null,
-		input.initialMessages ? JSON.stringify(input.initialMessages) : null,
-		Date.now()
-	);
+		   created_at = excluded.created_at`,
+  ).run(
+    intMsg,
+    intConv,
+    input.turnId ?? null,
+    input.fullInput,
+    input.promptBody,
+    input.prelude,
+    input.model ?? null,
+    input.mode ?? null,
+    input.memoryMode ?? null,
+    input.initialMessages ? JSON.stringify(input.initialMessages) : null,
+    Date.now(),
+  );
 }
 
-export function get(conversationId: string | number, messageId: string | number): TurnInput | null {
-	const db = getDb();
-	const intConv =
-		typeof conversationId === 'number' ? conversationId : convIdCodec.parse(conversationId);
-	const intMsg = typeof messageId === 'number' ? messageId : msgIdCodec.parse(messageId);
-	const row = db
-		.prepare('SELECT * FROM turn_inputs WHERE conversation_id = ? AND message_id = ?')
-		.get(intConv, intMsg) as TurnInputRow | undefined;
-	if (!row) return null;
-	return rowToTurnInput(row);
+export function get(
+  conversationId: string | number,
+  messageId: string | number,
+): TurnInput | null {
+  const db = getDb();
+  const intConv =
+    typeof conversationId === "number"
+      ? conversationId
+      : convIdCodec.parse(conversationId);
+  const intMsg =
+    typeof messageId === "number" ? messageId : msgIdCodec.parse(messageId);
+  const row = db
+    .prepare(
+      "SELECT * FROM turn_inputs WHERE conversation_id = ? AND message_id = ?",
+    )
+    .get(intConv, intMsg) as TurnInputRow | undefined;
+  if (!row) return null;
+  return rowToTurnInput(row);
 }
 
 function rowToTurnInput(r: TurnInputRow): TurnInput {
-	let initialMessages: InitialMessagePreview[] | null = null;
-	if (r.initial_messages) {
-		try {
-			initialMessages = JSON.parse(r.initial_messages) as InitialMessagePreview[];
-		} catch {
-			initialMessages = null;
-		}
-	}
-	return {
-		messageId: msgIdCodec.encode(r.message_id),
-		conversationId: convIdCodec.encode(r.conversation_id),
-		turnId: r.turn_id,
-		fullInput: r.full_input,
-		promptBody: r.prompt_body,
-		prelude: r.prelude,
-		model: r.model,
-		mode: r.mode,
-		memoryMode: r.memory_mode,
-		initialMessages,
-		createdAt: r.created_at
-	};
+  let initialMessages: InitialMessagePreview[] | null = null;
+  if (r.initial_messages) {
+    try {
+      initialMessages = JSON.parse(
+        r.initial_messages,
+      ) as InitialMessagePreview[];
+    } catch {
+      initialMessages = null;
+    }
+  }
+  return {
+    messageId: msgIdCodec.encode(r.message_id),
+    conversationId: convIdCodec.encode(r.conversation_id),
+    turnId: r.turn_id,
+    fullInput: r.full_input,
+    promptBody: r.prompt_body,
+    prelude: r.prelude,
+    model: r.model,
+    mode: r.mode,
+    memoryMode: r.memory_mode,
+    initialMessages,
+    createdAt: r.created_at,
+  };
 }

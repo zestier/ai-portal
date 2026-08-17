@@ -1,35 +1,35 @@
-import { mkdirSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import { loadConfig } from './config';
+import { mkdirSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { loadConfig } from "./config";
 
 export type WorktreeErrorCode =
-	| 'not_git_repository'
-	| 'repository_has_no_commits'
-	| 'invalid_base_ref'
-	| 'invalid_identifier'
-	| 'branch_exists'
-	| 'worktree_exists'
-	| 'worktree_dirty'
-	| 'worktree_unavailable'
-	| 'git_failed';
+  | "not_git_repository"
+  | "repository_has_no_commits"
+  | "invalid_base_ref"
+  | "invalid_identifier"
+  | "branch_exists"
+  | "worktree_exists"
+  | "worktree_dirty"
+  | "worktree_unavailable"
+  | "git_failed";
 
 export class WorktreeError extends Error {
-	constructor(
-		public readonly code: WorktreeErrorCode,
-		message: string,
-		public readonly detail?: { stderr?: string; dirtyCount?: number }
-	) {
-		super(message);
-		this.name = 'WorktreeError';
-	}
+  constructor(
+    public readonly code: WorktreeErrorCode,
+    message: string,
+    public readonly detail?: { stderr?: string; dirtyCount?: number },
+  ) {
+    super(message);
+    this.name = "WorktreeError";
+  }
 }
 
 const IDENTIFIER_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 function assertIdentifier(value: string, label: string): void {
-	if (!IDENTIFIER_RE.test(value)) {
-		throw new WorktreeError('invalid_identifier', `invalid ${label}`);
-	}
+  if (!IDENTIFIER_RE.test(value)) {
+    throw new WorktreeError("invalid_identifier", `invalid ${label}`);
+  }
 }
 
 /**
@@ -44,15 +44,15 @@ function assertIdentifier(value: string, label: string): void {
  * checked against the real filesystem.
  */
 export type WorktreeSlot =
-	| { kind: 'conversation'; userId: string; conversationId: string }
-	| { kind: 'lease'; userId: string; leaseId: string; label?: string };
+  | { kind: "conversation"; userId: string; conversationId: string }
+  | { kind: "lease"; userId: string; leaseId: string; label?: string };
 
 /**
  * Directory segment separating lease checkouts from conversation checkouts
  * under a user's worktree root. Reserved: a conversation whose id equalled this
  * would collide with the lease namespace, so {@link slotPath} rejects it.
  */
-const LEASE_NAMESPACE = 'leases';
+const LEASE_NAMESPACE = "leases";
 
 const LEASE_LABEL_RE = /^[a-z0-9][a-z0-9-]{0,32}$/;
 
@@ -63,14 +63,14 @@ const LEASE_LABEL_RE = /^[a-z0-9][a-z0-9-]{0,32}$/;
  * caller did not ask for.
  */
 export function sanitizeLeaseLabel(label: string): string {
-	const trimmed = label.trim();
-	if (!LEASE_LABEL_RE.test(trimmed)) {
-		throw new WorktreeError(
-			'invalid_identifier',
-			'label must be 1-33 chars of lowercase letters, digits, or dashes, and start with a letter or digit'
-		);
-	}
-	return trimmed;
+  const trimmed = label.trim();
+  if (!LEASE_LABEL_RE.test(trimmed)) {
+    throw new WorktreeError(
+      "invalid_identifier",
+      "label must be 1-33 chars of lowercase letters, digits, or dashes, and start with a letter or digit",
+    );
+  }
+  return trimmed;
 }
 
 /**
@@ -79,27 +79,33 @@ export function sanitizeLeaseLabel(label: string): string {
  * traversal segment can never reach the filesystem.
  */
 export function slotPath(slot: WorktreeSlot): string {
-	assertIdentifier(slot.userId, 'user id');
-	const root = resolve(loadConfig().WORKTREE_ROOT);
-	let candidate: string;
-	if (slot.kind === 'conversation') {
-		assertIdentifier(slot.conversationId, 'conversation id');
-		// The lease namespace is a sibling directory under the same user root, so
-		// a conversation literally named "leases" would own the whole namespace.
-		// Unreachable with ULID ids, but IDENTIFIER_RE permits lowercase.
-		if (slot.conversationId === LEASE_NAMESPACE) {
-			throw new WorktreeError('invalid_identifier', 'conversation id is reserved');
-		}
-		candidate = resolve(root, slot.userId, slot.conversationId);
-	} else {
-		assertIdentifier(slot.leaseId, 'lease id');
-		candidate = resolve(root, slot.userId, LEASE_NAMESPACE, slot.leaseId);
-	}
-	const rel = relative(root, candidate);
-	if (rel.startsWith('..') || isAbsolute(rel)) {
-		throw new WorktreeError('invalid_identifier', 'generated worktree path escapes root');
-	}
-	return candidate;
+  assertIdentifier(slot.userId, "user id");
+  const root = resolve(loadConfig().WORKTREE_ROOT);
+  let candidate: string;
+  if (slot.kind === "conversation") {
+    assertIdentifier(slot.conversationId, "conversation id");
+    // The lease namespace is a sibling directory under the same user root, so
+    // a conversation literally named "leases" would own the whole namespace.
+    // Unreachable with ULID ids, but IDENTIFIER_RE permits lowercase.
+    if (slot.conversationId === LEASE_NAMESPACE) {
+      throw new WorktreeError(
+        "invalid_identifier",
+        "conversation id is reserved",
+      );
+    }
+    candidate = resolve(root, slot.userId, slot.conversationId);
+  } else {
+    assertIdentifier(slot.leaseId, "lease id");
+    candidate = resolve(root, slot.userId, LEASE_NAMESPACE, slot.leaseId);
+  }
+  const rel = relative(root, candidate);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new WorktreeError(
+      "invalid_identifier",
+      "generated worktree path escapes root",
+    );
+  }
+  return candidate;
 }
 
 /**
@@ -108,22 +114,24 @@ export function slotPath(slot: WorktreeSlot): string {
  * `portal/<conversationId>` branch.
  */
 export function slotBranch(slot: WorktreeSlot): string {
-	if (slot.kind === 'conversation') {
-		assertIdentifier(slot.conversationId, 'conversation id');
-		return `portal/${slot.conversationId}`;
-	}
-	assertIdentifier(slot.leaseId, 'lease id');
-	const base = `portal/lease/${slot.leaseId}`;
-	return slot.label ? `${base}--${sanitizeLeaseLabel(slot.label)}` : base;
+  if (slot.kind === "conversation") {
+    assertIdentifier(slot.conversationId, "conversation id");
+    return `portal/${slot.conversationId}`;
+  }
+  assertIdentifier(slot.leaseId, "lease id");
+  const base = `portal/lease/${slot.leaseId}`;
+  return slot.label ? `${base}--${sanitizeLeaseLabel(slot.label)}` : base;
 }
 
 /** The path segments below WORKTREE_ROOT that contain a slot's checkout. */
 function slotParentSegments(slot: WorktreeSlot): string[] {
-	return slot.kind === 'conversation' ? [slot.userId] : [slot.userId, LEASE_NAMESPACE];
+  return slot.kind === "conversation"
+    ? [slot.userId]
+    : [slot.userId, LEASE_NAMESPACE];
 }
 
 function generatedPath(userId: string, conversationId: string): string {
-	return slotPath({ kind: 'conversation', userId, conversationId });
+  return slotPath({ kind: "conversation", userId, conversationId });
 }
 
 /**
@@ -136,15 +144,21 @@ function generatedPath(userId: string, conversationId: string): string {
  * only one side is what detects a planted `<root>/<user> -> /elsewhere` link.
  */
 export function prepareGeneratedParent(path: string, slot: WorktreeSlot): void {
-	const root = resolve(loadConfig().WORKTREE_ROOT);
-	mkdirSync(dirname(path), { recursive: true });
-	const expected = resolve(realpathSync(root), ...slotParentSegments(slot));
-	const parentReal = realpathSync(dirname(path));
-	if (parentReal !== expected) {
-		throw new WorktreeError('invalid_identifier', 'generated worktree parent escapes root');
-	}
+  const root = resolve(loadConfig().WORKTREE_ROOT);
+  mkdirSync(dirname(path), { recursive: true });
+  const expected = resolve(realpathSync(root), ...slotParentSegments(slot));
+  const parentReal = realpathSync(dirname(path));
+  if (parentReal !== expected) {
+    throw new WorktreeError(
+      "invalid_identifier",
+      "generated worktree parent escapes root",
+    );
+  }
 }
 
-export function expectedManagedWorktreePath(userId: string, conversationId: string): string {
-	return generatedPath(userId, conversationId);
+export function expectedManagedWorktreePath(
+  userId: string,
+  conversationId: string,
+): string {
+  return generatedPath(userId, conversationId);
 }

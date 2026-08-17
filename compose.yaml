@@ -35,7 +35,7 @@ services:
       WORKTREE_ROOT: /data/worktrees
       # No auth layer. HOST=0.0.0.0 demands the explicit acknowledge flag
       # (see header note); reachability is fenced by the loopback port publish.
-      I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: '1'
+      I_KNOW_THIS_IS_NETWORK_ACCESSIBLE: "1"
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?required}
       PI_MODEL: ${PI_MODEL:-anthropic/claude-sonnet-4-5}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-claude-sonnet-4.5}
@@ -64,7 +64,7 @@ services:
       - ./data:/data
       - ${PROJECT_DIR:?required}:/workspace
     ports:
-      - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
+      - "${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000"
     networks:
       - appnet
     # Cap memory/CPU so a runaway redeploy or agent session can't OOM the
@@ -77,8 +77,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: '10m'
-        max-file: '5'
+        max-size: "10m"
+        max-file: "5"
 
 networks:
   appnet:

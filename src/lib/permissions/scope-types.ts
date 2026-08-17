@@ -15,8 +15,8 @@ export type GrantScope = ShellScope | FsScope | UrlScope | AnyScope;
 
 /** Matches `shell` permission requests. */
 export interface ShellScope {
-	kind: 'shell';
-	rule: ShellRule;
+  kind: "shell";
+  rule: ShellRule;
 }
 
 /**
@@ -69,82 +69,82 @@ export interface ShellScope {
  * positionals plus whatever it denies.
  */
 export interface ShellOptionRules {
-	allow?: ShellOptionSpec[] | undefined;
-	deny?: string[] | undefined;
+  allow?: ShellOptionSpec[] | undefined;
+  deny?: string[] | undefined;
 }
 
 export type ShellOptionSpec =
-	| { name: string; kind: 'flag' }
-	| { name: string; kind: 'option'; value: ShellOptionValueRule };
+  | { name: string; kind: "flag" }
+  | { name: string; kind: "option"; value: ShellOptionValueRule };
 
-export type ShellOptionValueRule = { kind: 'any' } | { kind: 'workspace-path' };
+export type ShellOptionValueRule = { kind: "any" } | { kind: "workspace-path" };
 
 export interface ShellCommandStep {
-	token: string;
-	options?: ShellOptionRules | undefined;
+  token: string;
+  options?: ShellOptionRules | undefined;
 }
 
 export interface ShellRule {
-	/**
-	 * Ordered command path. The first step matches argv[0]; subsequent steps
-	 * match subcommand tokens. Each step owns the options allowed after that
-	 * token and before the next command-path token. Options on the final step
-	 * may be interleaved with positional arguments.
-	 */
-	command: ShellCommandStep[];
-	/**
-	 * What positional arguments (non-flag tokens other than argv[0], the
-	 * command-path tokens, and values consumed by matched option specs) are
-	 * allowed. This constrains the SHAPE of each positional; use
-	 * `positionalCount` to constrain how many there are.
-	 *   none             — every positional must be absent
-	 *   any              — anything goes; positionals are opaque and are NOT
-	 *                      resolved or containment-checked. Correct for
-	 *                      operands that aren't paths at all, such as a
-	 *                      `grep` pattern
-	 *   workspace-paths          — every positional must resolve to a path
-	 *                              inside the conversation's workspace root
-	 *   session-workspace-paths  — every positional must resolve to a path
-	 *                              inside the SDK session workspace
-	 *   readable-paths           — every positional must be a path the user's
-	 *                              `read` grants already permit
-	 *   writable-paths           — same, for `write`
-	 *
-	 * See `PositionalsRule` for the precedence and fail-closed semantics of
-	 * the two grant-deferring kinds.
-	 */
-	positionals?: PositionalsRule | undefined;
-	/**
-	 * Inclusive bounds on the NUMBER of positionals, orthogonal to the
-	 * containment rule above; omitted bounds are unconstrained. Composing
-	 * the two is what makes narrow rules expressible without inventing a
-	 * named variant per command shape:
-	 *
-	 *   `grep` as a pure stdin filter  — positionals `any` + max 1 (the lone
-	 *     operand is the pattern; a second one is a file to read, which the
-	 *     rule refuses)
-	 *   a single-file reader           — `workspace-paths` + min 1, max 1
-	 *
-	 * Note `{ kind: 'none' }` is equivalent to max 0 and is kept as the
-	 * clearer spelling of that case.
-	 */
-	positionalCount?: PositionalCountRule | undefined;
-	/**
-	 * Whether this segment must / must not be part of a shell pipeline
-	 * (i.e. connected to a neighboring command by `|`). Omitted = no
-	 * constraint. Used by the seed prompt grants for commands like `cat`
-	 * / `grep` whose stdout is the human-visible output when run bare,
-	 * but which are legitimate inside `cmd | grep ...`.
-	 *   must         — this segment must be in a pipeline (either side of a `|`)
-	 *   forbid       — this segment must NOT be in a pipeline
-	 *   pipe-target  — this segment must be DOWNSTREAM of a `|`, i.e. it
-	 *                  consumes another command's stdout. Strictly narrower
-	 *                  than `must`, which also matches the producer: in
-	 *                  `grep x file | head`, grep satisfies `must` while
-	 *                  still reading files off disk. `pipe-target` is how a
-	 *                  grant says "only as a filter over piped input".
-	 */
-	pipeline?: 'must' | 'forbid' | 'pipe-target' | undefined;
+  /**
+   * Ordered command path. The first step matches argv[0]; subsequent steps
+   * match subcommand tokens. Each step owns the options allowed after that
+   * token and before the next command-path token. Options on the final step
+   * may be interleaved with positional arguments.
+   */
+  command: ShellCommandStep[];
+  /**
+   * What positional arguments (non-flag tokens other than argv[0], the
+   * command-path tokens, and values consumed by matched option specs) are
+   * allowed. This constrains the SHAPE of each positional; use
+   * `positionalCount` to constrain how many there are.
+   *   none             — every positional must be absent
+   *   any              — anything goes; positionals are opaque and are NOT
+   *                      resolved or containment-checked. Correct for
+   *                      operands that aren't paths at all, such as a
+   *                      `grep` pattern
+   *   workspace-paths          — every positional must resolve to a path
+   *                              inside the conversation's workspace root
+   *   session-workspace-paths  — every positional must resolve to a path
+   *                              inside the SDK session workspace
+   *   readable-paths           — every positional must be a path the user's
+   *                              `read` grants already permit
+   *   writable-paths           — same, for `write`
+   *
+   * See `PositionalsRule` for the precedence and fail-closed semantics of
+   * the two grant-deferring kinds.
+   */
+  positionals?: PositionalsRule | undefined;
+  /**
+   * Inclusive bounds on the NUMBER of positionals, orthogonal to the
+   * containment rule above; omitted bounds are unconstrained. Composing
+   * the two is what makes narrow rules expressible without inventing a
+   * named variant per command shape:
+   *
+   *   `grep` as a pure stdin filter  — positionals `any` + max 1 (the lone
+   *     operand is the pattern; a second one is a file to read, which the
+   *     rule refuses)
+   *   a single-file reader           — `workspace-paths` + min 1, max 1
+   *
+   * Note `{ kind: 'none' }` is equivalent to max 0 and is kept as the
+   * clearer spelling of that case.
+   */
+  positionalCount?: PositionalCountRule | undefined;
+  /**
+   * Whether this segment must / must not be part of a shell pipeline
+   * (i.e. connected to a neighboring command by `|`). Omitted = no
+   * constraint. Used by the seed prompt grants for commands like `cat`
+   * / `grep` whose stdout is the human-visible output when run bare,
+   * but which are legitimate inside `cmd | grep ...`.
+   *   must         — this segment must be in a pipeline (either side of a `|`)
+   *   forbid       — this segment must NOT be in a pipeline
+   *   pipe-target  — this segment must be DOWNSTREAM of a `|`, i.e. it
+   *                  consumes another command's stdout. Strictly narrower
+   *                  than `must`, which also matches the producer: in
+   *                  `grep x file | head`, grep satisfies `must` while
+   *                  still reading files off disk. `pipe-target` is how a
+   *                  grant says "only as a filter over piped input".
+   */
+  pipeline?: "must" | "forbid" | "pipe-target" | undefined;
 }
 
 /**
@@ -179,12 +179,12 @@ export interface ShellRule {
  *     that grants an open deny-list of options is not made safe by this kind.
  */
 export type PositionalsRule =
-	| { kind: 'none' }
-	| { kind: 'any' }
-	| { kind: 'workspace-paths' }
-	| { kind: 'session-workspace-paths' }
-	| { kind: 'readable-paths' }
-	| { kind: 'writable-paths' };
+  | { kind: "none" }
+  | { kind: "any" }
+  | { kind: "workspace-paths" }
+  | { kind: "session-workspace-paths" }
+  | { kind: "readable-paths" }
+  | { kind: "writable-paths" };
 
 /**
  * The `PositionalsRule` kinds that defer containment to the fs grants, mapped
@@ -193,11 +193,12 @@ export type PositionalsRule =
  * another.
  */
 export const FS_DEFERRED_POSITIONALS_KINDS = {
-	'readable-paths': 'read',
-	'writable-paths': 'write'
+  "readable-paths": "read",
+  "writable-paths": "write",
 } as const satisfies Record<string, FsPermission>;
 
-export type FsDeferredPositionalsKind = keyof typeof FS_DEFERRED_POSITIONALS_KINDS;
+export type FsDeferredPositionalsKind =
+  keyof typeof FS_DEFERRED_POSITIONALS_KINDS;
 
 /**
  * Every `PositionalsRule` kind, in the order the grant form offers them.
@@ -206,72 +207,91 @@ export type FsDeferredPositionalsKind = keyof typeof FS_DEFERRED_POSITIONALS_KIN
  * listing a kind that isn't a variant is too.
  */
 export const POSITIONALS_KINDS = [
-	'none',
-	'any',
-	'workspace-paths',
-	'session-workspace-paths',
-	'readable-paths',
-	'writable-paths'
-] as const satisfies readonly PositionalsRule['kind'][];
+  "none",
+  "any",
+  "workspace-paths",
+  "session-workspace-paths",
+  "readable-paths",
+  "writable-paths",
+] as const satisfies readonly PositionalsRule["kind"][];
 
 type _PositionalsKindsAreExhaustive =
-	PositionalsRule['kind'] extends (typeof POSITIONALS_KINDS)[number] ? true : never;
+  PositionalsRule["kind"] extends (typeof POSITIONALS_KINDS)[number]
+    ? true
+    : never;
 const _positionalsKindsAreExhaustive: _PositionalsKindsAreExhaustive = true;
 void _positionalsKindsAreExhaustive;
 
 /** Inclusive positional-count bounds. Both ends are optional and each is a
  * non-negative integer; `min` must not exceed `max`. */
 export interface PositionalCountRule {
-	min?: number | undefined;
-	max?: number | undefined;
+  min?: number | undefined;
+  max?: number | undefined;
 }
 
 /** Matches `read` / `write` / `edit` permission requests. */
 export interface FsScope {
-	kind: 'fs';
-	/** Which kinds this grant covers. Empty = all three. */
-	perms?: FsPermission[] | undefined;
-	rule: FsRule;
+  kind: "fs";
+  /** Which kinds this grant covers. Empty = all three. */
+  perms?: FsPermission[] | undefined;
+  rule: FsRule;
 }
 
-export const FS_PERMISSIONS = ['read', 'write', 'edit'] as const;
+export const FS_PERMISSIONS = ["read", "write", "edit"] as const;
 export type FsPermission = (typeof FS_PERMISSIONS)[number];
 
-export const FS_RULE_ROOTS = ['workspace', 'session-workspace', 'absolute'] as const;
+export const FS_RULE_ROOTS = [
+  "workspace",
+  "session-workspace",
+  "absolute",
+] as const;
 export type FsRuleRoot = (typeof FS_RULE_ROOTS)[number];
 
-export const FS_RULE_CONTAINER_ROOTS = ['workspace', 'session-workspace'] as const;
+export const FS_RULE_CONTAINER_ROOTS = [
+  "workspace",
+  "session-workspace",
+] as const;
 export type FsRuleContainerRoot = (typeof FS_RULE_CONTAINER_ROOTS)[number];
 
-export const FS_RULE_BEHAVIORS_WITH_VALUE = ['exact', 'prefix', 'glob'] as const;
-export type FsRuleBehaviorWithValue = (typeof FS_RULE_BEHAVIORS_WITH_VALUE)[number];
+export const FS_RULE_BEHAVIORS_WITH_VALUE = [
+  "exact",
+  "prefix",
+  "glob",
+] as const;
+export type FsRuleBehaviorWithValue =
+  (typeof FS_RULE_BEHAVIORS_WITH_VALUE)[number];
 
 export type FsRule =
-	/**
-	 * Composable path rule. `root` chooses the coordinate system, `behavior`
-	 * chooses the matcher, and `value` is required for exact / prefix / glob.
-	 *
-	 *   workspace / session-workspace — value is relative to that root
-	 *   absolute                      — value is an absolute path or glob
-	 */
-	| { kind: 'path'; root: FsRuleContainerRoot; behavior: 'any' }
-	| { kind: 'path'; root: FsRuleRoot; behavior: FsRuleBehaviorWithValue; value: string };
+  /**
+   * Composable path rule. `root` chooses the coordinate system, `behavior`
+   * chooses the matcher, and `value` is required for exact / prefix / glob.
+   *
+   *   workspace / session-workspace — value is relative to that root
+   *   absolute                      — value is an absolute path or glob
+   */
+  | { kind: "path"; root: FsRuleContainerRoot; behavior: "any" }
+  | {
+      kind: "path";
+      root: FsRuleRoot;
+      behavior: FsRuleBehaviorWithValue;
+      value: string;
+    };
 
 /** Matches `url` permission requests. */
 export interface UrlScope {
-	kind: 'url';
-	rule: UrlRule;
+  kind: "url";
+  rule: UrlRule;
 }
 
 export type UrlRule =
-	| { kind: 'exact'; url: string }
-	| { kind: 'host'; host: string }
-	/** Match host iff it equals `suffix` or ends with `'.' + suffix`. */
-	| { kind: 'host-suffix'; suffix: string };
+  | { kind: "exact"; url: string }
+  | { kind: "host"; host: string }
+  /** Match host iff it equals `suffix` or ends with `'.' + suffix`. */
+  | { kind: "host-suffix"; suffix: string };
 
 /** Catch-all for v2-era rows we migrate without conversion ("Allow always"
  * with no kind/pattern). The matcher treats this as "any request for the
  * grant's tool". */
 export interface AnyScope {
-	kind: 'any';
+  kind: "any";
 }

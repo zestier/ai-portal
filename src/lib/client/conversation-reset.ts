@@ -21,21 +21,21 @@
 // reintroduce the bug by reading the id but forgetting to record it.
 
 export interface ConversationResetGate {
-	// Returns true (and records `nextId`) only when `nextId` differs from the
-	// last id this gate seeded from — i.e. a genuine conversation switch or the
-	// very first mount. A repeat of the same id (a background refresh handing a
-	// new prop object) returns false, so local state such as an in-progress
-	// composer draft survives untouched.
-	shouldReset(nextId: string): boolean;
+  // Returns true (and records `nextId`) only when `nextId` differs from the
+  // last id this gate seeded from — i.e. a genuine conversation switch or the
+  // very first mount. A repeat of the same id (a background refresh handing a
+  // new prop object) returns false, so local state such as an in-progress
+  // composer draft survives untouched.
+  shouldReset(nextId: string): boolean;
 }
 
 export function createConversationResetGate(): ConversationResetGate {
-	let lastId: string | undefined = undefined;
-	return {
-		shouldReset(nextId: string): boolean {
-			if (lastId === nextId) return false;
-			lastId = nextId;
-			return true;
-		}
-	};
+  let lastId: string | undefined = undefined;
+  return {
+    shouldReset(nextId: string): boolean {
+      if (lastId === nextId) return false;
+      lastId = nextId;
+      return true;
+    },
+  };
 }

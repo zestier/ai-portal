@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeEach } from 'vitest';
-import { cleanupTmpDirs } from './helpers/tmp';
+import { afterAll, afterEach, beforeEach } from "vitest";
+import { cleanupTmpDirs } from "./helpers/tmp";
 
 /**
  * Per-test env snapshot/restore. Many tests mutate process.env (DATA_DIR,
@@ -9,23 +9,23 @@ import { cleanupTmpDirs } from './helpers/tmp';
 let envSnapshot: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-	envSnapshot = { ...process.env };
+  envSnapshot = { ...process.env };
 });
 
 afterEach(() => {
-	for (const key of Object.keys(process.env)) {
-		if (!(key in envSnapshot)) delete process.env[key];
-	}
-	for (const [key, value] of Object.entries(envSnapshot)) {
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
+  for (const key of Object.keys(process.env)) {
+    if (!(key in envSnapshot)) delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(envSnapshot)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 afterAll(() => {
-	cleanupTmpDirs();
+  cleanupTmpDirs();
 });
 
 // Default to warn-level logging so the suite isn't drowned in
 // db.migration.applied / db.open lines.
-if (!process.env.LOG_LEVEL) process.env.LOG_LEVEL = 'warn';
+if (!process.env.LOG_LEVEL) process.env.LOG_LEVEL = "warn";

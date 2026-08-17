@@ -5,38 +5,44 @@
 // keyboard-activatable trigger that opens the shared lightbox. A MutationObserver
 // re-decorates after streaming re-renders; decoration is idempotent.
 
-import { openImageLightbox } from './image-lightbox.svelte';
+import { openImageLightbox } from "./image-lightbox.svelte";
 
 function decorateImg(img: HTMLImageElement): void {
-	if (img.dataset.zoomDecorated === 'true') return;
-	img.dataset.zoomDecorated = 'true';
+  if (img.dataset.zoomDecorated === "true") return;
+  img.dataset.zoomDecorated = "true";
 
-	img.style.cursor = 'zoom-in';
-	img.setAttribute('role', 'button');
-	img.setAttribute('tabindex', '0');
-	if (!img.title) img.title = 'Click to view full size';
+  img.style.cursor = "zoom-in";
+  img.setAttribute("role", "button");
+  img.setAttribute("tabindex", "0");
+  if (!img.title) img.title = "Click to view full size";
 
-	img.addEventListener('click', () => openImageLightbox(img.currentSrc || img.src, img.alt));
-	img.addEventListener('keydown', (e) => {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			openImageLightbox(img.currentSrc || img.src, img.alt);
-		}
-	});
+  img.addEventListener("click", () =>
+    openImageLightbox(img.currentSrc || img.src, img.alt),
+  );
+  img.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openImageLightbox(img.currentSrc || img.src, img.alt);
+    }
+  });
 }
 
 export function zoomableImages(node: HTMLElement) {
-	const decorate = (): void =>
-		node.querySelectorAll('img').forEach((img) => decorateImg(img as HTMLImageElement));
+  const decorate = (): void =>
+    node
+      .querySelectorAll("img")
+      .forEach((img) => decorateImg(img as HTMLImageElement));
 
-	const observer =
-		typeof MutationObserver !== 'undefined' ? new MutationObserver(() => decorate()) : null;
+  const observer =
+    typeof MutationObserver !== "undefined"
+      ? new MutationObserver(() => decorate())
+      : null;
 
-	decorate();
-	observer?.observe(node, { childList: true, subtree: true });
+  decorate();
+  observer?.observe(node, { childList: true, subtree: true });
 
-	return {
-		update: decorate,
-		destroy: () => observer?.disconnect()
-	};
+  return {
+    update: decorate,
+    destroy: () => observer?.disconnect(),
+  };
 }

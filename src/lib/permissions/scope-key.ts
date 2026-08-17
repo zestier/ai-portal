@@ -1,7 +1,10 @@
 // Pure scope-key derivation. Shared between the server (matcher) and the
 // client (dialog UI), so it lives outside $lib/server.
 
-import { derivePermissionScopeKey, type PermissionScopeKeyRequest } from './metadata';
+import {
+  derivePermissionScopeKey,
+  type PermissionScopeKeyRequest,
+} from "./metadata";
 
 /**
  * Derive a scope key from the SDK's permission-request payload. Returns
@@ -10,8 +13,8 @@ import { derivePermissionScopeKey, type PermissionScopeKeyRequest } from './meta
  * the "Just this exact …" scope option.
  */
 export function deriveScopeKey(
-	permissionKind: string,
-	req: PermissionScopeKeyRequest
+  permissionKind: string,
+  req: PermissionScopeKeyRequest,
 ): string | null {
-	return derivePermissionScopeKey(permissionKind, req);
+  return derivePermissionScopeKey(permissionKind, req);
 }

@@ -11,21 +11,21 @@
 // `requestId`. This is also what protects against replayed event logs
 // resurrecting prompts the user already answered.
 
-import type { InteractiveRequestView } from '$lib/types';
+import type { InteractiveRequestView } from "$lib/types";
 
 export function addInteractive(
-	queue: InteractiveRequestView[],
-	req: InteractiveRequestView
+  queue: InteractiveRequestView[],
+  req: InteractiveRequestView,
 ): InteractiveRequestView[] {
-	// Dedupe by requestId so replaying the turn's event log on reconnect
-	// doesn't double-insert prompts already in the queue.
-	if (queue.some((p) => p.requestId === req.requestId)) return queue;
-	return [...queue, req];
+  // Dedupe by requestId so replaying the turn's event log on reconnect
+  // doesn't double-insert prompts already in the queue.
+  if (queue.some((p) => p.requestId === req.requestId)) return queue;
+  return [...queue, req];
 }
 
 export function removeInteractive(
-	queue: InteractiveRequestView[],
-	requestId: string
+  queue: InteractiveRequestView[],
+  requestId: string,
 ): InteractiveRequestView[] {
-	return queue.filter((p) => p.requestId !== requestId);
+  return queue.filter((p) => p.requestId !== requestId);
 }

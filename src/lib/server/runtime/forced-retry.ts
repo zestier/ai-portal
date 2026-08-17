@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes } from "node:crypto";
 
 /**
  * One-shot forced-retry escalation tokens.
@@ -22,79 +22,79 @@ import { randomBytes } from 'node:crypto';
 const TTL_MS = 15 * 60 * 1000;
 
 export interface ForcedRetryEntry {
-	token: string;
-	conversationId: number;
-	tool: string;
-	permissionKind: string;
-	scopeKey: string | null;
-	argsHash: string | null;
-	summary: string;
-	args: unknown;
-	deniedFeedback: string | null;
-	reason: string | null;
-	createdAt: number;
-	status: 'pending' | 'approved';
+  token: string;
+  conversationId: number;
+  tool: string;
+  permissionKind: string;
+  scopeKey: string | null;
+  argsHash: string | null;
+  summary: string;
+  args: unknown;
+  deniedFeedback: string | null;
+  reason: string | null;
+  createdAt: number;
+  status: "pending" | "approved";
 }
 
 const store = new Map<string, ForcedRetryEntry>();
 
 function prune(): void {
-	const now = Date.now();
-	for (const [token, entry] of store) {
-		if (now - entry.createdAt > TTL_MS) store.delete(token);
-	}
+  const now = Date.now();
+  for (const [token, entry] of store) {
+    if (now - entry.createdAt > TTL_MS) store.delete(token);
+  }
 }
 
 export function mintForcedRetry(input: {
-	conversationId: number;
-	tool: string;
-	permissionKind: string;
-	scopeKey: string | null;
-	argsHash: string | null;
-	summary: string;
-	args: unknown;
-	deniedFeedback?: string | null;
+  conversationId: number;
+  tool: string;
+  permissionKind: string;
+  scopeKey: string | null;
+  argsHash: string | null;
+  summary: string;
+  args: unknown;
+  deniedFeedback?: string | null;
 }): string {
-	prune();
-	const token = randomBytes(12).toString('hex');
-	store.set(token, {
-		token,
-		conversationId: input.conversationId,
-		tool: input.tool,
-		permissionKind: input.permissionKind,
-		scopeKey: input.scopeKey,
-		argsHash: input.argsHash,
-		summary: input.summary,
-		args: input.args,
-		deniedFeedback: input.deniedFeedback ?? null,
-		reason: null,
-		createdAt: Date.now(),
-		status: 'pending'
-	});
-	return token;
+  prune();
+  const token = randomBytes(12).toString("hex");
+  store.set(token, {
+    token,
+    conversationId: input.conversationId,
+    tool: input.tool,
+    permissionKind: input.permissionKind,
+    scopeKey: input.scopeKey,
+    argsHash: input.argsHash,
+    summary: input.summary,
+    args: input.args,
+    deniedFeedback: input.deniedFeedback ?? null,
+    reason: null,
+    createdAt: Date.now(),
+    status: "pending",
+  });
+  return token;
 }
 
 export function getForcedRetry(token: string): ForcedRetryEntry | null {
-	prune();
-	const entry = store.get(token);
-	if (!entry) return null;
-	if (Date.now() - entry.createdAt > TTL_MS) {
-		store.delete(token);
-		return null;
-	}
-	return entry;
+  prune();
+  const entry = store.get(token);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > TTL_MS) {
+    store.delete(token);
+    return null;
+  }
+  return entry;
 }
 
 export function approveForcedRetry(token: string, reason: string): boolean {
-	const entry = store.get(token);
-	if (!entry || entry.status !== 'pending') return false;
-	entry.status = 'approved';
-	entry.reason = reason;
-	return true;
+  const entry = store.get(token);
+  if (!entry || entry.status !== "pending") return false;
+  entry.status = "approved";
+  entry.reason = reason;
+  return true;
 }
 
 export function revokeForcedRetry(token: string): void {
-	store.delete(token);
+  store.delete(token);
 }
 
 /**
@@ -106,10 +106,10 @@ export function revokeForcedRetry(token: string): void {
  * `consumeForcedRetryMatch` to match.
  */
 export function takeForcedRetry(token: string): ForcedRetryEntry | null {
-	const entry = store.get(token);
-	if (!entry || entry.status !== 'pending') return null;
-	store.delete(token);
-	return entry;
+  const entry = store.get(token);
+  if (!entry || entry.status !== "pending") return null;
+  store.delete(token);
+  return entry;
 }
 
 /**
@@ -124,30 +124,30 @@ export function takeForcedRetry(token: string): ForcedRetryEntry | null {
  * so callers can audit the approval.
  */
 export function consumeForcedRetryMatch(input: {
-	conversationId: number;
-	tool: string;
-	permissionKind: string;
-	scopeKey: string | null;
-	argsHash: string | null;
+  conversationId: number;
+  tool: string;
+  permissionKind: string;
+  scopeKey: string | null;
+  argsHash: string | null;
 }): ForcedRetryEntry | null {
-	prune();
-	for (const [token, entry] of store) {
-		if (entry.status !== 'approved') continue;
-		if (entry.conversationId !== input.conversationId) continue;
-		if (entry.tool !== input.tool) continue;
-		if (entry.permissionKind !== input.permissionKind) continue;
-		if (entry.scopeKey !== input.scopeKey) continue;
-		if (input.scopeKey === null && entry.argsHash !== input.argsHash) continue;
-		store.delete(token);
-		return entry;
-	}
-	return null;
+  prune();
+  for (const [token, entry] of store) {
+    if (entry.status !== "approved") continue;
+    if (entry.conversationId !== input.conversationId) continue;
+    if (entry.tool !== input.tool) continue;
+    if (entry.permissionKind !== input.permissionKind) continue;
+    if (entry.scopeKey !== input.scopeKey) continue;
+    if (input.scopeKey === null && entry.argsHash !== input.argsHash) continue;
+    store.delete(token);
+    return entry;
+  }
+  return null;
 }
 
 /** Append the escalation hint (with the one-shot token) to a deny message. */
 export function withForceRetryHint(feedback: string, token: string): string {
-	return (
-		`${feedback}\n\nTo force this call, call \`force_retry_tool\` with \`token: "${token}"\` ` +
-		'and a concise reason (>= 20 characters).'
-	);
+  return (
+    `${feedback}\n\nTo force this call, call \`force_retry_tool\` with \`token: "${token}"\` ` +
+    "and a concise reason (>= 20 characters)."
+  );
 }

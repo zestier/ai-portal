@@ -9,24 +9,24 @@
 // advanced). The text is intentionally tool-agnostic about *which* commit it
 // followed.
 export const COMMIT_TICKET_FOLLOW_UP_HINT =
-	'Now reconcile workspace tickets: review the open ones with ticket_list and, for any that this commit completes or advances, update them with ticket_update.';
+  "Now reconcile workspace tickets: review the open ones with ticket_list and, for any that this commit completes or advances, update them with ticket_update.";
 
 // Appended to `COMMIT_TICKET_FOLLOW_UP_HINT` when the commit landed in a linked
 // worktree. Commits made there are invisible to the source checkout until they
 // are merged back, which is the single easiest thing for an agent to forget at
 // the end of a worktree session.
 export const WORKTREE_INTEGRATE_FOLLOW_UP_HINT =
-	'This commit landed on a linked worktree branch, so it is not yet in the source checkout. When the work is complete, integrate it with git_worktree_merge (direction "to-source"), passing `squash` with a subject if the branch\'s intermediate commits should land as one; use git_worktree_status first if you need the ahead/behind counts.';
+  'This commit landed on a linked worktree branch, so it is not yet in the source checkout. When the work is complete, integrate it with git_worktree_merge (direction "to-source"), passing `squash` with a subject if the branch\'s intermediate commits should land as one; use git_worktree_status first if you need the ahead/behind counts.';
 
 // Set by `git_commit` when the commit was made INTO a lease this conversation
 // holds (`worktree: <leaseId>`). The collecting call there is `worktree_merge`
 // with that id — `git_worktree_merge` acts on the session's own workspace and
 // would not touch the lease — so the hint names it explicitly.
 export function leaseIntegrateFollowUpHint(leaseId: string): string {
-	return (
-		`This commit landed on worktree ${leaseId}'s branch, not in this conversation's workspace. ` +
-		`Collect it with worktree_merge (leaseId: "${leaseId}"), adding \`squash\` with a subject to land the worktree's commits as one, then worktree_remove the worktree once you no longer need it.`
-	);
+  return (
+    `This commit landed on worktree ${leaseId}'s branch, not in this conversation's workspace. ` +
+    `Collect it with worktree_merge (leaseId: "${leaseId}"), adding \`squash\` with a subject to land the worktree's commits as one, then worktree_remove the worktree once you no longer need it.`
+  );
 }
 
 /**
@@ -39,14 +39,16 @@ export function leaseIntegrateFollowUpHint(leaseId: string): string {
  * `selector` is the `worktree: "<leaseId>"` fragment to repeat in the follow-up
  * calls, so a hint read inside a lease names the same tree it described.
  */
-export function mergeInProgressFollowUpHint(leaseId?: string | undefined): string {
-	const selector = leaseId ? `worktree: "${leaseId}", ` : '';
-	return (
-		'A merge is in progress in this tree. Resolve each conflicted file by editing it — keep the intended content and ' +
-		'delete the <<<<<<< / ======= / >>>>>>> lines — then conclude the merge with ' +
-		`git_commit { ${selector}paths: "all", subject: "<message>" }, which stages those resolutions (only the conflicted files) and creates the merge commit. ` +
-		`To give up on the merge instead and return the tree to its pre-merge state, use git_merge_abort { ${leaseId ? `worktree: "${leaseId}"` : ''} }.`
-	);
+export function mergeInProgressFollowUpHint(
+  leaseId?: string | undefined,
+): string {
+  const selector = leaseId ? `worktree: "${leaseId}", ` : "";
+  return (
+    "A merge is in progress in this tree. Resolve each conflicted file by editing it — keep the intended content and " +
+    "delete the <<<<<<< / ======= / >>>>>>> lines — then conclude the merge with " +
+    `git_commit { ${selector}paths: "all", subject: "<message>" }, which stages those resolutions (only the conflicted files) and creates the merge commit. ` +
+    `To give up on the merge instead and return the tree to its pre-merge state, use git_merge_abort { ${leaseId ? `worktree: "${leaseId}"` : ""} }.`
+  );
 }
 
 /**
@@ -55,13 +57,15 @@ export function mergeInProgressFollowUpHint(leaseId?: string | undefined): strin
  * forward, and saying so is better than a hint that names `git_merge_abort`,
  * which would fail here.
  */
-export function unmergedPathsFollowUpHint(leaseId?: string | undefined): string {
-	const selector = leaseId ? `worktree: "${leaseId}", ` : '';
-	return (
-		'This tree has unmerged (conflicted) paths but no merge in progress, so git will refuse every commit until they are resolved. ' +
-		'Edit each conflicted file to keep the intended content and delete the <<<<<<< / ======= / >>>>>>> lines, then commit with ' +
-		`git_commit { ${selector}paths: "all", subject: "<message>" }. git_merge_abort does not apply here — there is no merge to roll back.`
-	);
+export function unmergedPathsFollowUpHint(
+  leaseId?: string | undefined,
+): string {
+  const selector = leaseId ? `worktree: "${leaseId}", ` : "";
+  return (
+    "This tree has unmerged (conflicted) paths but no merge in progress, so git will refuse every commit until they are resolved. " +
+    "Edit each conflicted file to keep the intended content and delete the <<<<<<< / ======= / >>>>>>> lines, then commit with " +
+    `git_commit { ${selector}paths: "all", subject: "<message>" }. git_merge_abort does not apply here — there is no merge to roll back.`
+  );
 }
 
 /**
@@ -72,14 +76,14 @@ export function unmergedPathsFollowUpHint(leaseId?: string | undefined): string 
  * operations itself; a tree in one got there from outside.
  */
 export function sequencerFollowUpHint(
-	sequencer: 'rebase' | 'cherry-pick' | 'revert',
-	leaseId?: string | undefined
+  sequencer: "rebase" | "cherry-pick" | "revert",
+  leaseId?: string | undefined,
 ): string {
-	const selector = leaseId ? `worktree: "${leaseId}", ` : '';
-	return (
-		`This tree is in the middle of a ${sequencer}, which the portal did not start and has no structured tool to continue or abort. ` +
-		`git_commit { ${selector}paths: "all", subject: "<message>" } commits the current conflict resolution, but it does NOT advance the ${sequencer}: ` +
-		`any remaining steps still need \`git ${sequencer} --continue\` or \`--abort\`, which this portal does not expose. ` +
-		'Report that rather than treating the operation as finished — a human has to drive the rest.'
-	);
+  const selector = leaseId ? `worktree: "${leaseId}", ` : "";
+  return (
+    `This tree is in the middle of a ${sequencer}, which the portal did not start and has no structured tool to continue or abort. ` +
+    `git_commit { ${selector}paths: "all", subject: "<message>" } commits the current conflict resolution, but it does NOT advance the ${sequencer}: ` +
+    `any remaining steps still need \`git ${sequencer} --continue\` or \`--abort\`, which this portal does not expose. ` +
+    "Report that rather than treating the operation as finished — a human has to drive the rest."
+  );
 }

@@ -1,4 +1,7 @@
-import type { WorkspaceTicketPriority, WorkspaceTicketStatus } from '$lib/types';
+import type {
+  WorkspaceTicketPriority,
+  WorkspaceTicketStatus,
+} from "$lib/types";
 
 type TicketStatusFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -8,21 +11,21 @@ type TicketStatusFetch = (url: string, init: RequestInit) => Promise<Response>;
  * stay generic across them and refresh loader data in place afterward.
  */
 export async function patchTicketStatus({
-	ticketId,
-	status,
-	fetcher = fetch
+  ticketId,
+  status,
+  fetcher = fetch,
 }: {
-	ticketId: string;
-	status: WorkspaceTicketStatus;
-	fetcher?: TicketStatusFetch;
+  ticketId: string;
+  status: WorkspaceTicketStatus;
+  fetcher?: TicketStatusFetch;
 }): Promise<{ ok: true } | { ok: false; status?: number }> {
-	const res = await fetcher(`/api/tickets/${encodeURIComponent(ticketId)}`, {
-		method: 'PATCH',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ status })
-	});
-	if (!res.ok) return { ok: false, status: res.status };
-	return { ok: true };
+  const res = await fetcher(`/api/tickets/${encodeURIComponent(ticketId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return { ok: false, status: res.status };
+  return { ok: true };
 }
 
 /**
@@ -31,19 +34,19 @@ export async function patchTicketStatus({
  * re-prioritization, mirroring `patchTicketStatus`.
  */
 export async function patchTicketPriority({
-	ticketId,
-	priority,
-	fetcher = fetch
+  ticketId,
+  priority,
+  fetcher = fetch,
 }: {
-	ticketId: string;
-	priority: WorkspaceTicketPriority;
-	fetcher?: TicketStatusFetch;
+  ticketId: string;
+  priority: WorkspaceTicketPriority;
+  fetcher?: TicketStatusFetch;
 }): Promise<{ ok: true } | { ok: false; status?: number }> {
-	const res = await fetcher(`/api/tickets/${encodeURIComponent(ticketId)}`, {
-		method: 'PATCH',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ priority })
-	});
-	if (!res.ok) return { ok: false, status: res.status };
-	return { ok: true };
+  const res = await fetcher(`/api/tickets/${encodeURIComponent(ticketId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ priority }),
+  });
+  if (!res.ok) return { ok: false, status: res.status };
+  return { ok: true };
 }

@@ -1,4 +1,4 @@
-import type { DisplayMessage } from './display-message';
+import type { DisplayMessage } from "./display-message";
 
 /**
  * Where a `tool.call` / `file.edit` event should be applied.
@@ -10,7 +10,8 @@ import type { DisplayMessage } from './display-message';
  *   message has been fetched). Re-sync from the server instead of silently
  *   dropping the event.
  */
-export type AssistantTargetResult = { kind: 'found'; index: number } | { kind: 'refresh' };
+export type AssistantTargetResult =
+  { kind: "found"; index: number } | { kind: "refresh" };
 
 /**
  * Resolve the assistant message a `tool.call` / `file.edit` event belongs to.
@@ -22,19 +23,19 @@ export type AssistantTargetResult = { kind: 'found'; index: number } | { kind: '
  * the last message when that is an assistant turn.
  */
 export function resolveAssistantTarget(
-	messages: Pick<DisplayMessage, 'id' | 'role'>[],
-	messageId: string | undefined
+  messages: Pick<DisplayMessage, "id" | "role">[],
+  messageId: string | undefined,
 ): AssistantTargetResult {
-	if (messageId) {
-		const index = messages.findIndex((m) => m.id === messageId);
-		if (index >= 0 && messages[index].role === 'assistant') {
-			return { kind: 'found', index };
-		}
-		return { kind: 'refresh' };
-	}
-	const last = messages.length - 1;
-	if (last >= 0 && messages[last].role === 'assistant') {
-		return { kind: 'found', index: last };
-	}
-	return { kind: 'refresh' };
+  if (messageId) {
+    const index = messages.findIndex((m) => m.id === messageId);
+    if (index >= 0 && messages[index].role === "assistant") {
+      return { kind: "found", index };
+    }
+    return { kind: "refresh" };
+  }
+  const last = messages.length - 1;
+  if (last >= 0 && messages[last].role === "assistant") {
+    return { kind: "found", index: last };
+  }
+  return { kind: "refresh" };
 }

@@ -11,9 +11,9 @@
 // image preview (server/files.ts), so it lives in a neutral location neither
 // feature owns.
 
-import { statSync, readFileSync } from 'node:fs';
-import { extname } from 'node:path';
-import { sanitizeSvg, looksLikeSvg, MAX_SVG_BYTES } from './svg-sanitize';
+import { statSync, readFileSync } from "node:fs";
+import { extname } from "node:path";
+import { sanitizeSvg, looksLikeSvg, MAX_SVG_BYTES } from "./svg-sanitize";
 
 // Hard ceiling on a single captured/served image. Larger images are skipped
 // gracefully (no capture, no inline render) rather than loading huge blobs.
@@ -25,19 +25,19 @@ export const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 export const MAX_IMAGE_PREVIEW_BYTES = 1.5 * 1024 * 1024;
 
 const EXTENSION_MIME: Record<string, string> = {
-	'.png': 'image/png',
-	'.jpg': 'image/jpeg',
-	'.jpeg': 'image/jpeg',
-	'.gif': 'image/gif',
-	'.webp': 'image/webp',
-	'.bmp': 'image/bmp',
-	'.svg': 'image/svg+xml'
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
 };
 
-export const SVG_MIME = 'image/svg+xml';
+export const SVG_MIME = "image/svg+xml";
 
 export function isAllowlistedImageExtension(path: string): boolean {
-	return extname(path).toLowerCase() in EXTENSION_MIME;
+  return extname(path).toLowerCase() in EXTENSION_MIME;
 }
 
 /**
@@ -47,56 +47,56 @@ export function isAllowlistedImageExtension(path: string): boolean {
  * reading the file.
  */
 export function sniffImageMime(head: Uint8Array): string | null {
-	const b = head;
-	// PNG: 89 50 4E 47 0D 0A 1A 0A
-	if (
-		b.length >= 8 &&
-		b[0] === 0x89 &&
-		b[1] === 0x50 &&
-		b[2] === 0x4e &&
-		b[3] === 0x47 &&
-		b[4] === 0x0d &&
-		b[5] === 0x0a &&
-		b[6] === 0x1a &&
-		b[7] === 0x0a
-	) {
-		return 'image/png';
-	}
-	// JPEG: FF D8 FF
-	if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
-		return 'image/jpeg';
-	}
-	// GIF: "GIF87a" / "GIF89a"
-	if (
-		b.length >= 6 &&
-		b[0] === 0x47 &&
-		b[1] === 0x49 &&
-		b[2] === 0x46 &&
-		b[3] === 0x38 &&
-		(b[4] === 0x37 || b[4] === 0x39) &&
-		b[5] === 0x61
-	) {
-		return 'image/gif';
-	}
-	// WEBP: "RIFF" .... "WEBP"
-	if (
-		b.length >= 12 &&
-		b[0] === 0x52 &&
-		b[1] === 0x49 &&
-		b[2] === 0x46 &&
-		b[3] === 0x46 &&
-		b[8] === 0x57 &&
-		b[9] === 0x45 &&
-		b[10] === 0x42 &&
-		b[11] === 0x50
-	) {
-		return 'image/webp';
-	}
-	// BMP: "BM"
-	if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) {
-		return 'image/bmp';
-	}
-	return null;
+  const b = head;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    b.length >= 8 &&
+    b[0] === 0x89 &&
+    b[1] === 0x50 &&
+    b[2] === 0x4e &&
+    b[3] === 0x47 &&
+    b[4] === 0x0d &&
+    b[5] === 0x0a &&
+    b[6] === 0x1a &&
+    b[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  // JPEG: FF D8 FF
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
+    return "image/jpeg";
+  }
+  // GIF: "GIF87a" / "GIF89a"
+  if (
+    b.length >= 6 &&
+    b[0] === 0x47 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x38 &&
+    (b[4] === 0x37 || b[4] === 0x39) &&
+    b[5] === 0x61
+  ) {
+    return "image/gif";
+  }
+  // WEBP: "RIFF" .... "WEBP"
+  if (
+    b.length >= 12 &&
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 &&
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  // BMP: "BM"
+  if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) {
+    return "image/bmp";
+  }
+  return null;
 }
 
 /**
@@ -107,16 +107,16 @@ export function sniffImageMime(head: Uint8Array): string | null {
  * Returns null otherwise.
  */
 export function detectImageMime(path: string, head: Uint8Array): string | null {
-	if (!isAllowlistedImageExtension(path)) return null;
-	if (extname(path).toLowerCase() === '.svg') {
-		return looksLikeSvg(head) ? SVG_MIME : null;
-	}
-	return sniffImageMime(head);
+  if (!isAllowlistedImageExtension(path)) return null;
+  if (extname(path).toLowerCase() === ".svg") {
+    return looksLikeSvg(head) ? SVG_MIME : null;
+  }
+  return sniffImageMime(head);
 }
 
 export interface CapturedImage {
-	mimeType: string;
-	data: Buffer;
+  mimeType: string;
+  data: Buffer;
 }
 
 /**
@@ -128,22 +128,22 @@ export interface CapturedImage {
  * missing, unreadable, content-excluded, etc.
  */
 export function readImageFile(absPath: string): CapturedImage | null {
-	try {
-		if (!isAllowlistedImageExtension(absPath)) return null;
-		const st = statSync(absPath);
-		if (!st.isFile()) return null;
-		if (st.size <= 0 || st.size > MAX_IMAGE_ATTACHMENT_BYTES) return null;
-		const data = readFileSync(absPath);
-		if (extname(absPath).toLowerCase() === '.svg') {
-			if (st.size > MAX_SVG_BYTES) return null;
-			const clean = sanitizeSvg(data);
-			if (clean === null) return null;
-			return { mimeType: SVG_MIME, data: Buffer.from(clean, 'utf-8') };
-		}
-		const mimeType = sniffImageMime(data.subarray(0, 16));
-		if (!mimeType) return null;
-		return { mimeType, data };
-	} catch {
-		return null;
-	}
+  try {
+    if (!isAllowlistedImageExtension(absPath)) return null;
+    const st = statSync(absPath);
+    if (!st.isFile()) return null;
+    if (st.size <= 0 || st.size > MAX_IMAGE_ATTACHMENT_BYTES) return null;
+    const data = readFileSync(absPath);
+    if (extname(absPath).toLowerCase() === ".svg") {
+      if (st.size > MAX_SVG_BYTES) return null;
+      const clean = sanitizeSvg(data);
+      if (clean === null) return null;
+      return { mimeType: SVG_MIME, data: Buffer.from(clean, "utf-8") };
+    }
+    const mimeType = sniffImageMime(data.subarray(0, 16));
+    if (!mimeType) return null;
+    return { mimeType, data };
+  } catch {
+    return null;
+  }
 }

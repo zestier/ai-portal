@@ -10,15 +10,15 @@
 // tracked on `globalThis` so an HMR re-import or a duplicate boot doesn't stack
 // multiple bridges (which would publish the same event N times).
 
-import { onTicketMutation } from '../db/ticket-mutations';
-import { publishAppEvent } from './app-events';
+import { onTicketMutation } from "../db/ticket-mutations";
+import { publishAppEvent } from "./app-events";
 import {
-	appGlobalSymbols,
-	getGlobalSingletonValue,
-	setGlobalSingletonValue
-} from '../global-singleton';
+  appGlobalSymbols,
+  getGlobalSingletonValue,
+  setGlobalSingletonValue,
+} from "../global-singleton";
 
-const TICKET_BRIDGE_KEYS = appGlobalSymbols('runtime.ticket-event-bridge');
+const TICKET_BRIDGE_KEYS = appGlobalSymbols("runtime.ticket-event-bridge");
 
 /**
  * Subscribe the app-event feed to ticket mutations. Safe to call repeatedly:
@@ -26,18 +26,18 @@ const TICKET_BRIDGE_KEYS = appGlobalSymbols('runtime.ticket-event-bridge');
  * `globalThis`; later calls are no-ops until the existing bridge is torn down.
  */
 export function startTicketEventBridge(): void {
-	if (getGlobalSingletonValue<() => void>(TICKET_BRIDGE_KEYS)) return;
+  if (getGlobalSingletonValue<() => void>(TICKET_BRIDGE_KEYS)) return;
 
-	const unsubscribe = onTicketMutation(({ userId }) => {
-		// Non-fatal: a feed hiccup must never propagate back into the repo
-		// mutation that triggered this. The sidebar still reconciles on the next
-		// layout `load`.
-		try {
-			publishAppEvent(userId, { type: 'tickets.changed' });
-		} catch {
-			/* non-fatal */
-		}
-	});
+  const unsubscribe = onTicketMutation(({ userId }) => {
+    // Non-fatal: a feed hiccup must never propagate back into the repo
+    // mutation that triggered this. The sidebar still reconciles on the next
+    // layout `load`.
+    try {
+      publishAppEvent(userId, { type: "tickets.changed" });
+    } catch {
+      /* non-fatal */
+    }
+  });
 
-	setGlobalSingletonValue(TICKET_BRIDGE_KEYS, unsubscribe);
+  setGlobalSingletonValue(TICKET_BRIDGE_KEYS, unsubscribe);
 }

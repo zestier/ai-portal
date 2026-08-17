@@ -1,4 +1,4 @@
-import type { ShellCommandStep } from '$lib/permissions/scope-types';
+import type { ShellCommandStep } from "$lib/permissions/scope-types";
 
 /**
  * One audited shell tool that is seeded with a PATH-SHAPED positional rule.
@@ -11,15 +11,15 @@ import type { ShellCommandStep } from '$lib/permissions/scope-types';
  * that no path-shaped allow seed exists for a token that was never audited.
  */
 export interface ReaderSeed {
-	token: string;
-	options?: ShellCommandStep['options'];
-	/**
-	 * Upper bound on positionals, for tools whose LATER operands are outputs
-	 * rather than inputs. See `uniq`.
-	 */
-	maxPositionals?: number;
-	/** What the audit found: the dangerous options/operands, or that there are none. */
-	audit: string;
+  token: string;
+  options?: ShellCommandStep["options"];
+  /**
+   * Upper bound on positionals, for tools whose LATER operands are outputs
+   * rather than inputs. See `uniq`.
+   */
+  maxPositionals?: number;
+  /** What the audit found: the dangerous options/operands, or that there are none. */
+  audit: string;
 }
 
 /**
@@ -78,85 +78,98 @@ export interface ReaderSeed {
  * `matchesDeniedOption`), so that is where the boundary is enforced.
  */
 export const FS_READ_TOOLS: ReaderSeed[] = [
-	{ token: 'cat', audit: 'no file-valued options; every positional is an input file.' },
-	{ token: 'head', audit: 'no file-valued options; every positional is an input file.' },
-	{
-		token: 'tail',
-		audit: 'no file-valued options (`-f` follows, it does not name a file); inputs only.'
-	},
-	{
-		token: 'file',
-		// `-C`/`--compile` WRITES a compiled magic file (`<magic>.mgc`);
-		// `-m`/`--magic-file` reads arbitrary magic files; `-f`/`--files-from`
-		// examines paths named inside a file's content. None are positionals.
-		options: { deny: ['-C', '--compile', '-m', '--magic-file', '-f', '--files-from'] },
-		audit: '`-C/--compile` writes a .mgc file; `-m` and `-f` name files that are never positionals.'
-	},
-	{
-		token: 'stat',
-		audit: 'no file-valued options — `--printf`/`-c` are formats to stdout, `-f` is --file-system.'
-	},
-	{ token: 'ls', audit: 'no file-valued options — `--hide`/`-I` take patterns, not paths.' },
-	{
-		token: 'sort',
-		// `-o`/`--output` WRITES (arbitrary content over a pipe);
-		// `--compress-program` EXECUTES an arbitrary program on the temp files;
-		// `--files0-from` and `--random-source` read a file that is not a
-		// positional; `-T` creates temp files in an arbitrary directory.
-		options: {
-			deny: [
-				'-o',
-				'--output',
-				'--files0-from',
-				'--compress-program',
-				'--random-source',
-				'-T',
-				'--temporary-directory'
-			]
-		},
-		audit:
-			'`-o` writes, `--compress-program` executes, `--files0-from`/`--random-source`/`-T` name unchecked paths.'
-	},
-	{
-		token: 'uniq',
-		// `uniq INPUT OUTPUT` creates/truncates OUTPUT. Bounding the count to
-		// one operand keeps the reader a reader; two-operand calls prompt.
-		//
-		// KNOWN COST: the matcher does not know which options take values, so a
-		// SEPARATED value counts as a positional — `uniq -f 2 file` (three
-		// tokens, two positionals) now prompts, while the attached `uniq -f2
-		// file` still auto-approves. That asymmetry is the price of bounding
-		// the count without an option grammar, and it fails in the safe
-		// direction: the refusal is a prompt, not a denial.
-		maxPositionals: 1,
-		audit:
-			'no file-valued options, but the SECOND positional is an OUTPUT file — bounded to one. ' +
-			'Side effect: separated option values (`-f 2`) count as positionals and prompt.'
-	},
-	{
-		token: 'cut',
-		audit: 'no file-valued options — `--output-delimiter` is a string, not a path.'
-	},
-	{
-		token: 'realpath',
-		audit:
-			'`--relative-to`/`--relative-base` are path-shaped but resolution-only: no open, no write.'
-	},
-	{ token: 'readlink', audit: 'no file-valued options; resolution only.' },
-	...['md5sum', 'sha1sum', 'sha256sum'].map(
-		(token): ReaderSeed => ({
-			token,
-			// `-c`/`--check` hashes every path named INSIDE the checklist file.
-			// Only the checklist itself is a positional, so the paths it names
-			// are checked by nothing — structurally identical to
-			// `sort --files0-from`, and it turns the tool into an oracle for
-			// files outside the read grants. Verifying a checksum file still
-			// works, it just prompts.
-			options: { deny: ['-c', '--check'] },
-			audit:
-				'`-c/--check` reads every path named inside the checklist file; those are not positionals.'
-		})
-	)
+  {
+    token: "cat",
+    audit: "no file-valued options; every positional is an input file.",
+  },
+  {
+    token: "head",
+    audit: "no file-valued options; every positional is an input file.",
+  },
+  {
+    token: "tail",
+    audit:
+      "no file-valued options (`-f` follows, it does not name a file); inputs only.",
+  },
+  {
+    token: "file",
+    // `-C`/`--compile` WRITES a compiled magic file (`<magic>.mgc`);
+    // `-m`/`--magic-file` reads arbitrary magic files; `-f`/`--files-from`
+    // examines paths named inside a file's content. None are positionals.
+    options: {
+      deny: ["-C", "--compile", "-m", "--magic-file", "-f", "--files-from"],
+    },
+    audit:
+      "`-C/--compile` writes a .mgc file; `-m` and `-f` name files that are never positionals.",
+  },
+  {
+    token: "stat",
+    audit:
+      "no file-valued options — `--printf`/`-c` are formats to stdout, `-f` is --file-system.",
+  },
+  {
+    token: "ls",
+    audit: "no file-valued options — `--hide`/`-I` take patterns, not paths.",
+  },
+  {
+    token: "sort",
+    // `-o`/`--output` WRITES (arbitrary content over a pipe);
+    // `--compress-program` EXECUTES an arbitrary program on the temp files;
+    // `--files0-from` and `--random-source` read a file that is not a
+    // positional; `-T` creates temp files in an arbitrary directory.
+    options: {
+      deny: [
+        "-o",
+        "--output",
+        "--files0-from",
+        "--compress-program",
+        "--random-source",
+        "-T",
+        "--temporary-directory",
+      ],
+    },
+    audit:
+      "`-o` writes, `--compress-program` executes, `--files0-from`/`--random-source`/`-T` name unchecked paths.",
+  },
+  {
+    token: "uniq",
+    // `uniq INPUT OUTPUT` creates/truncates OUTPUT. Bounding the count to
+    // one operand keeps the reader a reader; two-operand calls prompt.
+    //
+    // KNOWN COST: the matcher does not know which options take values, so a
+    // SEPARATED value counts as a positional — `uniq -f 2 file` (three
+    // tokens, two positionals) now prompts, while the attached `uniq -f2
+    // file` still auto-approves. That asymmetry is the price of bounding
+    // the count without an option grammar, and it fails in the safe
+    // direction: the refusal is a prompt, not a denial.
+    maxPositionals: 1,
+    audit:
+      "no file-valued options, but the SECOND positional is an OUTPUT file — bounded to one. " +
+      "Side effect: separated option values (`-f 2`) count as positionals and prompt.",
+  },
+  {
+    token: "cut",
+    audit:
+      "no file-valued options — `--output-delimiter` is a string, not a path.",
+  },
+  {
+    token: "realpath",
+    audit:
+      "`--relative-to`/`--relative-base` are path-shaped but resolution-only: no open, no write.",
+  },
+  { token: "readlink", audit: "no file-valued options; resolution only." },
+  ...["md5sum", "sha1sum", "sha256sum"].map((token): ReaderSeed => ({
+    token,
+    // `-c`/`--check` hashes every path named INSIDE the checklist file.
+    // Only the checklist itself is a positional, so the paths it names
+    // are checked by nothing — structurally identical to
+    // `sort --files0-from`, and it turns the tool into an oracle for
+    // files outside the read grants. Verifying a checksum file still
+    // works, it just prompts.
+    options: { deny: ["-c", "--check"] },
+    audit:
+      "`-c/--check` reads every path named inside the checklist file; those are not positionals.",
+  })),
 ];
 
 /**
@@ -171,14 +184,23 @@ export const FS_READ_TOOLS: ReaderSeed[] = [
  * asserts the two stay in sync.
  */
 export const CWD_MOVERS: ReaderSeed[] = [
-	{
-		token: 'cd',
-		audit:
-			'single directory operand, no file-valued options; seeded on workspace-paths + min:1 so it only reaches the workdir/leases/subdirs.'
-	},
-	{ token: 'pushd', audit: 'same as `cd` — only a concrete in-workspace target auto-allows.' },
-	{ token: 'popd', audit: 'no operands — never passes the min:1 guard, so always prompts.' },
-	{ token: 'chdir', audit: 'same as `cd` — only a concrete in-workspace target auto-allows.' }
+  {
+    token: "cd",
+    audit:
+      "single directory operand, no file-valued options; seeded on workspace-paths + min:1 so it only reaches the workdir/leases/subdirs.",
+  },
+  {
+    token: "pushd",
+    audit: "same as `cd` — only a concrete in-workspace target auto-allows.",
+  },
+  {
+    token: "popd",
+    audit: "no operands — never passes the min:1 guard, so always prompts.",
+  },
+  {
+    token: "chdir",
+    audit: "same as `cd` — only a concrete in-workspace target auto-allows.",
+  },
 ];
 
 /**
@@ -193,37 +215,37 @@ export const CWD_MOVERS: ReaderSeed[] = [
  * it prints paths, not file contents.
  */
 export const PATH_SEARCH_TOOLS: ReaderSeed[] = [
-	{
-		token: 'find',
-		// The exec family runs commands; the -fprint/-fls family CREATES AND
-		// TRUNCATES its FILE operand. The latter matters especially now that this
-		// seed defers to the `read` grants: without the denies, `find <dir> -fls
-		// <path>` would let a path the user only made READABLE be written to,
-		// turning a read grant into a write. `-fprint0` and `-fls` are easy to
-		// miss — deny matching does not derive variants, so `-fprint` does not
-		// cover `-fprint0`.
-		//
-		// `-files0-from FILE` (findutils >= 4.9) takes the start points from a
-		// file's CONTENT, so the directories actually walked are named by no
-		// positional and escape both the workspace floor and the read grants.
-		options: {
-			deny: [
-				'-exec',
-				'-execdir',
-				'-ok',
-				'-okdir',
-				'-delete',
-				'-fprint',
-				'-fprint0',
-				'-fprintf',
-				'-fls',
-				'-files0-from'
-			]
-		},
-		audit:
-			'the -exec/-ok family executes; -fprint/-fprintf/-fprint0/-fls truncate their FILE operand; ' +
-			'-files0-from takes start points from a file. All denied; -newer/-samefile only stat their operand.'
-	}
+  {
+    token: "find",
+    // The exec family runs commands; the -fprint/-fls family CREATES AND
+    // TRUNCATES its FILE operand. The latter matters especially now that this
+    // seed defers to the `read` grants: without the denies, `find <dir> -fls
+    // <path>` would let a path the user only made READABLE be written to,
+    // turning a read grant into a write. `-fprint0` and `-fls` are easy to
+    // miss — deny matching does not derive variants, so `-fprint` does not
+    // cover `-fprint0`.
+    //
+    // `-files0-from FILE` (findutils >= 4.9) takes the start points from a
+    // file's CONTENT, so the directories actually walked are named by no
+    // positional and escape both the workspace floor and the read grants.
+    options: {
+      deny: [
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+        "-delete",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-fls",
+        "-files0-from",
+      ],
+    },
+    audit:
+      "the -exec/-ok family executes; -fprint/-fprintf/-fprint0/-fls truncate their FILE operand; " +
+      "-files0-from takes start points from a file. All denied; -newer/-samefile only stat their operand.",
+  },
 ];
 
 /**
@@ -237,11 +259,11 @@ export const PATH_SEARCH_TOOLS: ReaderSeed[] = [
  * would slip past it entirely.
  */
 export const AUDITED_PATH_SHAPED_TOOLS: Readonly<
-	Record<string, { audit: string; maxPositionals?: number | undefined }>
+  Record<string, { audit: string; maxPositionals?: number | undefined }>
 > = Object.fromEntries(
-	[...FS_READ_TOOLS, ...PATH_SEARCH_TOOLS, ...CWD_MOVERS].map(
-		({ token, audit, maxPositionals }) => [token, { audit, maxPositionals }]
-	)
+  [...FS_READ_TOOLS, ...PATH_SEARCH_TOOLS, ...CWD_MOVERS].map(
+    ({ token, audit, maxPositionals }) => [token, { audit, maxPositionals }],
+  ),
 );
 
 /**
@@ -281,21 +303,33 @@ export const AUDITED_PATH_SHAPED_TOOLS: Readonly<
  * — `grep root` would be judged as the file `./root`. The count bound, not a
  * path rule, is what stops file operands here.
  */
-export const STDIN_FILTER_TOOLS: { token: string; options?: ShellCommandStep['options'] }[] = [
-	{
-		token: 'rg',
-		options: {
-			deny: ['--pre', '--pre-glob', '--hostname-bin', '--no-config', '-f', '--file']
-		}
-	},
-	{
-		token: 'grep',
-		options: { deny: ['-f', '--file', '-r', '-R', '--recursive', '-d', '--directories'] }
-	}
+export const STDIN_FILTER_TOOLS: {
+  token: string;
+  options?: ShellCommandStep["options"];
+}[] = [
+  {
+    token: "rg",
+    options: {
+      deny: [
+        "--pre",
+        "--pre-glob",
+        "--hostname-bin",
+        "--no-config",
+        "-f",
+        "--file",
+      ],
+    },
+  },
+  {
+    token: "grep",
+    options: {
+      deny: ["-f", "--file", "-r", "-R", "--recursive", "-d", "--directories"],
+    },
+  },
 ];
 
 export const STDIN_FILTER_PROMPT_REASON =
-	'is seeded only as a pipe filter (`some-command | %TOKEN% pattern`), where it reads stdin. Searching files with it requires approval — use the structured `grep` tool instead: it is ripgrep, it honors the same read scopes as `view`, and it supports globs, context lines, multiline and output_mode count/files_with_matches.';
+  "is seeded only as a pipe filter (`some-command | %TOKEN% pattern`), where it reads stdin. Searching files with it requires approval — use the structured `grep` tool instead: it is ripgrep, it honors the same read scopes as `view`, and it supports globs, context lines, multiline and output_mode count/files_with_matches.";
 
 // `wc` is denied by default and steered to the structured grep tool. The
 // dominant real use is `wc -l` (line count), which the grep tool covers via
@@ -304,7 +338,7 @@ export const STDIN_FILTER_PROMPT_REASON =
 // matching LINES, not occurrences, so it can't produce a word count — those
 // rare needs escalate via `force_retry_tool`.
 export const WC_SHELL_DENY_FEEDBACK =
-	'Shell `wc` is denied by default. To count lines use the grep tool with output_mode count and the pattern ^ (it matches every line). For word or byte counts, escalate sparingly with `force_retry_tool` (token from the denial) only if no structured tool fits.';
+  "Shell `wc` is denied by default. To count lines use the grep tool with output_mode count and the pattern ^ (it matches every line). For word or byte counts, escalate sparingly with `force_retry_tool` (token from the denial) only if no structured tool fits.";
 
 /**
  * Terminal-usage prompt rules. Since regular allow grants outrank prompt
@@ -317,24 +351,24 @@ export const WC_SHELL_DENY_FEEDBACK =
  * `read` grants`), so these only need to name the structured alternative.
  */
 export const PROMPT_SEEDS: { argv0: string; reason: string }[] = [
-	{
-		argv0: 'cat',
-		reason:
-			'`cat` on a path your `read` grants do not cover requires a prompt. Use `view` for file reads.'
-	},
-	{
-		argv0: 'head',
-		reason:
-			'`head` on a path your `read` grants do not cover requires a prompt. Use `view` with `view_range`.'
-	},
-	{
-		argv0: 'tail',
-		reason:
-			'`tail` on a path your `read` grants do not cover requires a prompt. Use `view` with `view_range`.'
-	},
-	{
-		argv0: 'ls',
-		reason:
-			'`ls` on a path your `read` grants do not cover requires a prompt. Use `glob` to enumerate files.'
-	}
+  {
+    argv0: "cat",
+    reason:
+      "`cat` on a path your `read` grants do not cover requires a prompt. Use `view` for file reads.",
+  },
+  {
+    argv0: "head",
+    reason:
+      "`head` on a path your `read` grants do not cover requires a prompt. Use `view` with `view_range`.",
+  },
+  {
+    argv0: "tail",
+    reason:
+      "`tail` on a path your `read` grants do not cover requires a prompt. Use `view` with `view_range`.",
+  },
+  {
+    argv0: "ls",
+    reason:
+      "`ls` on a path your `read` grants do not cover requires a prompt. Use `glob` to enumerate files.",
+  },
 ];

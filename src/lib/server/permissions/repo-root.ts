@@ -17,31 +17,35 @@
 // this canonical root: an edit in an unmerged worktree can never widen active
 // grants until merged (fail-closed, review just delayed).
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { execFileSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const CACHE = new Map<string, string>();
 
 export function canonicalWorkspaceRoot(root: string): string {
-	const key = resolve(root);
-	const cached = CACHE.get(key);
-	if (cached !== undefined) return cached;
-	if (!existsSync(key)) {
-		CACHE.set(key, key);
-		return key;
-	}
-	let canonical: string;
-	try {
-		const out = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-			cwd: key,
-			encoding: 'utf8',
-			stdio: ['ignore', 'pipe', 'ignore']
-		}).trim();
-		canonical = out ? dirname(realpathSync(out)) : realpathSync(key);
-	} catch {
-		canonical = realpathSync(key);
-	}
-	CACHE.set(key, canonical);
-	return canonical;
+  const key = resolve(root);
+  const cached = CACHE.get(key);
+  if (cached !== undefined) return cached;
+  if (!existsSync(key)) {
+    CACHE.set(key, key);
+    return key;
+  }
+  let canonical: string;
+  try {
+    const out = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd: key,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+    canonical = out ? dirname(realpathSync(out)) : realpathSync(key);
+  } catch {
+    canonical = realpathSync(key);
+  }
+  CACHE.set(key, canonical);
+  return canonical;
 }

@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: ['**']
+    branches: ["**"]
   pull_request:
   # Allow other workflows (notably release.yml) to invoke the full suite as a
   # gate. Releasing a tag must re-run CI against the tagged commit so a red

@@ -13,8 +13,11 @@
 // `globalThis` so a Vite SSR HMR re-import doesn't orphan the live bridge
 // subscription in the old module's closure.
 
-import { EventEmitter } from 'node:events';
-import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleton';
+import { EventEmitter } from "node:events";
+import {
+  appGlobalSymbols,
+  getOrCreateGlobalSingleton,
+} from "../global-singleton";
 
 /**
  * Announced when a ticket changes. `userId` is always present (every repo
@@ -23,25 +26,25 @@ import { appGlobalSymbols, getOrCreateGlobalSingleton } from '../global-singleto
  * only needs `userId`.
  */
 export interface TicketMutation {
-	userId: number;
-	workspaceKey?: string | undefined;
-	ticketId?: number | undefined;
+  userId: number;
+  workspaceKey?: string | undefined;
+  ticketId?: number | undefined;
 }
 
 export type TicketMutationListener = (mutation: TicketMutation) => void;
 
-const EVENT = 'ticket.mutated';
+const EVENT = "ticket.mutated";
 
-const TICKET_MUTATIONS_KEYS = appGlobalSymbols('db.ticket-mutations');
+const TICKET_MUTATIONS_KEYS = appGlobalSymbols("db.ticket-mutations");
 
 function getEmitter(): EventEmitter {
-	return getOrCreateGlobalSingleton(TICKET_MUTATIONS_KEYS, () => {
-		const emitter = new EventEmitter();
-		// The bridge plus any tests can each attach a listener; the default cap of
-		// 10 is plenty but the warning is noise here, so lift it.
-		emitter.setMaxListeners(0);
-		return emitter;
-	});
+  return getOrCreateGlobalSingleton(TICKET_MUTATIONS_KEYS, () => {
+    const emitter = new EventEmitter();
+    // The bridge plus any tests can each attach a listener; the default cap of
+    // 10 is plenty but the warning is noise here, so lift it.
+    emitter.setMaxListeners(0);
+    return emitter;
+  });
 }
 
 /**
@@ -50,18 +53,18 @@ function getEmitter(): EventEmitter {
  * reconciles from the next layout `load`).
  */
 export function notifyTicketMutation(mutation: TicketMutation): void {
-	try {
-		getEmitter().emit(EVENT, mutation);
-	} catch {
-		/* non-fatal */
-	}
+  try {
+    getEmitter().emit(EVENT, mutation);
+  } catch {
+    /* non-fatal */
+  }
 }
 
 /** Subscribe to ticket mutations. Returns an unsubscribe function. */
 export function onTicketMutation(listener: TicketMutationListener): () => void {
-	const emitter = getEmitter();
-	emitter.on(EVENT, listener);
-	return () => {
-		emitter.off(EVENT, listener);
-	};
+  const emitter = getEmitter();
+  emitter.on(EVENT, listener);
+  return () => {
+    emitter.off(EVENT, listener);
+  };
 }

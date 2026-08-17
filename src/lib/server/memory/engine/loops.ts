@@ -1,6 +1,6 @@
-import { conversationId as convCodec } from '$lib/ids';
-import * as memoryRepo from '$lib/server/db/repos/memory';
-import type { AgeOpenLoopsResult } from './types';
+import { conversationId as convCodec } from "$lib/ids";
+import * as memoryRepo from "$lib/server/db/repos/memory";
+import type { AgeOpenLoopsResult } from "./types";
 
 /**
  * Open-loop liveness ("touch-to-keep"). LLMs reliably notice what is present but
@@ -20,57 +20,78 @@ import type { AgeOpenLoopsResult } from './types';
  * reversible like any other memory mutation.
  */
 export function ageOpenLoops(
-	conversationId: string | number,
-	opts: {
-		presentedLoopIds: Iterable<number>;
-		keptLoopIds?: Iterable<number> | undefined;
-		baseThreshold: number;
-		sourceMessageId?: string | number | null | undefined;
-		turnId?: string | null | undefined;
-	}
+  conversationId: string | number,
+  opts: {
+    presentedLoopIds: Iterable<number>;
+    keptLoopIds?: Iterable<number> | undefined;
+    baseThreshold: number;
+    sourceMessageId?: string | number | null | undefined;
+    turnId?: string | null | undefined;
+  },
 ): AgeOpenLoopsResult {
-	const intConv =
-		typeof conversationId === 'number' ? conversationId : convCodec.parse(conversationId);
-	return memoryRepo.recordOpenLoopLiveness(intConv, {
-		presentedLoopIds: [...opts.presentedLoopIds],
-		keptLoopIds: opts.keptLoopIds ? [...opts.keptLoopIds] : [],
-		baseThreshold: opts.baseThreshold,
-		sourceMessageId: opts.sourceMessageId,
-		turnId: opts.turnId
-	});
+  const intConv =
+    typeof conversationId === "number"
+      ? conversationId
+      : convCodec.parse(conversationId);
+  return memoryRepo.recordOpenLoopLiveness(intConv, {
+    presentedLoopIds: [...opts.presentedLoopIds],
+    keptLoopIds: opts.keptLoopIds ? [...opts.keptLoopIds] : [],
+    baseThreshold: opts.baseThreshold,
+    sourceMessageId: opts.sourceMessageId,
+    turnId: opts.turnId,
+  });
 }
 
 export function isHiddenVisibility(visibility: string | undefined): boolean {
-	return visibility === 'hidden' || visibility === 'private' || visibility === 'gm';
+  return (
+    visibility === "hidden" || visibility === "private" || visibility === "gm"
+  );
 }
 
 export function isSecretPredicate(predicate: string): boolean {
-	return /(^|[:._-])(secret|gm_secret|hidden|private)([:._-]|$)/i.test(predicate);
+  return /(^|[:._-])(secret|gm_secret|hidden|private)([:._-]|$)/i.test(
+    predicate,
+  );
 }
 
-export function hasObjectStringFields(value: unknown, fields: string[]): boolean {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-	const record = value as Record<string, unknown>;
-	return fields.every(
-		(field) => typeof record[field] === 'string' && record[field].trim().length > 0
-	);
+export function hasObjectStringFields(
+  value: unknown,
+  fields: string[],
+): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return fields.every(
+    (field) =>
+      typeof record[field] === "string" && record[field].trim().length > 0,
+  );
 }
 
 export function isTimelineEvent(eventType: string): boolean {
-	return eventType === 'timeline' || eventType === 'alibi' || eventType === 'location';
+  return (
+    eventType === "timeline" ||
+    eventType === "alibi" ||
+    eventType === "location"
+  );
 }
 
-export function timelinePoint(payload: unknown): { at: string; location: string } | null {
-	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-	const record = payload as Record<string, unknown>;
-	const at =
-		typeof record.at === 'string' ? record.at : typeof record.time === 'string' ? record.time : '';
-	const location =
-		typeof record.location === 'string'
-			? record.location
-			: typeof record.place === 'string'
-				? record.place
-				: '';
-	if (!at.trim() || !location.trim()) return null;
-	return { at: at.trim(), location: location.trim() };
+export function timelinePoint(
+  payload: unknown,
+): { at: string; location: string } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload))
+    return null;
+  const record = payload as Record<string, unknown>;
+  const at =
+    typeof record.at === "string"
+      ? record.at
+      : typeof record.time === "string"
+        ? record.time
+        : "";
+  const location =
+    typeof record.location === "string"
+      ? record.location
+      : typeof record.place === "string"
+        ? record.place
+        : "";
+  if (!at.trim() || !location.trim()) return null;
+  return { at: at.trim(), location: location.trim() };
 }

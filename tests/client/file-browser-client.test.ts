@@ -1,52 +1,52 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchHeadStatus } from '../../src/lib/client/file-browser';
-import { conversationId } from '../../src/lib/ids';
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchHeadStatus } from "../../src/lib/client/file-browser";
+import { conversationId } from "../../src/lib/ids";
 
 const C123 = conversationId.encode(123);
 
-describe('fetchHeadStatus', () => {
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
+describe("fetchHeadStatus", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
-	it('returns the parsed git status payload', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue({
-				ok: true,
-				json: async () => ({
-					status: {
-						initialized: true,
-						branch: 'main',
-						sha: 'abc',
-						shortSha: 'abc',
-						detached: false,
-						upstream: 'origin/main',
-						ahead: 0,
-						behind: 0,
-						dirtyCount: 3
-					}
-				})
-			})
-		);
+  it("returns the parsed git status payload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: {
+            initialized: true,
+            branch: "main",
+            sha: "abc",
+            shortSha: "abc",
+            detached: false,
+            upstream: "origin/main",
+            ahead: 0,
+            behind: 0,
+            dirtyCount: 3,
+          },
+        }),
+      }),
+    );
 
-		await expect(fetchHeadStatus(C123)).resolves.toMatchObject({
-			initialized: true,
-			dirtyCount: 3
-		});
-		expect(fetch).toHaveBeenCalledWith('/api/conversations/C123/git/status');
-	});
+    await expect(fetchHeadStatus(C123)).resolves.toMatchObject({
+      initialized: true,
+      dirtyCount: 3,
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/conversations/C123/git/status");
+  });
 
-	it('throws the response body for non-ok responses', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue({
-				ok: false,
-				status: 500,
-				text: async () => 'boom'
-			})
-		);
+  it("throws the response body for non-ok responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "boom",
+      }),
+    );
 
-		await expect(fetchHeadStatus(C123)).rejects.toThrow('boom');
-	});
+    await expect(fetchHeadStatus(C123)).rejects.toThrow("boom");
+  });
 });

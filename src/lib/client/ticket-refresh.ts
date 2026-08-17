@@ -9,10 +9,10 @@
 // fake timers (Svelte components aren't exercised by the Vitest/node suite).
 
 export interface Debouncer {
-	/** Schedule the action to run after the quiet window; resets the window. */
-	trigger(): void;
-	/** Cancel any pending run (e.g. on component teardown). */
-	cancel(): void;
+  /** Schedule the action to run after the quiet window; resets the window. */
+  trigger(): void;
+  /** Cancel any pending run (e.g. on component teardown). */
+  cancel(): void;
 }
 
 const DEFAULT_DELAY_MS = 250;
@@ -21,24 +21,27 @@ const DEFAULT_DELAY_MS = 250;
  * Create a trailing-edge debouncer. Each `trigger()` (re)starts a `delayMs`
  * timer; `action` runs once when the timer elapses with no further triggers.
  */
-export function createTrailingDebounce(action: () => void, delayMs = DEFAULT_DELAY_MS): Debouncer {
-	let timer: ReturnType<typeof setTimeout> | undefined;
+export function createTrailingDebounce(
+  action: () => void,
+  delayMs = DEFAULT_DELAY_MS,
+): Debouncer {
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
-	const cancel = () => {
-		if (timer !== undefined) {
-			clearTimeout(timer);
-			timer = undefined;
-		}
-	};
+  const cancel = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
 
-	return {
-		trigger() {
-			cancel();
-			timer = setTimeout(() => {
-				timer = undefined;
-				action();
-			}, delayMs);
-		},
-		cancel
-	};
+  return {
+    trigger() {
+      cancel();
+      timer = setTimeout(() => {
+        timer = undefined;
+        action();
+      }, delayMs);
+    },
+    cancel,
+  };
 }

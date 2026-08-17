@@ -1,7 +1,7 @@
-import { error, isHttpError } from '@sveltejs/kit';
-import { log } from '$lib/server/log';
-import { TurnAlreadyInProgressError } from '$lib/server/runtime/turn-runner';
-import { WorkspaceUnavailableError } from '$lib/server/workdir';
+import { error, isHttpError } from "@sveltejs/kit";
+import { log } from "$lib/server/log";
+import { TurnAlreadyInProgressError } from "$lib/server/runtime/turn-runner";
+import { WorkspaceUnavailableError } from "$lib/server/workdir";
 
 /**
  * Map an unexpected (non-domain) failure raised while starting a rerun turn —
@@ -24,29 +24,29 @@ import { WorkspaceUnavailableError } from '$lib/server/workdir';
  * construction time), so there is nothing secret to leak here.
  */
 export function throwRerunFailure(
-	context: { route: string; conversationId?: string; userId?: string },
-	e: unknown
+  context: { route: string; conversationId?: string; userId?: string },
+  e: unknown,
 ): never {
-	// A handler that already chose a specific HTTP status (e.g. a nested
-	// `authorizeConversation` 404) should pass through unchanged.
-	if (isHttpError(e)) throw e;
+  // A handler that already chose a specific HTTP status (e.g. a nested
+  // `authorizeConversation` 404) should pass through unchanged.
+  if (isHttpError(e)) throw e;
 
-	// A concurrent rerun that lost the turn-start race throws this typed error.
-	// Map it to a clean 409, matching `conversation_busy` and the turns route,
-	// instead of leaking a confusing 502 for what is just "another turn won".
-	if (e instanceof TurnAlreadyInProgressError) {
-		throw error(409, 'A turn is already in progress for this conversation.');
-	}
-	if (e instanceof WorkspaceUnavailableError) {
-		throw error(409, { message: e.message, code: e.code });
-	}
+  // A concurrent rerun that lost the turn-start race throws this typed error.
+  // Map it to a clean 409, matching `conversation_busy` and the turns route,
+  // instead of leaking a confusing 502 for what is just "another turn won".
+  if (e instanceof TurnAlreadyInProgressError) {
+    throw error(409, "A turn is already in progress for this conversation.");
+  }
+  if (e instanceof WorkspaceUnavailableError) {
+    throw error(409, { message: e.message, code: e.code });
+  }
 
-	const message = e instanceof Error ? e.message : String(e);
-	log.error('rerun.start_failed', {
-		route: context.route,
-		conversationId: context.conversationId,
-		userId: context.userId,
-		err: message
-	});
-	throw error(502, `Couldn't start the rerun: ${message}`);
+  const message = e instanceof Error ? e.message : String(e);
+  log.error("rerun.start_failed", {
+    route: context.route,
+    conversationId: context.conversationId,
+    userId: context.userId,
+    err: message,
+  });
+  throw error(502, `Couldn't start the rerun: ${message}`);
 }

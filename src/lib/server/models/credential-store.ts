@@ -10,59 +10,64 @@
 // class structurally at the ModelRuntime.create call site, so any drift from
 // the real interface is a compile error there.
 
-import * as providersRepo from '../db/repos/providers';
+import * as providersRepo from "../db/repos/providers";
 
 export interface PortalApiKeyCredential {
-	type: 'api_key';
-	key?: string;
-	env?: Record<string, string>;
+  type: "api_key";
+  key?: string;
+  env?: Record<string, string>;
 }
 
 export interface PortalCredentialInfo {
-	providerId: string;
-	type: 'api_key' | 'oauth';
+  providerId: string;
+  type: "api_key" | "oauth";
 }
 
 export interface PortalAuthOperationOptions {
-	signal?: AbortSignal;
+  signal?: AbortSignal;
 }
 
 export class PortalCredentialStore {
-	async read(
-		providerId: string,
-		options?: PortalAuthOperationOptions
-	): Promise<PortalApiKeyCredential | undefined> {
-		options?.signal?.throwIfAborted();
-		const key = providersRepo.getApiKey(providerId);
-		return key ? { type: 'api_key', key } : undefined;
-	}
+  async read(
+    providerId: string,
+    options?: PortalAuthOperationOptions,
+  ): Promise<PortalApiKeyCredential | undefined> {
+    options?.signal?.throwIfAborted();
+    const key = providersRepo.getApiKey(providerId);
+    return key ? { type: "api_key", key } : undefined;
+  }
 
-	async list(options?: PortalAuthOperationOptions): Promise<readonly PortalCredentialInfo[]> {
-		options?.signal?.throwIfAborted();
-		return providersRepo
-			.listWithKeys()
-			.map((p) => ({ providerId: p.id, type: 'api_key' as const }));
-	}
+  async list(
+    options?: PortalAuthOperationOptions,
+  ): Promise<readonly PortalCredentialInfo[]> {
+    options?.signal?.throwIfAborted();
+    return providersRepo
+      .listWithKeys()
+      .map((p) => ({ providerId: p.id, type: "api_key" as const }));
+  }
 
-	async modify(
-		providerId: string,
-		fn: (
-			current: PortalApiKeyCredential | undefined
-		) => Promise<PortalApiKeyCredential | undefined>,
-		options?: PortalAuthOperationOptions
-	): Promise<PortalApiKeyCredential | undefined> {
-		options?.signal?.throwIfAborted();
-		const current = await this.read(providerId, options);
-		const next = await fn(current);
-		// Per the CredentialStore contract, `undefined` means "leave unchanged".
-		if (next === undefined) return current;
-		if (next.key) providersRepo.setApiKey(providerId, next.key);
-		else providersRepo.clearApiKey(providerId);
-		return next;
-	}
+  async modify(
+    providerId: string,
+    fn: (
+      current: PortalApiKeyCredential | undefined,
+    ) => Promise<PortalApiKeyCredential | undefined>,
+    options?: PortalAuthOperationOptions,
+  ): Promise<PortalApiKeyCredential | undefined> {
+    options?.signal?.throwIfAborted();
+    const current = await this.read(providerId, options);
+    const next = await fn(current);
+    // Per the CredentialStore contract, `undefined` means "leave unchanged".
+    if (next === undefined) return current;
+    if (next.key) providersRepo.setApiKey(providerId, next.key);
+    else providersRepo.clearApiKey(providerId);
+    return next;
+  }
 
-	async delete(providerId: string, options?: PortalAuthOperationOptions): Promise<void> {
-		options?.signal?.throwIfAborted();
-		providersRepo.clearApiKey(providerId);
-	}
+  async delete(
+    providerId: string,
+    options?: PortalAuthOperationOptions,
+  ): Promise<void> {
+    options?.signal?.throwIfAborted();
+    providersRepo.clearApiKey(providerId);
+  }
 }

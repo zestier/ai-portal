@@ -6,95 +6,97 @@
 // hands back is UNTRUSTED until `leases.ts` re-derives it from ids and verifies
 // it against the filesystem, mirroring how `managed_worktrees` rows are treated.
 
-import { randomUUID } from 'node:crypto';
-import { getDb } from '../index';
-import { conversationId, leaseId } from '$lib/ids';
+import { randomUUID } from "node:crypto";
+import { getDb } from "../index";
+import { conversationId, leaseId } from "$lib/ids";
 
 export interface LeaseRow {
-	id: string;
-	userId: number;
-	heldByConversationId: string | null;
-	label: string;
-	sourceWorkdir: string;
-	gitCommonDir: string;
-	path: string;
-	branch: string;
-	baseSha: string;
-	state: 'active' | 'releasing';
-	createdAt: number;
-	lastUsedAt: number;
+  id: string;
+  userId: number;
+  heldByConversationId: string | null;
+  label: string;
+  sourceWorkdir: string;
+  gitCommonDir: string;
+  path: string;
+  branch: string;
+  baseSha: string;
+  state: "active" | "releasing";
+  createdAt: number;
+  lastUsedAt: number;
 }
 
 interface RawLeaseRow {
-	id: number;
-	user_id: number;
-	held_by_conversation_id: number | null;
-	label: string;
-	source_workdir: string;
-	git_common_dir: string;
-	path: string;
-	branch: string;
-	base_sha: string;
-	state: string;
-	created_at: number;
-	last_used_at: number;
+  id: number;
+  user_id: number;
+  held_by_conversation_id: number | null;
+  label: string;
+  source_workdir: string;
+  git_common_dir: string;
+  path: string;
+  branch: string;
+  base_sha: string;
+  state: string;
+  created_at: number;
+  last_used_at: number;
 }
 
 function toLease(r: RawLeaseRow): LeaseRow {
-	return {
-		id: leaseId.encode(r.id),
-		userId: r.user_id,
-		heldByConversationId:
-			r.held_by_conversation_id === null ? null : conversationId.encode(r.held_by_conversation_id),
-		label: r.label,
-		sourceWorkdir: r.source_workdir,
-		gitCommonDir: r.git_common_dir,
-		path: r.path,
-		branch: r.branch,
-		baseSha: r.base_sha,
-		state: r.state === 'releasing' ? 'releasing' : 'active',
-		createdAt: r.created_at,
-		lastUsedAt: r.last_used_at
-	};
+  return {
+    id: leaseId.encode(r.id),
+    userId: r.user_id,
+    heldByConversationId:
+      r.held_by_conversation_id === null
+        ? null
+        : conversationId.encode(r.held_by_conversation_id),
+    label: r.label,
+    sourceWorkdir: r.source_workdir,
+    gitCommonDir: r.git_common_dir,
+    path: r.path,
+    branch: r.branch,
+    baseSha: r.base_sha,
+    state: r.state === "releasing" ? "releasing" : "active",
+    createdAt: r.created_at,
+    lastUsedAt: r.last_used_at,
+  };
 }
 
 export interface InsertLeaseInput {
-	id: number;
-	userId: number;
-	heldByConversationId: number;
-	label: string;
-	sourceWorkdir: string;
-	gitCommonDir: string;
-	path: string;
-	branch: string;
-	baseSha: string;
+  id: number;
+  userId: number;
+  heldByConversationId: number;
+  label: string;
+  sourceWorkdir: string;
+  gitCommonDir: string;
+  path: string;
+  branch: string;
+  baseSha: string;
 }
 
 export function insert(input: InsertLeaseInput): LeaseRow {
-	const now = Date.now();
-	getDb()
-		.prepare(
-			`INSERT INTO workspace_leases(
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO workspace_leases(
 			   id, user_id, held_by_conversation_id, label, source_workdir,
 			   git_common_dir, path, branch, base_sha, state, created_at, last_used_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`
-		)
-		.run(
-			input.id,
-			input.userId,
-			input.heldByConversationId,
-			input.label,
-			input.sourceWorkdir,
-			input.gitCommonDir,
-			input.path,
-			input.branch,
-			input.baseSha,
-			now,
-			now
-		);
-	const row = getById(input.id, input.userId);
-	if (!row) throw new Error('lease insert did not persist');
-	return row;
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    )
+    .run(
+      input.id,
+      input.userId,
+      input.heldByConversationId,
+      input.label,
+      input.sourceWorkdir,
+      input.gitCommonDir,
+      input.path,
+      input.branch,
+      input.baseSha,
+      now,
+      now,
+    );
+  const row = getById(input.id, input.userId);
+  if (!row) throw new Error("lease insert did not persist");
+  return row;
 }
 
 /**
@@ -105,98 +107,116 @@ export function insert(input: InsertLeaseInput): LeaseRow {
  * branch)` are UNIQUE — concurrent mints must not collide.
  */
 export function mintPlaceholder(input: {
-	userId: number;
-	heldByConversationId: number;
-	label: string;
+  userId: number;
+  heldByConversationId: number;
+  label: string;
 }): number {
-	const stub = `pending-${randomUUID()}`;
-	const now = Date.now();
-	const info = getDb()
-		.prepare(
-			`INSERT INTO workspace_leases(
+  const stub = `pending-${randomUUID()}`;
+  const now = Date.now();
+  const info = getDb()
+    .prepare(
+      `INSERT INTO workspace_leases(
 			   user_id, held_by_conversation_id, label, source_workdir,
 			   git_common_dir, path, branch, base_sha, state, created_at, last_used_at
-			 ) VALUES (?, ?, ?, '', '', ?, ?, '', 'active', ?, ?)`
-		)
-		.run(input.userId, input.heldByConversationId, input.label, stub, stub, now, now);
-	return Number(info.lastInsertRowid);
+			 ) VALUES (?, ?, ?, '', '', ?, ?, '', 'active', ?, ?)`,
+    )
+    .run(
+      input.userId,
+      input.heldByConversationId,
+      input.label,
+      stub,
+      stub,
+      now,
+      now,
+    );
+  return Number(info.lastInsertRowid);
 }
 
 /** Fill in the real checkout metadata after the worktree exists. */
 export function completePlaceholder(
-	id: string | number,
-	userId: number,
-	meta: {
-		sourceWorkdir: string;
-		gitCommonDir: string;
-		path: string;
-		branch: string;
-		baseSha: string;
-	}
+  id: string | number,
+  userId: number,
+  meta: {
+    sourceWorkdir: string;
+    gitCommonDir: string;
+    path: string;
+    branch: string;
+    baseSha: string;
+  },
 ): LeaseRow | null {
-	const intId = leaseInt(id);
-	getDb()
-		.prepare(
-			`UPDATE workspace_leases
+  const intId = leaseInt(id);
+  getDb()
+    .prepare(
+      `UPDATE workspace_leases
 			    SET source_workdir = ?, git_common_dir = ?, path = ?, branch = ?, base_sha = ?
-			  WHERE id = ?`
-		)
-		.run(meta.sourceWorkdir, meta.gitCommonDir, meta.path, meta.branch, meta.baseSha, intId);
-	return getById(intId, userId);
+			  WHERE id = ?`,
+    )
+    .run(
+      meta.sourceWorkdir,
+      meta.gitCommonDir,
+      meta.path,
+      meta.branch,
+      meta.baseSha,
+      intId,
+    );
+  return getById(intId, userId);
 }
 
 function leaseInt(id: string | number): number {
-	return typeof id === 'number' ? id : leaseId.parse(id);
+  return typeof id === "number" ? id : leaseId.parse(id);
 }
 
 function convInt(id: string | number): number {
-	return typeof id === 'number' ? id : conversationId.parse(id);
+  return typeof id === "number" ? id : conversationId.parse(id);
 }
 
 export function getById(id: string | number, userId: number): LeaseRow | null {
-	const row = getDb()
-		.prepare(`SELECT * FROM workspace_leases WHERE id = ? AND user_id = ?`)
-		.get(leaseInt(id), userId) as RawLeaseRow | undefined;
-	return row ? toLease(row) : null;
+  const row = getDb()
+    .prepare(`SELECT * FROM workspace_leases WHERE id = ? AND user_id = ?`)
+    .get(leaseInt(id), userId) as RawLeaseRow | undefined;
+  return row ? toLease(row) : null;
 }
 
-export function listByConversation(conversationId: string | number, userId: number): LeaseRow[] {
-	const rows = getDb()
-		.prepare(
-			`SELECT * FROM workspace_leases
+export function listByConversation(
+  conversationId: string | number,
+  userId: number,
+): LeaseRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM workspace_leases
 			  WHERE held_by_conversation_id = ? AND user_id = ?
-			  ORDER BY created_at ASC`
-		)
-		.all(convInt(conversationId), userId) as RawLeaseRow[];
-	return rows.map(toLease);
+			  ORDER BY created_at ASC`,
+    )
+    .all(convInt(conversationId), userId) as RawLeaseRow[];
+  return rows.map(toLease);
 }
 
 export function countByConversation(conversationId: string | number): number {
-	const row = getDb()
-		.prepare(
-			`SELECT COUNT(*) AS n FROM workspace_leases
-			  WHERE held_by_conversation_id = ? AND state = 'active' AND base_sha != ''`
-		)
-		.get(convInt(conversationId)) as { n: number };
-	return row.n;
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM workspace_leases
+			  WHERE held_by_conversation_id = ? AND state = 'active' AND base_sha != ''`,
+    )
+    .get(convInt(conversationId)) as { n: number };
+  return row.n;
 }
 
 export function countByUser(userId: number): number {
-	const row = getDb()
-		.prepare(
-			`SELECT COUNT(*) AS n FROM workspace_leases
-			  WHERE user_id = ? AND state = 'active' AND base_sha != ''`
-		)
-		.get(userId) as { n: number };
-	return row.n;
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM workspace_leases
+			  WHERE user_id = ? AND state = 'active' AND base_sha != ''`,
+    )
+    .get(userId) as { n: number };
+  return row.n;
 }
 
 /** All leases, for startup reconciliation. Not user-scoped by design. */
 export function listAll(): LeaseRow[] {
-	const rows = getDb()
-		.prepare(`SELECT * FROM workspace_leases ORDER BY created_at ASC`)
-		.all() as RawLeaseRow[];
-	return rows.map(toLease);
+  const rows = getDb()
+    .prepare(`SELECT * FROM workspace_leases ORDER BY created_at ASC`)
+    .all() as RawLeaseRow[];
+  return rows.map(toLease);
 }
 
 /**
@@ -205,26 +225,33 @@ export function listAll(): LeaseRow[] {
  * be known from the row.
  */
 export function listIdle(before: number): LeaseRow[] {
-	const rows = getDb()
-		.prepare(
-			`SELECT * FROM workspace_leases
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM workspace_leases
 			  WHERE state = 'active' AND last_used_at < ?
-			  ORDER BY last_used_at ASC`
-		)
-		.all(before) as RawLeaseRow[];
-	return rows.map(toLease);
+			  ORDER BY last_used_at ASC`,
+    )
+    .all(before) as RawLeaseRow[];
+  return rows.map(toLease);
 }
 
 export function touch(id: string | number, now = Date.now()): void {
-	getDb()
-		.prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`)
-		.run(now, leaseInt(id));
+  getDb()
+    .prepare(`UPDATE workspace_leases SET last_used_at = ? WHERE id = ?`)
+    .run(now, leaseInt(id));
 }
 
-export function setState(id: string | number, state: 'active' | 'releasing'): void {
-	getDb().prepare(`UPDATE workspace_leases SET state = ? WHERE id = ?`).run(state, leaseInt(id));
+export function setState(
+  id: string | number,
+  state: "active" | "releasing",
+): void {
+  getDb()
+    .prepare(`UPDATE workspace_leases SET state = ? WHERE id = ?`)
+    .run(state, leaseInt(id));
 }
 
 export function remove(id: string | number): void {
-	getDb().prepare(`DELETE FROM workspace_leases WHERE id = ?`).run(leaseInt(id));
+  getDb()
+    .prepare(`DELETE FROM workspace_leases WHERE id = ?`)
+    .run(leaseInt(id));
 }

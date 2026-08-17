@@ -8,14 +8,14 @@
 // so auth/catalog state is consistent; the stub model is registered on it
 // once when `PI_STUB=1`.
 
-import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { loadConfig } from '../config';
-import * as portalExtensions from '../extensions';
-import { PortalCredentialStore } from '../models/credential-store';
-import { modelsJsonPath, writeModelsJsonFile } from '../models/models-json';
-import type { ProviderOpenOptions, ProviderSession } from './session-contract';
-import { createPiProviderSession, type PiModel } from './session';
-import { getStubModel, isPiStubMode } from './stub-server';
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { loadConfig } from "../config";
+import * as portalExtensions from "../extensions";
+import { PortalCredentialStore } from "../models/credential-store";
+import { modelsJsonPath, writeModelsJsonFile } from "../models/models-json";
+import type { ProviderOpenOptions, ProviderSession } from "./session-contract";
+import { createPiProviderSession, type PiModel } from "./session";
+import { getStubModel, isPiStubMode } from "./stub-server";
 
 let runtimePromise: Promise<ModelRuntime> | null = null;
 
@@ -28,12 +28,12 @@ let runtimePromise: Promise<ModelRuntime> | null = null;
  * the e2e stub model is additionally registered on this same runtime.
  */
 export function getModelRuntime(): Promise<ModelRuntime> {
-	runtimePromise ??= ModelRuntime.create({
-		modelsPath: modelsJsonPath(loadConfig()),
-		credentials: new PortalCredentialStore(),
-		refreshOnCreate: false
-	});
-	return runtimePromise;
+  runtimePromise ??= ModelRuntime.create({
+    modelsPath: modelsJsonPath(loadConfig()),
+    credentials: new PortalCredentialStore(),
+    refreshOnCreate: false,
+  });
+  return runtimePromise;
 }
 
 /**
@@ -43,14 +43,14 @@ export function getModelRuntime(): Promise<ModelRuntime> {
  * call after any provider/model/key mutation.
  */
 export async function syncModelRuntime(): Promise<void> {
-	writeModelsJsonFile();
-	const runtime = await getModelRuntime();
-	await runtime.refresh({ allowNetwork: false });
+  writeModelsJsonFile();
+  const runtime = await getModelRuntime();
+  await runtime.refresh({ allowNetwork: false });
 }
 
 /** Whether this turn should run on the pi SDK path. T1 gates on the stub only. */
 export function isPiMode(): boolean {
-	return isPiStubMode();
+  return isPiStubMode();
 }
 
 /**
@@ -58,45 +58,55 @@ export function isPiMode(): boolean {
  * the stub model is registered on the shared runtime first; otherwise the
  * `PI_MODEL` config id (`providerId/modelId`) selects the model.
  */
-export async function openPiSession(opts: ProviderOpenOptions): Promise<ProviderSession> {
-	const runtime = await getModelRuntime();
-	const model = await resolvePiModel(runtime, opts.model);
-	// Compute the operator-managed extension set (paths/specs) and its
-	// fingerprint in one pass over the same repo state, so the pool's acquire
-	// re-match (which independently fingerprints) is consistent.
-	const [extensionPaths, extensionFingerprint] = await Promise.all([
-		portalExtensions.enabledExtensionPaths(opts.userId),
-		portalExtensions.fingerprint(opts.userId)
-	]);
-	return createPiProviderSession({
-		cwd: opts.workingDirectory,
-		model,
-		providerLabel: `${model.provider}/${model.id}`,
-		runtime,
-		provider: opts.provider ?? 'pi',
-		conversationId: opts.conversationId,
-		providerSessionId: opts.providerSessionId ?? String(opts.conversationId),
-		userId: opts.userId,
-		policy: opts.policy,
-		additionalExtensionPaths: extensionPaths,
-		extensionFingerprint,
-		...(opts.sessionFilePath !== undefined ? { sessionFilePath: opts.sessionFilePath } : {}),
-		...(opts.mode !== undefined ? { mode: opts.mode } : {}),
-		...(opts.approvalMode !== undefined ? { approvalMode: opts.approvalMode } : {}),
-		...(opts.disabledToolGroups !== undefined
-			? { disabledToolGroups: opts.disabledToolGroups }
-			: {}),
-		...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
-		...(opts.appendSystemPrompt !== undefined
-			? { appendSystemPrompt: opts.appendSystemPrompt }
-			: {}),
-		...(opts.workspaceKey !== undefined ? { workspaceKey: opts.workspaceKey } : {}),
-		...(opts.memoryMode !== undefined ? { memoryMode: opts.memoryMode } : {}),
-		...(opts.globalMemoryEnabled !== undefined
-			? { globalMemoryEnabled: opts.globalMemoryEnabled }
-			: {}),
-		...(opts.onEvent ? { onEvent: opts.onEvent } : {})
-	});
+export async function openPiSession(
+  opts: ProviderOpenOptions,
+): Promise<ProviderSession> {
+  const runtime = await getModelRuntime();
+  const model = await resolvePiModel(runtime, opts.model);
+  // Compute the operator-managed extension set (paths/specs) and its
+  // fingerprint in one pass over the same repo state, so the pool's acquire
+  // re-match (which independently fingerprints) is consistent.
+  const [extensionPaths, extensionFingerprint] = await Promise.all([
+    portalExtensions.enabledExtensionPaths(opts.userId),
+    portalExtensions.fingerprint(opts.userId),
+  ]);
+  return createPiProviderSession({
+    cwd: opts.workingDirectory,
+    model,
+    providerLabel: `${model.provider}/${model.id}`,
+    runtime,
+    provider: opts.provider ?? "pi",
+    conversationId: opts.conversationId,
+    providerSessionId: opts.providerSessionId ?? String(opts.conversationId),
+    userId: opts.userId,
+    policy: opts.policy,
+    additionalExtensionPaths: extensionPaths,
+    extensionFingerprint,
+    ...(opts.sessionFilePath !== undefined
+      ? { sessionFilePath: opts.sessionFilePath }
+      : {}),
+    ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
+    ...(opts.approvalMode !== undefined
+      ? { approvalMode: opts.approvalMode }
+      : {}),
+    ...(opts.disabledToolGroups !== undefined
+      ? { disabledToolGroups: opts.disabledToolGroups }
+      : {}),
+    ...(opts.systemPrompt !== undefined
+      ? { systemPrompt: opts.systemPrompt }
+      : {}),
+    ...(opts.appendSystemPrompt !== undefined
+      ? { appendSystemPrompt: opts.appendSystemPrompt }
+      : {}),
+    ...(opts.workspaceKey !== undefined
+      ? { workspaceKey: opts.workspaceKey }
+      : {}),
+    ...(opts.memoryMode !== undefined ? { memoryMode: opts.memoryMode } : {}),
+    ...(opts.globalMemoryEnabled !== undefined
+      ? { globalMemoryEnabled: opts.globalMemoryEnabled }
+      : {}),
+    ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
+  });
 }
 
 /**
@@ -113,22 +123,31 @@ export async function openPiSession(opts: ProviderOpenOptions): Promise<Provider
  * means "no per-conversation override" and falls back to `PI_MODEL`. Any other
  * value is a real override, resolved against the runtime.
  */
-async function resolvePiModel(runtime: ModelRuntime, requested: string): Promise<PiModel> {
-	if (isPiStubMode()) {
-		const stub = await getStubModel(runtime);
-		if (stub) return stub;
-		throw new Error('pi stub model unavailable');
-	}
-	const cfg = loadConfig();
-	const isOverride = requested && requested.indexOf('/') > 0 && requested !== cfg.DEFAULT_MODEL;
-	const selection = isOverride ? requested : cfg.PI_MODEL;
-	const slash = selection.indexOf('/');
-	if (slash <= 0) {
-		throw new Error(`invalid pi model "${selection}": expected "providerId/modelId"`);
-	}
-	const model = runtime.getModel(selection.slice(0, slash), selection.slice(slash + 1));
-	if (!model) {
-		throw new Error(`pi model not found: ${selection}`);
-	}
-	return model;
+async function resolvePiModel(
+  runtime: ModelRuntime,
+  requested: string,
+): Promise<PiModel> {
+  if (isPiStubMode()) {
+    const stub = await getStubModel(runtime);
+    if (stub) return stub;
+    throw new Error("pi stub model unavailable");
+  }
+  const cfg = loadConfig();
+  const isOverride =
+    requested && requested.indexOf("/") > 0 && requested !== cfg.DEFAULT_MODEL;
+  const selection = isOverride ? requested : cfg.PI_MODEL;
+  const slash = selection.indexOf("/");
+  if (slash <= 0) {
+    throw new Error(
+      `invalid pi model "${selection}": expected "providerId/modelId"`,
+    );
+  }
+  const model = runtime.getModel(
+    selection.slice(0, slash),
+    selection.slice(slash + 1),
+  );
+  if (!model) {
+    throw new Error(`pi model not found: ${selection}`);
+  }
+  return model;
 }

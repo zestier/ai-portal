@@ -34,73 +34,82 @@
 // has exactly one textual form.
 
 export interface IdCodec {
-	readonly prefix: string;
-	readonly label: string;
-	/** Anchored, case-insensitive; the numeric part is `[1-9][0-9]*`. */
-	readonly regex: RegExp;
-	/** `10` -> `'T10'`. Throws unless `id` is a positive safe integer. */
-	encode(id: number): string;
-	/** `'T10'` -> `10`. Throws with a precise message on any invalid input. */
-	parse(handle: string): number;
-	/** `'T10'` -> true; `10`, `'10'`, `'T007'`, junk -> false. */
-	is(value: unknown): value is string;
-	/** The failure message `parse` throws, e.g. "not a ticket id: 10 — expected T<number>". */
-	error(input: unknown): string;
-	/** `parse` without throwing: null when `value` isn't a valid handle. */
-	tryParse(value: unknown): number | null;
+  readonly prefix: string;
+  readonly label: string;
+  /** Anchored, case-insensitive; the numeric part is `[1-9][0-9]*`. */
+  readonly regex: RegExp;
+  /** `10` -> `'T10'`. Throws unless `id` is a positive safe integer. */
+  encode(id: number): string;
+  /** `'T10'` -> `10`. Throws with a precise message on any invalid input. */
+  parse(handle: string): number;
+  /** `'T10'` -> true; `10`, `'10'`, `'T007'`, junk -> false. */
+  is(value: unknown): value is string;
+  /** The failure message `parse` throws, e.g. "not a ticket id: 10 — expected T<number>". */
+  error(input: unknown): string;
+  /** `parse` without throwing: null when `value` isn't a valid handle. */
+  tryParse(value: unknown): number | null;
 }
 
 export function makeId(spec: { prefix: string; label: string }): IdCodec {
-	const { prefix, label } = spec;
-	if (!/^[A-Z]+$/.test(prefix)) {
-		throw new Error(`id prefix must be uppercase ASCII letters, got ${JSON.stringify(prefix)}`);
-	}
-	// Anchored: `^` .. `$`. Case-insensitive so `t10` and `T10` are the same
-	// handle. The numeric part starts at 1-9 (no leading zeros, no zero/negative).
-	const regex = new RegExp(`^${prefix}([1-9][0-9]*)$`, 'i');
+  const { prefix, label } = spec;
+  if (!/^[A-Z]+$/.test(prefix)) {
+    throw new Error(
+      `id prefix must be uppercase ASCII letters, got ${JSON.stringify(prefix)}`,
+    );
+  }
+  // Anchored: `^` .. `$`. Case-insensitive so `t10` and `T10` are the same
+  // handle. The numeric part starts at 1-9 (no leading zeros, no zero/negative).
+  const regex = new RegExp(`^${prefix}([1-9][0-9]*)$`, "i");
 
-	function error(input: unknown): string {
-		const shown = typeof input === 'string' ? input : String(input);
-		return `not a ${label} id: ${shown} — expected ${prefix}<number>`;
-	}
+  function error(input: unknown): string {
+    const shown = typeof input === "string" ? input : String(input);
+    return `not a ${label} id: ${shown} — expected ${prefix}<number>`;
+  }
 
-	return {
-		prefix,
-		label,
-		regex,
-		encode(id: number): string {
-			if (!Number.isSafeInteger(id) || id <= 0) {
-				throw new Error(
-					`cannot encode ${label} id: ${String(id)} — expected a positive safe integer`
-				);
-			}
-			return `${prefix}${id}`;
-		},
-		parse(handle: string): number {
-			if (typeof handle !== 'string' || !regex.test(handle)) throw new Error(error(handle));
-			const id = Number(handle.slice(prefix.length));
-			if (!Number.isSafeInteger(id) || id <= 0) throw new Error(error(handle));
-			return id;
-		},
-		is(value: unknown): value is string {
-			return typeof value === 'string' && regex.test(value);
-		},
-		error,
-		tryParse(value: unknown): number | null {
-			if (typeof value !== 'string' || !regex.test(value)) return null;
-			const id = Number(value.slice(prefix.length));
-			return Number.isSafeInteger(id) && id > 0 ? id : null;
-		}
-	};
+  return {
+    prefix,
+    label,
+    regex,
+    encode(id: number): string {
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error(
+          `cannot encode ${label} id: ${String(id)} — expected a positive safe integer`,
+        );
+      }
+      return `${prefix}${id}`;
+    },
+    parse(handle: string): number {
+      if (typeof handle !== "string" || !regex.test(handle))
+        throw new Error(error(handle));
+      const id = Number(handle.slice(prefix.length));
+      if (!Number.isSafeInteger(id) || id <= 0) throw new Error(error(handle));
+      return id;
+    },
+    is(value: unknown): value is string {
+      return typeof value === "string" && regex.test(value);
+    },
+    error,
+    tryParse(value: unknown): number | null {
+      if (typeof value !== "string" || !regex.test(value)) return null;
+      const id = Number(value.slice(prefix.length));
+      return Number.isSafeInteger(id) && id > 0 ? id : null;
+    },
+  };
 }
 
-export const ticketId = makeId({ prefix: 'T', label: 'ticket' });
-export const conversationId = makeId({ prefix: 'C', label: 'conversation' });
-export const messageId = makeId({ prefix: 'M', label: 'message' });
-export const toolCallId = makeId({ prefix: 'X', label: 'tool call' });
-export const leaseId = makeId({ prefix: 'L', label: 'lease' });
-export const promptTemplateId = makeId({ prefix: 'PT', label: 'prompt template' });
-export const extensionId = makeId({ prefix: 'EX', label: 'extension' });
-export const memoryEntityId = makeId({ prefix: 'E', label: 'memory entity' });
-export const memoryFactId = makeId({ prefix: 'F', label: 'memory fact' });
-export const memoryPatchItemId = makeId({ prefix: 'PC', label: 'memory patch item' });
+export const ticketId = makeId({ prefix: "T", label: "ticket" });
+export const conversationId = makeId({ prefix: "C", label: "conversation" });
+export const messageId = makeId({ prefix: "M", label: "message" });
+export const toolCallId = makeId({ prefix: "X", label: "tool call" });
+export const leaseId = makeId({ prefix: "L", label: "lease" });
+export const promptTemplateId = makeId({
+  prefix: "PT",
+  label: "prompt template",
+});
+export const extensionId = makeId({ prefix: "EX", label: "extension" });
+export const memoryEntityId = makeId({ prefix: "E", label: "memory entity" });
+export const memoryFactId = makeId({ prefix: "F", label: "memory fact" });
+export const memoryPatchItemId = makeId({
+  prefix: "PC",
+  label: "memory patch item",
+});

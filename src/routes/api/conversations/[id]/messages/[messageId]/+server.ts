@@ -1,9 +1,9 @@
-import { error, json } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { conversationId as convCodec, messageId as msgCodec } from '$lib/ids';
-import * as turnInputs from '$lib/server/db/repos/turn-inputs';
-import { authorizeConversation } from '$lib/server/conversation-auth';
-import { projectMessageForOwner } from '$lib/server/present/transcript';
+import { error, json } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import { conversationId as convCodec, messageId as msgCodec } from "$lib/ids";
+import * as turnInputs from "$lib/server/db/repos/turn-inputs";
+import { authorizeConversation } from "$lib/server/conversation-auth";
+import { projectMessageForOwner } from "$lib/server/present/transcript";
 
 /**
  * GET returns the full body of one message (content + records, oversized
@@ -18,13 +18,13 @@ import { projectMessageForOwner } from '$lib/server/present/transcript';
  * inspector — so both lazy reads share one endpoint.
  */
 export const GET: RequestHandler = async ({ params, locals }) => {
-	const conv = authorizeConversation(params.id, locals.userId);
-	const convId = convCodec.parse(conv.id);
-	if (!params.messageId) throw error(400, 'missing message id');
-	const messageId = msgCodec.tryParse(params.messageId);
-	if (messageId === null) throw error(400, 'missing message id');
-	const message = projectMessageForOwner(convId, messageId);
-	if (!message) throw error(404);
-	const input = turnInputs.get(convId, messageId);
-	return json({ message, input });
+  const conv = authorizeConversation(params.id, locals.userId);
+  const convId = convCodec.parse(conv.id);
+  if (!params.messageId) throw error(400, "missing message id");
+  const messageId = msgCodec.tryParse(params.messageId);
+  if (messageId === null) throw error(400, "missing message id");
+  const message = projectMessageForOwner(convId, messageId);
+  if (!message) throw error(404);
+  const input = turnInputs.get(convId, messageId);
+  return json({ message, input });
 };

@@ -9,25 +9,26 @@ export const CHAT_STREAM_STALL_TIMEOUT_MS = 60_000;
 // snaps the dialog queue + stream state back to the authoritative `pending`
 // map — clearing a prompt the server no longer holds, or re-arming for another
 // interval if it does.
-export const CHAT_INTERACTIVE_STALL_TIMEOUT_MS = 5 * CHAT_STREAM_STALL_TIMEOUT_MS;
+export const CHAT_INTERACTIVE_STALL_TIMEOUT_MS =
+  5 * CHAT_STREAM_STALL_TIMEOUT_MS;
 
 // How long the stall timer should wait before firing recovery, or `null` when
 // it should not arm at all (no live stream / no active turn). Pure so the
 // branching is unit-testable without timers or a DOM. A pending interactive
 // uses the longer fuse rather than disabling recovery entirely.
 export function streamStallDelayMs({
-	hasEventSource,
-	activeTurnId,
-	pendingInteractiveCount
+  hasEventSource,
+  activeTurnId,
+  pendingInteractiveCount,
 }: {
-	hasEventSource: boolean;
-	activeTurnId: string | null;
-	pendingInteractiveCount: number;
+  hasEventSource: boolean;
+  activeTurnId: string | null;
+  pendingInteractiveCount: number;
 }): number | null {
-	if (!hasEventSource || !activeTurnId) return null;
-	return pendingInteractiveCount > 0
-		? CHAT_INTERACTIVE_STALL_TIMEOUT_MS
-		: CHAT_STREAM_STALL_TIMEOUT_MS;
+  if (!hasEventSource || !activeTurnId) return null;
+  return pendingInteractiveCount > 0
+    ? CHAT_INTERACTIVE_STALL_TIMEOUT_MS
+    : CHAT_STREAM_STALL_TIMEOUT_MS;
 }
 
 // `EventSource.CLOSED` as a bare numeric constant so this module stays pure
@@ -41,7 +42,7 @@ export const EVENT_SOURCE_CLOSED = 2;
 // tab) the browser can leave a socket CLOSED without ever firing `onerror`,
 // so callers must not treat "non-null" as "healthy".
 export function streamIsLive(source: { readyState: number } | null): boolean {
-	return source !== null && source.readyState !== EVENT_SOURCE_CLOSED;
+  return source !== null && source.readyState !== EVENT_SOURCE_CLOSED;
 }
 
 // Whether a foreground/network resume (visibilitychange/focus/online) should
@@ -49,32 +50,32 @@ export function streamIsLive(source: { readyState: number } | null): boolean {
 // is in flight: a hidden page is still frozen (re-syncing now is pointless and
 // races the unfreeze), and with no active turn there is nothing to recover.
 export function shouldResumeStream({
-	documentHidden,
-	activeTurnId
+  documentHidden,
+  activeTurnId,
 }: {
-	documentHidden: boolean;
-	activeTurnId: string | null;
+  documentHidden: boolean;
+  activeTurnId: string | null;
 }): boolean {
-	if (documentHidden) return false;
-	return activeTurnId !== null;
+  if (documentHidden) return false;
+  return activeTurnId !== null;
 }
 
-export type StreamRefreshAction = 'finish' | 'reattach' | 'stay-attached';
+export type StreamRefreshAction = "finish" | "reattach" | "stay-attached";
 
 export function streamRefreshAction({
-	currentTurnId,
-	refreshedActiveTurnId,
-	hasEventSource
+  currentTurnId,
+  refreshedActiveTurnId,
+  hasEventSource,
 }: {
-	currentTurnId: string | null;
-	refreshedActiveTurnId: string | null;
-	hasEventSource: boolean;
+  currentTurnId: string | null;
+  refreshedActiveTurnId: string | null;
+  hasEventSource: boolean;
 }): StreamRefreshAction {
-	if (!refreshedActiveTurnId) {
-		return currentTurnId || hasEventSource ? 'finish' : 'stay-attached';
-	}
-	if (!hasEventSource || refreshedActiveTurnId !== currentTurnId) {
-		return 'reattach';
-	}
-	return 'stay-attached';
+  if (!refreshedActiveTurnId) {
+    return currentTurnId || hasEventSource ? "finish" : "stay-attached";
+  }
+  if (!hasEventSource || refreshedActiveTurnId !== currentTurnId) {
+    return "reattach";
+  }
+  return "stay-attached";
 }

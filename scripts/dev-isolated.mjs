@@ -13,32 +13,32 @@
 // The temp dir is created fresh each run under the OS tmpdir and is
 // NOT deleted on exit (so you can post-mortem it); they're small.
 
-import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const dataDir = mkdtempSync(join(tmpdir(), 'zap-dev-'));
+const dataDir = mkdtempSync(join(tmpdir(), "zap-dev-"));
 console.log(`[dev-isolated] DATA_DIR=${dataDir}`);
-console.log('[dev-isolated] loopback only (no auth)');
+console.log("[dev-isolated] loopback only (no auth)");
 
-const child = spawn('pnpm', ['exec', 'vite', 'dev', ...process.argv.slice(2)], {
-	stdio: 'inherit',
-	env: {
-		...process.env,
-		DATA_DIR: dataDir,
-		HOST: '127.0.0.1',
-		I_KNOW_THIS_IS_LOCAL: '1'
-		// ENCRYPTION_KEY is intentionally not set: it's optional here (only
-		// needed for provider/BYOK API-key at-rest encryption, which throwaway
-		// dev doesn't use).
-	}
+const child = spawn("pnpm", ["exec", "vite", "dev", ...process.argv.slice(2)], {
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    DATA_DIR: dataDir,
+    HOST: "127.0.0.1",
+    I_KNOW_THIS_IS_LOCAL: "1",
+    // ENCRYPTION_KEY is intentionally not set: it's optional here (only
+    // needed for provider/BYOK API-key at-rest encryption, which throwaway
+    // dev doesn't use).
+  },
 });
 
 const forward = (sig) => child.kill(sig);
-process.on('SIGINT', forward);
-process.on('SIGTERM', forward);
-child.on('exit', (code, sig) => {
-	if (sig) process.kill(process.pid, sig);
-	else process.exit(code ?? 0);
+process.on("SIGINT", forward);
+process.on("SIGTERM", forward);
+child.on("exit", (code, sig) => {
+  if (sig) process.kill(process.pid, sig);
+  else process.exit(code ?? 0);
 });

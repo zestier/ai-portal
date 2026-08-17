@@ -20,17 +20,20 @@ type LockMap = Map<string, Promise<void>>;
 
 const locks: LockMap = new Map();
 
-export async function withRepositoryLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-	const previous = locks.get(key) ?? Promise.resolve();
-	let release!: () => void;
-	const current = new Promise<void>((done) => (release = done));
-	const queued = previous.then(() => current);
-	locks.set(key, queued);
-	await previous;
-	try {
-		return await fn();
-	} finally {
-		release();
-		if (locks.get(key) === queued) locks.delete(key);
-	}
+export async function withRepositoryLock<T>(
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = locks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((done) => (release = done));
+  const queued = previous.then(() => current);
+  locks.set(key, queued);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (locks.get(key) === queued) locks.delete(key);
+  }
 }

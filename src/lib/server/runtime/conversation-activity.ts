@@ -10,10 +10,10 @@
 // `turn-runner` is the main emitter, and importing it here would create a
 // module cycle. Callers that aren't the turn runner resolve it via `getTurn`.
 
-import { publishAppEvent } from './app-events';
-import { conversationId as convCodec } from '$lib/ids';
-import * as convs from '../db/repos/conversations';
-import { log } from '../log';
+import { publishAppEvent } from "./app-events";
+import { conversationId as convCodec } from "$lib/ids";
+import * as convs from "../db/repos/conversations";
+import { log } from "../log";
 
 /**
  * Publish a conversation's current active state to its owner's global feed.
@@ -23,22 +23,22 @@ import { log } from '../log';
  * that triggered it.
  */
 export function publishConversationActivity(
-	userId: number | undefined,
-	conversationId: number,
-	running: boolean
+  userId: number | undefined,
+  conversationId: number,
+  running: boolean,
 ): void {
-	if (!userId) return;
-	try {
-		publishAppEvent(userId, {
-			type: 'activity.changed',
-			conversationId: convCodec.encode(conversationId),
-			running,
-			unread: convs.hasUnread(conversationId, userId)
-		});
-	} catch (err) {
-		log.warn('activity.publish_failed', {
-			conversationId,
-			err: err instanceof Error ? err.message : String(err)
-		});
-	}
+  if (!userId) return;
+  try {
+    publishAppEvent(userId, {
+      type: "activity.changed",
+      conversationId: convCodec.encode(conversationId),
+      running,
+      unread: convs.hasUnread(conversationId, userId),
+    });
+  } catch (err) {
+    log.warn("activity.publish_failed", {
+      conversationId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

@@ -14,24 +14,24 @@ version: 2
 # limit, so urgent CVE fixes still land promptly.
 updates:
   - package-ecosystem: npm
-    directory: '/'
+    directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
       npm-dependencies:
         patterns:
-          - '*'
+          - "*"
         update-types:
           - minor
           - patch
 
   - package-ecosystem: github-actions
-    directory: '/'
+    directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
       github-actions:
         patterns:
-          - '*'
+          - "*"

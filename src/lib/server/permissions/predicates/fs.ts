@@ -1,104 +1,109 @@
 // Predicate for FsScope grants — `read` / `write` / `edit` requests.
 
-import { isAbsolute, sep, relative, resolve } from 'node:path';
-import type { FsScope, FsRule } from '../../../permissions/scope-types';
-import { isPathInWorkspace, resolveWithParentFallback } from '../workspace';
+import { isAbsolute, sep, relative, resolve } from "node:path";
+import type { FsScope, FsRule } from "../../../permissions/scope-types";
+import { isPathInWorkspace, resolveWithParentFallback } from "../workspace";
 
 export interface FsMatchContext {
-	permissionKind: 'read' | 'write' | 'edit';
-	target: string;
-	/**
-	 * Every root the conversation may write inside: its own workspace plus any
-	 * worktree leases it holds. A `workspace`-rooted rule matches inside ANY of
-	 * them; an empty list matches nothing.
-	 */
-	workspaceRoots: readonly string[] | null;
-	/**
-	 * The provider session's actual cwd. Deliberately singular — `session-workspace`
-	 * rules mean "the real working directory", which leases never widen.
-	 */
-	sessionWorkspaceRoot?: string | null;
+  permissionKind: "read" | "write" | "edit";
+  target: string;
+  /**
+   * Every root the conversation may write inside: its own workspace plus any
+   * worktree leases it holds. A `workspace`-rooted rule matches inside ANY of
+   * them; an empty list matches nothing.
+   */
+  workspaceRoots: readonly string[] | null;
+  /**
+   * The provider session's actual cwd. Deliberately singular — `session-workspace`
+   * rules mean "the real working directory", which leases never widen.
+   */
+  sessionWorkspaceRoot?: string | null;
 }
 
 export function fsScopeMatches(scope: FsScope, ctx: FsMatchContext): boolean {
-	if (scope.perms && scope.perms.length > 0 && !scope.perms.includes(ctx.permissionKind)) {
-		return false;
-	}
-	return fsRuleMatches(scope.rule, ctx);
+  if (
+    scope.perms &&
+    scope.perms.length > 0 &&
+    !scope.perms.includes(ctx.permissionKind)
+  ) {
+    return false;
+  }
+  return fsRuleMatches(scope.rule, ctx);
 }
 
 function fsRuleMatches(rule: FsRule, ctx: FsMatchContext): boolean {
-	switch (rule.kind) {
-		case 'path':
-			return pathRuleMatches(rule, ctx);
-		default: {
-			const _exhaustive: never = rule.kind;
-			void _exhaustive;
-			return false;
-		}
-	}
+  switch (rule.kind) {
+    case "path":
+      return pathRuleMatches(rule, ctx);
+    default: {
+      const _exhaustive: never = rule.kind;
+      void _exhaustive;
+      return false;
+    }
+  }
 }
 
 function pathRuleMatches(rule: FsRule, ctx: FsMatchContext): boolean {
-	if (ctx.target.includes('\0')) return false;
-	if (rule.root === 'absolute') {
-		const target = canonicalAbsolutePath(ctx.target);
-		if (target === null) return false;
-		return absolutePathBehaviorMatches(rule.behavior, rule.value, target);
-	}
+  if (ctx.target.includes("\0")) return false;
+  if (rule.root === "absolute") {
+    const target = canonicalAbsolutePath(ctx.target);
+    if (target === null) return false;
+    return absolutePathBehaviorMatches(rule.behavior, rule.value, target);
+  }
 
-	// A `workspace` rule is satisfied by containment in any of the conversation's
-	// roots; `session-workspace` stays anchored to the single real cwd. Roots are
-	// disjoint directories, so at most one can contain the target — resolve the
-	// path relative to whichever one does.
-	const roots = rule.root === 'workspace' ? ctx.workspaceRoots : [ctx.sessionWorkspaceRoot];
-	for (const root of roots ?? []) {
-		if (!root) continue;
-		const rel = canonicalRelativePath(ctx.target, root);
-		if (rel === null) continue;
-		if (rule.behavior === 'any') return true;
-		return relativePathBehaviorMatches(rule.behavior, rule.value, rel);
-	}
-	return false;
+  // A `workspace` rule is satisfied by containment in any of the conversation's
+  // roots; `session-workspace` stays anchored to the single real cwd. Roots are
+  // disjoint directories, so at most one can contain the target — resolve the
+  // path relative to whichever one does.
+  const roots =
+    rule.root === "workspace" ? ctx.workspaceRoots : [ctx.sessionWorkspaceRoot];
+  for (const root of roots ?? []) {
+    if (!root) continue;
+    const rel = canonicalRelativePath(ctx.target, root);
+    if (rel === null) continue;
+    if (rule.behavior === "any") return true;
+    return relativePathBehaviorMatches(rule.behavior, rule.value, rel);
+  }
+  return false;
 }
 
 function absolutePathBehaviorMatches(
-	behavior: 'exact' | 'prefix' | 'glob',
-	value: string,
-	target: string
+  behavior: "exact" | "prefix" | "glob",
+  value: string,
+  target: string,
 ): boolean {
-	if (value.includes('\0') || target.includes('\0')) return false;
-	switch (behavior) {
-		case 'exact': {
-			const exact = canonicalAbsolutePath(value);
-			return exact !== null && target === exact;
-		}
-		case 'prefix':
-			return prefixMatches(value, target);
-		case 'glob':
-			return tokenGlobMatches(value, target);
-	}
+  if (value.includes("\0") || target.includes("\0")) return false;
+  switch (behavior) {
+    case "exact": {
+      const exact = canonicalAbsolutePath(value);
+      return exact !== null && target === exact;
+    }
+    case "prefix":
+      return prefixMatches(value, target);
+    case "glob":
+      return tokenGlobMatches(value, target);
+  }
 }
 
 function relativePathBehaviorMatches(
-	behavior: 'exact' | 'prefix' | 'glob',
-	value: string,
-	target: string
+  behavior: "exact" | "prefix" | "glob",
+  value: string,
+  target: string,
 ): boolean {
-	if (value.includes('\0') || target.includes('\0')) return false;
-	switch (behavior) {
-		case 'exact':
-			return target === value;
-		case 'prefix':
-			return relativePrefixMatches(value, target);
-		case 'glob':
-			return tokenGlobMatches(value, target);
-	}
+  if (value.includes("\0") || target.includes("\0")) return false;
+  switch (behavior) {
+    case "exact":
+      return target === value;
+    case "prefix":
+      return relativePrefixMatches(value, target);
+    case "glob":
+      return tokenGlobMatches(value, target);
+  }
 }
 
 function canonicalAbsolutePath(path: string): string | null {
-	if (!path || path.includes('\0') || !isAbsolute(path)) return null;
-	return resolveWithParentFallback(resolve(path));
+  if (!path || path.includes("\0") || !isAbsolute(path)) return null;
+  return resolveWithParentFallback(resolve(path));
 }
 
 /**
@@ -109,42 +114,44 @@ function canonicalAbsolutePath(path: string): string | null {
  * meaning across working directories.
  */
 function prefixMatches(prefix: string, target: string): boolean {
-	if (!prefix || !target) return false;
-	if (prefix.includes('\0') || target.includes('\0')) return false;
-	if (!isAbsolute(prefix) || !isAbsolute(target)) return false;
-	const resolvedPrefix = resolveWithParentFallback(prefix);
-	const resolvedTarget = resolveWithParentFallback(target);
-	if (resolvedPrefix === null || resolvedTarget === null) return false;
-	if (resolvedTarget === resolvedPrefix) return true;
-	const rel = relative(resolvedPrefix, resolvedTarget);
-	if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
-	return resolvedTarget.startsWith(resolvedPrefix + sep);
+  if (!prefix || !target) return false;
+  if (prefix.includes("\0") || target.includes("\0")) return false;
+  if (!isAbsolute(prefix) || !isAbsolute(target)) return false;
+  const resolvedPrefix = resolveWithParentFallback(prefix);
+  const resolvedTarget = resolveWithParentFallback(target);
+  if (resolvedPrefix === null || resolvedTarget === null) return false;
+  if (resolvedTarget === resolvedPrefix) return true;
+  const rel = relative(resolvedPrefix, resolvedTarget);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+  return resolvedTarget.startsWith(resolvedPrefix + sep);
 }
 
 function relativePrefixMatches(prefix: string, target: string): boolean {
-	if (!prefix || !target) return false;
-	if (prefix.includes('\0') || target.includes('\0')) return false;
-	if (isAbsolute(prefix) || isAbsolute(target)) return false;
-	if (target === prefix) return true;
-	const rel = relative(prefix, target);
-	if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
-	return target.startsWith(prefix.replace(/\/$/, '') + '/');
+  if (!prefix || !target) return false;
+  if (prefix.includes("\0") || target.includes("\0")) return false;
+  if (isAbsolute(prefix) || isAbsolute(target)) return false;
+  if (target === prefix) return true;
+  const rel = relative(prefix, target);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+  return target.startsWith(prefix.replace(/\/$/, "") + "/");
 }
 
 function canonicalRelativePath(target: string, root: string): string | null {
-	if (!isPathInWorkspace(target, root)) return null;
+  if (!isPathInWorkspace(target, root)) return null;
 
-	const resolvedRoot = canonicalAbsolutePath(resolve(root));
-	if (resolvedRoot === null) return null;
-	const absTarget = isAbsolute(target) ? resolve(target) : resolve(resolvedRoot, target);
-	const resolvedTarget = resolveWithParentFallback(absTarget);
-	if (resolvedTarget === null) return null;
-	if (resolvedTarget === resolvedRoot) return '';
+  const resolvedRoot = canonicalAbsolutePath(resolve(root));
+  if (resolvedRoot === null) return null;
+  const absTarget = isAbsolute(target)
+    ? resolve(target)
+    : resolve(resolvedRoot, target);
+  const resolvedTarget = resolveWithParentFallback(absTarget);
+  if (resolvedTarget === null) return null;
+  if (resolvedTarget === resolvedRoot) return "";
 
-	const rel = relative(resolvedRoot, resolvedTarget);
-	if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
-	if (!resolvedTarget.startsWith(resolvedRoot + sep)) return null;
-	return rel;
+  const rel = relative(resolvedRoot, resolvedTarget);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  if (!resolvedTarget.startsWith(resolvedRoot + sep)) return null;
+  return rel;
 }
 
 /**
@@ -156,35 +163,35 @@ function canonicalRelativePath(target: string, root: string): string | null {
  * Everything else is literal.
  */
 export function tokenGlobMatches(glob: string, path: string): boolean {
-	return globToRegex(glob).test(path);
+  return globToRegex(glob).test(path);
 }
 
 function globToRegex(glob: string): RegExp {
-	let re = '^';
-	let i = 0;
-	while (i < glob.length) {
-		const ch = glob[i];
-		if (ch === '*') {
-			if (glob[i + 1] === '*') {
-				if (glob[i + 2] === '/') {
-					re += '(?:.*/)?';
-					i += 3;
-				} else if (i === 0 || glob[i - 1] === '/') {
-					re += '.*';
-					i += 2;
-				} else {
-					re += '[^/]*';
-					i += 2;
-				}
-			} else {
-				re += '[^/]*';
-				i += 1;
-			}
-		} else {
-			re += ch.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-			i += 1;
-		}
-	}
-	re += '$';
-	return new RegExp(re);
+  let re = "^";
+  let i = 0;
+  while (i < glob.length) {
+    const ch = glob[i];
+    if (ch === "*") {
+      if (glob[i + 1] === "*") {
+        if (glob[i + 2] === "/") {
+          re += "(?:.*/)?";
+          i += 3;
+        } else if (i === 0 || glob[i - 1] === "/") {
+          re += ".*";
+          i += 2;
+        } else {
+          re += "[^/]*";
+          i += 2;
+        }
+      } else {
+        re += "[^/]*";
+        i += 1;
+      }
+    } else {
+      re += ch.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+      i += 1;
+    }
+  }
+  re += "$";
+  return new RegExp(re);
 }

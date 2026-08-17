@@ -1,7 +1,7 @@
-import { error } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
-import { sseResponse } from '$lib/server/sse';
-import { getAppEventBus } from '$lib/server/runtime/app-events';
+import { error } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+import { sseResponse } from "$lib/server/sse";
+import { getAppEventBus } from "$lib/server/runtime/app-events";
 
 /**
  * Per-user global event feed. The app shell opens exactly one of these and
@@ -20,26 +20,28 @@ import { getAppEventBus } from '$lib/server/runtime/app-events';
  * a cross-process bus behind the `AppEventBus` interface.
  */
 export const GET: RequestHandler = ({ locals, request, url }) => {
-	const userId = locals.userId;
-	if (!userId) throw error(401, 'Not authenticated');
+  const userId = locals.userId;
+  if (!userId) throw error(401, "Not authenticated");
 
-	// Browser auto-reconnect sets this header to the last `id:` (a ULID) it saw.
-	// Client-managed reconnect (see `+layout.svelte`) can't set request headers
-	// on a fresh EventSource, so it passes the same cursor as a `last-event-id`
-	// query param instead — accept either. Opaque cursor: passed straight
-	// through; the bus orders it lexicographically.
-	const lastIdHeader =
-		request.headers.get('last-event-id') ?? url.searchParams.get('last-event-id');
-	const sinceId = lastIdHeader && lastIdHeader.length > 0 ? lastIdHeader : undefined;
+  // Browser auto-reconnect sets this header to the last `id:` (a ULID) it saw.
+  // Client-managed reconnect (see `+layout.svelte`) can't set request headers
+  // on a fresh EventSource, so it passes the same cursor as a `last-event-id`
+  // query param instead — accept either. Opaque cursor: passed straight
+  // through; the bus orders it lexicographically.
+  const lastIdHeader =
+    request.headers.get("last-event-id") ??
+    url.searchParams.get("last-event-id");
+  const sinceId =
+    lastIdHeader && lastIdHeader.length > 0 ? lastIdHeader : undefined;
 
-	return sseResponse(
-		getAppEventBus().subscribe(userId, {
-			signal: request.signal,
-			...(sinceId !== undefined ? { sinceId } : {})
-		}),
-		{
-			extractId: (item) => item.id,
-			extractData: (item) => item.event
-		}
-	);
+  return sseResponse(
+    getAppEventBus().subscribe(userId, {
+      signal: request.signal,
+      ...(sinceId !== undefined ? { sinceId } : {}),
+    }),
+    {
+      extractId: (item) => item.id,
+      extractData: (item) => item.event,
+    },
+  );
 };
