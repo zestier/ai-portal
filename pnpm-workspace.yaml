@@ -1,6 +1,10 @@
 allowBuilds:
   '@google/genai': false
-  better-sqlite3: true
+  # better-sqlite3 v13 ships prebuilt .node files in-package (prebuilds/); it
+  # has no install lifecycle and never needs node-gyp. Allow-listing it here
+  # makes pnpm run a `node-gyp rebuild`, which fails on slim images without
+  # Python/compilers. Keep it out so the vendored prebuild is used.
+  better-sqlite3: false
   esbuild: true
   koffi: true
   protobufjs: false
