@@ -305,7 +305,7 @@
       <EmptyState size="sm" description="No standing directives." />
     {:else}
       <div class="rows">
-        {#each rows as row}
+        {#each rows as row, i (rowId(row) ?? i)}
           <div class="memory-row">
             <div class="row-actions">
               <button
@@ -340,7 +340,7 @@
       <EmptyState size="sm" description="No records." />
     {:else}
       <div class="rows">
-        {#each rows as row}
+        {#each rows as row, i (rowId(row) ?? i)}
           <div class="memory-row">
             <div class="row-actions">
               {#if editable}

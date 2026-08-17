@@ -2,6 +2,7 @@
   import { invalidateAll } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount, onDestroy, tick } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { conversationId } from "$lib/ids";
   import type {
     ChatPromptTemplate,
@@ -292,7 +293,7 @@
   }
 
   function toggleTicketExpanded(ticketId: string) {
-    const next = new Set(expandedTicketIds);
+    const next = new SvelteSet(expandedTicketIds);
     if (next.has(ticketId)) {
       next.delete(ticketId);
     } else {
@@ -302,7 +303,7 @@
   }
 
   function collapseTicket(ticketId: string) {
-    const next = new Set(expandedTicketIds);
+    const next = new SvelteSet(expandedTicketIds);
     next.delete(ticketId);
     expandedTicketIds = next;
   }
@@ -562,14 +563,14 @@
   }
 
   function toggleSelected(id: string) {
-    const next = new Set(selected);
+    const next = new SvelteSet(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     selected = next;
   }
 
   function toggleSelectAllActive() {
-    const next = new Set(selected);
+    const next = new SvelteSet(selected);
     if (allActiveSelected) {
       for (const c of active) next.delete(c.id);
     } else {

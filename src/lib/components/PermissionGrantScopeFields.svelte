@@ -173,7 +173,7 @@
         command token; options on the final step may be interleaved with
         positionals.
       </p>
-      {#each shellCommandTokens as token, i}
+      {#each shellCommandTokens as token, i (i)}
         <fieldset class="step-option-fields">
           <legend>
             Options after `{token || "(argv0)"}`
@@ -276,7 +276,7 @@
     <label>
       Root
       <select bind:value={fsRoot}>
-        {#each FS_RULE_ROOTS as root}
+        {#each FS_RULE_ROOTS as root (root)}
           <option value={root}>{fsRootLabel(root)}</option>
         {/each}
       </select>
@@ -287,7 +287,7 @@
         {#if fsRoot !== "absolute"}
           <option value="any">{fsBehaviorLabel("any")}</option>
         {/if}
-        {#each FS_RULE_BEHAVIORS_WITH_VALUE as behavior}
+        {#each FS_RULE_BEHAVIORS_WITH_VALUE as behavior (behavior)}
           <option value={behavior}>{fsBehaviorLabel(behavior)}</option>
         {/each}
       </select>

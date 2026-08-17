@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { invalidateAll } from "$app/navigation";
   import { messageId } from "$lib/ids";
   import type {
@@ -349,7 +350,7 @@
   let visibleInteractive = $state<InteractiveRequestView[]>(
     untrack(() => [...initialPendingInteractive]),
   );
-  const interactiveRevealTimers = new Map<
+  const interactiveRevealTimers = new SvelteMap<
     string,
     ReturnType<typeof setTimeout>
   >();
@@ -1441,7 +1442,7 @@
   // windowing can't drift even when cards change height mid-stream.
   const OVERSCAN = 8;
   const MAX_FULL_CARDS = 40;
-  const rowEls = new Map<string, HTMLElement>();
+  const rowEls = new SvelteMap<string, HTMLElement>();
   let offsets: number[] = [];
   let offsetsDirty = true;
   let windowFrame = 0;
@@ -1560,7 +1561,7 @@
   });
 
   // --- Hydration (near-viewport, idled, LRU-capped) --------------------
-  const hydrationQueue = new Set<number>();
+  const hydrationQueue = new SvelteSet<number>();
   let hydrationTimer: ReturnType<typeof setTimeout> | null = null;
   let pumpingHydration = false;
 
@@ -1620,7 +1621,7 @@
   }
 
   function evictBodies() {
-    const pinned = new Set<DisplayId>();
+    const pinned = new SvelteSet<DisplayId>();
     const n = transcript.entries.length;
     for (
       let i = Math.max(0, windowStart - OVERSCAN);
@@ -1698,17 +1699,13 @@
   });
 
   // --- Permalink + search jump ----------------------------------------
-  let highlighted = $state<Set<DisplayId>>(new Set());
+  const highlighted = new SvelteSet<DisplayId>();
   let permalinkHandled = false;
 
   function highlightMessage(id: DisplayId) {
-    const next = new Set(highlighted);
-    next.add(id);
-    highlighted = next;
+    highlighted.add(id);
     setTimeout(() => {
-      const next2 = new Set(highlighted);
-      next2.delete(id);
-      highlighted = next2;
+      highlighted.delete(id);
     }, 2500);
   }
 

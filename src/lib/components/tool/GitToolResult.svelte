@@ -39,7 +39,7 @@
         <tr><th>File</th><th>Added</th><th>Removed</th></tr>
       </thead>
       <tbody>
-        {#each result.files as file}
+        {#each result.files as file (file.path)}
           <tr>
             <td>
               <code>{file.path}</code>
@@ -57,7 +57,7 @@
 {:else if result.kind === "diff-name-only"}
   <div class="git-result">
     <ul class="paths">
-      {#each result.files as file}
+      {#each result.files as file (file)}
         <li><code>{file}</code></li>
       {/each}
     </ul>
@@ -69,7 +69,7 @@
         <tr><th>Status</th><th>File</th></tr>
       </thead>
       <tbody>
-        {#each result.files as file}
+        {#each result.files as file (file.path)}
           <tr>
             <td><span class="status">{file.statusCode}</span></td>
             <td>
@@ -90,7 +90,7 @@
         <tr><th>Commit</th><th>Subject</th><th>Author</th><th>Date</th></tr>
       </thead>
       <tbody>
-        {#each result.commits as commit}
+        {#each result.commits as commit (commit.sha)}
           <tr>
             <td><code title={commit.sha}>{commit.shortSha}</code></td>
             <td>{commit.subject}</td>
@@ -115,7 +115,7 @@
         <tr><th>Status</th><th>File</th></tr>
       </thead>
       <tbody>
-        {#each result.commit.files as file}
+        {#each result.commit.files as file (file.path)}
           <tr>
             <td><span class="status">{file.statusCode}</span></td>
             <td>
@@ -172,7 +172,7 @@
           <tr><th>Trailer</th><th>Value</th></tr>
         </thead>
         <tbody>
-          {#each result.trailers as trailer}
+          {#each result.trailers as trailer, i (i)}
             <tr>
               <td><code>{trailer.token}</code></td>
               <td>{trailer.value}</td>
@@ -186,7 +186,7 @@
         <tr><th>Status</th><th>File</th><th>Added</th><th>Removed</th></tr>
       </thead>
       <tbody>
-        {#each result.files as file}
+        {#each result.files as file (file.path)}
           {@const stat = statFor(file.path)}
           <tr>
             <td><span class="status">{file.statusCode}</span></td>
@@ -212,7 +212,7 @@
             <tr><th>File</th><th>Added</th><th>Removed</th></tr>
           </thead>
           <tbody>
-            {#each extraStats() as file}
+            {#each extraStats() as file (file.path)}
               <tr>
                 <td>
                   <code>{file.path}</code>
@@ -234,7 +234,7 @@
           Remaining dirty files: {result.remainingDirtyFiles.length}
         </summary>
         <ul class="paths">
-          {#each result.remainingDirtyFiles as file}
+          {#each result.remainingDirtyFiles as file (file.path)}
             <li>
               <span class="status">{file.statusCode}</span>
               <code>{file.path}</code>

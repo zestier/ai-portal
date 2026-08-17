@@ -385,7 +385,7 @@
         </dl>
         {#if gitCommit.paths}
           <ul class="commit-paths">
-            {#each gitCommit.paths as path}
+            {#each gitCommit.paths as path (path)}
               <li><code>{path}</code></li>
             {/each}
           </ul>
@@ -405,7 +405,7 @@
               >
             </thead>
             <tbody>
-              {#each gitCommit.trailers as trailer}
+              {#each gitCommit.trailers as trailer, i (i)}
                 <tr>
                   <td><code>{trailer.token}</code></td>
                   <td>{trailer.value}</td>
@@ -445,7 +445,7 @@
                 {/if}
               </dd>
             </div>
-            {#each merged.fields as field}
+            {#each merged.fields as field (field.label)}
               <div class:changed={field.changed}>
                 <dt>{field.label}</dt>
                 <dd>
@@ -501,7 +501,7 @@
                 <dd>{templatePreview.title}</dd>
               </div>
             {/if}
-            {#each templatePreview.fields as field}
+            {#each templatePreview.fields as field (field.label)}
               <div>
                 <dt>{field.label}</dt>
                 <dd>{field.value}</dd>

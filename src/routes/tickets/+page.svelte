@@ -12,6 +12,7 @@
   } from "$lib/client/tickets-list";
   import { replaceState } from "$app/navigation";
   import { untrack } from "svelte";
+  import { SvelteURLSearchParams } from "svelte/reactivity";
 
   let { data }: { data: PageData } = $props();
 
@@ -75,7 +76,7 @@
   // Reflect sort + filter in the URL (omitting defaults) without re-running the
   // loader, so the view is shareable and survives reload.
   function syncUrl() {
-    const params = new URLSearchParams();
+    const params = new SvelteURLSearchParams();
     if (sort === "priority") params.set("sort", "priority");
     if (priorityFilter !== "all") params.set("priority", priorityFilter);
     const qs = params.toString();

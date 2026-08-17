@@ -104,7 +104,7 @@
                   e.currentTarget as HTMLSelectElement
                 ).value)}
             >
-              {#each field.enum as opt, i}
+              {#each field.enum as opt, i (i)}
                 <option value={opt}>{field.enumNames?.[i] ?? opt}</option>
               {/each}
             </select>

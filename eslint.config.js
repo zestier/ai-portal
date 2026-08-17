@@ -22,6 +22,17 @@ export default ts.config(
     },
   },
   {
+    files: ["**/*.svelte.ts"],
+    languageOptions: {
+      parser: ts.parser,
+    },
+  },
+  {
+    rules: {
+      "svelte/no-navigation-without-resolve": "off",
+    },
+  },
+  {
     ignores: [
       "build/",
       "build.live/",
