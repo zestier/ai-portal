@@ -17,8 +17,7 @@ export const GitLogArgs = z
 		worktree: WorktreeSelector
 	})
 	.strict()
-	.optional()
-	.default({});
+	.prefault({});
 
 export function buildGitLogTools(cwd: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(cwd, ctx);

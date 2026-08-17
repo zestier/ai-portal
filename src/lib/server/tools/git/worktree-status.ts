@@ -14,8 +14,7 @@ export const GitWorktreeStatusArgs = z
 		worktree: WorktreeSelector
 	})
 	.strict()
-	.optional()
-	.default({});
+	.prefault({});
 
 export function buildGitWorktreeStatusTools(cwd: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(cwd, ctx);

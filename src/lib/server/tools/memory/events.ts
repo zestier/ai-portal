@@ -12,8 +12,7 @@ export const RecentEventsArgs = z
 		limit: z.number().int().min(1).max(50).optional().default(20),
 		fields: FieldsArg
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 export const TimelineArgs = z
 	.object({
@@ -22,8 +21,7 @@ export const TimelineArgs = z
 		limit: z.number().int().min(1).max(100).optional().default(50),
 		fields: FieldsArg
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 export function buildMemoryEventsTools(opts: MemoryToolsOpts): PortalTool[] {
 	return [

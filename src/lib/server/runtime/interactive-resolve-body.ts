@@ -63,6 +63,7 @@ const UserInputBody = z.object({
 });
 
 const ElicitationContent = z.record(
+	z.string(),
 	z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])
 );
 

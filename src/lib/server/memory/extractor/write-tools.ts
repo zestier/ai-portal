@@ -34,20 +34,24 @@ import type { ExtractorToolSpec } from './types';
 // options) is far more useful when phrased as an instruction.
 function hintForIssue(issue: ZodIssue): string {
 	switch (issue.code) {
-		case 'invalid_union_discriminator':
-			return `Set "kind" to one of: ${MEMORY_FACT_KINDS.join(', ')}.`;
+		case 'invalid_union':
+			return `Set "kind" to one of: ${
+				'options' in issue && issue.options?.length
+					? issue.options.join(', ')
+					: MEMORY_FACT_KINDS.join(', ')
+			}.`;
 		case 'invalid_type':
-			return issue.received === 'undefined'
+			return issue.input === undefined
 				? `Missing required field — provide a ${issue.expected}.`
-				: `Wrong type — expected ${issue.expected}, got ${issue.received}.`;
+				: `Wrong type — expected ${issue.expected}, got ${typeof issue.input}.`;
 		case 'unrecognized_keys':
 			return `Remove field(s) not allowed for this kind: ${issue.keys.join(', ')}.`;
 		case 'too_small':
 			return `Too short/small — needs at least ${issue.minimum}.`;
 		case 'too_big':
 			return `Too long/large — at most ${issue.maximum}.`;
-		case 'invalid_enum_value':
-			return `Use one of: ${issue.options.join(', ')}.`;
+		case 'invalid_value':
+			return `Use one of: ${issue.values.join(', ')}.`;
 		default:
 			return issue.message;
 	}

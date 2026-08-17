@@ -307,7 +307,7 @@ describe('multi_edit', () => {
 
 			const validation = validatePortalToolArgs(tool, { edits });
 			expect(validation.ok).toBe(false);
-			if (!validation.ok) expect(validation.feedback).toMatch(/at most 100/);
+			if (!validation.ok) expect(validation.feedback).toMatch(/to have <=100 items/);
 		});
 	});
 

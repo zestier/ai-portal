@@ -22,8 +22,7 @@ export const GitDiffArgs = z
 		path: ['sha'],
 		message: 'sha is required when target is commit or commit-vs-parent'
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 export function buildGitDiffTools(cwd: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(cwd, ctx);

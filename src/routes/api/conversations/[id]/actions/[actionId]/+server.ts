@@ -17,7 +17,7 @@ import { resolveInputValues } from '$lib/server/actions/inputs';
 // wire shape (a flat map of scalars).
 const Body = z
 	.object({
-		inputs: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+		inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
 	})
 	.strict();
 

@@ -1,3 +1,12 @@
+<script module lang="ts">
+	// zod v4 JIT-compiles schemas via the Function constructor, which this
+	// app's CSP policy (no 'unsafe-eval') blocks at runtime. The availability
+	// probe is caught and harmless, but it fires a console.error that the
+	// settings e2e treats as a page error. `jitless` skips the probe entirely.
+	import { config } from 'zod';
+	config({ jitless: true });
+</script>
+
 <script lang="ts">
 	import '../app.css';
 	import Sidebar from '$lib/components/Sidebar.svelte';

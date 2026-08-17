@@ -16,8 +16,7 @@ export const CapabilitiesArgs = z
 		intent: z.string().trim().min(1).max(500).optional(),
 		detail: z.boolean().optional()
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 export type CapabilityStatus = 'allowed' | 'denied' | 'prompt_required' | 'partially_allowed';
 

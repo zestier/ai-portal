@@ -62,8 +62,7 @@ const ListArgs = z
 		limit: z.number().int().min(1).max(50).optional().default(20),
 		fields: FieldsArg
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 const UpdateArgs = z
 	.object({

@@ -19,8 +19,7 @@ export const ClueArgs = z
 		limit: z.number().int().min(1).max(100).optional().default(50),
 		fields: FieldsArg
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 export const CharacterKnowledgeArgs = z.object({
 	characterEntityKey: z.string().trim().min(1).max(200),

@@ -59,7 +59,7 @@ describe('validatePortalToolArgs', () => {
 		const result = validatePortalToolArgs(ticketList, { fields: '["id","title"]' });
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error('unreachable');
-		expect(result.feedback).toContain('fields: Expected array');
+		expect(result.feedback).toContain('fields: Invalid input: expected array, received string');
 		expect(result.feedback).toContain('"type": "array"');
 	});
 

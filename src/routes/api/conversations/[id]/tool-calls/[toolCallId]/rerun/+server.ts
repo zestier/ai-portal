@@ -23,8 +23,7 @@ const Body = z
 	.object({
 		confirmed: z.boolean().optional().default(false)
 	})
-	.optional()
-	.default({});
+	.prefault({});
 
 const APPROVAL_TTL_MS = 2 * 60_000;
 

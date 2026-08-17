@@ -14,8 +14,7 @@ export const GitMergeAbortArgs = z
 		worktree: WorktreeSelector
 	})
 	.strict()
-	.optional()
-	.default({});
+	.prefault({});
 
 export function buildGitMergeAbortTools(cwd: string, ctx?: WorktreeToolContext): PortalTool[] {
 	const treeFor = createTreeResolver(cwd, ctx);
