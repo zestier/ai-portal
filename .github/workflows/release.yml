@@ -101,6 +101,12 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Pull and smoke test pushed digest
+        run: |
+          image='${{ steps.image.outputs.value }}@${{ steps.build.outputs.digest }}'
+          docker pull "$image"
+          bash scripts/smoke-container.sh "$image"
+
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
@@ -213,13 +219,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm run build
-
-      - name: Pack tarball
-        run: |
-          tarball=$(npm pack)
-          mv "$tarball" "zap-$GITHUB_REF_NAME.tgz"
+      - name: Pack and smoke test tarball
+        run: pnpm run release:pack -- --output "zap-$GITHUB_REF_NAME.tgz"
 
       - name: Create GitHub release
         env:

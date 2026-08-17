@@ -1,6 +1,6 @@
 {
   "name": "zap",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "Self-hosted web portal for the pi coding agent SDK.",
@@ -33,6 +33,7 @@
     "verify": "node scripts/verify.mjs",
     "verify:sequential": "node scripts/verify.mjs --concurrency 1",
     "verify:failure-probe": "node scripts/verify.mjs --failure-probe",
+    "release:pack": "node scripts/pack-release.mjs",
     "release:bump-actions": "node scripts/bump-actions.mjs",
     "prepare": "node scripts/install-git-hooks.mjs"
   },
