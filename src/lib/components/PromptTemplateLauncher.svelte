@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto, invalidateAll } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import {
     createPromptTemplateDraftChat,
@@ -125,7 +126,7 @@
       const body = await res.json();
       await invalidateAll();
       onNavigate?.();
-      await goto(`/conversations/${body.conversation.id}`);
+      await goto(resolve(`/conversations/${body.conversation.id}`));
     } catch {
       reportError("Could not create chat");
     } finally {
@@ -232,7 +233,7 @@
       await invalidateAll();
       onNavigate?.();
       pickerOpen = false;
-      await goto(result.href);
+      await goto(resolve(result.href));
     } catch (err) {
       if (
         controller.signal.aborted ||
@@ -374,7 +375,7 @@
       <section aria-labelledby="custom-template-heading">
         <div class="section-row">
           <h3 id="custom-template-heading">Your templates</h3>
-          <a href="/settings?tab=prompts">Manage</a>
+          <a href={resolve("/settings?tab=prompts")}>Manage</a>
         </div>
         {#if customTemplates.length > 0}
           <div class="template-list">

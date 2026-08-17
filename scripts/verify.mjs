@@ -26,7 +26,7 @@ const concurrency = args.has("--sequential") ? 1 : parseConcurrency();
 const taskDefinitions = [
   { label: "lint", command: pnpm, args: ["lint"], dependsOn: [] },
   { label: "unit", command: pnpm, args: ["test"], dependsOn: [] },
-  { label: "build", command: pnpm, args: ["build"], dependsOn: [] },
+  { label: "build", command: pnpm, args: ["build"], dependsOn: ["unit"] },
   { label: "check", command: pnpm, args: ["check"], dependsOn: ["build"] },
   {
     label: "e2e",

@@ -18,6 +18,7 @@
   import Alert from "$lib/components/ui/Alert.svelte";
   import RawInputDialog from "./RawInputDialog.svelte";
   import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
 
   let {
     message,
@@ -146,7 +147,7 @@
       // server persisted the edited text as the new conversation's draft,
       // which its page load seeds into the composer. So we just navigate —
       // no client-side prefill relay (which was lost on reload).
-      await goto(`/conversations/${data.conversationId}`);
+      await goto(resolve(`/conversations/${data.conversationId}`));
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
@@ -244,7 +245,7 @@
       }
       const data = (await r.json()) as { conversationId: string };
       onForked?.();
-      await goto(`/conversations/${data.conversationId}`);
+      await goto(resolve(`/conversations/${data.conversationId}`));
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
@@ -276,7 +277,7 @@
         {#each liveForks as f (f.id)}
           <a
             class="fork-badge"
-            href={`/conversations/${f.id}`}
+            href={resolve(`/conversations/${f.id}`)}
             title={`Open fork: ${f.title}`}
           >
             <Pill>

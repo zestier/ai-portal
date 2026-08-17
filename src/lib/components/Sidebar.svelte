@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invalidateAll } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import { onMount, onDestroy, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -817,7 +818,8 @@
                     >
                       <a
                         class="ticket-action"
-                        href={`/tickets/${ticket.id}`}
+                        href={resolve(`/tickets/${ticket.id}`)}
+                        data-sveltekit-reload
                         title="Open ticket page"
                         aria-label={`Open ticket page: ${ticket.title}`}
                         onclick={() => onnavigate?.()}
@@ -873,7 +875,11 @@
           </div>
         {/if}
         {#if ticketWorkspace}
-          <a class="ticket-all" href="/tickets" onclick={() => onnavigate?.()}>
+          <a
+            class="ticket-all"
+            href={resolve("/tickets")}
+            onclick={() => onnavigate?.()}
+          >
             View all tickets →
           </a>
         {/if}
@@ -930,7 +936,7 @@
         {:else}
           <a
             class="title-area"
-            href={`/conversations/${c.id}`}
+            href={resolve(`/conversations/${c.id}`)}
             onclick={(e) => {
               if (selectMode) {
                 e.preventDefault();
@@ -1055,7 +1061,7 @@
             {:else}
               <a
                 class="title-area"
-                href={`/conversations/${c.id}`}
+                href={resolve(`/conversations/${c.id}`)}
                 onclick={(e) => {
                   if (selectMode) {
                     e.preventDefault();
@@ -1168,7 +1174,8 @@
   {/if}
 
   <div class="bottom">
-    <a class="settings-link" href="/settings" onclick={onnavigate}>⚙ Settings</a
+    <a class="settings-link" href={resolve("/settings")} onclick={onnavigate}
+      >⚙ Settings</a
     >
     {#if user}
       <div class="user muted">

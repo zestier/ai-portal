@@ -19,6 +19,7 @@
   } from "$lib/prompt-templates";
   import { PORTAL_TOOL_GROUPS } from "$lib/tools/groups";
   import { goto, invalidateAll } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { createPromptTemplateRefineChat } from "$lib/client/prompt-template-launch";
   import { onDestroy } from "svelte";
 
@@ -134,7 +135,7 @@
         return;
       }
       await invalidateAll();
-      await goto(result.href);
+      await goto(resolve(result.href));
     } catch (err) {
       if (
         controller.signal.aborted ||
@@ -180,7 +181,7 @@
         return;
       }
       await invalidateAll();
-      await goto(result.href);
+      await goto(resolve(result.href));
     } catch (err) {
       if (
         controller.signal.aborted ||

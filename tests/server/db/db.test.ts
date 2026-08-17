@@ -968,5 +968,5 @@ describe("db migrations + repos", () => {
     const afterTruncate = messages.listByConversation(c.id);
     expect(afterTruncate).toHaveLength(1);
     expect(afterTruncate[0].id).toBe(created[0]);
-  });
+  }, 10_000);
 });

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { type FormResult, type SettingsTab } from "./settings-types";
   import type { PageData } from "./$types";
@@ -68,18 +67,6 @@
     if (urlTab !== null) return readTab(urlTab, visibleTabs);
     return readTab(fallbackTab(form), visibleTabs);
   });
-
-  async function selectTab(tab: SettingsTab) {
-    if (tab === activeTab) return;
-    const nextUrl = new URL($page.url);
-    if (tab === "general") nextUrl.searchParams.delete("tab");
-    else nextUrl.searchParams.set("tab", tab);
-    await goto(nextUrl, {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: true,
-    });
-  }
 </script>
 
 <svelte:head><title>Settings — Zestier's AI Portal</title></svelte:head>
@@ -96,7 +83,6 @@
     tabs={visibleTabs}
     {activeTab}
     grantCount={data.grants.length}
-    onSelect={selectTab}
   />
 
   {#if activeTab === "general"}

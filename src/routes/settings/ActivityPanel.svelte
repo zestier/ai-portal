@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from "$app/paths";
   import {
     decisionLabel,
     formatTime,
@@ -38,7 +39,7 @@
             >{/if}
           <span class="meta">
             in
-            <a href="/conversations/{d.conversationId}"
+            <a href={resolve(`/conversations/${d.conversationId}`)}
               >{d.conversationTitle ?? d.conversationId}</a
             >
             · {formatTime(d.decidedAt)}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/stores";
   import Chat from "$lib/components/Chat.svelte";
   import ChangesTabIndicator from "$lib/components/ChangesTabIndicator.svelte";
@@ -35,26 +36,26 @@
 
   async function selectWorktree(leaseId: string | null) {
     if (leaseId === worktree) return;
-    const nextUrl = new URL($page.url);
-    if (leaseId) nextUrl.searchParams.set("worktree", leaseId);
-    else nextUrl.searchParams.delete("worktree");
-    await goto(nextUrl, {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: true,
-    });
+    await goto(
+      resolve(
+        `/conversations/${data.conversation.id}${tab === "chat" ? "" : `?tab=${tab}`}${leaseId ? `${tab === "chat" ? "?" : "&"}worktree=${encodeURIComponent(leaseId)}` : ""}`,
+      ),
+      {
+        keepFocus: true,
+        noScroll: true,
+        replaceState: true,
+      },
+    );
   }
 
   async function selectTab(nextTab: Tab) {
     if (nextTab === tab) return;
-    const nextUrl = new URL($page.url);
-    if (nextTab === "chat") nextUrl.searchParams.delete("tab");
-    else nextUrl.searchParams.set("tab", nextTab);
-    await goto(nextUrl, {
-      keepFocus: true,
-      noScroll: true,
-      replaceState: true,
-    });
+    await goto(
+      resolve(
+        `/conversations/${data.conversation.id}${nextTab === "chat" ? "" : `?tab=${nextTab}`}${worktree ? `${nextTab === "chat" ? "?" : "&"}worktree=${encodeURIComponent(worktree)}` : ""}`,
+      ),
+      { keepFocus: true, noScroll: true, replaceState: true },
+    );
   }
 </script>
 
@@ -64,69 +65,87 @@
 
 <div class="conversation">
   <div class="tabs scroll-mask" role="tablist">
-    <button
+    <a
       id="conversation-tab-chat"
       role="tab"
       aria-selected={tab === "chat"}
       aria-controls="conversation-panel-chat"
       class:active={tab === "chat"}
-      onclick={() => selectTab("chat")}
+      href={resolve(
+        `/conversations/${data.conversation.id}${worktree ? `?worktree=${encodeURIComponent(worktree)}` : ""}`,
+      )}
+      data-sveltekit-reload
     >
       Chat
-    </button>
-    <button
+    </a>
+    <a
       id="conversation-tab-memory"
       role="tab"
       aria-selected={tab === "memory"}
       aria-controls="conversation-panel-memory"
       class:active={tab === "memory"}
-      onclick={() => selectTab("memory")}
+      href={resolve(
+        `/conversations/${data.conversation.id}?tab=memory${worktree ? `&worktree=${encodeURIComponent(worktree)}` : ""}`,
+      )}
+      data-sveltekit-reload
     >
       Memory
-    </button>
-    <button
+    </a>
+    <a
       id="conversation-tab-changes"
       role="tab"
       aria-selected={tab === "changes"}
       aria-controls="conversation-panel-changes"
       class:active={tab === "changes"}
-      onclick={() => selectTab("changes")}
+      href={resolve(
+        `/conversations/${data.conversation.id}?tab=changes${worktree ? `&worktree=${encodeURIComponent(worktree)}` : ""}`,
+      )}
+      data-sveltekit-reload
     >
       <span class="tab-label">
         <span>Changes</span>
         <ChangesTabIndicator conversationId={data.conversation.id} />
       </span>
-    </button>
-    <button
+    </a>
+    <a
       id="conversation-tab-files"
       role="tab"
       aria-selected={tab === "files"}
       aria-controls="conversation-panel-files"
       class:active={tab === "files"}
-      onclick={() => selectTab("files")}
+      href={resolve(
+        `/conversations/${data.conversation.id}?tab=files${worktree ? `&worktree=${encodeURIComponent(worktree)}` : ""}`,
+      )}
+      data-sveltekit-reload
     >
       Files
-    </button>
-    <button
+    </a>
+    <a
       id="conversation-tab-commits"
       role="tab"
       aria-selected={tab === "commits"}
       aria-controls="conversation-panel-commits"
       class:active={tab === "commits"}
-      onclick={() => selectTab("commits")}
+      href={resolve(
+        `/conversations/${data.conversation.id}?tab=commits${worktree ? `&worktree=${encodeURIComponent(worktree)}` : ""}`,
+      )}
+      data-sveltekit-reload
     >
       Commits
-    </button>
-    <button
+    </a>
+    <a
       id="conversation-tab-actions"
       role="tab"
       aria-selected={tab === "actions"}
       aria-controls="conversation-panel-actions"
       class:active={tab === "actions"}
-      onclick={() => selectTab("actions")}
+      href={resolve(
+        `/conversations/${data.conversation.id}?tab=actions${worktree ? `&worktree=${encodeURIComponent(worktree)}` : ""}`,
+      )}
+      data-sveltekit-reload
     >
       Actions
-    </button>
+    </a>
   </div>
   <div
     id="conversation-panel-chat"
@@ -219,7 +238,7 @@
       scroll-padding-left: var(--mobile-hamburger-inset);
     }
   }
-  .tabs button {
+  .tabs a {
     background: transparent;
     color: var(--text-muted);
     border: 0;
@@ -227,6 +246,7 @@
     padding: var(--space-2) var(--space-4);
     cursor: pointer;
     font: inherit;
+    text-decoration: none;
     white-space: nowrap;
     scroll-snap-align: start;
   }
@@ -235,7 +255,7 @@
     align-items: center;
     gap: var(--space-2);
   }
-  .tabs button.active {
+  .tabs a.active {
     color: var(--text);
     border-bottom-color: var(--accent);
   }

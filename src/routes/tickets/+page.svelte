@@ -11,6 +11,7 @@
     type TicketPriorityFilter,
   } from "$lib/client/tickets-list";
   import { replaceState } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { untrack } from "svelte";
   import { SvelteURLSearchParams } from "svelte/reactivity";
 
@@ -80,7 +81,7 @@
     if (sort === "priority") params.set("sort", "priority");
     if (priorityFilter !== "all") params.set("priority", priorityFilter);
     const qs = params.toString();
-    replaceState(qs ? `?${qs}` : location.pathname, {});
+    replaceState(resolve(qs ? `/tickets?${qs}` : "/tickets"), {});
   }
 
   async function loadFirstPage() {
@@ -153,7 +154,7 @@
 <svelte:head><title>Tickets</title></svelte:head>
 
 <div class="wrap">
-  <a class="back eyebrow" href="/">← Back to portal</a>
+  <a class="back eyebrow" href={resolve("/")}>← Back to portal</a>
 
   <header class="page-header">
     <div class="heading">
@@ -228,7 +229,7 @@
       <ul class="ticket-list">
         {#each items as ticket (ticket.id)}
           <li class="ticket-row">
-            <a class="ticket-link" href={`/tickets/${ticket.id}`}>
+            <a class="ticket-link" href={resolve(`/tickets/${ticket.id}`)}>
               <span class="ticket-title">{ticket.title}</span>
             </a>
             <span class="ticket-meta">

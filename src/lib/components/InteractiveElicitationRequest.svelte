@@ -53,7 +53,7 @@
   <p>{request.message}</p>
   {#if request.mode === "url" && request.url}
     <p>
-      <a href={request.url} target="_blank" rel="noopener noreferrer"
+      <a href={request.url} target="_blank" rel="external noopener noreferrer"
         >{request.url}</a
       >
     </p>

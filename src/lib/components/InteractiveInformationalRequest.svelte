@@ -26,7 +26,7 @@
       <a
         href={request.authorizationUrl}
         target="_blank"
-        rel="noopener noreferrer">Open authorization URL</a
+        rel="external noopener noreferrer">Open authorization URL</a
       >
     </p>
   {/if}

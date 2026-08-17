@@ -7,6 +7,7 @@ import type {
 import type { PromptLaunchBehavior } from "$lib/types";
 
 type TemplateFetch = (url: string, init: RequestInit) => Promise<Response>;
+type ConversationHref = `/conversations/${string}`;
 
 /**
  * Conversation-create `workspace` payload for a resolved launch workspace.
@@ -63,7 +64,7 @@ async function createConversation(
 export function promptTemplateDraftUrl(
   conversationId: string,
   template: { id: string; source: PromptTemplateSource },
-): string {
+): ConversationHref {
   const params = new URLSearchParams({
     promptTemplateSource: template.source,
     promptTemplateId: template.id,
@@ -82,7 +83,9 @@ export async function createPromptTemplateDraftChat({
   signal?: AbortSignal;
   /** Resolved launch settings; omit to use the API/user defaults. */
   options?: TemplateLaunchOptions;
-}): Promise<{ ok: true; href: string } | { ok: false; status?: number }> {
+}): Promise<
+  { ok: true; href: ConversationHref } | { ok: false; status?: number }
+> {
   const conv = await createConversation(
     template.title,
     fetcher,
@@ -115,7 +118,7 @@ export async function createPromptTemplateLaunchChat({
   fetcher?: TemplateFetch;
   signal?: AbortSignal;
 }): Promise<
-  | { ok: true; href: string }
+  | { ok: true; href: ConversationHref }
   | { ok: false; stage: "create" | "launch"; status?: number }
 > {
   const conv = await createConversation(
@@ -149,7 +152,7 @@ export async function createPromptTemplateLaunchChat({
 export function promptTemplateRefineUrl(
   conversationId: string,
   templateId: string,
-): string {
+): ConversationHref {
   const params = new URLSearchParams({ refinePromptTemplateId: templateId });
   return `/conversations/${conversationId}?${params.toString()}`;
 }
@@ -181,7 +184,7 @@ export async function createPromptTemplateRefineChat({
   fetcher?: TemplateFetch;
   signal?: AbortSignal;
 }): Promise<
-  | { ok: true; href: string }
+  | { ok: true; href: ConversationHref }
   | { ok: false; stage: "create" | "launch"; status?: number }
 > {
   const conv = await createConversation(

@@ -1,16 +1,15 @@
 <script lang="ts">
+  import { resolve } from "$app/paths";
   import type { SettingsTab } from "./settings-types";
 
   let {
     tabs,
     activeTab,
     grantCount,
-    onSelect,
   }: {
     tabs: SettingsTab[];
     activeTab: SettingsTab;
     grantCount: number;
-    onSelect: (tab: SettingsTab) => void;
   } = $props();
 
   function tabLabel(tab: SettingsTab): string {
@@ -41,17 +40,17 @@
   aria-label="Settings sections"
 >
   {#each tabs as tab (tab)}
-    <button
+    <a
       id="settings-tab-{tab}"
-      type="button"
       role="tab"
       aria-selected={activeTab === tab}
       aria-controls="settings-panel-{tab}"
       class:active={activeTab === tab}
-      onclick={() => onSelect(tab)}
+      href={resolve(tab === "general" ? "/settings" : `/settings?tab=${tab}`)}
+      data-sveltekit-reload
     >
       {tabLabel(tab)}
-    </button>
+    </a>
   {/each}
 </div>
 
@@ -63,7 +62,7 @@
     overflow-x: auto;
     border-bottom: 1px solid var(--border);
   }
-  .settings-tabs button {
+  .settings-tabs a {
     background: transparent;
     color: var(--text-muted);
     border: 0;
@@ -71,13 +70,14 @@
     padding: 0.65rem 0.85rem;
     cursor: pointer;
     font: inherit;
+    text-decoration: none;
     white-space: nowrap;
     scroll-snap-align: start;
   }
-  .settings-tabs button:hover {
+  .settings-tabs a:hover {
     color: var(--text);
   }
-  .settings-tabs button.active {
+  .settings-tabs a.active {
     color: var(--text);
     border-bottom-color: var(--accent);
   }
