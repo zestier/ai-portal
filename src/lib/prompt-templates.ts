@@ -356,27 +356,25 @@ const DO_PROMPT =
 
 const REFINE_PROMPT =
   "Refine this workspace ticket: {{ticket.title}}\n\n" +
-  'Turn this ticket into a complete, self-contained spec and implementation plan that a later "Do" ' +
-  "run can execute without making any decisions. You are the strong model doing the thinking up front; " +
-  "the executor that follows may be much weaker, so resolve everything now and leave nothing to infer.\n\n" +
+  'Turn this ticket into a complete, detailed spec that a later "Do" run can execute without making ' +
+  "decisions. You do the thinking up front; the executor that follows may be weaker, so resolve " +
+  "everything now and leave nothing to infer.\n\n" +
   "The complete ticket (id, status, priority, body, plan) is inlined below, current as of launch — " +
   "keep every important detail from its current body and plan (you do not need to fetch it again).\n\n" +
   "{{ticket.all}}\n\n" +
-  "Write both artifacts into the ticket with `ticket_update` (id {{ticket.id}}):\n\n" +
-  "1. Spec (ticket body) — goal, verifiable acceptance criteria, requirements and edge cases, explicit " +
-  "in/out of scope, constraints, and every decision with its rationale. No open questions left.\n\n" +
-  "2. Plan (ticket plan) — an ordered, dependency-sorted checklist of small, independently verifiable " +
-  "steps: file paths, symbols, the exact change, and how to verify each. The executor should only follow " +
-  "it, not design it.\n\n" +
+  "Write both into the ticket with `ticket_update` (id {{ticket.id}}):\n\n" +
+  "- **Body** — a short summary of the change, skimmable on its own.\n" +
+  "- **Plan** — the authoritative spec: goal, verifiable acceptance criteria, requirements and edge cases, " +
+  "explicit in/out of scope, constraints, and each decision with its rationale. Tight prose and bullets " +
+  "carrying real detail; the executor follows it. No open questions left.\n\n" +
   "Research the code first so file paths and approaches are accurate. Ask me the questions needed to drive " +
-  "each open decision to a concrete choice. Do not implement anything — refine only writes the spec and plan." +
-  "\n\nWrite both artifacts tight:\n" +
-  "- Bullets and fragments, not full-sentence prose. No filler; never restate the ticket title or ID.\n" +
+  "each open decision to a concrete choice. Write the spec only; no implementation.\n\n" +
+  "Write tight:\n" +
+  "- Bullets and fragments, concise prose. No filler; never restate the ticket title or ID.\n" +
   "- Include a section only if it carries new information; skip or merge ones that don't apply.\n" +
-  "- One line per decision; give rationale only when the choice is non-obvious — one sentence of " +
-  "rationale is a paragraph.\n" +
-  "- Every path, symbol, and verification step stays exact; terse wording never cuts content.\n" +
-  "- Match depth to the ticket: small change → tight spec and short checklist, not a padded one.";
+  "- One line per decision; give rationale only when the choice is non-obvious.\n" +
+  "- Every path, symbol, and acceptance criterion stays exact; terse wording never cuts content.\n" +
+  "- Match depth to the ticket: small change → tight spec.";
 
 export const TICKET_ACTION_DEFAULTS: readonly TicketActionDefault[] = [
   {
