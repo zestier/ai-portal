@@ -23,4 +23,6 @@ ENV PATH="/opt/node/bin:${PATH}"
 
 RUN corepack enable
 
+RUN npm install --global typescript-language-server@5.3.0
+
 USER vscode
