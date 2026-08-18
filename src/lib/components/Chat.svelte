@@ -941,6 +941,11 @@
           delete tc.partialOutput;
           delete tc.progressMessage;
           touched = tc.messageId;
+        } else {
+          // Anchor card missing — re-sync instead of silently dropping the
+          // result, else a call that straddled a reconnect/hydration gap
+          // (e.g. approval-gated git_commit or a merge) never renders.
+          void refreshMessages();
         }
         break;
       }
