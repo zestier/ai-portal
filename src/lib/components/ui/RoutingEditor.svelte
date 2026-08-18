@@ -49,8 +49,7 @@
   }
 
   function routing(): Record<string, unknown> | null {
-    const v = initial?.openRouterRouting;
-    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+    return initial && typeof initial === "object" ? initial : null;
   }
 
   function open() {
