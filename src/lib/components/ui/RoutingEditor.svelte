@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { buildSort } from "./routing";
+
   // Typed editor for pi's `compat.openRouterRouting` (OpenRouter provider
   // routing: see https://openrouter.ai/docs/guides/routing/provider-selection).
   // Pass the routing object itself (or null); on save it emits the built object
@@ -169,12 +171,8 @@
     for (const f of TAG_FIELDS) {
       if (!tagInherit[f.key] && tags[f.key].length) o[f.key] = [...tags[f.key]];
     }
-    if (sortBy !== "inherit" || sortPartition !== "inherit") {
-      const s: Record<string, string> = {};
-      if (sortBy !== "inherit") s.by = sortBy;
-      if (sortPartition !== "inherit") s.partition = sortPartition;
-      o.sort = s;
-    }
+    const sort = buildSort(sortBy, sortPartition);
+    if (sort) o.sort = sort;
     const mp: Record<string, number> = {};
     const prompt = number(maxPricePrompt);
     const completion = number(maxPriceCompletion);
