@@ -23,26 +23,39 @@
   ] as const;
 
   let editing = $state(false);
-  let allowFallbacks = $state(false);
-  let dataCollection = $state<"allow" | "deny">("allow");
+  // Tri-state: "inherit" = omit from build (use provider/bundled default),
+  // "false"/"true" = emit explicitly. loadState maps these from initial.
+  type TriBool = "inherit" | "false" | "true";
+  let allowFallbacks = $state<TriBool>("inherit");
+  let zdr = $state<TriBool>("inherit");
+  let requireParameters = $state<TriBool>("inherit");
+  let enforceDistillable = $state<TriBool>("inherit");
+  // data_collection: inherit | "allow" | "deny"
+  let dataCollection = $state<string>("inherit");
+  // sort.by: inherit | "" | price | latency | throughput
+  let sortBy = $state<string>("inherit");
+  let sortPartition = $state<string>("inherit");
+  // Tags: boolean inherit vs explicit (array may be empty)
+  let tagInherit = $state<Record<string, boolean>>({
+    order: true,
+    only: true,
+    ignore: true,
+    quantizations: true,
+  });
   let tags = $state<Record<string, string[]>>({
     order: [],
     only: [],
     ignore: [],
     quantizations: [],
   });
-  let sortBy = $state("");
-  let sortPartition = $state("");
-  let zdr = $state(false);
-  let requireParameters = $state(false);
-  let enforceDistillable = $state(false);
-  let maxPricePrompt = $state("");
-  let maxPriceCompletion = $state("");
-  let throughP50 = $state("");
-  let throughP90 = $state("");
-  let latencyP50 = $state("");
-  let latencyP90 = $state("");
-  let latencyP99 = $state("");
+  // Numerics: inherit | value string
+  let maxPricePrompt = $state<string>("inherit");
+  let maxPriceCompletion = $state<string>("inherit");
+  let throughP50 = $state<string>("inherit");
+  let throughP90 = $state<string>("inherit");
+  let latencyP50 = $state<string>("inherit");
+  let latencyP90 = $state<string>("inherit");
+  let latencyP99 = $state<string>("inherit");
 
   function numStr(v: unknown): string {
     return typeof v === "number" && Number.isFinite(v) ? String(v) : "";
@@ -54,45 +67,67 @@
 
   function open() {
     const r = routing() ?? {};
-    allowFallbacks = r.allow_fallbacks === true;
-    dataCollection = r.data_collection === "deny" ? "deny" : "allow";
-    tags = {
-      order: arr(r.order),
-      only: arr(r.only),
-      ignore: arr(r.ignore),
-      quantizations: arr(r.quantizations),
-    };
+    const has = (k: string): boolean => k in r;
+    allowFallbacks = has("allow_fallbacks")
+      ? r.allow_fallbacks === true
+        ? "true"
+        : "false"
+      : "inherit";
+    dataCollection = has("data_collection")
+      ? (r.data_collection as string)
+      : "inherit";
+    zdr = has("zdr") ? (r.zdr === true ? "true" : "false") : "inherit";
+    requireParameters = has("require_parameters")
+      ? r.require_parameters === true
+        ? "true"
+        : "false"
+      : "inherit";
+    enforceDistillable = has("enforce_distillable_text")
+      ? r.enforce_distillable_text === true
+        ? "true"
+        : "false"
+      : "inherit";
+    for (const f of TAG_FIELDS) {
+      tagInherit[f.key] = !has(f.key);
+      tags[f.key] = arr(r[f.key]);
+    }
     const sort = (r.sort && typeof r.sort === "object" ? r.sort : {}) as Record<
       string,
       unknown
     >;
-    sortBy = typeof sort.by === "string" ? sort.by : "";
-    sortPartition = typeof sort.partition === "string" ? sort.partition : "";
-    zdr = r.zdr === true;
-    requireParameters = r.require_parameters === true;
-    enforceDistillable = r.enforce_distillable_text === true;
+    sortBy = has("sort") && typeof sort.by === "string" ? sort.by : "inherit";
+    sortPartition =
+      has("sort") && typeof sort.partition === "string"
+        ? sort.partition
+        : "inherit";
     const mp = (
       r.max_price && typeof r.max_price === "object" ? r.max_price : {}
     ) as Record<string, unknown>;
-    maxPricePrompt = numStr(mp.prompt);
-    maxPriceCompletion = numStr(mp.completion);
+    maxPricePrompt = has("max_price") ? numStr(mp.prompt) : "inherit";
+    maxPriceCompletion = has("max_price") ? numStr(mp.completion) : "inherit";
     const th = (
       r.preferred_min_throughput &&
       typeof r.preferred_min_throughput === "object"
         ? r.preferred_min_throughput
         : {}
     ) as Record<string, unknown>;
-    throughP50 = numStr(th.p50);
-    throughP90 = numStr(th.p90);
+    throughP50 = has("preferred_min_throughput") ? numStr(th.p50) : "inherit";
+    throughP90 = has("preferred_min_throughput") ? numStr(th.p90) : "inherit";
     const lat = (
       r.preferred_max_latency && typeof r.preferred_max_latency === "object"
         ? r.preferred_max_latency
         : {}
     ) as Record<string, unknown>;
-    latencyP50 = numStr(lat.p50);
-    latencyP90 = numStr(lat.p90);
-    latencyP99 = numStr(lat.p99);
+    latencyP50 = has("preferred_max_latency") ? numStr(lat.p50) : "inherit";
+    latencyP90 = has("preferred_max_latency") ? numStr(lat.p90) : "inherit";
+    latencyP99 = has("preferred_max_latency") ? numStr(lat.p99) : "inherit";
     editing = true;
+  }
+  function numDisplay(v: string): string {
+    return v === "inherit" ? "" : v;
+  }
+  function numState(v: string): string {
+    return v === "" ? "inherit" : v;
   }
 
   function arr(v: unknown): string[] {
@@ -123,20 +158,23 @@
 
   function build(): Record<string, unknown> {
     const o: Record<string, unknown> = {};
-    if (allowFallbacks) o.allow_fallbacks = true;
-    if (dataCollection === "deny") o.data_collection = "deny";
+    if (allowFallbacks !== "inherit")
+      o.allow_fallbacks = allowFallbacks === "true";
+    if (dataCollection !== "inherit") o.data_collection = dataCollection;
+    if (zdr !== "inherit") o.zdr = zdr === "true";
+    if (requireParameters !== "inherit")
+      o.require_parameters = requireParameters === "true";
+    if (enforceDistillable !== "inherit")
+      o.enforce_distillable_text = enforceDistillable === "true";
     for (const f of TAG_FIELDS) {
-      if (tags[f.key].length) o[f.key] = [...tags[f.key]];
+      if (!tagInherit[f.key] && tags[f.key].length) o[f.key] = [...tags[f.key]];
     }
-    if (sortBy || sortPartition) {
+    if (sortBy !== "inherit" || sortPartition !== "inherit") {
       const s: Record<string, string> = {};
-      if (sortBy) s.by = sortBy;
-      if (sortPartition) s.partition = sortPartition;
+      if (sortBy !== "inherit") s.by = sortBy;
+      if (sortPartition !== "inherit") s.partition = sortPartition;
       o.sort = s;
     }
-    if (zdr) o.zdr = true;
-    if (requireParameters) o.require_parameters = true;
-    if (enforceDistillable) o.enforce_distillable_text = true;
     const mp: Record<string, number> = {};
     const prompt = number(maxPricePrompt);
     const completion = number(maxPriceCompletion);
@@ -171,7 +209,8 @@
     if (only.length) bits.push(`only ${only.length}`);
     if (ignore.length) bits.push(`ignore ${ignore.length}`);
     if (r.allow_fallbacks) bits.push("fallbacks on");
-    if (r.data_collection) bits.push(`data ${r.data_collection}`);
+    if (r.data_collection === "allow") bits.push("data allow");
+    else if (r.data_collection === "deny") bits.push("data deny");
     if (r.sort) bits.push("custom sort");
     return bits.length ? bits.join(", ") : "configured";
   }
@@ -202,14 +241,43 @@
     <div class="routing-form">
       {#each TAG_FIELDS as f (f.key)}
         <label>
-          {f.label}
-          <div class="tag-input">
+          <div class="tag-header">
+            <span>{f.label}</span>
+            <label class="inherit-toggle">
+              <input
+                type="checkbox"
+                checked={tagInherit[f.key]}
+                onchange={() => {
+                  tagInherit = { ...tagInherit, [f.key]: !tagInherit[f.key] };
+                  if (tagInherit[f.key]) tags = { ...tags, [f.key]: [] };
+                }}
+              /> inherit
+            </label>
+          </div>
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div
+            class="tag-input"
+            class:dim={tagInherit[f.key]}
+            onclick={() => {
+              if (tagInherit[f.key]) {
+                tagInherit = { ...tagInherit, [f.key]: false };
+                setTimeout(
+                  () =>
+                    document.getElementById(`routing-${f.key}-input`)?.focus(),
+                  0,
+                );
+              }
+            }}
+          >
             {#each tags[f.key] as t (t)}
               <span class="chip"
                 >{t}<button
                   type="button"
                   class="chip-x"
-                  onclick={() => removeTag(f.key, t)}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    removeTag(f.key, t);
+                  }}
                   aria-label={`Remove ${t}`}>×</button
                 ></span
               >
@@ -217,10 +285,11 @@
             <input
               id={`routing-${f.key}-input`}
               placeholder="add + Enter"
+              disabled={tagInherit[f.key]}
               onkeydown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  addTag(f.key);
+                  if (!tagInherit[f.key]) addTag(f.key);
                 }
               }}
             />
@@ -229,26 +298,26 @@
       {/each}
 
       <div class="grid2">
-        <label
-          ><input type="checkbox" bind:checked={allowFallbacks} /> allow fallbacks</label
-        >
+        <label class="inline-field">
+          allow fallbacks
+          <select bind:value={allowFallbacks}>
+            <option value="inherit">inherit</option>
+            <option value="false">off</option>
+            <option value="true">on</option>
+          </select>
+        </label>
         <label class="inline-field">
           data collection
-          <select
-            bind:value={dataCollection}
-            onchange={(e) =>
-              (dataCollection = e.currentTarget.value as "allow" | "deny")}
-          >
+          <select bind:value={dataCollection}>
+            <option value="inherit">inherit</option>
             <option value="allow">allow</option>
             <option value="deny">deny</option>
           </select>
         </label>
         <label class="inline-field">
           sort by
-          <select
-            value={sortBy}
-            onchange={(e) => (sortBy = e.currentTarget.value)}
-          >
+          <select bind:value={sortBy}>
+            <option value="inherit">inherit</option>
             <option value="">—</option>
             <option value="price">price</option>
             <option value="latency">latency</option>
@@ -257,7 +326,11 @@
         </label>
         <label class="inline-field">
           sort partition
-          <input bind:value={sortPartition} placeholder="model" />
+          <input
+            value={numDisplay(sortPartition)}
+            oninput={(e) => (sortPartition = numState(e.currentTarget.value))}
+            placeholder="model"
+          />
         </label>
       </div>
 
@@ -265,59 +338,81 @@
         <summary>Advanced</summary>
         <div class="advanced-body">
           <div class="grid2">
-            <label
-              ><input type="checkbox" bind:checked={zdr} /> zero data retention</label
-            >
-            <label
-              ><input type="checkbox" bind:checked={requireParameters} /> require
-              parameters</label
-            >
-            <label
-              ><input type="checkbox" bind:checked={enforceDistillable} /> enforce
-              distillable text</label
-            >
+            <label class="inline-field">
+              zero data retention
+              <select bind:value={zdr}>
+                <option value="inherit">inherit</option>
+                <option value="false">off</option>
+                <option value="true">on</option>
+              </select>
+            </label>
+            <label class="inline-field">
+              require parameters
+              <select bind:value={requireParameters}>
+                <option value="inherit">inherit</option>
+                <option value="false">off</option>
+                <option value="true">on</option>
+              </select>
+            </label>
+            <label class="inline-field">
+              enforce distillable text
+              <select bind:value={enforceDistillable}>
+                <option value="inherit">inherit</option>
+                <option value="false">off</option>
+                <option value="true">on</option>
+              </select>
+            </label>
           </div>
           <div class="grid2 nums">
             <label
               >max price / prompt ($)<input
                 type="number"
-                bind:value={maxPricePrompt}
+                value={numDisplay(maxPricePrompt)}
+                oninput={(e) =>
+                  (maxPricePrompt = numState(e.currentTarget.value))}
               /></label
             >
             <label
               >max price / completion ($)<input
                 type="number"
-                bind:value={maxPriceCompletion}
+                value={numDisplay(maxPriceCompletion)}
+                oninput={(e) =>
+                  (maxPriceCompletion = numState(e.currentTarget.value))}
               /></label
             >
             <label
               >min throughput p50<input
                 type="number"
-                bind:value={throughP50}
+                value={numDisplay(throughP50)}
+                oninput={(e) => (throughP50 = numState(e.currentTarget.value))}
               /></label
             >
             <label
               >min throughput p90<input
                 type="number"
-                bind:value={throughP90}
+                value={numDisplay(throughP90)}
+                oninput={(e) => (throughP90 = numState(e.currentTarget.value))}
               /></label
             >
             <label
               >max latency p50<input
                 type="number"
-                bind:value={latencyP50}
+                value={numDisplay(latencyP50)}
+                oninput={(e) => (latencyP50 = numState(e.currentTarget.value))}
               /></label
             >
             <label
               >max latency p90<input
                 type="number"
-                bind:value={latencyP90}
+                value={numDisplay(latencyP90)}
+                oninput={(e) => (latencyP90 = numState(e.currentTarget.value))}
               /></label
             >
             <label
               >max latency p99<input
                 type="number"
-                bind:value={latencyP99}
+                value={numDisplay(latencyP99)}
+                oninput={(e) => (latencyP99 = numState(e.currentTarget.value))}
               /></label
             >
           </div>
@@ -355,6 +450,22 @@
     border: 1px solid var(--border, #333);
     border-radius: 4px;
     padding: 0.25rem;
+  }
+  .tag-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .inherit-toggle {
+    font-size: var(--fs-sm);
+    color: var(--muted, #888);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+  }
+  .dim {
+    opacity: 0.5;
   }
   .tag-input input {
     border: none;
