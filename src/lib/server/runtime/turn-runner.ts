@@ -54,6 +54,24 @@ export * from "./turn-memory-extraction";
 const EMPTY_RESPONSE_MESSAGE =
   "The model returned an empty response. Retry to try again.";
 
+// Shown when a turn executed tool calls but produced no final text answer even
+// after the continuation nudge — the model stopped mid-task. Surfaced as a
+// visible `error` event so the user gets Alert + Retry, not a dead tool-card bubble.
+const INCOMPLETE_RESPONSE_MESSAGE =
+  "The model stopped after tool work without replying. Retry to try again.";
+
+// Nudge used by the general tool-call-without-answer guard (distinct from
+// MEMORY_CONTINUATION_NUDGE, which targets memory-only recall turns).
+export const CONTINUATION_NUDGE =
+  "You made tool call(s) but have not yet replied. I never see tool output directly; using the results you have, finish the task and respond to me now. Do not end your turn without a substantive reply.";
+
+// True when the turn yielded no assistant text. Used by the general
+// tool-call-without-answer guard to detect a model that stopped after tool
+// work without producing a final text answer.
+function isTextEmpty(text: string): boolean {
+  return text.trim().length === 0;
+}
+
 export interface StartTurnOptions {
   bridge: ProviderOpenOptions;
   prompt: string;
@@ -532,6 +550,39 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
           });
         }
       }
+      // Tool-call-without-answer guard: ≥1 tool call executed but no user-facing
+      // text — the model stopped mid-task. Nudge once to finish; if still empty,
+      // classify as `error`/`incomplete_response` instead of a silent `complete`.
+      if (
+        !turnAc.signal.aborted &&
+        !streamErrorCode &&
+        pendingTools.size > 0 &&
+        isTextEmpty(assistantBuf)
+      ) {
+        log.info("turn.continuation_nudge", {
+          conversationId: opts.conversationId,
+          toolCalls: pendingTools.size,
+        });
+        for await (const ev of session.send(
+          CONTINUATION_NUDGE,
+          turnAc.signal,
+        )) {
+          dispatch(ev);
+        }
+        // Bounded to one retry. Re-check covers the whole turn since
+        // `pendingTools` accumulates across both sends.
+        if (
+          !turnAc.signal.aborted &&
+          pendingTools.size > 0 &&
+          isTextEmpty(assistantBuf)
+        ) {
+          streamErrorCode = "incomplete_response";
+          log.warn("turn.incomplete_response", {
+            conversationId: opts.conversationId,
+            toolCalls: pendingTools.size,
+          });
+        }
+      }
     } catch (e) {
       if (turnAc.signal.aborted) return;
       streamErrorCode = "stream_failed";
@@ -638,6 +689,17 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
           type: "error",
           code: "empty_response",
           message: EMPTY_RESPONSE_MESSAGE,
+        });
+      }
+
+      // Surface the incomplete response (tool calls but no answer, even after
+      // the continuation nudge) the same way: a visible `error` event so the
+      // UI shows Alert + Retry rather than a dead tool-card-only bubble.
+      if (streamErrorCode === "incomplete_response") {
+        dispatch({
+          type: "error",
+          code: "incomplete_response",
+          message: INCOMPLETE_RESPONSE_MESSAGE,
         });
       }
 

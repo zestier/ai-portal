@@ -1711,9 +1711,12 @@ describe("turn-runner", () => {
         workingDirectory: wd,
         async *send(): AsyncIterable<PortalEvent> {
           sendCount += 1;
-          // A write tool (memory_global_record) with no user-facing
-          // text is NOT the recall-then-nothing failure mode, so the
-          // guard must leave it alone.
+          // A write tool (memory_global_record) with no user-facing text.
+          // The memory-only nudge does NOT fire (write isn't a recall tool),
+          // but the general tool-call-without-answer guard does: the turn
+          // gets nudged once and the second send produces a minimal reply
+          // (accepted edge case per the bug's decision: tool-as-answer gets
+          // one nudge round).
           yield { type: "message.start", messageId: "M1", role: "assistant" };
           yield {
             type: "tool.call",
@@ -1728,6 +1731,13 @@ describe("turn-runner", () => {
             summary: "stored",
             output: "ok",
           };
+          if (sendCount === 2) {
+            yield {
+              type: "message.delta",
+              messageId: "M1",
+              text: "Done.",
+            };
+          }
         },
         async abort() {},
         async dispose() {},
@@ -1758,8 +1768,9 @@ describe("turn-runner", () => {
         if (event.type === "done") break;
       }
 
-      // No continuation nudge: a write-only turn is not the targeted bug.
-      expect(sendCount).toBe(1);
+      // The general guard nudged once (write tool + no text); the nudge
+      // produced a minimal reply, so the turn finalized complete.
+      expect(sendCount).toBe(2);
     } finally {
       vi.doUnmock("../../../src/lib/server/memory/extractor");
     }
@@ -2827,5 +2838,245 @@ describe("turn-runner", () => {
     expect(assistant[0].status).toBe("error");
     expect(assistant[0].errorCode).toBe("pi_send_failed");
     expect(assistant[0].content).toBe("");
+  });
+
+  it("nudges a tool-calling turn that produced no text, then finalizes complete with the reply", async () => {
+    const { users, convs, turnRunner } = await freshImports();
+    const messages = await import("../../../src/lib/server/db/repos/messages");
+    const user = users.ensureLocalUser();
+    const wd = makeTmpDir("portal-wd-");
+    const conv = convs.create(user.id, {
+      title: "tool no text",
+      workdir: wd,
+      model: "gpt-4",
+    });
+
+    const prompts: string[] = [];
+    let sendCount = 0;
+    acquireMock.mockResolvedValue({
+      conversationId: convCodec.parse(conv.id),
+      workingDirectory: wd,
+      async *send(prompt: string): AsyncIterable<PortalEvent> {
+        prompts.push(prompt);
+        sendCount += 1;
+        if (sendCount === 1) {
+          // First send: a tool call with no user-facing text — the silent
+          // premature-stop failure mode.
+          yield { type: "message.start", messageId: "M1", role: "assistant" };
+          yield {
+            type: "tool.call",
+            toolCallId: "X1",
+            tool: "bash",
+            args: { command: "echo hi", timeoutMs: 30_000 },
+          };
+          yield {
+            type: "tool.result",
+            toolCallId: "X1",
+            ok: true,
+            summary: "ok",
+            output: "hi\n",
+          };
+        } else {
+          // Continuation after the nudge: now actually answer.
+          yield {
+            type: "message.delta",
+            messageId: "M1",
+            text: "Done.",
+          };
+        }
+      },
+      async abort() {},
+      async dispose() {},
+      async setMode() {},
+      async setApproveAll() {},
+      async resetSessionApprovals() {},
+      lastUsed: Date.now(),
+    });
+
+    const turn = await turnRunner.startTurn({
+      bridge: {
+        conversationId: convCodec.parse(conv.id),
+        userId: user.id,
+        workingDirectory: wd,
+        model: "gpt-4",
+        policy: "prompt",
+      },
+      prompt: "hi",
+      conversationId: convCodec.parse(conv.id),
+    });
+
+    const seen: PortalEvent[] = [];
+    for await (const { event } of turn.subscribe()) {
+      seen.push(event);
+      if (event.type === "done") break;
+    }
+
+    // Exactly one continuation nudge was sent.
+    expect(sendCount).toBe(2);
+    expect(prompts[1]).toContain("not yet replied");
+    // No error events — the nudge produced a substantive reply.
+    expect(seen.find((e) => e.type === "error")).toBeUndefined();
+    const done = seen.find((e) => e.type === "done");
+    expect(done).toMatchObject({ type: "done", status: "complete" });
+
+    // The assistant persisted with the reply text and the resolved tool call.
+    const assistant = messages
+      .listByConversation(conv.id)
+      .find((m) => m.role === "assistant");
+    expect(assistant?.content).toBe("Done.");
+    expect(assistant?.toolCalls?.[0]).toMatchObject({
+      tool: "bash",
+      status: "ok",
+    });
+  });
+
+  it("classifies as incomplete_response when the nudge still yields no text", async () => {
+    const { users, convs, turnRunner } = await freshImports();
+    const messages = await import("../../../src/lib/server/db/repos/messages");
+    const user = users.ensureLocalUser();
+    const wd = makeTmpDir("portal-wd-");
+    const conv = convs.create(user.id, {
+      title: "tool no text no answer",
+      workdir: wd,
+      model: "gpt-4",
+    });
+
+    let sendCount = 0;
+    acquireMock.mockResolvedValue({
+      conversationId: convCodec.parse(conv.id),
+      workingDirectory: wd,
+      async *send(): AsyncIterable<PortalEvent> {
+        sendCount += 1;
+        // Both sends: a tool call with no user-facing text. The nudge fails
+        // to elicit a reply, so the turn should classify as incomplete_response.
+        yield { type: "message.start", messageId: "M1", role: "assistant" };
+        yield {
+          type: "tool.call",
+          toolCallId: "X1",
+          tool: "bash",
+          args: { command: "echo hi", timeoutMs: 30_000 },
+        };
+        yield {
+          type: "tool.result",
+          toolCallId: "X1",
+          ok: true,
+          summary: "ok",
+          output: "hi\n",
+        };
+      },
+      async abort() {},
+      async dispose() {},
+      async setMode() {},
+      async setApproveAll() {},
+      async resetSessionApprovals() {},
+      lastUsed: Date.now(),
+    });
+
+    const turn = await turnRunner.startTurn({
+      bridge: {
+        conversationId: convCodec.parse(conv.id),
+        userId: user.id,
+        workingDirectory: wd,
+        model: "gpt-4",
+        policy: "prompt",
+      },
+      prompt: "hi",
+      conversationId: convCodec.parse(conv.id),
+    });
+
+    const seen: PortalEvent[] = [];
+    let done: PortalEvent | undefined;
+    for await (const { event } of turn.subscribe()) {
+      seen.push(event);
+      if (event.type === "done") {
+        done = event;
+        break;
+      }
+    }
+
+    // Bounded to exactly one retry.
+    expect(sendCount).toBe(2);
+    // The visible error event surfaces to live subscribers + event log.
+    expect(
+      seen.some((e) => e.type === "error" && e.code === "incomplete_response"),
+    ).toBe(true);
+    expect(done).toMatchObject({ type: "done", status: "error" });
+
+    // The turn persisted as error/incomplete_response (NOT a silent complete).
+    expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).toBe("error");
+    const assistant = messages
+      .listByConversation(conv.id)
+      .find((m) => m.role === "assistant");
+    expect(assistant?.status).toBe("error");
+    expect(assistant?.errorCode).toBe("incomplete_response");
+  });
+
+  it("does not nudge a tool-calling turn that produced substantive text", async () => {
+    const { users, convs, turnRunner } = await freshImports();
+    const user = users.ensureLocalUser();
+    const wd = makeTmpDir("portal-wd-");
+    const conv = convs.create(user.id, {
+      title: "tool with text",
+      workdir: wd,
+      model: "gpt-4",
+    });
+
+    let sendCount = 0;
+    acquireMock.mockResolvedValue({
+      conversationId: convCodec.parse(conv.id),
+      workingDirectory: wd,
+      async *send(): AsyncIterable<PortalEvent> {
+        sendCount += 1;
+        yield { type: "message.start", messageId: "M1", role: "assistant" };
+        yield {
+          type: "tool.call",
+          toolCallId: "X1",
+          tool: "bash",
+          args: { command: "echo hi", timeoutMs: 30_000 },
+        };
+        yield { type: "message.delta", messageId: "M1", text: "Running…" };
+        yield {
+          type: "tool.result",
+          toolCallId: "X1",
+          ok: true,
+          summary: "ok",
+          output: "hi\n",
+        };
+        yield { type: "message.delta", messageId: "M1", text: "Done!" };
+      },
+      async abort() {},
+      async dispose() {},
+      async setMode() {},
+      async setApproveAll() {},
+      async resetSessionApprovals() {},
+      lastUsed: Date.now(),
+    });
+
+    const turn = await turnRunner.startTurn({
+      bridge: {
+        conversationId: convCodec.parse(conv.id),
+        userId: user.id,
+        workingDirectory: wd,
+        model: "gpt-4",
+        policy: "prompt",
+      },
+      prompt: "hi",
+      conversationId: convCodec.parse(conv.id),
+    });
+
+    let done: PortalEvent | undefined;
+    for await (const { event } of turn.subscribe()) {
+      if (event.type === "done") {
+        done = event;
+        break;
+      }
+    }
+
+    // No continuation nudge: the model produced a substantive reply.
+    expect(sendCount).toBe(1);
+    expect(done).toMatchObject({ type: "done", status: "complete" });
+    expect(turnRunner.getTurn(convCodec.parse(conv.id))?.status).toBe(
+      "complete",
+    );
   });
 });
