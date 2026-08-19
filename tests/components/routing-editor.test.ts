@@ -25,8 +25,12 @@ describe("RoutingEditor compat read-back", () => {
 });
 
 describe("buildSort", () => {
-  test("omits sort when the sort order is blank", () => {
+  test("omits a blank sort at provider level", () => {
     expect(buildSort("", "inherit")).toBeUndefined();
+  });
+
+  test("preserves a blank sort to clear a model's inherited sort order", () => {
+    expect(buildSort("", "inherit", true)).toEqual({});
   });
 
   test("preserves a partition while omitting a blank sort order", () => {

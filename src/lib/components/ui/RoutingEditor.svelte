@@ -10,10 +10,12 @@
   let {
     initial,
     hint,
+    modelOverride = false,
     onSave,
   }: {
     initial: Record<string, unknown> | null;
     hint?: string;
+    modelOverride?: boolean;
     onSave: (routing: Record<string, unknown> | null) => void;
   } = $props();
 
@@ -97,7 +99,11 @@
       string,
       unknown
     >;
-    sortBy = has("sort") && typeof sort.by === "string" ? sort.by : "inherit";
+    sortBy = has("sort")
+      ? typeof sort.by === "string"
+        ? sort.by
+        : ""
+      : "inherit";
     sortPartition =
       has("sort") && typeof sort.partition === "string"
         ? sort.partition
@@ -171,7 +177,7 @@
     for (const f of TAG_FIELDS) {
       if (!tagInherit[f.key] && tags[f.key].length) o[f.key] = [...tags[f.key]];
     }
-    const sort = buildSort(sortBy, sortPartition);
+    const sort = buildSort(sortBy, sortPartition, modelOverride);
     if (sort) o.sort = sort;
     const mp: Record<string, number> = {};
     const prompt = number(maxPricePrompt);

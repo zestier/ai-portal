@@ -641,6 +641,7 @@
                       <RoutingEditor
                         initial={routingFor(m.compat)}
                         hint="Overrides provider routing defaults for this model."
+                        modelOverride
                         onSave={(r) => saveModelRouting(p.id, m, r)}
                       />
                     </div>
