@@ -132,7 +132,15 @@ export function getBuiltInPromptTemplate(
 /** Concrete workspace kinds a conversation can be created with. */
 export type LaunchWorkspaceKind = "shared" | "worktree";
 
-/** Prompt + settings a launch actually uses, after any review-dialog edits. */
+/**
+ * Prompt + settings a launch actually uses, after any review-dialog edits.
+ * `modelOptions` is not a real launch parameter — it's the enabled-model
+ * catalog surfaced to the review dialog's picker so the user can pick from the
+ * same catalog as the chat header. It is intentionally optional and is stripped
+ * by the API client (which picks only the real launch fields), so adding it
+ * here keeps the `defaults` data flow explicit without leaking into the
+ * conversation-create request.
+ */
 export interface TemplateLaunchOptions {
   prompt: string;
   workspace: LaunchWorkspaceKind;
@@ -145,6 +153,12 @@ export interface TemplateLaunchOptions {
    * this array to the API — even when empty — so a cleared preset sticks).
    */
   disabledToolGroups: PortalToolGroupId[];
+  /**
+   * Enabled portal models (`providerId/modelId`) offered as options in the
+   * review dialog's model picker. Populated client-side from
+   * `/api/prompt-templates/model-options`; absent on direct API launches.
+   */
+  modelOptions?: string[];
 }
 
 /** A template's effective workspace, collapsing "no preference" to `shared`. */

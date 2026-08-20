@@ -52,6 +52,10 @@
     untrack(() => defaults.disabledToolGroups),
   );
 
+  // The enabled-model catalog fetched before the dialog opens; undefined when
+  // absent (e.g. a direct render in tests), which the picker treats as empty.
+  const modelOptions = $derived(untrack(() => defaults.modelOptions));
+
   // Re-seed whenever a different launch opens the dialog so a second launch
   // never inherits the previous one's edits.
   $effect(() => {
@@ -147,7 +151,7 @@
       <ModelPicker
         label="Model"
         value={model}
-        options={[]}
+        options={modelOptions ?? []}
         emptyLabel="Use my default model"
         disabled={busy}
         onchange={(v) => (model = v)}

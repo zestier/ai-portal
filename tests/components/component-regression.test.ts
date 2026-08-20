@@ -885,6 +885,7 @@ describe("Svelte component regression coverage", () => {
           approvalMode: "auto-deny",
           model: "gpt-5.5",
           disabledToolGroups: [],
+          modelOptions: ["openai/gpt-4o", "anthropic/claude-3-5-sonnet"],
         },
         onLaunch: () => {},
         onCancel: () => {},
@@ -899,5 +900,8 @@ describe("Svelte component regression coverage", () => {
     expect(body).toContain("Launch chat");
     // A stale/unlisted model override still shows up as the selected option.
     expect(body).toContain("gpt-5.5");
+    // The fetched catalog populates the model picker's option list.
+    expect(body).toContain("openai/gpt-4o");
+    expect(body).toContain("anthropic/claude-3-5-sonnet");
   });
 });

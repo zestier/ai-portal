@@ -172,6 +172,22 @@
   }
 
   /**
+   * Fetch the enabled-model catalog (same source as the chat header picker)
+   * for the review dialog. Non-blocking: on failure the dialog opens with an
+   * empty list and the user can still launch with their default model.
+   */
+  async function loadModelOptions(): Promise<string[]> {
+    try {
+      const res = await fetch("/api/prompt-templates/model-options");
+      if (!res.ok) return [];
+      const body = await res.json();
+      return (body?.modelOptions ?? []) as string[];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Entry point for the template cards (and the default-template New-chat
    * path). `review` templates open the review dialog first (seeded from the
    * supplied options); everything else launches straight away with those
@@ -188,7 +204,10 @@
     launchError = null;
     if (template.launchBehavior === "review") {
       reviewing = template;
-      reviewingOptions = options;
+      // Fetch the model catalog before opening the dialog so the picker is
+      // populated on first render (no flash of an empty dropdown). Failure
+      // is swallowed — the dialog still opens with an empty list.
+      reviewingOptions = { ...options, modelOptions: await loadModelOptions() };
       return;
     }
     await launchTemplate(template, options);
