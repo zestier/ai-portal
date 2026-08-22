@@ -5,6 +5,10 @@
 
 import { getDb } from "../index";
 import { extensionId } from "$lib/ids";
+import {
+  CAVEMAN_STYLE_EXTENSION_NAME,
+  CAVEMAN_STYLE_EXTENSION_SOURCE,
+} from "../../extensions/builtin";
 import type {
   PortalExtension,
   PortalExtensionKind,
@@ -201,4 +205,41 @@ export function remove(userId: number, id: string | number): boolean {
     .prepare("DELETE FROM portal_extensions WHERE id = ? AND user_id = ?")
     .run(extensionInt(id), userId);
   return res.changes > 0;
+}
+
+/**
+ * Idempotently ensure the bundled "Caveman response style" row exists for a
+ * user, enabled, with `value` set to the current bundle source. Called on the
+ * `ensureLocalUser` path (mirroring `ensureSeedGrantsForUser`) so fresh users
+ * get it and existing users pick it up on their next request.
+ *
+ * The row's reserved `name` is the builtin's identity: this INSERT is skipped
+ * whenever a row with that exact name already exists — so a *disabled* row
+ * stays disabled, a manually edited one is left untouched, and deleting the
+ * row means "reset to default" (it is re-INSERTed on the next call). The
+ * snapshot copy means future rewording of the bundle source won't silently
+ * change existing rows; "Reset to bundled" in Settings → Extensions restores
+ * the current source explicitly.
+ */
+export function ensureCavemanExtensionSeeded(userId: number): void {
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO portal_extensions(
+				   user_id, name, kind, value, enabled, status, sort_order, created_at, updated_at, archived_at
+				 ) SELECT ?, ?, 'inline', ?, 1, 'open', 0, ?, ?, NULL
+				   WHERE NOT EXISTS (
+					   SELECT 1 FROM portal_extensions
+					   WHERE user_id = ? AND name = ?
+				   )`,
+    )
+    .run(
+      userId,
+      CAVEMAN_STYLE_EXTENSION_NAME,
+      CAVEMAN_STYLE_EXTENSION_SOURCE,
+      now,
+      now,
+      userId,
+      CAVEMAN_STYLE_EXTENSION_NAME,
+    );
 }

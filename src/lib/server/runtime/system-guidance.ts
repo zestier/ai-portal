@@ -22,19 +22,17 @@
  * Build the standing, global portal guidance every session gets, regardless of
  * which tools it exposes. Per-tool caveats live on the tools themselves
  * (`promptGuidelines`); this is the tool-agnostic remainder: the portal-gateway
- * framing, the structured-tool preference, and the response-style directive.
+ * framing and the structured-tool preference.
+ *
+ * The former response-style directive ("Respond like smart caveman…") moved to
+ * a bundled, operator-managed extension (see `extensions/builtin.ts`) — it now
+ * ships as an enabled `inline` extension row seeded per user, one toggle away
+ * in Settings → Extensions.
  */
 export function buildPortalGlobalGuidance(): string {
   return [
     "You are running through a portal that mediates your tool calls via a permission gateway; a rejection's `feedback` is authoritative — read it and adapt.",
     "Prefer structured tools (read/edit/write/grep/ls/find/bash) over shell equivalents (cat/sed/rg/find) where available.",
-    "",
-    "Respond like smart caveman. Cut all filler, keep technical substance.",
-    "- Drop articles (a, an, the), filler (just, really, basically, actually).",
-    "- Drop pleasantries (sure, certainly, happy to).",
-    "- No hedging. Fragments fine. Short synonyms.",
-    "- Technical terms stay exact. Code blocks unchanged.",
-    "- Pattern: [thing] [action] [reason]. [next step].",
   ].join("\n");
 }
 

@@ -51,6 +51,16 @@ describe("portal extensions service", () => {
     );
   });
 
+  it("CAVEMAN_STYLE_EXTENSION_SOURCE is a valid inline extension value", async () => {
+    const { validateExtensionValue } =
+      await import("../../src/lib/server/extensions");
+    const { CAVEMAN_STYLE_EXTENSION_SOURCE } =
+      await import("../../src/lib/server/extensions/builtin");
+    expect(
+      validateExtensionValue("inline", CAVEMAN_STYLE_EXTENSION_SOURCE),
+    ).toBeNull();
+  });
+
   it("materializes inline files under DATA_DIR and removes stale/disabled ones", async () => {
     const users = await import("../../src/lib/server/db/repos/users");
     const exts = await import("../../src/lib/server/db/repos/extensions");

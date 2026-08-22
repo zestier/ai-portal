@@ -14,6 +14,10 @@ import { canRedeployUser } from "$lib/server/redeploy";
 import { extensionId } from "$lib/ids";
 import * as extensions from "$lib/server/extensions";
 import * as extensionsRepo from "$lib/server/db/repos/extensions";
+import {
+  CAVEMAN_STYLE_EXTENSION_NAME,
+  CAVEMAN_STYLE_EXTENSION_SOURCE,
+} from "$lib/server/extensions/builtin";
 
 function admin(locals: App.Locals): number {
   const userId = locals.userId;
@@ -69,7 +73,18 @@ function parseExtId(raw: string): number {
 export const GET: RequestHandler = ({ locals, url }) => {
   const userId = admin(locals);
   const status = url.searchParams.get("status") === "all" ? "all" : "open";
-  return json({ extensions: extensionsRepo.list(userId, { status }) });
+  const extensions = extensionsRepo.list(userId, { status }).map((e) => {
+    if (e.name !== CAVEMAN_STYLE_EXTENSION_NAME) return e;
+    return {
+      ...e,
+      builtin: {
+        name: CAVEMAN_STYLE_EXTENSION_NAME,
+        value: CAVEMAN_STYLE_EXTENSION_SOURCE,
+        isCurrent: e.value === CAVEMAN_STYLE_EXTENSION_SOURCE,
+      },
+    };
+  });
+  return json({ extensions });
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {

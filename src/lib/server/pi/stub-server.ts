@@ -37,6 +37,17 @@ let stubRegistered = false;
 // tests make unique per test, so there's no cross-test state.
 const emptyTriggered = new Set<string>();
 
+// The most recent system-prompt string seen on any request. Lets e2e tests
+// assert on what the model actually received (e.g. that an inline extension's
+// `before_agent_start` guidance reached the system prompt). Set on every
+// request, so a test reads this immediately after its own turn.
+let lastSystemPrompt = "";
+
+/** The system prompt of the most recent stub-model request ("" if none yet). */
+export function getLastSystemPrompt(): string {
+  return lastSystemPrompt;
+}
+
 /** Base URL of the shared stub server (started lazily, kept for process lifetime). */
 export function getStubServerBaseUrl(): Promise<string> {
   serverPromise ??= startServer();
@@ -115,6 +126,23 @@ async function handleRequest(
     res.end("bad request");
     return;
   }
+  // Capture the system prompt (inline string or first `system` message) so
+  // tests can assert on what the loaded extensions injected.
+  const inlineSystem = (body as { system?: unknown }).system;
+  const sysMsg = [...body.messages]
+    .reverse()
+    .find(
+      (m) =>
+        !!m &&
+        typeof m === "object" &&
+        (m as { role?: unknown }).role === "system",
+    ) as { content?: unknown } | undefined;
+  lastSystemPrompt =
+    typeof inlineSystem === "string"
+      ? inlineSystem
+      : typeof sysMsg?.content === "string"
+        ? sysMsg.content
+        : "";
   const userText = lastUserText(body.messages);
   // Stateless termination guard: once the model has emitted a tool call, the
   // follow-up request (assistant tool_calls + tool result in history) replies

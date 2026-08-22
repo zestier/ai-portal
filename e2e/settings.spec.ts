@@ -205,11 +205,17 @@ test("the Extensions tab renders, deep-links, and lists the admin-managed source
     page.getByRole("heading", { name: "Extensions", exact: true }),
   ).toBeVisible();
   // The warning banner renders (trust model), and the panel self-loads the
-  // (empty) admin-managed list from /api/admin/extensions.
+  // admin-managed list from /api/admin/extensions. The bundled "Caveman
+  // response style" extension is seeded enabled by default, so the list is
+  // never empty — assert the row (and its reset-to-bundled affordance) render.
   await expect(
     page.getByText(/run with full system permissions/i),
   ).toBeVisible();
-  await expect(page.getByText(/No extensions configured/i)).toBeVisible();
+  // The bundled "Caveman response style" row is seeded enabled by default.
+  // Its "Reset to bundled" button is disabled because it already matches.
+  const reset = page.getByRole("button", { name: /reset to bundled/i });
+  await expect(reset).toBeVisible();
+  await expect(reset).toBeDisabled();
 });
 
 test("the default approval mode is saved and seeds newly created conversations", async ({

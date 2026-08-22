@@ -23,6 +23,12 @@ describe("portal extensions repo", () => {
     const user = users.ensureLocalUser();
     const other = users.ensureLocalUser("ext-rival");
 
+    // `ensureLocalUser` auto-seeds the "Caveman response style" builtin row per
+    // user; drop those so this test only reasons about the rows it creates.
+    for (const u of [user, other]) {
+      for (const r of exts.list(u.id)) exts.remove(u.id, r.id);
+    }
+
     const a = exts.create(user.id, {
       name: "A",
       kind: "inline",
@@ -89,5 +95,52 @@ describe("portal extensions repo", () => {
   it("invalid ids throw a precise parse error", async () => {
     const exts = await import("../../src/lib/server/db/repos/extensions");
     expect(() => exts.get(1, "T10")).toThrow("not a extension id: T10");
+  });
+
+  it("ensureCavemanExtensionSeeded inserts exactly one enabled inline row and is idempotent", async () => {
+    const users = await import("../../src/lib/server/db/repos/users");
+    const exts = await import("../../src/lib/server/db/repos/extensions");
+    const { CAVEMAN_STYLE_EXTENSION_SOURCE } =
+      await import("../../src/lib/server/extensions/builtin");
+
+    // Seeded as part of `ensureLocalUser` (fresh install path).
+    const user = users.ensureLocalUser();
+    expect(exts.list(user.id)).toHaveLength(1);
+    const row = exts.list(user.id)[0];
+    expect(row.name).toBe("Caveman response style");
+    expect(row.kind).toBe("inline");
+    expect(row.enabled).toBe(true);
+    expect(row.value).toBe(CAVEMAN_STYLE_EXTENSION_SOURCE);
+
+    // Idempotent — a second seed leaves exactly one row.
+    exts.ensureCavemanExtensionSeeded(user.id);
+    exts.ensureCavemanExtensionSeeded(user.id);
+    expect(exts.list(user.id)).toHaveLength(1);
+  });
+
+  it("ensureCavemanExtensionSeeded leaves an existing (even disabled) row untouched", async () => {
+    const users = await import("../../src/lib/server/db/repos/users");
+    const exts = await import("../../src/lib/server/db/repos/extensions");
+    const user = users.ensureLocalUser();
+
+    // User opted out via the toggle → row exists but disabled.
+    const id = exts.list(user.id)[0].id;
+    exts.setEnabled(user.id, id, false);
+
+    // Seed must NOT flip `enabled` back on, nor duplicate the row.
+    exts.ensureCavemanExtensionSeeded(user.id);
+    const rows = exts.list(user.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].enabled).toBe(false);
+  });
+
+  it("ensureCavemanExtensionSeeded seeds each user independently", async () => {
+    const users = await import("../../src/lib/server/db/repos/users");
+    const exts = await import("../../src/lib/server/db/repos/extensions");
+    const a = users.ensureLocalUser();
+    const b = users.ensureLocalUser("ext-seed-rival");
+    expect(exts.list(a.id)).toHaveLength(1);
+    expect(exts.list(b.id)).toHaveLength(1);
+    expect(exts.list(a.id)[0].id).not.toBe(exts.list(b.id)[0].id);
   });
 });

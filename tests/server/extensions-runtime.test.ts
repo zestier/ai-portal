@@ -83,6 +83,20 @@ async function runToolCall(
 
 const T = 30_000;
 
+/** Send a plain turn and dispose the session, then return collected events. */
+async function runTurn(
+  session: Awaited<ReturnType<typeof openSession>>,
+  text: string,
+): Promise<PortalEvent[]> {
+  const ac = new AbortController();
+  const events: PortalEvent[] = [];
+  for await (const ev of session.send(text, ac.signal)) {
+    events.push(ev);
+  }
+  await session.dispose();
+  return events;
+}
+
 describe("pi extensions runtime (inline custom tool)", () => {
   beforeAll(async () => {
     process.env.PI_STUB = "1";
@@ -93,6 +107,34 @@ describe("pi extensions runtime (inline custom tool)", () => {
       await import("../../src/lib/server/db/repos/users");
     USER = ensureLocalUser().id;
   });
+
+  it(
+    "injects caveman guidance when the seeded builtin is enabled, withholds it when disabled",
+    async () => {
+      const { getLastSystemPrompt } =
+        await import("../../src/lib/server/pi/stub-server");
+      const { list, setEnabled } =
+        await import("../../src/lib/server/db/repos/extensions");
+      const row = list(USER).find((e) => e.name === "Caveman response style");
+      expect(row).toBeTruthy();
+
+      const wd = makeTmpDir("pi-caveman-");
+
+      // Enabled by seed → guidance present on the next turn.
+      setEnabled(USER, row!.id, true);
+      const convOn = await createConversation(wd);
+      await runTurn(await openSession(wd, convOn), "check caveman on");
+      expect(getLastSystemPrompt()).toContain("Respond like smart caveman");
+      expect(getLastSystemPrompt()).toContain("[thing] [action] [reason]");
+
+      // Disabled → guidance gone.
+      setEnabled(USER, row!.id, false);
+      const convOff = await createConversation(wd);
+      await runTurn(await openSession(wd, convOff), "check caveman off");
+      expect(getLastSystemPrompt()).not.toContain("Respond like smart caveman");
+    },
+    T,
+  );
 
   it(
     "runs an inline extension custom tool via PI_TEST_TOOLCALL",

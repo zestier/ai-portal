@@ -1,6 +1,7 @@
 import { getDb } from "../index";
 import type { User } from "$lib/types";
 import { ensureSeedGrantsForUser } from "../../permissions/seed-grants";
+import { ensureCavemanExtensionSeeded } from "./extensions";
 
 interface UserRow {
   id: number;
@@ -59,6 +60,7 @@ export function ensureLocalUser(key = "local"): User {
       );
     const id = Number(info.lastInsertRowid);
     ensureSeedGrantsForUser(id);
+    ensureCavemanExtensionSeeded(id);
     return {
       id,
       githubLogin,

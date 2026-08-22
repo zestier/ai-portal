@@ -15,11 +15,11 @@ describe("buildPortalGlobalGuidance", () => {
     expect(guidance).toContain("Prefer structured tools");
   });
 
-  it("includes the smart-caveman response-style directive", () => {
+  it("no longer hardcodes the caveman guidance — that moved to a bundled extension", () => {
+    // The response-style directive shipped as a hardcoded block here; it now
+    // lives in the bundled "Caveman response style" extension (builtin.ts).
     const guidance = buildPortalGlobalGuidance();
-    expect(guidance).toContain("Respond like smart caveman");
-    expect(guidance).toContain("Cut all filler, keep technical substance");
-    expect(guidance).toContain("[thing] [action] [reason]");
+    expect(guidance).not.toContain("Respond like smart caveman");
   });
 
   it("contains no tool-group prose — per-tool guidance lives on the tools themselves", () => {
@@ -78,7 +78,7 @@ describe("createPiSession loader wiring", () => {
       PORTAL_SYSTEM_GUIDANCE,
     ]);
     expect(loaderOptions.value?.appendSystemPrompt?.[0]).toContain(
-      "Respond like smart caveman",
+      "permission gateway",
     );
   });
 });

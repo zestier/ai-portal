@@ -14,7 +14,12 @@
     errors: { path: string; error: string }[];
   }
 
-  let extensions = $state<PortalExtension[]>([]);
+  /** A row that maps to a bundled extension (carries a reset-to-bundled action). */
+  type ExtensionView = PortalExtension & {
+    builtin?: { name: string; value: string; isCurrent: boolean };
+  };
+
+  let extensions = $state<ExtensionView[]>([]);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let notice = $state<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -56,7 +61,7 @@
   async function reload() {
     try {
       loadError = null;
-      const data = await api<{ extensions: PortalExtension[] }>(
+      const data = await api<{ extensions: ExtensionView[] }>(
         "/api/admin/extensions",
       );
       extensions = data.extensions;
@@ -206,6 +211,31 @@
     }
   }
 
+  async function resetToBundled(e: ExtensionView) {
+    if (!e.builtin?.value) return;
+    if (
+      !confirm(
+        `Reset "${e.name}" to the bundled content? This overwrites your edits.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await api("/api/admin/extensions", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "update",
+          id: e.id,
+          value: e.builtin.value,
+        }),
+      });
+      flash("ok", `Extension "${e.name}" reset to bundled content.`);
+      await reload();
+    } catch (err) {
+      flash("err", err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function verifyOne(e: PortalExtension) {
     if (verifyingId) return;
     verifyingId = e.id;
@@ -326,6 +356,19 @@
             >
               {verifyingId === e.id ? "Verifying…" : "Verify"}
             </button>
+            {#if e.builtin}
+              <button
+                type="button"
+                class="builtin"
+                disabled={e.builtin.isCurrent}
+                title={e.builtin.isCurrent
+                  ? "This extension already matches the bundled content."
+                  : "Restore the bundled content of this extension."}
+                onclick={() => resetToBundled(e)}
+              >
+                Reset to bundled
+              </button>
+            {/if}
             <button type="button" onclick={() => openEdit(e)}>Edit</button>
             <button type="button" class="danger" onclick={() => remove(e)}
               >Delete</button
