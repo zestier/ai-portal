@@ -5,7 +5,13 @@ import {
   isPathInWorkspace,
   resolveWithParentFallback,
 } from "../permissions/workspace";
-import { err, ok, type PortalTool, type ToolPermissionRequest } from "./types";
+import {
+  err,
+  ok,
+  type PortalTool,
+  type ToolPermissionRequest,
+  type ToolResult,
+} from "./types";
 import {
   createTreeResolver,
   resolveWorktreeDir,
@@ -13,6 +19,13 @@ import {
   WORKTREE_PARAM,
   type WorktreeToolContext,
 } from "./worktree-selector";
+import {
+  parseTicketPath,
+  resolveTicketPath,
+  grepTicketFolder,
+  grepSingleTicket,
+  type TicketGrepMatch,
+} from "./ticket-file";
 
 const MAX_GREP_OUTPUT_BYTES = 100_000;
 const GrepOutputMode = z.enum(["content", "files_with_matches", "count"]);
@@ -271,6 +284,89 @@ export function renderGrepResult(result: GrepResult): string {
   return lines.join("\n");
 }
 
+// Handle grep on ticket: virtual-file paths. Routes to either
+// folder grep (ticket:open) or single-ticket grep (ticket:T5,
+// ticket:open/T5).
+async function handleTicketGrep(
+  resolution: Exclude<ReturnType<typeof parseTicketPath>, null>,
+  args: GrepArgsParsed,
+  userId: number | undefined,
+  workspaceKey: string | undefined,
+): Promise<ToolResult> {
+  if (!userId || !workspaceKey) {
+    return err("ticket: paths require a session context (userId/workspaceKey)");
+  }
+  if (resolution.kind === "folder") {
+    const result = grepTicketFolder(args.pattern, userId, workspaceKey, {
+      output_mode: args.output_mode,
+      "-i": args["-i"],
+      "-n": args["-n"],
+      head_limit: args.head_limit,
+      offset: args.offset,
+    });
+    return ok(result, "Search completed.", {
+      views: [
+        {
+          type: "text",
+          text: renderTicketGrepResult(result, args.output_mode),
+        },
+      ],
+    });
+  }
+  const { ticket, statusMismatch } = resolveTicketPath(resolution, userId);
+  if (!ticket) {
+    return err(`Ticket not found: ${resolution.ticketId}`);
+  }
+  if (statusMismatch) {
+    // Scoped lookup on a non-open ticket: resolve it but warn.
+    const result = grepSingleTicket(ticket, args.pattern, {
+      output_mode: args.output_mode,
+      "-i": args["-i"],
+      "-n": args["-n"],
+      head_limit: args.head_limit,
+      offset: args.offset,
+    });
+    const warning = `Warning: ticket ${ticket.id} has status "${ticket.status}", not "open". Searching content anyway.\n\n`;
+    const body = renderTicketGrepResult(result, args.output_mode);
+    return ok(result, "Search completed.", {
+      views: [{ type: "text", text: warning + body }],
+    });
+  }
+  const result = grepSingleTicket(ticket, args.pattern, {
+    output_mode: args.output_mode,
+    "-i": args["-i"],
+    "-n": args["-n"],
+    head_limit: args.head_limit,
+    offset: args.offset,
+  });
+  return ok(result, "Search completed.", {
+    views: [
+      { type: "text", text: renderTicketGrepResult(result, args.output_mode) },
+    ],
+  });
+}
+
+function renderTicketGrepResult(
+  result: TicketGrepMatch[] | { count: number },
+  mode: string,
+): string {
+  if (mode === "count") {
+    const count = (result as { count: number }).count;
+    if (count === 0)
+      return "No matches found\n\nFound 0 total occurrences across 0 tickets.";
+    return `Found ${count} total occurrence(s).`;
+  }
+  const matches = result as TicketGrepMatch[];
+  if (matches.length === 0) return "No matches found.";
+  const lines: string[] = [`Found ${matches.length} match(es):`];
+  for (const m of matches) {
+    lines.push(
+      `${m.ticketId} [${m.ticketTitle}] line ${m.lineNumber}: ${m.lineContent}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 export function buildGrepTools(
   workspaceRoot: string,
   ctx?: WorktreeToolContext,
@@ -343,12 +439,24 @@ export function buildGrepTools(
       derivePermissionRequest(args): ToolPermissionRequest | null {
         const parsed = GrepArgs.safeParse(args);
         if (!parsed.success) return null;
+        if (parseTicketPath(parsed.data.path ?? "")) return null;
         const root = permissionRoot(parsed.data.worktree);
         const path = root && resolveTarget(root, parsed.data.path);
         return path ? { permissionKind: "read", path } : null;
       },
       async handler(args) {
         const parsed = GrepArgs.parse(args);
+        const ticketPath = parseTicketPath(parsed.path ?? "");
+        if (ticketPath) {
+          const tree = treeFor(parsed.worktree);
+          if (tree.error) return tree.error;
+          return handleTicketGrep(
+            ticketPath,
+            parsed,
+            ctx?.userId,
+            ctx?.workspaceKey,
+          );
+        }
         const tree = treeFor(parsed.worktree);
         if (tree.error) return tree.error;
         const target = resolveTarget(tree.cwd, parsed.path);

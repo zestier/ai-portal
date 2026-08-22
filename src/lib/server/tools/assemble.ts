@@ -67,22 +67,31 @@ export function assemblePiTools(
 ): AssembledPiTools {
   const disabled = new Set(sanitizeDisabledToolGroups(opts.disabledToolGroups));
   const { userId, conversationId } = opts;
+  const toolCtx: {
+    userId: number;
+    conversationId: number;
+    workspaceKey?: string;
+  } = {
+    userId,
+    conversationId,
+  };
+  if (opts.workspaceKey !== undefined) toolCtx.workspaceKey = opts.workspaceKey;
 
   // Build every group eagerly (builders only close over context — no IO until
   // a handler runs), then filter by the enabled groups.
   const grouped: Record<PortalToolGroupId, PortalTool[]> = {
     shell: buildShellTools(opts.cwd),
-    git: buildGitTools(opts.cwd, { userId, conversationId }),
+    git: buildGitTools(opts.cwd, toolCtx),
     filesystem: [
-      ...buildCreateDirectoryTools(opts.cwd, { userId, conversationId }),
-      ...buildMoveTools(opts.cwd, { userId, conversationId }),
-      ...buildTrashTools(opts.cwd, { userId, conversationId }),
-      ...buildReadTools(opts.cwd, { userId, conversationId }),
-      ...buildMultiEditTools(opts.cwd, { userId, conversationId }),
-      ...buildEditFileTools(opts.cwd, { userId, conversationId }),
-      ...buildGrepTools(opts.cwd, { userId, conversationId }),
-      ...buildLsTools(opts.cwd, { userId, conversationId }),
-      ...buildFindTools(opts.cwd, { userId, conversationId }),
+      ...buildCreateDirectoryTools(opts.cwd, toolCtx),
+      ...buildMoveTools(opts.cwd, toolCtx),
+      ...buildTrashTools(opts.cwd, toolCtx),
+      ...buildReadTools(opts.cwd, toolCtx),
+      ...buildMultiEditTools(opts.cwd, toolCtx),
+      ...buildEditFileTools(opts.cwd, toolCtx),
+      ...buildGrepTools(opts.cwd, toolCtx),
+      ...buildLsTools(opts.cwd, toolCtx),
+      ...buildFindTools(opts.cwd, toolCtx),
     ],
     worktree: buildWorktreeTools({ userId, conversationId }),
     tickets: buildTicketTools({

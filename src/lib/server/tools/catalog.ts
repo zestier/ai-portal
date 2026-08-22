@@ -38,54 +38,28 @@ export type { PortalToolCatalogEntry };
 const STUB = {
   userId: 1,
   conversationId: 1,
-  workspaceKey: "catalog",
   cwd: "/",
+};
+const STUB_CTX = {
+  userId: STUB.userId,
+  conversationId: STUB.conversationId,
+  workspaceKey: "catalog",
 };
 
 function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
   return {
     shell: buildShellTools(STUB.cwd),
-    git: buildGitTools(STUB.cwd, {
-      userId: STUB.userId,
-      conversationId: STUB.conversationId,
-    }),
+    git: buildGitTools(STUB.cwd, STUB_CTX),
     filesystem: [
-      ...buildCreateDirectoryTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildMoveTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildTrashTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildReadTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildMultiEditTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildEditFileTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildGrepTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildLsTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
-      ...buildFindTools(STUB.cwd, {
-        userId: STUB.userId,
-        conversationId: STUB.conversationId,
-      }),
+      ...buildCreateDirectoryTools(STUB.cwd, STUB_CTX),
+      ...buildMoveTools(STUB.cwd, STUB_CTX),
+      ...buildTrashTools(STUB.cwd, STUB_CTX),
+      ...buildReadTools(STUB.cwd, STUB_CTX),
+      ...buildMultiEditTools(STUB.cwd, STUB_CTX),
+      ...buildEditFileTools(STUB.cwd, STUB_CTX),
+      ...buildGrepTools(STUB.cwd, STUB_CTX),
+      ...buildLsTools(STUB.cwd, STUB_CTX),
+      ...buildFindTools(STUB.cwd, STUB_CTX),
     ],
     worktree: buildWorktreeTools({
       userId: STUB.userId,
@@ -93,7 +67,7 @@ function groupedTools(): Record<PortalToolGroupId, PortalTool[]> {
     }),
     tickets: buildTicketTools({
       userId: STUB.userId,
-      workspaceKey: STUB.workspaceKey,
+      workspaceKey: "catalog",
       conversationId: STUB.conversationId,
     }),
     permissions: buildPermissionTools({

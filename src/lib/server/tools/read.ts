@@ -30,6 +30,11 @@ import {
   storeDelta,
   unchangedReadResult,
 } from "./read-delta";
+import {
+  parseTicketPath,
+  resolveTicketPath,
+  ticketFileContent,
+} from "./ticket-file";
 // Mirrors the Agent SDK's FileReadInput (sdk-tools.d.ts) so the aliased SDK
 // `Read` tool (which sends these field names verbatim) parses cleanly.
 const ReadArgs = z
@@ -353,6 +358,85 @@ export async function readFileResult(
   }
 }
 
+// Read a ticket virtual file. Returns the serialized ticket content
+// with a banner if the path scopes to a status that doesn't match.
+async function readTicketFileResult(
+  resolution: Exclude<ReturnType<typeof parseTicketPath>, null>,
+  offset: number | undefined,
+  limit: number | undefined,
+  numbered: boolean | undefined,
+  userId: number | undefined,
+  workspaceKey: string | undefined,
+): Promise<ToolResult> {
+  if (!userId || !workspaceKey) {
+    return err("ticket: paths require a session context (userId/workspaceKey)");
+  }
+  if (resolution.kind === "folder") {
+    return err(
+      "ticket:open is a grep folder, not a readable file — use grep with path=ticket:open",
+    );
+  }
+  const { ticket, statusMismatch } = resolveTicketPath(resolution, userId);
+  if (!ticket) {
+    return err(`Ticket not found: ${resolution.ticketId}`);
+  }
+  if (statusMismatch) {
+    // Scoped lookup on a non-open ticket: resolve it but warn.
+    const content = ticketFileContent(ticket);
+    const banner = `Warning: ticket ${ticket.id} has status "${ticket.status}", not "open". Showing content anyway.\n\n`;
+    const fullContent = banner + content;
+    const lines = fullContent.split(/\r?\n/);
+    const totalLines = lines.length;
+    const startLine = offset ?? 1;
+    const end = limit
+      ? Math.min(totalLines, startLine + limit - 1)
+      : totalLines;
+    const sliced = lines.slice(startLine - 1, end);
+    const rendered = numbered
+      ? sliced.map((l, i) => `${startLine + i}\t${l}`).join("\n")
+      : sliced.join("\n");
+    return ok(
+      {
+        type: "text",
+        file: {
+          filePath: `ticket:${resolution.ticketId}`,
+          content: rendered,
+          numLines: sliced.length,
+          startLine,
+          totalLines,
+          size: Buffer.byteLength(fullContent),
+        },
+      },
+      `Read ticket file: ticket:${resolution.ticketId}`,
+      { views: [{ type: "text", text: rendered }] },
+    );
+  }
+  const content = ticketFileContent(ticket);
+  const lines = content.split(/\r?\n/);
+  const totalLines = lines.length;
+  const startLine = offset ?? 1;
+  const end = limit ? Math.min(totalLines, startLine + limit - 1) : totalLines;
+  const sliced = lines.slice(startLine - 1, end);
+  const rendered = numbered
+    ? sliced.map((l, i) => `${startLine + i}\t${l}`).join("\n")
+    : sliced.join("\n");
+  return ok(
+    {
+      type: "text",
+      file: {
+        filePath: `ticket:${resolution.ticketId}`,
+        content: rendered,
+        numLines: sliced.length,
+        startLine,
+        totalLines,
+        size: Buffer.byteLength(content),
+      },
+    },
+    `Read ticket file: ticket:${resolution.ticketId}`,
+    { views: [{ type: "text", text: rendered }] },
+  );
+}
+
 export function buildReadTools(
   workspaceRoot: string,
   ctx?: WorktreeToolContext,
@@ -408,6 +492,7 @@ export function buildReadTools(
       derivePermissionRequest(args): ToolPermissionRequest | null {
         const parsed = ReadArgs.safeParse(args);
         if (!parsed.success) return null;
+        if (parseTicketPath(parsed.data.file_path)) return null;
         const root = permissionRoot(parsed.data.worktree);
         if (root === null) return null;
         const abs = resolveAbsoluteTarget(root, parsed.data.file_path);
@@ -416,6 +501,19 @@ export function buildReadTools(
       },
       async handler(args) {
         const parsed = ReadArgs.parse(args);
+        const ticketPath = parseTicketPath(parsed.file_path);
+        if (ticketPath) {
+          const tree = treeFor(parsed.worktree);
+          if (tree.error) return tree.error;
+          return readTicketFileResult(
+            ticketPath,
+            parsed.offset,
+            parsed.limit,
+            parsed.numbered,
+            ctx?.userId,
+            ctx?.workspaceKey,
+          );
+        }
         const tree = treeFor(parsed.worktree);
         if (tree.error) return tree.error;
         return readFileResult(tree.cwd, parsed.file_path, {

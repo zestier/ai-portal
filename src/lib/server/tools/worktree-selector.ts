@@ -60,6 +60,8 @@ export const WORKTREE_WRITE_PARAM = {
 export interface WorktreeToolContext {
   userId: number;
   conversationId: number;
+  /** Scopes ticket: virtual-file lookups to this workspace. */
+  workspaceKey?: string;
 }
 
 /** Either the directory to act in, or the error envelope to return instead. */

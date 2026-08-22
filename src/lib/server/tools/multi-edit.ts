@@ -37,6 +37,7 @@ import {
   suggestionHint,
   type FileEditOutput,
 } from "./edit-file/common";
+import { parseTicketPath } from "./ticket-file";
 import {
   err,
   ok,
@@ -170,6 +171,9 @@ export function buildMultiEditTools(
       derivePermissionRequest(args): ToolPermissionRequest | null {
         const parsed = MultiEditArgs.safeParse(args);
         if (!parsed.success) return null;
+        for (const edit of parsed.data.edits) {
+          if (parseTicketPath(edit.file_path)) return null;
+        }
         const root = parsed.data.worktree
           ? resolveWorktreeDir(parsed.data.worktree, ctx)
           : workspaceRoot;
@@ -190,6 +194,13 @@ export function buildMultiEditTools(
       },
       async handler(args) {
         const parsed = MultiEditArgs.parse(args);
+        for (const edit of parsed.edits) {
+          if (parseTicketPath(edit.file_path)) {
+            return err(
+              "ticket: paths are not supported in multi_edit — use the edit tool instead.",
+            );
+          }
+        }
         const tree = treeFor(parsed.worktree);
         if (tree.error) return tree.error;
         const cwd = tree.cwd;

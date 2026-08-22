@@ -20,6 +20,7 @@ import {
   type FileWriteGitDiff,
   type FileWriteStructuredPatch,
 } from "./common";
+import { parseTicketPath } from "../ticket-file";
 
 // Mirrors the SDK WriteInput so the aliased SDK `Write` tool (which sends
 // `file_path`/`content` verbatim) parses cleanly. `file_path` is absolute per
@@ -126,6 +127,7 @@ export function buildWriteTool(
     derivePermissionRequest(args) {
       const parsed = WriteArgs.safeParse(args);
       if (!parsed.success) return null;
+      if (parseTicketPath(parsed.data.file_path)) return null;
       const root = parsed.data.worktree
         ? resolveWorktreeDir(parsed.data.worktree, ctx)
         : workspaceRoot;
@@ -134,6 +136,11 @@ export function buildWriteTool(
     },
     async handler(args) {
       const parsed = WriteArgs.parse(args);
+      if (parseTicketPath(parsed.file_path)) {
+        return err(
+          "Writing to ticket: paths is not supported — use edit to modify ticket content.",
+        );
+      }
       const tree = treeFor(parsed.worktree);
       if (tree.error) return tree.error;
       const target = resolveWriteTarget(tree.cwd, parsed.file_path);
