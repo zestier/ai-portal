@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stringify } from "smol-toml";
 import {
   parseActionsConfig,
   loadActionsConfig,
@@ -384,22 +385,19 @@ describe("loadActionsConfig — file IO", () => {
     expect(res).toEqual({ ok: true, actions: [] });
   });
 
-  it("reads and validates a real .zap/actions.json", async () => {
+  it("reads and validates a real .zap/actions.toml", async () => {
     const dir = makeTmpDir("portal-actions-");
     mkdirSync(join(dir, ".zap"), { recursive: true });
-    writeFileSync(
-      join(dir, ".zap", "actions.json"),
-      JSON.stringify(validConfig),
-    );
+    writeFileSync(join(dir, ".zap", "actions.toml"), stringify(validConfig));
     const res = await loadActionsConfig(dir);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.actions[0].id).toBe("preview-deploy");
   });
 
-  it("surfaces invalid JSON as a config error", async () => {
+  it("surfaces invalid TOML as a config error", async () => {
     const dir = makeTmpDir("portal-actions-");
     mkdirSync(join(dir, ".zap"), { recursive: true });
-    writeFileSync(join(dir, ".zap", "actions.json"), "{ not json");
+    writeFileSync(join(dir, ".zap", "actions.toml"), "not = valid toml");
     const res = await loadActionsConfig(dir);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain("invalid");
@@ -409,8 +407,8 @@ describe("loadActionsConfig — file IO", () => {
     const dir = makeTmpDir("portal-actions-");
     mkdirSync(join(dir, ".zap"), { recursive: true });
     writeFileSync(
-      join(dir, ".zap", "actions.json"),
-      JSON.stringify({ version: 9, actions: [] }),
+      join(dir, ".zap", "actions.toml"),
+      stringify({ version: 9, actions: [] }),
     );
     const res = await loadActionsConfig(dir);
     expect(res.ok).toBe(false);

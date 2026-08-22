@@ -1,0 +1,46 @@
+# ZAP project actions — lifecycle and custom commands.
+#
+# Each [[actions]] entry defines a button the UI renders for
+# conversation-scoped work.  Lifecycle actions (build, test, lint,
+# check, verify) ship as defaults; remove or redefine any of them
+# in this file to override.
+#
+# Schema: see src/lib/server/actions/config.ts (format-agnostic —
+# works with JSON or TOML, validates the parsed object).
+
+version = 1
+
+[[actions]]
+id = "build"
+label = "Build"
+description = "Run the project build script"
+permission = "user"
+steps = [{ label = "build", command = "pnpm", args = ["run", "build"] }]
+
+[[actions]]
+id = "test"
+label = "Test"
+description = "Run the project test suite"
+permission = "user"
+steps = [{ label = "test", command = "pnpm", args = ["test"] }]
+
+[[actions]]
+id = "lint"
+label = "Lint"
+description = "Run the project linter"
+permission = "user"
+steps = [{ label = "lint", command = "pnpm", args = ["run", "lint"] }]
+
+[[actions]]
+id = "check"
+label = "Check"
+description = "Run type-checking and static analysis"
+permission = "user"
+steps = [{ label = "check", command = "pnpm", args = ["run", "check"] }]
+
+[[actions]]
+id = "verify"
+label = "Verify"
+description = "Run the full verification suite"
+permission = "user"
+steps = [{ label = "verify", command = "pnpm", args = ["run", "verify"] }]

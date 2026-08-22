@@ -1,4 +1,4 @@
-// Glue between validated `.zap/actions.json` action definitions and the
+// Glue between validated `.zap/actions.toml` action definitions and the
 // generic runner: turns a declarative action into concrete runner `Step`s and
 // owns the per-action-per-conversation in-flight guard.
 

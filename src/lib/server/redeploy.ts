@@ -4,7 +4,7 @@
 // ./actions/runner.ts). It is the one privileged action that carries the
 // rollover semantic — a successful build schedules `process.exit(0)` so the
 // `pnpm serve` supervisor relaunches on refreshed code. That capability is
-// reserved to built-ins and is NOT expressible from `.zap/actions.json`.
+// reserved to built-ins and is NOT expressible from `.zap/actions.toml`.
 //
 // The redeploy steps deliberately keep the runner's default env behavior
 // (`inheritEnv` defaulting to true => full `process.env` spread) and default

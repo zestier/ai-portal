@@ -3,7 +3,7 @@
 // Extracted from the original redeploy implementation so it can back BOTH the
 // privileged built-in redeploy (admin-only, cwd = portal source, with a
 // process rollover) AND user-defined project actions loaded from
-// `.zap/actions.json` (conversation-scoped, cwd = the conversation workdir,
+// `.zap/actions.toml` (conversation-scoped, cwd = the conversation workdir,
 // default-deny env). The only redeploy-special behavior — the
 // `process.exit(0)` rollover that hands control to the `pnpm serve`
 // supervisor — is gated behind an explicit `rollover` flag the config path

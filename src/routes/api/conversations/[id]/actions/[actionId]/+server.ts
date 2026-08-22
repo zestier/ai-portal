@@ -29,7 +29,7 @@ const Body = z
 
 /**
  * Run a single project action defined in the conversation's
- * `.zap/actions.json`, streaming its stdout/stderr back as SSE just like the
+ * `.zap/actions.toml`, streaming its stdout/stderr back as SSE just like the
  * built-in redeploy. Gating:
  *  - conversation-auth (the caller must own the conversation),
  *  - `permission: admin` actions additionally require redeploy-admin rights,

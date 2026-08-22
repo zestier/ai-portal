@@ -180,7 +180,7 @@
 <div class="actions-panel">
   <PanelHeader title="Actions" fullBleed>
     {#snippet meta()}Run project scripts defined in this repo's <code
-        >.zap/actions.json</code
+        >.zap/actions.toml</code
       >.{/snippet}
   </PanelHeader>
 
@@ -195,7 +195,7 @@
     {#if actions.length === 0 && !configError}
       <p class="muted small">
         No actions defined. Add buttons by committing a <code
-          >.zap/actions.json</code
+          >.zap/actions.toml</code
         > file to this project.
       </p>
     {/if}

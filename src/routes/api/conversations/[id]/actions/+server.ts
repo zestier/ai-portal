@@ -7,7 +7,7 @@ import { canRedeployUser } from "$lib/server/redeploy";
 import { loadActionsConfig } from "$lib/server/actions/config";
 
 /**
- * List the project actions defined in the conversation's `.zap/actions.json`.
+ * List the project actions defined in the conversation's `.zap/actions.toml`.
  * Returns the metadata the UI needs to render buttons (id/label/description/
  * permission) plus `canRunAdmin` so the client can disable admin-only buttons
  * for non-admin users. Enforcement still happens on POST; this is UX only.

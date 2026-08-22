@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execPath } from "node:process";
+import { stringify } from "smol-toml";
 import { resetServerSingletons, setupLocalEnv } from "../../helpers/env";
 
 async function importRepos() {
@@ -49,7 +50,7 @@ async function readSse(res: Response): Promise<Record<string, unknown>[]> {
 
 function writeActions(dir: string, config: unknown) {
   mkdirSync(join(dir, ".zap"), { recursive: true });
-  writeFileSync(join(dir, ".zap", "actions.json"), JSON.stringify(config));
+  writeFileSync(join(dir, ".zap", "actions.toml"), stringify(config));
 }
 
 describe("conversation actions routes (local mode)", () => {
@@ -81,7 +82,7 @@ describe("conversation actions routes (local mode)", () => {
     return { user, conv };
   }
 
-  it("GET lists actions from the conversation .zap/actions.json", async () => {
+  it("GET lists actions from the conversation .zap/actions.toml", async () => {
     writeActions(projectRoot, {
       version: 1,
       actions: [

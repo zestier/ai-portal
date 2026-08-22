@@ -1,4 +1,4 @@
-// Loader + validator for `.zap/actions.json` — the committed, per-project file
+// Loader + validator for `.zap/actions.toml` — the committed, per-project file
 // that declares user-facing action buttons for a conversation's workdir.
 //
 // Security posture (see the ticket): definitions live in the repo (not the
@@ -13,11 +13,12 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { parse } from "smol-toml";
 import { zapSubdir } from "../tools/zap-dir";
 import { isPortalSecretEnvName } from "./runner";
 import { tokensIn } from "./inputs";
 
-export const ACTIONS_FILE = "actions.json";
+export const ACTIONS_FILE = "actions.toml";
 
 // Keys that map to privileged runner capabilities. They are meaningless (and
 // dangerous) in committed project config, so their presence anywhere in the
@@ -276,7 +277,7 @@ export function parseActionsConfig(raw: unknown): LoadActionsResult {
 }
 
 /**
- * Read, parse and validate `<workdir>/.zap/actions.json`.
+ * Read, parse and validate `<workdir>/.zap/actions.toml`.
  *
  * Outcomes:
  *  - file missing  => `{ ok: true, actions: [] }` (a project with no actions
@@ -301,11 +302,11 @@ export async function loadActionsConfig(
   }
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = parse(text);
   } catch (e) {
     return {
       ok: false,
-      error: `actions config invalid: not valid JSON (${(e as Error).message})`,
+      error: `actions config invalid: not valid TOML (${(e as Error).message})`,
     };
   }
   return parseActionsConfig(raw);
