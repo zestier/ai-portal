@@ -565,3 +565,113 @@ describe("message-edit.regenerateFromAssistant", () => {
     ).toThrowError(expect.objectContaining({ reason: "no_user_message" }));
   });
 });
+
+describe("message-edit.editAssistantMessage", () => {
+  beforeEach(async () => {
+    await setupLocalEnv("portal-message-edit-assistant-test-");
+  });
+
+  it("overwrites the assistant message in place, leaving later messages and usage untouched", async () => {
+    const { users, convs, messages, usage, edit } = await freshImports();
+    const u = users.ensureLocalUser();
+    const conv = convs.create(u.id, {
+      title: "src",
+      workdir: "/tmp",
+      model: null,
+    });
+
+    const u1 = messages.append(conv.id, { role: "user", content: "prompt" });
+    const a1 = messages.append(conv.id, {
+      role: "assistant",
+      content: "original reply",
+    });
+    const a2 = messages.append(conv.id, {
+      role: "assistant",
+      content: "a later reply",
+    });
+    usage.upsert(conv.id, { currentTokens: 5000, tokenLimit: 128_000 });
+
+    const result = edit.editAssistantMessage({
+      userId: u.id,
+      conversationId: conv.id,
+      messageId: a1.id,
+      newContent: "fixed by hand",
+    });
+
+    expect(result.message).toMatchObject({
+      id: a1.id,
+      content: "fixed by hand",
+      role: "assistant",
+    });
+    // No messages added/removed/re-ordered; only content of a1 changed.
+    expect(messages.listByConversation(conv.id)).toMatchObject([
+      { id: u1.id, role: "user", content: "prompt" },
+      { id: a1.id, role: "assistant", content: "fixed by hand" },
+      { id: a2.id, role: "assistant", content: "a later reply" },
+    ]);
+    // Save-only: usage survives (unlike inline edit, which clears it).
+    expect(usage.get(conv.id)).toMatchObject({
+      currentTokens: 5000,
+      tokenLimit: 128_000,
+    });
+  });
+
+  it("rejects editing a non-assistant message", async () => {
+    const { users, convs, messages, edit } = await freshImports();
+    const u = users.ensureLocalUser();
+    const conv = convs.create(u.id, {
+      title: "src",
+      workdir: "/tmp",
+      model: null,
+    });
+    const u1 = messages.append(conv.id, { role: "user", content: "prompt" });
+
+    expect(() =>
+      edit.editAssistantMessage({
+        userId: u.id,
+        conversationId: conv.id,
+        messageId: u1.id,
+        newContent: "nope",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ reason: "not_assistant_message" }),
+    );
+  });
+
+  it("rejects an unknown message", async () => {
+    const { users, convs, edit } = await freshImports();
+    const u = users.ensureLocalUser();
+    const conv = convs.create(u.id, {
+      title: "src",
+      workdir: "/tmp",
+      model: null,
+    });
+    expect(() =>
+      edit.editAssistantMessage({
+        userId: u.id,
+        conversationId: conv.id,
+        messageId: 99999,
+        newContent: "nope",
+      }),
+    ).toThrowError(expect.objectContaining({ reason: "message_not_found" }));
+  });
+
+  it("rejects empty content", async () => {
+    const { users, convs, messages, edit } = await freshImports();
+    const u = users.ensureLocalUser();
+    const conv = convs.create(u.id, {
+      title: "src",
+      workdir: "/tmp",
+      model: null,
+    });
+    messages.append(conv.id, { role: "assistant", content: "hi" });
+    expect(() =>
+      edit.editAssistantMessage({
+        userId: u.id,
+        conversationId: conv.id,
+        messageId: 1,
+        newContent: "",
+      }),
+    ).toThrowError(expect.objectContaining({ reason: "content_required" }));
+  });
+});

@@ -755,6 +755,19 @@
     attachStream(turnId);
   }
 
+  // Assistant-message text edit (save-only). The server overwrote the message
+  // content in place — mirror the new text locally so the transcript updates
+  // without a round-trip fetch. No truncation, no re-run, nothing after the
+  // message changes.
+  function handleAssistantEdited(messageId: string, content: string) {
+    store.applyToMessage(transcript, messageId, (m) => {
+      m.content = content;
+      m.status = "complete";
+      m.errorCode = null;
+    });
+    markOffsetsDirty();
+  }
+
   // Regenerate: the server discarded the assistant reply (and anything after)
   // and re-ran the turn from the unchanged preceding user message. Truncate
   // the rendered thread to that user message and attach to the new turn's
@@ -1979,6 +1992,7 @@
                 busy={streaming}
                 onForked={refreshForks}
                 onInlineEdited={handleInlineEdited}
+                onAssistantEdited={handleAssistantEdited}
                 onRegenerated={handleRegenerated}
                 onToolRerunStarted={handleToolRerunStarted}
                 onMemoryRetryStarted={handleMemoryRetryStarted}

@@ -75,6 +75,56 @@ export function inlineEditMessage(input: InlineEditInput): InlineEditResult {
   );
 }
 
+export interface AssistantEditResult {
+  conversation: Conversation;
+  message: Message;
+}
+
+/**
+ * Overwrite an assistant message's content in place. Save-only: no re-run, no
+ * truncation, no memory rewind — the transcript keeps its shape, the edited
+ * text is just persisted. Mirrors user-message inline edit persistence but
+ * deliberately skips everything that re-runs the model.
+ */
+export function editAssistantMessage(
+  input: InlineEditInput,
+): AssistantEditResult {
+  if (!input.newContent) {
+    throw new InlineEditRejected("content_required", "content is required.");
+  }
+
+  const { conv, all } = loadIdleConversation(
+    input.userId,
+    input.conversationId,
+  );
+  const targetIdx = all.findIndex(
+    (m) =>
+      msgCodec.parse(m.id) ===
+      (typeof input.messageId === "number"
+        ? input.messageId
+        : msgCodec.parse(input.messageId)),
+  );
+  const target = targetIdx >= 0 ? all[targetIdx] : null;
+  if (!target) throw new InlineEditRejected("message_not_found");
+  if (target.role !== "assistant") {
+    throw new InlineEditRejected(
+      "not_assistant_message",
+      "Only assistant messages can be edited.",
+    );
+  }
+
+  // Plain content update — same persistence path the streaming turn runner
+  // uses to commit assistant text (survives reload). No truncation or rerun.
+  messages.updateContentOnly(target.id, input.newContent);
+
+  const refreshed = convs.get(convCodec.parse(conv.id), input.userId);
+  if (!refreshed) throw new InlineEditRejected("conversation_not_found");
+  return {
+    conversation: refreshed,
+    message: { ...target, content: input.newContent },
+  };
+}
+
 export interface RegenerateInput {
   userId: number;
   conversationId: string | number;

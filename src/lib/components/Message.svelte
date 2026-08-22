@@ -31,6 +31,7 @@
     busy = false,
     onForked,
     onInlineEdited,
+    onAssistantEdited,
     onRegenerated,
     onToolRerunStarted,
     onMemoryRetryStarted,
@@ -54,6 +55,7 @@
       content: string,
       turnId: string,
     ) => void;
+    onAssistantEdited?: (messageId: string, content: string) => void;
     onRegenerated?: (userMessageId: string, turnId: string) => void;
     onToolRerunStarted?: (turnId: string) => void;
     onMemoryRetryStarted?: (turnId: string) => void;
@@ -103,6 +105,18 @@
   );
 
   const liveForks = $derived(forks.filter((f) => f.archivedAt == null));
+
+  // Assistant-message in-place text edit (save-only, no re-run). Requires a
+  // persisted, non-streaming assistant message and the parent conversation id
+  // — mirrors `canAssistantActions` so ephemeral/streaming messages are
+  // excluded. `busy` is applied as disabled (like Retry) so a running turn
+  // can't start an edit that'd be rejected server-side.
+  const canEditAssistant = $derived(
+    message.role === "assistant" &&
+      (message.status === "complete" || message.status === "error") &&
+      !!conversationId &&
+      messageId.is(message.id),
+  );
 
   function beginEdit() {
     editText = message.content;
@@ -184,6 +198,34 @@
       };
       editing = false;
       onInlineEdited?.(data.userMessageId, text, data.turnId);
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function submitAssistantEdit() {
+    const text = editText.trim();
+    if (!text || !conversationId || submitting) return;
+    submitting = true;
+    errorMsg = null;
+    try {
+      const r = await fetch(
+        `/api/conversations/${conversationId}/messages/${message.id}/edit-assistant`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: text }),
+        },
+      );
+      if (!r.ok) {
+        const body = await r.text();
+        errorMsg = body || `Save failed (${r.status})`;
+        return;
+      }
+      editing = false;
+      onAssistantEdited?.(String(message.id), text);
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
@@ -354,6 +396,31 @@
         Edit
       </button>
     {/if}
+    {#if canEditAssistant && !editing}
+      <button
+        type="button"
+        class="action-btn edit-btn"
+        onclick={beginEdit}
+        disabled={busy}
+        title="Edit this message's text"
+        aria-label="Edit message"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5z" />
+        </svg>
+        Edit
+      </button>
+    {/if}
     {#if canAssistantActions}
       <button
         type="button"
@@ -422,7 +489,7 @@
     {/if}
   </header>
   <div class="body">
-    {#if message.role === "assistant"}
+    {#if message.role === "assistant" && !editing}
       {#each parts as p, i (i)}
         {#if p.kind === "text"}
           <div class="text-part" use:copyableCodeBlocks use:zoomableImages>
@@ -493,7 +560,7 @@
       {#if thinking}
         <ThinkingIndicator />
       {/if}
-    {:else if editing}
+    {:else if message.role === "user" && editing}
       <form
         class="edit-form"
         onsubmit={(e) => {
@@ -542,6 +609,40 @@
             title="Create an isolated worktree at this message's snapshot"
           >
             Fork in worktree
+          </button>
+        </div>
+      </form>
+    {:else if editing}
+      <form
+        class="edit-form"
+        onsubmit={(e) => {
+          e.preventDefault();
+          submitAssistantEdit();
+        }}
+      >
+        <textarea
+          bind:value={editText}
+          rows="5"
+          disabled={submitting}
+          aria-label="Edited message"></textarea>
+        <div class="edit-actions">
+          <span class="hint muted">
+            Saves this message's text. No re-run and nothing after this message
+            changes.
+          </span>
+          <button
+            type="button"
+            class="btn sm"
+            onclick={cancelEdit}
+            disabled={submitting}>Cancel</button
+          >
+          <button
+            type="submit"
+            class="btn primary sm"
+            disabled={submitting || !editText.trim()}
+            title="Save this message's text"
+          >
+            {submitting ? "Saving…" : "Save"}
           </button>
         </div>
       </form>
