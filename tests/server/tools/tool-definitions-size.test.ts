@@ -27,6 +27,8 @@ import { setupLocalEnv } from "../../helpers/env";
 // inherently additive to the per-turn cost (the pre-T58 default set already sat
 // within ~69 bytes of 24_000, so a new tool can't be trimmed into the old
 // headroom). Bumped only far enough to cover the leanest ask_user definition.
+// ask_user became array-only in T74 (single `questions` array property); the
+// schema loses the per-field `description`s so it still fits the same budget.
 const TOOL_DEFINITIONS_BYTES_BUDGET = 24_400;
 
 // A representative options object matching a real conversation: no disabled

@@ -260,8 +260,7 @@ describe("Svelte component regression coverage", () => {
         {
           requestId: "input-1",
           kind: "user_input",
-          question: "Choose a branch",
-          choices: ["develop"],
+          questions: [{ question: "Choose a branch", choices: ["develop"] }],
           allowFreeform: true,
         },
         ["The agent has a question", "Choose a branch", "develop"],

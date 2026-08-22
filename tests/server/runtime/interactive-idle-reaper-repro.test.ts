@@ -90,7 +90,7 @@ function registerPrompt(
       : {
           requestId,
           kind: "user_input" as const,
-          question: "pick one",
+          questions: [{ question: "pick one" }],
           allowFreeform: true,
         };
   interactive.register({

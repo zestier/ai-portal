@@ -7,8 +7,8 @@ import { portalToolCatalog } from "../../../src/lib/server/tools/catalog";
 
 // The `ask_user` tool is `never-prompt` (nothing to gate at the call site)
 // and always raises a `user_input` dialog, waiting for the human's answer.
-// These tests drive the tool handler directly, resolve the question it
-// raises, and assert the returned answer / cancellation behavior.
+// These tests drive the tool handler directly, resolve the questions it
+// raises, and assert the returned answers / cancellation behavior.
 
 async function makeHarness() {
   const interactive =
@@ -38,7 +38,7 @@ async function makeHarness() {
 async function driveAndAnswer(
   harness: Awaited<ReturnType<typeof makeHarness>>,
   args: Record<string, unknown>,
-  answer: { kind: "user_input"; answer: string; wasFreeform?: boolean },
+  answers: { kind: "user_input"; answers: string[]; wasFreeform?: boolean },
 ): Promise<{ result: ToolResult; view: Record<string, unknown> }> {
   const resultPromise = harness.tool.handler(args) as Promise<ToolResult>;
 
@@ -58,7 +58,7 @@ async function driveAndAnswer(
   const resolved = harness.interactive.resolve(
     view.requestId,
     harness.user.id,
-    answer,
+    answers,
   );
   expect(resolved).toBe(true);
 
@@ -79,22 +79,30 @@ describe("ask_user", () => {
     expect(entry?.permissionBehavior).toBe("never-prompt");
   });
 
-  it("raises a user_input view carrying the question and resolves to the answer", async () => {
+  it("raises a user_input view carrying the questions and resolves to the answers", async () => {
     const harness = await makeHarness();
     const { result, view } = await driveAndAnswer(
       harness,
       {
-        question: "Which database do you prefer?",
-        choices: ["sqlite", "postgres"],
+        questions: [
+          {
+            question: "Which database do you prefer?",
+            choices: ["sqlite", "postgres"],
+          },
+        ],
       },
-      { kind: "user_input", answer: "sqlite", wasFreeform: false },
+      { kind: "user_input", answers: ["sqlite"], wasFreeform: false },
     );
 
     expect(view).toMatchObject({
       requestId: expect.any(String),
       kind: "user_input",
-      question: "Which database do you prefer?",
-      choices: ["sqlite", "postgres"],
+      questions: [
+        {
+          question: "Which database do you prefer?",
+          choices: ["sqlite", "postgres"],
+        },
+      ],
       allowFreeform: true,
     });
     // The question was raised into the turn stream.
@@ -105,10 +113,43 @@ describe("ask_user", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result).toEqual({
-        question: "Which database do you prefer?",
-        answer: "sqlite",
+        answers: [
+          { question: "Which database do you prefer?", answer: "sqlite" },
+        ],
         wasFreeform: false,
       });
+    }
+  });
+
+  it("raises a batch view with multiple items and resolves answers in order", async () => {
+    const harness = await makeHarness();
+    const { result, view } = await driveAndAnswer(
+      harness,
+      {
+        questions: [{ question: "First?" }, { question: "Second?" }],
+      },
+      { kind: "user_input", answers: ["one", "two"], wasFreeform: true },
+    );
+
+    expect(view).toMatchObject({
+      kind: "user_input",
+      questions: [{ question: "First?" }, { question: "Second?" }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Pair-array: each entry self-contained with its question echoed, in order.
+      expect(result.result).toEqual({
+        answers: [
+          { question: "First?", answer: "one" },
+          { question: "Second?", answer: "two" },
+        ],
+        wasFreeform: true,
+      });
+      // And the human-readable summary formats one numbered line per answer.
+      expect(result.summary).toBe(
+        "The human answered:\n1. First? one\n2. Second? two",
+      );
     }
   });
 
@@ -116,14 +157,16 @@ describe("ask_user", () => {
     const harness = await makeHarness();
     const { result } = await driveAndAnswer(
       harness,
-      { question: "What is the release name?" },
-      { kind: "user_input", answer: "something custom", wasFreeform: true },
+      { questions: [{ question: "What is the release name?" }] },
+      { kind: "user_input", answers: ["something custom"], wasFreeform: true },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result).toMatchObject({
         wasFreeform: true,
-        answer: "something custom",
+        answers: [
+          { question: "What is the release name?", answer: "something custom" },
+        ],
       });
     }
   });
@@ -131,7 +174,7 @@ describe("ask_user", () => {
   it("reports a cancellation (turn abort) as question_cancelled", async () => {
     const harness = await makeHarness();
     const resultPromise = harness.tool.handler({
-      question: "Your preference?",
+      questions: [{ question: "Your preference?" }],
     }) as Promise<ToolResult>;
     for (let i = 0; i < 200; i++) {
       if (
@@ -150,9 +193,33 @@ describe("ask_user", () => {
     if (!result.ok) expect(result.error.code).toBe("question_cancelled");
   });
 
-  it("rejects an empty question", async () => {
+  it("rejects an empty questions array", async () => {
     const harness = await makeHarness();
-    const parsed = harness.tool.argsSchema!.safeParse({ question: "   " });
+    const parsed = harness.tool.argsSchema!.safeParse({ questions: [] });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects more than 10 questions", async () => {
+    const harness = await makeHarness();
+    const parsed = harness.tool.argsSchema!.safeParse({
+      questions: Array.from({ length: 11 }, (_, i) => ({ question: `q${i}` })),
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects an item with an empty question", async () => {
+    const harness = await makeHarness();
+    const parsed = harness.tool.argsSchema!.safeParse({
+      questions: [{ question: "   " }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects the old single-question shape", async () => {
+    const harness = await makeHarness();
+    const parsed = harness.tool.argsSchema!.safeParse({
+      question: "Your preference?",
+    });
     expect(parsed.success).toBe(false);
   });
 });

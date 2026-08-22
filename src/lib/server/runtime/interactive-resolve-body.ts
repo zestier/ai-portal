@@ -58,7 +58,7 @@ const AutoModeSwitchBody = z.object({
 
 const UserInputBody = z.object({
   kind: z.literal("user_input"),
-  answer: z.string(),
+  answers: z.array(z.string()),
   wasFreeform: z.boolean().optional(),
 });
 

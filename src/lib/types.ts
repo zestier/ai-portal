@@ -874,10 +874,14 @@ export interface InteractiveAutoModeSwitchView {
   retryAfterSeconds?: number | undefined;
 }
 
-export interface InteractiveUserInputView {
-  kind: "user_input";
+export interface InteractiveQuestionItem {
   question: string;
   choices?: string[] | undefined;
+}
+
+export interface InteractiveUserInputView {
+  kind: "user_input";
+  questions: InteractiveQuestionItem[];
   allowFreeform: boolean;
 }
 
@@ -987,7 +991,7 @@ export type InteractiveResponse =
       feedback?: string;
     }
   | { kind: "auto_mode_switch"; decision: "yes" | "no" }
-  | { kind: "user_input"; answer: string; wasFreeform?: boolean }
+  | { kind: "user_input"; answers: string[]; wasFreeform?: boolean }
   | {
       kind: "elicitation";
       action: "accept" | "decline" | "cancel";

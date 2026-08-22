@@ -7,7 +7,7 @@ import type {
 const interactiveKindDescriptors = {
   permission: () => ({ kind: "permission", decision: "deny" }),
   auto_mode_switch: () => ({ kind: "auto_mode_switch", decision: "no" }),
-  user_input: () => ({ kind: "user_input", answer: "", wasFreeform: true }),
+  user_input: () => ({ kind: "user_input", answers: [], wasFreeform: true }),
   elicitation: () => ({ kind: "elicitation", action: "cancel" }),
   sampling: () => ({ kind: "sampling", action: "ack" }),
   mcp_oauth: () => ({ kind: "mcp_oauth", action: "ack" }),
