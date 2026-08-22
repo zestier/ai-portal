@@ -509,6 +509,7 @@ function createPiPermissionBridge(
     name: "portal-permission-bridge",
     hidden: true,
     factory: (pi) => {
+      pi.on("after_provider_response")
       pi.on("tool_call", async (event) => {
         const decision = await onPermission(
           event.toolName,

@@ -372,17 +372,30 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
       });
     } else if (ev.type === "tool.result") {
       emit(ev);
-      const tc = pendingTools.get(toolCodec.parse(ev.toolCallId));
+      const toolCallId = toolCodec.parse(ev.toolCallId);
+      const status = ev.ok ? "ok" : "error";
+      const resultJson = safeJson(ev.output ?? ev.summary);
+      const endedAt = Date.now();
+      const tc = pendingTools.get(toolCallId);
       if (tc) {
-        tc.status = ev.ok ? "ok" : "error";
-        tc.resultJson = safeJson(ev.output ?? ev.summary);
-        tc.endedAt = Date.now();
-        messages.updateToolCall(toolCodec.parse(ev.toolCallId), {
-          status: tc.status,
-          resultJson: tc.resultJson,
-          endedAt: tc.endedAt,
-        });
+        tc.status = status;
+        tc.resultJson = resultJson;
+        tc.endedAt = endedAt;
+      } else {
+        // Result for a tool.call this turn's stream never tracked. On the
+        // stream this loop dispatches on every tool.call registers before its
+        // result, so a miss is a divergence between the minting side and this
+        // track (e.g. an id the DB has but this instance never saw start) —
+        // not a signal to drop the write. Persist the result anyway so the
+        // row can't be left stuck `pending`, and surface the anomaly instead
+        // of silently no-op'ing.
+        log.warn("turn.tool_result.untracked_call", { toolCallId, ok: ev.ok });
       }
+      messages.updateToolCall(toolCallId, {
+        status,
+        resultJson,
+        endedAt,
+      });
     } else if (ev.type === "subagent.lifecycle") {
       emit(ev);
       messages.updateBackgroundAgentLifecycle(

@@ -1260,6 +1260,73 @@ describe("turn-runner", () => {
     });
   });
 
+  it("finalizes a tool.result whose tool.call this turn never tracked", async () => {
+    // Regression: a tool.result for an id the turn's stream never saw start
+    // must still finalize the persisted row. Before the fix the result was
+    // silently dropped (`if (tc) {}`), leaving the row stuck `status='pending'`
+    // — the card "disappeared". The row is seeded directly to stand in for a
+    // call persisted by an earlier pass this turn-runner instance never saw.
+    const { users, convs, turnRunner } = await freshImports();
+    const messages = await import("../../../src/lib/server/db/repos/messages");
+    const user = users.ensureLocalUser();
+    const wd = makeTmpDir("portal-wd-");
+    const conv = convs.create(user.id, {
+      title: "untracked-result",
+      workdir: wd,
+      model: "gpt-4",
+    });
+    const assistantMsg = messages.append(conv.id, {
+      role: "assistant",
+      content: "",
+    });
+    messages.insertToolCall(assistantMsg.id, {
+      id: 1,
+      tool: "bash",
+      argsJson: JSON.stringify({}),
+      resultJson: null,
+      status: "pending",
+      startedAt: Date.now() - 100,
+      endedAt: null,
+      textOffset: 0,
+      parentToolCallId: null,
+    });
+    acquireMock.mockResolvedValue(
+      makeFakeSession([
+        { type: "message.start", messageId: "M1", role: "assistant" },
+        { type: "message.end", messageId: "M1" },
+        // Deliberately no preceding tool.call: exercises the untracked branch.
+        {
+          type: "tool.result",
+          toolCallId: "X1",
+          ok: true,
+          summary: "ok",
+          output: "finalized",
+        },
+      ]),
+    );
+
+    const turn = await turnRunner.startTurn({
+      bridge: {
+        conversationId: convCodec.parse(conv.id),
+        userId: user.id,
+        workingDirectory: wd,
+        model: "gpt-4",
+        policy: "prompt",
+      },
+      prompt: "run",
+      conversationId: convCodec.parse(conv.id),
+    });
+    for await (const { event } of turn.subscribe()) {
+      if (event.type === "done") break;
+    }
+
+    const row = messages
+      .listByConversation(conv.id)
+      .flatMap((m) => m.toolCalls ?? [])
+      .find((t) => t.id === "X1");
+    expect(row).toMatchObject({ status: "ok", resultJson: "finalized" });
+  });
+
   it("dedupes repeated file edit events during incremental persistence", async () => {
     const { users, convs, turnRunner } = await freshImports();
     const messages = await import("../../../src/lib/server/db/repos/messages");
