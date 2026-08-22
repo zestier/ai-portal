@@ -45,7 +45,14 @@ export function ensureLocalUser(key = "local"): User {
     const existing = db
       .prepare("SELECT * FROM users WHERE github_login = ?")
       .get(githubLogin) as UserRow | undefined;
-    if (existing) return rowToUser(existing);
+    if (existing) {
+      // Existing installs predate the bundled caveman extension — seed it so
+      // the row appears for them too, not just at user-creation time.
+      // `ensureCavemanExtensionSeeded` is idempotent (INSERT-if-missing by the
+      // reserved name), so this is a cheap no-op once present.
+      ensureCavemanExtensionSeeded(existing.id);
+      return rowToUser(existing);
+    }
     const now = Date.now();
     const info = db
       .prepare(

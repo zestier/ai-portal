@@ -143,4 +143,27 @@ describe("portal extensions repo", () => {
     expect(exts.list(b.id)).toHaveLength(1);
     expect(exts.list(a.id)[0].id).not.toBe(exts.list(b.id)[0].id);
   });
+
+  it("ensureLocalUser seeds an EXISTING user who predates the builtin (upgrade path)", async () => {
+    const users = await import("../../src/lib/server/db/repos/users");
+    const exts = await import("../../src/lib/server/db/repos/extensions");
+    const user = users.ensureLocalUser();
+
+    // Simulate a pre-existing install: the user's DB row is long gone before
+    // this feature shipped, but the user already exists. Remove the seeded
+    // caveman row to reproduce the "old DB, upgraded binary" state.
+    const seeded = exts.list(user.id);
+    expect(seeded).toHaveLength(1);
+    expect(exts.remove(user.id, seeded[0].id)).toBe(true);
+    expect(exts.list(user.id)).toHaveLength(0);
+
+    // The next ensureLocalUser for the SAME (already-existing) user must
+    // re-seed the builtin — it cannot rely on the user-creation branch.
+    const again = users.ensureLocalUser("local");
+    expect(again.id).toBe(user.id);
+    const rows = exts.list(user.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe("Caveman response style");
+    expect(rows[0].enabled).toBe(true);
+  });
 });
