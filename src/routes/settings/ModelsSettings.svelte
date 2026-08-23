@@ -37,6 +37,27 @@
   let keyDrafts = $state<Record<string, string>>({});
   let savingKey = $state<Record<string, boolean>>({});
 
+  // --- model filter (per provider, client-side) ---
+  let modelSearch = $state<Record<string, string>>({});
+  let enabledOnly = $state<Record<string, boolean>>({});
+
+  const matchesModel = (m: ManagedModel, q: string): boolean => {
+    const query = q.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      m.id.toLowerCase().includes(query) ||
+      m.name.toLowerCase().includes(query) ||
+      (m.purpose ?? "").toLowerCase().includes(query)
+    );
+  };
+
+  const visibleModelsFor = (providerId: string): ManagedModel[] =>
+    modelsFor(providerId).filter(
+      (m) =>
+        (enabledOnly[providerId] ? m.enabled : true) &&
+        matchesModel(m, modelSearch[providerId] ?? ""),
+    );
+
   // --- model form (per provider) ---
   let modelFormFor = $state<string | null>(null);
   let mId = $state("");
@@ -605,8 +626,36 @@
                 </div>
               {/if}
 
+              <div class="model-filter">
+                <input
+                  type="search"
+                  placeholder="Filter by id, name, purpose…"
+                  value={modelSearch[p.id] ?? ""}
+                  oninput={(e) =>
+                    (modelSearch = {
+                      ...modelSearch,
+                      [p.id]: e.currentTarget.value,
+                    })}
+                />
+                <label class="toggle">
+                  <input
+                    type="checkbox"
+                    checked={enabledOnly[p.id] ?? false}
+                    onchange={(e) =>
+                      (enabledOnly = {
+                        ...enabledOnly,
+                        [p.id]: e.currentTarget.checked,
+                      })}
+                  />
+                  enabled only
+                </label>
+                <span class="muted small">
+                  {visibleModelsFor(p.id).length} / {modelsFor(p.id).length}
+                </span>
+              </div>
+
               <div class="models-list">
-                {#each modelsFor(p.id) as m (m.id)}
+                {#each visibleModelsFor(p.id) as m (m.id)}
                   <div class="model-row">
                     <label class="toggle">
                       <input
@@ -652,6 +701,8 @@
                     No models yet — add one, fetch the provider catalog, or
                     {#if p.builtin}import from pi's catalog{/if}.
                   </p>
+                {:else if visibleModelsFor(p.id).length === 0}
+                  <p class="muted small">No models match the filter.</p>
                 {/if}
               </div>
 
@@ -866,6 +917,16 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .model-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .model-filter input {
+    flex: 1;
+    min-width: 12rem;
   }
   .models-list {
     display: flex;
