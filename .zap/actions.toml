@@ -44,3 +44,10 @@ label = "Verify"
 description = "Run the full verification suite"
 permission = "user"
 steps = [{ label = "verify", command = "pnpm", args = ["run", "verify"] }]
+
+[[actions]]
+id = "clear-wireit-cache"
+label = "Clear Wireit cache"
+description = "Remove Wireit's local build cache"
+permission = "user"
+steps = [{ label = "clear Wireit cache", command = "rm", args = ["-rf", ".wireit"] }]
