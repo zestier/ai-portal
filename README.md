@@ -47,22 +47,20 @@ host and reach the portal over the tailnet (see
 
 ## Scripts
 
-| Script                               | Purpose                                                                            |
-| ------------------------------------ | ---------------------------------------------------------------------------------- |
-| `pnpm run dev`                       | Vite dev server with HMR.                                                          |
-| `pnpm run dev:isolated`              | Like `dev`, but points `DATA_DIR` at a fresh temp dir. See [AGENTS.md](AGENTS.md). |
-| `pnpm run build`                     | Production build into `build/`.                                                    |
-| `pnpm start`                         | Run the production build (`node build`).                                           |
-| `pnpm run serve`                     | Supervisor that runs the build from `build.live/` and supports in-app redeploy.    |
-| `pnpm run check`                     | `svelte-check` + TS.                                                               |
-| `pnpm run lint`                      | ESLint + Prettier check.                                                           |
-| `pnpm run format`                    | Prettier write.                                                                    |
-| `pnpm test`                          | Vitest unit tests.                                                                 |
-| `pnpm run test:e2e`                  | Build + Playwright e2e (uses the stubbed pi model).                                |
-| `pnpm run test:e2e:run`              | Playwright e2e only; expects `build/` to already exist.                            |
-| `pnpm run verify`                    | Serial lint/unit/build/check/e2e gate used by redeploy and pre-commit.             |
-| `pnpm run verify -- --concurrency 3` | Run the same gate with up to three independent phases in parallel.                 |
-| `pnpm run verify:sequential`         | Explicit serial alias for the same verify phases.                                  |
+| Script                  | Purpose                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm run dev`          | Vite dev server with HMR.                                                                             |
+| `pnpm run dev:isolated` | Like `dev`, but points `DATA_DIR` at a fresh temp dir. See [AGENTS.md](AGENTS.md).                    |
+| `pnpm run build`        | Production build into `build/`.                                                                       |
+| `pnpm start`            | Run the production build (`node build`).                                                              |
+| `pnpm run serve`        | Supervisor that runs the build from `build.live/` and supports in-app redeploy.                       |
+| `pnpm run check`        | `svelte-check` + TS.                                                                                  |
+| `pnpm run lint`         | ESLint + Prettier check.                                                                              |
+| `pnpm run format`       | Prettier write.                                                                                       |
+| `pnpm test`             | Vitest unit tests.                                                                                    |
+| `pnpm run test:e2e`     | Build + Playwright e2e (uses the stubbed pi model).                                                   |
+| `pnpm run test:e2e:run` | Playwright e2e only; expects `build/` to already exist.                                               |
+| `pnpm run verify`       | Full lint/unit/build/check/e2e gate used by redeploy and pre-commit, with wireit's incremental cache. |
 
 This project uses **pnpm** (declared via `packageManager` in `package.json`).
 Use `corepack enable` once to make pnpm available without a global install.
@@ -73,15 +71,13 @@ at `scripts/git-hooks/` (containing a `pre-commit` that runs
 `SKIP_VERIFY=1 git commit ...`.
 
 `pnpm run verify` preserves the full quality gate: lint, Svelte/TypeScript
-check, unit tests, production build, and Playwright e2e. On this workspace
-(2026-05-23), the sequential phase baseline was lint 4.8s, check 3.5s,
-unit 3.9s, build 3.7s, and Playwright e2e 6.0s for a 22.0s total. The
-parallel runner uses a small DAG: lint/unit/build have no dependencies, and
-check/e2e depend on build. e2e stays after build because it uses `build/`,
-`e2e/.tmp-data`, `playwright-report/`, and `test-results/`, while check is
-kept after build so both phases do not write `.svelte-kit` at the same time.
-Each child line is prefixed with its phase label so terminal, pre-commit, and
-redeploy logs identify failures clearly.
+check, unit tests, production build, and Playwright e2e. The task graph and
+incremental caching are handled by [wireit](https://wireit.dev), configured in
+the `"wireit"` section of `package.json`: `lint` and `unit` (the `test`
+script) have no dependencies and run in parallel; `build` then `check` and
+`e2e` follow. Wireit skips any phase whose inputs are unchanged and whose
+outputs are still present, so re-running `pnpm run verify` with no changes is
+a near-instant no-op that restores everything from cache.
 
 ## Goals
 
