@@ -159,6 +159,19 @@
     tags = { ...tags, [field]: tags[field].filter((t) => t !== value) };
   }
 
+  // Dismiss "inherit" to enable editing a tag field. Shared by the
+  // container's onclick and onkeydown (role=button div, not <button>,
+  // because it houses a nested text <input>). Guarded on the dimmed state.
+  function dismissInherit(field: string) {
+    if (tagInherit[field]) {
+      tagInherit = { ...tagInherit, [field]: false };
+      setTimeout(
+        () => document.getElementById(`routing-${field}-input`)?.focus(),
+        0,
+      );
+    }
+  }
+
   function number(s: string): number | undefined {
     const n = Number(s);
     return s.trim() !== "" && Number.isFinite(n) ? n : undefined;
@@ -258,18 +271,17 @@
               /> inherit
             </label>
           </div>
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div
             class="tag-input"
             class:dim={tagInherit[f.key]}
-            onclick={() => {
-              if (tagInherit[f.key]) {
-                tagInherit = { ...tagInherit, [f.key]: false };
-                setTimeout(
-                  () =>
-                    document.getElementById(`routing-${f.key}-input`)?.focus(),
-                  0,
-                );
+            role="button"
+            tabindex={tagInherit[f.key] ? 0 : -1}
+            aria-label={tagInherit[f.key] ? `Edit ${f.label}` : undefined}
+            onclick={() => dismissInherit(f.key)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                dismissInherit(f.key);
               }
             }}
           >

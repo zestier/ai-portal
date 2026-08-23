@@ -122,7 +122,7 @@
       ]
     },
     "check": {
-      "command": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+      "command": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
       "dependencies": [
         "build"
       ],
