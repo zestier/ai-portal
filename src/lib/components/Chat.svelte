@@ -923,6 +923,13 @@
           break;
         }
         const m = msgs[target.index];
+        // Dedupe: a re-delivered `tool.call` (mirrors the `message.start`
+        // guard — a reconnect can re-send an event we already hold) would
+        // otherwise push a ghost `pending` card that never completes: a
+        // single delivered `tool.result` updates the first matching record,
+        // leaving the ghost stuck `pending` until a reload swaps the body
+        // for the single DB record and it silently vanishes.
+        if ((m.toolCalls ?? []).some((t) => t.id === ev.toolCallId)) break;
         const isChild = !!ev.parentToolCallId;
         (m.toolCalls ??= []).push({
           id: ev.toolCallId,

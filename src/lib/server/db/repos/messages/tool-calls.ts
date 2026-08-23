@@ -1,4 +1,5 @@
 import { getDb } from "../../index";
+import { log } from "$lib/server/log";
 import {
   conversationId as convCodec,
   messageId as msgCodec,
@@ -116,9 +117,21 @@ export function updateToolCall(
   }
   if (fields.length === 0) return;
   values.push(id);
-  getDb()
+  const info = getDb()
     .prepare(`UPDATE tool_calls SET ${fields.join(", ")} WHERE id = ?`)
     .run(...values);
+  if (info.changes === 0) {
+    // A 0-row update means the id the mirror mapped to doesn't exist — a
+    // tool.result landed on a divergent id. Log loudly (do NOT upsert: the
+    // tool.call that should own this row never happened, and inventing one
+    // hides the id-stability bug upstream in session/events. Loud failure
+    // surfaces it for fixes like the shared tool-id map).
+    log.warn("tool.result_update_missed_row", {
+      id,
+      status: patch.status,
+      resultJsonLength: patch.resultJson?.length ?? 0,
+    });
+  }
 }
 
 export function updateBackgroundAgentLifecycle(

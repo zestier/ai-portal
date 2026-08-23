@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,7 @@ import * as users from "../../../src/lib/server/db/repos/users";
 import * as convs from "../../../src/lib/server/db/repos/conversations";
 import * as messages from "../../../src/lib/server/db/repos/messages";
 import * as settings from "../../../src/lib/server/db/repos/settings";
+import { log } from "../../../src/lib/server/log";
 import { resetServerSingletons, setupLocalEnv } from "../../helpers/env";
 import type { SessionMode } from "../../../src/lib/types";
 
@@ -26,6 +27,7 @@ describe("db migrations + repos", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     delete process.env.PROJECT_ROOT;
     rmSync(projectRoot, { recursive: true, force: true });
   });
@@ -912,6 +914,61 @@ describe("db migrations + repos", () => {
       backgroundAgentStartedAt: 120,
       backgroundAgentEndedAt: 130,
     });
+  });
+
+  it("updateToolCall on a missing id logs loudly and affects no row", () => {
+    const warn = vi.spyOn(log, "warn");
+    expect(() =>
+      messages.updateToolCall(999_999, {
+        resultJson: JSON.stringify({ ok: true }),
+        status: "ok",
+        endedAt: 1234,
+      }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("tool.result_update_missed_row", {
+      id: 999_999,
+      status: "ok",
+      resultJsonLength: 11,
+    });
+    const row = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE id = 999_999")
+      .get() as { n: number };
+    expect(row.n).toBe(0);
+  });
+
+  it("updateToolCall on an existing id updates without warning", () => {
+    const u = users.ensureLocalUser();
+    const c = convs.create(u.id, {
+      title: "update no warn",
+      workdir: "/tmp",
+      model: null,
+    });
+    const assistant = messages.append(c.id, {
+      role: "assistant",
+      content: "",
+      status: "streaming",
+    });
+    messages.insertToolCall(assistant.id, {
+      id: 7,
+      tool: "read",
+      argsJson: JSON.stringify({ path: "a" }),
+      resultJson: null,
+      status: "pending",
+      startedAt: 100,
+      endedAt: null,
+      textOffset: 0,
+      parentToolCallId: null,
+    });
+    const warn = vi.spyOn(log, "warn");
+    messages.updateToolCall(7, { status: "ok", endedAt: 110 });
+    expect(
+      warn.mock.calls.filter((c) => c[0] === "tool.result_update_missed_row"),
+    ).toEqual([]);
+    const row = getDb()
+      .prepare("SELECT status, ended_at AS e FROM tool_calls WHERE id = 7")
+      .get() as { status: string; e: number };
+    expect(row).toEqual({ status: "ok", e: 110 });
   });
 
   it("handles conversations whose id lists exceed the SQLite variable limit", () => {

@@ -16,6 +16,14 @@ import { mintToolCallId } from "../db/repos/messages";
 
 const TOOL_SUMMARY_MAX = 200;
 
+// Session-stable SDK→portal tool-id map. Borrowed by every PiEventMapper a
+// provider session constructs across its multiple send()s of a turn, so one
+// SDK tool id maps to ONE numeric portal id for the whole turn. Without this,
+// a second send() minted a fresh numeric id for the same SDK id, and its
+// tool.result wrote under a row that never existed (or clobbered the real
+// one) — stranding the card `pending` forever (see tool-calls.updateToolCall).
+export type ToolCallIdMap = Map<string, number>;
+
 export class PiEventMapper {
   readonly messageId: string;
   // Open reasoning bursts keyed by pi's content index (one per thinking block).
@@ -26,13 +34,18 @@ export class PiEventMapper {
   // pi tool calls carry SDK-string ids; the portal persists numeric tool_calls
   // ids. Map each SDK id to a minted numeric id (stable across the call's
   // start/update/end events so the client and DB correlate them as one call),
-  // exposed to the turn stream as its opaque X-handle.
-  private toolCallIds = new Map<string, number>();
+  // exposed to the turn stream as its opaque X-handle. Shared across the
+  // session's sends (see ToolCallIdMap) so the mapping survives multi-send
+  // turns.
+  private toolCallIds: Map<string, number>;
   private messageEnded = false;
   private emittedError = false;
 
-  constructor(messageId: string) {
+  constructor(messageId: string, sharedToolCallIds?: ToolCallIdMap) {
     this.messageId = messageId;
+    // Borrow the session-stable map; default to a fresh per-instance one for
+    // standalone tests / back-compat callers.
+    this.toolCallIds = sharedToolCallIds ?? new Map();
   }
 
   /** True once a stream-level error event has been emitted (abort or failure). */

@@ -43,7 +43,7 @@ import { workspaceRootsFor } from "../leases";
 import type { ProviderSession } from "./session-contract";
 import { AsyncQueue } from "../runtime/async-queue";
 import { log } from "../log";
-import { PiEventMapper } from "./events";
+import { PiEventMapper, type ToolCallIdMap } from "./events";
 import { loadConfig } from "../config";
 import * as messagesRepo from "../db/repos/messages";
 import { PORTAL_SYSTEM_GUIDANCE } from "../runtime/system-guidance";
@@ -356,6 +356,11 @@ function makePiProviderSession(
   let disposed = false;
 
   const sessionFile = piSession.sessionManager.getSessionFile();
+  // Session-stable SDK→portal tool-id map: shared by every send() of this turn
+  // so one SDK tool id maps to one portal numeric id (the root-cause fix for
+  // a second send minting a fresh id and stranding the persisted tool.call
+  // row: see ToolCallIdMap in events.ts).
+  const sharedToolCallIds: ToolCallIdMap = new Map();
   const session: ProviderSession = {
     provider: opts.provider,
     conversationId: opts.conversationId,
@@ -401,7 +406,7 @@ function makePiProviderSession(
       if (disposed) throw new Error("session disposed");
       const messageId = ""; // sentinel — the turn-runner overwrites it via `ensurePersistedAssistant`
       const queue = new AsyncQueue<PortalEvent>();
-      const mapper = new PiEventMapper(messageId);
+      const mapper = new PiEventMapper(messageId, sharedToolCallIds);
       const unsub = piSession.subscribe((ev) => {
         for (const portalEvent of mapper.map(ev)) queue.push(portalEvent);
         // `agent_end` terminates the run: snapshot this turn's context
