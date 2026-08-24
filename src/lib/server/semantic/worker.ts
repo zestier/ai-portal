@@ -18,7 +18,7 @@ import {
   type SemanticTransaction,
 } from "./store";
 
-const MAX_TURNS = 12;
+const MAX_TURNS = 100;
 const COMPLETE = "semantic_complete";
 const ESCALATE = "semantic_escalate";
 
