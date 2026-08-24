@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dataDir = resolve(__dirname, "e2e/.tmp-data");
+const dataDir = resolve(__dirname, ".generated/e2e");
 
 // Never reuse/attach to an already-running server. The in-app redeploy
 // (src/lib/server/redeploy.ts) runs the full verify gate — including this e2e

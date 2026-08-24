@@ -9,7 +9,9 @@ import { uniqueTitle } from "./helpers/conversations";
 // created inside it is a legal `sourcePath`.
 const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  ".tmp-data",
+  "..",
+  ".generated",
+  "e2e",
 );
 
 function git(cwd: string, args: string[]): string {

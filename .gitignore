@@ -23,7 +23,7 @@ data/
 .DS_Store
 playwright-report/
 test-results/
-e2e/.tmp-data/
+.generated/
 # Playwright CLI (browser automation) scratch: snapshots, console logs, traces.
 .playwright-cli/
 coverage/

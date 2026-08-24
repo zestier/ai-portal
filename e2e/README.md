@@ -14,7 +14,7 @@ The E2E command installs the configured Firefox browser and its Linux system
 dependencies, so `pnpm run verify` works from a fresh dependency install.
 
 The `webServer` in `playwright.config.ts` builds the app and launches
-`node build` on port 4173 against `e2e/.tmp-data/` (wiped on each run).
+`node build` on port 4173 against `.generated/e2e/` (wiped on each run).
 Specs use unique conversations and per-test workdirs so Playwright can run
 them with multiple workers. Set `E2E_WORKERS=1` to force serial execution.
 

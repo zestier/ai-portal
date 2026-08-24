@@ -10,7 +10,9 @@ import { uniqueTitle } from "./helpers/conversations";
 // browser's workspace root is this directory.
 const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  ".tmp-data",
+  "..",
+  ".generated",
+  "e2e",
 );
 
 function createWorkdir() {

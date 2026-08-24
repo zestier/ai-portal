@@ -4,11 +4,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The server runs with cwd=DATA_DIR, so PROJECT_ROOT is e2e/.tmp-data — a
+// The server runs with cwd=DATA_DIR, so PROJECT_ROOT is .generated/e2e — a
 // repository created inside it is a legal worktree source path.
 const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  ".tmp-data",
+  "..",
+  ".generated",
+  "e2e",
 );
 
 function git(cwd: string, args: string[]): string {

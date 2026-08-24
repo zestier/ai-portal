@@ -11,7 +11,9 @@ import { uniqueTitle, waitForAssistantMessage } from "./helpers/conversations";
 // lets this spec exercise the real end-to-end flow instead of stubbing it.
 const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  ".tmp-data",
+  "..",
+  ".generated",
+  "e2e",
 );
 
 function git(cwd: string, args: string[]): string {

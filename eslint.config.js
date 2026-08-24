@@ -39,7 +39,6 @@ export default ts.config(
       ".zap/",
       "dist/",
       "data/",
-      "e2e/.tmp-data/",
       "*.timestamp-*.mjs",
       "playwright-report/",
       "test-results/",

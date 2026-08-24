@@ -66,7 +66,7 @@ What "add a test" means in practice here:
 - The e2e server runs the **production build** with `PI_STUB=1`, so tests
   never hit a real model provider — assert against the stub's deterministic
   behavior rather than live model output.
-- Each run gets an isolated `DATA_DIR` (`e2e/.tmp-data`); the config in
+- Each run gets an isolated `DATA_DIR` (`.generated/e2e`); the config in
   [`playwright.config.ts`](playwright.config.ts) documents the
   CSRF/Origin and `GIT_CEILING_DIRECTORIES` setup it relies on.
 - For API-driven specs, import `test`/`expect` from
