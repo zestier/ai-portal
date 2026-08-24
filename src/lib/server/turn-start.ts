@@ -65,6 +65,8 @@ export async function startTurnFromUserMessage(
       workingDirectory: workdir,
       workspaceKey: conv.workspaceKey,
       model: conv.model ?? cfg.DEFAULT_MODEL,
+      agentArchitecture: conv.agentArchitecture,
+      semanticWorkerModel: conv.semanticWorkerModel,
       policy: userSettings.defaultPolicy,
       mode: conv.mode,
       approvalMode: conv.approvalMode,

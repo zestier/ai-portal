@@ -331,6 +331,13 @@ function assistantTurnOf(message: PiAssistantMessage): ExtractorAssistantTurn {
     content: content.join(""),
     toolCalls,
     ...(reasoning !== undefined ? { reasoning } : {}),
+    usage: {
+      input: message.usage.input,
+      output: message.usage.output,
+      cacheRead: message.usage.cacheRead,
+      cacheWrite: message.usage.cacheWrite,
+      cost: message.usage.cost.total,
+    },
   };
 }
 

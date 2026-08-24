@@ -43,6 +43,7 @@
     "highlight.js": "^11.12.0",
     "jsdom": "^30.0.1",
     "marked": "^18.0.10",
+    "quickjs-emscripten": "^0.32.0",
     "ripgrep": "0.3.1",
     "shell-quote": "^1.10.0",
     "smol-toml": "^1.8.0",

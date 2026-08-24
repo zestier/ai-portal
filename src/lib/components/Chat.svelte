@@ -141,6 +141,12 @@
   let sessionModel = $state<string>(
     untrack(() => conversation.model ?? effectiveModel),
   );
+  let agentArchitecture = $state<Conversation["agentArchitecture"]>(
+    untrack(() => conversation.agentArchitecture),
+  );
+  let semanticWorkerModel = $state<string | null>(
+    untrack(() => conversation.semanticWorkerModel),
+  );
   let sessionMode = $state<Conversation["mode"]>(
     untrack(() => conversation.mode),
   );
@@ -230,6 +236,8 @@
       clearHydrationQueue();
       title = conversation.title;
       sessionModel = conversation.model ?? effectiveModel;
+      agentArchitecture = conversation.agentArchitecture;
+      semanticWorkerModel = conversation.semanticWorkerModel;
       sessionMode = conversation.mode;
       memoryMode = conversation.memoryMode;
       memoryExtractorModel = conversation.memoryExtractorModel;
@@ -1844,6 +1852,8 @@
     {title}
     {conversation}
     model={sessionModel}
+    {agentArchitecture}
+    {semanticWorkerModel}
     {modelOptions}
     {parent}
     {usage}
@@ -1856,6 +1866,10 @@
     modelChangeDisabled={streaming}
     onSettingsChange={(patch) => {
       if (patch.model !== undefined) sessionModel = patch.model;
+      if (patch.agentArchitecture !== undefined)
+        agentArchitecture = patch.agentArchitecture;
+      if (patch.semanticWorkerModel !== undefined)
+        semanticWorkerModel = patch.semanticWorkerModel;
       if (patch.mode !== undefined) sessionMode = patch.mode;
       if (patch.memoryMode !== undefined) memoryMode = patch.memoryMode;
       if (patch.memoryExtractorModel !== undefined)

@@ -122,6 +122,14 @@ export interface ExtractorAssistantTurn {
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   /** Provider-reported reasoning/thinking for this step, when available. */
   reasoning?: string | undefined;
+  /** Provider-reported usage for cost attribution by background consumers. */
+  usage?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    cost: number;
+  };
 }
 
 /** Incremental tokens streamed from the model during a single chat step. */

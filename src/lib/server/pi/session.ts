@@ -34,19 +34,33 @@ import {
   type ModelRuntime,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { ApprovalMode, PortalEvent, SessionMode } from "$lib/types";
+import type {
+  AgentArchitecture,
+  ApprovalMode,
+  PortalEvent,
+  SessionMode,
+} from "$lib/types";
 import type { PortalTool } from "../tools/types";
-import { assemblePiTools } from "../tools/assemble";
+import { assemblePortalTools } from "../tools/assemble";
+import { portalToolToPiTool } from "./tools";
+import { buildSemanticTools } from "../semantic/tools";
 import { createPiPermissionResolver } from "./permission-gate";
 import { piContextUsageToEvent } from "./context-usage";
 import { workspaceRootsFor } from "../leases";
 import type { ProviderSession } from "./session-contract";
 import { AsyncQueue } from "../runtime/async-queue";
 import { log } from "../log";
-import { PiEventMapper, type ToolCallIdMap } from "./events";
+import {
+  PiEventMapper,
+  portalToolCallIdFor,
+  type ToolCallIdMap,
+} from "./events";
 import { loadConfig } from "../config";
 import * as messagesRepo from "../db/repos/messages";
-import { PORTAL_SYSTEM_GUIDANCE } from "../runtime/system-guidance";
+import {
+  PORTAL_SYSTEM_GUIDANCE,
+  SEMANTIC_FRONTIER_GUIDANCE,
+} from "../runtime/system-guidance";
 
 export type PiModel = NonNullable<CreateAgentSessionOptions["model"]>;
 
@@ -100,6 +114,7 @@ export interface CreatePiSessionOptions {
   systemPrompt?: string;
   /** Optional system-prompt suffix (pi ResourceLoader `appendSystemPrompt`). */
   appendSystemPrompt?: string;
+  agentArchitecture?: AgentArchitecture;
 }
 
 /**
@@ -197,7 +212,11 @@ export async function createPiSession(
       // so pi appends it to the system prompt once at session setup (system
       // tokens, cache-friendly). Per-tool caveats come from each tool's
       // `promptGuidelines` instead — nothing tool-specific belongs here.
-      appendSystemPrompt: [PORTAL_SYSTEM_GUIDANCE],
+      appendSystemPrompt: [
+        opts.agentArchitecture === "semantic"
+          ? SEMANTIC_FRONTIER_GUIDANCE
+          : PORTAL_SYSTEM_GUIDANCE,
+      ],
     };
   // Template system-prompt overrides (ticket #41). `systemPrompt` replaces the
   // default coding-assistant block; `appendSystemPrompt` is appended UNDER the
@@ -238,6 +257,8 @@ export interface PiProviderSessionOptions {
   providerSessionId: string;
   userId: number;
   policy: import("$lib/types").PermissionPolicy;
+  agentArchitecture?: AgentArchitecture;
+  semanticWorkerModel?: string | null;
   mode?: SessionMode;
   approvalMode?: ApprovalMode;
   disabledToolGroups?: string[];
@@ -279,8 +300,9 @@ export async function createPiProviderSession(
   };
   const getWorkspaceRoots = (): string[] =>
     workspaceRootsFor(opts.conversationId, opts.userId, opts.cwd);
+  const sharedToolCallIds: ToolCallIdMap = new Map();
 
-  const { customTools, portalToolsByName } = assemblePiTools({
+  const capabilities = assemblePortalTools({
     cwd: opts.cwd,
     userId: opts.userId,
     conversationId: opts.conversationId,
@@ -299,6 +321,33 @@ export async function createPiProviderSession(
       ? { globalMemoryEnabled: opts.globalMemoryEnabled }
       : {}),
   });
+  const delegatedPermissionResolver: PiPermissionResolver = (...args) =>
+    permissionResolver(...args);
+  const exposedTools =
+    opts.agentArchitecture === "semantic"
+      ? [
+          ...buildSemanticTools({
+            conversationId: opts.conversationId,
+            frontierModel: opts.providerLabel,
+            ...(opts.semanticWorkerModel !== undefined
+              ? { workerModel: opts.semanticWorkerModel }
+              : {}),
+            capabilities: capabilities.byName,
+            permissionResolver: delegatedPermissionResolver,
+            emit,
+          }),
+          ...(capabilities.byName.get("ask_user")
+            ? [capabilities.byName.get("ask_user")!]
+            : []),
+        ]
+      : capabilities.tools;
+  const portalToolsByName = new Map(capabilities.byName);
+  for (const tool of exposedTools) portalToolsByName.set(tool.name, tool);
+  const customTools = exposedTools.map((tool) =>
+    portalToolToPiTool(tool, (sdkId) =>
+      portalToolCallIdFor(sharedToolCallIds, sdkId),
+    ),
+  );
   const permissionResolver = createPiPermissionResolver({
     userId: opts.userId,
     conversationId: opts.conversationId,
@@ -318,10 +367,14 @@ export async function createPiProviderSession(
     portalToolsByName,
     permissionResolver,
     conversationId: opts.conversationId,
+    ...(opts.agentArchitecture !== undefined
+      ? { agentArchitecture: opts.agentArchitecture }
+      : {}),
     ...(opts.sessionFilePath !== undefined
       ? { sessionFilePath: opts.sessionFilePath }
       : {}),
-    ...(opts.additionalExtensionPaths !== undefined
+    ...(opts.additionalExtensionPaths !== undefined &&
+    opts.agentArchitecture !== "semantic"
       ? { additionalExtensionPaths: opts.additionalExtensionPaths }
       : {}),
     ...(opts.systemPrompt !== undefined
@@ -333,6 +386,7 @@ export async function createPiProviderSession(
   });
   return makePiProviderSession(piSession, opts, {
     state,
+    sharedToolCallIds,
     getActiveQueue: () => activeQueue,
     setActiveQueue: (queue: AsyncQueue<PortalEvent> | null) => {
       activeQueue = queue;
@@ -342,6 +396,7 @@ export async function createPiProviderSession(
 
 interface ProviderSessionRuntime {
   state: { mode: SessionMode; approvalMode: ApprovalMode };
+  sharedToolCallIds: ToolCallIdMap;
   getActiveQueue: () => AsyncQueue<PortalEvent> | null;
   setActiveQueue: (queue: AsyncQueue<PortalEvent> | null) => void;
 }
@@ -360,13 +415,15 @@ function makePiProviderSession(
   // so one SDK tool id maps to one portal numeric id (the root-cause fix for
   // a second send minting a fresh id and stranding the persisted tool.call
   // row: see ToolCallIdMap in events.ts).
-  const sharedToolCallIds: ToolCallIdMap = new Map();
+  const sharedToolCallIds = runtime.sharedToolCallIds;
   const session: ProviderSession = {
     provider: opts.provider,
     conversationId: opts.conversationId,
     providerSessionId: opts.providerSessionId,
     workingDirectory: opts.cwd,
     model: opts.providerLabel,
+    agentArchitecture: opts.agentArchitecture ?? "standard",
+    semanticWorkerModel: opts.semanticWorkerModel ?? null,
     ...(sessionFile ? { sessionFile } : {}),
     ...(opts.extensionFingerprint !== undefined
       ? { extensionFingerprint: opts.extensionFingerprint }

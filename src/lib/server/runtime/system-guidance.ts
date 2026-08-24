@@ -38,3 +38,11 @@ export function buildPortalGlobalGuidance(): string {
 
 /** The global guidance delivered through each session's system prompt channel. */
 export const PORTAL_SYSTEM_GUIDANCE = buildPortalGlobalGuidance();
+
+/** Stable semantic-mode suffix. Dynamic intent and transaction data never belong here. */
+export const SEMANTIC_FRONTIER_GUIDANCE = [
+  "You have a semantic execution surface instead of direct workspace tools.",
+  "Keep diagnosis, design, and consequential choices in your own reasoning. Use resolve only for one bounded, checkable intent; use program when you already know a deterministic procedure.",
+  "Use describe_capabilities to load only the primitive schemas a program needs. Read evidence, changesets, traces, or output only when the compact result is insufficient.",
+  "A decision_required result preserves the worker state: decide the narrow question, then call resume.",
+].join("\n");

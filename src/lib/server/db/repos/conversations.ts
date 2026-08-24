@@ -2,9 +2,11 @@ import { getDb } from "../index";
 import { purgeSessionSearchIndex } from "./memory";
 import { conversationId, messageId } from "$lib/ids";
 import {
+  normalizeAgentArchitecture,
   normalizeApprovalMode,
   normalizeMemoryMode,
   normalizeSessionMode,
+  type AgentArchitecture,
   type ApprovalMode,
   type Conversation,
   type MemoryMode,
@@ -38,6 +40,8 @@ interface ConvRow {
   title: string;
   workdir: string;
   model: string | null;
+  agent_architecture: string | null;
+  semantic_worker_model: string | null;
   session_file: string | null;
   created_at: number;
   updated_at: number;
@@ -89,6 +93,8 @@ function rowToConv(r: ConvRow): Conversation {
     title: r.title,
     workdir: r.workdir,
     model: r.model,
+    agentArchitecture: normalizeAgentArchitecture(r.agent_architecture),
+    semanticWorkerModel: r.semantic_worker_model ?? null,
     sessionFile: r.session_file ?? null,
     mode,
     memoryMode: normalizeMemoryMode(r.memory_mode),
@@ -172,6 +178,8 @@ export interface CreateInput {
   title: string;
   workdir: string;
   model: string | null;
+  agentArchitecture?: AgentArchitecture;
+  semanticWorkerModel?: string | null;
   mode?: SessionMode;
   approvalMode?: ApprovalMode;
   memoryMode?: MemoryMode;
@@ -199,6 +207,8 @@ export function create(userId: number, input: CreateInput): Conversation {
   const forkConv = input.forkedFromConversationId ?? null;
   const forkMsg = input.forkedFromMessageId ?? null;
   const mode = input.mode ?? "interactive";
+  const agentArchitecture = normalizeAgentArchitecture(input.agentArchitecture);
+  const semanticWorkerModel = normalizeOptionalModel(input.semanticWorkerModel);
   const approvalMode = normalizeApprovalMode(input.approvalMode);
   const memoryMode = input.memoryMode ?? "off";
   const memoryExtractorModel = normalizeOptionalModel(
@@ -224,17 +234,20 @@ export function create(userId: number, input: CreateInput): Conversation {
     const info = db
       .prepare(
         `INSERT INTO conversations(
-				   user_id, title, workdir, model, mode, approval_mode, memory_mode, memory_extractor_model,
+           user_id, title, workdir, model, agent_architecture, semantic_worker_model,
+           mode, approval_mode, memory_mode, memory_extractor_model,
 				   adversary_model, global_memory_enabled, disabled_tool_groups, created_at, updated_at,
 				   forked_from_conversation_id, forked_from_message_id, draft_prompt,
 				   workspace_kind, workspace_key, system_prompt, append_system_prompt
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         userId,
         input.title,
         input.workdir,
         input.model,
+        agentArchitecture,
+        semanticWorkerModel,
         mode,
         approvalMode,
         memoryMode,
@@ -281,6 +294,8 @@ export function create(userId: number, input: CreateInput): Conversation {
     title: input.title,
     workdir: input.workdir,
     model: input.model,
+    agentArchitecture,
+    semanticWorkerModel,
     sessionFile: null,
     mode,
     memoryMode,
@@ -412,6 +427,8 @@ export function updateSessionSettings(
   userId: number,
   patch: {
     model?: string;
+    agentArchitecture?: AgentArchitecture;
+    semanticWorkerModel?: string | null;
     mode?: SessionMode;
     memoryMode?: MemoryMode;
     memoryExtractorModel?: string | null;
@@ -426,6 +443,14 @@ export function updateSessionSettings(
   if (patch.model !== undefined) {
     sets.push("model = ?");
     args.push(patch.model);
+  }
+  if (patch.agentArchitecture !== undefined) {
+    sets.push("agent_architecture = ?");
+    args.push(normalizeAgentArchitecture(patch.agentArchitecture));
+  }
+  if (patch.semanticWorkerModel !== undefined) {
+    sets.push("semantic_worker_model = ?");
+    args.push(normalizeOptionalModel(patch.semanticWorkerModel));
   }
   if (patch.mode !== undefined) {
     sets.push("mode = ?");

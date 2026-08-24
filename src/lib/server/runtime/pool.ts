@@ -180,6 +180,10 @@ export async function acquire(
     if (
       existing.session.workingDirectory === opts.workingDirectory &&
       existing.session.model === opts.model &&
+      (existing.session.agentArchitecture ?? "standard") ===
+        (opts.agentArchitecture ?? "standard") &&
+      (existing.session.semanticWorkerModel ?? null) ===
+        (opts.semanticWorkerModel ?? null) &&
       cachedProviderSessionId === requestedProviderSessionId &&
       cachedProvider === requestedProvider &&
       existing.session.extensionFingerprint === extensionFingerprint

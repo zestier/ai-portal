@@ -34,6 +34,9 @@ export interface ToolStreamContext {
   progress(message: string): void;
   // Mirrors the turn's abort signal.
   readonly signal: AbortSignal;
+  // Portal-mapped id of the currently executing tool call. Present on pi
+  // sessions; handlers that spawn nested activity use it as the parent id.
+  readonly toolCallId?: string;
 }
 
 // A tool's declaration that its permission check should be evaluated as a

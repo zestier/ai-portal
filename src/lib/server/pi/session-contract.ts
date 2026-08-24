@@ -5,6 +5,7 @@
 // turn-start / background-reviewer consumers still rely on.
 
 import type {
+  AgentArchitecture,
   ApprovalMode,
   MemoryMode,
   PermissionPolicy,
@@ -54,6 +55,10 @@ export interface ProviderOpenOptions {
   /** Stable logical repository identity used to scope tickets across worktrees. */
   workspaceKey?: string;
   model: string;
+  /** Tool architecture exposed to the frontier model. */
+  agentArchitecture?: AgentArchitecture;
+  /** Optional semantic worker model; absent inherits `model`. */
+  semanticWorkerModel?: string | null;
   policy: PermissionPolicy;
   /** Initial session mode. Providers without mode support may ignore it. */
   mode?: SessionMode;
@@ -112,6 +117,8 @@ export interface ProviderSession {
   providerSessionId: string;
   workingDirectory: string;
   model: string;
+  agentArchitecture?: AgentArchitecture;
+  semanticWorkerModel?: string | null;
   /**
    * Absolute path to the durable pi session file backing this session, when
    * one exists. Absent for in-memory sessions (one-shot opens, memory-mode).

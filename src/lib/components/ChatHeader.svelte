@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from "$app/paths";
   import type {
+    AgentArchitecture,
     ApprovalMode,
     Conversation,
     ConversationUsage,
@@ -25,6 +26,8 @@
     title,
     conversation,
     model,
+    agentArchitecture,
+    semanticWorkerModel,
     modelOptions = [],
     parent = null,
     usage = null,
@@ -40,6 +43,8 @@
     title: string;
     conversation: Conversation;
     model: string;
+    agentArchitecture: AgentArchitecture;
+    semanticWorkerModel: string | null;
     /** Enabled portal models as `providerId/modelId`, offered as suggestions. */
     modelOptions?: string[];
     parent?: {
@@ -60,6 +65,8 @@
     // so the parent can mirror state without waiting for the SSE echo.
     onSettingsChange?: (patch: {
       model?: string;
+      agentArchitecture?: AgentArchitecture;
+      semanticWorkerModel?: string | null;
       mode?: SessionMode;
       memoryMode?: MemoryMode;
       memoryExtractorModel?: string | null;
@@ -71,6 +78,8 @@
 
   let expanded = $state(false);
   let savingModel = $state(false);
+  let savingArchitecture = $state(false);
+  let savingWorkerModel = $state(false);
   let savingMode = $state(false);
   let savingMemory = $state(false);
   let savingHarvester = $state(false);
@@ -89,6 +98,22 @@
       value: "autopilot",
       label: "Autopilot",
       hint: "Agent decides when to switch into less-supervised execution.",
+    },
+  ];
+  const ARCHITECTURES: {
+    value: AgentArchitecture;
+    label: string;
+    hint: string;
+  }[] = [
+    {
+      value: "standard",
+      label: "Standard",
+      hint: "Expose portal tools directly to the conversation model.",
+    },
+    {
+      value: "semantic",
+      label: "Semantic",
+      hint: "Expose compact semantic and programmatic tools; delegate primitives to a worker.",
     },
   ];
   const APPROVAL_MODE_OPTIONS: {
@@ -141,9 +166,12 @@
   );
   const showContextMeter = $derived(usage !== null);
   const currentHarvesterModel = $derived(memoryExtractorModel ?? "");
+  const currentWorkerModel = $derived(semanticWorkerModel ?? "");
 
   async function patchSession(body: {
     model?: string;
+    agentArchitecture?: AgentArchitecture;
+    semanticWorkerModel?: string | null;
     mode?: SessionMode;
     memoryMode?: MemoryMode;
     memoryExtractorModel?: string | null;
@@ -172,6 +200,41 @@
       onSettingsChange?.({ model: prev });
     } finally {
       savingModel = false;
+    }
+  }
+
+  async function chooseArchitecture(next: AgentArchitecture) {
+    if (next === agentArchitecture || savingArchitecture || modelChangeDisabled)
+      return;
+    savingArchitecture = true;
+    const prev = agentArchitecture;
+    onSettingsChange?.({ agentArchitecture: next });
+    try {
+      await patchSession({ agentArchitecture: next });
+    } catch {
+      onSettingsChange?.({ agentArchitecture: prev });
+    } finally {
+      savingArchitecture = false;
+    }
+  }
+
+  async function chooseWorkerModel(next: string | null) {
+    const normalized = next?.trim() || null;
+    if (
+      normalized === semanticWorkerModel ||
+      savingWorkerModel ||
+      modelChangeDisabled
+    )
+      return;
+    savingWorkerModel = true;
+    const prev = semanticWorkerModel;
+    onSettingsChange?.({ semanticWorkerModel: normalized });
+    try {
+      await patchSession({ semanticWorkerModel: normalized });
+    } catch {
+      onSettingsChange?.({ semanticWorkerModel: prev });
+    } finally {
+      savingWorkerModel = false;
     }
   }
 
@@ -585,6 +648,42 @@
             {/if}
           </div>
           <div class="setting-row">
+            <span class="setting-label">Architecture</span>
+            <div
+              class="seg"
+              role="radiogroup"
+              aria-label="Agent architecture"
+              aria-busy={savingArchitecture}
+            >
+              {#each ARCHITECTURES as opt (opt.value)}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={agentArchitecture === opt.value}
+                  class="seg-btn"
+                  class:active={agentArchitecture === opt.value}
+                  title={opt.hint}
+                  disabled={savingArchitecture || modelChangeDisabled}
+                  onclick={() => chooseArchitecture(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+          {#if agentArchitecture === "semantic"}
+            <div class="setting-row model-row">
+              <ModelPicker
+                label="Worker"
+                value={currentWorkerModel}
+                options={modelOptions}
+                emptyLabel="Use conversation model"
+                disabled={savingWorkerModel || modelChangeDisabled}
+                onchange={(v) => chooseWorkerModel(v || null)}
+              />
+            </div>
+          {/if}
+          <div class="setting-row">
             <span class="setting-label">Mode</span>
             <div
               class="seg"
@@ -719,8 +818,9 @@
               {/each}
             </div>
             <p class="tool-groups-note" role="note">
-              Runtime-native tools (bash, view, edit, task, web_fetch…) are
-              always available — these toggles only cover portal-injected tools.
+              {agentArchitecture === "semantic"
+                ? "These groups control the capabilities available behind semantic tools."
+                : "Checked groups are exposed directly to the agent."}
               Disabling
               <strong>Permissions</strong> removes the agent's self-service
               grant tools; disabling

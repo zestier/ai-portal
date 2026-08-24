@@ -8,7 +8,7 @@ import { getTurn } from "$lib/server/runtime/turn-runner";
 import { authorizeConversation } from "$lib/server/conversation-auth";
 import { parseBody } from "$lib/server/validate";
 import { resolveModelSelection } from "$lib/server/pi/complete";
-import { APPROVAL_MODES, SESSION_MODES } from "$lib/types";
+import { AGENT_ARCHITECTURES, APPROVAL_MODES, SESSION_MODES } from "$lib/types";
 import {
   PORTAL_TOOL_GROUP_IDS,
   sanitizeDisabledToolGroups,
@@ -25,6 +25,13 @@ import {
 const PatchBody = z
   .object({
     model: z.string().trim().min(1).optional(),
+    agentArchitecture: z.enum(AGENT_ARCHITECTURES).optional(),
+    semanticWorkerModel: z
+      .string()
+      .trim()
+      .transform((value) => (value ? value : null))
+      .nullable()
+      .optional(),
     mode: z.enum(SESSION_MODES).optional(),
     memoryMode: z
       .enum(["off", "lightweight", "project", "story", "strict"])
@@ -50,6 +57,8 @@ const PatchBody = z
   .refine(
     (b) =>
       b.model !== undefined ||
+      b.agentArchitecture !== undefined ||
+      b.semanticWorkerModel !== undefined ||
       b.mode !== undefined ||
       b.memoryMode !== undefined ||
       b.memoryExtractorModel !== undefined ||
@@ -70,17 +79,24 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
   // PI_MODEL on the next turn: the string must parse as `providerId/modelId`
   // and resolve against the shared ModelRuntime (the same path the pi session
   // uses at open time).
-  if (body.model !== undefined) {
+  for (const selection of [body.model, body.semanticWorkerModel]) {
+    if (!selection) continue;
     try {
-      await resolveModelSelection(body.model);
+      await resolveModelSelection(selection);
     } catch (err) {
       throw error(
         400,
-        err instanceof Error ? err.message : `invalid model id: ${body.model}`,
+        err instanceof Error ? err.message : `invalid model id: ${selection}`,
       );
     }
   }
   const modelChanged = body.model !== undefined && body.model !== conv.model;
+  const architectureChanged =
+    body.agentArchitecture !== undefined &&
+    body.agentArchitecture !== conv.agentArchitecture;
+  const workerModelChanged =
+    body.semanticWorkerModel !== undefined &&
+    body.semanticWorkerModel !== conv.semanticWorkerModel;
   const memoryChanged =
     body.memoryMode !== undefined && body.memoryMode !== conv.memoryMode;
   const extractorModelChanged =
@@ -104,6 +120,8 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
   const turn = getTurn(convId);
   if (
     (modelChanged ||
+      architectureChanged ||
+      workerModelChanged ||
       memoryChanged ||
       extractorModelChanged ||
       adversaryModelChanged ||
@@ -113,12 +131,18 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
   ) {
     throw error(
       409,
-      "Cannot change model, memory mode, harvester model, adversary model, global memory, or tool groups while a turn is running.",
+      "Cannot change model, architecture, worker model, memory, or tool groups while a turn is running.",
     );
   }
 
   const persistedPatch = {
     ...(body.model !== undefined ? { model: body.model } : {}),
+    ...(body.agentArchitecture !== undefined
+      ? { agentArchitecture: body.agentArchitecture }
+      : {}),
+    ...(body.semanticWorkerModel !== undefined
+      ? { semanticWorkerModel: body.semanticWorkerModel }
+      : {}),
     ...(body.mode !== undefined ? { mode: body.mode } : {}),
     ...(body.memoryMode !== undefined ? { memoryMode: body.memoryMode } : {}),
     ...(body.memoryExtractorModel !== undefined
@@ -140,6 +164,8 @@ export const PATCH: RequestHandler = async ({ params, locals, request }) => {
   convs.updateSessionSettings(convId, conv.userId, persistedPatch);
   if (
     modelChanged ||
+    architectureChanged ||
+    workerModelChanged ||
     memoryChanged ||
     extractorModelChanged ||
     adversaryModelChanged ||

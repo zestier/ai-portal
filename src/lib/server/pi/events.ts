@@ -24,6 +24,15 @@ const TOOL_SUMMARY_MAX = 200;
 // one) — stranding the card `pending` forever (see tool-calls.updateToolCall).
 export type ToolCallIdMap = Map<string, number>;
 
+/** Mint or resolve the portal id for one SDK tool call. */
+export function portalToolCallIdFor(ids: ToolCallIdMap, sdkId: string): string {
+  const existing = ids.get(sdkId);
+  if (existing !== undefined) return toolCallId.encode(existing);
+  const minted = mintToolCallId();
+  ids.set(sdkId, minted);
+  return toolCallId.encode(minted);
+}
+
 export class PiEventMapper {
   readonly messageId: string;
   // Open reasoning bursts keyed by pi's content index (one per thinking block).
@@ -60,11 +69,7 @@ export class PiEventMapper {
 
   /** Mint-or-lookup the numeric portal tool-call id for an SDK tool call id. */
   private toolCallIdFor(sdkId: string): string {
-    const existing = this.toolCallIds.get(sdkId);
-    if (existing !== undefined) return toolCallId.encode(existing);
-    const minted = mintToolCallId();
-    this.toolCallIds.set(sdkId, minted);
-    return toolCallId.encode(minted);
+    return portalToolCallIdFor(this.toolCallIds, sdkId);
   }
 
   map(event: AgentSessionEvent): PortalEvent[] {

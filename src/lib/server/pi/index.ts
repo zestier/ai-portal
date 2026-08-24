@@ -80,6 +80,12 @@ export async function openPiSession(
     providerSessionId: opts.providerSessionId ?? String(opts.conversationId),
     userId: opts.userId,
     policy: opts.policy,
+    ...(opts.agentArchitecture !== undefined
+      ? { agentArchitecture: opts.agentArchitecture }
+      : {}),
+    ...(opts.semanticWorkerModel !== undefined
+      ? { semanticWorkerModel: opts.semanticWorkerModel }
+      : {}),
     additionalExtensionPaths: extensionPaths,
     extensionFingerprint,
     ...(opts.sessionFilePath !== undefined

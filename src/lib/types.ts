@@ -26,6 +26,10 @@ export interface Conversation {
   title: string;
   workdir: string;
   model: string | null;
+  /** Tool architecture exposed to the frontier model for this conversation. */
+  agentArchitecture: AgentArchitecture;
+  /** Optional model override for semantic workers; null inherits the frontier model. */
+  semanticWorkerModel: string | null;
   /**
    * Absolute path to this conversation's durable pi session file
    * (DATA_DIR/sessions/<...>.jsonl), NULL until the first turn creates one.
@@ -398,6 +402,15 @@ export interface ChatPromptTemplate {
 // (2026-08-12); a persisted `plan` row reads back as `interactive`.
 export const SESSION_MODES = ["interactive", "autopilot"] as const;
 export type SessionMode = (typeof SESSION_MODES)[number];
+
+export const AGENT_ARCHITECTURES = ["standard", "semantic"] as const;
+export type AgentArchitecture = (typeof AGENT_ARCHITECTURES)[number];
+
+export function normalizeAgentArchitecture(
+  raw: string | null | undefined,
+): AgentArchitecture {
+  return raw === "semantic" ? "semantic" : "standard";
+}
 
 export function normalizeSessionMode(
   raw: string | null | undefined,

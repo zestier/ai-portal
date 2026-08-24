@@ -22,6 +22,8 @@ const conversation: Conversation = {
   title: "Regression chat",
   workdir: "/workspaces/zap",
   model: "gpt-5.5",
+  agentArchitecture: "standard",
+  semanticWorkerModel: null,
   sessionFile: null,
   mode: "autopilot",
   memoryMode: "off",

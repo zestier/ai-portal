@@ -55,6 +55,8 @@ export interface AssemblePiToolsOptions {
   disabledToolGroups?: string[];
   memoryMode?: MemoryMode;
   globalMemoryEnabled?: boolean;
+  /** Maps an SDK tool id to the portal id used by persisted events. */
+  resolveToolCallId?: (sdkId: string) => string;
 }
 
 export interface AssembledPiTools {
@@ -62,9 +64,14 @@ export interface AssembledPiTools {
   portalToolsByName: Map<string, PortalTool>;
 }
 
-export function assemblePiTools(
+export interface AssembledPortalTools {
+  tools: PortalTool[];
+  byName: Map<string, PortalTool>;
+}
+
+export function assemblePortalTools(
   opts: AssemblePiToolsOptions,
-): AssembledPiTools {
+): AssembledPortalTools {
   const disabled = new Set(sanitizeDisabledToolGroups(opts.disabledToolGroups));
   const { userId, conversationId } = opts;
   const toolCtx: {
@@ -76,6 +83,7 @@ export function assemblePiTools(
     conversationId,
   };
   if (opts.workspaceKey !== undefined) toolCtx.workspaceKey = opts.workspaceKey;
+  const byName = new Map<string, PortalTool>();
 
   // Build every group eagerly (builders only close over context — no IO until
   // a handler runs), then filter by the enabled groups.
@@ -106,7 +114,7 @@ export function assemblePiTools(
       getMode: opts.getMode,
       getApprovalMode: opts.getApprovalMode,
       emit: opts.emit,
-      resolvePortalTool: (name) => portalToolsByName.get(name) ?? null,
+      resolvePortalTool: (name) => byName.get(name) ?? null,
     }),
     // buildMemoryTools returns [] when mode is 'off' (the default), so
     // omitting memoryMode keeps the group empty unless a mode was requested.
@@ -124,14 +132,25 @@ export function assemblePiTools(
     ],
   };
 
-  const portalToolsByName = new Map<string, PortalTool>();
-  const customTools: ToolDefinition[] = [];
+  const tools: PortalTool[] = [];
   for (const group of PORTAL_TOOL_GROUPS) {
     if (disabled.has(group.id)) continue;
     for (const tool of grouped[group.id]) {
-      portalToolsByName.set(tool.name, tool);
-      customTools.push(portalToolToPiTool(tool));
+      byName.set(tool.name, tool);
+      tools.push(tool);
     }
   }
-  return { customTools, portalToolsByName };
+  return { tools, byName };
+}
+
+export function assemblePiTools(
+  opts: AssemblePiToolsOptions,
+): AssembledPiTools {
+  const { tools, byName } = assemblePortalTools(opts);
+  return {
+    customTools: tools.map((tool) =>
+      portalToolToPiTool(tool, opts.resolveToolCallId),
+    ),
+    portalToolsByName: byName,
+  };
 }

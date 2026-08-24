@@ -190,7 +190,13 @@
   const headline = $derived(
     args.description ??
       args.name ??
-      (args.prompt ? firstLine(args.prompt) : "subagent"),
+      (args.prompt
+        ? firstLine(args.prompt)
+        : args.intent
+          ? firstLine(args.intent)
+          : args.transaction_id
+            ? "Resume semantic transaction"
+            : "subagent"),
   );
 
   // Child reasoning blocks come in two kinds: 'reasoning' (thinking) and

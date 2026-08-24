@@ -83,6 +83,32 @@ describe("db migrations + repos", () => {
     expect(convs.get(c.id, u.id)?.title).toBe("t");
   });
 
+  it("round-trips semantic architecture settings", () => {
+    const user = users.ensureLocalUser();
+    const conversation = convs.create(user.id, {
+      title: "semantic",
+      workdir: "/tmp",
+      model: "provider/frontier",
+      agentArchitecture: "semantic",
+      semanticWorkerModel: "provider/worker",
+    });
+
+    expect(convs.get(conversation.id, user.id)).toMatchObject({
+      agentArchitecture: "semantic",
+      semanticWorkerModel: "provider/worker",
+    });
+    expect(
+      convs.updateSessionSettings(conversation.id, user.id, {
+        agentArchitecture: "standard",
+        semanticWorkerModel: null,
+      }),
+    ).toBe(true);
+    expect(convs.get(conversation.id, user.id)).toMatchObject({
+      agentArchitecture: "standard",
+      semanticWorkerModel: null,
+    });
+  });
+
   it("normalizes the workspace key for conversations upgraded from before migration 061", () => {
     const u = users.ensureLocalUser();
     const legacyWorkdir = resolve(

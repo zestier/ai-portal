@@ -65,6 +65,8 @@ function edit(id: number, parentToolCallId: number | null): FileEditRecord {
 describe("isSubagentToolCall", () => {
   it("identifies task calls, which render as sub-agent cards", () => {
     expect(isSubagentToolCall(tool(1, null, SUBAGENT_TOOL))).toBe(true);
+    expect(isSubagentToolCall(tool(2, null, "resolve"))).toBe(true);
+    expect(isSubagentToolCall(tool(3, null, "resume"))).toBe(true);
   });
 
   it("rejects ordinary tool calls", () => {

@@ -184,6 +184,8 @@ export async function forkAtMessage(input: ForkInput): Promise<ForkResult> {
     workspaceKind: "shared",
     workspaceKey: source.workspaceKey,
     model: source.model,
+    agentArchitecture: source.agentArchitecture,
+    semanticWorkerModel: source.semanticWorkerModel,
     mode: source.mode,
     approvalMode: source.approvalMode === "auto-deny" ? "auto-deny" : "ask",
     memoryMode: source.memoryMode,

@@ -40,7 +40,10 @@ import {
 type PiToolDetails =
   ToolResult | { portalStream: "partial" } | { portalStream: "progress" };
 
-export function portalToolToPiTool(portalTool: PortalTool): ToolDefinition {
+export function portalToolToPiTool(
+  portalTool: PortalTool,
+  resolveToolCallId?: (sdkId: string) => string,
+): ToolDefinition {
   const tool = {
     name: portalTool.name,
     label: portalTool.name,
@@ -60,13 +63,16 @@ export function portalToolToPiTool(portalTool: PortalTool): ToolDefinition {
     parameters:
       portalTool.parameters as unknown as ToolDefinition["parameters"],
     async execute(
-      _toolCallId: string,
+      sdkToolCallId: string,
       params: unknown,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<PiToolDetails> | undefined,
     ): Promise<AgentToolResult<PiToolDetails>> {
       const stream: ToolStreamContext = {
         signal: signal ?? new AbortController().signal,
+        ...(resolveToolCallId
+          ? { toolCallId: resolveToolCallId(sdkToolCallId) }
+          : {}),
         partial(output) {
           onUpdate?.({
             content: [{ type: "text", text: output }],

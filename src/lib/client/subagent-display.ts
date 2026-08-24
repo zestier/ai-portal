@@ -6,6 +6,7 @@ import type { DisplayFileEdit, DisplayReasoningBlock } from "./display-message";
  * SubagentCall card rather than a generic tool card.
  */
 export const SUBAGENT_TOOL = "task";
+const SUBAGENT_TOOLS = new Set([SUBAGENT_TOOL, "resolve", "resume"]);
 
 /**
  * How deep sub-agent cards nest before falling back to a plain tool card.
@@ -19,7 +20,7 @@ export const SUBAGENT_TOOL = "task";
 export const MAX_SUBAGENT_NESTING_DEPTH = 4;
 
 export function isSubagentToolCall(toolCall: ToolCallRecord): boolean {
-  return toolCall.tool === SUBAGENT_TOOL;
+  return SUBAGENT_TOOLS.has(toolCall.tool);
 }
 
 /** The full per-message pools a sub-agent card filters its own children from. */
@@ -68,6 +69,8 @@ export type SubagentArgs = {
   model?: string;
   mode?: string;
   prompt?: string;
+  intent?: string;
+  transaction_id?: string;
 };
 
 export type SubagentDisplayState = {
