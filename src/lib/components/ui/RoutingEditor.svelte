@@ -300,6 +300,7 @@
             {/each}
             <input
               id={`routing-${f.key}-input`}
+              enterKeyHint="enter"
               placeholder="add + Enter"
               disabled={tagInherit[f.key]}
               onkeydown={(e) => {
