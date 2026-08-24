@@ -24,13 +24,6 @@ import {
 } from "./worktree-selector";
 import { computeOutline, renderOutline } from "./outline";
 import {
-  deltaKey,
-  deltaReadResult,
-  deltaStore,
-  storeDelta,
-  unchangedReadResult,
-} from "./read-delta";
-import {
   parseTicketPath,
   resolveTicketPath,
   ticketFileContent,
@@ -232,7 +225,6 @@ export async function readFileResult(
     limit?: number;
     numbered?: boolean;
     mode?: "auto" | "outline" | "content";
-    conversationId?: unknown;
   } = {},
 ): Promise<ToolResult> {
   const resolved = resolveReadTarget(cwd, filePath);
@@ -265,24 +257,6 @@ export async function readFileResult(
     // their full content.
     const offset = req.offset ?? 1;
     const limit = req.limit ?? totalLines;
-    // Delta reads (T38): every text read refreshes the per-conversation
-    // snapshot, and a broad re-read (not a targeted drill-in) returns the
-    // delta — an `unchanged` marker, or line-diff hunks when the file
-    // changed. mode 'content'/'outline' explicitly opt out.
-    const key = deltaKey(req.conversationId, abs);
-    const record = deltaStore.get(key);
-    storeDelta(key, { hash, content, mtimeMs: fileStat.mtimeMs });
-    if (
-      req.mode !== "content" &&
-      req.mode !== "outline" &&
-      record !== undefined &&
-      limit > OUTLINE_READ_MAX_RANGE
-    ) {
-      if (record.hash === hash) {
-        return unchangedReadResult(rel, hash, totalLines, fileStat.size);
-      }
-      return deltaReadResult(rel, record, content, hash, totalLines);
-    }
     // mode: 'outline' always outlines; 'content' always returns raw; auto
     // (default) outlines non-tiny files read broadly, keeping targeted
     // ranges (<= MAX_RANGE lines) raw as the drill-in.
@@ -453,7 +427,6 @@ export function buildReadTools(
         "Reads return plain text by default; pass `numbered: true` to prefix each line with `<lineNumber>\t`. For text, `offset`/`limit` are optional and default to the whole file (a range-less read of a large file returns an outline).",
         "Images (jpeg/png/gif/webp) return as an image and ignore `offset`/`limit`. Errors on binary files or directories.",
         `Files over ${OUTLINE_READ_FLOOR} lines return an indentation outline (header + blocks + tail) by default (mode auto). Pass mode:'content' for raw content, mode:'outline' to force structure, or read a targeted offset:limit range (up to ${OUTLINE_READ_MAX_RANGE} lines) for a block body.`,
-        `A broad re-read (range over ${OUTLINE_READ_MAX_RANGE} lines) of a file you have read before returns a delta: an \`unchanged\` marker or the line-diff hunks, not the full content. Use mode:'content' to force raw, or a targeted range to drill in.`,
       ],
       argsSchema: ReadArgs,
       parameters: {
@@ -523,7 +496,6 @@ export function buildReadTools(
             ? { numbered: parsed.numbered }
             : {}),
           ...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
-          conversationId: ctx?.conversationId,
         });
       },
     },
