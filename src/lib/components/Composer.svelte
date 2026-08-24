@@ -27,6 +27,11 @@
     el.style.height = Math.min(el.scrollHeight, max) + "px";
   }
 
+  function onInput(e: Event) {
+    value = (e.currentTarget as HTMLTextAreaElement).value;
+    autoGrow();
+  }
+
   function reportAutoGrowError(error: unknown) {
     queueMicrotask(() => {
       throw error;
@@ -73,9 +78,9 @@
   <div class="composer-shell" class:is-streaming={streaming}>
     <textarea
       bind:this={textareaEl}
-      bind:value
+      {value}
       onkeydown={onKeydown}
-      oninput={autoGrow}
+      oninput={onInput}
       {placeholder}
       aria-label={placeholder}
       rows="1"></textarea>

@@ -56,6 +56,7 @@ if (!willReuseServer) {
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
+  maxFailures: 5,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers,

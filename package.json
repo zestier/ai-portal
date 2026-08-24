@@ -110,7 +110,7 @@
       "output": []
     },
     "build": {
-      "command": "vite build",
+      "command": "vite build --emptyOutDir",
       "files": [
         "svelte.config.js",
         "vite.config.ts",

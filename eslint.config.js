@@ -29,6 +29,7 @@ export default ts.config(
   },
   {
     ignores: [
+      ".generated/",
       ".wireit/",
       "build/",
       "build.live/",
