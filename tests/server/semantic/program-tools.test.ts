@@ -47,6 +47,7 @@ describe("semantic program tools", () => {
     const program = tools.find((tool) => tool.name === "program")!;
     const result = await program.handler(
       {
+        summary: "Find needle in TypeScript files",
         source:
           'return tools.grep({ query: "needle", cwd: "src", include: "*.ts" });',
       },
@@ -101,7 +102,10 @@ describe("semantic program tools", () => {
     });
     const program = tools.find((tool) => tool.name === "program")!;
     const pending = program.handler(
-      { source: 'return tools.grep({ pattern: "needle" });' },
+      {
+        summary: "Find needle",
+        source: 'return tools.grep({ pattern: "needle" });',
+      },
       {
         signal: new AbortController().signal,
         toolCallId: "X2",

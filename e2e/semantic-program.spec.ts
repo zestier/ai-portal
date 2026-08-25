@@ -7,6 +7,7 @@ import {
 } from "./helpers/conversations";
 
 test("semantic program supports direct guesses and schema-assisted recovery", async ({
+  page,
   request,
 }) => {
   const id = await createConversation(
@@ -23,6 +24,7 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
     {
       name: "program",
       args: {
+        summary: "Search for ProgramArgs directly",
         source:
           'return tools.grep({ query: "ProgramArgs", cwd: "src", include: "*.ts" });',
       },
@@ -40,12 +42,16 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
   const recovery = sequenceDirective([
     {
       name: "program",
-      args: { source: 'return tools.grep({ nope: "ProgramArgs" });' },
+      args: {
+        summary: "Try the initial ProgramArgs search",
+        source: 'return tools.grep({ nope: "ProgramArgs" });',
+      },
     },
     { name: "get_program_tool_schemas", args: { names: ["grep"] } },
     {
       name: "program",
       args: {
+        summary: "Retry ProgramArgs with the recovered schema",
         source:
           'return tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" });',
       },
@@ -75,6 +81,19 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
     "program",
     "grep",
   ]);
+
+  await page.goto(`/conversations/${id}`);
+  await expect(
+    page.getByText("Search for ProgramArgs directly", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Try the initial ProgramArgs search", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Retry ProgramArgs with the recovered schema", {
+      exact: true,
+    }),
+  ).toBeVisible();
 });
 
 interface MessageWithTools {

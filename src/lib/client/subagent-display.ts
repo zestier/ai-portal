@@ -65,13 +65,26 @@ export function selectSubagentChildren(
 export type SubagentArgs = {
   name?: string;
   description?: string;
+  summary?: string;
   agent_type?: string;
   model?: string;
   mode?: string;
   prompt?: string;
   intent?: string;
+  constraints?: string[];
+  completion?: string[];
   transaction_id?: string;
 };
+
+/** The exact dynamic user message sent when a resolve transaction starts. */
+export function resolveWorkerPrompt(args: SubagentArgs): string | null {
+  if (!args.intent) return null;
+  return JSON.stringify({
+    intent: args.intent,
+    constraints: Array.isArray(args.constraints) ? args.constraints : [],
+    completion: Array.isArray(args.completion) ? args.completion : [],
+  });
+}
 
 export type SubagentDisplayState = {
   pending: boolean;

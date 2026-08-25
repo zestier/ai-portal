@@ -47,6 +47,21 @@ describe("summarizeToolCall", () => {
     ).toBe("ls -la");
   });
 
+  it("uses user-visible summaries for semantic tools", () => {
+    expect(
+      summarizeToolCall(
+        "resolve",
+        JSON.stringify({ summary: "Find the request owner", intent: "..." }),
+      ),
+    ).toBe("Find the request owner");
+    expect(
+      summarizeToolCall(
+        "program",
+        JSON.stringify({ summary: "Check all manifests", source: "..." }),
+      ),
+    ).toBe("Check all manifests");
+  });
+
   it("falls back to the path for the legacy view tool", () => {
     // `view` is a removed legacy name; old turns render via the generic
     // first-string-arg fallback instead of the old `view_range` suffix.

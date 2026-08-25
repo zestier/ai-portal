@@ -26,6 +26,7 @@ const ESCALATE = "semantic_escalate";
 // providers can cache this system/tool prefix across semantic transactions.
 export const SEMANTIC_WORKER_SYSTEM = `Execute the one repository task in the user message.
 Use tools incrementally and stay within the stated outcome, constraints, and completion checks.
+Scope is determined by decision ownership, not by turn count, file count, or repository breadth. Long mechanical loops are allowed.
 Do not make product, design, or other consequential choices. Call semantic_escalate with the smallest required decision.
 Call semantic_complete after the result and requested validation are complete. Keep findings brief and grounded in files or tool results.`;
 

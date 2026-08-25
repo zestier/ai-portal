@@ -200,7 +200,10 @@ describe("semantic worker", () => {
     const resume = tools.find((tool) => tool.name === "resume")!;
     const signal = new AbortController().signal;
     const first = await resolve.handler(
-      { intent: "Update the selected implementation" },
+      {
+        summary: "Update the selected implementation",
+        intent: "Update the selected implementation",
+      },
       {
         signal,
         toolCallId: "X21",

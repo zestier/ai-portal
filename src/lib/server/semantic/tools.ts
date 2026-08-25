@@ -22,6 +22,7 @@ import {
 
 const ResolveArgs = z
   .object({
+    summary: z.string().min(1).max(500),
     intent: z.string().min(1).max(20_000),
     constraints: z.array(z.string().max(2_000)).max(20).optional(),
     completion: z.array(z.string().max(2_000)).max(20).optional(),
@@ -44,7 +45,10 @@ const ReaderArgs = z
   .strict();
 
 const ProgramArgs = z
-  .object({ source: z.string().min(1).max(20_000) })
+  .object({
+    summary: z.string().min(1).max(500),
+    source: z.string().min(1).max(20_000),
+  })
   .strict();
 
 const ProgramToolSchemasArgs = z
@@ -105,8 +109,14 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
     argsSchema: ProgramArgs,
     parameters: {
       type: "object",
-      properties: { source: { type: "string" } },
-      required: ["source"],
+      properties: {
+        summary: {
+          type: "string",
+          description: "Brief user-visible explanation of the operation.",
+        },
+        source: { type: "string" },
+      },
+      required: ["summary", "source"],
       additionalProperties: false,
     },
     permissionBehavior: "never-prompt",
@@ -194,11 +204,15 @@ function buildResolveTool(opts: SemanticToolOptions): PortalTool {
     parameters: {
       type: "object",
       properties: {
+        summary: {
+          type: "string",
+          description: "Brief user-visible explanation of the task.",
+        },
         intent: { type: "string", description: "One bounded outcome." },
         constraints: { type: "array", items: { type: "string" } },
         completion: { type: "array", items: { type: "string" } },
       },
-      required: ["intent"],
+      required: ["summary", "intent"],
       additionalProperties: false,
     },
     permissionBehavior: "never-prompt",

@@ -18,7 +18,9 @@ constructing edits, and processing verbose tool output.
 
 1. Make standard and semantic conversations directly comparable.
 2. Keep consequential decisions with the frontier model.
-3. Collapse adaptive mechanical tool loops into bounded semantic transactions.
+3. Collapse adaptive mechanical tool loops into semantically bounded
+   transactions. A transaction may still require many turns, primitive calls,
+   or touched files.
 4. Let the frontier batch deterministic operations with programmatic tool
    calling (PTC) without exposing host APIs to generated programs.
 5. Preserve permission prompts, auditability, cancellation, and nested activity.
@@ -61,19 +63,31 @@ not expose both. There is no list mode or compatibility alias. Available names
 and tiny usage descriptions come from the system-prompt catalog, while schema
 lookup is an optional precision and recovery path rather than a prerequisite
 for execution.
-`resolve` has one intent field plus optional constraints and completion
-conditions. It does not require the frontier to predict whether the transaction
-will need read, write, or execute authority. Each delegated primitive operation
-is permission-checked normally.
+`resolve` has a required user-visible summary and intent plus optional
+constraints and completion conditions. `program` likewise requires a brief
+user-visible summary. These summaries label the calls in the transcript, while
+the resolve card also exposes the exact dynamic request sent to its worker.
+`resolve` does not require the frontier to predict whether the transaction will
+need read, write, or execute authority. Each delegated primitive operation is
+permission-checked normally.
 
 ## Decision Boundary
 
 The worker may determine how to obtain or realize a specified result. It may
 not decide which materially different result the system should want.
 
+Scope is measured by decision ownership, not operational effort. A repository-
+wide mechanical transformation can be a valid resolve task even when it takes
+many rounds of searching, contextual reads, edits, and validation. Conversely,
+a one-file task is too broad when the worker must diagnose the problem, choose
+the desired behavior, design the solution, or decide how to decompose the work.
+The frontier must specify the desired repository state or requested evidence;
+the worker owns only the adaptive mechanics needed to produce it.
+
 Valid intents include:
 
 - Find the controlling implementation and its direct callers.
+- Remove every instance of a specified term and verify none remain.
 - Rewrite a named function to supplied pseudocode while preserving its API.
 - Apply a supplied signature change to direct call sites and run a named test.
 - Find the narrowest tests covering a specified behavior.

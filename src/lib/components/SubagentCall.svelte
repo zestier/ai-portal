@@ -13,6 +13,7 @@
     isSubagentToolCall,
     MAX_SUBAGENT_NESTING_DEPTH,
     parseSubagentArgs,
+    resolveWorkerPrompt,
     selectSubagentChildren,
   } from "$lib/client/subagent-display";
   import SubagentCall from "./SubagentCall.svelte";
@@ -128,6 +129,9 @@
   }
 
   const resultText = $derived(displayState.resultText);
+  const resolvePrompt = $derived(
+    toolCall.tool === "resolve" ? resolveWorkerPrompt(args) : null,
+  );
   const promptHtml = $derived(args.prompt ? renderMarkdown(args.prompt) : null);
   const resultHtml = $derived(resultText ? renderMarkdown(resultText) : null);
 
@@ -188,7 +192,8 @@
   }
 
   const headline = $derived(
-    args.description ??
+    args.summary ??
+      args.description ??
       args.name ??
       (args.prompt
         ? firstLine(args.prompt)
@@ -375,7 +380,7 @@
     {#if retryError}
       <Alert kind="error">{retryError}</Alert>
     {/if}
-    {#if promptHtml}
+    {#if promptHtml || resolvePrompt}
       <details class="section prompt">
         <summary class="disclosure">
           <svg
@@ -394,8 +399,12 @@
           </svg>
           <span class="label">Prompt</span>
         </summary>
-        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-        <div class="markdown" use:copyableCodeBlocks>{@html promptHtml}</div>
+        {#if promptHtml}
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+          <div class="markdown" use:copyableCodeBlocks>{@html promptHtml}</div>
+        {:else if resolvePrompt}
+          <pre><code>{resolvePrompt}</code></pre>
+        {/if}
       </details>
     {/if}
     {#if activity.length > 0}

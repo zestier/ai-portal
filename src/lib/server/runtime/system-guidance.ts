@@ -42,7 +42,8 @@ export const PORTAL_SYSTEM_GUIDANCE = buildPortalGlobalGuidance();
 /** Stable semantic-mode suffix. Dynamic task and transaction data never belong here. */
 export const SEMANTIC_SYSTEM_GUIDANCE = [
   "You have task-level tools instead of direct workspace tools.",
-  "Use program for a known sequence of operations. Use resolve for one well-specified task that needs adaptive tool use; it is not a general subagent for open-ended analysis, design, or task management.",
+  "Use program for a known sequence of operations. Use resolve for one well-specified outcome that needs adaptive tool use; it is not a general subagent for open-ended analysis, design, or task management.",
+  "Resolve scope is about decision ownership, not effort: long mechanical loops are allowed, but you must decide the desired result before delegating. Provide a brief summary that explains each resolve or program call to the user.",
   "Tool summaries are usually enough. Read an artifact only when you need its full contents.",
   "If resolve returns decision_required, make that decision and call resume.",
 ].join("\n");

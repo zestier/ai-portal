@@ -32,6 +32,8 @@ type SummaryHandler = (args: Record<string, unknown>) => string | null;
 const summaryHandlers: Record<string, SummaryHandler> = {
   bash: commandSummary,
   task: taskSummary,
+  resolve: semanticSummary,
+  program: semanticSummary,
   read: readPathSummary,
   edit: pathSummary,
   write: pathSummary,
@@ -131,6 +133,10 @@ function pathSummary(args: Record<string, unknown>): string | null {
 // label for the collapsed row.
 function taskSummary(args: Record<string, unknown>): string | null {
   return str(args.description) ?? str(args.name);
+}
+
+function semanticSummary(args: Record<string, unknown>): string | null {
+  return str(args.summary);
 }
 
 function readPathSummary(args: Record<string, unknown>): string | null {

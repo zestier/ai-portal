@@ -3,6 +3,7 @@ import {
   isSubagentToolCall,
   selectSubagentChildren,
   MAX_SUBAGENT_NESTING_DEPTH,
+  resolveWorkerPrompt,
   SUBAGENT_TOOL,
 } from "../../src/lib/client/subagent-display";
 import type {
@@ -73,6 +74,35 @@ describe("isSubagentToolCall", () => {
     expect(isSubagentToolCall(tool(1, null, "bash"))).toBe(false);
     // Near-miss names must not be treated as sub-agents.
     expect(isSubagentToolCall(tool(2, null, "tasks"))).toBe(false);
+  });
+});
+
+describe("resolveWorkerPrompt", () => {
+  it("reproduces the structured user message sent to the semantic worker", () => {
+    expect(
+      resolveWorkerPrompt({
+        summary: "Remove obsolete terminology",
+        intent: "Remove every instance of foo",
+        constraints: ["Do not alter generated files"],
+        completion: ["grep finds no matches"],
+      }),
+    ).toBe(
+      JSON.stringify({
+        intent: "Remove every instance of foo",
+        constraints: ["Do not alter generated files"],
+        completion: ["grep finds no matches"],
+      }),
+    );
+  });
+
+  it("uses the worker defaults for omitted optional fields", () => {
+    expect(resolveWorkerPrompt({ intent: "Find the owner" })).toBe(
+      JSON.stringify({
+        intent: "Find the owner",
+        constraints: [],
+        completion: [],
+      }),
+    );
   });
 });
 
