@@ -415,6 +415,7 @@ async function decidePermission(
 }
 
 function commandRunScopeKey(args: Record<string, unknown>): string | null {
+  if (typeof args.command === "string") return args.command;
   if (typeof args.executable !== "string" || !Array.isArray(args.args)) {
     return null;
   }

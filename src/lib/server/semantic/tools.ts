@@ -97,9 +97,10 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
       "Run isolated JavaScript for a known sequence of tool and filesystem operations.",
     promptSnippet: "Batch known operations in isolated JavaScript.",
     promptGuidelines: [
-      `Tools: ${catalog}. Calls return the successful value and throw on failure. Return the final value directly, for example return { results }; do not use console output or JSON.stringify. Use get_program_tool_schemas only for an unclear contract.`,
-      'Globals are already available: do not use import, require, or module loading. Use fs.readFile(path, "utf8"), fs.writeFile(path, text), fs.readdir(path), fs.stat(path), fs.mkdir(path), and fs.rename(from, to). Use path.join, path.dirname, path.basename, path.extname, path.normalize, path.relative, and path.isAbsolute for POSIX workspace paths. Edit with readFile then writeFile. File contents are text only.',
-      "Commands: command.run(executable, args?, { cwd?, stdin?, timeoutMs? }) returns { stdout, stderr }. It uses argv without a shell and throws on nonzero exit.",
+      "Program rules: fs, path, command, and tools are predeclared synchronous APIs; never import, require, or await them. Return the final value directly; never use console output or JSON.stringify.",
+      `Tools: ${catalog}. Calls return the successful value and throw on failure. Use get_program_tool_schemas only for an unclear contract.`,
+      'Files: fs.readFile(path, "utf8"), fs.writeFile(path, text), fs.readdir(path), fs.stat(path), fs.mkdir(path), and fs.rename(from, to). Use path.join, path.dirname, path.basename, path.extname, path.normalize, path.relative, and path.isAbsolute for POSIX workspace paths. Edit with readFile then writeFile. File contents are text only.',
+      'Commands: command.run("pnpm", ["check"], options). Options are { cwd?, stdin?, timeoutMs? }; results are { stdout, stderr }. Pass the executable and argv separately; no shell is used, and nonzero exit throws.',
     ],
     argsSchema: ProgramArgs,
     parameters: {

@@ -24,7 +24,7 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
       name: "program",
       args: {
         source:
-          'return await tools.grep({ query: "ProgramArgs", cwd: "src", include: "*.ts" });',
+          'return tools.grep({ query: "ProgramArgs", cwd: "src", include: "*.ts" });',
       },
     },
   ]);
@@ -40,14 +40,14 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
   const recovery = sequenceDirective([
     {
       name: "program",
-      args: { source: 'return await tools.grep({ nope: "ProgramArgs" });' },
+      args: { source: 'return tools.grep({ nope: "ProgramArgs" });' },
     },
     { name: "get_program_tool_schemas", args: { names: ["grep"] } },
     {
       name: "program",
       args: {
         source:
-          'return await tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" });',
+          'return tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" });',
       },
     },
   ]);

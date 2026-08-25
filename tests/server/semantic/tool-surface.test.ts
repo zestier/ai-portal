@@ -60,18 +60,24 @@ describe("semantic tool surface", () => {
     );
     expect(programGuidance).not.toContain("ask_user -");
     expect(programGuidance).toContain(
-      "Globals are already available: do not use import, require, or module loading",
+      "Program rules: fs, path, command, and tools are predeclared synchronous APIs",
+    );
+    expect(programGuidance).toContain(
+      "predeclared synchronous APIs; never import, require, or await them",
     );
     expect(programGuidance).toContain('fs.readFile(path, "utf8")');
     expect(programGuidance).toContain("path.join");
     expect(programGuidance).toContain("fs.mkdir(path)");
     expect(programGuidance).toContain("fs.rename(from, to)");
-    expect(programGuidance).toContain("command.run(executable, args?");
+    expect(programGuidance).toContain(
+      'command.run("pnpm", ["check"], options)',
+    );
+    expect(programGuidance).not.toContain('command.run("git"');
     expect(programGuidance).toContain(
       "Calls return the successful value and throw on failure",
     );
     expect(programGuidance).toContain(
-      "Return the final value directly, for example return { results }; do not use console output or JSON.stringify",
+      "Return the final value directly; never use console output or JSON.stringify",
     );
   });
 
@@ -98,7 +104,7 @@ describe("semantic tool surface", () => {
       .promptGuidelines?.join("\n");
     expect(guidance).not.toContain("grep -");
     expect(guidance).not.toContain("bash -");
-    expect(guidance).toContain("command.run(executable, args?");
+    expect(guidance).toContain('command.run("pnpm", ["check"], options)');
   });
 });
 

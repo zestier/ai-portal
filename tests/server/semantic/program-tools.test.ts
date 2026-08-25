@@ -48,7 +48,7 @@ describe("semantic program tools", () => {
     const result = await program.handler(
       {
         source:
-          'return await tools.grep({ query: "needle", cwd: "src", include: "*.ts" });',
+          'return tools.grep({ query: "needle", cwd: "src", include: "*.ts" });',
       },
       {
         signal: new AbortController().signal,

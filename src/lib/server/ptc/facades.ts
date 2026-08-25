@@ -3,6 +3,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { isolatedChildEnv } from "$lib/server/child-env";
+import { parseShellCommand } from "$lib/server/permissions/shell-parser";
 import {
   err,
   ok,
@@ -15,24 +16,36 @@ import {
 } from "$lib/server/tools/filesystem/targets";
 
 const PathArgs = z.object({ path: z.string().min(1).max(4096) }).strict();
-const CommandArgs = z
-  .object({
-    executable: z.string().trim().min(1).max(4096),
-    args: z.array(z.string().max(20_000)).max(256).optional().default([]),
-    cwd: z.string().min(1).max(4096).optional(),
-    stdin: z
-      .string()
-      .max(64 * 1024)
-      .optional(),
-    timeoutMs: z
-      .number()
-      .int()
-      .min(100)
-      .max(120_000)
-      .optional()
-      .default(120_000),
-  })
-  .strict();
+const CommandOptions = {
+  cwd: z.string().min(1).max(4096).optional(),
+  stdin: z
+    .string()
+    .max(64 * 1024)
+    .optional(),
+  timeoutMs: z.number().int().min(100).max(120_000).optional().default(120_000),
+};
+const CommandArgs = z.union([
+  z
+    .object({
+      executable: z.string().trim().min(1).max(4096),
+      args: z.array(z.string().max(20_000)).max(256).optional().default([]),
+      ...CommandOptions,
+    })
+    .strict(),
+  z
+    .object({
+      command: z.string().trim().min(1).max(20_000),
+      ...CommandOptions,
+    })
+    .strict(),
+]);
+interface NormalizedCommand {
+  executable: string;
+  args: string[];
+  cwd?: string;
+  stdin?: string;
+  timeoutMs: number;
+}
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
 
 export function buildProgramFacadeTools(
@@ -53,29 +66,32 @@ function buildCommandRunTool(workspaceRoot: string): PortalTool {
     parameters: {
       type: "object",
       properties: {
+        command: { type: "string" },
         executable: { type: "string" },
         args: { type: "array", items: { type: "string" } },
         cwd: { type: "string" },
         stdin: { type: "string" },
         timeoutMs: { type: "number" },
       },
-      required: ["executable"],
+      oneOf: [{ required: ["command"] }, { required: ["executable"] }],
       additionalProperties: false,
     },
     argsSchema: CommandArgs,
     async handler(raw, ctx) {
       const parsed = CommandArgs.parse(raw);
+      const normalized = normalizeCommand(parsed);
       const target = parsed.cwd
         ? resolveWorkspaceTarget(workspaceRoot, parsed.cwd)
         : { ok: true as const, abs: workspaceRoot };
       if (!target.ok) return err(target.message);
-      return await runCommand(parsed, target.abs, ctx?.signal);
+      if (!normalized.ok) return err(normalized.message);
+      return await runCommand(normalized.command, target.abs, ctx?.signal);
     },
   };
 }
 
 function runCommand(
-  command: z.infer<typeof CommandArgs>,
+  command: NormalizedCommand,
   cwd: string,
   signal?: AbortSignal,
 ): Promise<ReturnType<typeof ok> | ReturnType<typeof err>> {
@@ -140,6 +156,48 @@ function runCommand(
     if (command.stdin !== undefined) child.stdin.end(command.stdin);
     else child.stdin.end();
   });
+}
+
+function normalizeCommand(
+  command: z.infer<typeof CommandArgs>,
+): { ok: true; command: NormalizedCommand } | { ok: false; message: string } {
+  if ("executable" in command) {
+    return {
+      ok: true,
+      command: {
+        executable: command.executable,
+        args: command.args,
+        ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
+        ...(command.stdin !== undefined ? { stdin: command.stdin } : {}),
+        timeoutMs: command.timeoutMs,
+      },
+    };
+  }
+  const parsed = parseShellCommand(command.command);
+  if (
+    parsed.kind !== "parsed" ||
+    parsed.segments.length !== 1 ||
+    parsed.segments[0]?.followingOp !== null
+  ) {
+    return {
+      ok: false,
+      message:
+        "command.run accepts one command line without shell operators; use argv and JavaScript composition for pipelines.",
+    };
+  }
+  const [executable, ...args] = parsed.segments[0].argv;
+  if (!executable)
+    return { ok: false, message: "command.run command is empty." };
+  return {
+    ok: true,
+    command: {
+      executable,
+      args,
+      ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
+      ...(command.stdin !== undefined ? { stdin: command.stdin } : {}),
+      timeoutMs: command.timeoutMs,
+    },
+  };
 }
 
 function buildReaddirTool(workspaceRoot: string): PortalTool {

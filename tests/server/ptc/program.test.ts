@@ -14,8 +14,7 @@ const echo: PortalTool = {
 describe("program runtime", () => {
   it("composes capability calls and returns JSON", async () => {
     const result = await runProgram({
-      source:
-        "const first = await tools.echo({ value: 2 }); return first.value + 1;",
+      source: "const first = tools.echo({ value: 2 }); return first.value + 1;",
       capabilities: new Map([[echo.name, echo]]),
       execute: (_name, args) => echo.handler(args),
       signal: new AbortController().signal,
@@ -41,7 +40,7 @@ describe("program runtime", () => {
   it("returns actionable unknown-tool failures without dispatching", async () => {
     let dispatched = false;
     const run = runProgram({
-      source: "return await tools.ech({ value: 2 });",
+      source: "return tools.ech({ value: 2 });",
       capabilities: new Map([[echo.name, echo]]),
       execute: async () => {
         dispatched = true;
@@ -155,12 +154,12 @@ describe("program runtime", () => {
     );
     const result = await runProgram({
       source: `
-        const text = await fs.readFile("src/a.ts", "utf8");
-        await fs.writeFile("src/b.ts", text);
-        await fs.mkdir("src/generated");
-        await fs.rename("src/b.ts", "src/generated/b.ts");
-        const entries = await fs.readdir("src");
-        const stats = await fs.stat("src/a.ts");
+        const text = fs.readFile("src/a.ts", "utf8");
+        fs.writeFile("src/b.ts", text);
+        fs.mkdir("src/generated");
+        fs.rename("src/b.ts", "src/generated/b.ts");
+        const entries = fs.readdir("src");
+        const stats = fs.stat("src/a.ts");
         return {
           text,
           entries,
@@ -225,7 +224,7 @@ describe("program runtime", () => {
   it("does not expose internal facade capabilities through tools", async () => {
     const internal = tool("__ptc_fs_stat");
     const run = runProgram({
-      source: 'return await tools["__ptc_fs_stat"]({ path: "." });',
+      source: 'return tools["__ptc_fs_stat"]({ path: "." });',
       capabilities: new Map(),
       facadeCapabilities: new Map([[internal.name, internal]]),
       execute: (_name, args) => internal.handler(args),
@@ -239,8 +238,8 @@ describe("program runtime", () => {
     const calls: unknown[] = [];
     const result = await runProgram({
       source: `
-        const first = await command.run("printf", ["%s", "hello"]);
-        return await command.run("sort", [], { stdin: first.stdout, timeoutMs: 5000 });
+        const first = command.run("printf", ["%s", "hello"]);
+        return command.run("sort", [], { stdin: first.stdout, timeoutMs: 5000 });
       `,
       capabilities: new Map(),
       facadeCapabilities: new Map([[commandTool.name, commandTool]]),
@@ -271,14 +270,62 @@ describe("program runtime", () => {
     ]);
   });
 
+  it("supports command.run option and argv overloads", async () => {
+    const commandTool = tool("__ptc_command_run");
+    const calls: unknown[] = [];
+    const result = await runProgram({
+      source: `
+        const first = command.run("pwd -L", { cwd: "src" });
+        const second = command.run(["printf", "%s", first.stdout], { timeoutMs: 5000 });
+        return second;
+      `,
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[commandTool.name, commandTool]]),
+      execute: async (name, args) => {
+        calls.push({ name, args });
+        return ok({ stdout: calls.length === 1 ? "src" : "src", stderr: "" });
+      },
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual({ stdout: "src", stderr: "" });
+    expect(calls).toEqual([
+      {
+        name: "__ptc_command_run",
+        args: { command: "pwd -L", cwd: "src" },
+      },
+      {
+        name: "__ptc_command_run",
+        args: {
+          executable: "printf",
+          args: ["%s", "src"],
+          timeoutMs: 5000,
+        },
+      },
+    ]);
+  });
+
+  it("returns command.run results synchronously", async () => {
+    const commandTool = tool("__ptc_command_run");
+    await expect(
+      runProgram({
+        source:
+          'const result = command.run("ls", ["-la"]); return result.stdout;',
+        capabilities: new Map(),
+        facadeCapabilities: new Map([[commandTool.name, commandTool]]),
+        execute: async () => ok({ stdout: "files", stderr: "" }),
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ value: "files" });
+  });
+
   it("rejects unsupported fs options before dispatch", async () => {
     let dispatched = false;
     const result = await runProgram({
       source: `
         const failures = [];
-        try { await fs.readFile("a.bin", "base64"); }
+        try { fs.readFile("a.bin", "base64"); }
         catch (error) { failures.push(error.message); }
-        try { await fs.readdir("src", { withFileTypes: true }); }
+        try { fs.readdir("src", { withFileTypes: true }); }
         catch (error) { failures.push(error.message); }
         return failures;
       `,

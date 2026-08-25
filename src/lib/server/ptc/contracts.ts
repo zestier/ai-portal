@@ -158,7 +158,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
   find: metadata(
     "find workspace paths by glob",
     FIND_RESULT,
-    'await tools.find({ pattern: "**/*.test.ts", path: "tests" })',
+    'tools.find({ pattern: "**/*.test.ts", path: "tests" })',
     normalizeAliases({ pattern: ["query"], path: ["cwd"] }),
     {
       parameters: objectParameters(
@@ -176,7 +176,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
   grep: metadata(
     "search workspace file contents",
     GREP_RESULT,
-    'await tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" })',
+    'tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" })',
     normalizeAliases({
       pattern: ["query", "regex"],
       path: ["cwd"],
@@ -200,7 +200,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
   git_status: metadata(
     "inspect repository working-tree status",
     GIT_STATUS_RESULT,
-    "await tools.git_status({})",
+    "tools.git_status({})",
     undefined,
     {
       parameters: objectParameters({}, []),
@@ -211,7 +211,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
   git_diff: metadata(
     "inspect repository changes",
     GIT_DIFF_RESULT,
-    'await tools.git_diff({ target: "worktree-vs-head" })',
+    'tools.git_diff({ target: "worktree-vs-head" })',
     undefined,
     {
       parameters: objectParameters(

@@ -93,4 +93,23 @@ describe("program fs facade capabilities", () => {
       error: { message: expect.stringContaining("code 7: bad") },
     });
   });
+
+  it("parses one command-line string but rejects shell operators", async () => {
+    const root = makeTmpDir("ptc-command-line-");
+    const command = buildProgramFacadeTools(root).get("__ptc_command_run")!;
+    expect(
+      await command.handler({
+        command: `printf %s "quoted value"`,
+      }),
+    ).toMatchObject({
+      ok: true,
+      result: { stdout: "quoted value", stderr: "" },
+    });
+    expect(
+      await command.handler({ command: "printf hi | sort" }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("without shell operators") },
+    });
+  });
 });

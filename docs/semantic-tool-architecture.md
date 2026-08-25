@@ -196,8 +196,8 @@ permission scope. Facades are installed directly in the program environment,
 so generated programs look and behave like ordinary JavaScript:
 
 ```js
-const source = await fs.readFile("src/index.ts", "utf8");
-await fs.writeFile("tmp/source.txt", source);
+const source = fs.readFile("src/index.ts", "utf8");
+fs.writeFile("tmp/source.txt", source);
 return { source };
 ```
 
@@ -207,19 +207,19 @@ The first implementation installs `fs` in every program without a load step:
 
 ```ts
 interface ProgramFs {
-   readFile(path: string, encoding: "utf8" | "utf-8"): Promise<string>;
+   readFile(path: string, encoding: "utf8" | "utf-8"): string;
    writeFile(
       path: string,
       data: string,
       options?: { encoding?: "utf8" | "utf-8" },
-   ): Promise<void>;
+   ): void;
    readdir(
       path: string,
       options?: { withFileTypes?: false },
-   ): Promise<string[]>;
-   stat(path: string): Promise<ProgramStats>;
-   mkdir(path: string): Promise<void>;
-   rename(oldPath: string, newPath: string): Promise<void>;
+   ): string[];
+   stat(path: string): ProgramStats;
+   mkdir(path: string): void;
+   rename(oldPath: string, newPath: string): void;
 }
 
 interface ProgramStats {
@@ -251,7 +251,7 @@ declare const command: {
          stdin?: string;
          timeoutMs?: number;
       },
-   ): Promise<{ stdout: string; stderr: string }>;
+   ): { stdout: string; stderr: string };
 };
 ```
 
@@ -264,14 +264,16 @@ Returned values must be JSON-compatible, and completing with `undefined` is an
 error rather than an empty successful result.
 
 Only these signatures are promised. The first version has no binary encodings,
-`Buffer`, abort signal crossing, file descriptors, recursive directory options,
-or synchronous APIs. Unsupported arguments fail with an error naming the
-unsupported surface; they must not be silently ignored.
+`Buffer`, abort signal crossing, file descriptors, or recursive directory
+options. Unsupported arguments fail with an error naming the unsupported
+surface; they must not be silently ignored.
 
-`command.run` executes an explicit argv without shell parsing. Its optional
-bounded string `stdin` supports program-level composition; nonzero exits,
-timeouts, cancellation, and output over the bridge limit throw. Direct-mode
-`bash` remains available outside `program` but is not a program capability.
+`command.run` executes an explicit argv without a shell. Optional bounded string
+`stdin` supports program-level composition; nonzero exits, timeouts,
+cancellation, and output over the bridge limit throw. The runtime accepts a
+couple of conservative legacy argument forms, but they are compatibility
+behavior rather than part of the model-facing contract. Direct-mode `bash`
+remains available outside `program` but is not a program capability.
 
 The QuickJS bootstrap implements `ProgramStats` as an isolate-local JavaScript
 object over JSON RPC results. The host never passes a Node object into the
@@ -291,8 +293,11 @@ change covered by prompt-size and runtime tests.
 These are compatibility facades, not references to Node or host objects. Every
 operation crosses the same JSON-only capability RPC boundary and is authorized
 by the existing permission resolver. The facade grants no ambient filesystem
-or network access. Synchronous Node APIs are excluded because host capability
-calls are asynchronous.
+or network access. An isolated Asyncify WASM module suspends while the host
+operation runs, so `fs`, `command`, and `tools` calls are synchronous from the
+program's perspective even though host execution remains asynchronous. One
+program receives one module because an Asyncify module may only have one
+suspended host call at a time.
 
 Facade signatures should match the established API closely enough that a model
 can use them from existing JavaScript knowledge without loading a schema. Where
@@ -322,7 +327,7 @@ validation, or permission failure. They do not expose the portal's `{ ok,
 result }` transport envelope inside the isolate:
 
 ```js
-const matches = await tools.grep({ pattern: "ProgramArgs", path: "src" });
+const matches = tools.grep({ pattern: "ProgramArgs", path: "src" });
 return matches;
 ```
 
@@ -376,9 +381,9 @@ change the normal portal tool schema. For example, a program `grep` adapter may
 accept all of these:
 
 ```js
-await tools.grep({ pattern: "ProgramArgs", path: "src" });
-await tools.grep({ query: "ProgramArgs", include: "src/**" });
-await tools.grep({ regex: "ProgramArgs", cwd: "src" });
+tools.grep({ pattern: "ProgramArgs", path: "src" });
+tools.grep({ query: "ProgramArgs", include: "src/**" });
+tools.grep({ regex: "ProgramArgs", cwd: "src" });
 ```
 
 Each programmable tool has one pure normalizer that maps every accepted form to
