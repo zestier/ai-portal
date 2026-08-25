@@ -147,9 +147,13 @@ async function handleRequest(
   // Stateless termination guard: once the model has emitted a tool call, the
   // follow-up request (assistant tool_calls + tool result in history) replies
   // with plain text — the directive isn't re-triggered, so the loop ends.
-  const toolCall = hasAssistantToolCalls(body.messages)
-    ? null
-    : parseToolCallDirective(userText);
+  const sequence = parseToolSequenceDirective(userText);
+  const completedToolCalls = countAssistantToolCalls(body.messages);
+  const toolCall = sequence
+    ? (sequence[completedToolCalls] ?? null)
+    : completedToolCalls > 0
+      ? null
+      : parseToolCallDirective(userText);
   // `@trigger-empty` makes the FIRST request carrying this exact user text
   // reply with NO content (a silently-empty response), so e2e can exercise
   // the empty-turn handling. One-shot per unique prompt: a Retry/regenerate
@@ -312,15 +316,61 @@ function parseToolCallDirective(
   return { name: m[1], args: m[2] };
 }
 
-function hasAssistantToolCalls(messages: unknown[]): boolean {
-  return messages.some(
-    (message) =>
+const TOOL_SEQUENCE_RE = /^PI_TEST_TOOL_SEQUENCE\s+(\[[\s\S]*\])\s*$/;
+
+function parseToolSequenceDirective(
+  text: string,
+): Array<{ name: string; args: string }> | null {
+  const match = TOOL_SEQUENCE_RE.exec(text);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const sequence: Array<{ name: string; args: string }> = [];
+    for (const entry of parsed) {
+      if (
+        !entry ||
+        typeof entry !== "object" ||
+        typeof (entry as { name?: unknown }).name !== "string" ||
+        !("args" in entry)
+      ) {
+        return null;
+      }
+      sequence.push({
+        name: (entry as { name: string }).name,
+        args: JSON.stringify((entry as { args: unknown }).args),
+      });
+    }
+    return sequence;
+  } catch {
+    return null;
+  }
+}
+
+function countAssistantToolCalls(messages: unknown[]): number {
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (
       !!message &&
       typeof message === "object" &&
-      (message as { role?: unknown }).role === "assistant" &&
-      Array.isArray((message as { tool_calls?: unknown }).tool_calls) &&
-      (message as { tool_calls: unknown[] }).tool_calls.length > 0,
-  );
+      (message as { role?: unknown }).role === "user"
+    ) {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  return messages.slice(lastUserIndex + 1).reduce<number>((total, message) => {
+    if (
+      !message ||
+      typeof message !== "object" ||
+      (message as { role?: unknown }).role !== "assistant"
+    ) {
+      return total;
+    }
+    const calls = (message as { tool_calls?: unknown }).tool_calls;
+    return total + (Array.isArray(calls) ? calls.length : 0);
+  }, 0);
 }
 
 // Stream an OpenAI-style tool_calls delta sequence (name chunk, then the JSON

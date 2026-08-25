@@ -37,7 +37,7 @@ describe("semantic frontier tool surface", () => {
       "resolve",
       "resume",
       "program",
-      "describe_capabilities",
+      "get_program_tool_schemas",
       "read_evidence",
       "read_changeset",
       "read_trace",
@@ -50,6 +50,36 @@ describe("semantic frontier tool surface", () => {
     );
     expect(exposed.some((tool) => tool.name === "bash")).toBe(false);
     expect(exposed.some((tool) => tool.name === "edit")).toBe(false);
+    const program = semantic.find((tool) => tool.name === "program")!;
+    expect(program.promptGuidelines?.join("\n")).toContain(
+      "grep - search workspace file contents",
+    );
+    expect(program.promptGuidelines?.join("\n")).not.toContain("ask_user -");
+  });
+
+  it("removes disabled groups from the program catalog", () => {
+    const capabilities = assemblePortalTools({
+      cwd: "/",
+      userId: 1,
+      conversationId: 1,
+      policy: "prompt",
+      getMode: () => "interactive",
+      getApprovalMode: () => "ask",
+      emit: () => {},
+      disabledToolGroups: ["filesystem"],
+    });
+    const semantic = buildSemanticTools({
+      conversationId: 1,
+      frontierModel: "pi-stub/stub-model",
+      capabilities: capabilities.byName,
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+    });
+    const guidance = semantic
+      .find((tool) => tool.name === "program")!
+      .promptGuidelines?.join("\n");
+    expect(guidance).not.toContain("grep -");
+    expect(guidance).toContain("bash - run a bounded validation or command");
   });
 });
 

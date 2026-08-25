@@ -13,6 +13,12 @@ import {
 import { initialWorkerMessages, runSemanticWorker } from "./worker";
 import { executeDelegatedTool } from "./delegated-tool";
 import { runProgram } from "$lib/server/ptc/program";
+import {
+  normalizeProgramToolArgs,
+  programCapabilities,
+  programCatalog,
+  programToolContracts,
+} from "$lib/server/ptc/contracts";
 
 const ResolveArgs = z
   .object({
@@ -41,8 +47,10 @@ const ProgramArgs = z
   .object({ source: z.string().min(1).max(20_000) })
   .strict();
 
-const DescribeCapabilitiesArgs = z
-  .object({ names: z.array(z.string().min(1).max(100)).max(20).optional() })
+const ProgramToolSchemasArgs = z
+  .object({
+    names: z.array(z.string().min(1).max(100)).min(1).max(20),
+  })
   .strict();
 
 export interface SemanticToolOptions {
@@ -50,6 +58,7 @@ export interface SemanticToolOptions {
   frontierModel: string;
   workerModel?: string | null;
   capabilities: ReadonlyMap<string, PortalTool>;
+  facadeCapabilities?: ReadonlyMap<string, PortalTool>;
   permissionResolver: PiPermissionResolver;
   emit: (event: PortalEvent) => void;
 }
@@ -59,7 +68,7 @@ export function buildSemanticTools(opts: SemanticToolOptions): PortalTool[] {
     buildResolveTool(opts),
     buildResumeTool(opts),
     buildProgramTool(opts),
-    buildDescribeCapabilitiesTool(opts.capabilities),
+    buildProgramToolSchemasTool(opts.capabilities),
     buildReaderTool(opts.conversationId, "evidence", "read_evidence"),
     buildReaderTool(opts.conversationId, "changeset", "read_changeset"),
     buildReaderTool(opts.conversationId, "trace", "read_trace"),
@@ -68,6 +77,20 @@ export function buildSemanticTools(opts: SemanticToolOptions): PortalTool[] {
 }
 
 function buildProgramTool(opts: SemanticToolOptions): PortalTool {
+  const capabilities = programCapabilities(opts.capabilities);
+  const facadeCapabilities = new Map<string, PortalTool>();
+  for (const name of ["read", "write"]) {
+    const tool = capabilities.get(name);
+    if (tool) facadeCapabilities.set(name, tool);
+  }
+  for (const [name, tool] of opts.facadeCapabilities ?? []) {
+    facadeCapabilities.set(name, tool);
+  }
+  const executableCapabilities = new Map([
+    ...capabilities,
+    ...facadeCapabilities,
+  ]);
+  const catalog = programCatalog(capabilities);
   return {
     name: "program",
     description:
@@ -75,7 +98,8 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
     promptSnippet:
       "Batch deterministic capability calls in isolated JavaScript.",
     promptGuidelines: [
-      "Use describe_capabilities before calling unfamiliar tools. Generated code has no ambient host APIs.",
+      `Available program tools: ${catalog}. Call get_program_tool_schemas for exact contracts when a name is ambiguous or arguments fail. Generated code has no ambient host APIs.`,
+      'Programs have async fs.readFile(path, "utf8"), fs.writeFile(path, text, { encoding?: "utf8" }), fs.readdir(path), and fs.stat(path). Only text IO is supported; fs.stat returns size, mtimeMs, isFile(), isDirectory(), and isSymbolicLink().',
     ],
     argsSchema: ProgramArgs,
     parameters: {
@@ -89,23 +113,28 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
       const args = ProgramArgs.parse(raw);
       if (!ctx?.toolCallId)
         return err("program requires a mapped tool call id");
-      const capabilities = ptcCapabilities(opts.capabilities);
       try {
         const result = await runProgram({
           source: args.source,
           capabilities,
-          execute: (name, callArgs, signal) =>
-            executeDelegatedTool(
+          facadeCapabilities,
+          execute: (name, callArgs, signal) => {
+            const tool = executableCapabilities.get(name);
+            const normalized = tool
+              ? normalizeProgramToolArgs(tool, callArgs)
+              : callArgs;
+            return executeDelegatedTool(
               {
                 parentToolCallId: toolCodec.parse(ctx.toolCallId!),
-                capabilities,
+                capabilities: executableCapabilities,
                 permissionResolver: opts.permissionResolver,
                 emit: opts.emit,
                 signal,
               },
               name,
-              callArgs,
-            ),
+              normalized,
+            );
+          },
           signal: ctx.signal,
         });
         return ok(
@@ -121,40 +150,35 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
   };
 }
 
-function buildDescribeCapabilitiesTool(
+function buildProgramToolSchemasTool(
   capabilities: ReadonlyMap<string, PortalTool>,
 ): PortalTool {
   return {
-    name: "describe_capabilities",
-    description: "List PTC capabilities or load selected argument schemas.",
-    argsSchema: DescribeCapabilitiesArgs,
+    name: "get_program_tool_schemas",
+    description:
+      "Get exact input and result contracts for named program tools when the compact catalog is insufficient.",
+    argsSchema: ProgramToolSchemasArgs,
     parameters: {
       type: "object",
       properties: {
-        names: { type: "array", items: { type: "string" }, maxItems: 20 },
+        names: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 20,
+        },
       },
+      required: ["names"],
       additionalProperties: false,
     },
     permissionBehavior: "never-prompt",
     async handler(raw) {
-      const args = DescribeCapabilitiesArgs.parse(raw);
-      const available = ptcCapabilities(capabilities);
-      if (!args.names?.length) {
-        return ok(
-          [...available.values()].map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-          })),
-          `${available.size} program capabilities available.`,
-        );
-      }
-      const selected = args.names.map((name) => {
-        const tool = available.get(name);
-        return tool
-          ? { name, description: tool.description, parameters: tool.parameters }
-          : { name, error: "unknown capability" };
-      });
-      return ok(selected, `Described ${selected.length} capability schema(s).`);
+      const args = ProgramToolSchemasArgs.parse(raw);
+      const tools = programToolContracts(capabilities, args.names);
+      return ok(
+        { tools },
+        `Returned ${tools.length} program tool contract(s).`,
+      );
     },
   };
 }
@@ -302,21 +326,4 @@ function buildReaderTool(
       });
     },
   };
-}
-
-function ptcCapabilities(
-  capabilities: ReadonlyMap<string, PortalTool>,
-): Map<string, PortalTool> {
-  const selected = new Map<string, PortalTool>();
-  for (const [name, tool] of capabilities) {
-    if (
-      name === "ask_user" ||
-      name === "request_permission_grant" ||
-      name === "force_retry_tool" ||
-      name === "permission_capabilities"
-    )
-      continue;
-    selected.set(name, tool);
-  }
-  return selected;
 }

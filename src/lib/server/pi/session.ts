@@ -44,6 +44,7 @@ import type { PortalTool } from "../tools/types";
 import { assemblePortalTools } from "../tools/assemble";
 import { portalToolToPiTool } from "./tools";
 import { buildSemanticTools } from "../semantic/tools";
+import { buildProgramFacadeTools } from "../ptc/facades";
 import { createPiPermissionResolver } from "./permission-gate";
 import { piContextUsageToEvent } from "./context-usage";
 import { workspaceRootsFor } from "../leases";
@@ -323,6 +324,10 @@ export async function createPiProviderSession(
   });
   const delegatedPermissionResolver: PiPermissionResolver = (...args) =>
     permissionResolver(...args);
+  const programFacadeTools =
+    opts.agentArchitecture === "semantic"
+      ? buildProgramFacadeTools(opts.cwd)
+      : new Map<string, PortalTool>();
   const exposedTools =
     opts.agentArchitecture === "semantic"
       ? [
@@ -333,6 +338,7 @@ export async function createPiProviderSession(
               ? { workerModel: opts.semanticWorkerModel }
               : {}),
             capabilities: capabilities.byName,
+            facadeCapabilities: programFacadeTools,
             permissionResolver: delegatedPermissionResolver,
             emit,
           }),
@@ -342,6 +348,9 @@ export async function createPiProviderSession(
         ]
       : capabilities.tools;
   const portalToolsByName = new Map(capabilities.byName);
+  for (const [name, tool] of programFacadeTools) {
+    portalToolsByName.set(name, tool);
+  }
   for (const tool of exposedTools) portalToolsByName.set(tool.name, tool);
   const customTools = exposedTools.map((tool) =>
     portalToolToPiTool(tool, (sdkId) =>

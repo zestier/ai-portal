@@ -1,6 +1,8 @@
 import { getQuickJS, shouldInterruptAfterDeadline } from "quickjs-emscripten";
 import type { QuickJSDeferredPromise } from "quickjs-emscripten";
+import { createHash } from "node:crypto";
 import type { PortalTool, ToolResult } from "$lib/server/tools/types";
+import { suggestionsFor } from "./contracts";
 
 const MAX_OPERATIONS = 50;
 const MAX_OUTPUT_BYTES = 64 * 1024;
@@ -11,6 +13,7 @@ const MAX_STACK_BYTES = 512 * 1024;
 export interface ProgramRunOptions {
   source: string;
   capabilities: ReadonlyMap<string, PortalTool>;
+  facadeCapabilities?: ReadonlyMap<string, PortalTool>;
   execute(
     name: string,
     args: unknown,
@@ -22,6 +25,16 @@ export interface ProgramRunOptions {
 export interface ProgramRunResult {
   value: unknown;
   operations: number;
+  trace: {
+    sourceHash: string;
+    calls: Array<{
+      name: string;
+      kind: "tool" | "facade";
+      argsHash: string;
+      ok: boolean;
+    }>;
+    durationMs: number;
+  };
 }
 
 export async function runProgram(
@@ -39,16 +52,20 @@ export async function runProgram(
   const vm = runtime.newContext();
   const pending = new Set<Promise<unknown>>();
   const deferreds = new Set<QuickJSDeferredPromise>();
+  const startedAt = Date.now();
+  const calls: ProgramRunResult["trace"]["calls"] = [];
   let operations = 0;
 
-  const callHandle = vm.newFunction(
-    "__callCapability",
-    (nameHandle, argsHandle) => {
+  function installBridge(
+    bridgeName: string,
+    allowed: ReadonlyMap<string, PortalTool>,
+  ): void {
+    const callHandle = vm.newFunction(bridgeName, (nameHandle, argsHandle) => {
       const name = vm.getString(nameHandle);
       const args = argsHandle ? vm.dump(argsHandle) : {};
       const deferred = vm.newPromise();
       deferreds.add(deferred);
-      const operation = execute(name, args)
+      const operation = execute(name, args, allowed)
         .then((value) => {
           const encoded = JSON.stringify(value);
           if (Buffer.byteLength(encoded) > MAX_OUTPUT_BYTES) {
@@ -73,12 +90,66 @@ export async function runProgram(
         });
       pending.add(operation);
       return deferred.handle;
-    },
-  );
-  vm.setProp(vm.global, "__callCapability", callHandle);
-  callHandle.dispose();
+    });
+    vm.setProp(vm.global, bridgeName, callHandle);
+    callHandle.dispose();
+  }
+
+  installBridge("__callCapability", opts.capabilities);
+  installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
 
   const wrapped = `(async () => {
+    async function callFacade(name, args) {
+      const result = JSON.parse(await __callFacadeCapability(name, args));
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    }
+    const fs = Object.freeze({
+      async readFile(path, encoding) {
+        const normalizedEncoding = typeof encoding === "string"
+          ? encoding
+          : encoding?.encoding;
+        if (normalizedEncoding !== "utf8" && normalizedEncoding !== "utf-8") {
+          throw new Error('fs.readFile supports only "utf8" and "utf-8".');
+        }
+        const result = await callFacade("read", {
+          file_path: path,
+          mode: "content"
+        });
+        if (result?.type !== "text") {
+          throw new Error("fs.readFile supports only text files.");
+        }
+        return result.file.content;
+      },
+      async writeFile(path, data, options) {
+        const encoding = typeof options === "string"
+          ? options
+          : options?.encoding ?? "utf8";
+        if (encoding !== "utf8" && encoding !== "utf-8") {
+          throw new Error('fs.writeFile supports only "utf8" and "utf-8".');
+        }
+        if (typeof data !== "string") {
+          throw new Error("fs.writeFile supports only string data.");
+        }
+        await callFacade("write", { file_path: path, content: data });
+      },
+      async readdir(path, options) {
+        if (options?.withFileTypes === true) {
+          throw new Error("fs.readdir does not yet support withFileTypes: true.");
+        }
+        return await callFacade("__ptc_fs_readdir", { path });
+      },
+      async stat(path) {
+        const value = await callFacade("__ptc_fs_stat", { path });
+        return Object.freeze({
+          size: value.size,
+          mtimeMs: value.mtimeMs,
+          isFile: () => value.file,
+          isDirectory: () => value.directory,
+          isSymbolicLink: () => value.symbolicLink
+        });
+      }
+    });
     const tools = new Proxy(Object.create(null), {
       get(_target, name) {
         if (typeof name !== "string" || name === "then") return undefined;
@@ -110,7 +181,15 @@ export async function runProgram(
         if (Buffer.byteLength(encoded) > MAX_OUTPUT_BYTES) {
           throw new Error("Program result exceeded its size budget.");
         }
-        return { value, operations };
+        return {
+          value,
+          operations,
+          trace: {
+            sourceHash: hash(opts.source),
+            calls,
+            durationMs: Date.now() - startedAt,
+          },
+        };
       } finally {
         valueHandle.dispose();
       }
@@ -124,7 +203,11 @@ export async function runProgram(
     runtime.dispose();
   }
 
-  async function execute(name: string, args: unknown): Promise<ToolResult> {
+  async function execute(
+    name: string,
+    args: unknown,
+    allowed: ReadonlyMap<string, PortalTool>,
+  ): Promise<unknown> {
     operations++;
     if (operations > MAX_OPERATIONS) {
       throw new Error("Program exceeded its operation budget.");
@@ -133,15 +216,41 @@ export async function runProgram(
     if (Date.now() > deadline) {
       throw new Error("Program exceeded its runtime budget.");
     }
-    if (!opts.capabilities.has(name)) {
-      return {
+    if (!allowed.has(name)) {
+      const suggestions = suggestionsFor(name, [...allowed.keys()]);
+      const related = suggestions.length
+        ? ` Available related tools: ${suggestions.join(", ")}.`
+        : "";
+      const failure = {
         ok: false,
         error: {
-          message: `Unknown capability: ${name}`,
-          details: { validTools: [...opts.capabilities.keys()].sort() },
+          message: `Unknown program tool "${name}".${related} Call get_program_tool_schemas for exact contracts.`,
+          details: { validTools: [...allowed.keys()].sort() },
         },
       };
+      calls.push({
+        name,
+        kind: allowed === opts.capabilities ? "tool" : "facade",
+        argsHash: hash(args),
+        ok: false,
+      });
+      return failure;
     }
-    return opts.execute(name, args, opts.signal);
+    const result = await opts.execute(name, args, opts.signal);
+    calls.push({
+      name,
+      kind: allowed === opts.capabilities ? "tool" : "facade",
+      argsHash: hash(args),
+      ok: result.ok,
+    });
+    return result.ok
+      ? { ok: true, value: result.result }
+      : { ok: false, error: result.error };
   }
+}
+
+function hash(value: unknown): string {
+  return createHash("sha256")
+    .update(typeof value === "string" ? value : JSON.stringify(value))
+    .digest("hex");
 }

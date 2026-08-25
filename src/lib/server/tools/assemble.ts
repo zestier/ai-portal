@@ -38,6 +38,7 @@ import { buildTicketTools } from "./tickets";
 import { buildWorktreeTools } from "./worktree";
 import { buildAskUserTool } from "./ask-user";
 import type { PortalTool } from "./types";
+import { attachProgramMetadata } from "$lib/server/ptc/contracts";
 
 export interface AssemblePiToolsOptions {
   cwd: string;
@@ -135,7 +136,8 @@ export function assemblePortalTools(
   const tools: PortalTool[] = [];
   for (const group of PORTAL_TOOL_GROUPS) {
     if (disabled.has(group.id)) continue;
-    for (const tool of grouped[group.id]) {
+    for (const rawTool of grouped[group.id]) {
+      const tool = attachProgramMetadata(rawTool);
       byName.set(tool.name, tool);
       tools.push(tool);
     }

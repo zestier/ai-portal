@@ -62,6 +62,19 @@ export interface ToolPermissionRequest {
   additionalPaths?: string[];
 }
 
+export interface ProgramToolMetadata {
+  /** One short system-prompt catalog entry describing when to use the tool. */
+  catalogDescription: string;
+  /** JSON schema for the successful value returned inside a program. */
+  resultSchema: Record<string, unknown>;
+  /** Canonical program invocation shown by explicit schema lookup. */
+  example: string;
+  /** Bumped only when the canonical program contract changes. */
+  contractVersion: string;
+  /** Internal compatibility adapter; canonical validation runs afterward. */
+  normalizeArgs?: (args: unknown) => unknown;
+}
+
 export interface PortalTool {
   name: string;
   description: string;
@@ -72,6 +85,8 @@ export interface PortalTool {
   // "Available tools" entry; `promptGuidelines` are short guideline bullets.
   promptSnippet?: string;
   promptGuidelines?: string[];
+  /** Opt-in contract for exposure through semantic-mode `program`. */
+  program?: ProgramToolMetadata;
   argsSchema?: z.ZodTypeAny;
   permissionBehavior?: "normal" | "always-prompt" | "never-prompt";
   // Optional, pure (no IO) hook: when present and it returns a request, the
