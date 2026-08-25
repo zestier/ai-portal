@@ -221,6 +221,64 @@ describe("program runtime", () => {
     ]);
   });
 
+  it("supports undocumented Node-style fs Sync aliases", async () => {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const facadeTools = new Map(
+      [
+        "read",
+        "write",
+        "create_directory",
+        "move",
+        "__ptc_fs_readdir",
+        "__ptc_fs_stat",
+      ].map((name) => [name, tool(name)]),
+    );
+    const result = await runProgram({
+      source: `
+        const text = fs.readFileSync("src/a.ts", "utf8");
+        fs.writeFileSync("src/b.ts", text);
+        fs.mkdirSync("src/generated");
+        fs.renameSync("src/b.ts", "src/generated/b.ts");
+        const entries = fs.readdirSync("src");
+        const stats = fs.statSync("src/a.ts");
+        return { text, entries, size: stats.size };
+      `,
+      capabilities: new Map(),
+      facadeCapabilities: facadeTools,
+      execute: async (name, args) => {
+        calls.push({ name, args });
+        if (name === "read") {
+          return ok({ type: "text", file: { content: "hello" } });
+        }
+        if (name === "__ptc_fs_readdir") return ok(["a.ts", "b.ts"]);
+        if (name === "__ptc_fs_stat") {
+          return ok({
+            size: 5,
+            mtimeMs: 1,
+            file: true,
+            directory: false,
+            symbolicLink: false,
+          });
+        }
+        return ok();
+      },
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual({
+      text: "hello",
+      entries: ["a.ts", "b.ts"],
+      size: 5,
+    });
+    expect(calls.map(({ name }) => name)).toEqual([
+      "read",
+      "write",
+      "create_directory",
+      "move",
+      "__ptc_fs_readdir",
+      "__ptc_fs_stat",
+    ]);
+  });
+
   it("does not expose internal facade capabilities through tools", async () => {
     const internal = tool("__ptc_fs_stat");
     const run = runProgram({

@@ -147,7 +147,7 @@ export async function runProgram(
         return value.startsWith("/");
       }
     });
-    const fsApi = Object.freeze({
+    const fsMethods = {
       readFile(path, encoding) {
         const normalizedEncoding = typeof encoding === "string"
           ? encoding
@@ -202,6 +202,15 @@ export async function runProgram(
           overwrite: true
         });
       }
+    };
+    const fsApi = Object.freeze({
+      ...fsMethods,
+      readFileSync: fsMethods.readFile,
+      writeFileSync: fsMethods.writeFile,
+      readdirSync: fsMethods.readdir,
+      statSync: fsMethods.stat,
+      mkdirSync: fsMethods.mkdir,
+      renameSync: fsMethods.rename
     });
     const commandApi = Object.freeze({
       run(executableOrArgv, argsOrOptions = [], maybeOptions = {}) {
