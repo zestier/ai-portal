@@ -3,8 +3,12 @@ import {
   shouldInterruptAfterDeadline,
 } from "quickjs-emscripten";
 import { createHash } from "node:crypto";
-import type { PortalTool, ToolResult } from "$lib/server/tools/types";
-import { suggestionsFor } from "./contracts";
+import type {
+  PortalTool,
+  ToolPermissionRequest,
+  ToolResult,
+} from "$lib/server/tools/types";
+import { normalizeProgramToolArgs, suggestionsFor } from "./contracts";
 
 const MAX_OPERATIONS_BY_CATEGORY = {
   mutation: 500,
@@ -330,17 +334,8 @@ export async function runProgram(
     if (Date.now() > deadline) {
       throw new Error("Program exceeded its runtime budget.");
     }
-    const category = operationCategory(name, args, allowed);
-    if (category !== null) {
-      categoryOperations[category]++;
-      const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
-      if (categoryOperations[category] > categoryLimit) {
-        throw new Error(
-          `Program exceeded its ${category} operation budget (${categoryLimit}).`,
-        );
-      }
-    }
-    if (!allowed.has(name)) {
+    const tool = allowed.get(name);
+    if (!tool) {
       const suggestions = suggestionsFor(name, [...allowed.keys()]);
       const related = suggestions.length
         ? ` Available related tools: ${suggestions.join(", ")}.`
@@ -360,11 +355,28 @@ export async function runProgram(
       });
       return failure;
     }
-    const result = await opts.execute(name, args, opts.signal);
+    // Normalize compatibility forms once, before the operation category and
+    // dispatch, so every downstream step (which parses the canonical form
+    // with Zod) sees canonical args. Previously the category ran on the raw
+    // guest args: a program tool whose `derivePermissionRequest` parses them
+    // threw on an unnormalized alias and failed the call before any tool.call
+    // was emitted (opts.execute normalized too late).
+    const effective = normalizeProgramToolArgs(tool, args);
+    const category = operationCategory(name, effective, allowed);
+    if (category !== null) {
+      categoryOperations[category]++;
+      const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
+      if (categoryOperations[category] > categoryLimit) {
+        throw new Error(
+          `Program exceeded its ${category} operation budget (${categoryLimit}).`,
+        );
+      }
+    }
+    const result = await opts.execute(name, effective, opts.signal);
     calls.push({
       name,
       kind: allowed === opts.capabilities ? "tool" : "facade",
-      argsHash: hash(args),
+      argsHash: hash(effective),
       ok: result.ok,
     });
     return result.ok
@@ -380,7 +392,16 @@ function operationCategory(
 ): OperationCategory | null {
   if (name === "__ptc_command_run") return "command";
   const tool = allowed.get(name);
-  const permission = tool?.derivePermissionRequest?.(args);
+  // Classification must never crash the program: a guessed arg form that a
+  // tool's `derivePermissionRequest` can't parse should fall through to the
+  // static program category (a failed argument guess is dispatched and fails
+  // validation normally — see executeDelegatedTool), not abort the run.
+  let permission: ToolPermissionRequest | null | undefined;
+  try {
+    permission = tool?.derivePermissionRequest?.(args);
+  } catch {
+    permission = null;
+  }
   if (permission?.permissionKind === "read") return null;
   if (tool?.program?.operationCategory === "read") return null;
   return "mutation";
