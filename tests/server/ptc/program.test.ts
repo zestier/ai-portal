@@ -63,8 +63,71 @@ describe("program runtime", () => {
     });
     expect(result.value).toEqual({
       processType: "undefined",
-      requireType: "undefined",
+      requireType: "function",
     });
+  });
+
+  it("provides predeclared POSIX path helpers without module loading", async () => {
+    const result = await runProgram({
+      source: `const { extname } = path; return {
+        joined: path.join("src", "lib", "..", "routes", "page.ts"),
+        directory: path.dirname("src/routes/page.ts"),
+        base: path.basename("src/routes/page.test.ts", ".ts"),
+        extension: extname("src/routes/page.test.ts"),
+        normalized: path.normalize("src//routes/../lib/./file.ts"),
+        relative: path.relative("src/lib", "tests/server"),
+        absolute: path.isAbsolute("/tmp/file")
+      };`,
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual({
+      joined: "src/routes/page.ts",
+      directory: "src/routes",
+      base: "page.test",
+      extension: ".ts",
+      normalized: "src/lib/file.ts",
+      relative: "../../tests/server",
+      absolute: true,
+    });
+  });
+
+  it("reports actionable module-loading errors without lexical collisions", async () => {
+    const run = runProgram({
+      source: 'const fs = require("fs"); return fs;',
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    await expect(run).rejects.toThrow(
+      /fs, path, command, and tools are predeclared globals/,
+    );
+    await expect(run).rejects.not.toThrow(/redefinition of lexical identifier/);
+  });
+
+  it("rejects console output and missing return values", async () => {
+    await expect(
+      runProgram({
+        source: 'console.log({ answer: 42 }); return "unreachable";',
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      "Console output is unavailable in program. Return the final value directly instead; do not JSON.stringify it.",
+    );
+
+    await expect(
+      runProgram({
+        source: "const answer = 42;",
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      "Program returned undefined. Return the final value directly, for example return { results }.",
+    );
   });
 
   it("cannot escape to a host process through Function constructors", async () => {

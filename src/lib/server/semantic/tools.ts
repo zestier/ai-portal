@@ -97,8 +97,8 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
       "Run isolated JavaScript for a known sequence of tool and filesystem operations.",
     promptSnippet: "Batch known operations in isolated JavaScript.",
     promptGuidelines: [
-      `Tools: ${catalog}. Calls return the successful value and throw on failure. Use get_program_tool_schemas only for an unclear contract.`,
-      'Files: fs.readFile(path, "utf8"), fs.writeFile(path, text), fs.readdir(path), fs.stat(path), fs.mkdir(path), and fs.rename(from, to). Edit with readFile then writeFile. File contents are text only. No other host APIs are available.',
+      `Tools: ${catalog}. Calls return the successful value and throw on failure. Return the final value directly, for example return { results }; do not use console output or JSON.stringify. Use get_program_tool_schemas only for an unclear contract.`,
+      'Globals are already available: do not use import, require, or module loading. Use fs.readFile(path, "utf8"), fs.writeFile(path, text), fs.readdir(path), fs.stat(path), fs.mkdir(path), and fs.rename(from, to). Use path.join, path.dirname, path.basename, path.extname, path.normalize, path.relative, and path.isAbsolute for POSIX workspace paths. Edit with readFile then writeFile. File contents are text only.',
       "Commands: command.run(executable, args?, { cwd?, stdin?, timeoutMs? }) returns { stdout, stderr }. It uses argv without a shell and throws on nonzero exit.",
     ],
     argsSchema: ProgramArgs,

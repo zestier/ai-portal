@@ -232,6 +232,16 @@ interface ProgramStats {
 
 declare const fs: ProgramFs;
 
+declare const path: {
+   join(...parts: string[]): string;
+   dirname(path: string): string;
+   basename(path: string, suffix?: string): string;
+   extname(path: string): string;
+   normalize(path: string): string;
+   relative(from: string, to: string): string;
+   isAbsolute(path: string): boolean;
+};
+
 declare const command: {
    run(
       executable: string,
@@ -244,6 +254,14 @@ declare const command: {
    ): Promise<{ stdout: string; stderr: string }>;
 };
 ```
+
+These globals are predeclared; programs must not use `import`, `require`, or
+module loading. `path` uses POSIX separators and intentionally omits `resolve`:
+filesystem calls accept workspace-relative paths and enforce their own root.
+Programs return their final value directly, such as `return { results }`; they
+must not use `console` output or pre-serialize the value with `JSON.stringify`.
+Returned values must be JSON-compatible, and completing with `undefined` is an
+error rather than an empty successful result.
 
 Only these signatures are promised. The first version has no binary encodings,
 `Buffer`, abort signal crossing, file descriptors, recursive directory options,

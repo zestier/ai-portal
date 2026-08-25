@@ -99,12 +99,69 @@ export async function runProgram(
   installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
 
   const wrapped = `(async () => {
+    {
     async function unwrapCall(call, name, args) {
       const result = JSON.parse(await call(name, args));
       if (!result.ok) throw new Error(result.error.message);
       return result.value;
     }
-    const fs = Object.freeze({
+    function normalizePath(value) {
+      if (typeof value !== "string") throw new TypeError("Path must be a string.");
+      const absolute = value.startsWith("/");
+      const parts = [];
+      for (const part of value.split("/")) {
+        if (!part || part === ".") continue;
+        if (part === "..") {
+          if (parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
+          else if (!absolute) parts.push("..");
+        } else {
+          parts.push(part);
+        }
+      }
+      const joined = parts.join("/");
+      return absolute ? "/" + joined : joined || ".";
+    }
+    function basenamePath(value, suffix) {
+      const normalized = normalizePath(value);
+      let base = normalized === "/" ? "" : normalized.slice(normalized.lastIndexOf("/") + 1);
+      if (typeof suffix === "string" && suffix && base.endsWith(suffix)) {
+        base = base.slice(0, -suffix.length);
+      }
+      return base;
+    }
+    const pathApi = Object.freeze({
+      join(...parts) {
+        if (parts.some((part) => typeof part !== "string")) {
+          throw new TypeError("Path must be a string.");
+        }
+        return normalizePath(parts.filter(Boolean).join("/"));
+      },
+      dirname(value) {
+        const normalized = normalizePath(value);
+        if (normalized === "/" || normalized === ".") return normalized;
+        const index = normalized.lastIndexOf("/");
+        return index < 0 ? "." : index === 0 ? "/" : normalized.slice(0, index);
+      },
+      basename: basenamePath,
+      extname(value) {
+        const base = basenamePath(value);
+        const index = base.lastIndexOf(".");
+        return index <= 0 ? "" : base.slice(index);
+      },
+      normalize: normalizePath,
+      relative(from, to) {
+        const fromParts = normalizePath(from).split("/").filter((part) => part && part !== ".");
+        const toParts = normalizePath(to).split("/").filter((part) => part && part !== ".");
+        let shared = 0;
+        while (shared < fromParts.length && shared < toParts.length && fromParts[shared] === toParts[shared]) shared++;
+        return [...fromParts.slice(shared).map(() => ".."), ...toParts.slice(shared)].join("/") || "";
+      },
+      isAbsolute(value) {
+        if (typeof value !== "string") throw new TypeError("Path must be a string.");
+        return value.startsWith("/");
+      }
+    });
+    const fsApi = Object.freeze({
       async readFile(path, encoding) {
         const normalizedEncoding = typeof encoding === "string"
           ? encoding
@@ -160,7 +217,7 @@ export async function runProgram(
         });
       }
     });
-    const command = Object.freeze({
+    const commandApi = Object.freeze({
       async run(executable, args = [], options = {}) {
         if (typeof executable !== "string" || executable.length === 0) {
           throw new Error("command.run requires an executable string.");
@@ -177,12 +234,38 @@ export async function runProgram(
         });
       }
     });
-    const tools = new Proxy(Object.create(null), {
+    const toolsApi = new Proxy(Object.create(null), {
       get(_target, name) {
         if (typeof name !== "string" || name === "then") return undefined;
         return async (args = {}) => unwrapCall(__callCapability, name, args);
       }
     });
+    const unavailableModule = (name) => {
+      throw new Error(
+        "Module loading is unavailable in program. fs, path, command, and tools are predeclared globals; use them directly instead of require or import. Requested: " + String(name)
+      );
+    };
+    const unavailableConsole = () => {
+      throw new Error(
+        "Console output is unavailable in program. Return the final value directly instead; do not JSON.stringify it."
+      );
+    };
+    const consoleApi = Object.freeze({
+      log: unavailableConsole,
+      info: unavailableConsole,
+      warn: unavailableConsole,
+      error: unavailableConsole,
+      debug: unavailableConsole
+    });
+    Object.defineProperties(globalThis, {
+      fs: { value: fsApi, writable: false, configurable: false },
+      path: { value: pathApi, writable: false, configurable: false },
+      command: { value: commandApi, writable: false, configurable: false },
+      tools: { value: toolsApi, writable: false, configurable: false },
+      require: { value: unavailableModule, writable: false, configurable: false },
+      console: { value: consoleApi, writable: false, configurable: false }
+    });
+    }
     ${opts.source}
   })()`;
 
@@ -197,13 +280,18 @@ export async function runProgram(
           ? state.value
           : state.type === "rejected"
             ? (() => {
-                const message = String(vm.dump(state.error));
+                const message = dumpedErrorMessage(vm.dump(state.error));
                 state.error.dispose();
                 throw new Error(message);
               })()
             : vm.unwrapResult(await vm.resolvePromise(promiseHandle));
       try {
         const value = vm.dump(valueHandle);
+        if (value === undefined) {
+          throw new Error(
+            "Program returned undefined. Return the final value directly, for example return { results }.",
+          );
+        }
         const encoded = JSON.stringify(value ?? null);
         if (Buffer.byteLength(encoded) > MAX_OUTPUT_BYTES) {
           throw new Error("Program result exceeded its size budget.");
@@ -280,4 +368,16 @@ function hash(value: unknown): string {
   return createHash("sha256")
     .update(typeof value === "string" ? value : JSON.stringify(value))
     .digest("hex");
+}
+
+function dumpedErrorMessage(value: unknown): string {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    "message" in value &&
+    typeof value.message === "string"
+  ) {
+    return value.message;
+  }
+  return String(value);
 }

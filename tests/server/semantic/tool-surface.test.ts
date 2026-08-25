@@ -59,12 +59,19 @@ describe("semantic tool surface", () => {
       /(?:^|; )(?:read|write|edit|multi_edit|move|ls|create_directory|bash) -/,
     );
     expect(programGuidance).not.toContain("ask_user -");
-    expect(programGuidance).toContain('Files: fs.readFile(path, "utf8")');
+    expect(programGuidance).toContain(
+      "Globals are already available: do not use import, require, or module loading",
+    );
+    expect(programGuidance).toContain('fs.readFile(path, "utf8")');
+    expect(programGuidance).toContain("path.join");
     expect(programGuidance).toContain("fs.mkdir(path)");
     expect(programGuidance).toContain("fs.rename(from, to)");
     expect(programGuidance).toContain("command.run(executable, args?");
     expect(programGuidance).toContain(
       "Calls return the successful value and throw on failure",
+    );
+    expect(programGuidance).toContain(
+      "Return the final value directly, for example return { results }; do not use console output or JSON.stringify",
     );
   });
 
