@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Run full verification suite before allowing commit. Mirrors what
+# redeploy button executes, so anything that passes here is safe to ship.
+set -eu
+
+# Allow explicit escape hatch for emergencies (e.g. mid-rebase fixups).
+if [ "${SKIP_VERIFY:-0}" = "1" ]; then
+	echo "[pre-commit] SKIP_VERIFY=1 — skipping pnpm run verify"
+	exit 0
+fi
+
+# Git exports repository-local variables to hooks. In particular,
+# GIT_INDEX_FILE=.git/index breaks commands run inside linked worktrees,
+# where .git is a file rather than a directory.
+while IFS= read -r variable; do
+	unset "$variable"
+done < <(git rev-parse --local-env-vars)
+
+# Format staged files before verify so prettier --check (inside lint)
+# can't block commit on formatting. Re-stage so committed blobs include it.
+# NUL-delimited paths handle spaces; --ignore-unknown skips binaries.
+mapfile -d '' -t files < <(git diff --cached --name-only -z --diff-filter=ACMR)
+if ((${#files[@]})); then
+	echo "[pre-commit] prettier --write (staged files)"
+	pnpm exec prettier --write --ignore-unknown "${files[@]}"
+	git add -- "${files[@]}"
+fi
+
+echo "[pre-commit] pnpm run verify"
+exec pnpm run verify
