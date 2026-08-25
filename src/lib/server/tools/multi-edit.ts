@@ -305,6 +305,8 @@ export function buildMultiEditTools(
           };
           if (applied.lenient !== undefined)
             output.lenientTabEating = applied.lenient;
+          output.replacedLines = applied.replacedLines;
+          output.shift = applied.shift;
           if (gitRepo) {
             output.gitDiff = gitDiffFor(
               "update",

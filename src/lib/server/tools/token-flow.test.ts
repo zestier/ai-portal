@@ -5,14 +5,15 @@ import { makeTmpDir } from "../../../../tests/helpers/tmp";
 import { buildReadTools } from "./read";
 import { buildEditFileTools } from "./edit-file";
 
-// The experiment's consolidated flow, exactly as the model would use it with
-// the folded-in tools:
+// The consolidated flow, exactly as the model would use it with the folded-in
+// tools:
 //   1. read (auto) a large file -> outline, giving a block's line range +
 //      header text
-//   2. edit mode:'range' that block by line numbers + header checksum (no
-//      old-block echo, no pre-edit whole-file read)
+//   2. read that specific range -> the block's exact text
+//   3. edit with `old_string: <exact block text>` (exact-text replacement)
+//   4. re-read (broad) -> outline reflects the redrawn block
 describe("read + edit range flow (consolidated)", () => {
-  it("navigates by outline and edits by range", async () => {
+  it("navigates by outline and edits by exact text", async () => {
     const root = makeTmpDir("token-flow-");
     writeFileSync(join(root, "svc.py"), bigPy());
     const read = buildReadTools(root)[0]!;
@@ -33,16 +34,33 @@ describe("read + edit range flow (consolidated)", () => {
     const block = blocks[1];
     expect(block.text).toBe("def method_0(self):");
 
-    // 2. edit range with outline-derived line numbers + header checksum.
+    // 2. read the exact range for the block body.
+    const r = await read.handler({
+      file_path: "svc.py",
+      offset: block.line,
+      limit: block.extent - block.line + 1,
+    });
+    if (!r.ok) throw new Error(r.error.message);
+    const oldBlock = (r.result as { file: { content: string } }).file.content;
+    expect(oldBlock).toBe("    def method_0(self):\n        return 0");
+
+    // 3. edit by exact text: old_string is the block body exactly.
     const er = await edit.handler({
       file_path: "svc.py",
-      anchor: block.text,
-      lines: block.extent - block.line + 1,
+      old_string: oldBlock,
       new_string:
         '    def method_0(self):\n        return -1\n        print("x")',
     });
     if (!er.ok) throw new Error(er.error.message);
-    expect(er.result).toMatchObject({ shift: { after: block.extent, by: 1 } });
+
+    // 4. broad re-read -> the outline now reflects the changed body.
+    const o2 = await read.handler({
+      file_path: "svc.py",
+      offset: 1,
+      limit: 100,
+    });
+    if (!o2.ok) throw new Error(o2.error.message);
+    expect(o2.result).toMatchObject({ type: "text", file: { outlined: true } });
   });
 });
 

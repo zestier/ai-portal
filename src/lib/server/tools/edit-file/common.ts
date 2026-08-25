@@ -48,9 +48,10 @@ export interface FileEditOutput {
   // whose stray leading numbering tab was dropped; `new_string` was written
   // with the same tabs removed, so the file carries no artifact.
   lenientTabEating?: { ateLines: number[] };
-  // Present when the edit extended the anchor to whole lines (the `lines`
-  // parameter): how many lines were replaced and how lines after the block
-  // moved (`after` = 1-based last replaced line).
+  // Computed for every successful edit: `replacedLines` is how many lines
+  // `old_string` spans; `shift` reports how line numbers after the match move
+  // (`after` = 1-based line number where `old_string` ends, `by` = net lines
+  // added/removed). Undefined for not-found/no-change.
   replacedLines?: number;
   shift?: { after: number; by: number };
 }
@@ -268,45 +269,43 @@ export function mirrorNumberingTabEating(
     .join("\n");
 }
 
-// The pure content transformation behind a replacement: exact-text first, then
-// the numbered-read tab-eating fallback. Shared by the `edit` tool and
-// `multi_edit` so the replace semantics (first occurrence unless `replaceAll`,
-// no-change rejection, and the tab-eating fallback) cannot drift. `multi_edit`
-// calls it against the in-memory batch content instead of a file, which is what
-// makes the sequential intra-file semantics identical to repeated `edit` calls.
+// The pure content transformation behind a replacement: exact-text match,
+// then the numbered-read tab-eating fallback. `replacedLines`/`shift` are
+// computed for every success. Shared by `edit` and `multi_edit` so the replace
+// semantics (first occurrence unless `replaceAll`, no-change rejection, and
+// the tab-eating fallback) cannot drift. `multi_edit` calls it against the
+// in-memory batch content instead of a file, which is what makes the sequential
+// intra-file edit semantics identical to repeated `edit` calls.
 export type EditContentResult =
   | {
       ok: true;
       content: string;
       lenient?: { ateLines: number[] };
-      replacedLines?: number;
-      shift?: { after: number; by: number };
+      replacedLines: number;
+      shift: { after: number; by: number };
     }
   | { ok: false; reason: "not_found" | "no_change" };
 
-// 0-based start offset of every line in `content`.
-function lineStarts(content: string): number[] {
-  const starts = [0];
-  for (let i = 0; i < content.length; i += 1)
-    if (content[i] === "\n") starts.push(i + 1);
-  return starts;
-}
-
-// Index of the greatest element of the ascending array `sorted` that is <= target.
-function lastIndexAtOrBefore(sorted: number[], target: number): number {
-  let lo = 0;
-  let hi = sorted.length - 1;
-  let res = 0;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid]! <= target) {
-      res = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return res;
+// Line metrics for a successful exact-text match: how many lines the matched
+// text spans and how line numbers after the match move. `matchEndIdx` is the
+// 0-based offset just past the match; newline counts come from `oldText`/`newText`
+// (the caller's strings — tab-eating never changes newline structure, and
+// `\r\n` counts as one newline since it contains a single `\n`).
+function lineSpanInfo(
+  content: string,
+  matchEndIdx: number,
+  oldText: string,
+  newText: string,
+): { replacedLines: number; shift: { after: number; by: number } } {
+  const oldNewlines = oldText.split("\n").length - 1;
+  const newNewlines = newText.split("\n").length - 1;
+  return {
+    replacedLines: oldNewlines + 1,
+    shift: {
+      after: content.slice(0, matchEndIdx).split("\n").length,
+      by: newNewlines - oldNewlines,
+    },
+  };
 }
 
 export function applyEditToContent(
@@ -314,78 +313,44 @@ export function applyEditToContent(
   oldString: string,
   newString: string,
   replaceAll: boolean,
-  lines?: number,
 ): EditContentResult {
-  // `lines` present => whole-line replacement: replace the anchor's line plus
-  // enough following lines to cover `lines` total. Omitted => exact text
-  // replace (with the numbering-tab fallback for numbered `read` output).
-  if (lines === undefined) {
-    if (oldString === newString) return { ok: false, reason: "no_change" };
-    if (content.includes(oldString)) {
-      return {
-        ok: true,
-        content: replaceAll
-          ? content.replaceAll(oldString, newString)
-          : content.replace(oldString, newString),
-      };
-    }
-    // Exact match failed. If `old_string` carries a stray leading tab from
-    // numbered `read` output, match the tab-stripped form instead — but only
-    // when that form is unambiguous (exactly one occurrence), so a wrong-line
-    // edit is never silently applied. Mirror the strip onto `new_string` so
-    // the artifact is not reinserted.
-    const plan = planNumberingTabEating(oldString);
-    if (plan !== null && countOccurrences(content, plan.normalized) === 1) {
-      const mirrored = mirrorNumberingTabEating(
-        newString,
-        plan.ate,
-        plan.oldTabs,
-      );
-      const ateLines = plan.ate
-        .map((ate, i) => (ate ? i + 1 : -1))
-        .filter((line) => line > 0);
-      return {
-        ok: true,
-        content: content.replace(plan.normalized, mirrored),
-        lenient: { ateLines },
-      };
-    }
-    return { ok: false, reason: "not_found" };
+  const match = (matched: string, matchIdx: number) =>
+    lineSpanInfo(content, matchIdx + matched.length, oldString, newString);
+  if (oldString === newString) return { ok: false, reason: "no_change" };
+  if (content.includes(oldString)) {
+    const matchIdx = content.indexOf(oldString);
+    return {
+      ok: true,
+      content: replaceAll
+        ? content.replaceAll(oldString, newString)
+        : content.replace(oldString, newString),
+      ...match(oldString, matchIdx),
+    };
   }
-
-  // Whole-line path. The anchor may match mid-line (the outline shows trimmed
-  // header text); the replacement covers the WHOLE anchor line plus the lines
-  // after it, up to `total` lines. `total` clamps to at least the number of
-  // lines the anchor itself spans.
-  const linesInMatch = oldString.split(/\r?\n/).length;
-  const total = Math.max(lines, linesInMatch);
-  const matches: number[] = [];
-  for (
-    let idx = content.indexOf(oldString);
-    idx !== -1;
-    idx = content.indexOf(oldString, idx + 1)
-  ) {
-    matches.push(idx);
+  // Exact match failed. If `old_string` carries a stray leading tab from
+  // numbered `read` output, match the tab-stripped form instead — but only
+  // when that form is unambiguous (exactly one occurrence), so a wrong-line
+  // edit is never silently applied. Mirror the strip onto `new_string` so
+  // the artifact is not reinserted.
+  const plan = planNumberingTabEating(oldString);
+  if (plan !== null && countOccurrences(content, plan.normalized) === 1) {
+    const mirrored = mirrorNumberingTabEating(
+      newString,
+      plan.ate,
+      plan.oldTabs,
+    );
+    const ateLines = plan.ate
+      .map((ate, i) => (ate ? i + 1 : -1))
+      .filter((line) => line > 0);
+    const matchIdx = content.indexOf(plan.normalized);
+    return {
+      ok: true,
+      content: content.replace(plan.normalized, mirrored),
+      lenient: { ateLines },
+      ...match(plan.normalized, matchIdx),
+    };
   }
-  if (matches.length === 0) return { ok: false, reason: "not_found" };
-  const starts = lineStarts(content);
-  const nl = content.includes("\r\n") ? "\r\n" : "\n";
-  const newLinesArr = newString === "" ? [] : newString.split(/\r?\n/);
-  const linesArr = content.split(/\r?\n/);
-  // Apply from the end so earlier offsets stay valid (works for non-overlapping
-  // occurrences; overlapping extended blocks are a pathological edge).
-  const targets = replaceAll ? matches : matches.slice(0, 1);
-  for (const m of [...targets].reverse()) {
-    const startIdx = lastIndexAtOrBefore(starts, m);
-    linesArr.splice(startIdx, total, ...newLinesArr);
-  }
-  const firstStart = lastIndexAtOrBefore(starts, targets[0]!);
-  return {
-    ok: true,
-    content: linesArr.join(nl),
-    replacedLines: total,
-    shift: { after: firstStart + total, by: newLinesArr.length - total },
-  };
+  return { ok: false, reason: "not_found" };
 }
 
 // ---- "Did you mean" closest-match suggestion on not-found (Option 2) ----

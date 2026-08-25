@@ -9,38 +9,24 @@ function editTool(root: string) {
 }
 
 describe("applyEditToContent", () => {
-  it("replaces just the anchor text when lines is omitted (exact)", () => {
+  it("replaces exact text and reports line shift", () => {
     const out = applyEditToContent("a\nb\nc", "b", "B", false);
     if (!out.ok) throw new Error(out.reason);
     expect(out.content).toBe("a\nB\nc");
-    expect(out.shift).toBeUndefined();
-  });
-
-  it("extends the anchor to whole lines and reports the shift", () => {
-    const out = applyEditToContent("a\nb\nc\nd\ne", "b", "X\nY\nZ", false, 3);
-    if (!out.ok) throw new Error(out.reason);
-    expect(out.content).toBe("a\nX\nY\nZ\ne");
-    expect(out.replacedLines).toBe(3);
-    expect(out.shift).toEqual({ after: 4, by: 0 });
-  });
-
-  it("lines:1 replaces the whole anchor line", () => {
-    const out = applyEditToContent("a\nb\nc", "b", "B", false, 1);
-    if (!out.ok) throw new Error(out.reason);
-    expect(out.content).toBe("a\nB\nc");
+    expect(out.replacedLines).toBe(1);
     expect(out.shift).toEqual({ after: 2, by: 0 });
   });
 
-  it("clamps lines to at least the anchor span", () => {
-    // anchor spans 2 lines; lines:1 is bumped to 2
-    const out = applyEditToContent("a\nb\nc\nd", "b\nc", "X\nY", false, 1);
+  it("reports replacedLines and shift for a multi-line exact-text replacement", () => {
+    const out = applyEditToContent("a\nb\nc\nd", "b\nc", "X", false);
     if (!out.ok) throw new Error(out.reason);
-    expect(out.content).toBe("a\nX\nY\nd");
-    expect(out.shift).toEqual({ after: 3, by: 0 });
+    expect(out.content).toBe("a\nX\nd");
+    expect(out.replacedLines).toBe(2);
+    expect(out.shift).toEqual({ after: 3, by: -1 });
   });
 
-  it("reports not_found when the anchor is absent", () => {
-    const out = applyEditToContent("a\nb\nc", "zzz", "X", false, 2);
+  it("reports not_found when old_string is absent", () => {
+    const out = applyEditToContent("a\nb\nc", "zzz", "X", false);
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.reason).toBe("not_found");
@@ -48,25 +34,24 @@ describe("applyEditToContent", () => {
 });
 
 describe("edit tool", () => {
-  it("replaces just the anchor text by default", async () => {
+  it("replaces exact text by default", async () => {
     const root = makeTmpDir("edit-tool-");
     writeFileSync(join(root, "f.txt"), "a\nb\nc");
     const result = await editTool(root).handler({
       file_path: "f.txt",
-      anchor: "b",
+      old_string: "b",
       new_string: "B",
     });
     if (!result.ok) throw new Error(result.error.message);
     expect(readFileSync(join(root, "f.txt"), "utf8")).toBe("a\nB\nc");
   });
 
-  it("lines replaces a whole block and reports the diff + shift", async () => {
+  it("reports replacedLines and shift for a multi-line exact-text replacement", async () => {
     const root = makeTmpDir("edit-tool-");
     writeFileSync(join(root, "f.txt"), "a\nb\nc\nd");
     const result = await editTool(root).handler({
       file_path: "f.txt",
-      anchor: "b",
-      lines: 2,
+      old_string: "b\nc",
       new_string: "X\nY\nZ",
     });
     if (!result.ok) throw new Error(result.error.message);
@@ -81,7 +66,7 @@ describe("edit tool", () => {
     const root = makeTmpDir("edit-tool-");
     const result = await editTool(root).handler({
       file_path: "nope.txt",
-      anchor: "x",
+      old_string: "x",
       new_string: "y",
     });
     expect(result.ok).toBe(false);

@@ -30,15 +30,14 @@ import {
 } from "../ticket-file";
 
 // Portal-native schema for the `edit` tool. The SDK's built-in tools are
-// disabled (`noTools: 'builtin'`), so the field names are ours: `anchor` locates
-// the edit by content, and optional `lines` extends it to a whole-line block
-// (replace the anchor's line plus the following lines). No line numbers, no
-// checksum — the content anchor self-verifies and survives line drift.
+// disabled (`noTools: 'builtin'`), so the field names are ours: `old_string`
+// locates the edit by exact content, mirroring `multi_edit`'s `old_string`.
+// No line numbers, no checksum — the content self-verifies and survives line
+// drift.
 export const EditArgs = z
   .object({
     file_path: z.string().min(1).max(4096),
-    anchor: z.string().min(1).max(MAX_EDIT_FILE_BYTES),
-    lines: z.number().int().min(1).optional(),
+    old_string: z.string().min(1).max(MAX_EDIT_FILE_BYTES),
     new_string: z.string().max(MAX_EDIT_FILE_BYTES),
     replace_all: z.boolean().optional().default(false),
     worktree: WorktreeSelector,
@@ -78,34 +77,32 @@ async function performEdit(
     }
 > {
   const {
-    anchor,
+    old_string: oldString,
     new_string: newString,
     replace_all: replaceAll,
-    lines,
   } = args;
   try {
     const existing = await readExisting(target.abs);
     if (existing === null) {
       // Edit is edit-only; a missing file has nothing to search, so it
       // fails like any unmatched string.
-      return { message: editNotFoundError(anchor) };
+      return { message: editNotFoundError(oldString) };
     }
     const applied = applyEditToContent(
       existing,
-      anchor,
+      oldString,
       newString,
       replaceAll,
-      lines,
     );
     if (!applied.ok) {
       if (applied.reason === "not_found") {
-        const suggestion = findClosestMatch(existing, anchor);
+        const suggestion = findClosestMatch(existing, oldString);
         if (suggestion === null) {
           // No window cleared the thresholds — exactly today's text.
-          return { message: editNotFoundError(anchor) };
+          return { message: editNotFoundError(oldString) };
         }
         return {
-          message: editNotFoundError(anchor, suggestionHint(suggestion)),
+          message: editNotFoundError(oldString, suggestionHint(suggestion)),
           code: "edit_failed",
           details: { suggestion },
           // The message is the complete model-facing text; code/details
@@ -113,7 +110,7 @@ async function performEdit(
           detailsUiOnly: true,
         };
       }
-      return { message: "new_string must be different from anchor" };
+      return { message: "new_string must be different from old_string" };
     }
     const content = applied.content;
     await writeFile(target.abs, content);
@@ -122,7 +119,7 @@ async function performEdit(
     }).hunks;
     const result: FileEditOutput = {
       filePath: target.abs,
-      oldString: anchor,
+      oldString: oldString,
       newString,
       originalFile: existing,
       structuredPatch: hunks,
@@ -131,10 +128,8 @@ async function performEdit(
     };
     if (applied.lenient !== undefined)
       result.lenientTabEating = applied.lenient;
-    if (applied.shift !== undefined && applied.replacedLines !== undefined) {
-      result.replacedLines = applied.replacedLines;
-      result.shift = applied.shift;
-    }
+    result.replacedLines = applied.replacedLines;
+    result.shift = applied.shift;
     if (await isGitRepo(cwd)) {
       result.gitDiff = gitDiffFor(
         "update",
@@ -145,7 +140,7 @@ async function performEdit(
       );
     }
     const shiftText =
-      applied.shift === undefined
+      applied.shift.by === 0
         ? ""
         : ` Lines after ${applied.shift.after} shift by ${applied.shift.by >= 0 ? "+" : ""}${applied.shift.by}.`;
     return {
@@ -183,24 +178,26 @@ async function handleTicketEdit(
   const currentContent = ticketFileContent(ticket);
   const applied = applyEditToContent(
     currentContent,
-    args.anchor,
+    args.old_string,
     args.new_string,
     args.replace_all,
-    args.lines,
   );
   if (!applied.ok) {
     if (applied.reason === "not_found") {
-      const suggestion = findClosestMatch(currentContent, args.anchor);
+      const suggestion = findClosestMatch(currentContent, args.old_string);
       if (suggestion === null) {
-        return err(editNotFoundError(args.anchor));
+        return err(editNotFoundError(args.old_string));
       }
-      return err(editNotFoundError(args.anchor, suggestionHint(suggestion)), {
-        code: "edit_failed",
-        details: { suggestion },
-        detailsUiOnly: true,
-      });
+      return err(
+        editNotFoundError(args.old_string, suggestionHint(suggestion)),
+        {
+          code: "edit_failed",
+          details: { suggestion },
+          detailsUiOnly: true,
+        },
+      );
     }
-    return err("new_string must be different from anchor");
+    return err("new_string must be different from old_string");
   }
   const editResult = applyTicketFileEdit(applied.content, ticket, userId);
   if (!editResult.ok) {
@@ -239,9 +236,8 @@ export function buildEditTool(
     name: "edit",
     description: "Replace exact text in an existing workspace file.",
     promptGuidelines: [
-      "Fails (leaving the file unchanged) when the `anchor` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
-      "`anchor` locates the edit (content, not line numbers). Omit `lines` to replace just the anchor text; pass `lines` (total lines counting from the anchor) to replace a whole block — use the block header + size from read's outline. Returns the diff and how lines after the block shifted. Use `multi_edit` for multi-hunk or multi-file edits.",
-      "Pass whole lines as the anchor when using `lines` (the leading indentation of the anchor line is part of the replaced block).",
+      "Fails (leaving the file unchanged) when the `old_string` is not found — the error may include the closest matching region ('Did you mean') to help correct the edit.",
+      "`old_string` locates the edit by exact content (not line numbers), mirroring `multi_edit`. Use `multi_edit` for multi-hunk or multi-file edits.",
     ],
     argsSchema: EditArgs,
     parameters: {
@@ -251,15 +247,10 @@ export function buildEditTool(
           type: "string",
           description: "Absolute or workspace-relative path.",
         },
-        anchor: {
+        old_string: {
           type: "string",
           description:
-            "Text locating the edit — usually the first line of the block to replace (whole lines work best with `lines`).",
-        },
-        lines: {
-          type: "number",
-          description:
-            "Total lines to replace, counting from the anchor line. Omit to replace just the anchor text. Use the block header + size from read's outline.",
+            "Exact text to replace — usually the first line of the block to replace.",
         },
         new_string: {
           type: "string",
@@ -267,11 +258,11 @@ export function buildEditTool(
         },
         replace_all: {
           type: "boolean",
-          description: "Replace every occurrence of the anchor. Default false.",
+          description: "Replace every occurrence of old_string. Default false.",
         },
         worktree: WORKTREE_WRITE_PARAM,
       },
-      required: ["file_path", "anchor", "new_string"],
+      required: ["file_path", "old_string", "new_string"],
       additionalProperties: false,
     },
     derivePermissionRequest(args) {
