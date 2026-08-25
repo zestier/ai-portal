@@ -15,13 +15,13 @@ describe("program runtime", () => {
   it("composes capability calls and returns JSON", async () => {
     const result = await runProgram({
       source:
-        "const first = await tools.echo({ value: 2 }); return { ok: first.ok, value: first.value.value + 1 };",
+        "const first = await tools.echo({ value: 2 }); return first.value + 1;",
       capabilities: new Map([[echo.name, echo]]),
       execute: (_name, args) => echo.handler(args),
       signal: new AbortController().signal,
     });
     expect(result).toMatchObject({
-      value: { ok: true, value: 3 },
+      value: 3,
       operations: 1,
       trace: {
         sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -40,7 +40,7 @@ describe("program runtime", () => {
 
   it("returns actionable unknown-tool failures without dispatching", async () => {
     let dispatched = false;
-    const result = await runProgram({
+    const run = runProgram({
       source: "return await tools.ech({ value: 2 });",
       capabilities: new Map([[echo.name, echo]]),
       execute: async () => {
@@ -49,13 +49,8 @@ describe("program runtime", () => {
       },
       signal: new AbortController().signal,
     });
+    await expect(run).rejects.toThrow(/Available related tools: echo/);
     expect(dispatched).toBe(false);
-    expect(result.value).toMatchObject({
-      ok: false,
-      error: {
-        message: expect.stringContaining("Available related tools: echo"),
-      },
-    });
   });
 
   it("does not expose ambient process APIs", async () => {
@@ -86,15 +81,21 @@ describe("program runtime", () => {
   it("provides native-like fs methods over audited facade capabilities", async () => {
     const calls: Array<{ name: string; args: unknown }> = [];
     const facadeTools = new Map(
-      ["read", "write", "__ptc_fs_readdir", "__ptc_fs_stat"].map((name) => [
-        name,
-        tool(name),
-      ]),
+      [
+        "read",
+        "write",
+        "create_directory",
+        "move",
+        "__ptc_fs_readdir",
+        "__ptc_fs_stat",
+      ].map((name) => [name, tool(name)]),
     );
     const result = await runProgram({
       source: `
         const text = await fs.readFile("src/a.ts", "utf8");
         await fs.writeFile("src/b.ts", text);
+        await fs.mkdir("src/generated");
+        await fs.rename("src/b.ts", "src/generated/b.ts");
         const entries = await fs.readdir("src");
         const stats = await fs.stat("src/a.ts");
         return {
@@ -144,6 +145,15 @@ describe("program runtime", () => {
         name: "write",
         args: { file_path: "src/b.ts", content: "hello" },
       },
+      { name: "create_directory", args: { path: "src/generated" } },
+      {
+        name: "move",
+        args: {
+          source: "src/b.ts",
+          destination: "src/generated/b.ts",
+          overwrite: true,
+        },
+      },
       { name: "__ptc_fs_readdir", args: { path: "src" } },
       { name: "__ptc_fs_stat", args: { path: "src/a.ts" } },
     ]);
@@ -151,17 +161,51 @@ describe("program runtime", () => {
 
   it("does not expose internal facade capabilities through tools", async () => {
     const internal = tool("__ptc_fs_stat");
-    const result = await runProgram({
+    const run = runProgram({
       source: 'return await tools["__ptc_fs_stat"]({ path: "." });',
       capabilities: new Map(),
       facadeCapabilities: new Map([[internal.name, internal]]),
       execute: (_name, args) => internal.handler(args),
       signal: new AbortController().signal,
     });
-    expect(result.value).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("Unknown program tool") },
+    await expect(run).rejects.toThrow(/Unknown program tool/);
+  });
+
+  it("exposes command.run over its audited facade", async () => {
+    const commandTool = tool("__ptc_command_run");
+    const calls: unknown[] = [];
+    const result = await runProgram({
+      source: `
+        const first = await command.run("printf", ["%s", "hello"]);
+        return await command.run("sort", [], { stdin: first.stdout, timeoutMs: 5000 });
+      `,
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[commandTool.name, commandTool]]),
+      execute: async (name, args) => {
+        calls.push({ name, args });
+        return ok({
+          stdout: calls.length === 1 ? "hello" : "hello\n",
+          stderr: "",
+        });
+      },
+      signal: new AbortController().signal,
     });
+    expect(result.value).toEqual({ stdout: "hello\n", stderr: "" });
+    expect(calls).toEqual([
+      {
+        name: "__ptc_command_run",
+        args: { executable: "printf", args: ["%s", "hello"] },
+      },
+      {
+        name: "__ptc_command_run",
+        args: {
+          executable: "sort",
+          args: [],
+          stdin: "hello",
+          timeoutMs: 5000,
+        },
+      },
+    ]);
   });
 
   it("rejects unsupported fs options before dispatch", async () => {

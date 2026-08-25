@@ -4,9 +4,9 @@ import { setupLocalEnv } from "../../helpers/env";
 import { assemblePortalTools } from "../../../src/lib/server/tools/assemble";
 import { buildSemanticTools } from "../../../src/lib/server/semantic/tools";
 import { portalToolToPiTool } from "../../../src/lib/server/pi/tools";
-import { SEMANTIC_FRONTIER_GUIDANCE } from "../../../src/lib/server/runtime/system-guidance";
+import { SEMANTIC_SYSTEM_GUIDANCE } from "../../../src/lib/server/runtime/system-guidance";
 
-describe("semantic frontier tool surface", () => {
+describe("semantic tool surface", () => {
   beforeAll(async () => {
     await setupLocalEnv("semantic-surface-");
   });
@@ -45,16 +45,27 @@ describe("semantic frontier tool surface", () => {
       "ask_user",
     ]);
     expect(definitionBytes(exposed)).toBeLessThanOrEqual(8 * 1024);
-    expect(Buffer.byteLength(SEMANTIC_FRONTIER_GUIDANCE)).toBeLessThanOrEqual(
+    expect(Buffer.byteLength(SEMANTIC_SYSTEM_GUIDANCE)).toBeLessThanOrEqual(
       6 * 1024,
     );
+    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("not a general subagent");
+    expect(SEMANTIC_SYSTEM_GUIDANCE).not.toContain("frontier");
     expect(exposed.some((tool) => tool.name === "bash")).toBe(false);
     expect(exposed.some((tool) => tool.name === "edit")).toBe(false);
     const program = semantic.find((tool) => tool.name === "program")!;
-    expect(program.promptGuidelines?.join("\n")).toContain(
-      "grep - search workspace file contents",
+    const programGuidance = program.promptGuidelines?.join("\n") ?? "";
+    expect(programGuidance).toContain("grep - search workspace file contents");
+    expect(programGuidance).not.toMatch(
+      /(?:^|; )(?:read|write|edit|multi_edit|move|ls|create_directory|bash) -/,
     );
-    expect(program.promptGuidelines?.join("\n")).not.toContain("ask_user -");
+    expect(programGuidance).not.toContain("ask_user -");
+    expect(programGuidance).toContain('Files: fs.readFile(path, "utf8")');
+    expect(programGuidance).toContain("fs.mkdir(path)");
+    expect(programGuidance).toContain("fs.rename(from, to)");
+    expect(programGuidance).toContain("command.run(executable, args?");
+    expect(programGuidance).toContain(
+      "Calls return the successful value and throw on failure",
+    );
   });
 
   it("removes disabled groups from the program catalog", () => {
@@ -79,7 +90,8 @@ describe("semantic frontier tool surface", () => {
       .find((tool) => tool.name === "program")!
       .promptGuidelines?.join("\n");
     expect(guidance).not.toContain("grep -");
-    expect(guidance).toContain("bash - run a bounded validation or command");
+    expect(guidance).not.toContain("bash -");
+    expect(guidance).toContain("command.run(executable, args?");
   });
 });
 

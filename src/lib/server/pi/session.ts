@@ -60,7 +60,7 @@ import { loadConfig } from "../config";
 import * as messagesRepo from "../db/repos/messages";
 import {
   PORTAL_SYSTEM_GUIDANCE,
-  SEMANTIC_FRONTIER_GUIDANCE,
+  SEMANTIC_SYSTEM_GUIDANCE,
 } from "../runtime/system-guidance";
 
 export type PiModel = NonNullable<CreateAgentSessionOptions["model"]>;
@@ -215,7 +215,7 @@ export async function createPiSession(
       // `promptGuidelines` instead — nothing tool-specific belongs here.
       appendSystemPrompt: [
         opts.agentArchitecture === "semantic"
-          ? SEMANTIC_FRONTIER_GUIDANCE
+          ? SEMANTIC_SYSTEM_GUIDANCE
           : PORTAL_SYSTEM_GUIDANCE,
       ],
     };

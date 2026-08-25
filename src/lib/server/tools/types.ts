@@ -71,8 +71,19 @@ export interface ProgramToolMetadata {
   example: string;
   /** Bumped only when the canonical program contract changes. */
   contractVersion: string;
+  /** Program-specific arguments when the direct tool contract is broader. */
+  parameters?: Record<string, unknown>;
+  argsSchema?: z.ZodTypeAny;
   /** Internal compatibility adapter; canonical validation runs afterward. */
   normalizeArgs?: (args: unknown) => unknown;
+  /** Translate program arguments for the direct tool's permission hook. */
+  permissionArgs?: (args: unknown) => unknown;
+  /** Program-only invocation/result adapter. */
+  invoke?: (
+    tool: PortalTool,
+    args: unknown,
+    ctx?: ToolStreamContext,
+  ) => Promise<ToolResult>;
 }
 
 export interface PortalTool {

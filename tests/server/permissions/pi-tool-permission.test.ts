@@ -463,6 +463,56 @@ describe("pi tool calls + permission gate", () => {
     T,
   );
 
+  it("audits command.run argv as one shell command", async () => {
+    const wd = makeTmpDir("pi-command-gate-");
+    const convId = await createConversation(wd);
+    const emitted: InteractiveRequestView[] = [];
+    const { createPiPermissionResolver } =
+      await import("../../../src/lib/server/pi/permission-gate");
+    const { ok } = await import("../../../src/lib/server/tools/types");
+    const tool: PortalTool = {
+      name: "__ptc_command_run",
+      description: "test command facade",
+      parameters: {},
+      handler: async () => ok("ran"),
+    };
+    const resolver = createPiPermissionResolver({
+      userId: USER,
+      conversationId: conversationIdCodec.parse(convId),
+      workingDirectory: wd,
+      policy: "prompt",
+      portalToolsByName: new Map([[tool.name, tool]]),
+      getApprovalMode: () => "ask",
+      getWorkspaceRoots: () => [wd],
+      emit: (event) => {
+        if (event.type === "interactive.request") emitted.push(event.request);
+      },
+    });
+    const pending = resolver(
+      tool.name,
+      { executable: "mktemp", args: ["literal;still-one"] },
+      "command-call",
+    );
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      tool: "__ptc_command_run",
+      permissionKind: "shell",
+      shellAnalysis: {
+        kind: "parsed",
+        segments: [
+          { argv: ["mktemp", "literal;still-one"], followingOp: null },
+        ],
+      },
+    });
+    const { resolve } =
+      await import("../../../src/lib/server/runtime/interactive-requests");
+    resolve(emitted[0].requestId, USER, {
+      kind: "permission",
+      decision: "allow-once",
+    });
+    await expect(pending).resolves.toMatchObject({ allow: true });
+  });
+
   it(
     "a picker-persisted per-argv0 shell rule grant matches a later matching call",
     async () => {

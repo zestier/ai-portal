@@ -79,8 +79,8 @@ export function buildSemanticTools(opts: SemanticToolOptions): PortalTool[] {
 function buildProgramTool(opts: SemanticToolOptions): PortalTool {
   const capabilities = programCapabilities(opts.capabilities);
   const facadeCapabilities = new Map<string, PortalTool>();
-  for (const name of ["read", "write"]) {
-    const tool = capabilities.get(name);
+  for (const name of ["read", "write", "create_directory", "move"]) {
+    const tool = opts.capabilities.get(name);
     if (tool) facadeCapabilities.set(name, tool);
   }
   for (const [name, tool] of opts.facadeCapabilities ?? []) {
@@ -94,12 +94,12 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
   return {
     name: "program",
     description:
-      "Run bounded JavaScript that composes portal capabilities as await tools.<name>(args); return JSON.",
-    promptSnippet:
-      "Batch deterministic capability calls in isolated JavaScript.",
+      "Run isolated JavaScript for a known sequence of tool and filesystem operations.",
+    promptSnippet: "Batch known operations in isolated JavaScript.",
     promptGuidelines: [
-      `Available program tools: ${catalog}. Call get_program_tool_schemas for exact contracts when a name is ambiguous or arguments fail. Generated code has no ambient host APIs.`,
-      'Programs have async fs.readFile(path, "utf8"), fs.writeFile(path, text, { encoding?: "utf8" }), fs.readdir(path), and fs.stat(path). Only text IO is supported; fs.stat returns size, mtimeMs, isFile(), isDirectory(), and isSymbolicLink().',
+      `Tools: ${catalog}. Calls return the successful value and throw on failure. Use get_program_tool_schemas only for an unclear contract.`,
+      'Files: fs.readFile(path, "utf8"), fs.writeFile(path, text), fs.readdir(path), fs.stat(path), fs.mkdir(path), and fs.rename(from, to). Edit with readFile then writeFile. File contents are text only. No other host APIs are available.',
+      "Commands: command.run(executable, args?, { cwd?, stdin?, timeoutMs? }) returns { stdout, stderr }. It uses argv without a shell and throws on nonzero exit.",
     ],
     argsSchema: ProgramArgs,
     parameters: {
@@ -156,7 +156,7 @@ function buildProgramToolSchemasTool(
   return {
     name: "get_program_tool_schemas",
     description:
-      "Get exact input and result contracts for named program tools when the compact catalog is insufficient.",
+      "Get argument, result, and example contracts for named program tools.",
     argsSchema: ProgramToolSchemasArgs,
     parameters: {
       type: "object",
@@ -175,10 +175,7 @@ function buildProgramToolSchemasTool(
     async handler(raw) {
       const args = ProgramToolSchemasArgs.parse(raw);
       const tools = programToolContracts(capabilities, args.names);
-      return ok(
-        { tools },
-        `Returned ${tools.length} program tool contract(s).`,
-      );
+      return ok({ tools }, `Returned ${tools.length} contract(s).`);
     },
   };
 }
@@ -187,10 +184,10 @@ function buildResolveTool(opts: SemanticToolOptions): PortalTool {
   return {
     name: "resolve",
     description:
-      "Complete one bounded repository intent through a semantic worker; escalates consequential choices.",
-    promptSnippet: "Delegate bounded adaptive repository mechanics.",
+      "Execute one well-specified repository task with a tool-using worker.",
+    promptSnippet: "Execute one scoped repository task.",
     promptGuidelines: [
-      "Keep diagnosis, design, and tradeoffs in the frontier; give resolve one immediate, checkable intent.",
+      "Resolve is not a general subagent. Use it only after deciding what outcome you need; keep open-ended analysis, design, and task management here.",
     ],
     argsSchema: ResolveArgs,
     parameters: {
@@ -245,7 +242,7 @@ function buildResumeTool(opts: SemanticToolOptions): PortalTool {
   return {
     name: "resume",
     description:
-      "Resume a suspended semantic transaction with a frontier decision.",
+      "Continue a suspended resolve task with the requested decision.",
     argsSchema: ResumeArgs,
     parameters: {
       type: "object",
@@ -298,7 +295,7 @@ function buildReaderTool(
 ): PortalTool {
   return {
     name,
-    description: `Read a captured semantic ${kind} artifact by id.`,
+    description: `Read a ${kind} artifact returned by resolve.`,
     argsSchema: ReaderArgs,
     parameters: {
       type: "object",

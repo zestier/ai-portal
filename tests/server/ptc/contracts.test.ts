@@ -46,7 +46,17 @@ describe("program contracts", () => {
     expect(contracts).toHaveLength(2);
     expect(contracts[0]).toMatchObject({
       name: "grep",
-      parameters: { type: "object" },
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string" },
+          caseInsensitive: { type: "boolean" },
+        },
+      },
+      result: {
+        type: "object",
+        required: ["matches", "truncated"],
+      },
       contractVersion: "1",
     });
     expect(contracts[1]).toMatchObject({
@@ -68,5 +78,73 @@ describe("program contracts", () => {
     expect(() =>
       normalizeProgramToolArgs(grep, { pattern: "one", query: "two" }),
     ).toThrow(/Ambiguous program arguments/);
+  });
+
+  it("omits bash from program capabilities", () => {
+    const bash = attachProgramMetadata(tool("bash"));
+    expect(programCapabilities(new Map([[bash.name, bash]]))).toEqual(
+      new Map(),
+    );
+  });
+
+  it("adapts canonical find and grep values", async () => {
+    const find = attachProgramMetadata({
+      ...tool("find"),
+      async handler() {
+        return ok({
+          text: "src/a.ts\nsrc/b.ts\n[10000 results limit reached]",
+        });
+      },
+    });
+    const grep = attachProgramMetadata({
+      ...tool("grep"),
+      async handler() {
+        return ok({
+          content: "src/a.ts:4:first\nsrc/b.ts:9:second",
+          truncated: false,
+        });
+      },
+    });
+    const capabilities = programCapabilities(
+      new Map([
+        [find.name, find],
+        [grep.name, grep],
+      ]),
+    );
+    await expect(
+      capabilities.get("find")!.handler({ pattern: "*.ts" }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: { paths: ["src/a.ts", "src/b.ts"], truncated: true },
+    });
+    await expect(
+      capabilities.get("grep")!.handler({ pattern: "needle" }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: {
+        matches: [
+          { path: "src/a.ts", line: 4, column: null, text: "first" },
+          { path: "src/b.ts", line: 9, column: null, text: "second" },
+        ],
+        truncated: false,
+      },
+    });
+  });
+
+  it("turns an uninitialized Git status into a program error", async () => {
+    const status = attachProgramMetadata({
+      ...tool("git_status"),
+      async handler() {
+        return ok({ initialized: false, changes: [] });
+      },
+    });
+    await expect(
+      programCapabilities(new Map([[status.name, status]]))
+        .get("git_status")!
+        .handler({}),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { message: "Not a Git repository." },
+    });
   });
 });

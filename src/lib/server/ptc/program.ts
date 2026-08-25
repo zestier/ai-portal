@@ -99,8 +99,8 @@ export async function runProgram(
   installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
 
   const wrapped = `(async () => {
-    async function callFacade(name, args) {
-      const result = JSON.parse(await __callFacadeCapability(name, args));
+    async function unwrapCall(call, name, args) {
+      const result = JSON.parse(await call(name, args));
       if (!result.ok) throw new Error(result.error.message);
       return result.value;
     }
@@ -112,7 +112,7 @@ export async function runProgram(
         if (normalizedEncoding !== "utf8" && normalizedEncoding !== "utf-8") {
           throw new Error('fs.readFile supports only "utf8" and "utf-8".');
         }
-        const result = await callFacade("read", {
+        const result = await unwrapCall(__callFacadeCapability, "read", {
           file_path: path,
           mode: "content"
         });
@@ -131,16 +131,16 @@ export async function runProgram(
         if (typeof data !== "string") {
           throw new Error("fs.writeFile supports only string data.");
         }
-        await callFacade("write", { file_path: path, content: data });
+        await unwrapCall(__callFacadeCapability, "write", { file_path: path, content: data });
       },
       async readdir(path, options) {
         if (options?.withFileTypes === true) {
           throw new Error("fs.readdir does not yet support withFileTypes: true.");
         }
-        return await callFacade("__ptc_fs_readdir", { path });
+        return await unwrapCall(__callFacadeCapability, "__ptc_fs_readdir", { path });
       },
       async stat(path) {
-        const value = await callFacade("__ptc_fs_stat", { path });
+        const value = await unwrapCall(__callFacadeCapability, "__ptc_fs_stat", { path });
         return Object.freeze({
           size: value.size,
           mtimeMs: value.mtimeMs,
@@ -148,19 +148,46 @@ export async function runProgram(
           isDirectory: () => value.directory,
           isSymbolicLink: () => value.symbolicLink
         });
+      },
+      async mkdir(path) {
+        await unwrapCall(__callFacadeCapability, "create_directory", { path });
+      },
+      async rename(oldPath, newPath) {
+        await unwrapCall(__callFacadeCapability, "move", {
+          source: oldPath,
+          destination: newPath,
+          overwrite: true
+        });
+      }
+    });
+    const command = Object.freeze({
+      async run(executable, args = [], options = {}) {
+        if (typeof executable !== "string" || executable.length === 0) {
+          throw new Error("command.run requires an executable string.");
+        }
+        if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
+          throw new Error("command.run args must be an array of strings.");
+        }
+        return await unwrapCall(__callFacadeCapability, "__ptc_command_run", {
+          executable,
+          args,
+          ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+          ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
+        });
       }
     });
     const tools = new Proxy(Object.create(null), {
       get(_target, name) {
         if (typeof name !== "string" || name === "then") return undefined;
-        return async (args = {}) => JSON.parse(await __callCapability(name, args));
+        return async (args = {}) => unwrapCall(__callCapability, name, args);
       }
     });
     ${opts.source}
   })()`;
 
   try {
-    const evaluation = vm.evalCode(wrapped, "frontier-program.js");
+    const evaluation = vm.evalCode(wrapped, "program.js");
     const promiseHandle = vm.unwrapResult(evaluation);
     try {
       runtime.executePendingJobs();

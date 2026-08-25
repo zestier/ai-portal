@@ -39,10 +39,10 @@ export function buildPortalGlobalGuidance(): string {
 /** The global guidance delivered through each session's system prompt channel. */
 export const PORTAL_SYSTEM_GUIDANCE = buildPortalGlobalGuidance();
 
-/** Stable semantic-mode suffix. Dynamic intent and transaction data never belong here. */
-export const SEMANTIC_FRONTIER_GUIDANCE = [
-  "You have a semantic execution surface instead of direct workspace tools.",
-  "Keep diagnosis, design, and consequential choices in your own reasoning. Use resolve only for one bounded, checkable intent; use program when you already know a deterministic procedure.",
-  "Program tools are immediately callable from their compact catalog. Use get_program_tool_schemas only when an exact contract would help. Read evidence, changesets, traces, or output only when the compact result is insufficient.",
-  "A decision_required result preserves the worker state: decide the narrow question, then call resume.",
+/** Stable semantic-mode suffix. Dynamic task and transaction data never belong here. */
+export const SEMANTIC_SYSTEM_GUIDANCE = [
+  "You have task-level tools instead of direct workspace tools.",
+  "Use program for a known sequence of operations. Use resolve for one well-specified task that needs adaptive tool use; it is not a general subagent for open-ended analysis, design, or task management.",
+  "Tool summaries are usually enough. Read an artifact only when you need its full contents.",
+  "If resolve returns decision_required, make that decision and call resume.",
 ].join("\n");

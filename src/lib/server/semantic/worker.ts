@@ -24,11 +24,10 @@ const ESCALATE = "semantic_escalate";
 
 // Stable by design: dynamic ids, paths, and intents belong in user messages so
 // providers can cache this system/tool prefix across semantic transactions.
-export const SEMANTIC_WORKER_SYSTEM = `You are a semantic tool executor. Satisfy one bounded intent by operating repository tools.
-The frontier owns diagnosis, design, tradeoffs, and product decisions. You own only the mechanics of obtaining or realizing its specified result.
-Use tools incrementally. Never guess through consequential ambiguity: call semantic_escalate with the smallest decision the frontier must make.
-When the requested result is established and any requested validation is done, call semantic_complete. Do not merely describe completion in prose.
-Keep findings factual, compact, and grounded in locations or tool results. Do not start unrelated cleanup or broaden scope.`;
+export const SEMANTIC_WORKER_SYSTEM = `Execute the one repository task in the user message.
+Use tools incrementally and stay within the stated outcome, constraints, and completion checks.
+Do not make product, design, or other consequential choices. Call semantic_escalate with the smallest required decision.
+Call semantic_complete after the result and requested validation are complete. Keep findings brief and grounded in files or tool results.`;
 
 export interface WorkerRunOptions {
   transaction: SemanticTransaction;
@@ -263,7 +262,7 @@ function workerToolSpecs(
     type: "function",
     function: {
       name: COMPLETE,
-      description: "Finish the bounded intent with grounded findings.",
+      description: "Finish the task with a brief result and grounded findings.",
       parameters: {
         type: "object",
         properties: {
@@ -279,8 +278,7 @@ function workerToolSpecs(
     type: "function",
     function: {
       name: ESCALATE,
-      description:
-        "Suspend when the frontier must make a consequential decision.",
+      description: "Suspend when the task requires a consequential decision.",
       parameters: {
         type: "object",
         properties: {

@@ -58,11 +58,22 @@ describe("semantic program tools", () => {
       },
     );
     const canonical = { pattern: "needle", path: "src", glob: "*.ts" };
-    expect(seen).toEqual([{ permission: canonical }, { handler: canonical }]);
+    expect(seen).toEqual([
+      { permission: canonical },
+      {
+        handler: {
+          ...canonical,
+          output_mode: "content",
+          head_limit: 0,
+          "-n": true,
+          "-i": false,
+        },
+      },
+    ]);
     expect(result).toMatchObject({
       ok: true,
       result: {
-        value: { ok: true, value: canonical },
+        value: { matches: [], truncated: false },
         operations: 1,
       },
     });

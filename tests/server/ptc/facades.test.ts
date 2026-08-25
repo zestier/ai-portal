@@ -55,4 +55,42 @@ describe("program fs facade capabilities", () => {
       error: { message: expect.stringContaining("escapes the workspace") },
     });
   });
+
+  it("runs argv commands with bounded stdin and no shell interpretation", async () => {
+    const root = makeTmpDir("ptc-command-");
+    const command = buildProgramFacadeTools(root).get("__ptc_command_run")!;
+    const result = await command.handler({
+      executable: process.execPath,
+      args: [
+        "-e",
+        "process.stdin.setEncoding('utf8'); let value = ''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ value, arg: process.argv[1] })));",
+        "literal;not-shell",
+      ],
+      stdin: "piped input",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        stdout: JSON.stringify({
+          value: "piped input",
+          arg: "literal;not-shell",
+        }),
+        stderr: "",
+      },
+    });
+  });
+
+  it("rejects nonzero command exits", async () => {
+    const root = makeTmpDir("ptc-command-fail-");
+    const command = buildProgramFacadeTools(root).get("__ptc_command_run")!;
+    expect(
+      await command.handler({
+        executable: process.execPath,
+        args: ["-e", "process.stderr.write('bad'); process.exit(7)"],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("code 7: bad") },
+    });
+  });
 });

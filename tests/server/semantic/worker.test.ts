@@ -12,6 +12,7 @@ import {
 import {
   initialWorkerMessages,
   runSemanticWorker,
+  SEMANTIC_WORKER_SYSTEM,
 } from "../../../src/lib/server/semantic/worker";
 import { buildSemanticTools } from "../../../src/lib/server/semantic/tools";
 
@@ -26,6 +27,15 @@ describe("semantic worker", () => {
   beforeEach(async () => {
     piChat.mockReset();
     await setupLocalEnv("semantic-worker-");
+  });
+
+  it("defines a narrow execution role without subagent framing", () => {
+    expect(SEMANTIC_WORKER_SYSTEM).toContain("Execute the one repository task");
+    expect(SEMANTIC_WORKER_SYSTEM).toContain(
+      "Do not make product, design, or other consequential choices",
+    );
+    expect(SEMANTIC_WORKER_SYSTEM).not.toContain("frontier");
+    expect(SEMANTIC_WORKER_SYSTEM).not.toContain("subagent");
   });
 
   it("permission-checks nested tools, persists artifacts, and records usage", async () => {

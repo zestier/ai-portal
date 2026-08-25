@@ -178,8 +178,8 @@ scratch artifact convention, with metadata and ownership in SQLite.
 
 ## Programmatic Tool Calling
 
-`program` accepts JavaScript authored by the frontier and runs it in a
-resource-limited QuickJS/WASM isolate. The program has no ambient filesystem,
+`program` runs model-authored JavaScript in a resource-limited QuickJS/WASM
+isolate. The program has no ambient filesystem,
 network, environment, module loading, child process, or host object access. It
 can only use explicitly installed compatibility facades and program
 capabilities, and it can return only JSON-compatible data.
@@ -188,11 +188,12 @@ capabilities, and it can return only JSON-compatible data.
 
 Common operations should be exposed with familiar JavaScript APIs where the
 portal can preserve their expected semantics. The initial facade includes
-Promise-based file operations `fs.readFile`, `fs.writeFile`, `fs.readdir`, and
-`fs.stat`. A text-only `fetch` is reserved for a later version after the portal
-has an audited network capability and permission scope. Facades are installed
-directly in the program environment rather than under `tools`, so generated
-programs look and behave like ordinary JavaScript:
+Promise-based file operations `fs.readFile`, `fs.writeFile`, `fs.readdir`,
+`fs.stat`, `fs.mkdir`, and `fs.rename`. Filesystem operations are not repeated
+under `tools`; edits use read-transform-write. A text-only `fetch` is reserved
+for a later version after the portal has an audited network capability and
+permission scope. Facades are installed directly in the program environment,
+so generated programs look and behave like ordinary JavaScript:
 
 ```js
 const source = await fs.readFile("src/index.ts", "utf8");
@@ -217,6 +218,8 @@ interface ProgramFs {
       options?: { withFileTypes?: false },
    ): Promise<string[]>;
    stat(path: string): Promise<ProgramStats>;
+   mkdir(path: string): Promise<void>;
+   rename(oldPath: string, newPath: string): Promise<void>;
 }
 
 interface ProgramStats {
@@ -228,12 +231,29 @@ interface ProgramStats {
 }
 
 declare const fs: ProgramFs;
+
+declare const command: {
+   run(
+      executable: string,
+      args?: string[],
+      options?: {
+         cwd?: string;
+         stdin?: string;
+         timeoutMs?: number;
+      },
+   ): Promise<{ stdout: string; stderr: string }>;
+};
 ```
 
 Only these signatures are promised. The first version has no binary encodings,
 `Buffer`, abort signal crossing, file descriptors, recursive directory options,
 or synchronous APIs. Unsupported arguments fail with an error naming the
 unsupported surface; they must not be silently ignored.
+
+`command.run` executes an explicit argv without shell parsing. Its optional
+bounded string `stdin` supports program-level composition; nonzero exits,
+timeouts, cancellation, and output over the bridge limit throw. Direct-mode
+`bash` remains available outside `program` but is not a program capability.
 
 The QuickJS bootstrap implements `ProgramStats` as an isolate-local JavaScript
 object over JSON RPC results. The host never passes a Node object into the
@@ -243,7 +263,7 @@ Each facade method maps to a named internal capability adapter. Adapters reuse
 the same path normalization, workspace containment, permission resolver, event
 emission, cancellation, result-size limit, and audit record as the corresponding
 portal tool. Facades do not call Node `fs` directly from the sandbox bridge.
-Internal adapter names are not visible to the frontier and cannot be invoked
+Internal adapter names are not visible to the model and cannot be invoked
 through `tools`.
 
 The stable semantic system prompt includes the facade names, the declaration
@@ -268,20 +288,28 @@ support remain out of scope.
 ### Portal-specific program tools
 
 Capabilities without a standard JavaScript analogue remain available under
-`tools.<name>`. The semantic frontier system prompt contains only each available
-name and a very short description of when to use it. It does not include their
-full schemas.
+`tools.<name>`. The system prompt contains each available name and a short
+description, but not its full schema.
 
 Every catalogued program tool in the conversation's current enabled capability
-set is installed in the `tools` proxy for every `program` call. The frontier may
+set is installed in the `tools` proxy for every `program` call. The model may
 call it directly by guessing the object argument from its name and compact
 description. There is no load state, receipt, declaration list, ancestry check,
 or extra authority associated with schema lookup. Forks, rewinds, session
 recreation, and parallel tool calls therefore need no special schema-state
 handling.
 
+Program tool calls return their successful result directly and throw on tool,
+validation, or permission failure. They do not expose the portal's `{ ok,
+result }` transport envelope inside the isolate:
+
+```js
+const matches = await tools.grep({ pattern: "ProgramArgs", path: "src" });
+return matches;
+```
+
 When the name is ambiguous, the first guessed call fails validation, or exact
-result handling matters, the frontier may request full contracts:
+result handling matters, the model may request full contracts:
 
 ```ts
 get_program_tool_schemas({ names: string[] }): {
@@ -311,7 +339,7 @@ added to the compact catalog otherwise. The output schema describes the actual
 JSON value returned inside the program, not the portal UI rendering.
 
 The compact catalog is generated from currently enabled programmable
-capabilities and inserted into semantic frontier guidance as one line per tool:
+capabilities and inserted into semantic guidance as one line per tool:
 
 ```text
 Program tools: grep — search workspace text; git_diff — read repository changes.

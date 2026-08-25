@@ -164,7 +164,7 @@ async function decidePermission(
   const override = tool.derivePermissionRequest
     ? tool.derivePermissionRequest(args)
     : null;
-  const isShell = toolName === "bash";
+  const isShell = toolName === "bash" || toolName === "__ptc_command_run";
   const permissionKind = override
     ? override.permissionKind
     : isShell
@@ -178,7 +178,9 @@ async function decidePermission(
   const scopeKey = override
     ? override.path
     : isShell
-      ? deriveScopeKey("shell", { args })
+      ? toolName === "__ptc_command_run"
+        ? commandRunScopeKey(args)
+        : deriveScopeKey("shell", { args })
       : deriveScopeKey(permissionKind, args);
 
   const summary = summarizePermissionRequest(
@@ -410,6 +412,23 @@ async function decidePermission(
       },
     },
   );
+}
+
+function commandRunScopeKey(args: Record<string, unknown>): string | null {
+  if (typeof args.executable !== "string" || !Array.isArray(args.args)) {
+    return null;
+  }
+  const argv = [args.executable, ...args.args];
+  if (!argv.every((part): part is string => typeof part === "string")) {
+    return null;
+  }
+  return argv.map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value)
+    ? value
+    : `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 // Raise a human permission prompt and settle the decision from the response.
