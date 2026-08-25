@@ -143,16 +143,21 @@ describe("grep", () => {
     });
   });
 
-  it("rejects a path outside the workspace", async () => {
+  it("searches an outside path when the read grant allows it", async () => {
     await withWorkspace(async (workspace) => {
-      const result = await tool(workspace, "grep").handler({
-        pattern: "needle",
-        path: "..",
-      });
-      expect(result).toMatchObject({
-        ok: false,
-        error: { code: "invalid_path" },
-      });
+      const outside = await mkdtemp(join(tmpdir(), "portal-grep-outside-"));
+      try {
+        await writeFile(join(outside, "outside.txt"), "needle\n");
+        const grep = tool(workspace, "grep");
+        expect(
+          await grep.handler({ pattern: "needle", path: outside }),
+        ).toMatchObject({ ok: true, result: { numFiles: 1 } });
+        expect(
+          grep.derivePermissionRequest?.({ pattern: "needle", path: outside }),
+        ).toEqual({ permissionKind: "read", path: outside });
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
     });
   });
 

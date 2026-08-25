@@ -17,7 +17,7 @@ import { ensureZapGitignore } from "../zap-dir";
 import {
   buildFilesystemCtx,
   resolveAbsoluteTarget,
-  resolveWorkspaceTarget,
+  resolveContainedTarget,
   trashDir,
   trashRelation,
 } from "./targets";
@@ -84,7 +84,7 @@ export async function trashInto(
   root: string,
   rawPath: string,
 ): Promise<ToolResult> {
-  const target = resolveWorkspaceTarget(root, rawPath);
+  const target = resolveContainedTarget(root, rawPath);
   if (!target.ok) return err(target.message);
   if (target.rel === "." || target.rel === "") {
     return err("refusing to trash the workspace root");
@@ -92,12 +92,12 @@ export async function trashInto(
   const dir = trashDir();
   // Compare `target.rel` against the REALPATH-resolved trash dir, not
   // the lexical `.zap/scratch/trash` string. `target.rel` is already
-  // symlink-resolved (resolveWorkspaceTarget realpaths existing
+  // symlink-resolved (resolveContainedTarget realpaths existing
   // ancestors), so if `.zap` is itself a symlink a lexical compare
   // would miss — letting the tool re-bury an already-trashed entry and
   // stamp meta.json with the wrong originalPath. Resolving the store
   // the same way keeps both sides in the same (real) namespace.
-  const resolvedDir = resolveWorkspaceTarget(root, dir);
+  const resolvedDir = resolveContainedTarget(root, dir);
   const dirForCompare = resolvedDir.ok ? resolvedDir.rel : dir;
   const relation = trashRelation(target.rel, dirForCompare);
   if (relation === "inside") {
@@ -111,7 +111,7 @@ export async function trashInto(
     if (!targetStat) return err(`path does not exist: ${target.rel}`);
     const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const entryDirRel = `${dir}/${entryId}`;
-    const entryDir = resolveWorkspaceTarget(root, entryDirRel);
+    const entryDir = resolveContainedTarget(root, entryDirRel);
     if (!entryDir.ok) return err(entryDir.message);
     const name = basename(target.rel);
     const trashedRel = `${entryDirRel}/${name}`;

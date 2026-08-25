@@ -1,10 +1,7 @@
-import { relative, resolve } from "node:path";
+import { relative } from "node:path";
 import { ripgrep } from "ripgrep";
 import { z } from "zod";
-import {
-  isPathInWorkspace,
-  resolveWithParentFallback,
-} from "../permissions/workspace";
+import { resolveGrantedTarget } from "./filesystem";
 import {
   err,
   ok,
@@ -77,13 +74,8 @@ function resolveTarget(
   root: string,
   rawPath: string | undefined,
 ): string | null {
-  const resolvedRoot = resolveWithParentFallback(resolve(root));
-  const target = resolveWithParentFallback(
-    resolve(resolvedRoot ?? root, rawPath ?? "."),
-  );
-  return target && resolvedRoot && isPathInWorkspace(target, resolvedRoot)
-    ? target
-    : null;
+  const target = resolveGrantedTarget(root, rawPath ?? ".");
+  return target.ok ? target.abs : null;
 }
 
 // Truncate a filename list so the joined output stays under `maxBytes`; the
@@ -379,9 +371,9 @@ export function buildGrepTools(
     {
       name: "grep",
       description:
-        "Search workspace text with ripgrep (content | files_with_matches | count).",
+        "Search text with ripgrep (content | files_with_matches | count).",
       promptGuidelines: [
-        "Respects .gitignore and stays inside the selected workspace or held worktree.",
+        "Respects .gitignore; filesystem read grants govern the target path.",
       ],
       argsSchema: GrepArgs,
       parameters: {
@@ -461,7 +453,7 @@ export function buildGrepTools(
         if (tree.error) return tree.error;
         const target = resolveTarget(tree.cwd, parsed.path);
         if (!target)
-          return err("path must resolve inside the workspace", {
+          return err("path could not be resolved", {
             code: "invalid_path",
           });
         try {

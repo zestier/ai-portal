@@ -106,36 +106,47 @@ describe("move tool", () => {
     ).toMatch(/does not exist/i);
   });
 
-  it("rejects absolute source and destination paths", async () => {
+  it("accepts contained absolute source and destination paths", async () => {
+    writeFileSync(join(root, "a.txt"), "x");
+    expect(
+      await move.handler({
+        source: join(root, "a.txt"),
+        destination: join(root, "b.txt"),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(existsSync(join(root, "b.txt"))).toBe(true);
+  });
+
+  it("moves across workspace boundaries after both targets are authorized", async () => {
     const outside = makeTmpDir("move-outside-");
     writeFileSync(join(outside, "secret"), "x");
     expect(
-      expectErr(
-        await move.handler({
-          source: join(outside, "secret"),
-          destination: "b.txt",
-        }),
-      ),
-    ).toMatch(/source:.*absolute/i);
+      await move.handler({
+        source: join(outside, "secret"),
+        destination: "b.txt",
+      }),
+    ).toMatchObject({ ok: true });
     writeFileSync(join(root, "a.txt"), "x");
     expect(
-      expectErr(
-        await move.handler({
-          source: "a.txt",
-          destination: join(outside, "evil"),
-        }),
-      ),
-    ).toMatch(/destination:.*absolute/i);
-    expect(existsSync(join(root, "a.txt"))).toBe(true);
+      await move.handler({
+        source: "a.txt",
+        destination: join(outside, "evil"),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(existsSync(join(outside, "evil"))).toBe(true);
   });
 
-  it("rejects a `..` destination escape", async () => {
-    writeFileSync(join(root, "a.txt"), "x");
+  it("derives both targets for a relative outside move", () => {
     expect(
-      expectErr(
-        await move.handler({ source: "a.txt", destination: "../escape.txt" }),
-      ),
-    ).toMatch(/destination:.*escapes the workspace/i);
+      move.derivePermissionRequest?.({
+        source: "a.txt",
+        destination: "../escape.txt",
+      }),
+    ).toEqual({
+      permissionKind: "write",
+      path: join(root, "a.txt"),
+      additionalPaths: [join(root, "..", "escape.txt")],
+    });
   });
 
   it("errors when source and destination are the same path", async () => {

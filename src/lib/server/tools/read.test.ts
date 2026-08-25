@@ -156,19 +156,23 @@ describe("read tool", () => {
     );
   });
 
-  it("rejects a path that escapes the workspace", async () => {
+  it("reads an outside path after authorization", async () => {
     const root = makeTmpDir("read-tool-");
     const outside = makeTmpDir("read-outside-");
-    writeFileSync(join(outside, "secret.txt"), "secret");
-    const result = await readTool(root).handler({
-      file_path: join(outside, "secret.txt"),
+    const filePath = join(outside, "secret.txt");
+    writeFileSync(filePath, "secret");
+    const tool = readTool(root);
+    expect(tool.derivePermissionRequest?.({ file_path: filePath })).toEqual({
+      permissionKind: "read",
+      path: filePath,
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.message).toContain("escapes the workspace");
+    expect(await tool.handler({ file_path: filePath })).toMatchObject({
+      ok: true,
+      result: { type: "text", file: { content: "secret" } },
+    });
   });
 
-  it("rejects a symlink that escapes the workspace", async () => {
+  it("reads a symlinked outside target after authorization", async () => {
     const root = makeTmpDir("read-tool-");
     const outside = makeTmpDir("read-outside-");
     writeFileSync(join(outside, "secret.txt"), "secret");
@@ -177,10 +181,15 @@ describe("read tool", () => {
     } catch {
       return; // no symlink support on this platform
     }
-    const result = await readTool(root).handler({ file_path: "link.txt" });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.message).toContain("escapes the workspace");
+    const tool = readTool(root);
+    expect(tool.derivePermissionRequest?.({ file_path: "link.txt" })).toEqual({
+      permissionKind: "read",
+      path: join(outside, "secret.txt"),
+    });
+    expect(await tool.handler({ file_path: "link.txt" })).toMatchObject({
+      ok: true,
+      result: { type: "text", file: { content: "secret" } },
+    });
   });
 
   it("returns an image as an image view with the SDK image shape", async () => {

@@ -12,7 +12,8 @@ import {
 } from "$lib/server/tools/types";
 import {
   resolveAbsoluteTarget,
-  resolveWorkspaceTarget,
+  resolveContainedTarget,
+  resolveGrantedTarget,
 } from "$lib/server/tools/filesystem/targets";
 
 const PathArgs = z.object({ path: z.string().min(1).max(4096) }).strict();
@@ -81,7 +82,7 @@ function buildCommandRunTool(workspaceRoot: string): PortalTool {
       const parsed = CommandArgs.parse(raw);
       const normalized = normalizeCommand(parsed);
       const target = parsed.cwd
-        ? resolveWorkspaceTarget(workspaceRoot, parsed.cwd)
+        ? resolveContainedTarget(workspaceRoot, parsed.cwd)
         : { ok: true as const, abs: workspaceRoot };
       if (!target.ok) return err(target.message);
       if (!normalized.ok) return err(normalized.message);
@@ -209,7 +210,7 @@ function buildReaddirTool(workspaceRoot: string): PortalTool {
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
     async handler(raw) {
       const { path } = PathArgs.parse(raw);
-      const target = resolveWorkspaceTarget(workspaceRoot, path);
+      const target = resolveGrantedTarget(workspaceRoot, path);
       if (!target.ok) return err(target.message);
       try {
         const entries = (await readdir(target.abs)).sort((left, right) =>
@@ -232,7 +233,7 @@ function buildStatTool(workspaceRoot: string): PortalTool {
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
     async handler(raw) {
       const { path } = PathArgs.parse(raw);
-      const target = resolveWorkspaceTarget(workspaceRoot, path);
+      const target = resolveGrantedTarget(workspaceRoot, path);
       if (!target.ok) return err(target.message);
       try {
         // Validate the real target for containment, then lstat the lexical path

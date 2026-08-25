@@ -186,13 +186,15 @@ describe("filesystem tools inside a worktree lease", () => {
     );
   });
 
-  it("still escapes are rejected relative to the lease root", async () => {
-    const res = await tools
-      .get("create_directory")!
-      .handler({ path: "../escape", worktree: leaseId });
-
-    expect(expectErr(res).message).toContain("escapes the workspace");
-    expect(existsSync(join(leasePath, "..", "escape"))).toBe(false);
+  it("derives outside targets relative to the selected lease root", () => {
+    expect(
+      tools
+        .get("create_directory")!
+        .derivePermissionRequest?.({ path: "../escape", worktree: leaseId }),
+    ).toEqual({
+      permissionKind: "write",
+      path: join(leasePath, "..", "escape"),
+    });
   });
 
   // The held-by-this-conversation check is what keeps the selector from being a

@@ -116,7 +116,7 @@ export function buildWriteTool(
       properties: {
         file_path: {
           type: "string",
-          description: "Absolute path; must resolve inside the workspace.",
+          description: "Absolute or workspace-relative path.",
         },
         content: { type: "string" },
         worktree: WORKTREE_WRITE_PARAM,

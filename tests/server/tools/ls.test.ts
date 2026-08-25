@@ -64,6 +64,23 @@ describe("ls", () => {
     });
   });
 
+  it("lists a scoped absolute path inside the workspace", async () => {
+    await withWorkspace(async (workspace) => {
+      const pkg = join(workspace, "pkg");
+      await mkdir(pkg);
+      await writeFile(join(pkg, "index.ts"), "");
+
+      const ls = tool(workspace);
+      const result = await ls.handler({ path: pkg });
+      expect(lsText(result)).toBe("index.ts");
+      expect(result).toMatchObject({ ok: true, result: { path: "pkg" } });
+      expect(ls.derivePermissionRequest?.({ path: pkg })).toEqual({
+        permissionKind: "read",
+        path: pkg,
+      });
+    });
+  });
+
   it("caps entries at the requested limit", async () => {
     await withWorkspace(async (workspace) => {
       for (const name of ["a.ts", "b.ts", "c.ts"])
@@ -89,12 +106,28 @@ describe("ls", () => {
     });
   });
 
-  it("rejects a path outside the workspace", async () => {
+  it("lists an outside path when the permission gateway allows it", async () => {
     await withWorkspace(async (workspace) => {
-      const result = await tool(workspace).handler({ path: ".." });
-      expect(result).toMatchObject({
-        ok: false,
-        error: { code: "invalid_path" },
+      const outside = await mkdtemp(join(tmpdir(), "portal-ls-outside-"));
+      try {
+        await writeFile(join(outside, "outside.txt"), "");
+        const result = await tool(workspace).handler({ path: outside });
+        expect(result).toMatchObject({ ok: true, result: { path: outside } });
+        expect(lsText(result)).toBe("outside.txt");
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("derives outside paths for grant evaluation", async () => {
+    await withWorkspace(async (workspace) => {
+      const outside = join(workspace, "..", "outside");
+      expect(
+        tool(workspace).derivePermissionRequest?.({ path: outside }),
+      ).toEqual({
+        permissionKind: "read",
+        path: outside,
       });
     });
   });
@@ -107,7 +140,10 @@ describe("ls", () => {
         permissionKind: "read",
         path: join(workspace, "src"),
       });
-      expect(derive?.({ path: ".." })).toBeNull();
+      expect(derive?.({ path: ".." })).toEqual({
+        permissionKind: "read",
+        path: join(workspace, ".."),
+      });
     });
   });
 });

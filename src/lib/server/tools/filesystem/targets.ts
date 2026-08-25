@@ -28,40 +28,56 @@ export function trashDir(): string {
 type ResolvedTarget =
   { ok: true; abs: string; rel: string } | { ok: false; message: string };
 
-// Resolve a workspace-relative directory request into an absolute, symlink-
-// resolved path that is provably inside the workspace. Rejects absolute inputs
-// and any `..` escape that resolves outside the root (resolving the real path of
-// existing ancestors first, so a symlinked parent can't be used to escape).
-export function resolveWorkspaceTarget(
+// Canonicalize a filesystem target without imposing workspace policy. The
+// caller's derivePermissionRequest passes `abs` to the permission gateway,
+// which decides whether grants and policy allow execution.
+export function resolveGrantedTarget(
   workspaceRoot: string,
   rawPath: string,
 ): ResolvedTarget {
   if (rawPath.includes("\0")) {
     return { ok: false, message: "path must not contain NUL characters" };
   }
-  if (isAbsolute(rawPath)) {
-    return {
-      ok: false,
-      message: `path must be workspace-relative, not absolute: ${rawPath}`,
-    };
-  }
   const root = resolveWithParentFallback(resolve(workspaceRoot));
   if (root === null) {
     return { ok: false, message: "could not resolve the workspace root" };
   }
-  const abs = resolveWithParentFallback(resolve(root, rawPath));
+  const abs = resolveWithParentFallback(
+    isAbsolute(rawPath) ? resolve(rawPath) : resolve(root, rawPath),
+  );
   if (abs === null) {
     return { ok: false, message: `could not resolve path: ${rawPath}` };
   }
-  if (!isPathInWorkspace(abs, root)) {
-    return { ok: false, message: `path escapes the workspace: ${rawPath}` };
-  }
-  const rel = abs === root ? "." : relative(root, abs);
+  const rel = isPathInWorkspace(abs, root)
+    ? abs === root
+      ? "."
+      : relative(root, abs)
+    : abs;
   return { ok: true, abs, rel };
 }
 
+// Resolve an absolute or workspace-relative request into a symlink-resolved
+// path that is provably inside the workspace. Any escape is rejected after
+// resolving the real path of existing ancestors, so a symlinked parent cannot
+// be used to leave the selected workspace.
+export function resolveContainedTarget(
+  workspaceRoot: string,
+  rawPath: string,
+): ResolvedTarget {
+  const target = resolveGrantedTarget(workspaceRoot, rawPath);
+  if (!target.ok) return target;
+  const root = resolveWithParentFallback(resolve(workspaceRoot));
+  if (root === null) {
+    return { ok: false, message: "could not resolve the workspace root" };
+  }
+  if (!isPathInWorkspace(target.abs, root)) {
+    return { ok: false, message: `path escapes the workspace: ${rawPath}` };
+  }
+  return target;
+}
+
 // Best-effort absolute target for the permission request. Unlike
-// `resolveWorkspaceTarget` it does NOT enforce containment: an out-of-workspace
+// `resolveContainedTarget` it does NOT enforce containment: an out-of-workspace
 // path is resolved and returned so the permission layer sees the real target
 // and prompts (it won't match the in-workspace fs-write seed) instead of
 // silently auto-approving.

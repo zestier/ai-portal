@@ -1,13 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
-import {
-  isPathInWorkspace,
-  resolveWithParentFallback,
-} from "../permissions/workspace";
 import { sniffImageMime } from "../image-detect";
-import { resolveAbsoluteTarget } from "./filesystem";
+import { resolveAbsoluteTarget, resolveGrantedTarget } from "./filesystem";
 import {
   err,
   ok,
@@ -94,33 +89,13 @@ export interface FileReadImageOutput {
   };
 }
 
-// Resolve a Read `file_path` to an absolute, symlink-resolved target inside the
-// workspace. Accepts both the SDK contract's absolute paths and
-// workspace-relative paths (as the tests use), rejecting any `..` escape that
-// resolves outside the root. Mirrors `resolveWriteTarget` in edit-file.ts — same
-// resolver, different tool. Exported so the outline tool reuses the same
-// workspace-containment rules.
+// Resolve the exact target evaluated by the read grant. Workspace targets are
+// covered by seeded grants; outside targets require an explicit grant/prompt.
 export function resolveReadTarget(
   workspaceRoot: string,
   rawPath: string,
 ): { ok: true; abs: string; rel: string } | { ok: false; message: string } {
-  if (rawPath.includes("\0")) {
-    return { ok: false, message: "path must not contain NUL characters" };
-  }
-  const root = resolveWithParentFallback(resolve(workspaceRoot));
-  if (root === null) {
-    return { ok: false, message: "could not resolve the workspace root" };
-  }
-  const abs = resolveWithParentFallback(
-    isAbsolute(rawPath) ? resolve(rawPath) : resolve(root, rawPath),
-  );
-  if (abs === null) {
-    return { ok: false, message: `could not resolve path: ${rawPath}` };
-  }
-  if (!isPathInWorkspace(abs, root)) {
-    return { ok: false, message: `path escapes the workspace: ${rawPath}` };
-  }
-  return { ok: true, abs, rel: abs === root ? "." : relative(root, abs) };
+  return resolveGrantedTarget(workspaceRoot, rawPath);
 }
 
 // The numbered rendering a model sees for a read when `numbered: true`: one

@@ -14,14 +14,14 @@ describe("program fs facade capabilities", () => {
 
     const listed = await tools
       .get("__ptc_fs_readdir")!
-      .handler({ path: "src" });
+      .handler({ path: join(root, "src") });
     expect(listed).toMatchObject({
       ok: true,
       result: ["a.txt", "link.txt"],
     });
 
     const file = await tools.get("__ptc_fs_stat")!.handler({
-      path: "src/a.txt",
+      path: join(root, "src", "a.txt"),
     });
     expect(file).toMatchObject({
       ok: true,
@@ -42,7 +42,7 @@ describe("program fs facade capabilities", () => {
     });
   });
 
-  it("derives read permissions and rejects workspace escapes", async () => {
+  it("derives read permissions for workspace and outside paths", async () => {
     const root = makeTmpDir("ptc-fs-permission-");
     const tools = buildProgramFacadeTools(root);
     const stat = tools.get("__ptc_fs_stat")!;
@@ -50,9 +50,26 @@ describe("program fs facade capabilities", () => {
       permissionKind: "read",
       path: join(root, "src", "a.ts"),
     });
-    expect(await stat.handler({ path: "../outside" })).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("escapes the workspace") },
+    expect(
+      stat.derivePermissionRequest?.({ path: join(root, "src", "a.ts") }),
+    ).toEqual({
+      permissionKind: "read",
+      path: join(root, "src", "a.ts"),
+    });
+    const outside = makeTmpDir("ptc-fs-outside-");
+    await writeFile(join(outside, "granted.txt"), "outside");
+    expect(
+      await stat.handler({ path: join(outside, "granted.txt") }),
+    ).toMatchObject({ ok: true, result: { file: true, size: 7 } });
+    expect(
+      stat.derivePermissionRequest?.({ path: join(outside, "granted.txt") }),
+    ).toEqual({
+      permissionKind: "read",
+      path: join(outside, "granted.txt"),
+    });
+    expect(stat.derivePermissionRequest?.({ path: "../outside" })).toEqual({
+      permissionKind: "read",
+      path: join(root, "..", "outside"),
     });
   });
 

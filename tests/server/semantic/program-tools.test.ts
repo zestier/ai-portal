@@ -78,6 +78,53 @@ describe("semantic program tools", () => {
       },
     });
   });
+
+  it("suspends and resumes a synchronous program call for permission", async () => {
+    let approve!: () => void;
+    const permission = new Promise<void>((resolve) => {
+      approve = resolve;
+    });
+    let handlerRan = false;
+    const echo = attachProgramMetadata({
+      ...fakeTool("grep"),
+      async handler() {
+        handlerRan = true;
+        return ok({ content: "src/a.ts:1:needle", truncated: false });
+      },
+    });
+    const tools = buildSemanticTools({
+      ...options(new Map([[echo.name, echo]])),
+      permissionResolver: async () => {
+        await permission;
+        return { allow: true };
+      },
+    });
+    const program = tools.find((tool) => tool.name === "program")!;
+    const pending = program.handler(
+      { source: 'return tools.grep({ pattern: "needle" });' },
+      {
+        signal: new AbortController().signal,
+        toolCallId: "X2",
+        partial: () => {},
+        progress: () => {},
+      },
+    );
+
+    await Promise.resolve();
+    expect(handlerRan).toBe(false);
+    approve();
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        value: {
+          matches: [
+            { path: "src/a.ts", line: 1, column: null, text: "needle" },
+          ],
+        },
+      },
+    });
+    expect(handlerRan).toBe(true);
+  });
 });
 
 function fakeTool(name: string): PortalTool {

@@ -1,7 +1,7 @@
 import { createLsTool } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 import { err, ok, type PortalTool, type ToolPermissionRequest } from "./types";
-import { resolveWorkspaceTarget } from "./filesystem";
+import { resolveGrantedTarget } from "./filesystem";
 import {
   createTreeResolver,
   resolveWorktreeDir,
@@ -11,9 +11,8 @@ import {
 } from "./worktree-selector";
 
 // pi's `ls` schema (`{ path?, limit? }`) extended with the portal `worktree`
-// selector. `path` stays workspace-relative per the portal contract; the
-// handler resolves it against the selected root before handing an ABSOLUTE path
-// to pi, whose `ls` executes against the local filesystem.
+// selector. Relative paths use the selected root; absolute targets are
+// evaluated directly by the read-grant permission request.
 const LsArgs = z
   .object({
     path: z.string().min(1).max(4096).optional(),
@@ -50,7 +49,7 @@ export function buildLsTools(
     {
       name: "ls",
       description:
-        "List a single workspace directory (sorted, `/` suffix for dirs, includes dotfiles).",
+        "List a single directory (sorted, `/` suffix for dirs, includes dotfiles).",
       argsSchema: LsArgs,
       parameters: {
         type: "object",
@@ -73,7 +72,7 @@ export function buildLsTools(
         const root = permissionRoot(parsed.data.worktree);
         if (root === null) return null;
         const target = parsed.data.path
-          ? resolveWorkspaceTarget(root, parsed.data.path)
+          ? resolveGrantedTarget(root, parsed.data.path)
           : { ok: true as const, abs: root, rel: "." };
         if (!target.ok) return null;
         return { permissionKind: "read", path: target.abs };
@@ -83,7 +82,7 @@ export function buildLsTools(
         const tree = treeFor(parsed.worktree);
         if (tree.error) return tree.error;
         const target = parsed.path
-          ? resolveWorkspaceTarget(tree.cwd, parsed.path)
+          ? resolveGrantedTarget(tree.cwd, parsed.path)
           : { ok: true as const, abs: tree.cwd, rel: "." };
         if (!target.ok) return err(target.message, { code: "invalid_path" });
         try {

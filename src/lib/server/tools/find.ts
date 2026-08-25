@@ -4,7 +4,7 @@ import { relative } from "node:path";
 import { ripgrep } from "ripgrep";
 import { z } from "zod";
 import { err, ok, type PortalTool, type ToolPermissionRequest } from "./types";
-import { resolveWorkspaceTarget } from "./filesystem";
+import { resolveGrantedTarget } from "./filesystem";
 import {
   createTreeResolver,
   resolveWorktreeDir,
@@ -14,9 +14,8 @@ import {
 } from "./worktree-selector";
 
 // pi's `find` schema (`{ pattern, path?, limit? }`) extended with the portal
-// `worktree` selector. `path` stays workspace-relative per the portal contract;
-// the handler resolves it against the selected root before handing an ABSOLUTE
-// path to pi.
+// `worktree` selector. Relative paths use the selected root; absolute targets
+// are evaluated directly by the read-grant permission request.
 const FindArgs = z
   .object({
     pattern: z.string().min(1).max(4096),
@@ -98,7 +97,7 @@ export function buildFindTools(
   return [
     {
       name: "find",
-      description: "Find workspace files by glob pattern (e.g. `*.ts`).",
+      description: "Find files by glob pattern (e.g. `*.ts`).",
       promptGuidelines: [
         "Respects .gitignore and excludes node_modules. Use `grep` for file contents.",
       ],
@@ -129,7 +128,7 @@ export function buildFindTools(
         const root = permissionRoot(parsed.data.worktree);
         if (root === null) return null;
         const target = parsed.data.path
-          ? resolveWorkspaceTarget(root, parsed.data.path)
+          ? resolveGrantedTarget(root, parsed.data.path)
           : { ok: true as const, abs: root, rel: "." };
         if (!target.ok) return null;
         return { permissionKind: "read", path: target.abs };
@@ -139,7 +138,7 @@ export function buildFindTools(
         const tree = treeFor(parsed.worktree);
         if (tree.error) return tree.error;
         const target = parsed.path
-          ? resolveWorkspaceTarget(tree.cwd, parsed.path)
+          ? resolveGrantedTarget(tree.cwd, parsed.path)
           : { ok: true as const, abs: tree.cwd, rel: "." };
         if (!target.ok) return err(target.message, { code: "invalid_path" });
         try {

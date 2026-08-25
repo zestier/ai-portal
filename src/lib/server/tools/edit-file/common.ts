@@ -1,11 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { createTwoFilesPatch } from "diff";
 import type { StructuredPatchHunk } from "diff";
-import { isAbsolute, relative, resolve } from "node:path";
-import {
-  isPathInWorkspace,
-  resolveWithParentFallback,
-} from "../../permissions/workspace";
+import { resolveGrantedTarget } from "../filesystem/targets";
 
 export const MAX_EDIT_FILE_BYTES = 5_000_000;
 
@@ -59,32 +55,13 @@ export interface FileEditOutput {
   shift?: { after: number; by: number };
 }
 
-// Resolve a Write `file_path` to an absolute, symlink-resolved target inside
-// the workspace. Accepts both the SDK contract's absolute paths and
-// workspace-relative paths (as the tests use), rejecting any `..`
-// escape that resolves outside the root. Exported so `multi_edit` resolves its
-// `file_path`s through the exact same rules.
+// Resolve the exact target evaluated by the write/edit grant. Exported so
+// multi_edit resolves every file through the same grant-governed rules.
 export function resolveWriteTarget(
   workspaceRoot: string,
   rawPath: string,
 ): { ok: true; abs: string; rel: string } | { ok: false; message: string } {
-  if (rawPath.includes("\0")) {
-    return { ok: false, message: "path must not contain NUL characters" };
-  }
-  const root = resolveWithParentFallback(resolve(workspaceRoot));
-  if (root === null) {
-    return { ok: false, message: "could not resolve the workspace root" };
-  }
-  const abs = resolveWithParentFallback(
-    isAbsolute(rawPath) ? resolve(rawPath) : resolve(root, rawPath),
-  );
-  if (abs === null) {
-    return { ok: false, message: `could not resolve path: ${rawPath}` };
-  }
-  if (!isPathInWorkspace(abs, root)) {
-    return { ok: false, message: `path escapes the workspace: ${rawPath}` };
-  }
-  return { ok: true, abs, rel: abs === root ? "." : relative(root, abs) };
+  return resolveGrantedTarget(workspaceRoot, rawPath);
 }
 
 // Read an existing file's content, enforcing the size/binary caps. Returns null

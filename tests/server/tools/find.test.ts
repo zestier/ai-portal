@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { buildFindTools } from "../../../src/lib/server/tools/find";
 import type { PortalTool } from "../../../src/lib/server/tools/types";
 
@@ -81,7 +81,7 @@ describe("find", () => {
     });
   });
 
-  it("scopes to the given path and rejects paths outside the workspace", async () => {
+  it("scopes to workspace and grant-authorized outside paths", async () => {
     await withWorkspace(async (workspace) => {
       await mkdir(join(workspace, "src"));
       await writeFile(join(workspace, "src", "app.ts"), "");
@@ -93,14 +93,17 @@ describe("find", () => {
       });
       expect(findText(scoped).split("\n")).toEqual(["app.ts"]);
 
-      const escaped = await tool(workspace).handler({
-        pattern: "**/*.ts",
-        path: "..",
-      });
-      expect(escaped).toMatchObject({
-        ok: false,
-        error: { code: "invalid_path" },
-      });
+      const outside = await mkdtemp(join(tmpdir(), "portal-find-outside-"));
+      try {
+        await writeFile(join(outside, "outside.ts"), "");
+        const granted = await tool(workspace).handler({
+          pattern: "**/*.ts",
+          path: outside,
+        });
+        expect(findText(granted)).toContain("outside.ts");
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
     });
   });
 
@@ -131,7 +134,10 @@ describe("find", () => {
         permissionKind: "read",
         path: join(workspace, "src"),
       });
-      expect(derive?.({ pattern: "*.ts", path: ".." })).toBeNull();
+      expect(derive?.({ pattern: "*.ts", path: ".." })).toEqual({
+        permissionKind: "read",
+        path: resolve(workspace, ".."),
+      });
     });
   });
 });

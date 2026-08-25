@@ -275,14 +275,20 @@ couple of conservative legacy argument forms, but they are compatibility
 behavior rather than part of the model-facing contract. Direct-mode `bash`
 remains available outside `program` but is not a program capability.
 
+Command `cwd` remains workspace-contained as a stopgap. A future permission
+contract should evaluate command execution and directory traversal as separate
+targets rather than treating a writable-directory grant as authority to run a
+process there.
+
 The QuickJS bootstrap implements `ProgramStats` as an isolate-local JavaScript
 object over JSON RPC results. The host never passes a Node object into the
 isolate.
 
 Each facade method maps to a named internal capability adapter. Adapters reuse
-the same path normalization, workspace containment, permission resolver, event
-emission, cancellation, result-size limit, and audit record as the corresponding
-portal tool. Facades do not call Node `fs` directly from the sandbox bridge.
+the same canonical path resolution, filesystem grants, permission resolver,
+event emission, cancellation, result-size limit, and audit record as the
+corresponding portal tool. Facades do not call Node `fs` directly from the
+sandbox bridge.
 Internal adapter names are not visible to the model and cannot be invoked
 through `tools`.
 

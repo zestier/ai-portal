@@ -9,8 +9,8 @@ import {
 import { err, ok, type PortalTool, type ToolPermissionRequest } from "../types";
 import {
   buildFilesystemCtx,
+  resolveGrantedTarget,
   resolveMoveTargets,
-  resolveWorkspaceTarget,
 } from "./targets";
 
 export const MoveArgs = z
@@ -30,7 +30,7 @@ export function buildMoveTools(
   return [
     {
       name: "move",
-      description: "Move (rename) a file or directory within the workspace.",
+      description: "Move (rename) a file or directory.",
       promptGuidelines: [
         "Refuses to overwrite an existing destination unless `overwrite`; never overwrites a directory.",
         "A move touching anything outside the workspace is gated on BOTH source and destination paths and prompts.",
@@ -81,9 +81,9 @@ export function buildMoveTools(
           MoveArgs.parse(args);
         const tree = treeFor(worktree);
         if (tree.error) return tree.error;
-        const src = resolveWorkspaceTarget(tree.cwd, source);
+        const src = resolveGrantedTarget(tree.cwd, source);
         if (!src.ok) return err(`source: ${src.message}`);
-        const dst = resolveWorkspaceTarget(tree.cwd, destination);
+        const dst = resolveGrantedTarget(tree.cwd, destination);
         if (!dst.ok) return err(`destination: ${dst.message}`);
         if (src.abs === dst.abs) {
           return err("source and destination resolve to the same path");

@@ -249,7 +249,7 @@ export function buildEditTool(
       properties: {
         file_path: {
           type: "string",
-          description: "Absolute path; must resolve inside the workspace.",
+          description: "Absolute or workspace-relative path.",
         },
         anchor: {
           type: "string",

@@ -170,7 +170,7 @@ describe("trash tool", () => {
     writeFileSync(join(outside, "secret"), "x");
     expect(
       expectErr(await trash.handler({ path: join(outside, "secret") })),
-    ).toMatch(/absolute/i);
+    ).toMatch(/escapes the workspace/i);
     expect(existsSync(join(outside, "secret"))).toBe(true);
   });
 

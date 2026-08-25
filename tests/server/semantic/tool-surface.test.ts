@@ -66,6 +66,9 @@ describe("semantic tool surface", () => {
       "predeclared synchronous APIs; never import, require, or await them",
     );
     expect(programGuidance).toContain('fs.readFile(path, "utf8")');
+    expect(programGuidance).toContain(
+      "filesystem grants govern the resolved target, so outside paths may prompt",
+    );
     expect(programGuidance).toContain("path.join");
     expect(programGuidance).toContain("fs.mkdir(path)");
     expect(programGuidance).toContain("fs.rename(from, to)");

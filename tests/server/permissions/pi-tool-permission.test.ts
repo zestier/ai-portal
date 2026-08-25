@@ -267,12 +267,38 @@ describe("pi tool calls + permission gate", () => {
   );
 
   it(
+    "a filesystem tool prompts for an outside target and runs after approval",
+    async () => {
+      const wd = makeTmpDir("pi-gate-");
+      const outside = makeTmpDir("pi-gate-outside-ls-");
+      writeFileSync(join(outside, "granted.txt"), "hello\n");
+      const convId = await createConversation(wd);
+      const session = await openSession(wd, convId);
+      const { result, prompts } = await runToolCall(
+        session,
+        "ls",
+        { path: outside },
+        (view) =>
+          view.kind === "permission"
+            ? { kind: "permission", decision: "allow-once" }
+            : undefined,
+      );
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatchObject({
+        tool: "ls",
+        permissionKind: "read",
+        args: { path: outside },
+      });
+      expect(result.ok).toBe(true);
+    },
+    T,
+  );
+
+  it(
     "fs-kind requests outside the workspace are NOT auto-approved (gate-level)",
     async () => {
-      // No portal tool can derive an out-of-workspace target (the tool layer
-      // rejects absolute/escaping paths before the gate), so this drives the
-      // gate directly with a synthetic fs tool: an in-workspace target
-      // auto-approves, an out-of-workspace target raises a prompt.
+      // Drive the gate directly to isolate policy behavior from a handler:
+      // in-workspace targets auto-approve, while outside targets prompt.
       const wd = makeTmpDir("pi-gate-");
       const outside = makeTmpDir("pi-gate-out-");
       const fsConvId = await createConversation(wd);

@@ -9,7 +9,7 @@ import { err, ok, type PortalTool, type ToolPermissionRequest } from "../types";
 import {
   buildFilesystemCtx,
   resolveAbsoluteTarget,
-  resolveWorkspaceTarget,
+  resolveGrantedTarget,
 } from "./targets";
 
 export const CreateDirectoryArgs = z
@@ -30,7 +30,7 @@ export function buildCreateDirectoryTools(
       description:
         "Create a directory recursively (idempotent like `mkdir -p`).",
       promptGuidelines: [
-        "Paths must be workspace-relative; absolute paths and `..` escapes are rejected.",
+        "Filesystem write grants govern the resolved target path.",
       ],
       argsSchema: CreateDirectoryArgs,
       parameters: {
@@ -38,7 +38,7 @@ export function buildCreateDirectoryTools(
         properties: {
           path: {
             type: "string",
-            description: "Workspace-relative path.",
+            description: "Absolute or workspace-relative path.",
           },
           worktree: WORKTREE_WRITE_PARAM,
         },
@@ -58,7 +58,7 @@ export function buildCreateDirectoryTools(
         const { path: rawPath, worktree } = CreateDirectoryArgs.parse(args);
         const tree = treeFor(worktree);
         if (tree.error) return tree.error;
-        const resolved = resolveWorkspaceTarget(tree.cwd, rawPath);
+        const resolved = resolveGrantedTarget(tree.cwd, rawPath);
         if (!resolved.ok) return err(resolved.message);
         try {
           const existing = await stat(resolved.abs).catch(() => null);

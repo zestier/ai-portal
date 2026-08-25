@@ -79,30 +79,32 @@ describe("create_directory tool", () => {
     expect(res.error.message).toMatch(/not a directory/i);
   });
 
-  it("rejects absolute paths without creating anything", async () => {
+  it("accepts contained absolute paths", async () => {
+    const target = join(root, "absolute", "child");
+    expect(await tool.handler({ path: target })).toMatchObject({ ok: true });
+    expect(existsSync(target)).toBe(true);
+  });
+
+  it("creates an absolute path outside the workspace after authorization", async () => {
     const outside = makeTmpDir("create-dir-outside-");
     const res = await tool.handler({ path: join(outside, "evil") });
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error("unreachable");
-    expect(res.error.message).toMatch(/absolute/i);
-    expect(existsSync(join(outside, "evil"))).toBe(false);
+    expect(res.ok).toBe(true);
+    expect(existsSync(join(outside, "evil"))).toBe(true);
   });
 
-  it("rejects `..` escapes that resolve outside the workspace", async () => {
-    const res = await tool.handler({ path: "../escape" });
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error("unreachable");
-    expect(res.error.message).toMatch(/escapes the workspace/i);
+  it("derives a relative outside target for authorization", () => {
+    expect(tool.derivePermissionRequest?.({ path: "../escape" })).toEqual({
+      permissionKind: "write",
+      path: join(root, "..", "escape"),
+    });
   });
 
-  it("rejects an escape via a symlinked parent that points outside the workspace", async () => {
+  it("uses the granted target behind a symlinked parent", async () => {
     const outside = makeTmpDir("create-dir-symlink-outside-");
     symlinkSync(outside, join(root, "link"));
     const res = await tool.handler({ path: "link/evil" });
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error("unreachable");
-    expect(res.error.message).toMatch(/escapes the workspace/i);
-    expect(existsSync(join(outside, "evil"))).toBe(false);
+    expect(res.ok).toBe(true);
+    expect(existsSync(join(outside, "evil"))).toBe(true);
   });
 
   it('treats "." as the workspace root and is a no-op', async () => {

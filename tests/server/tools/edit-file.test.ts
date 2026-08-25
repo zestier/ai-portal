@@ -410,16 +410,17 @@ describe("write", () => {
     });
   });
 
-  it("rejects a path outside the workspace", async () => {
+  it("writes outside the workspace after authorization", async () => {
     await withWorkspace(async (workspace) => {
+      const outside = await mkdtemp(join(tmpdir(), "portal-write-outside-"));
+      const filePath = join(outside, "escape.txt");
       const result = await tool(workspace, "write").handler({
-        file_path: join(tmpdir(), "portal-write-escape", "escape.txt"),
+        file_path: filePath,
         content: "nope",
       });
-      expect(result).toMatchObject({
-        ok: false,
-        error: { code: "invalid_path" },
-      });
+      expect(result).toMatchObject({ ok: true });
+      expect(await readFile(filePath, "utf8")).toBe("nope");
+      await rm(outside, { recursive: true, force: true });
     });
   });
 
@@ -716,17 +717,19 @@ describe("edit", () => {
     });
   });
 
-  it("rejects a path outside the workspace", async () => {
+  it("edits outside the workspace after authorization", async () => {
     await withWorkspace(async (workspace) => {
+      const outside = await mkdtemp(join(tmpdir(), "portal-edit-outside-"));
+      const filePath = join(outside, "escape.txt");
+      await writeFile(filePath, "x");
       const result = await tool(workspace, "edit").handler({
-        file_path: join(tmpdir(), "portal-edit-escape", "escape.txt"),
+        file_path: filePath,
         anchor: "x",
         new_string: "y",
       });
-      expect(result).toMatchObject({
-        ok: false,
-        error: { code: "invalid_path" },
-      });
+      expect(result).toMatchObject({ ok: true });
+      expect(await readFile(filePath, "utf8")).toBe("y");
+      await rm(outside, { recursive: true, force: true });
     });
   });
 
