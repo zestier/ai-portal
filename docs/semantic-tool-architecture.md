@@ -71,6 +71,17 @@ the resolve card also exposes the exact dynamic request sent to its worker.
 need read, write, or execute authority. Each delegated primitive operation is
 permission-checked normally.
 
+Program execution uses category-specific operation budgets rather than one
+global call count. Read-heavy traversal has a generous allowance, while
+mutations and command executions have progressively tighter ceilings. The
+wall-clock, memory, output, cancellation, and permission boundaries remain in
+force independently of those category limits.
+
+Program results preserve the complete execution trace in the persisted tool
+envelope for UI and audit use, but the routine model-facing result contains
+only the program's returned value and operation count. Source hashes, argument
+hashes, timing, and successful call records are not injected into model context.
+
 ## Decision Boundary
 
 The worker may determine how to obtain or realize a specified result. It may

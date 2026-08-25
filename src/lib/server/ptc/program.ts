@@ -6,10 +6,13 @@ import { createHash } from "node:crypto";
 import type { PortalTool, ToolResult } from "$lib/server/tools/types";
 import { suggestionsFor } from "./contracts";
 
-const MAX_OPERATIONS = 50;
+const MAX_OPERATIONS_BY_CATEGORY = {
+  mutation: 500,
+  command: 20,
+} as const;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_RUNTIME_MS = 120_000;
-const MAX_MEMORY_BYTES = 32 * 1024 * 1024;
+const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
 const MAX_STACK_BYTES = 512 * 1024;
 
 export interface ProgramRunOptions {
@@ -39,6 +42,8 @@ export interface ProgramRunResult {
   };
 }
 
+type OperationCategory = keyof typeof MAX_OPERATIONS_BY_CATEGORY;
+
 export async function runProgram(
   opts: ProgramRunOptions,
 ): Promise<ProgramRunResult> {
@@ -57,6 +62,10 @@ export async function runProgram(
   const startedAt = Date.now();
   const calls: ProgramRunResult["trace"]["calls"] = [];
   let operations = 0;
+  const categoryOperations: Record<OperationCategory, number> = {
+    mutation: 0,
+    command: 0,
+  };
 
   function installBridge(
     bridgeName: string,
@@ -317,12 +326,19 @@ export async function runProgram(
     allowed: ReadonlyMap<string, PortalTool>,
   ): Promise<unknown> {
     operations++;
-    if (operations > MAX_OPERATIONS) {
-      throw new Error("Program exceeded its operation budget.");
-    }
     if (opts.signal.aborted) throw new Error("Program aborted.");
     if (Date.now() > deadline) {
       throw new Error("Program exceeded its runtime budget.");
+    }
+    const category = operationCategory(name, args, allowed);
+    if (category !== null) {
+      categoryOperations[category]++;
+      const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
+      if (categoryOperations[category] > categoryLimit) {
+        throw new Error(
+          `Program exceeded its ${category} operation budget (${categoryLimit}).`,
+        );
+      }
     }
     if (!allowed.has(name)) {
       const suggestions = suggestionsFor(name, [...allowed.keys()]);
@@ -355,6 +371,19 @@ export async function runProgram(
       ? { ok: true, value: result.result }
       : { ok: false, error: result.error };
   }
+}
+
+function operationCategory(
+  name: string,
+  args: unknown,
+  allowed: ReadonlyMap<string, PortalTool>,
+): OperationCategory | null {
+  if (name === "__ptc_command_run") return "command";
+  const tool = allowed.get(name);
+  const permission = tool?.derivePermissionRequest?.(args);
+  if (permission?.permissionKind === "read") return null;
+  if (tool?.program?.operationCategory === "read") return null;
+  return "mutation";
 }
 
 function hash(value: unknown): string {

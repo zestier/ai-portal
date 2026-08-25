@@ -65,6 +65,8 @@ export interface ToolPermissionRequest {
 export interface ProgramToolMetadata {
   /** One short system-prompt catalog entry describing when to use the tool. */
   catalogDescription: string;
+  /** Resource-budget category; reads are unbounded by operation count. */
+  operationCategory: "read" | "mutation";
   /** JSON schema for the successful value returned inside a program. */
   resultSchema: Record<string, unknown>;
   /** Canonical program invocation shown by explicit schema lookup. */

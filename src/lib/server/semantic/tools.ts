@@ -151,6 +151,14 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
         return ok(
           result,
           `Program completed with ${result.operations} capability call(s).`,
+          {
+            views: [
+              {
+                type: "text",
+                text: programModelResult(result.value, result.operations),
+              },
+            ],
+          },
         );
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error), {
@@ -159,6 +167,12 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
       }
     },
   };
+}
+
+function programModelResult(value: unknown, operations: number): string {
+  const rendered =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return `${rendered}\n\nOperations: ${operations}`;
 }
 
 function buildProgramToolSchemasTool(

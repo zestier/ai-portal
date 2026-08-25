@@ -342,6 +342,7 @@ function metadata(
 ): ProgramToolMetadata {
   return {
     catalogDescription,
+    operationCategory: "read",
     resultSchema,
     example,
     contractVersion: "1",

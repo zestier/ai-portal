@@ -52,6 +52,55 @@ describe("program runtime", () => {
     expect(dispatched).toBe(false);
   });
 
+  it("does not impose an operation-count budget on declared reads", async () => {
+    const readEcho: PortalTool = {
+      ...echo,
+      program: {
+        catalogDescription: "read a value",
+        operationCategory: "read",
+        resultSchema: {},
+        example: "tools.echo({ value: 1 })",
+        contractVersion: "1",
+      },
+    };
+    const result = await runProgram({
+      source:
+        "let total = 0; for (let index = 0; index < 250; index++) total += tools.echo({ value: 1 }).value; return total;",
+      capabilities: new Map([[readEcho.name, readEcho]]),
+      execute: (_name, args) => readEcho.handler(args),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toBe(250);
+    expect(result.operations).toBe(250);
+    expect(result.trace.calls).toHaveLength(250);
+  });
+
+  it("charges undeclared operations to the mutation budget", async () => {
+    await expect(
+      runProgram({
+        source:
+          "for (let index = 0; index < 501; index++) tools.echo({ value: index }); return 'done';",
+        capabilities: new Map([[echo.name, echo]]),
+        execute: (_name, args) => echo.handler(args),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("mutation operation budget (500)");
+  });
+
+  it("bounds command operations independently from reads", async () => {
+    const command = tool("__ptc_command_run");
+    await expect(
+      runProgram({
+        source:
+          'for (let index = 0; index < 21; index++) command.run("echo", ["ok"]); return "done";',
+        capabilities: new Map(),
+        facadeCapabilities: new Map([[command.name, command]]),
+        execute: (_name, args) => command.handler(args),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("command operation budget (20)");
+  });
+
   it("does not expose ambient process APIs", async () => {
     const result = await runProgram({
       source:

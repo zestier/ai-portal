@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { setupLocalEnv } from "../../helpers/env";
 import { ok, type PortalTool } from "../../../src/lib/server/tools/types";
+import { deriveToolResultViews } from "../../../src/lib/tool-result-views";
 import { attachProgramMetadata } from "../../../src/lib/server/ptc/contracts";
 import { buildSemanticTools } from "../../../src/lib/server/semantic/tools";
 
@@ -78,6 +79,11 @@ describe("semantic program tools", () => {
         operations: 1,
       },
     });
+    expect(deriveToolResultViews(result).modelText).toBe(
+      `${JSON.stringify({ matches: [], truncated: false }, null, 2)}\n\nOperations: 1`,
+    );
+    expect(deriveToolResultViews(result).modelText).not.toContain("trace");
+    expect(deriveToolResultViews(result).fullContent).toContain('"trace"');
   });
 
   it("suspends and resumes a synchronous program call for permission", async () => {
