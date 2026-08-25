@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeAll, afterEach } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { setupLocalEnv } from "../../helpers/env";
 import { makeTmpDir } from "../../helpers/tmp";
@@ -67,13 +68,40 @@ describe("pi session persistence", () => {
       await import("../../../src/lib/server/config");
     resetConfigForTests();
   });
-
   afterEach(async () => {
     // Drop pooled sessions so one test's cached pi session can't leak into the
     // next (each conversation would otherwise keep its file open until reap).
     const { shutdown } = await import("../../../src/lib/server/runtime/pool");
     await shutdown();
   });
+
+  it(
+    "deletes the durable session file when the conversation is removed",
+    async () => {
+      const wd = makeTmpDir("pi-remove-wd-");
+      const dir = makeTmpDir("pi-remove-file-");
+      const sessionFile = join(dir, "session.jsonl");
+      writeFileSync(sessionFile, "{}");
+      const { ensureLocalUser } =
+        await import("../../../src/lib/server/db/repos/users");
+      const { create, get, remove, setSessionFile } =
+        await import("../../../src/lib/server/db/repos/conversations");
+
+      const u = ensureLocalUser();
+      const conv = create(u.id, {
+        title: "delete-me",
+        workdir: wd,
+        model: null,
+      });
+      setSessionFile(conv.id, u.id, sessionFile);
+      expect(existsSync(sessionFile)).toBe(true);
+
+      expect(remove(conv.id, u.id)).toBe(true);
+      expect(existsSync(sessionFile)).toBe(false);
+      expect(get(conv.id, u.id)).toBeNull();
+    },
+    T,
+  );
 
   it(
     "creates a durable session file on the first turn and resumes it on the next",

@@ -1,5 +1,7 @@
 import { getDb } from "../index";
 import { purgeSessionSearchIndex } from "./memory";
+import { rmSync } from "node:fs";
+import { log } from "../../log";
 import { conversationId, messageId } from "$lib/ids";
 import {
   normalizeAgentArchitecture,
@@ -619,7 +621,17 @@ export function unarchive(id: string | number, userId: number): boolean {
 export function remove(id: string | number, userId: number): boolean {
   const intId = convInt(id);
   const db = getDb();
-  return db.transaction(() => {
+  // Capture the durable conversation session file (the on-disk .jsonl
+  // transcript) before the row is deleted: FK `ON DELETE CASCADE` and the
+  // search-index purge handle relational state, but this file lives on disk and
+  // would otherwise leak after the conversation is gone.
+  const row = db
+    .prepare(
+      "SELECT session_file FROM conversations WHERE id = ? AND user_id = ?",
+    )
+    .get(intId, userId) as { session_file: string | null } | undefined;
+  const sessionFile = row?.session_file ?? null;
+  const removed = db.transaction(() => {
     const r = db
       .prepare("DELETE FROM conversations WHERE id = ? AND user_id = ?")
       .run(intId, userId);
@@ -632,4 +644,20 @@ export function remove(id: string | number, userId: number): boolean {
     }
     return r.changes > 0;
   })();
+  // Only remove the file when the row was actually deleted (so an unauthorized
+  // id can't probe / delete another user's transcript) and a path was recorded.
+  // `force: true` makes a missing file a no-op.
+  if (removed && sessionFile) {
+    try {
+      rmSync(sessionFile, { force: true });
+    } catch (err) {
+      // Best-effort: the row is already gone, so a transcript left behind by a
+      // failed unlink must not roll back the conversation delete.
+      log.warn("conversation.session_file_remove_failed", {
+        conversationId: id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return removed;
 }
