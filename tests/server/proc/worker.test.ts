@@ -41,6 +41,7 @@ describe("proc worker", () => {
             id: "atom-1",
             name: "atom",
             arguments: JSON.stringify({
+              summary: "Create candidates",
               source: "return [{ path: 'src/a.ts', line: 10 }];",
               output: { mode: "shape", max_bytes: 1024, store: true },
             }),
@@ -58,6 +59,7 @@ describe("proc worker", () => {
               id: "atom-2",
               name: "atom",
               arguments: JSON.stringify({
+                summary: "Add definition extents",
                 source: `return state[${JSON.stringify(prior.result_id)}].map(row => ({ ...row, end: row.line + 5 }));`,
                 output: { mode: "none", store: true },
               }),
@@ -152,8 +154,23 @@ describe("proc worker", () => {
           type: "subagent.lifecycle",
           status: "completed",
         }),
+        expect.objectContaining({
+          type: "tool.call",
+          tool: "atom",
+          parentToolCallId: "X42",
+        }),
+        expect.objectContaining({
+          type: "tool.result",
+          parentToolCallId: "X42",
+          output: expect.stringContaining("projection"),
+        }),
       ]),
     );
+    expect(
+      (piChat.mock.calls[0][2] as Array<{ function: { name: string } }>).map(
+        (tool) => tool.function.name,
+      ),
+    ).toEqual(["atom", "complete", "cannot_execute"]);
     const initial = JSON.parse(transaction.messages[1].content as string) as {
       program_environment: { tool_contracts: unknown[] };
     };
@@ -169,6 +186,7 @@ describe("proc worker", () => {
             id: "bad-atom",
             name: "atom",
             arguments: JSON.stringify({
+              summary: "Attempt unsupported operation",
               source: "throw new Error('bad atom');",
               output: { mode: "shape", max_bytes: 1024, store: true },
             }),

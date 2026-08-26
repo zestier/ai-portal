@@ -32,6 +32,7 @@ type SummaryHandler = (args: Record<string, unknown>) => string | null;
 const summaryHandlers: Record<string, SummaryHandler> = {
   bash: commandSummary,
   task: taskSummary,
+  atom: semanticSummary,
   proc: semanticSummary,
   resolve: semanticSummary,
   program: semanticSummary,

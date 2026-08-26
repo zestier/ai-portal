@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { toolCallId as toolCodec } from "$lib/ids";
 import type { PortalEvent } from "$lib/types";
+import { mintToolCallId } from "$lib/server/db/repos/messages";
 import { piChat, resolveModelSelection } from "$lib/server/pi/complete";
 import type {
   ExtractorChatMessage,
@@ -55,6 +56,7 @@ const OutputPolicy = z
 
 const AtomArgs = z
   .object({
+    summary: z.string().min(1).max(500),
     source: z.string().min(1).max(20_000),
     output: OutputPolicy,
   })
@@ -70,6 +72,7 @@ const CannotExecuteArgs = z
 export const PROC_WORKER_SYSTEM = `Realize exactly the supplied procedure using program atoms.
 You are a tolerant compiler and dataflow orchestrator, not a goal-owning agent. Do not broaden the investigation, add goals, reinterpret relevance, or choose a different algorithm.
 Use atom to execute JavaScript. Exact stored values are available to later atoms as state[resultId]. Request shape for stored intermediate values, none when the structure is already known, and bounded exact only when applying the supplied criterion requires inspecting data.
+Give every atom a brief user-visible summary. Design the final stored value to satisfy the proc output policy; never use proc as a bulk conduit for full files or other raw corpora. If exact completion exceeds its byte budget, use the supplied filtering criteria to reduce it rather than requesting broad raw data.
 Repair syntax, tool contracts, batching, and equivalent mechanical failures. If a consequential instruction is missing or the procedure cannot be realized, call cannot_execute with the smallest precise reason.
 End only with complete for a stored final result or cannot_execute.`;
 
@@ -197,6 +200,15 @@ export async function runProcWorker(
 
       for (const call of turn.toolCalls) {
         const raw = parseArgs(call.arguments);
+        const protocolId = toolCodec.encode(mintToolCallId());
+        const procId = toolCodec.encode(transaction.parentToolCallId);
+        opts.emit({
+          type: "tool.call",
+          toolCallId: protocolId,
+          tool: call.name,
+          args: raw,
+          parentToolCallId: procId,
+        });
         try {
           if (call.name === ATOM) {
             const args = AtomArgs.parse(raw);
@@ -214,7 +226,7 @@ export async function runProcWorker(
                   : callArgs;
                 return executeDelegatedTool(
                   {
-                    parentToolCallId: transaction.parentToolCallId,
+                    parentToolCallId: toolCodec.parse(protocolId),
                     capabilities: executableCapabilities,
                     permissionResolver: opts.permissionResolver,
                     emit: opts.emit,
@@ -235,23 +247,33 @@ export async function runProcWorker(
                   value: result.value,
                 })
               : null;
+            const feedback = {
+              ...(stored ? { result_id: stored.id } : {}),
+              stored: policy.store,
+              bytes:
+                stored?.bytes ??
+                Buffer.byteLength(JSON.stringify(result.value)),
+              ...(projection.projection !== undefined
+                ? { projection: projection.projection }
+                : {}),
+              projection_bytes: projection.projectionBytes,
+              truncated: projection.truncated,
+              operations: result.operations,
+              final_output: transaction.outputPolicy,
+            };
+            const feedbackText = JSON.stringify(feedback);
             transaction.messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: JSON.stringify({
-                ...(stored ? { result_id: stored.id } : {}),
-                stored: policy.store,
-                bytes:
-                  stored?.bytes ??
-                  Buffer.byteLength(JSON.stringify(result.value)),
-                ...(projection.projection !== undefined
-                  ? { projection: projection.projection }
-                  : {}),
-                projection_bytes: projection.projectionBytes,
-                truncated: projection.truncated,
-                operations: result.operations,
-              }),
+              content: feedbackText,
             });
+            emitProtocolResult(
+              opts.emit,
+              protocolId,
+              procId,
+              true,
+              feedbackText,
+            );
             continue;
           }
           if (call.name === COMPLETE) {
@@ -279,6 +301,16 @@ export async function runProcWorker(
               });
             }
             updateProcTransaction(transaction);
+            emitProtocolResult(
+              opts.emit,
+              protocolId,
+              procId,
+              true,
+              JSON.stringify({
+                result_id: args.result_id,
+                status: "completed",
+              }),
+            );
             emitCompleted(opts, transaction);
             return {
               status: "completed",
@@ -302,6 +334,13 @@ export async function runProcWorker(
             transaction.status = "cannot_execute";
             transaction.error = args.reason;
             updateProcTransaction(transaction);
+            emitProtocolResult(
+              opts.emit,
+              protocolId,
+              procId,
+              false,
+              JSON.stringify({ reason: args.reason }),
+            );
             emitCompleted(opts, transaction);
             return {
               status: "cannot_execute",
@@ -313,16 +352,24 @@ export async function runProcWorker(
           throw new Error(`Unknown proc worker tool: ${call.name}`);
         } catch (error) {
           if (opts.signal.aborted) throw error;
+          const feedback = {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            instruction:
+              "Repair the equivalent atom or call cannot_execute if the supplied procedure cannot be realized.",
+          };
           transaction.messages.push({
             role: "tool",
             tool_call_id: call.id,
-            content: JSON.stringify({
-              ok: false,
-              error: error instanceof Error ? error.message : String(error),
-              instruction:
-                "Repair the equivalent atom or call cannot_execute if the supplied procedure cannot be realized.",
-            }),
+            content: JSON.stringify(feedback),
           });
+          emitProtocolResult(
+            opts.emit,
+            protocolId,
+            procId,
+            false,
+            JSON.stringify(feedback),
+          );
         }
       }
       updateProcTransaction(transaction);
@@ -358,6 +405,10 @@ function workerToolSpecs(): ExtractorToolSpec[] {
         parameters: {
           type: "object",
           properties: {
+            summary: {
+              type: "string",
+              description: "Brief user-visible explanation of this atom.",
+            },
             source: { type: "string" },
             output: {
               type: "object",
@@ -374,7 +425,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
               additionalProperties: false,
             },
           },
-          required: ["source", "output"],
+          required: ["summary", "source", "output"],
           additionalProperties: false,
         },
       },
@@ -434,5 +485,22 @@ function emitCompleted(
     toolCallId: toolCodec.encode(transaction.parentToolCallId),
     agentId: transaction.id,
     status: "completed",
+  });
+}
+
+function emitProtocolResult(
+  emit: (event: PortalEvent) => void,
+  toolCallId: string,
+  parentToolCallId: string,
+  ok: boolean,
+  output: string,
+): void {
+  emit({
+    type: "tool.result",
+    toolCallId,
+    ok,
+    summary: ok ? "Completed" : "Failed",
+    output,
+    parentToolCallId,
   });
 }

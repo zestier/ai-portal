@@ -65,7 +65,7 @@ function trimmedColumn(col: string, alias: string, keepWhen = ""): string {
 // inline regardless of size. (`task` calls are a small minority, so this costs
 // little.) Its result is only rendered once the card is opened, and is trimmed
 // like any other.
-const ALWAYS_INLINE_ARGS_TOOLS = "tool NOT IN ('task', 'proc') AND ";
+const ALWAYS_INLINE_ARGS_TOOLS = "tool NOT IN ('task', 'proc', 'atom') AND ";
 
 // A `kind = 'content'` reasoning block is a sub-agent's spoken answer, rendered
 // as markdown in the card's activity timeline with no expand step. Only real

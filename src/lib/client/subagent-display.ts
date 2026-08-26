@@ -6,7 +6,13 @@ import type { DisplayFileEdit, DisplayReasoningBlock } from "./display-message";
  * SubagentCall card rather than a generic tool card.
  */
 export const SUBAGENT_TOOL = "task";
-const SUBAGENT_TOOLS = new Set([SUBAGENT_TOOL, "resolve", "resume", "proc"]);
+const SUBAGENT_TOOLS = new Set([
+  SUBAGENT_TOOL,
+  "resolve",
+  "resume",
+  "proc",
+  "atom",
+]);
 
 /**
  * How deep sub-agent cards nest before falling back to a plain tool card.
@@ -75,13 +81,33 @@ export type SubagentArgs = {
   completion?: string[];
   goal?: string;
   procedure?: string;
+  source?: string;
+  output?: unknown;
   transaction_id?: string;
 };
 
 export function procWorkerPrompt(args: SubagentArgs): string | null {
   if (!args.goal || !args.procedure) return null;
   return JSON.stringify(
-    { goal: args.goal, procedure: args.procedure },
+    {
+      ...(args.summary ? { summary: args.summary } : {}),
+      goal: args.goal,
+      procedure: args.procedure,
+      ...(args.output !== undefined ? { output: args.output } : {}),
+    },
+    null,
+    2,
+  );
+}
+
+export function atomWorkerPrompt(args: SubagentArgs): string | null {
+  if (!args.source) return null;
+  return JSON.stringify(
+    {
+      ...(args.summary ? { summary: args.summary } : {}),
+      source: args.source,
+      ...(args.output !== undefined ? { output: args.output } : {}),
+    },
     null,
     2,
   );
@@ -187,6 +213,10 @@ export function extractSubagentResultText(
     const v = JSON.parse(resultJson);
     if (typeof v === "string") return v;
     if (isRecord(v)) {
+      if (v.ok === true && isRecord(v.result)) {
+        const content = v.result.content;
+        if (typeof content === "string" && content.length > 0) return content;
+      }
       for (const key of [
         "content",
         "result",

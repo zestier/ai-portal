@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  atomWorkerPrompt,
   isSubagentToolCall,
   procWorkerPrompt,
   selectSubagentChildren,
@@ -70,6 +71,7 @@ describe("isSubagentToolCall", () => {
     expect(isSubagentToolCall(tool(2, null, "resolve"))).toBe(true);
     expect(isSubagentToolCall(tool(3, null, "resume"))).toBe(true);
     expect(isSubagentToolCall(tool(4, null, "proc"))).toBe(true);
+    expect(isSubagentToolCall(tool(5, null, "atom"))).toBe(true);
   });
 
   it("rejects ordinary tool calls", () => {
@@ -86,17 +88,32 @@ describe("procWorkerPrompt", () => {
         summary: "Find owners",
         goal: "Return paths and ranges",
         procedure: "grep, group, read context",
+        output: { mode: "exact", max_bytes: 4096, store: false },
       }),
     ).toBe(
       JSON.stringify(
         {
+          summary: "Find owners",
           goal: "Return paths and ranges",
           procedure: "grep, group, read context",
+          output: { mode: "exact", max_bytes: 4096, store: false },
         },
         null,
         2,
       ),
     );
+  });
+});
+
+describe("atomWorkerPrompt", () => {
+  it("shows the exact atom source and projection policy", () => {
+    expect(
+      atomWorkerPrompt({
+        summary: "Read matching definitions",
+        source: "return state.RES_matches.map(readDefinition);",
+        output: { mode: "shape", max_bytes: 2048, store: true },
+      }),
+    ).toContain("return state.RES_matches.map(readDefinition);");
   });
 });
 

@@ -49,14 +49,27 @@ test("semantic mode exposes proc and completes a stateful atom flow", async ({
       ? (message as MessageWithTools).toolCalls!.map((call) => call.tool)
       : [],
   );
-  expect(calls).toEqual(["proc"]);
+  expect(calls).toEqual(["proc", "atom", "complete"]);
 
   await page.goto(`/conversations/${id}`);
   await expect(page.getByText(summary, { exact: true })).toBeVisible();
   await page.getByText(summary, { exact: true }).click();
-  await expect(page.locator("details.subagent pre code")).toContainText(
-    "Return paths and line numbers",
+  const procCard = page
+    .locator("details.subagent")
+    .filter({ has: page.getByText(summary, { exact: true }) })
+    .first();
+  await expect(
+    procCard.locator(":scope > .content > .prompt pre code"),
+  ).toContainText("Return paths and line numbers");
+  await expect(procCard.locator(":scope > .content > .response")).toContainText(
+    '"path": "src/a.ts"',
   );
+  await procCard
+    .locator(":scope > .content > details.activity > summary")
+    .click();
+  await expect(
+    procCard.getByText("Return deterministic proc fixture", { exact: true }),
+  ).toBeVisible();
 });
 
 interface MessageWithTools {

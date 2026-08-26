@@ -69,6 +69,18 @@ not an open-ended objective. `procedure` describes the algorithm and relevance
 criteria the worker must realize. The worker rejects requests that require it
 to invent those elements.
 
+`summary` stays intentionally short enough for a collapsed activity card;
+`goal` may be longer and precise. Frontier guidance includes paired examples so
+the model does not collapse the two fields into duplicate prose.
+
+Proc is a reduction boundary, not a context-smuggling mechanism. A valid goal
+derives bounded evidence from a potentially large corpus: paths, line ranges,
+purposes, counts, selected records, or limited excerpts. Requests to return
+multiple complete files or another raw corpus verbatim are rejected before a
+worker turn because they cannot satisfy the architecture's context objective or
+a credible exact output budget. A single deliberately bounded complete value
+remains valid.
+
 ## Decision Boundary
 
 The frontier owns:
@@ -107,6 +119,24 @@ The proc worker receives only:
 It does not receive repository tools directly. Repository operations occur
 inside atoms so the worker acts as a compiler and dataflow orchestrator rather
 than a second repository agent.
+
+The transcript makes this boundary visible. Proc protocol calls are persisted
+as nested activity, and capability calls are parented beneath the atom that
+caused them:
+
+```text
+proc: Map model routing
+  atom: Locate routing definitions
+    grep
+    read
+  atom: Select enclosing implementations
+    read
+  complete
+```
+
+The worker model still receives only `atom`, `complete`, and
+`cannot_execute`. Nested `grep`, `read`, Git, filesystem, and command rows are
+execution trace, not additional model-visible worker tools.
 
 ### Atom capabilities and discovery
 
@@ -212,6 +242,13 @@ A result envelope is:
 entered worker context. `truncated` always describes the requested projection:
 it is true only when projection limits forced that mode to omit information.
 The stored value, when present, is exact regardless of projection mode.
+
+Every atom also requires a short user-visible `summary`. Its persisted card
+shows the full source and output policy, the exact projection returned to the
+worker, exact and projection byte counts, truncation state, operation count,
+and its nested capability activity. The outer proc card shows the complete
+frontier request, including summary and output policy, plus the exact bounded
+projection sent back to the frontier model.
 
 Result ids are immutable, transaction- and conversation-scoped, inaccessible
 across users, auditable to their producing atom, and garbage-collected with the

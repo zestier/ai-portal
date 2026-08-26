@@ -8,6 +8,7 @@
   import { renderMarkdown } from "$lib/client/markdown";
   import { copyableCodeBlocks } from "$lib/client/copyable-code-blocks";
   import {
+    atomWorkerPrompt,
     getSubagentDisplayState,
     getSubagentPresentation,
     isSubagentToolCall,
@@ -135,7 +136,9 @@
       ? resolveWorkerPrompt(args)
       : toolCall.tool === "proc"
         ? procWorkerPrompt(args)
-        : null,
+        : toolCall.tool === "atom"
+          ? atomWorkerPrompt(args)
+          : null,
   );
   const promptHtml = $derived(args.prompt ? renderMarkdown(args.prompt) : null);
   const resultHtml = $derived(resultText ? renderMarkdown(resultText) : null);
