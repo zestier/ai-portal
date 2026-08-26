@@ -13,6 +13,7 @@
     isSubagentToolCall,
     MAX_SUBAGENT_NESTING_DEPTH,
     parseSubagentArgs,
+    procWorkerPrompt,
     resolveWorkerPrompt,
     selectSubagentChildren,
   } from "$lib/client/subagent-display";
@@ -130,7 +131,11 @@
 
   const resultText = $derived(displayState.resultText);
   const resolvePrompt = $derived(
-    toolCall.tool === "resolve" ? resolveWorkerPrompt(args) : null,
+    toolCall.tool === "resolve"
+      ? resolveWorkerPrompt(args)
+      : toolCall.tool === "proc"
+        ? procWorkerPrompt(args)
+        : null,
   );
   const promptHtml = $derived(args.prompt ? renderMarkdown(args.prompt) : null);
   const resultHtml = $derived(resultText ? renderMarkdown(resultText) : null);

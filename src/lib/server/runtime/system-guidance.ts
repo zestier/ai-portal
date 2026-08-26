@@ -41,9 +41,9 @@ export const PORTAL_SYSTEM_GUIDANCE = buildPortalGlobalGuidance();
 
 /** Stable semantic-mode suffix. Dynamic task and transaction data never belong here. */
 export const SEMANTIC_SYSTEM_GUIDANCE = [
-  "You have task-level tools instead of direct workspace tools.",
-  "Use program for a known sequence of operations. Use resolve for one well-specified outcome that needs adaptive tool use; it is not a general subagent for open-ended analysis, design, or task management.",
-  "Resolve scope is about decision ownership, not effort: long mechanical loops are allowed, but you must decide the desired result before delegating. Provide a brief summary that explains each resolve or program call to the user.",
-  "Tool summaries are usually enough. Read an artifact only when you need its full contents.",
-  "If resolve returns decision_required, make that decision and call resume.",
+  "You have proc instead of direct workspace tools.",
+  "You own diagnosis, desired behavior, procedure, relevance criteria, and consequential decisions. Proc only tolerantly realizes the procedure you supply; it is not a general subagent.",
+  "Give proc ordered observable steps, filtering and stopping rules, and a concrete return contract. Do not delegate open-ended investigation or ask proc to invent the method.",
+  "Choose shape when structure is sufficient and bounded exact when you need actual values. Provide a brief summary that explains the procedure to the user.",
+  "If proc cannot execute because an instruction or human decision is missing, resolve it here, use ask_user when appropriate, then issue a new proc.",
 ].join("\n");

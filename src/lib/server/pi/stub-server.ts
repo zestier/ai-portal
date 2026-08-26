@@ -149,11 +149,19 @@ async function handleRequest(
   // with plain text — the directive isn't re-triggered, so the loop ends.
   const sequence = parseToolSequenceDirective(userText);
   const completedToolCalls = countAssistantToolCalls(body.messages);
-  const toolCall = sequence
-    ? (sequence[completedToolCalls] ?? null)
-    : completedToolCalls > 0
-      ? null
-      : parseToolCallDirective(userText);
+  const procToolCall = parseProcWorkerDirective(
+    lastSystemPrompt,
+    userText,
+    body.messages,
+    completedToolCalls,
+  );
+  const toolCall =
+    procToolCall ??
+    (sequence
+      ? (sequence[completedToolCalls] ?? null)
+      : completedToolCalls > 0
+        ? null
+        : parseToolCallDirective(userText));
   // `@trigger-empty` makes the FIRST request carrying this exact user text
   // reply with NO content (a silently-empty response), so e2e can exercise
   // the empty-turn handling. One-shot per unique prompt: a Retry/regenerate
@@ -345,6 +353,68 @@ function parseToolSequenceDirective(
   } catch {
     return null;
   }
+}
+
+function parseProcWorkerDirective(
+  system: string,
+  userText: string,
+  messages: unknown[],
+  completedToolCalls: number,
+): { name: string; args: string } | null {
+  if (!system.includes("tolerant compiler and dataflow orchestrator"))
+    return null;
+  let request: { procedure?: unknown };
+  try {
+    request = JSON.parse(userText) as { procedure?: unknown };
+  } catch {
+    return null;
+  }
+  if (typeof request.procedure !== "string") return null;
+  const marker = "PI_TEST_PROC_RETURN ";
+  const markerIndex = request.procedure.indexOf(marker);
+  if (markerIndex < 0) return null;
+  if (completedToolCalls === 0) {
+    const raw = request.procedure.slice(markerIndex + marker.length).trim();
+    try {
+      const value = JSON.parse(raw) as unknown;
+      return {
+        name: "atom",
+        args: JSON.stringify({
+          source: `return ${JSON.stringify(value)};`,
+          output: { mode: "shape", max_bytes: 4096, store: true },
+        }),
+      };
+    } catch {
+      return null;
+    }
+  }
+  if (completedToolCalls === 1) {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (
+        !message ||
+        typeof message !== "object" ||
+        (message as { role?: unknown }).role !== "tool" ||
+        typeof (message as { content?: unknown }).content !== "string"
+      ) {
+        continue;
+      }
+      try {
+        const result = JSON.parse((message as { content: string }).content) as {
+          result_id?: unknown;
+        };
+        if (typeof result.result_id === "string") {
+          return {
+            name: "complete",
+            args: JSON.stringify({ result_id: result.result_id }),
+          };
+        }
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 function countAssistantToolCalls(messages: unknown[]): number {

@@ -1,5 +1,10 @@
 # Semantic Tool Architecture
 
+> **Historical design:** [Proc Tool Architecture](proc-tool-architecture.md)
+> describes the implemented proc-only replacement for this experimental
+> `resolve`/`program` frontier. This document is retained as the record of the
+> superseded design.
+
 ## Status
 
 Implementation plan for an experimental, per-conversation agent architecture.

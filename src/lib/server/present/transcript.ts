@@ -164,8 +164,9 @@ function diffStat(diff: string): string | null {
   }`;
 }
 
-function taskMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
-  if (tc.tool.toLowerCase() !== "task") return undefined;
+function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
+  const tool = tc.tool.toLowerCase();
+  if (tool !== "task" && tool !== "proc") return undefined;
   const meta: Record<string, unknown> = {};
   if (tc.backgroundAgentId) meta.agentId = tc.backgroundAgentId;
   if (tc.backgroundAgentStatus)
@@ -181,6 +182,9 @@ function taskMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
         "mode",
         "description",
         "name",
+        "summary",
+        "goal",
+        "procedure",
       ] as const) {
         const v = args[key];
         if (typeof v === "string" && v.length > 0) meta[key] = v;
@@ -197,7 +201,7 @@ function taskMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
 function toolSummary(tc: ToolCallRecord): string {
   const fromArgs = summarizeToolCall(tc.tool, tc.argsJson);
   if (fromArgs) return fromArgs;
-  const meta = taskMeta(tc);
+  const meta = subagentMeta(tc);
   const headline =
     typeof meta?.description === "string" && meta.description.length > 0
       ? meta.description
@@ -230,10 +234,12 @@ function reasoningSummary(r: ReasoningBlockRecord): string {
 // Trim one record's large field(s) per `rules` and attach the server-computed
 // summary. Returns a fresh record (inputs are never mutated).
 function projectTool(t: ToolCallRecord, rules: TrimRules): ToolCallRecord {
-  const argsInline = rules.taskArgs === null && t.tool.toLowerCase() === "task";
+  const subagentArgs =
+    t.tool.toLowerCase() === "task" || t.tool.toLowerCase() === "proc";
+  const argsInline = rules.taskArgs === null && subagentArgs;
   const args = trimmed(t.argsJson, rules.args, argsInline);
   const result = trimmed(t.resultJson, rules.result, false);
-  const meta = taskMeta(t);
+  const meta = subagentMeta(t);
   return {
     ...t,
     argsJson: args.value,
@@ -296,7 +302,7 @@ export function projectMessageBody(msg: Message, rules: TrimRules): Message {
 // ---------------------------------------------------------------------------
 
 function toolDescriptor(t: ToolCallRecord): TranscriptRecordDescriptor {
-  const meta = taskMeta(t);
+  const meta = subagentMeta(t);
   return {
     kind: "tool",
     id: t.id,

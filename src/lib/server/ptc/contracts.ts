@@ -278,6 +278,13 @@ export function programCatalog(
     .join("; ");
 }
 
+export function programToolManifest(
+  capabilities: ReadonlyMap<string, PortalTool>,
+): Array<Record<string, unknown>> {
+  const available = programCapabilities(capabilities);
+  return programToolContracts(available, [...available.keys()].sort());
+}
+
 export function programToolContracts(
   capabilities: ReadonlyMap<string, PortalTool>,
   names: readonly string[],

@@ -14,7 +14,8 @@ const MAX_OPERATIONS_BY_CATEGORY = {
   mutation: 500,
   command: 20,
 } as const;
-const MAX_OUTPUT_BYTES = 64 * 1024;
+const MAX_CAPABILITY_RESULT_BYTES = 64 * 1024;
+const MAX_PROGRAM_RESULT_BYTES = 5 * 1024 * 1024;
 const MAX_RUNTIME_MS = 120_000;
 const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
 const MAX_STACK_BYTES = 512 * 1024;
@@ -23,6 +24,7 @@ export interface ProgramRunOptions {
   source: string;
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities?: ReadonlyMap<string, PortalTool>;
+  state?: ReadonlyMap<string, unknown>;
   execute(
     name: string,
     args: unknown,
@@ -82,7 +84,7 @@ export async function runProgram(
         const args = argsHandle ? vm.dump(argsHandle) : {};
         const value = await execute(name, args, allowed);
         const encoded = JSON.stringify(value);
-        if (Buffer.byteLength(encoded) > MAX_OUTPUT_BYTES) {
+        if (Buffer.byteLength(encoded) > MAX_CAPABILITY_RESULT_BYTES) {
           throw new Error(
             `Capability ${name} result exceeded the size budget.`,
           );
@@ -96,6 +98,7 @@ export async function runProgram(
 
   installBridge("__callCapability", opts.capabilities);
   installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
+  const stateJson = JSON.stringify(Object.fromEntries(opts.state ?? []));
 
   const wrapped = `(() => {
     {
@@ -103,6 +106,13 @@ export async function runProgram(
       const result = JSON.parse(call(name, args));
       if (!result.ok) throw new Error(result.error.message);
       return result.value;
+    }
+    function deepFreeze(value) {
+      if (value && typeof value === "object") {
+        for (const child of Object.values(value)) deepFreeze(child);
+        Object.freeze(value);
+      }
+      return value;
     }
     function normalizePath(value) {
       if (typeof value !== "string") throw new TypeError("Path must be a string.");
@@ -265,6 +275,7 @@ export async function runProgram(
         return (args = {}) => unwrapCall(__callCapability, name, args);
       }
     });
+    const stateApi = deepFreeze(JSON.parse(${JSON.stringify(stateJson)}));
     const unavailableModule = (name) => {
       throw new Error(
         "Module loading is unavailable in program. fs, path, command, and tools are predeclared globals; use them directly instead of require or import. Requested: " + String(name)
@@ -287,6 +298,7 @@ export async function runProgram(
       path: { value: pathApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
+      state: { value: stateApi, writable: false, configurable: false },
       require: { value: unavailableModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false }
     });
@@ -305,7 +317,7 @@ export async function runProgram(
         );
       }
       const encoded = JSON.stringify(value ?? null);
-      if (Buffer.byteLength(encoded) > MAX_OUTPUT_BYTES) {
+      if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
         throw new Error("Program result exceeded its size budget.");
       }
       return {

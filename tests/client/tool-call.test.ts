@@ -50,6 +50,12 @@ describe("summarizeToolCall", () => {
   it("uses user-visible summaries for semantic tools", () => {
     expect(
       summarizeToolCall(
+        "proc",
+        JSON.stringify({ summary: "Find request owners", procedure: "..." }),
+      ),
+    ).toBe("Find request owners");
+    expect(
+      summarizeToolCall(
         "resolve",
         JSON.stringify({ summary: "Find the request owner", intent: "..." }),
       ),

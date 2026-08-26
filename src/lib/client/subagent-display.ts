@@ -6,7 +6,7 @@ import type { DisplayFileEdit, DisplayReasoningBlock } from "./display-message";
  * SubagentCall card rather than a generic tool card.
  */
 export const SUBAGENT_TOOL = "task";
-const SUBAGENT_TOOLS = new Set([SUBAGENT_TOOL, "resolve", "resume"]);
+const SUBAGENT_TOOLS = new Set([SUBAGENT_TOOL, "resolve", "resume", "proc"]);
 
 /**
  * How deep sub-agent cards nest before falling back to a plain tool card.
@@ -73,8 +73,19 @@ export type SubagentArgs = {
   intent?: string;
   constraints?: string[];
   completion?: string[];
+  goal?: string;
+  procedure?: string;
   transaction_id?: string;
 };
+
+export function procWorkerPrompt(args: SubagentArgs): string | null {
+  if (!args.goal || !args.procedure) return null;
+  return JSON.stringify(
+    { goal: args.goal, procedure: args.procedure },
+    null,
+    2,
+  );
+}
 
 /** The exact dynamic user message sent when a resolve transaction starts. */
 export function resolveWorkerPrompt(args: SubagentArgs): string | null {

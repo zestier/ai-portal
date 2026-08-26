@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isSubagentToolCall,
+  procWorkerPrompt,
   selectSubagentChildren,
   MAX_SUBAGENT_NESTING_DEPTH,
   resolveWorkerPrompt,
@@ -68,12 +69,34 @@ describe("isSubagentToolCall", () => {
     expect(isSubagentToolCall(tool(1, null, SUBAGENT_TOOL))).toBe(true);
     expect(isSubagentToolCall(tool(2, null, "resolve"))).toBe(true);
     expect(isSubagentToolCall(tool(3, null, "resume"))).toBe(true);
+    expect(isSubagentToolCall(tool(4, null, "proc"))).toBe(true);
   });
 
   it("rejects ordinary tool calls", () => {
     expect(isSubagentToolCall(tool(1, null, "bash"))).toBe(false);
     // Near-miss names must not be treated as sub-agents.
     expect(isSubagentToolCall(tool(2, null, "tasks"))).toBe(false);
+  });
+});
+
+describe("procWorkerPrompt", () => {
+  it("shows the exact goal and procedure supplied to proc", () => {
+    expect(
+      procWorkerPrompt({
+        summary: "Find owners",
+        goal: "Return paths and ranges",
+        procedure: "grep, group, read context",
+      }),
+    ).toBe(
+      JSON.stringify(
+        {
+          goal: "Return paths and ranges",
+          procedure: "grep, group, read context",
+        },
+        null,
+        2,
+      ),
+    );
   });
 });
 

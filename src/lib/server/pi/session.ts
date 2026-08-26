@@ -43,7 +43,7 @@ import type {
 import type { PortalTool } from "../tools/types";
 import { assemblePortalTools } from "../tools/assemble";
 import { portalToolToPiTool } from "./tools";
-import { buildSemanticTools } from "../semantic/tools";
+import { buildProcTools } from "../proc/tools";
 import { buildProgramFacadeTools } from "../ptc/facades";
 import { createPiPermissionResolver } from "./permission-gate";
 import { piContextUsageToEvent } from "./context-usage";
@@ -331,14 +331,20 @@ export async function createPiProviderSession(
   const exposedTools =
     opts.agentArchitecture === "semantic"
       ? [
-          ...buildSemanticTools({
+          ...buildProcTools({
             conversationId: opts.conversationId,
             frontierModel: opts.providerLabel,
             ...(opts.semanticWorkerModel !== undefined
               ? { workerModel: opts.semanticWorkerModel }
               : {}),
             capabilities: capabilities.byName,
-            facadeCapabilities: programFacadeTools,
+            facadeCapabilities: new Map([
+              ...["read", "write", "create_directory", "move"]
+                .map((name) => capabilities.byName.get(name))
+                .filter((tool): tool is PortalTool => tool !== undefined)
+                .map((tool) => [tool.name, tool] as const),
+              ...programFacadeTools,
+            ]),
             permissionResolver: delegatedPermissionResolver,
             emit,
           }),

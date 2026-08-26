@@ -37,6 +37,32 @@ describe("program runtime", () => {
     });
   });
 
+  it("composes immutable exact values through state handles", async () => {
+    const result = await runProgram({
+      source: `
+        const rows = state.RES_rows;
+        try { rows[0].line = 99; } catch {}
+        return rows.map(({ path, line }) => ({ path, start: line - 2, end: line + 2 }));
+      `,
+      state: new Map([
+        [
+          "RES_rows",
+          [
+            { path: "src/a.ts", line: 10 },
+            { path: "src/b.ts", line: 20 },
+          ],
+        ],
+      ]),
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual([
+      { path: "src/a.ts", start: 8, end: 12 },
+      { path: "src/b.ts", start: 18, end: 22 },
+    ]);
+  });
+
   it("returns actionable unknown-tool failures without dispatching", async () => {
     let dispatched = false;
     const run = runProgram({
