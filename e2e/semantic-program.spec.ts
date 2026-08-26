@@ -25,6 +25,8 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
       name: "program",
       args: {
         summary: "Search for ProgramArgs directly",
+        max_result_bytes: 4096,
+        result_overflow: "reject",
         source:
           'return tools.grep({ query: "ProgramArgs", cwd: "src", include: "*.ts" });',
       },
@@ -44,6 +46,8 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
       name: "program",
       args: {
         summary: "Try the initial ProgramArgs search",
+        max_result_bytes: 4096,
+        result_overflow: "reject",
         source: 'return tools.grep({ nope: "ProgramArgs" });',
       },
     },
@@ -52,6 +56,8 @@ test("semantic program supports direct guesses and schema-assisted recovery", as
       name: "program",
       args: {
         summary: "Retry ProgramArgs with the recovered schema",
+        max_result_bytes: 4096,
+        result_overflow: "reject",
         source:
           'return tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" });',
       },

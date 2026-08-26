@@ -29,6 +29,18 @@ describe("semantic program tools", () => {
     await expect(schemas.handler({})).rejects.toThrow();
   });
 
+  it("requires an explicit model-result budget and overflow policy", async () => {
+    const program = buildSemanticTools(options(new Map())).find(
+      (tool) => tool.name === "program",
+    )!;
+    await expect(
+      program.handler(
+        { summary: "Return a value", source: "return 42;" },
+        toolContext("X0"),
+      ),
+    ).rejects.toThrow(/max_result_bytes|result_overflow/);
+  });
+
   it("normalizes a guessed form before permission and dispatch", async () => {
     const seen: unknown[] = [];
     const grep = attachProgramMetadata({
@@ -49,6 +61,8 @@ describe("semantic program tools", () => {
     const result = await program.handler(
       {
         summary: "Find needle in TypeScript files",
+        max_result_bytes: 4096,
+        result_overflow: "reject",
         source:
           'return tools.grep({ query: "needle", cwd: "src", include: "*.ts" });',
       },
@@ -110,6 +124,8 @@ describe("semantic program tools", () => {
     const pending = program.handler(
       {
         summary: "Find needle",
+        max_result_bytes: 4096,
+        result_overflow: "reject",
         source: 'return tools.grep({ pattern: "needle" });',
       },
       {
@@ -135,7 +151,66 @@ describe("semantic program tools", () => {
     });
     expect(handlerRan).toBe(true);
   });
+
+  it("rejects oversized model output while retaining the raw result in UI details", async () => {
+    const program = buildSemanticTools(options(new Map())).find(
+      (tool) => tool.name === "program",
+    )!;
+    const result = await program.handler(
+      {
+        summary: "Return a deliberately large value",
+        source: 'return "PRIVATE-" + "x".repeat(2000);',
+        max_result_bytes: 1024,
+        result_overflow: "reject",
+      },
+      toolContext("X3"),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "program_result_too_large",
+        detailsUiOnly: true,
+        details: { value: expect.stringContaining("PRIVATE-") },
+      },
+    });
+    expect(deriveToolResultViews(result).modelText).not.toContain("PRIVATE-");
+    expect(deriveToolResultViews(result).fullContent).toContain("PRIVATE-");
+  });
+
+  it("bounds lossy model output while preserving the complete successful result", async () => {
+    const program = buildSemanticTools(options(new Map())).find(
+      (tool) => tool.name === "program",
+    )!;
+    const result = await program.handler(
+      {
+        summary: "Return a bounded large value",
+        source: 'return "BEGIN-" + "x".repeat(2000) + "-END";',
+        max_result_bytes: 1024,
+        result_overflow: "truncate-middle",
+      },
+      toolContext("X4"),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: { value: expect.stringMatching(/^BEGIN-.*-END$/) },
+    });
+    const views = deriveToolResultViews(result);
+    expect(Buffer.byteLength(views.modelText)).toBeLessThanOrEqual(1024);
+    expect(views.modelText).toContain("BEGIN-");
+    expect(views.modelText).toContain("-END");
+    expect(views.modelText).toContain("original model output was");
+    expect(views.fullContent).toContain("x".repeat(2000));
+  });
 });
+
+function toolContext(toolCallId: string) {
+  return {
+    signal: new AbortController().signal,
+    toolCallId,
+    partial: () => {},
+    progress: () => {},
+  };
+}
 
 function fakeTool(name: string): PortalTool {
   return {

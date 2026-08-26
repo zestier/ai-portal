@@ -19,6 +19,12 @@ import {
   programCatalog,
   programToolContracts,
 } from "$lib/server/ptc/contracts";
+import {
+  MAX_PROGRAM_RESULT_BYTES,
+  MIN_PROGRAM_RESULT_BYTES,
+  PROGRAM_RESULT_OVERFLOWS,
+  projectProgramResult,
+} from "$lib/server/ptc/result-policy";
 
 const ResolveArgs = z
   .object({
@@ -48,6 +54,12 @@ const ProgramArgs = z
   .object({
     summary: z.string().min(1).max(500),
     source: z.string().min(1).max(20_000),
+    max_result_bytes: z
+      .number()
+      .int()
+      .min(MIN_PROGRAM_RESULT_BYTES)
+      .max(MAX_PROGRAM_RESULT_BYTES),
+    result_overflow: z.enum(PROGRAM_RESULT_OVERFLOWS),
   })
   .strict();
 
@@ -102,6 +114,7 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
     promptSnippet: "Batch known operations in isolated JavaScript.",
     promptGuidelines: [
       "Program rules: fs, path, command, and tools are predeclared synchronous APIs; never import, require, or await them. Return the final value directly; never use console output or JSON.stringify.",
+      `Choose max_result_bytes (${MIN_PROGRAM_RESULT_BYTES}-${MAX_PROGRAM_RESULT_BYTES}) and result_overflow before writing source. Design the return value to fit that budget; overflow handling is a safety fallback, not routine output shaping. Prefer reject when completeness matters and structure for exploratory aggregation.`,
       `Tools: ${catalog}. Calls return the successful value and throw on failure. Use get_program_tool_schemas only for an unclear contract.`,
       'Files: absolute and workspace-relative paths both work; filesystem grants govern the resolved target, so outside paths may prompt. Use fs.readFile(path, "utf8"), fs.writeFile(path, text), fs.readdir(path), fs.stat(path), fs.mkdir(path), and fs.rename(from, to). Use path.join, path.dirname, path.basename, path.extname, path.normalize, path.relative, and path.isAbsolute for POSIX paths. Edit with readFile then writeFile. File contents are text only.',
       'Commands: command.run("pnpm", ["check"], options). Options are { cwd?, stdin?, timeoutMs? }; results are { stdout, stderr }. Pass the executable and argv separately; no shell is used, and nonzero exit throws.',
@@ -115,8 +128,21 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
           description: "Brief user-visible explanation of the operation.",
         },
         source: { type: "string" },
+        max_result_bytes: {
+          type: "integer",
+          minimum: MIN_PROGRAM_RESULT_BYTES,
+          maximum: MAX_PROGRAM_RESULT_BYTES,
+          description:
+            "Maximum UTF-8 bytes returned to the model. Write the program return value to fit this budget.",
+        },
+        result_overflow: {
+          type: "string",
+          enum: PROGRAM_RESULT_OVERFLOWS,
+          description:
+            "Behavior when the rendered return value exceeds max_result_bytes. Prefer reject; lossy modes mark the result incomplete.",
+        },
       },
-      required: ["summary", "source"],
+      required: ["summary", "source", "max_result_bytes", "result_overflow"],
       additionalProperties: false,
     },
     permissionBehavior: "never-prompt",
@@ -148,6 +174,20 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
           },
           signal: ctx.signal,
         });
+        const projection = projectProgramResult(
+          result.value,
+          result.operations,
+          args.max_result_bytes,
+          args.result_overflow,
+        );
+        if (!projection.ok) {
+          return err(projection.message, {
+            code: "program_result_too_large",
+            summary: projection.message,
+            details: result,
+            detailsUiOnly: true,
+          });
+        }
         return ok(
           result,
           `Program completed with ${result.operations} capability call(s).`,
@@ -155,7 +195,7 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
             views: [
               {
                 type: "text",
-                text: programModelResult(result.value, result.operations),
+                text: projection.text,
               },
             ],
           },
@@ -167,12 +207,6 @@ function buildProgramTool(opts: SemanticToolOptions): PortalTool {
       }
     },
   };
-}
-
-function programModelResult(value: unknown, operations: number): string {
-  const rendered =
-    typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return `${rendered}\n\nOperations: ${operations}`;
 }
 
 function buildProgramToolSchemasTool(

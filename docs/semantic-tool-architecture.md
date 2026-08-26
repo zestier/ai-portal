@@ -209,6 +209,26 @@ network, environment, module loading, child process, or host object access. It
 can only use explicitly installed compatibility facades and program
 capabilities, and it can return only JSON-compatible data.
 
+Each call declares `max_result_bytes` and `result_overflow` beside its source.
+The budget applies only to the final model-facing result, not to data processed
+inside the isolate. Requiring the model to choose the budget while writing the
+source encourages aggregation and filtering in the program instead of relying
+on the host to clean up an unbounded return value. The operation-count footer
+is included in the declared byte budget.
+
+`result_overflow` supports:
+
+- `reject`: fail with the measured and declared byte sizes;
+- `head` or `tail`: retain one edge and an explicit omission marker;
+- `truncate-middle`: retain both edges and an omission marker;
+- `structure`: return a bounded description of object keys, array lengths,
+  representative values, and omission counts.
+
+Lossy results are always marked incomplete. The complete raw return value and
+program trace remain in the persisted UI/audit envelope; only the projection
+automatically sent back to the model is bounded. The declared model budget is
+1-48 KiB and remains below the runtime's separate hard result ceiling.
+
 ### Native-like compatibility facades
 
 Common operations should be exposed with familiar JavaScript APIs where the
@@ -475,7 +495,8 @@ operations, duration, outcome, and budget consumption.
 Each capability call dispatches through the same `PortalTool` handlers and
 permission resolver used by standard mode. The PTC process enforces:
 
-- wall-clock and operation-count budgets;
+- wall-clock, memory, stack, mutation-count, and command-count budgets;
+- no operation-count budget for explicitly classified reads;
 - output and per-operation result limits;
 - cancellation propagation;
 - JSON-only RPC messages;
@@ -483,10 +504,10 @@ permission resolver used by standard mode. The PTC process enforces:
 - no semantic worker or recursive `program` capability.
 
 The sandbox uses a separate JavaScript engine with explicit memory, stack,
-operation-count, output-size, and wall-clock budgets. Node's in-process `vm`
-context alone is not acceptable. The initial tool set is read-oriented plus
-explicitly selected mutation and validation capabilities; interactive tools are
-excluded.
+category-specific operation, output-size, and wall-clock budgets. Node's
+in-process `vm` context alone is not acceptable. The initial tool set is
+read-oriented plus explicitly selected mutation and validation capabilities;
+interactive tools are excluded.
 
 ### PTC implementation plan
 
