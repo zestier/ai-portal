@@ -79,7 +79,6 @@ export type SubagentArgs = {
   intent?: string;
   constraints?: string[];
   completion?: string[];
-  goal?: string;
   procedure?: string;
   source?: string;
   output?: unknown;
@@ -87,13 +86,12 @@ export type SubagentArgs = {
 };
 
 export function procWorkerPrompt(args: SubagentArgs): string | null {
-  if (!args.goal || !args.procedure) return null;
+  if (!args.procedure || args.output === undefined) return null;
   return JSON.stringify(
     {
       ...(args.summary ? { summary: args.summary } : {}),
-      goal: args.goal,
       procedure: args.procedure,
-      ...(args.output !== undefined ? { output: args.output } : {}),
+      output: args.output,
     },
     null,
     2,

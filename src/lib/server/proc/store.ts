@@ -29,7 +29,7 @@ export interface ProcTransaction {
   workerModel: string;
   status: ProcStatus;
   summary: string;
-  goal: string;
+  contract: string;
   procedure: string;
   outputPolicy: ProcOutputPolicy;
   messages: ExtractorChatMessage[];
@@ -56,7 +56,7 @@ export function createProcTransaction(input: {
   parentToolCallId: number;
   workerModel: string;
   summary: string;
-  goal: string;
+  contract: string;
   procedure: string;
   outputPolicy: ProcOutputPolicy;
   messages: ExtractorChatMessage[];
@@ -69,7 +69,7 @@ export function createProcTransaction(input: {
     workerModel: input.workerModel,
     status: "running",
     summary: input.summary,
-    goal: input.goal,
+    contract: input.contract,
     procedure: input.procedure,
     outputPolicy: input.outputPolicy,
     messages: input.messages,
@@ -83,7 +83,7 @@ export function createProcTransaction(input: {
     .prepare(
       `INSERT INTO proc_transactions(
          id, conversation_id, parent_tool_call_id, worker_model, status,
-         summary, goal, procedure_text, output_json, messages_json,
+         summary, contract_text, procedure_text, output_json, messages_json,
          result_id, error, usage_json, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
     )
@@ -94,7 +94,7 @@ export function createProcTransaction(input: {
       transaction.workerModel,
       transaction.status,
       transaction.summary,
-      transaction.goal,
+      transaction.contract,
       transaction.procedure,
       JSON.stringify(transaction.outputPolicy),
       JSON.stringify(transaction.messages),
@@ -217,7 +217,7 @@ interface ProcTransactionRow {
   worker_model: string;
   status: ProcStatus;
   summary: string;
-  goal: string;
+  contract_text: string;
   procedure_text: string;
   output_json: string;
   messages_json: string;
@@ -236,7 +236,7 @@ function transactionOf(row: ProcTransactionRow): ProcTransaction {
     workerModel: row.worker_model,
     status: row.status,
     summary: row.summary,
-    goal: row.goal,
+    contract: row.contract_text,
     procedure: row.procedure_text,
     outputPolicy: JSON.parse(row.output_json) as ProcOutputPolicy,
     messages: JSON.parse(row.messages_json) as ExtractorChatMessage[],

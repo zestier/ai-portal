@@ -28,9 +28,11 @@ test("semantic mode exposes proc and completes a stateful atom flow", async ({
       name: "proc",
       args: {
         summary,
-        goal: "Return paths and line numbers",
         procedure: `PI_TEST_PROC_RETURN ${JSON.stringify(expected)}`,
-        output: { mode: "exact", max_bytes: 4096, store: false },
+        output: {
+          contract: "Return paths and line numbers",
+          max_bytes: 4096,
+        },
       },
     },
   ]);

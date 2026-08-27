@@ -70,9 +70,9 @@ const CannotExecuteArgs = z
   .strict();
 
 export const PROC_WORKER_SYSTEM = `Realize exactly the supplied procedure using program atoms.
-You are a tolerant compiler and dataflow orchestrator, not a goal-owning agent. Do not broaden the investigation, add goals, reinterpret relevance, or choose a different algorithm.
-Use atom to execute JavaScript. Exact stored values are available to later atoms as state[resultId]. Request shape for stored intermediate values, none when the structure is already known, and bounded exact only when applying the supplied criterion requires inspecting data.
-Give every atom a brief user-visible summary. Design the final stored value to satisfy the proc output policy; never use proc as a bulk conduit for full files or other raw corpora. If exact completion exceeds its byte budget, use the supplied filtering criteria to reduce it rather than requesting broad raw data.
+You are a tolerant compiler and dataflow orchestrator, not a goal-owning agent. Do not broaden the investigation, add goals, reinterpret relevance, or choose a different algorithm. Fuse, batch, and inline procedure steps into fewer atoms where the result, selection rules, and stopping criteria are unchanged.
+Every stored atom's exact value is always available to later atoms as state[resultId]; an atom's output mode only chooses what you see in the feedback to plan the next step, never what the next atom can access. Default to none or shape. Use exact only when you as the model must inspect the actual content to apply a supplied criterion that code cannot express (for example judging relevance, or summarizing prose or code). In almost every other case a later atom reads state[resultId] directly, so keep the projection small.
+Give every atom a brief user-visible summary. Design the final stored value to satisfy the proc output policy; never use proc as a bulk conduit for full files or other raw corpora. If the final value would exceed its byte budget, apply the supplied filtering criteria and request shape rather than broad raw data.
 Repair syntax, tool contracts, batching, and equivalent mechanical failures. If a consequential instruction is missing or the procedure cannot be realized, call cannot_execute with the smallest precise reason.
 End only with complete for a stored final result or cannot_execute.`;
 
@@ -100,7 +100,7 @@ export interface ProcWorkerOutcome {
 
 export function initialProcMessages(input: {
   summary: string;
-  goal: string;
+  contract: string;
   procedure: string;
   outputPolicy: ProcOutputPolicy;
   contracts: Array<Record<string, unknown>>;
@@ -111,9 +111,11 @@ export function initialProcMessages(input: {
       role: "user",
       content: JSON.stringify({
         summary: input.summary,
-        goal: input.goal,
         procedure: input.procedure,
-        output: input.outputPolicy,
+        output: {
+          contract: input.contract,
+          max_bytes: input.outputPolicy.maxBytes,
+        },
         program_environment: {
           tool_contracts: input.contracts,
           globals: "state, fs, path, command, tools",

@@ -15,16 +15,14 @@ const MAX_RESULT_BYTES = 48 * 1024;
 
 const OutputPolicy = z
   .object({
-    mode: z.enum(["shape", "exact"]),
+    contract: z.string().min(1).max(10_000),
     max_bytes: z.number().int().min(MIN_RESULT_BYTES).max(MAX_RESULT_BYTES),
-    store: z.boolean(),
   })
   .strict();
 
 const ProcArgs = z
   .object({
     summary: z.string().min(1).max(500),
-    goal: z.string().min(1).max(10_000),
     procedure: z.string().min(1).max(30_000),
     output: OutputPolicy,
   })
@@ -52,9 +50,10 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         "Execute a frontier-authored procedure with stateful program atoms.",
       promptGuidelines: [
         "Proc is not a subagent. You own diagnosis, procedure, relevance criteria, and consequential decisions; proc only realizes the procedure tolerantly.",
-        "Summary is a short user-visible label; goal is the fuller bounded return contract. Supply observable steps, filtering/reduction rules, stopping criteria, and an output that can fit max_bytes.",
-        "Use proc to derive selected evidence from a larger corpus, not to return multiple full files or other raw corpora verbatim. Prefer paths, line ranges, purposes, and bounded excerpts. Use shape for structural results and exact when you need the actual bounded value.",
-        'Good: summary "Map model routing"; goal "Return relevant paths, line ranges, purposes, and bounded excerpts"; procedure "locate handlers and call sites, read enclosing definitions, omit unrelated code". Bad: "read these six files fully and return raw contents verbatim".',
+        "Summary is a short user-visible label; output.contract is the fuller bounded return contract the worker shapes the final value to. Supply observable steps, filtering/reduction rules, stopping criteria, and an output that can fit max_bytes.",
+        "State the bounded answer proc should produce and why before naming any path, then name the searches, the read ranges, the fields and excerpts to keep, what to discard, and when to stop. 'Return this file' is a placeholder for an undefined answer; derive a real one, e.g. 'the API contract surface of src/index.ts' or 'which handlers call X, with their line ranges'. If you only want raw content back, you do not need proc — you already hold the context.",
+        "Use proc to reduce a larger corpus into selected evidence, not to return multiple full files or other raw corpora verbatim. Prefer paths, line ranges, purposes, and bounded excerpts.",
+        'Good: summary "Map the API contract"; output.contract "Function names, exported types, and signatures exposed by src/index.ts"; procedure "read the file, collect public exports, omit private helpers". Bad: "read these six files fully and return raw contents verbatim", or a contract of "src/routes.ts" with no bounded answer.',
       ],
       argsSchema: ProcArgs,
       parameters: {
@@ -63,12 +62,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           summary: {
             type: "string",
             description:
-              "Short user-visible label for the proc card, distinct from the fuller goal.",
-          },
-          goal: {
-            type: "string",
-            description:
-              "Concrete final data contract, not an open-ended objective.",
+              "Short user-visible label for the proc card, distinct from the fuller return contract.",
           },
           procedure: {
             type: "string",
@@ -78,26 +72,32 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           output: {
             type: "object",
             properties: {
-              mode: { type: "string", enum: ["shape", "exact"] },
+              contract: {
+                type: "string",
+                description:
+                  "Concrete bounded return contract (shape and bounds) the worker shapes the final value to; not an open-ended objective.",
+              },
               max_bytes: {
                 type: "integer",
                 minimum: MIN_RESULT_BYTES,
                 maximum: MAX_RESULT_BYTES,
               },
-              store: { type: "boolean" },
             },
-            required: ["mode", "max_bytes", "store"],
+            required: ["contract", "max_bytes"],
             additionalProperties: false,
           },
         },
-        required: ["summary", "goal", "procedure", "output"],
+        required: ["summary", "procedure", "output"],
         additionalProperties: false,
       },
       permissionBehavior: "never-prompt",
       async handler(raw, ctx) {
         const args = ProcArgs.parse(raw);
         if (!ctx?.toolCallId) return err("proc requires a mapped tool call id");
-        const requestProblem = validateProcRequest(args);
+        const requestProblem = validateProcRequest({
+          contract: args.output.contract,
+          procedure: args.procedure,
+        });
         if (requestProblem) {
           return err(requestProblem, {
             code: "proc_unbounded_output",
@@ -105,13 +105,13 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           });
         }
         const outputPolicy: ProcOutputPolicy = {
-          mode: args.output.mode,
+          mode: "exact",
           maxBytes: args.output.max_bytes,
-          store: args.output.store,
+          store: false,
         };
         const messages = initialProcMessages({
           summary: args.summary,
-          goal: args.goal,
+          contract: args.output.contract,
           procedure: args.procedure,
           outputPolicy,
           contracts,
@@ -121,7 +121,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           parentToolCallId: toolCodec.parse(ctx.toolCallId),
           workerModel: opts.workerModel ?? opts.frontierModel,
           summary: args.summary,
-          goal: args.goal,
+          contract: args.output.contract,
           procedure: args.procedure,
           outputPolicy,
           messages,
@@ -137,8 +137,6 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         if (outcome.status === "completed") {
           const frontierResult = {
             status: outcome.status,
-            ...(outcome.resultId ? { result_id: outcome.resultId } : {}),
-            stored: outcome.stored,
             bytes: outcome.bytes,
             ...(outcome.projection !== undefined
               ? { projection: outcome.projection }
@@ -176,10 +174,10 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
 }
 
 export function validateProcRequest(input: {
-  goal: string;
+  contract: string;
   procedure: string;
 }): string | null {
-  const text = `${input.goal}\n${input.procedure}`;
+  const text = `${input.contract}\n${input.procedure}`;
   const requestsVerbatimCorpus =
     /\b(?:raw\s+)?(?:file\s+)?contents?\s+verbatim\b/i.test(text) ||
     /\b(?:read|include|return)\b[^\n.]{0,80}\b(?:full|fully|entire)\b[^\n.]{0,40}\b(?:file|content|source)\b/i.test(

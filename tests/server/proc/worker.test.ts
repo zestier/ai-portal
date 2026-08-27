@@ -29,6 +29,7 @@ describe("proc worker", () => {
   it("is constrained to frontier-authored procedures and atoms", () => {
     expect(PROC_WORKER_SYSTEM).toContain("tolerant compiler");
     expect(PROC_WORKER_SYSTEM).toContain("Do not broaden");
+    expect(PROC_WORKER_SYSTEM).toContain("Fuse, batch, and inline");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
   });
 
@@ -108,12 +109,12 @@ describe("proc worker", () => {
       parentToolCallId: 42,
       workerModel: "pi-stub/stub-model",
       summary: "Find owner",
-      goal: "Return paths and ranges",
+      contract: "Return paths and ranges",
       procedure: "Create candidates, then add extents",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Find owner",
-        goal: "Return paths and ranges",
+        contract: "Return paths and ranges",
         procedure: "Create candidates, then add extents",
         outputPolicy,
         contracts,
@@ -225,12 +226,12 @@ describe("proc worker", () => {
       parentToolCallId: 43,
       workerModel: "pi-stub/stub-model",
       summary: "Unsupported proc",
-      goal: "Return a result",
+      contract: "Return a result",
       procedure: "Perform unsupported operation",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Unsupported proc",
-        goal: "Return a result",
+        contract: "Return a result",
         procedure: "Perform unsupported operation",
         outputPolicy,
         contracts: [],

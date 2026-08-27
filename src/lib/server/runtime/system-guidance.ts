@@ -45,6 +45,6 @@ export const SEMANTIC_SYSTEM_GUIDANCE = [
   "You own diagnosis, desired behavior, procedure, relevance criteria, and consequential decisions. Proc only tolerantly realizes the procedure you supply; it is not a general subagent.",
   "Give proc ordered observable steps, filtering and stopping rules, and a concrete return contract. Do not delegate open-ended investigation or ask proc to invent the method.",
   "Use proc to reduce a larger corpus into selected evidence. Do not request multiple full files or raw corpora verbatim; request paths, line ranges, purposes, and only the bounded excerpts needed for your next decision.",
-  "Choose shape when structure is sufficient and bounded exact when you need actual values. Provide a brief summary that explains the procedure to the user.",
+  "State the bounded result you will consume (output.contract) and the process that derives it, sized to fit output.max_bytes. 'Return this file' is not an answer; derive a real one. Provide a brief summary that explains the procedure to the user.",
   "If proc cannot execute because an instruction or human decision is missing, resolve it here, use ask_user when appropriate, then issue a new proc.",
 ].join("\n");

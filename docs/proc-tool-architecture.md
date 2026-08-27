@@ -51,7 +51,6 @@ A representative call is:
 
 ```yaml
 summary: Read key files for foo
-goal: File names, relevant line ranges, and a few-word purpose.
 procedure: |
   Search for foo, Foo, Oof, and Blanket.
   Group matches by file.
@@ -59,24 +58,27 @@ procedure: |
   Keep only enclosing class or function definitions.
   Return one entry per definition.
 output:
-  mode: exact
+  contract: File names, relevant line ranges, and a few-word purpose.
   max_bytes: 12000
-  store: false
 ```
 
-`summary` is the user-visible label. `goal` specifies the final data contract,
-not an open-ended objective. `procedure` describes the algorithm and relevance
-criteria the worker must realize. The worker rejects requests that require it
-to invent those elements.
+`summary` is the user-visible label. `output.contract` specifies the final data
+contract, not an open-ended objective. `procedure` describes the algorithm and
+relevance criteria the worker must realize. The worker rejects requests that
+require it to invent those elements.
 
 `summary` stays intentionally short enough for a collapsed activity card;
-`goal` may be longer and precise. Frontier guidance includes paired examples so
-the model does not collapse the two fields into duplicate prose.
+`output.contract` may be longer and precise. Frontier guidance includes paired
+examples so the model does not collapse the two fields into duplicate prose.
+The contract lives beside `max_bytes` so the shape and its budget are one
+atomic decision.
 
-Proc is a reduction boundary, not a context-smuggling mechanism. A valid goal
-derives bounded evidence from a potentially large corpus: paths, line ranges,
-purposes, counts, selected records, or limited excerpts. Requests to return
-multiple complete files or another raw corpus verbatim are rejected before a
+Proc is a reduction boundary, not a context-smuggling mechanism. A valid
+`output.contract` derives bounded evidence from a potentially large corpus:
+paths, line
+ranges, purposes, counts, selected records, or limited excerpts. Requests to
+return multiple complete files or another raw corpus verbatim are rejected
+before a
 worker turn because they cannot satisfy the architecture's context objective or
 a credible exact output budget. A single deliberately bounded complete value
 remains valid.

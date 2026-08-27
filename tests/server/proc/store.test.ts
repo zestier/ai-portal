@@ -30,7 +30,7 @@ describe("proc store", () => {
       parentToolCallId: 9,
       workerModel: "pi-stub/stub-model",
       summary: "Find owners",
-      goal: "Return paths and line ranges",
+      contract: "Return paths and line ranges",
       procedure: "grep, group, read context",
       outputPolicy: { mode: "shape", maxBytes: 4096, store: true },
       messages: [{ role: "system", content: "proc" }],

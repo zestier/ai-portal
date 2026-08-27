@@ -82,21 +82,19 @@ describe("isSubagentToolCall", () => {
 });
 
 describe("procWorkerPrompt", () => {
-  it("shows the exact goal and procedure supplied to proc", () => {
+  it("shows the exact return contract and procedure supplied to proc", () => {
     expect(
       procWorkerPrompt({
         summary: "Find owners",
-        goal: "Return paths and ranges",
         procedure: "grep, group, read context",
-        output: { mode: "exact", max_bytes: 4096, store: false },
+        output: { contract: "Return paths and ranges", max_bytes: 4096 },
       }),
     ).toBe(
       JSON.stringify(
         {
           summary: "Find owners",
-          goal: "Return paths and ranges",
           procedure: "grep, group, read context",
-          output: { mode: "exact", max_bytes: 4096, store: false },
+          output: { contract: "Return paths and ranges", max_bytes: 4096 },
         },
         null,
         2,
