@@ -129,20 +129,12 @@ function runCommand(
     child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
     child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
     child.on("error", (error) => finish(err(error.message)));
-    child.on("close", (code, childSignal) => {
+    child.on("close", (code) => {
       if (settled) return;
       if (timedOut)
         return finish(err(`Command timed out after ${command.timeoutMs}ms.`));
       if (aborted) return finish(err("Command aborted."));
-      if (code !== 0) {
-        const detail = stderr.trim() || stdout.trim();
-        return finish(
-          err(
-            `Command exited with code ${code ?? "null"}${childSignal ? ` (${childSignal})` : ""}${detail ? `: ${detail}` : ""}`,
-          ),
-        );
-      }
-      finish(ok({ stdout, stderr }));
+      finish(ok({ status: code, stdout, stderr }));
     });
     const timeout = setTimeout(() => {
       timedOut = true;

@@ -605,6 +605,33 @@ describe("program runtime", () => {
     ).resolves.toMatchObject({ value: "files" });
   });
 
+  it("lets programs inspect nonzero command results", async () => {
+    const commandTool = tool("__ptc_command_run");
+    const result = await runProgram({
+      source: `
+        const res = command.run("pnpm", ["check"], { cwd: "/workspace" });
+        return {
+          status: res.status,
+          stdout: res.stdout,
+          stderr: res.stderr,
+          verdict: res.status === 0 ? "PASS" : "FAIL"
+        };
+      `,
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[commandTool.name, commandTool]]),
+      execute: async () =>
+        ok({ status: 2, stdout: "checking", stderr: "type error" }),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.value).toEqual({
+      status: 2,
+      stdout: "checking",
+      stderr: "type error",
+      verdict: "FAIL",
+    });
+  });
+
   it("rejects unsupported fs options before dispatch", async () => {
     let dispatched = false;
     const result = await runProgram({

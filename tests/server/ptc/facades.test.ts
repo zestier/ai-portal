@@ -88,6 +88,7 @@ describe("program fs facade capabilities", () => {
     expect(result).toMatchObject({
       ok: true,
       result: {
+        status: 0,
         stdout: JSON.stringify({
           value: "piped input",
           arg: "literal;not-shell",
@@ -97,7 +98,7 @@ describe("program fs facade capabilities", () => {
     });
   });
 
-  it("rejects nonzero command exits", async () => {
+  it("returns stdout and stderr for nonzero command exits", async () => {
     const root = makeTmpDir("ptc-command-fail-");
     const command = buildProgramFacadeTools(root).get("__ptc_command_run")!;
     expect(
@@ -106,8 +107,8 @@ describe("program fs facade capabilities", () => {
         args: ["-e", "process.stderr.write('bad'); process.exit(7)"],
       }),
     ).toMatchObject({
-      ok: false,
-      error: { message: expect.stringContaining("code 7: bad") },
+      ok: true,
+      result: { status: 7, stdout: "", stderr: "bad" },
     });
   });
 
@@ -120,7 +121,7 @@ describe("program fs facade capabilities", () => {
       }),
     ).toMatchObject({
       ok: true,
-      result: { stdout: "quoted value", stderr: "" },
+      result: { status: 0, stdout: "quoted value", stderr: "" },
     });
     expect(
       await command.handler({ command: "printf hi | sort" }),
