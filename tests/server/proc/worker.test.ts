@@ -238,12 +238,13 @@ describe("proc worker", () => {
         contracts: [],
       }),
     });
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
     const outcome = await runProcWorker({
       transaction,
       capabilities: new Map(),
       facadeCapabilities: new Map(),
       permissionResolver: async () => ({ allow: true }),
-      emit: () => {},
+      emit: (event) => events.push(event),
       signal: new AbortController().signal,
     });
     expect(outcome).toMatchObject({
@@ -251,6 +252,14 @@ describe("proc worker", () => {
       summary: "The requested operation is unsupported.",
       usage: { turns: 2, executions: 1 },
     });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.result",
+        ok: false,
+        summary: "Failed",
+        output: "bad atom",
+      }),
+    );
   });
 
   it("reports whether a failed execution is safe to retry", async () => {

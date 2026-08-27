@@ -63,7 +63,7 @@ describe("program runtime", () => {
       execute: async () => ok(),
       signal: new AbortController().signal,
     });
-    expect(result.value).toBe("object object");
+    expect(result.value).toBe("function object");
   });
 
   it("reports explicit-return runtime errors at user source locations", async () => {
@@ -535,6 +535,26 @@ describe("program runtime", () => {
         },
       },
     ]);
+  });
+
+  it("exposes command as a callable shorthand", async () => {
+    const commandTool = tool("__ptc_command_run");
+    const result = await runProgram({
+      source: `
+        const res = command("pnpm", ["check"], { cwd: "/workspace", timeoutMs: 300000 });
+        ({ exitStatus: res.status ?? "unknown", stdout: res.stdout, stderr: res.stderr });
+      `,
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[commandTool.name, commandTool]]),
+      execute: async () => ok({ status: 0, stdout: "checked", stderr: "" }),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.value).toEqual({
+      exitStatus: 0,
+      stdout: "checked",
+      stderr: "",
+    });
   });
 
   it("supports command.run option and argv overloads", async () => {

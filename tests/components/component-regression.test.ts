@@ -472,6 +472,29 @@ describe("Svelte component regression coverage", () => {
     expect(withoutHint).not.toContain("remember to reconcile your tickets");
   });
 
+  test("ToolCall opens failures and surfaces their diagnostic", () => {
+    const body = render(ToolCall, {
+      props: {
+        toolCall: {
+          id: "X1",
+          messageId: "M1",
+          tool: "execute",
+          argsJson: JSON.stringify({ summary: "Run pnpm check" }),
+          resultJson: JSON.stringify("'command' is not a function"),
+          status: "error" as const,
+          startedAt: 0,
+          endedAt: 1,
+          textOffset: null,
+          parentToolCallId: "X0",
+        },
+      },
+    }).body;
+
+    expect(body).toMatch(/<details[^>]* open=""/);
+    expect(body).toContain('role="alert"');
+    expect(body).toContain("'command' is not a function");
+  });
+
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {
     const toolCall = {
       id: "X1",

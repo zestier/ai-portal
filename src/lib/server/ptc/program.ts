@@ -275,8 +275,7 @@ export async function runProgram(
       mkdirSync: fsMethods.mkdir,
       renameSync: fsMethods.rename
     });
-    const commandApi = Object.freeze({
-      run(executableOrArgv, argsOrOptions = [], maybeOptions = {}) {
+    function runCommand(executableOrArgv, argsOrOptions = [], maybeOptions = {}) {
         const argvForm = Array.isArray(executableOrArgv);
         const executable = argvForm ? executableOrArgv[0] : executableOrArgv;
         const secondIsArgs = Array.isArray(argsOrOptions);
@@ -307,8 +306,9 @@ export async function runProgram(
           ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
           ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
         });
-      }
-    });
+    }
+    Object.defineProperty(runCommand, "run", { value: runCommand });
+    const commandApi = Object.freeze(runCommand);
     const toolsApi = new Proxy(Object.create(null), {
       get(_target, name) {
         if (typeof name !== "string" || name === "then") return undefined;

@@ -69,10 +69,15 @@
   // bulk of a turn. (Subagents have their own auto-expand because they
   // run longer and have richer interior content.)
   // `task_complete` is the exception because its result is often the
-  // assistant's final user-facing summary.
+  // assistant's final user-facing summary. Failures also open so their
+  // diagnostic is visible without another click.
   let userToggled = $state(false);
   let manualOpen = $state(false);
-  const defaultOpen = $derived(toolCall.tool === "task_complete");
+  const defaultOpen = $derived(
+    toolCall.tool === "task_complete" ||
+      toolCall.status === "error" ||
+      toolCall.status === "denied",
+  );
   const open = $derived(userToggled ? manualOpen : defaultOpen);
 
   // A card that starts open (task_complete) needs its trimmed fields too.
@@ -341,7 +346,11 @@
         </button>
       {/if}
     {:else if resultJson}
-      {#if gitRenderedResult}
+      {#if toolCall.status === "error" || toolCall.status === "denied"}
+        <Alert kind="error">
+          {decoded.fallbackText ?? "Tool execution failed without details."}
+        </Alert>
+      {:else if gitRenderedResult}
         <GitToolResult result={gitRenderedResult} />
       {:else if gitDiffText}
         <DiffView diff={gitDiffText} collapsible />

@@ -109,7 +109,7 @@ export function initialProcMessages(input: {
               "isAbsolute",
             ],
             command:
-              "run(executable, args?, { cwd?, stdin?, timeoutMs? }) -> { stdout, stderr }",
+              "command.run(executable, args?, options?) -> { status?, stdout, stderr }",
           },
         },
       }),
@@ -357,7 +357,7 @@ export async function runProcWorker(
             protocolId,
             procId,
             false,
-            JSON.stringify(feedback),
+            feedback.error,
           );
         }
       }
