@@ -37,6 +37,102 @@ describe("program runtime", () => {
     });
   });
 
+  it("returns the completion value of the final expression", async () => {
+    const commandTool = tool("__ptc_command_run");
+    const result = await runProgram({
+      source: `
+        const res = command.run("pnpm", ["lint"], { timeoutMs: 120000 });
+        const output = "EXIT STATUS: " + res.status + "\\n\\nSTDOUT:\\n" + res.stdout + "\\n\\nSTDERR:\\n" + res.stderr;
+        output;
+      `,
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[commandTool.name, commandTool]]),
+      execute: async () => ok({ status: 0, stdout: "checked", stderr: "" }),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toBe(
+      "EXIT STATUS: 0\n\nSTDOUT:\nchecked\n\nSTDERR:\n",
+    );
+    expect(result.operations).toBe(1);
+  });
+
+  it("returns a standalone introspection expression", async () => {
+    const result = await runProgram({
+      source: 'typeof command + " " + typeof globalThis.fs;',
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toBe("object object");
+  });
+
+  it("reports explicit-return runtime errors at user source locations", async () => {
+    const run = runProgram({
+      source: "return (\nmissingValue\n);",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    await expect(run).rejects.toMatchObject({
+      name: "ReferenceError",
+      stack: expect.stringContaining("program.js:2:1"),
+    });
+    await expect(run).rejects.not.toMatchObject({
+      stack: expect.stringContaining("program.js:3:1"),
+    });
+  });
+
+  it("reports implicit-return runtime errors at user source locations", async () => {
+    const run = runProgram({
+      source: "const present = true;\nmissingValue;",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    await expect(run).rejects.toMatchObject({
+      name: "ReferenceError",
+      stack: expect.stringContaining("program.js:2:1"),
+    });
+    await expect(run).rejects.not.toMatchObject({
+      stack: expect.stringContaining("program.js:3:1"),
+    });
+  });
+
+  it("reports explicit-return syntax errors at user source locations", async () => {
+    const run = runProgram({
+      source: "return {;",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    await expect(run).rejects.toMatchObject({
+      name: "SyntaxError",
+      lineNumber: 1,
+      stack: expect.stringContaining("program.js:1:9"),
+    });
+  });
+
+  it("does not normalize user-authored exception locations", async () => {
+    const run = runProgram({
+      source: `throw {
+        message: "custom",
+        lineNumber: 99,
+        stack: "custom program.js:77:8"
+      };`,
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    await expect(run).rejects.toMatchObject({
+      lineNumber: 99,
+      stack: expect.stringContaining("custom program.js:77:8"),
+    });
+  });
+
   it("lazily composes and caches immutable exact values through getState", async () => {
     const fetched: string[] = [];
     const values = new Map<string, unknown>([
@@ -218,7 +314,7 @@ describe("program runtime", () => {
     await expect(run).rejects.not.toThrow(/redefinition of lexical identifier/);
   });
 
-  it("rejects console output and missing return values", async () => {
+  it("rejects console output and programs without a completion value", async () => {
     await expect(
       runProgram({
         source: 'console.log({ answer: 42 }); return "unreachable";',

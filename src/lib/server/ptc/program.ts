@@ -20,6 +20,27 @@ const MAX_RUNTIME_MS = 120_000;
 const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
 const MAX_STACK_BYTES = 512 * 1024;
 
+function normalizeProgramErrorLocation(error: unknown): void {
+  if (!(error instanceof Error)) return;
+  const located = error as Error & {
+    fileName?: string;
+    lineNumber?: number;
+  };
+  if (
+    located.fileName === "program.js" &&
+    typeof located.lineNumber === "number"
+  ) {
+    located.lineNumber = Math.max(1, located.lineNumber - 1);
+  }
+  if (located.stack) {
+    located.stack = located.stack.replace(
+      /^(\s+at (?:(?:.* \()?program\.js:))(\d+)(:\d+\)?\s*)$/gm,
+      (_match, prefix: string, line: string, suffix: string) =>
+        `${prefix}${Math.max(1, Number(line) - 1)}${suffix}`,
+    );
+  }
+}
+
 export interface ProgramRunOptions {
   source: string;
   capabilities: ReadonlyMap<string, PortalTool>;
@@ -119,7 +140,7 @@ export async function runProgram(
   vm.setProp(vm.global, "__ptc_fetch_state", fetchStateHandle);
   fetchStateHandle.dispose();
 
-  const wrapped = `(() => {
+  const setup = `(() => {
     {
     function unwrapCall(call, name, args) {
       const result = JSON.parse(call(name, args));
@@ -334,12 +355,31 @@ export async function runProgram(
       console: { value: consoleApi, writable: false, configurable: false }
     });
     }
-    ${opts.source}
   })()`;
 
   try {
-    const evaluation = await vm.evalCodeAsync(wrapped, "program.js");
-    const valueHandle = vm.unwrapResult(evaluation);
+    const setupEvaluation = await vm.evalCodeAsync(setup, "sandbox.js");
+    vm.unwrapResult(setupEvaluation).dispose();
+
+    const shiftedSource = `\n${opts.source}`;
+    const compiled = await vm.evalCodeAsync(shiftedSource, "program.js", {
+      compileOnly: true,
+    });
+    const scriptCompatible = "value" in compiled;
+    if ("value" in compiled) compiled.value.dispose();
+    else compiled.error.dispose();
+
+    const executable = scriptCompatible
+      ? shiftedSource
+      : `(() => {${shiftedSource}\n})()`;
+    const evaluation = await vm.evalCodeAsync(executable, "program.js");
+    let valueHandle;
+    try {
+      valueHandle = vm.unwrapResult(evaluation);
+    } catch (error) {
+      normalizeProgramErrorLocation(error);
+      throw error;
+    }
     try {
       const value = vm.dump(valueHandle);
       if (value === undefined) {
