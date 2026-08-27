@@ -328,9 +328,11 @@ export async function runProgram(
       }
       return stateCache.get(resultId);
     }
-    const unavailableModule = (name) => {
+    const requireModule = (name) => {
+      if (name === "fs" || name === "node:fs") return fsApi;
+      if (name === "path" || name === "node:path") return pathApi;
       throw new Error(
-        "Module loading is unavailable. Use the predeclared fs, path, command, tools, and getState globals. Requested: " + String(name)
+        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, command, tools, and getState globals."
       );
     };
     const unavailableConsole = () => {
@@ -351,7 +353,7 @@ export async function runProgram(
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
       getState: { value: getState, writable: false, configurable: false },
-      require: { value: unavailableModule, writable: false, configurable: false },
+      require: { value: requireModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false }
     });
     }

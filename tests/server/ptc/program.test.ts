@@ -303,15 +303,31 @@ describe("program runtime", () => {
     });
   });
 
-  it("reports actionable module-loading errors without lexical collisions", async () => {
+  it("resolves CommonJS spellings to the predeclared facades", async () => {
+    const result = await runProgram({
+      source: `const requiredFs = require("fs");
+        const requiredPath = require("node:path");
+        return {
+          fs: requiredFs === fs && require("node:fs") === fs,
+          path: requiredPath === path && require("path") === path,
+          joined: requiredPath.join("src", "..", "tests")
+        };`,
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual({ fs: true, path: true, joined: "tests" });
+  });
+
+  it("reports actionable errors for unsupported modules", async () => {
     const run = runProgram({
-      source: 'const fs = require("fs"); return fs;',
+      source: 'return require("node:crypto");',
       capabilities: new Map(),
       execute: async () => ok(),
       signal: new AbortController().signal,
     });
     await expect(run).rejects.toThrow(/predeclared fs, path, command, tools/);
-    await expect(run).rejects.not.toThrow(/redefinition of lexical identifier/);
+    await expect(run).rejects.toThrow(/node:crypto/);
   });
 
   it("rejects console output and programs without a completion value", async () => {

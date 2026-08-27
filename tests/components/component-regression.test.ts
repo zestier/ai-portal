@@ -7,6 +7,7 @@ import FileBrowser from "../../src/lib/components/FileBrowser.svelte";
 import GitToolResult from "../../src/lib/components/tool/GitToolResult.svelte";
 import InteractiveRequestDialog from "../../src/lib/components/InteractiveRequestDialog.svelte";
 import LaunchReviewDialog from "../../src/lib/components/LaunchReviewDialog.svelte";
+import ProcCall from "../../src/lib/components/ProcCall.svelte";
 import PromptTemplateLauncher from "../../src/lib/components/PromptTemplateLauncher.svelte";
 import ToolCall from "../../src/lib/components/ToolCall.svelte";
 import PromptsSettings from "../../src/routes/settings/PromptsSettings.svelte";
@@ -493,6 +494,50 @@ describe("Svelte component regression coverage", () => {
     expect(body).toMatch(/<details[^>]* open=""/);
     expect(body).toContain('role="alert"');
     expect(body).toContain("'command' is not a function");
+  });
+
+  test("ProcCall surfaces a failed execution's diagnostic", () => {
+    const body = render(ProcCall, {
+      props: {
+        toolCall: {
+          id: "P1",
+          messageId: "M1",
+          tool: "proc",
+          argsJson: JSON.stringify({
+            summary: "Inspect settings",
+            procedure: "Extract the relevant regions.",
+            output: { contract: "Source excerpts", max_bytes: 4096 },
+          }),
+          resultJson: null,
+          status: "pending" as const,
+          startedAt: 0,
+          endedAt: null,
+          textOffset: null,
+          parentToolCallId: null,
+        },
+        childTools: [
+          {
+            id: "E1",
+            messageId: "M1",
+            tool: "execute",
+            argsJson: JSON.stringify({
+              summary: "Extract ModelsSettings regions",
+              javascript: "return content;",
+              purpose: "final",
+            }),
+            resultJson: JSON.stringify("readFile is not defined"),
+            status: "error" as const,
+            startedAt: 0,
+            endedAt: 1,
+            textOffset: null,
+            parentToolCallId: "P1",
+          },
+        ],
+      },
+    }).body;
+
+    expect(body).toMatch(/<details class="stage [^"]+" open=""/);
+    expect(body).toContain("readFile is not defined");
   });
 
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {

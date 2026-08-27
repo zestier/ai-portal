@@ -59,6 +59,9 @@ describe("proc display parsing", () => {
       ),
     ).toMatchObject({ purpose: "checkpoint", result_id: "RES_1" });
     expect(
+      parseProcExecutionResult(JSON.stringify("readFile is not defined")),
+    ).toEqual({ error: "readFile is not defined" });
+    expect(
       parseProcOutcome(
         JSON.stringify({
           ok: true,

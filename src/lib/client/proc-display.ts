@@ -90,7 +90,21 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
 export function parseProcExecutionResult(
   json: string | null,
 ): ProcExecutionResult | null {
-  return parseObject(json) as ProcExecutionResult | null;
+  if (!json) return null;
+  try {
+    let value: unknown = JSON.parse(json);
+    if (typeof value === "string") {
+      const text = value;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        return { error: text };
+      }
+    }
+    return isObject(value) ? (value as ProcExecutionResult) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseProcOutcome(json: string | null): ProcOutcome | null {

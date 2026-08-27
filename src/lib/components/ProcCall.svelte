@@ -142,6 +142,9 @@
                 ></span>
               </summary>
               <div class="stage-body">
+                {#if executionResult?.error}
+                  <p class="execution-error">{executionResult.error}</p>
+                {/if}
                 {#if executionArgs}
                   <details>
                     <summary class="minor-label">JavaScript</summary>
@@ -384,6 +387,13 @@
     padding: var(--space-2);
     border-left: 3px solid var(--warning);
     background: var(--warning-bg);
+  }
+  .execution-error {
+    margin: 0;
+    padding: var(--space-2);
+    border-left: 3px solid var(--danger);
+    background: var(--danger-bg);
+    color: var(--danger);
   }
   .trace {
     display: grid;
