@@ -10,11 +10,13 @@
   let {
     initial,
     hint,
+    loadProviders,
     modelOverride = false,
     onSave,
   }: {
     initial: Record<string, unknown> | null;
     hint?: string;
+    loadProviders?: () => Promise<string[]>;
     modelOverride?: boolean;
     onSave: (routing: Record<string, unknown> | null) => void;
   } = $props();
@@ -27,6 +29,7 @@
   ] as const;
 
   let editing = $state(false);
+  let providerOptions = $state<string[]>([]);
   // Tri-state: "inherit" = omit from build (use provider/bundled default),
   // "false"/"true" = emit explicitly. loadState maps these from initial.
   type TriBool = "inherit" | "false" | "true";
@@ -70,6 +73,7 @@
   }
 
   function open() {
+    providerOptions = [];
     const r = routing() ?? {};
     const has = (k: string): boolean => k in r;
     allowFallbacks = has("allow_fallbacks")
@@ -130,6 +134,12 @@
     latencyP90 = has("preferred_max_latency") ? numStr(lat.p90) : "inherit";
     latencyP99 = has("preferred_max_latency") ? numStr(lat.p99) : "inherit";
     editing = true;
+    if (loadProviders)
+      void loadProviders()
+        .then((p) => (providerOptions = p))
+        .catch(() => {
+          providerOptions = [];
+        });
   }
   function numDisplay(v: string): string {
     return v === "inherit" ? "" : v;
@@ -240,6 +250,7 @@
 
   function cancel() {
     editing = false;
+    providerOptions = [];
   }
 </script>
 
@@ -300,6 +311,9 @@
             {/each}
             <input
               id={`routing-${f.key}-input`}
+              list={f.key === "quantizations"
+                ? undefined
+                : "routing-provider-list"}
               enterKeyHint="enter"
               placeholder="add + Enter"
               disabled={tagInherit[f.key]}
@@ -313,6 +327,9 @@
           </div>
         </label>
       {/each}
+      <datalist id="routing-provider-list">
+        {#each providerOptions as p (p)}<option value={p}></option>{/each}
+      </datalist>
 
       <div class="grid2">
         <label class="inline-field">

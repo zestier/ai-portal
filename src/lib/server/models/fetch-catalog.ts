@@ -23,7 +23,7 @@ export interface FetchCatalogResult {
 }
 
 /** Default base URLs for known built-in providers when the operator leaves it unset. */
-const DEFAULT_BASE_URLS: Record<string, string> = {
+export const DEFAULT_BASE_URLS: Record<string, string> = {
   anthropic: "https://api.anthropic.com",
   openai: "https://api.openai.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
@@ -149,6 +149,26 @@ async function fetchOpenRouter(
     models,
     source: `${new URL(endpoint(baseUrl, "models")).host}/models`,
   };
+}
+
+export async function fetchOpenRouterProviders(
+  baseUrl: string,
+  key: string,
+): Promise<string[]> {
+  if (!key) {
+    throw new Error("No API key stored — save an API key first.");
+  }
+  const json = (await getJson(endpoint(baseUrl, "models"), {
+    authorization: `Bearer ${key}`,
+  })) as { data?: { endpoints?: { provider_name?: string }[] }[] };
+  const seen = new Set<string>();
+  for (const m of json.data ?? []) {
+    for (const ep of m.endpoints ?? []) {
+      const name = ep.provider_name?.trim();
+      if (name) seen.add(name);
+    }
+  }
+  return [...seen].sort();
 }
 
 /** Generic OpenAI-compatible /models: ids only (Ollama, vLLM, gateways, OpenAI). */

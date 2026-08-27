@@ -10,7 +10,10 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setupLocalEnv } from "../../helpers/env";
-import { fetchProviderCatalog } from "../../../src/lib/server/models/fetch-catalog";
+import {
+  fetchOpenRouterProviders,
+  fetchProviderCatalog,
+} from "../../../src/lib/server/models/fetch-catalog";
 import * as providersRepo from "../../../src/lib/server/db/repos/providers";
 import type { ManagedProvider, ProviderApi } from "../../../src/lib/types";
 
@@ -206,5 +209,68 @@ describe("fetchProviderCatalog", () => {
       updatedAt: 0,
     };
     await expect(fetchProviderCatalog(p)).rejects.toThrow(/No API key stored/);
+  });
+});
+
+describe("fetchOpenRouterProviders", () => {
+  beforeEach(async () => {
+    await setupLocalEnv();
+    process.env.ENCRYPTION_KEY = randomBytes(32).toString("base64");
+  });
+
+  afterEach(() => {
+    delete process.env.ENCRYPTION_KEY;
+  });
+
+  it("derives deduped, sorted provider names from endpoints, dropping empties", async () => {
+    const baseUrl = await startStub((req, res) => {
+      expect(req.headers.authorization).toBe("Bearer sk-test-key");
+      json(res, 200, {
+        data: [
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            endpoints: [
+              { provider_name: "Anthropic" },
+              { provider_name: "   " },
+            ],
+          },
+          {
+            id: "openai/gpt-4o",
+            endpoints: [
+              { provider_name: "OpenAI" },
+              { provider_name: "Azure" },
+            ],
+          },
+          {
+            id: "anthropic/claude-haiku-4.5",
+            endpoints: [{ provider_name: "Anthropic" }],
+          },
+          { id: "mistralai/mistral-large", endpoints: [] },
+        ],
+      });
+    });
+    const providers = await fetchOpenRouterProviders(baseUrl, "sk-test-key");
+    expect(providers).toEqual(["Anthropic", "Azure", "OpenAI"]);
+  });
+
+  it("rejects with a clear error when no API key is stored", async () => {
+    const baseUrl = await startStub((_req, res) =>
+      json(res, 200, { data: [] }),
+    );
+    providersRepo.upsert({
+      id: "openrouter-nokey",
+      name: "OpenRouter",
+      api: "openai-completions",
+      baseUrl,
+      builtin: true,
+      enabled: true,
+    });
+    const provider = providersRepo.get("openrouter-nokey")!;
+    await expect(
+      fetchOpenRouterProviders(
+        provider.baseUrl ?? "",
+        providersRepo.getApiKey(provider.id) ?? "",
+      ),
+    ).rejects.toThrow(/No API key stored/);
   });
 });

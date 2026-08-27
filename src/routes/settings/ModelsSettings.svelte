@@ -103,6 +103,20 @@
     return res.json() as Promise<T>;
   }
 
+  async function loadOpenRouterProviders(
+    p: ManagedProvider,
+  ): Promise<string[]> {
+    if (p.id !== "openrouter" || !p.hasKey) return [];
+    try {
+      const r = await api<{ providers: string[] }>(
+        `/api/admin/models/${encodeURIComponent(p.id)}/providers`,
+      );
+      return r.providers;
+    } catch {
+      return [];
+    }
+  }
+
   async function reload() {
     try {
       loadError = null;
@@ -621,6 +635,7 @@
                   <RoutingEditor
                     initial={routingFor(p.compat)}
                     hint="Applies to all models under this provider by default. Individual models can override it."
+                    loadProviders={() => loadOpenRouterProviders(p)}
                     onSave={(r) => saveProviderRouting(p, r)}
                   />
                 </div>
@@ -691,6 +706,7 @@
                         initial={routingFor(m.compat)}
                         hint="Overrides provider routing defaults for this model."
                         modelOverride
+                        loadProviders={() => loadOpenRouterProviders(p)}
                         onSave={(r) => saveModelRouting(p.id, m, r)}
                       />
                     </div>
