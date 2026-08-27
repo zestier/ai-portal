@@ -57,7 +57,7 @@ const OutputPolicy = z
 const AtomArgs = z
   .object({
     summary: z.string().min(1).max(500),
-    source: z.string().min(1).max(20_000),
+    javascript: z.string().min(1).max(20_000),
     output: OutputPolicy,
   })
   .strict();
@@ -217,7 +217,7 @@ export async function runProcWorker(
             const policy = policyOf(args.output);
             transaction.usage.atoms++;
             const result = await runProgram({
-              source: args.source,
+              source: args.javascript,
               capabilities: opts.capabilities,
               facadeCapabilities: opts.facadeCapabilities,
               state: getProcState(transaction.id, transaction.conversationId),
@@ -411,7 +411,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
               type: "string",
               description: "Brief user-visible explanation of this atom.",
             },
-            source: { type: "string" },
+            javascript: { type: "string" },
             output: {
               type: "object",
               properties: {
@@ -427,7 +427,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
               additionalProperties: false,
             },
           },
-          required: ["summary", "source", "output"],
+          required: ["summary", "javascript", "output"],
           additionalProperties: false,
         },
       },

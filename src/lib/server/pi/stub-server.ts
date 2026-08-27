@@ -381,7 +381,7 @@ function parseProcWorkerDirective(
         name: "atom",
         args: JSON.stringify({
           summary: "Return deterministic proc fixture",
-          source: `return ${JSON.stringify(value)};`,
+          javascript: `return ${JSON.stringify(value)};`,
           output: { mode: "shape", max_bytes: 4096, store: true },
         }),
       };

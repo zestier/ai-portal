@@ -43,7 +43,7 @@ describe("proc worker", () => {
             name: "atom",
             arguments: JSON.stringify({
               summary: "Create candidates",
-              source: "return [{ path: 'src/a.ts', line: 10 }];",
+              javascript: "return [{ path: 'src/a.ts', line: 10 }];",
               output: { mode: "shape", max_bytes: 1024, store: true },
             }),
           },
@@ -61,7 +61,7 @@ describe("proc worker", () => {
               name: "atom",
               arguments: JSON.stringify({
                 summary: "Add definition extents",
-                source: `return state[${JSON.stringify(prior.result_id)}].map(row => ({ ...row, end: row.line + 5 }));`,
+                javascript: `return state[${JSON.stringify(prior.result_id)}].map(row => ({ ...row, end: row.line + 5 }));`,
                 output: { mode: "none", store: true },
               }),
             },
@@ -188,7 +188,7 @@ describe("proc worker", () => {
             name: "atom",
             arguments: JSON.stringify({
               summary: "Attempt unsupported operation",
-              source: "throw new Error('bad atom');",
+              javascript: "throw new Error('bad atom');",
               output: { mode: "shape", max_bytes: 1024, store: true },
             }),
           },
