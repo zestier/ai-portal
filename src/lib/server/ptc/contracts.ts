@@ -302,11 +302,10 @@ export function programToolContracts(
     }
     return {
       name,
-      description: tool.description,
+      description: tool.program.catalogDescription,
       parameters: tool.program.parameters ?? tool.parameters,
       result: tool.program.resultSchema,
       example: tool.program.example,
-      contractVersion: tool.program.contractVersion,
     };
   });
 }

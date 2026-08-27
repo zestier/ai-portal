@@ -166,7 +166,13 @@ function diffStat(diff: string): string | null {
 
 function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
   const tool = tc.tool.toLowerCase();
-  if (tool !== "task" && tool !== "proc" && tool !== "atom") return undefined;
+  if (
+    tool !== "task" &&
+    tool !== "proc" &&
+    tool !== "execute" &&
+    tool !== "atom"
+  )
+    return undefined;
   const meta: Record<string, unknown> = {};
   if (tc.backgroundAgentId) meta.agentId = tc.backgroundAgentId;
   if (tc.backgroundAgentStatus)
@@ -184,6 +190,8 @@ function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
         "name",
         "summary",
         "procedure",
+        "javascript",
+        "purpose",
         "source",
       ] as const) {
         const v = args[key];
@@ -238,6 +246,7 @@ function projectTool(t: ToolCallRecord, rules: TrimRules): ToolCallRecord {
   const subagentArgs =
     t.tool.toLowerCase() === "task" ||
     t.tool.toLowerCase() === "proc" ||
+    t.tool.toLowerCase() === "execute" ||
     t.tool.toLowerCase() === "atom";
   const argsInline = rules.taskArgs === null && subagentArgs;
   const args = trimmed(t.argsJson, rules.args, argsInline);

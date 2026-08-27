@@ -7,7 +7,7 @@ import {
   createProcResult,
   createProcTransaction,
   getProcResult,
-  getProcState,
+  createProcStateReader,
   getProcTransaction,
   updateProcTransaction,
 } from "../../../src/lib/server/proc/store";
@@ -56,10 +56,10 @@ describe("proc store", () => {
       value: [{ path: "src/a.ts", line: 4 }],
       bytes: expect.any(Number),
     });
-    expect([...getProcState(transaction.id, conversationId).keys()]).toEqual([
-      first.id,
-      second.id,
-    ]);
+    const state = createProcStateReader(transaction.id, conversationId);
+    expect(state.get(first.id)).toEqual([{ path: "src/a.ts", line: 4 }]);
+    expect(state.get(second.id)).toEqual({ selected: [first.id] });
+    expect(state.get("RES_unknown")).toBeUndefined();
     expect(
       getProcResult({
         id: first.id,
@@ -70,12 +70,12 @@ describe("proc store", () => {
 
     transaction.status = "completed";
     transaction.resultId = second.id;
-    transaction.usage.atoms = 2;
+    transaction.usage.executions = 2;
     updateProcTransaction(transaction);
     expect(getProcTransaction(transaction.id, conversationId)).toMatchObject({
       status: "completed",
       resultId: second.id,
-      usage: { atoms: 2 },
+      usage: { executions: 2 },
     });
   });
 });

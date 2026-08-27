@@ -37,30 +37,70 @@ describe("program runtime", () => {
     });
   });
 
-  it("composes immutable exact values through state handles", async () => {
+  it("lazily composes and caches immutable exact values through getState", async () => {
+    const fetched: string[] = [];
+    const values = new Map<string, unknown>([
+      [
+        "RES_rows",
+        [
+          { path: "src/a.ts", line: 10 },
+          { path: "src/b.ts", line: 20 },
+        ],
+      ],
+      ["RES_unused", { large: "unused".repeat(10_000) }],
+    ]);
     const result = await runProgram({
       source: `
-        const rows = state.RES_rows;
+        const rows = getState("RES_rows");
+        const sameRows = getState("RES_rows");
         try { rows[0].line = 99; } catch {}
-        return rows.map(({ path, line }) => ({ path, start: line - 2, end: line + 2 }));
+        return {
+          same: rows === sameRows,
+          rows: rows.map(({ path, line }) => ({ path, start: line - 2, end: line + 2 }))
+        };
       `,
-      state: new Map([
-        [
-          "RES_rows",
-          [
-            { path: "src/a.ts", line: 10 },
-            { path: "src/b.ts", line: 20 },
-          ],
-        ],
-      ]),
+      state: {
+        get(id) {
+          fetched.push(id);
+          return values.get(id);
+        },
+      },
       capabilities: new Map(),
       execute: async () => ok(),
       signal: new AbortController().signal,
     });
-    expect(result.value).toEqual([
-      { path: "src/a.ts", start: 8, end: 12 },
-      { path: "src/b.ts", start: 18, end: 22 },
-    ]);
+    expect(result.value).toEqual({
+      same: true,
+      rows: [
+        { path: "src/a.ts", start: 8, end: 12 },
+        { path: "src/b.ts", start: 18, end: 22 },
+      ],
+    });
+    expect(fetched).toEqual(["RES_rows"]);
+  });
+
+  it("reports unknown lazy state ids", async () => {
+    await expect(
+      runProgram({
+        source: 'return getState("RES_missing");',
+        state: new Map(),
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Unknown checkpoint: RES_missing");
+  });
+
+  it("loads lazy state values larger than the capability result limit", async () => {
+    const text = "x".repeat(128 * 1024);
+    const result = await runProgram({
+      source: 'return getState("RES_large").text.length;',
+      state: new Map([["RES_large", { text }]]),
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toBe(text.length);
   });
 
   it("returns actionable unknown-tool failures without dispatching", async () => {
@@ -110,7 +150,7 @@ describe("program runtime", () => {
         execute: (_name, args) => echo.handler(args),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("mutation operation budget (500)");
+    ).rejects.toThrow("mutation operation limit (500)");
   });
 
   it("bounds command operations independently from reads", async () => {
@@ -124,7 +164,7 @@ describe("program runtime", () => {
         execute: (_name, args) => command.handler(args),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("command operation budget (20)");
+    ).rejects.toThrow("command operation limit (20)");
   });
 
   it("does not expose ambient process APIs", async () => {
@@ -174,9 +214,7 @@ describe("program runtime", () => {
       execute: async () => ok(),
       signal: new AbortController().signal,
     });
-    await expect(run).rejects.toThrow(
-      /fs, path, command, and tools are predeclared globals/,
-    );
+    await expect(run).rejects.toThrow(/predeclared fs, path, command, tools/);
     await expect(run).rejects.not.toThrow(/redefinition of lexical identifier/);
   });
 
@@ -189,7 +227,7 @@ describe("program runtime", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(
-      "Console output is unavailable in program. Return the final value directly instead; do not JSON.stringify it.",
+      "Console output is unavailable. Return the value directly; do not JSON.stringify it.",
     );
 
     await expect(
@@ -200,7 +238,7 @@ describe("program runtime", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(
-      "Program returned undefined. Return the final value directly, for example return { results }.",
+      "Execution returned undefined. Return a JSON-compatible value, for example return { results }.",
     );
   });
 

@@ -152,7 +152,6 @@ async function handleRequest(
   const procToolCall = parseProcWorkerDirective(
     lastSystemPrompt,
     userText,
-    body.messages,
     completedToolCalls,
   );
   const toolCall =
@@ -358,10 +357,9 @@ function parseToolSequenceDirective(
 function parseProcWorkerDirective(
   system: string,
   userText: string,
-  messages: unknown[],
   completedToolCalls: number,
 ): { name: string; args: string } | null {
-  if (!system.includes("tolerant compiler and dataflow orchestrator"))
+  if (!system.includes("Execute the supplied procedure without changing it."))
     return null;
   let request: { procedure?: unknown };
   try {
@@ -378,41 +376,15 @@ function parseProcWorkerDirective(
     try {
       const value = JSON.parse(raw) as unknown;
       return {
-        name: "atom",
+        name: "execute",
         args: JSON.stringify({
           summary: "Return deterministic proc fixture",
           javascript: `return ${JSON.stringify(value)};`,
-          output: { mode: "shape", max_bytes: 4096, store: true },
+          purpose: "final",
         }),
       };
     } catch {
       return null;
-    }
-  }
-  if (completedToolCalls === 1) {
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index];
-      if (
-        !message ||
-        typeof message !== "object" ||
-        (message as { role?: unknown }).role !== "tool" ||
-        typeof (message as { content?: unknown }).content !== "string"
-      ) {
-        continue;
-      }
-      try {
-        const result = JSON.parse((message as { content: string }).content) as {
-          result_id?: unknown;
-        };
-        if (typeof result.result_id === "string") {
-          return {
-            name: "complete",
-            args: JSON.stringify({ result_id: result.result_id }),
-          };
-        }
-      } catch {
-        return null;
-      }
     }
   }
   return null;

@@ -83,6 +83,13 @@ worker turn because they cannot satisfy the architecture's context objective or
 a credible exact output budget. A single deliberately bounded complete value
 remains valid.
 
+The frontier should request the smallest result that preserves its ability to
+decide or edit correctly, not the largest context that would be convenient. It
+must not sacrifice consequential detail or independent verifiability. The
+appropriate representation depends on the task; summaries, structured facts,
+provenance, bounded excerpts, and exact source are options to consider rather
+than a fixed preference order.
+
 ## Decision Boundary
 
 The frontier owns:
@@ -95,7 +102,7 @@ The frontier owns:
 
 The proc worker owns only tolerant realization:
 
-- translating procedure steps into executable atoms;
+- translating procedure steps into executable JavaScript;
 - resolving exact tool names and argument contracts;
 - repairing syntax and equivalent mechanical failures;
 - batching, pagination, and intermediate data plumbing;
@@ -113,119 +120,132 @@ is no durable `resume` conversation hidden inside the tool.
 
 The proc worker receives only:
 
-- `atom`: execute one program fragment against capabilities and stored state;
-- `complete`: designate the final atom value and requested frontier
-  projection;
+- `execute`: run fused JavaScript as a checkpoint, bounded semantic
+  inspection, or final result;
 - `cannot_execute`: stop with a precise unsupported or underspecified step.
 
 It does not receive repository tools directly. Repository operations occur
-inside atoms so the worker acts as a compiler and dataflow orchestrator rather
+inside executions so the worker acts as a compiler and dataflow orchestrator rather
 than a second repository agent.
 
 The transcript makes this boundary visible. Proc protocol calls are persisted
-as nested activity, and capability calls are parented beneath the atom that
+as nested activity, and capability calls are parented beneath the execution that
 caused them:
 
 ```text
 proc: Map model routing
-  atom: Locate routing definitions
+  execute (final): Locate and select routing definitions
     grep
     read
-  atom: Select enclosing implementations
-    read
-  complete
 ```
 
-The worker model still receives only `atom`, `complete`, and
-`cannot_execute`. Nested `grep`, `read`, Git, filesystem, and command rows are
+The worker model still receives only `execute` and `cannot_execute`. Nested
+`grep`, `read`, Git, filesystem, and command rows are
 execution trace, not additional model-visible worker tools.
 
-### Atom capabilities and discovery
+### Fusion and segmentation
 
-Atom capabilities are opt-in, not inferred from the ordinary portal tool
-surface. Every atom-capable tool supplies `ProgramToolMetadata` with a compact
-purpose, atom-specific input and result schemas, one canonical JavaScript
+The normal successful proc is one `execute` call with purpose `final`. Its
+JavaScript performs search, reads, grouping, filtering, and projection in one
+runtime invocation. Intermediate values are ordinary JavaScript values, so the
+worker can use normal control flow and collection methods without placing those
+values in model context.
+
+Fusion is preferred, not mandatory. When one reliable program would be
+substantially harder, the worker may split at a concrete boundary:
+
+- `checkpoint` stores the exact value of a mechanically complete segment and
+  returns only its observed shape. A later execution accesses it through
+  `getState(resultId)`.
+- `inspect` stores the exact value and returns a bounded exact projection to
+  the worker. It is reserved for semantic judgment that cannot be expressed as
+  mechanical JavaScript over the supplied criteria.
+- `final` applies the frontier's output budget and completes proc immediately.
+
+This makes additional executions meaningful: they represent deliberate
+segmentation, semantic inspection, or repair rather than the default way to
+construct a pipeline.
+
+### Program capabilities and discovery
+
+Program capabilities are opt-in, not inferred from the ordinary portal tool
+surface. Every program-capable tool supplies `ProgramToolMetadata` with a compact
+purpose, program-specific input and result schemas, one canonical JavaScript
 example, its read or mutation category, and any compatibility, permission, or
 result adapters required when script and direct-tool contracts differ.
 
-At proc start, the worker receives the complete manifest for every enabled atom
+At proc start, the worker receives the complete manifest for every enabled program
 capability plus stable `fs`, `path`, and `command` facade signatures. This is
 not a discovery call and does not include disabled capabilities. Supplying it
 once with the procedure lets the worker generate valid source without guessing
 or spending turns loading schemas.
 
-The initial atom surface covers:
+The initial program surface covers:
 
 - file reads, writes, traversal, metadata, creation, and rename through `fs`;
 - content and path search through `tools.grep` and `tools.find`;
 - structured repository inspection through `tools.git_status` and
   `tools.git_diff`;
 - validation and explicit argv execution through `command.run`;
-- immutable intermediate values through `state[resultId]`.
+- immutable intermediate values through `getState(resultId)`.
 
 Additional Git operations, tickets, memory, or other domains must not silently
-appear in atoms. They require explicit metadata, contract tests, permission
+appear in executions. They require explicit metadata, contract tests, permission
 tests, and an update to the capability audit. Human interaction is deliberately
-not an atom capability: when the supplied procedure requires a human decision,
+not a program capability: when the supplied procedure requires a human decision,
 the worker calls `cannot_execute`; the frontier retains `ask_user` ownership
 and may issue a new proc with the answer.
 
-### Atom validation
+### Capability validation
 
 The same metadata drives discovery and execution. Before dispatch, the runtime:
 
-1. resolves the name against the enabled atom capability map;
-2. applies the atom-specific compatibility normalizer;
-3. validates canonical arguments with the atom-specific Zod schema;
+1. resolves the name against the enabled program capability map;
+2. applies the program-specific compatibility normalizer;
+3. validates canonical arguments with the program-specific Zod schema;
 4. derives permissions from those canonical arguments;
-5. invokes the existing portal handler or atom-specific adapter;
+5. invokes the existing portal handler or program-specific adapter;
 6. validates JSON compatibility and the hard per-call result limit;
 7. records the normalized call beneath the parent proc activity.
 
 This separation is required because direct tools and synchronous script
-functions often need different contracts. A tool is not atom-capable merely
+functions often need different contracts. A tool is not program-capable merely
 because it is a `PortalTool`; missing metadata means unavailable, and unknown
 calls fail closed with available-name suggestions.
 
-There is no initial `inspect` tool. Inspection is an atom whose projection is
-`exact`, for example:
+There is no separate inspection tool. Inspection is an execution purpose; its
+program first reduces the value to the bounded candidates the worker needs, for
+example:
 
 ```js
-return state["RES_candidates"].slice(0, 12);
+return getState("RES_candidates").slice(0, 12);
 ```
 
-This keeps one composition primitive. A dedicated inspection operation may be
-added later only if telemetry shows that trivial projection atoms create
-material latency or complexity.
+This keeps one composition primitive while distinguishing why a value enters
+worker context.
 
-## Atom Contract
+## Execution Contract
 
-An atom runs JavaScript in the existing resource-limited program runtime. In
-addition to audited filesystem and tool capabilities, it may read immutable
-prior atom values through `state[resultId]`.
+An execution runs JavaScript in the existing resource-limited program runtime.
+In addition to audited filesystem and tool capabilities, it may lazily read
+immutable prior checkpoint values through `getState(resultId)`. The first
+access fetches, parses, caches, and freezes that value inside the execution;
+unused checkpoints are never loaded into QuickJS.
 
 ```yaml
-source: |
-  return tools.grep({ pattern: "foo", path: "src" });
-output:
-  mode: shape
-  max_bytes: 4000
-  store: true
+summary: Locate and reduce foo definitions
+javascript: |
+  const matches = tools.grep({ pattern: "foo", path: "src" });
+  return groupAndSelect(matches);
+purpose: final
 ```
 
-Each atom output independently controls persistence and model visibility:
-
-- `store: true` persists the exact JSON-compatible value and returns a
-  transaction-scoped `result_id`.
-- `store: false` discards the exact value after deriving the projection and
-  returns no `result_id`.
-- `mode: none` returns no projection and therefore requires `store: true`.
-- `mode: shape` returns a compact observed description of the actual value.
-- `mode: exact` returns the actual value within `max_bytes`.
-
-`max_bytes` is required for `shape` and `exact`. A projection never exceeds its
-declared budget. Exact overflow rejects the atom unless a later contract adds
-an explicit lossy exact mode; silent truncation is not allowed.
+Persistence and projection follow from purpose rather than independent model
+choices. Checkpoint and inspect values are stored automatically. Checkpoints
+receive a bounded shape; inspections receive exact data under a fixed runtime
+budget. Final values are projected using the frontier's original output
+contract and byte budget. Exact overflow rejects the execution; silent
+truncation is not allowed.
 
 A result envelope is:
 
@@ -245,21 +265,37 @@ entered worker context. `truncated` always describes the requested projection:
 it is true only when projection limits forced that mode to omit information.
 The stored value, when present, is exact regardless of projection mode.
 
-Every atom also requires a short user-visible `summary`. Its persisted card
-shows the full source and output policy, the exact projection returned to the
-worker, exact and projection byte counts, truncation state, operation count,
-and its nested capability activity. The outer proc card shows the complete
-frontier request, including summary and output policy, plus the exact bounded
-projection sent back to the frontier model.
+Every execution also requires a short user-visible `summary`. The dedicated
+proc card shows the frontier procedure and return contract, each execution's
+purpose and JavaScript, exact and projection byte counts, operation count,
+nested capability activity, partial-effect warnings, final usage, and the
+bounded projection returned to the frontier model.
 
 Result ids are immutable, transaction- and conversation-scoped, inaccessible
-across users, auditable to their producing atom, and garbage-collected with the
-proc transaction. State access does not grant new authority: every repository
-operation still crosses the normal capability and permission boundary.
+across users, auditable to their producing execution, and garbage-collected with the
+proc transaction. Ephemeral checkpoint state is deleted on completion,
+`cannot_execute`, or failure when no retained final value was requested. State
+access does not grant new authority: every repository operation still crosses
+the normal capability and permission boundary.
+
+### Failure and effects
+
+Arbitrary capabilities and commands cannot be made generally atomic. Proc does
+not promise rollback. Each failed execution instead reports a coarse effect
+ledger classifying attempted capability calls as `read`, `mutation`, or
+`opaque`, together with whether each call succeeded.
+
+An execution is safe to retry automatically only when every completed call was
+a read. After a mutation or opaque command, the worker must not replay the
+original program blindly. It writes a continuation that inspects current
+repository state and performs only unfinished work, or returns
+`cannot_execute`. Read-heavy discovery should therefore be fused before
+effects, and opaque or non-idempotent operations should occur as late as
+practical.
 
 ## Shape Projection
 
-`shape` exists to let the worker write the next atom correctly without placing
+`shape` exists to let the worker write the next execution correctly without placing
 the intermediate value itself in model context. It is inferred solely from the
 actual JSON-compatible value in state. It does not speculate from a producing
 tool schema or describe values that are not present.
@@ -270,7 +306,7 @@ An empty array is therefore exactly:
 array(0)
 ```
 
-There is no inferred element type. The next atom has no elements to consume,
+There is no inferred element type. The next execution has no elements to consume,
 so a hypothetical item contract would add context without actionable data.
 
 Representative non-empty shapes are:
@@ -298,7 +334,7 @@ The renderer compacts aggressively. Its purpose is consumability, not perfect
 reconstruction of every observed variant. In particular, compatible object
 variants should normally merge into one object with optional fields rather
 than produce a large union. The module should prefer a concise safe
-over-approximation when the next atom can still access every observed field.
+over-approximation when the next execution can still access every observed field.
 
 ### Normalization Laws
 
@@ -324,7 +360,7 @@ properties are part of its contract:
    is visibly marked in the projection.
 9. **Safe for composition.** A rendered field is never presented as required
    when it was absent from an observed object included in that merged shape.
-10. **Cycle independent.** Atom values are JSON-compatible and therefore
+10. **Cycle independent.** Checkpoint values are JSON-compatible and therefore
     acyclic; the shape module rejects non-JSON input rather than inventing
     cycle semantics.
 
@@ -367,32 +403,37 @@ structurally so harmless formatting changes do not obscure regressions.
 frontier procedure
        |
        v
-proc worker -- atom(source, output policy) --> program runtime
+proc worker -- execute(javascript, purpose) --> program runtime
        ^                                      |
        |                                      v
        +------ handle + bounded projection -- state store
                                                       |
-                         later atom: state[resultId] <-+
+                      later execution: getState(resultId) <-+
 ```
 
-The worker normally requests `shape` for stored intermediate results, `none`
-for mechanically chained values whose structure is already known, and bounded
-`exact` only when applying a supplied criterion requires semantic inspection.
-The final `complete` call projects an atom result according to the frontier's
-original proc output contract.
+The worker normally submits one fused final execution. It uses a checkpoint
+when a reliable mechanical segment should be completed independently, and an
+inspection only when applying a supplied criterion requires semantic access to
+a reduced candidate set. A final execution projects its return value according
+to the frontier's original proc output contract and completes immediately.
+
+Small language-agnostic helpers for line ranges, line numbering, contextual
+windows, indentation outlines, and common collection operations are suitable
+future additions to the program environment. They should remove repetitive
+and error-prone mechanics without replacing ordinary JavaScript or committing
+the architecture to one language or LSP.
 
 ## Initial Implementation Sequence
 
 1. Implement and thoroughly test JSON value validation and shape
    normalization/rendering as pure modules.
-2. Add transaction-scoped immutable atom storage and lifecycle cleanup.
-3. Extend the program runtime with read-only `state[resultId]` access.
-4. Add atom persistence and `none`/`shape`/`exact` projections with byte
-   budgets and explicit `truncated` metadata.
-5. Expose the low-level atom protocol in tests and measure state composition
+2. Add transaction-scoped immutable checkpoint storage and lifecycle cleanup.
+3. Extend the program runtime with lazy read-only `getState(resultId)` access.
+4. Add execution persistence and checkpoint/inspect/final projections with
+  byte budgets and explicit `truncated` metadata.
+5. Expose the low-level execution protocol in tests and measure state composition
    before introducing another model.
-6. Add the constrained proc worker with only `atom`, `complete`, and
-   `cannot_execute`.
+6. Add the constrained proc worker with only `execute` and `cannot_execute`.
 7. Replace the semantic frontier surface with `proc` and `ask_user` for the
    experiment; remove `resolve` and its resume/artifact-reader surface.
 8. Add deterministic stub scenarios and paired evaluations against standard
@@ -400,15 +441,13 @@ original proc output contract.
 
 ## Open Questions
 
-- Whether `store` should be required or default to `true`; the current proposal
-  requires it so persistence is always intentional.
 - Exact minimum and maximum projection byte budgets.
 - Whether exact lossy projections are needed after real proc traces are
   available.
 - State retention after a proc call completes, including whether a later proc
   may explicitly consume an earlier result id.
-- Whether repeated trivial inspection atoms justify a later optimized
-  `inspect` operation.
+- Which small source/text utilities most reduce retries without creating a
+  language-specific query surface.
 - How strict pre-execution procedure validation should be versus relying on
   `cannot_execute` after the worker attempts compilation.
 
@@ -424,7 +463,8 @@ Evaluate a proc-only frontier on procedures that require:
 - heterogeneous records that shape must compact;
 - a deliberately underspecified decision that must return `cannot_execute`.
 
-Measure correctness, frontier and worker context growth, atom count, exact
-inspection frequency, shape bytes versus stored bytes, retries, latency, and
+Measure correctness, frontier and worker context growth, first-execution
+completion rate, execution count, exact inspection frequency, shape bytes
+versus stored bytes, retries, latency, partial-effect recoveries, and
 the frequency with which the worker attempts to broaden or rewrite the supplied
 procedure.

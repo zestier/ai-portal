@@ -7,6 +7,7 @@
   import { zoomableImages } from "$lib/client/zoomable-images";
   import ToolCall from "./ToolCall.svelte";
   import SubagentCall from "./SubagentCall.svelte";
+  import ProcCall from "./ProcCall.svelte";
   import {
     isSubagentToolCall,
     selectSubagentChildren,
@@ -505,7 +506,18 @@
             },
             p.tool.id,
           )}
-          {#if isSubagentToolCall(p.tool)}
+          {#if p.tool.tool === "proc"}
+            <ProcCall
+              toolCall={p.tool}
+              {conversationId}
+              childTools={children.tools}
+              childReasoning={children.reasoning}
+              childEdits={children.edits}
+              allTools={message.toolCalls ?? []}
+              allReasoning={message.reasoningBlocks ?? []}
+              allEdits={message.fileEdits ?? []}
+            />
+          {:else if isSubagentToolCall(p.tool)}
             <SubagentCall
               toolCall={p.tool}
               {conversationId}

@@ -57,7 +57,6 @@ describe("program contracts", () => {
         type: "object",
         required: ["matches", "truncated"],
       },
-      contractVersion: "1",
     });
     expect(contracts[1]).toMatchObject({
       name: "gre",

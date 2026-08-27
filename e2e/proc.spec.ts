@@ -6,7 +6,7 @@ import {
   waitForAssistantMessage,
 } from "./helpers/conversations";
 
-test("semantic mode exposes proc and completes a stateful atom flow", async ({
+test("semantic mode exposes proc and completes a fused execution", async ({
   page,
   request,
 }) => {
@@ -51,24 +51,21 @@ test("semantic mode exposes proc and completes a stateful atom flow", async ({
       ? (message as MessageWithTools).toolCalls!.map((call) => call.tool)
       : [],
   );
-  expect(calls).toEqual(["proc", "atom", "complete"]);
+  expect(calls).toEqual(["proc", "execute"]);
 
   await page.goto(`/conversations/${id}`);
   await expect(page.getByText(summary, { exact: true })).toBeVisible();
-  await page.getByText(summary, { exact: true }).click();
   const procCard = page
-    .locator("details.subagent")
+    .locator("details.proc")
     .filter({ has: page.getByText(summary, { exact: true }) })
     .first();
+  await procCard.locator(":scope > summary").click();
   await expect(
-    procCard.locator(":scope > .content > .prompt pre code"),
+    procCard.locator(":scope > .content .request-grid"),
   ).toContainText("Return paths and line numbers");
-  await expect(procCard.locator(":scope > .content > .response")).toContainText(
+  await expect(procCard.locator(":scope > .content > .outcome")).toContainText(
     '"path": "src/a.ts"',
   );
-  await procCard
-    .locator(":scope > .content > details.activity > summary")
-    .click();
   await expect(
     procCard.getByText("Return deterministic proc fixture", { exact: true }),
   ).toBeVisible();

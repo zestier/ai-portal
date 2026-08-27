@@ -24,7 +24,7 @@ export interface ProgramRunOptions {
   source: string;
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities?: ReadonlyMap<string, PortalTool>;
-  state?: ReadonlyMap<string, unknown>;
+  state?: { get(id: string): unknown | undefined };
   execute(
     name: string,
     args: unknown,
@@ -86,7 +86,7 @@ export async function runProgram(
         const encoded = JSON.stringify(value);
         if (Buffer.byteLength(encoded) > MAX_CAPABILITY_RESULT_BYTES) {
           throw new Error(
-            `Capability ${name} result exceeded the size budget.`,
+            `Capability ${name} returned more than 64 KiB. Narrow or batch the call.`,
           );
         }
         return vm.newString(encoded);
@@ -98,7 +98,26 @@ export async function runProgram(
 
   installBridge("__callCapability", opts.capabilities);
   installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
-  const stateJson = JSON.stringify(Object.fromEntries(opts.state ?? []));
+  const fetchStateHandle = vm.newAsyncifiedFunction(
+    "__ptc_fetch_state",
+    async (idHandle) => {
+      const id = vm.getString(idHandle);
+      const value = opts.state?.get(id);
+      if (value === undefined) {
+        throw new Error(`Unknown checkpoint: ${id}`);
+      }
+      const encoded = JSON.stringify(value);
+      if (encoded === undefined) {
+        throw new Error(`Checkpoint ${id} is not JSON-compatible.`);
+      }
+      if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
+        throw new Error(`Checkpoint ${id} exceeds the 5 MiB state limit.`);
+      }
+      return vm.newString(encoded);
+    },
+  );
+  vm.setProp(vm.global, "__ptc_fetch_state", fetchStateHandle);
+  fetchStateHandle.dispose();
 
   const wrapped = `(() => {
     {
@@ -275,15 +294,27 @@ export async function runProgram(
         return (args = {}) => unwrapCall(__callCapability, name, args);
       }
     });
-    const stateApi = deepFreeze(JSON.parse(${JSON.stringify(stateJson)}));
+    const stateCache = new Map();
+    function getState(resultId) {
+      if (typeof resultId !== "string" || resultId.length === 0) {
+        throw new TypeError("getState requires a non-empty result id string.");
+      }
+      if (!stateCache.has(resultId)) {
+        stateCache.set(
+          resultId,
+          deepFreeze(JSON.parse(__ptc_fetch_state(resultId)))
+        );
+      }
+      return stateCache.get(resultId);
+    }
     const unavailableModule = (name) => {
       throw new Error(
-        "Module loading is unavailable in program. fs, path, command, and tools are predeclared globals; use them directly instead of require or import. Requested: " + String(name)
+        "Module loading is unavailable. Use the predeclared fs, path, command, tools, and getState globals. Requested: " + String(name)
       );
     };
     const unavailableConsole = () => {
       throw new Error(
-        "Console output is unavailable in program. Return the final value directly instead; do not JSON.stringify it."
+        "Console output is unavailable. Return the value directly; do not JSON.stringify it."
       );
     };
     const consoleApi = Object.freeze({
@@ -298,7 +329,7 @@ export async function runProgram(
       path: { value: pathApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
-      state: { value: stateApi, writable: false, configurable: false },
+      getState: { value: getState, writable: false, configurable: false },
       require: { value: unavailableModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false }
     });
@@ -313,12 +344,12 @@ export async function runProgram(
       const value = vm.dump(valueHandle);
       if (value === undefined) {
         throw new Error(
-          "Program returned undefined. Return the final value directly, for example return { results }.",
+          "Execution returned undefined. Return a JSON-compatible value, for example return { results }.",
         );
       }
       const encoded = JSON.stringify(value ?? null);
       if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
-        throw new Error("Program result exceeded its size budget.");
+        throw new Error("Execution result exceeds the 5 MiB limit.");
       }
       return {
         value,
@@ -342,9 +373,9 @@ export async function runProgram(
     allowed: ReadonlyMap<string, PortalTool>,
   ): Promise<unknown> {
     operations++;
-    if (opts.signal.aborted) throw new Error("Program aborted.");
+    if (opts.signal.aborted) throw new Error("Execution aborted.");
     if (Date.now() > deadline) {
-      throw new Error("Program exceeded its runtime budget.");
+      throw new Error("Execution exceeded the 120 second limit.");
     }
     const tool = allowed.get(name);
     if (!tool) {
@@ -355,7 +386,7 @@ export async function runProgram(
       const failure = {
         ok: false,
         error: {
-          message: `Unknown program tool "${name}".${related} Call get_program_tool_schemas for exact contracts.`,
+          message: `Unknown program tool "${name}".${related} Use a contract from environment.tools.`,
           details: { validTools: [...allowed.keys()].sort() },
         },
       };
@@ -380,7 +411,7 @@ export async function runProgram(
       const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
       if (categoryOperations[category] > categoryLimit) {
         throw new Error(
-          `Program exceeded its ${category} operation budget (${categoryLimit}).`,
+          `Execution exceeded the ${category} operation limit (${categoryLimit}).`,
         );
       }
     }

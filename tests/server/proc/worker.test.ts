@@ -26,25 +26,30 @@ describe("proc worker", () => {
     await setupLocalEnv("proc-worker-");
   });
 
-  it("is constrained to frontier-authored procedures and atoms", () => {
-    expect(PROC_WORKER_SYSTEM).toContain("tolerant compiler");
-    expect(PROC_WORKER_SYSTEM).toContain("Do not broaden");
-    expect(PROC_WORKER_SYSTEM).toContain("Fuse, batch, and inline");
+  it("is constrained to frontier-authored procedures and fused executions", () => {
+    expect(Buffer.byteLength(PROC_WORKER_SYSTEM)).toBeLessThanOrEqual(2_000);
+    expect(PROC_WORKER_SYSTEM).toContain("without changing it");
+    expect(PROC_WORKER_SYSTEM).toContain("broaden scope");
+    expect(PROC_WORKER_SYSTEM).toContain("whole procedure");
+    expect(PROC_WORKER_SYSTEM).toContain(
+      "If one reliable program is impractical",
+    );
+    expect(PROC_WORKER_SYSTEM).toContain("exactly one tool per turn");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
   });
 
-  it("composes exact stored atom values and returns a bounded final projection", async () => {
+  it("composes an exact checkpoint and completes with a fused final execution", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
         toolCalls: [
           {
             id: "atom-1",
-            name: "atom",
+            name: "execute",
             arguments: JSON.stringify({
               summary: "Create candidates",
               javascript: "return [{ path: 'src/a.ts', line: 10 }];",
-              output: { mode: "shape", max_bytes: 1024, store: true },
+              purpose: "checkpoint",
             }),
           },
         ],
@@ -58,27 +63,12 @@ describe("proc worker", () => {
           toolCalls: [
             {
               id: "atom-2",
-              name: "atom",
+              name: "execute",
               arguments: JSON.stringify({
                 summary: "Add definition extents",
-                javascript: `return state[${JSON.stringify(prior.result_id)}].map(row => ({ ...row, end: row.line + 5 }));`,
-                output: { mode: "none", store: true },
+                javascript: `return getState(${JSON.stringify(prior.result_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
+                purpose: "final",
               }),
-            },
-          ],
-        };
-      })
-      .mockImplementationOnce(async (_config, messages) => {
-        const prior = JSON.parse(messages.at(-1).content) as {
-          result_id: string;
-        };
-        return {
-          content: "",
-          toolCalls: [
-            {
-              id: "complete-1",
-              name: "complete",
-              arguments: JSON.stringify({ result_id: prior.result_id }),
             },
           ],
         };
@@ -135,7 +125,7 @@ describe("proc worker", () => {
       stored: true,
       projection: [{ path: "src/a.ts", line: 10, end: 15 }],
       truncated: false,
-      usage: { turns: 3, atoms: 2, operations: 0 },
+      usage: { turns: 2, executions: 2, operations: 0 },
     });
     expect(outcome.resultId).toBeTruthy();
     expect(
@@ -157,7 +147,7 @@ describe("proc worker", () => {
         }),
         expect.objectContaining({
           type: "tool.call",
-          tool: "atom",
+          tool: "execute",
           parentToolCallId: "X42",
         }),
         expect.objectContaining({
@@ -167,29 +157,40 @@ describe("proc worker", () => {
         }),
       ]),
     );
-    expect(
-      (piChat.mock.calls[0][2] as Array<{ function: { name: string } }>).map(
-        (tool) => tool.function.name,
-      ),
-    ).toEqual(["atom", "complete", "cannot_execute"]);
+    const workerTools = piChat.mock.calls[0][2] as Array<{
+      function: {
+        name: string;
+        parameters: { properties: Record<string, unknown> };
+      };
+    }>;
+    expect(workerTools.map((tool) => tool.function.name)).toEqual([
+      "execute",
+      "cannot_execute",
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(workerTools))).toBeLessThanOrEqual(
+      2_500,
+    );
+    expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
+      "max_bytes",
+    );
     const initial = JSON.parse(transaction.messages[1].content as string) as {
-      program_environment: { tool_contracts: unknown[] };
+      environment: { tools: unknown[] };
     };
-    expect(initial.program_environment.tool_contracts).toEqual(contracts);
+    expect(initial.environment.tools).toEqual(contracts);
   });
 
-  it("returns atom failures to the worker instead of failing the transaction", async () => {
+  it("returns execution failures to the worker instead of failing the transaction", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
         toolCalls: [
           {
             id: "bad-atom",
-            name: "atom",
+            name: "execute",
             arguments: JSON.stringify({
               summary: "Attempt unsupported operation",
               javascript: "throw new Error('bad atom');",
-              output: { mode: "shape", max_bytes: 1024, store: true },
+              purpose: "final",
             }),
           },
         ],
@@ -248,7 +249,104 @@ describe("proc worker", () => {
     expect(outcome).toMatchObject({
       status: "cannot_execute",
       summary: "The requested operation is unsupported.",
-      usage: { turns: 2, atoms: 1 },
+      usage: { turns: 2, executions: 1 },
     });
+  });
+
+  it("reports whether a failed execution is safe to retry", async () => {
+    const mutation = {
+      name: "write_fixture",
+      description: "Write a fixture",
+      parameters: { type: "object" },
+      program: {
+        catalogDescription: "write a fixture",
+        operationCategory: "mutation" as const,
+        resultSchema: { type: "object" },
+        example: "tools.write_fixture({})",
+        contractVersion: "1",
+      },
+      handler: vi.fn(async () => ({
+        ok: true as const,
+        summary: "wrote fixture",
+        result: {},
+      })),
+    };
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "partial-mutation",
+            name: "execute",
+            arguments: JSON.stringify({
+              summary: "Write then fail",
+              javascript:
+                "tools.write_fixture({}); throw new Error('after write');",
+              purpose: "final",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          retry_safe: boolean;
+          effects: Array<{ tool: string; effect: string; ok: boolean }>;
+          instruction: string;
+        };
+        expect(feedback.retry_safe).toBe(false);
+        expect(feedback.effects).toEqual([
+          { tool: "write_fixture", effect: "mutation", ok: true },
+        ]);
+        expect(feedback.instruction).toContain("Do not replay");
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "stop-after-effects",
+              name: "cannot_execute",
+              arguments: JSON.stringify({
+                reason: "Current state needs reconciliation.",
+              }),
+            },
+          ],
+        };
+      });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc effects",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 1024,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 44,
+      workerModel: "pi-stub/stub-model",
+      summary: "Mutating proc",
+      contract: "Return validation status",
+      procedure: "Write a fixture and validate it",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Mutating proc",
+        contract: "Return validation status",
+        procedure: "Write a fixture and validate it",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map([[mutation.name, mutation]]),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+    expect(outcome.status).toBe("cannot_execute");
   });
 });

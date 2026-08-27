@@ -33,21 +33,32 @@ describe("semantic tool surface", () => {
     });
     const askUser = capabilities.byName.get("ask_user");
     expect(askUser).toBeTruthy();
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          snippet: proc[0]?.promptSnippet,
+          guidelines: proc[0]?.promptGuidelines,
+        }),
+      ),
+    ).toBeLessThanOrEqual(1_500);
     const exposed = [...proc, askUser!].map((tool) => portalToolToPiTool(tool));
     expect(exposed.map((tool) => tool.name)).toEqual(["proc", "ask_user"]);
     expect(definitionBytes(exposed)).toBeLessThanOrEqual(8 * 1024);
     expect(Buffer.byteLength(SEMANTIC_SYSTEM_GUIDANCE)).toBeLessThanOrEqual(
       6 * 1024,
     );
-    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("not a general subagent");
-    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("You own diagnosis");
+    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain(
+      "does not investigate an open-ended goal",
+    );
+    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("retain diagnosis");
+    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("consequential decisions");
     expect(exposed.some((tool) => tool.name === "bash")).toBe(false);
     expect(exposed.some((tool) => tool.name === "edit")).toBe(false);
     expect(exposed.some((tool) => tool.name === "program")).toBe(false);
     expect(exposed.some((tool) => tool.name === "resolve")).toBe(false);
   });
 
-  it("discovers only explicitly enabled atom contracts", () => {
+  it("discovers only explicitly enabled program contracts", () => {
     const capabilities = assemblePortalTools({
       cwd: "/",
       userId: 1,
@@ -68,7 +79,6 @@ describe("semantic tool surface", () => {
         parameters: expect.any(Object),
         result: expect.any(Object),
         example: expect.any(String),
-        contractVersion: expect.any(String),
       });
     }
   });

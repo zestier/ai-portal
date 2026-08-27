@@ -221,13 +221,18 @@ function assertJsonValue(value: unknown, seen = new Set<object>()): void {
     return;
   if (typeof value === "number") {
     if (!Number.isFinite(value))
-      throw new Error("Proc state must contain finite JSON numbers.");
+      throw new Error(
+        "Execution returned NaN or Infinity. Return finite numbers only.",
+      );
     return;
   }
   if (typeof value !== "object") {
-    throw new Error("Proc state must be JSON-compatible.");
+    throw new Error(
+      "Execution returned a non-JSON value. Return strings, finite numbers, booleans, null, arrays, or objects.",
+    );
   }
-  if (seen.has(value)) throw new Error("Proc state must not contain cycles.");
+  if (seen.has(value))
+    throw new Error("Execution value must not contain cycles.");
   seen.add(value);
   if (Array.isArray(value)) {
     for (const entry of value) assertJsonValue(entry, seen);

@@ -15,66 +15,37 @@ import { normalizeProgramToolArgs } from "$lib/server/ptc/contracts";
 import { projectProcValue } from "./projection";
 import {
   createProcResult,
-  deleteProcResult,
-  getProcResult,
-  getProcState,
+  deleteProcResults,
+  createProcStateReader,
   updateProcTransaction,
   type ProcOutputPolicy,
   type ProcTransaction,
 } from "./store";
 
 const MAX_TURNS = 100;
-const ATOM = "atom";
-const COMPLETE = "complete";
+const EXECUTE = "execute";
 const CANNOT_EXECUTE = "cannot_execute";
-const MIN_PROJECTION_BYTES = 256;
-const MAX_PROJECTION_BYTES = 48 * 1024;
+const CHECKPOINT_SHAPE_BYTES = 2 * 1024;
+const INSPECTION_BYTES = 12 * 1024;
 
-const OutputPolicy = z
-  .object({
-    mode: z.enum(["none", "shape", "exact"]),
-    max_bytes: z
-      .number()
-      .int()
-      .min(MIN_PROJECTION_BYTES)
-      .max(MAX_PROJECTION_BYTES)
-      .optional(),
-    store: z.boolean(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.mode !== "none" && value.max_bytes === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        message: `${value.mode} requires max_bytes.`,
-      });
-    }
-    if (value.mode === "none" && !value.store) {
-      ctx.addIssue({ code: "custom", message: "none requires store: true." });
-    }
-  });
-
-const AtomArgs = z
+const ExecuteArgs = z
   .object({
     summary: z.string().min(1).max(500),
     javascript: z.string().min(1).max(20_000),
-    output: OutputPolicy,
+    purpose: z.enum(["checkpoint", "inspect", "final"]),
   })
   .strict();
 
-const CompleteArgs = z
-  .object({ result_id: z.string().min(1).max(128) })
-  .strict();
 const CannotExecuteArgs = z
   .object({ reason: z.string().min(1).max(4_000) })
   .strict();
 
-export const PROC_WORKER_SYSTEM = `Realize exactly the supplied procedure using program atoms.
-You are a tolerant compiler and dataflow orchestrator, not a goal-owning agent. Do not broaden the investigation, add goals, reinterpret relevance, or choose a different algorithm. Fuse, batch, and inline procedure steps into fewer atoms where the result, selection rules, and stopping criteria are unchanged.
-Every stored atom's exact value is always available to later atoms as state[resultId]; an atom's output mode only chooses what you see in the feedback to plan the next step, never what the next atom can access. Choose the smallest mode that lets you write the next atom: none when the next atom only pipes the value; shape when it filters, groups, or selects mechanically. Write that mechanical logic as a JS predicate over state[resultId], which always holds the full exact value, so you almost never need to see it. Use exact as a last resort, and only on a small bounded batch, when the supplied criterion is subjective and a later atom cannot decide it in code — such as judging whether prose or code is worth keeping, or summarizing it. Never request exact to re-inspect a batch a predicate can already filter.
-Give every atom a brief user-visible summary. Design the final stored value to satisfy the proc output policy; never use proc as a bulk conduit for full files or other raw corpora. If the final value would exceed its byte budget, apply the supplied filtering criteria and request shape rather than broad raw data.
-Repair syntax, tool contracts, batching, and equivalent mechanical failures. If a consequential instruction is missing or the procedure cannot be realized, call cannot_execute with the smallest precise reason.
-End only with complete for a stored final result or cannot_execute.`;
+export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changing it. Do not add goals, broaden scope, change selection criteria, choose another method, or make consequential decisions.
+Prefer one execute call with purpose final that implements the whole procedure in one JavaScript program. Keep mechanical intermediate values inside it.
+If one reliable program is impractical, call execute with purpose checkpoint after a completed mechanical segment, then continue from getState(result_id). Use purpose inspect only for semantic judgment required by the procedure, after mechanically reducing to the smallest useful candidate set.
+Return a final value matching output.contract within output.max_bytes. Do not return unrequested raw source or other bulk data.
+Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
+Call exactly one tool per turn. Finish only by calling execute with purpose final, or cannot_execute. Use brief, user-facing summaries.`;
 
 export interface ProcWorkerOptions {
   transaction: ProcTransaction;
@@ -116,10 +87,10 @@ export function initialProcMessages(input: {
           contract: input.contract,
           max_bytes: input.outputPolicy.maxBytes,
         },
-        program_environment: {
-          tool_contracts: input.contracts,
-          globals: "state, fs, path, command, tools",
-          facades: {
+        environment: {
+          tools: input.contracts,
+          globals: {
+            getState: "getState(result_id) -> immutable checkpoint value",
             fs: [
               'readFile(path, "utf8") -> string',
               "writeFile(path, text) -> void",
@@ -194,7 +165,7 @@ export async function runProcWorker(
       if (turn.toolCalls.length === 0) {
         transaction.messages.push({
           role: "user",
-          content: "Continue with atom, complete, or cannot_execute.",
+          content: "Call execute or cannot_execute now.",
         });
         updateProcTransaction(transaction);
         continue;
@@ -204,6 +175,7 @@ export async function runProcWorker(
         const raw = parseArgs(call.arguments);
         const protocolId = toolCodec.encode(mintToolCallId());
         const procId = toolCodec.encode(transaction.parentToolCallId);
+        const effects: ExecutionEffect[] = [];
         opts.emit({
           type: "tool.call",
           toolCallId: protocolId,
@@ -212,20 +184,23 @@ export async function runProcWorker(
           parentToolCallId: procId,
         });
         try {
-          if (call.name === ATOM) {
-            const args = AtomArgs.parse(raw);
-            const policy = policyOf(args.output);
-            transaction.usage.atoms++;
+          if (call.name === EXECUTE) {
+            const args = ExecuteArgs.parse(raw);
+            transaction.usage.executions++;
             const result = await runProgram({
               source: args.javascript,
               capabilities: opts.capabilities,
               facadeCapabilities: opts.facadeCapabilities,
-              state: getProcState(transaction.id, transaction.conversationId),
+              state: createProcStateReader(
+                transaction.id,
+                transaction.conversationId,
+              ),
               execute: (name, callArgs, signal) => {
                 const tool = executableCapabilities.get(name);
                 const normalized = tool
                   ? normalizeProgramToolArgs(tool, callArgs)
                   : callArgs;
+                const effect = executionEffect(name, normalized, tool);
                 return executeDelegatedTool(
                   {
                     parentToolCallId: toolCodec.parse(protocolId),
@@ -236,32 +211,92 @@ export async function runProcWorker(
                   },
                   name,
                   normalized,
-                );
+                ).then((result) => {
+                  effects.push({ tool: name, effect, ok: result.ok });
+                  return result;
+                });
               },
               signal: opts.signal,
             });
             transaction.usage.operations += result.operations;
+            if (args.purpose === "final") {
+              const projection = projectProcValue(
+                result.value,
+                transaction.outputPolicy,
+              );
+              const stored = transaction.outputPolicy.store
+                ? createProcResult({
+                    transactionId: transaction.id,
+                    conversationId: transaction.conversationId,
+                    value: result.value,
+                  })
+                : null;
+              transaction.status = "completed";
+              transaction.resultId = stored?.id ?? null;
+              if (!transaction.outputPolicy.store) {
+                deleteProcResults(transaction.id, transaction.conversationId);
+              }
+              updateProcTransaction(transaction);
+              emitProtocolResult(
+                opts.emit,
+                protocolId,
+                procId,
+                true,
+                JSON.stringify({
+                  purpose: "final",
+                  status: "completed",
+                  bytes:
+                    stored?.bytes ??
+                    Buffer.byteLength(JSON.stringify(result.value)),
+                  operations: result.operations,
+                }),
+              );
+              emitCompleted(opts, transaction);
+              return {
+                status: "completed",
+                summary: transaction.summary,
+                transactionId: transaction.id,
+                ...(stored ? { resultId: stored.id } : {}),
+                stored: transaction.outputPolicy.store,
+                bytes:
+                  stored?.bytes ??
+                  Buffer.byteLength(JSON.stringify(result.value)),
+                ...(projection.projection !== undefined
+                  ? { projection: projection.projection }
+                  : {}),
+                projectionBytes: projection.projectionBytes,
+                truncated: projection.truncated,
+                usage: transaction.usage,
+              };
+            }
+            const policy: ProcOutputPolicy =
+              args.purpose === "inspect"
+                ? {
+                    mode: "exact",
+                    maxBytes: INSPECTION_BYTES,
+                    store: true,
+                  }
+                : {
+                    mode: "shape",
+                    maxBytes: CHECKPOINT_SHAPE_BYTES,
+                    store: true,
+                  };
             const projection = projectProcValue(result.value, policy);
-            const stored = policy.store
-              ? createProcResult({
-                  transactionId: transaction.id,
-                  conversationId: transaction.conversationId,
-                  value: result.value,
-                })
-              : null;
+            const stored = createProcResult({
+              transactionId: transaction.id,
+              conversationId: transaction.conversationId,
+              value: result.value,
+            });
             const feedback = {
-              ...(stored ? { result_id: stored.id } : {}),
-              stored: policy.store,
-              bytes:
-                stored?.bytes ??
-                Buffer.byteLength(JSON.stringify(result.value)),
+              purpose: args.purpose,
+              result_id: stored.id,
+              bytes: stored.bytes,
               ...(projection.projection !== undefined
                 ? { projection: projection.projection }
                 : {}),
               projection_bytes: projection.projectionBytes,
               truncated: projection.truncated,
               operations: result.operations,
-              final_output: transaction.outputPolicy,
             };
             const feedbackText = JSON.stringify(feedback);
             transaction.messages.push({
@@ -278,63 +313,11 @@ export async function runProcWorker(
             );
             continue;
           }
-          if (call.name === COMPLETE) {
-            const args = CompleteArgs.parse(raw);
-            const stored = getProcResult({
-              id: args.result_id,
-              transactionId: transaction.id,
-              conversationId: transaction.conversationId,
-            });
-            if (!stored)
-              throw new Error("complete referenced an unknown proc result.");
-            const projection = projectProcValue(
-              stored.value,
-              transaction.outputPolicy,
-            );
-            transaction.status = "completed";
-            transaction.resultId = transaction.outputPolicy.store
-              ? args.result_id
-              : null;
-            if (!transaction.outputPolicy.store) {
-              deleteProcResult({
-                id: args.result_id,
-                transactionId: transaction.id,
-                conversationId: transaction.conversationId,
-              });
-            }
-            updateProcTransaction(transaction);
-            emitProtocolResult(
-              opts.emit,
-              protocolId,
-              procId,
-              true,
-              JSON.stringify({
-                result_id: args.result_id,
-                status: "completed",
-              }),
-            );
-            emitCompleted(opts, transaction);
-            return {
-              status: "completed",
-              summary: transaction.summary,
-              transactionId: transaction.id,
-              ...(transaction.outputPolicy.store
-                ? { resultId: args.result_id }
-                : {}),
-              stored: transaction.outputPolicy.store,
-              bytes: stored.bytes,
-              ...(projection.projection !== undefined
-                ? { projection: projection.projection }
-                : {}),
-              projectionBytes: projection.projectionBytes,
-              truncated: projection.truncated,
-              usage: transaction.usage,
-            };
-          }
           if (call.name === CANNOT_EXECUTE) {
             const args = CannotExecuteArgs.parse(raw);
             transaction.status = "cannot_execute";
             transaction.error = args.reason;
+            deleteProcResults(transaction.id, transaction.conversationId);
             updateProcTransaction(transaction);
             emitProtocolResult(
               opts.emit,
@@ -354,11 +337,15 @@ export async function runProcWorker(
           throw new Error(`Unknown proc worker tool: ${call.name}`);
         } catch (error) {
           if (opts.signal.aborted) throw error;
+          const retrySafe = effects.every((effect) => effect.effect === "read");
           const feedback = {
             ok: false,
             error: error instanceof Error ? error.message : String(error),
-            instruction:
-              "Repair the equivalent atom or call cannot_execute if the supplied procedure cannot be realized.",
+            effects,
+            retry_safe: retrySafe,
+            instruction: retrySafe
+              ? "Fix and retry, or checkpoint before the failing step. Use cannot_execute only if the procedure itself cannot be realized."
+              : "Do not replay: effects may have occurred. Check current repository state and execute only unfinished work; otherwise call cannot_execute.",
           };
           transaction.messages.push({
             role: "tool",
@@ -380,6 +367,7 @@ export async function runProcWorker(
   } catch (error) {
     transaction.status = "failed";
     transaction.error = error instanceof Error ? error.message : String(error);
+    deleteProcResults(transaction.id, transaction.conversationId);
     updateProcTransaction(transaction);
     opts.emit({
       type: "subagent.lifecycle",
@@ -396,51 +384,54 @@ export async function runProcWorker(
   }
 }
 
+type ExecutionEffectKind = "read" | "mutation" | "opaque";
+
+interface ExecutionEffect {
+  tool: string;
+  effect: ExecutionEffectKind;
+  ok: boolean;
+}
+
+function executionEffect(
+  name: string,
+  args: unknown,
+  tool: PortalTool | undefined,
+): ExecutionEffectKind {
+  if (name === "__ptc_command_run") return "opaque";
+  try {
+    if (tool?.derivePermissionRequest?.(args)?.permissionKind === "read") {
+      return "read";
+    }
+  } catch {
+    // Invalid guessed arguments are classified by static metadata below.
+  }
+  return tool?.program?.operationCategory === "read" ? "read" : "mutation";
+}
+
 function workerToolSpecs(): ExtractorToolSpec[] {
   return [
     {
       type: "function",
       function: {
-        name: ATOM,
+        name: EXECUTE,
         description:
-          "Execute one JavaScript dataflow atom against capabilities and immutable state.",
+          "Execute part or all of the procedure as one JavaScript program.",
         parameters: {
           type: "object",
           properties: {
             summary: {
               type: "string",
-              description: "Brief user-visible explanation of this atom.",
+              description: "Short label shown to the user.",
             },
             javascript: { type: "string" },
-            output: {
-              type: "object",
-              properties: {
-                mode: { type: "string", enum: ["none", "shape", "exact"] },
-                max_bytes: {
-                  type: "integer",
-                  minimum: MIN_PROJECTION_BYTES,
-                  maximum: MAX_PROJECTION_BYTES,
-                },
-                store: { type: "boolean" },
-              },
-              required: ["mode", "store"],
-              additionalProperties: false,
+            purpose: {
+              type: "string",
+              enum: ["checkpoint", "inspect", "final"],
+              description:
+                "final: return the result and end proc; checkpoint: store an intermediate value and return only its shape; inspect: store a value and return up to 12 KiB for semantic review.",
             },
           },
-          required: ["summary", "javascript", "output"],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: COMPLETE,
-        description: "Complete with the id of the stored exact final value.",
-        parameters: {
-          type: "object",
-          properties: { result_id: { type: "string" } },
-          required: ["result_id"],
+          required: ["summary", "javascript", "purpose"],
           additionalProperties: false,
         },
       },
@@ -450,24 +441,21 @@ function workerToolSpecs(): ExtractorToolSpec[] {
       function: {
         name: CANNOT_EXECUTE,
         description:
-          "Stop when the supplied procedure is unsupported or needs a missing decision.",
+          "Stop because the procedure is unsupported or lacks a consequential instruction.",
         parameters: {
           type: "object",
-          properties: { reason: { type: "string" } },
+          properties: {
+            reason: {
+              type: "string",
+              description: "Smallest missing or unsupported instruction.",
+            },
+          },
           required: ["reason"],
           additionalProperties: false,
         },
       },
     },
   ];
-}
-
-function policyOf(value: z.infer<typeof OutputPolicy>): ProcOutputPolicy {
-  return {
-    mode: value.mode,
-    ...(value.max_bytes !== undefined ? { maxBytes: value.max_bytes } : {}),
-    store: value.store,
-  };
 }
 
 function parseArgs(raw: string): unknown {

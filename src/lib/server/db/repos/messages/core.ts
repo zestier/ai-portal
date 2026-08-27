@@ -58,14 +58,15 @@ function trimmedColumn(col: string, alias: string, keepWhen = ""): string {
   );
 }
 
-// A `task` or `proc` call's arguments ARE the subagent card's identity: its headline,
+// A `task`, `proc`, or `execute` call's arguments ARE the activity card's identity: its headline,
 // agent_type / model / background pills and the "Retry extraction" affordance
 // all render on the COLLAPSED card. Trimming them would leave a reloaded
 // conversation full of unlabelled, un-retryable "subagent" rows, so they stay
 // inline regardless of size. (`task` calls are a small minority, so this costs
 // little.) Its result is only rendered once the card is opened, and is trimmed
 // like any other.
-const ALWAYS_INLINE_ARGS_TOOLS = "tool NOT IN ('task', 'proc', 'atom') AND ";
+const ALWAYS_INLINE_ARGS_TOOLS =
+  "tool NOT IN ('task', 'proc', 'execute', 'atom') AND ";
 
 // A `kind = 'content'` reasoning block is a sub-agent's spoken answer, rendered
 // as markdown in the card's activity timeline with no expand step. Only real

@@ -18,7 +18,7 @@ export interface ProcUsage {
   cacheWrite: number;
   cost: number;
   turns: number;
-  atoms: number;
+  executions: number;
   operations: number;
 }
 
@@ -47,7 +47,7 @@ const EMPTY_USAGE: ProcUsage = {
   cacheWrite: 0,
   cost: 0,
   turns: 0,
-  atoms: 0,
+  executions: 0,
   operations: 0,
 };
 
@@ -145,7 +145,7 @@ export function createProcResult(input: {
 }): { id: string; bytes: number } {
   const valueJson = JSON.stringify(input.value);
   if (valueJson === undefined)
-    throw new Error("Proc result must be JSON-compatible.");
+    throw new Error("Checkpoint must contain a JSON value.");
   const bytes = Buffer.byteLength(valueJson);
   const id = `RES_${ulid()}`;
   getDb()
@@ -180,21 +180,21 @@ export function getProcResult(input: {
   return row ? { value: JSON.parse(row.value_json), bytes: row.bytes } : null;
 }
 
-export function getProcState(
+export function createProcStateReader(
   transactionId: string,
   conversationId: number,
-): Map<string, unknown> {
-  const rows = getDb()
-    .prepare(
-      `SELECT id, value_json FROM proc_results
-        WHERE transaction_id = ? AND conversation_id = ?
-        ORDER BY created_at, id`,
-    )
-    .all(transactionId, conversationId) as Array<{
-    id: string;
-    value_json: string;
-  }>;
-  return new Map(rows.map((row) => [row.id, JSON.parse(row.value_json)]));
+): { get(id: string): unknown | undefined } {
+  const query = getDb().prepare(
+    `SELECT value_json FROM proc_results
+      WHERE id = ? AND transaction_id = ? AND conversation_id = ?`,
+  );
+  return {
+    get(id: string): unknown | undefined {
+      const row = query.get(id, transactionId, conversationId) as
+        { value_json: string } | undefined;
+      return row ? JSON.parse(row.value_json) : undefined;
+    },
+  };
 }
 
 export function deleteProcResult(input: {
@@ -208,6 +208,18 @@ export function deleteProcResult(input: {
         WHERE id = ? AND transaction_id = ? AND conversation_id = ?`,
     )
     .run(input.id, input.transactionId, input.conversationId);
+}
+
+export function deleteProcResults(
+  transactionId: string,
+  conversationId: number,
+): void {
+  getDb()
+    .prepare(
+      `DELETE FROM proc_results
+        WHERE transaction_id = ? AND conversation_id = ?`,
+    )
+    .run(transactionId, conversationId);
 }
 
 interface ProcTransactionRow {
@@ -229,6 +241,9 @@ interface ProcTransactionRow {
 }
 
 function transactionOf(row: ProcTransactionRow): ProcTransaction {
+  const storedUsage = JSON.parse(row.usage_json) as Partial<ProcUsage> & {
+    atoms?: number;
+  };
   return {
     id: row.id,
     conversationId: row.conversation_id,
@@ -244,7 +259,8 @@ function transactionOf(row: ProcTransactionRow): ProcTransaction {
     error: row.error,
     usage: {
       ...EMPTY_USAGE,
-      ...(JSON.parse(row.usage_json) as Partial<ProcUsage>),
+      ...storedUsage,
+      executions: storedUsage.executions ?? storedUsage.atoms ?? 0,
     },
     createdAt: row.created_at,
     updatedAt: row.updated_at,

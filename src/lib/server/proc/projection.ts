@@ -27,11 +27,13 @@ export function projectProcValue(
   }
   const encoded = JSON.stringify(value);
   if (encoded === undefined)
-    throw new Error("Proc result must be JSON-compatible.");
+    throw new Error(
+      "Execution returned a non-JSON value. Return strings, finite numbers, booleans, null, arrays, or objects.",
+    );
   const bytes = Buffer.byteLength(encoded);
   if (bytes > policy.maxBytes) {
     throw new Error(
-      `Exact proc projection was ${bytes} bytes; declared maximum is ${policy.maxBytes} bytes. Return a smaller value or request shape.`,
+      `Execution returned ${bytes} bytes; the limit is ${policy.maxBytes}. Return a smaller value.`,
     );
   }
   return { projection: value, projectionBytes: bytes, truncated: false };

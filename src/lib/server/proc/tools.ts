@@ -45,15 +45,14 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
     {
       name: "proc",
       description:
-        "Tolerantly realize one supplied repository procedure while keeping intermediate data out of model context.",
-      promptSnippet:
-        "Execute a frontier-authored procedure with stateful program atoms.",
+        "Execute a specified repository procedure while keeping routine intermediate data out of context.",
+      promptSnippet: "Execute a bounded repository procedure.",
       promptGuidelines: [
-        "Proc is not a subagent. You own diagnosis, procedure, relevance criteria, and consequential decisions; proc only realizes the procedure tolerantly.",
-        "Summary is a short user-visible label; output.contract is the fuller bounded return contract the worker shapes the final value to. Supply observable steps, filtering/reduction rules, stopping criteria, and an output that can fit max_bytes.",
-        "State the bounded answer proc should produce and why before naming any path, then name the searches, the read ranges, the fields and excerpts to keep, what to discard, and when to stop. 'Return this file' is a placeholder for an undefined answer; derive a real one, e.g. 'the API contract surface of src/index.ts' or 'which handlers call X, with their line ranges'. If you only want raw content back, you do not need proc — you already hold the context.",
-        "Use proc to reduce a larger corpus into selected evidence, not to return multiple full files or other raw corpora verbatim. Prefer paths, line ranges, purposes, and bounded excerpts.",
-        'Good: summary "Map the API contract"; output.contract "Function names, exported types, and signatures exposed by src/index.ts"; procedure "read the file, collect public exports, omit private helpers". Bad: "read these six files fully and return raw contents verbatim", or a contract of "src/routes.ts" with no bounded answer.',
+        "Provide ordered, observable steps with selection, filtering, and stopping criteria. Define a derived result that fits output.max_bytes.",
+        "Request the smallest result that preserves your ability to decide or edit correctly, not context that is merely convenient. Do not sacrifice consequential detail or verifiability.",
+        "Choose an appropriate representation for the task. Consider summaries, structured facts, provenance, bounded excerpts, and exact source.",
+        "Describe the result before where to find it. A path alone is not a result contract; request concrete evidence such as exported signatures or callers with ranges.",
+        'Example: procedure "read src/index.ts; collect public exports; omit private helpers"; output.contract "exported names, types, and signatures". Do not request multiple full files.',
       ],
       argsSchema: ProcArgs,
       parameters: {
@@ -61,13 +60,12 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         properties: {
           summary: {
             type: "string",
-            description:
-              "Short user-visible label for the proc card, distinct from the fuller return contract.",
+            description: "Short label shown to the user.",
           },
           procedure: {
             type: "string",
             description:
-              "Ordered pseudocode, selection rules, and stopping criteria.",
+              "Ordered steps, selection criteria, and stopping rule.",
           },
           output: {
             type: "object",
@@ -75,12 +73,13 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
               contract: {
                 type: "string",
                 description:
-                  "Concrete bounded return contract (shape and bounds) the worker shapes the final value to; not an open-ended objective.",
+                  "What the result must contain: format, fields, selection criteria, and bounds.",
               },
               max_bytes: {
                 type: "integer",
                 minimum: MIN_RESULT_BYTES,
                 maximum: MAX_RESULT_BYTES,
+                description: "Hard UTF-8 byte limit for the final result.",
               },
             },
             required: ["contract", "max_bytes"],
@@ -135,30 +134,14 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           signal: ctx.signal,
         });
         if (outcome.status === "completed") {
-          const frontierResult = {
-            status: outcome.status,
-            bytes: outcome.bytes,
-            ...(outcome.projection !== undefined
-              ? { projection: outcome.projection }
-              : {}),
-            projection_bytes: outcome.projectionBytes,
-            truncated: outcome.truncated,
-          };
-          return ok(
-            {
-              ...outcome,
-              content: JSON.stringify(frontierResult, null, 2),
-            },
-            outcome.summary,
-            {
-              views: [
-                {
-                  type: "text",
-                  text: JSON.stringify(frontierResult),
-                },
-              ],
-            },
-          );
+          return ok(outcome, outcome.summary, {
+            views: [
+              {
+                type: "text",
+                text: JSON.stringify(outcome.projection),
+              },
+            ],
+          });
         }
         return err(outcome.summary, {
           code:
@@ -167,6 +150,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
               : "proc_failed",
           summary: outcome.summary,
           details: outcome,
+          detailsUiOnly: true,
         });
       },
     },
@@ -192,5 +176,5 @@ export function validateProcRequest(input: {
   if (paths.size < 2 && !/\b(?:all|multiple|every)\s+files?\b/i.test(text)) {
     return null;
   }
-  return "Proc output must be a bounded derived result, not multiple full files or raw corpus content. Request paths, line ranges, purposes, and only the excerpts needed by the frontier, with explicit filtering rules that fit output.max_bytes.";
+  return "Proc must return a bounded derived result, not multiple full files. Request selected paths, ranges, purposes, or limited excerpts that fit output.max_bytes.";
 }
