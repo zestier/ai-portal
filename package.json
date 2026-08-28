@@ -13,6 +13,7 @@
     "dev": "vite dev",
     "dev:isolated": "node scripts/dev-isolated.mjs",
     "build": "wireit",
+    "sync": "wireit",
     "preview": "vite preview",
     "start": "node build",
     "serve": "node scripts/serve.mjs",
@@ -82,6 +83,18 @@
     "pnpm": ">=11"
   },
   "wireit": {
+    "sync": {
+      "command": "svelte-kit sync",
+      "files": [
+        "svelte.config.js",
+        "vite.config.ts",
+        "tsconfig.json",
+        "src/"
+      ],
+      "output": [
+        ".svelte-kit/"
+      ]
+    },
     "lint": {
       "command": "eslint . && prettier --check .",
       "files": [
@@ -101,6 +114,9 @@
     },
     "test": {
       "command": "vitest run",
+      "dependencies": [
+        "check"
+      ],
       "files": [
         "vite.config.ts",
         "tsconfig.json",
@@ -111,6 +127,9 @@
     },
     "build": {
       "command": "vite build --emptyOutDir",
+      "dependencies": [
+        "sync"
+      ],
       "files": [
         "svelte.config.js",
         "vite.config.ts",
@@ -123,7 +142,7 @@
       ]
     },
     "check": {
-      "command": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+      "command": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
       "dependencies": [
         "build"
       ],

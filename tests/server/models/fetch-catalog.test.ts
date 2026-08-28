@@ -222,35 +222,28 @@ describe("fetchOpenRouterProviders", () => {
     delete process.env.ENCRYPTION_KEY;
   });
 
-  it("derives deduped, sorted provider names from endpoints, dropping empties", async () => {
+  it("derives deduped, sorted provider names from a model's endpoints, dropping empties", async () => {
     const baseUrl = await startStub((req, res) => {
       expect(req.headers.authorization).toBe("Bearer sk-test-key");
+      expect(req.url).toContain("/models/test-model/endpoints");
       json(res, 200, {
-        data: [
-          {
-            id: "anthropic/claude-sonnet-4.5",
-            endpoints: [
-              { provider_name: "Anthropic" },
-              { provider_name: "   " },
-            ],
-          },
-          {
-            id: "openai/gpt-4o",
-            endpoints: [
-              { provider_name: "OpenAI" },
-              { provider_name: "Azure" },
-            ],
-          },
-          {
-            id: "anthropic/claude-haiku-4.5",
-            endpoints: [{ provider_name: "Anthropic" }],
-          },
-          { id: "mistralai/mistral-large", endpoints: [] },
-        ],
+        data: {
+          id: "test-model",
+          endpoints: [
+            { provider_name: "Anthropic" },
+            { provider_name: "   " },
+            { provider_name: "Azure" },
+            { provider_name: "Anthropic" },
+          ],
+        },
       });
     });
-    const providers = await fetchOpenRouterProviders(baseUrl, "sk-test-key");
-    expect(providers).toEqual(["Anthropic", "Azure", "OpenAI"]);
+    const providers = await fetchOpenRouterProviders(
+      baseUrl,
+      "sk-test-key",
+      "test-model",
+    );
+    expect(providers).toEqual(["Anthropic", "Azure"]);
   });
 
   it("rejects with a clear error when no API key is stored", async () => {
@@ -270,6 +263,7 @@ describe("fetchOpenRouterProviders", () => {
       fetchOpenRouterProviders(
         provider.baseUrl ?? "",
         providersRepo.getApiKey(provider.id) ?? "",
+        "test-model",
       ),
     ).rejects.toThrow(/No API key stored/);
   });

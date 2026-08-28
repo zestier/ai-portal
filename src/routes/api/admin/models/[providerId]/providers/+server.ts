@@ -1,5 +1,5 @@
 // GET /api/admin/models/[providerId]/providers — provider names for the
-// OpenRouter routing picker, derived on demand from the provider's /models
+// OpenRouter routing picker, derived on demand from a model's /endpoints
 // endpoint (the distinct endpoints[].provider_name values).
 
 import { error, json } from "@sveltejs/kit";
@@ -12,7 +12,7 @@ import {
 } from "$lib/server/models/fetch-catalog";
 import * as providersRepo from "$lib/server/db/repos/providers";
 
-export const GET: RequestHandler = async ({ locals, params }) => {
+export const GET: RequestHandler = async ({ locals, params, url }) => {
   const cfg = loadConfig();
   if (!canRedeployUser(locals.user, cfg)) {
     throw error(403, "Model configuration requires admin access.");
@@ -21,8 +21,10 @@ export const GET: RequestHandler = async ({ locals, params }) => {
   if (!provider) throw error(404, "Provider not found.");
   if (provider.id !== "openrouter") return json({ providers: [] });
   if (!provider.hasKey) throw error(400, "Save an API key first.");
+  const modelId = url.searchParams.get("model");
+  if (!modelId) throw error(400, "model query param is required.");
   const baseUrl = provider.baseUrl ?? DEFAULT_BASE_URLS[provider.id];
   const key = providersRepo.getApiKey(provider.id)!;
-  const providers = await fetchOpenRouterProviders(baseUrl, key);
+  const providers = await fetchOpenRouterProviders(baseUrl, key, modelId);
   return json({ providers });
 };

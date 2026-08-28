@@ -154,19 +154,21 @@ async function fetchOpenRouter(
 export async function fetchOpenRouterProviders(
   baseUrl: string,
   key: string,
+  modelId: string,
 ): Promise<string[]> {
   if (!key) {
     throw new Error("No API key stored — save an API key first.");
   }
-  const json = (await getJson(endpoint(baseUrl, "models"), {
-    authorization: `Bearer ${key}`,
-  })) as { data?: { endpoints?: { provider_name?: string }[] }[] };
+  const json = (await getJson(
+    endpoint(baseUrl, `models/${modelId}/endpoints`),
+    {
+      authorization: `Bearer ${key}`,
+    },
+  )) as { data?: { endpoints?: { provider_name?: string }[] } };
   const seen = new Set<string>();
-  for (const m of json.data ?? []) {
-    for (const ep of m.endpoints ?? []) {
-      const name = ep.provider_name?.trim();
-      if (name) seen.add(name);
-    }
+  for (const ep of json.data?.endpoints ?? []) {
+    const name = ep.provider_name?.trim();
+    if (name) seen.add(name);
   }
   return [...seen].sort();
 }
