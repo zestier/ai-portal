@@ -44,6 +44,7 @@ import type { PortalTool } from "../tools/types";
 import { assemblePortalTools } from "../tools/assemble";
 import { portalToolToPiTool } from "./tools";
 import { buildProcTools } from "../proc/tools";
+import { buildProcTicketTools } from "../proc/ticket-tools";
 import { buildProgramFacadeTools } from "../ptc/facades";
 import { createPiPermissionResolver } from "./permission-gate";
 import { piContextUsageToEvent } from "./context-usage";
@@ -328,6 +329,17 @@ export async function createPiProviderSession(
     opts.agentArchitecture === "semantic"
       ? buildProgramFacadeTools(opts.cwd, opts.disabledToolGroups)
       : new Map<string, PortalTool>();
+  const procTicketTools =
+    opts.agentArchitecture === "semantic" &&
+    !opts.disabledToolGroups?.includes("tickets")
+      ? buildProcTicketTools({
+          userId: opts.userId,
+          workspaceKey: opts.workspaceKey ?? "",
+          conversationId: opts.conversationId,
+        })
+      : [];
+  const procCapabilities = new Map(capabilities.byName);
+  for (const tool of procTicketTools) procCapabilities.set(tool.name, tool);
   const exposedTools =
     opts.agentArchitecture === "semantic"
       ? [
@@ -337,7 +349,7 @@ export async function createPiProviderSession(
             ...(opts.semanticWorkerModel !== undefined
               ? { workerModel: opts.semanticWorkerModel }
               : {}),
-            capabilities: capabilities.byName,
+            capabilities: procCapabilities,
             facadeCapabilities: new Map([
               ...["read", "write", "create_directory", "move"]
                 .map((name) => capabilities.byName.get(name))
@@ -357,6 +369,7 @@ export async function createPiProviderSession(
   for (const [name, tool] of programFacadeTools) {
     portalToolsByName.set(name, tool);
   }
+  for (const tool of procTicketTools) portalToolsByName.set(tool.name, tool);
   for (const tool of exposedTools) portalToolsByName.set(tool.name, tool);
   const customTools = exposedTools.map((tool) =>
     portalToolToPiTool(tool, (sdkId) =>

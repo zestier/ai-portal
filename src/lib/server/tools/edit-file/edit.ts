@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { structuredPatch } from "diff";
 import { z } from "zod";
 import { isGitRepo } from "../../git";
-import { err, ok, type PortalTool, type ToolResult } from "../types";
+import { err, ok, type PortalTool } from "../types";
 import { resolveAbsoluteTarget } from "../filesystem";
 import {
   createTreeResolver,
@@ -22,12 +22,6 @@ import {
   suggestionHint,
   type FileEditOutput,
 } from "./common";
-import {
-  parseTicketPath,
-  resolveTicketPath,
-  applyTicketFileEdit,
-  ticketFileContent,
-} from "../ticket-file";
 
 // Portal-native schema for the `edit` tool. The SDK's built-in tools are
 // disabled (`noTools: 'builtin'`), so the field names are ours: `old_string`
@@ -155,78 +149,6 @@ async function performEdit(
   }
 }
 
-// Handle editing a ticket virtual file. Applies the edit to the
-// serialized ticket content, then writes the patch back to the DB.
-async function handleTicketEdit(
-  resolution: Exclude<ReturnType<typeof parseTicketPath>, null>,
-  args: z.infer<typeof EditArgs>,
-  userId: number | undefined,
-  workspaceKey: string | undefined,
-): Promise<ToolResult> {
-  if (!userId || !workspaceKey) {
-    return err("ticket: paths require a session context (userId/workspaceKey)");
-  }
-  const { ticket, statusMismatch } = resolveTicketPath(resolution, userId);
-  if (!ticket) {
-    return err(`Ticket not found: ${resolution.ticketId}`);
-  }
-  if (statusMismatch) {
-    return err(
-      `Ticket ${ticket.id} has status "${ticket.status}", not "open". Use ticket:${ticket.id} to edit it regardless of status.`,
-    );
-  }
-  const currentContent = ticketFileContent(ticket);
-  const applied = applyEditToContent(
-    currentContent,
-    args.old_string,
-    args.new_string,
-    args.replace_all,
-  );
-  if (!applied.ok) {
-    if (applied.reason === "not_found") {
-      const suggestion = findClosestMatch(currentContent, args.old_string);
-      if (suggestion === null) {
-        return err(editNotFoundError(args.old_string));
-      }
-      return err(
-        editNotFoundError(args.old_string, suggestionHint(suggestion)),
-        {
-          code: "edit_failed",
-          details: { suggestion },
-          detailsUiOnly: true,
-        },
-      );
-    }
-    return err("new_string must be different from old_string");
-  }
-  const editResult = applyTicketFileEdit(applied.content, ticket, userId);
-  if (!editResult.ok) {
-    return err(editResult.error);
-  }
-  const patch = editResult.patch;
-  const changedFields = Object.keys(patch);
-  const patchSummary = changedFields
-    .map(
-      (f) => `${f}: ${JSON.stringify((patch as Record<string, unknown>)[f])}`,
-    )
-    .join(", ");
-  return ok(
-    {
-      type: "text",
-      file: {
-        filePath: `ticket:${ticket.id}`,
-        content: ticketFileContent(editResult.ticket),
-      },
-    },
-    `Updated ticket ${ticket.id} (${patchSummary}). (file state is current in your context — no need to Read it back)`,
-    {
-      views: [
-        { type: "text", text: `Updated ticket ${ticket.id} (${patchSummary})` },
-      ],
-    },
-  );
-}
-
 export function buildEditTool(
   workspaceRoot: string,
   ctx?: WorktreeToolContext,
@@ -268,7 +190,6 @@ export function buildEditTool(
     derivePermissionRequest(args) {
       const parsed = EditArgs.safeParse(args);
       if (!parsed.success) return null;
-      if (parseTicketPath(parsed.data.file_path)) return null;
       const root = parsed.data.worktree
         ? resolveWorktreeDir(parsed.data.worktree, ctx)
         : workspaceRoot;
@@ -277,15 +198,6 @@ export function buildEditTool(
     },
     async handler(args) {
       const parsed = EditArgs.parse(args);
-      const ticketPath = parseTicketPath(parsed.file_path);
-      if (ticketPath) {
-        return handleTicketEdit(
-          ticketPath,
-          parsed,
-          ctx?.userId,
-          ctx?.workspaceKey,
-        );
-      }
       const tree = treeFor(parsed.worktree);
       if (tree.error) return tree.error;
       const target = resolveWriteTarget(tree.cwd, parsed.file_path);
