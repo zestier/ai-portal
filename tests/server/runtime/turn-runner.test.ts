@@ -26,9 +26,10 @@ async function freshImports() {
   await setupLocalEnv();
   const users = await import("../../../src/lib/server/db/repos/users");
   const convs = await import("../../../src/lib/server/db/repos/conversations");
+  const messages = await import("../../../src/lib/server/db/repos/messages");
   const turnRunner =
     await import("../../../src/lib/server/runtime/turn-runner");
-  return { users, convs, turnRunner };
+  return { users, convs, messages, turnRunner };
 }
 
 // The memory extractor resolves its model selection against the shared pi
@@ -516,6 +517,73 @@ describe("turn-runner", () => {
     expect(replayed.map((x) => x.id)).toEqual(
       all.slice(secondDeltaId + 1).map((x) => x.id),
     );
+  });
+
+  it("bounds synchronous persistence writes during a token burst", async () => {
+    const { users, convs, messages, turnRunner } = await freshImports();
+    const user = users.ensureLocalUser();
+    const wd = makeTmpDir("portal-wd-");
+    const conv = convs.create(user.id, {
+      title: "Streaming persistence",
+      workdir: wd,
+      model: "gpt-4",
+    });
+    const updateContentOnly = vi.spyOn(messages, "updateContentOnly");
+    const upsertReasoningBlock = vi.spyOn(messages, "upsertReasoningBlock");
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const text = "x".repeat(500);
+    const reasoning = "r".repeat(500);
+
+    acquireMock.mockResolvedValue(
+      makeFakeSession([
+        { type: "message.start", messageId: "M1", role: "assistant" },
+        ...[...text].map((token): PortalEvent => ({
+          type: "message.delta",
+          messageId: "M1",
+          text: token,
+        })),
+        ...[...reasoning].map((token): PortalEvent => ({
+          type: "message.reasoning",
+          messageId: "M1",
+          segmentId: "reasoning-1",
+          text: token,
+        })),
+        {
+          type: "message.reasoning.end",
+          messageId: "M1",
+          segmentId: "reasoning-1",
+          durationMs: 500,
+        },
+        { type: "message.end", messageId: "M1" },
+        { type: "done" },
+      ]),
+    );
+
+    const turn = await turnRunner.startTurn({
+      bridge: {
+        conversationId: convCodec.parse(conv.id),
+        userId: user.id,
+        workingDirectory: wd,
+        model: "gpt-4",
+        policy: "prompt",
+      },
+      prompt: "hi",
+      conversationId: convCodec.parse(conv.id),
+    });
+    let assistantMessageId: string | null = null;
+    for await (const { event } of turn.subscribe()) {
+      if (event.type === "message.start") assistantMessageId = event.messageId;
+      if (event.type === "done") break;
+    }
+
+    expect(updateContentOnly).toHaveBeenCalledTimes(1);
+    expect(upsertReasoningBlock.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(assistantMessageId).not.toBeNull();
+    const persisted = messages.getMessage(conv.id, assistantMessageId!);
+    expect(persisted?.content).toBe(text);
+    expect(persisted?.reasoningBlocks?.[0]?.text).toBe(reasoning);
+    expect(persisted?.reasoningBlocks?.[0]?.durationMs).toBe(500);
+    now.mockRestore();
   });
 
   it("tags the terminal done with status complete on a clean finish", async () => {

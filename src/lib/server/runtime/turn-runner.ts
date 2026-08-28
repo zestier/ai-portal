@@ -60,6 +60,12 @@ const EMPTY_RESPONSE_MESSAGE =
 const INCOMPLETE_RESPONSE_MESSAGE =
   "The model stopped after tool work without replying. Retry to try again.";
 
+// SQLite is synchronous. Persisting every provider token blocks the Node event
+// loop and becomes especially visible in semantic mode, where nested workers
+// produce several concurrent text/reasoning streams. SSE remains token-live;
+// only the durable snapshots are sampled, then flushed exactly at boundaries.
+const STREAM_PERSIST_INTERVAL_MS = 100;
+
 // Nudge used by the general tool-call-without-answer guard (distinct from
 // MEMORY_CONTINUATION_NUDGE, which targets memory-only recall turns).
 export const CONTINUATION_NUDGE =
@@ -233,6 +239,8 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
   const pendingReasoning = new Map<string, PendingReasoning>();
   const persistedFileEditKeys = new Set<string>();
   let nextReasoningIndex = 0;
+  let lastContentPersistedAt = 0;
+  const reasoningPersistedAt = new Map<number, number>();
 
   function ensurePersistedAssistant(): string {
     if (persistedAssistantId) return persistedAssistantId;
@@ -243,6 +251,25 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
     });
     persistedAssistantId = persisted.id;
     return persisted.id;
+  }
+
+  function persistContentSnapshot(messageId: string): void {
+    const now = Date.now();
+    if (now - lastContentPersistedAt < STREAM_PERSIST_INTERVAL_MS) return;
+    messages.updateContentOnly(msgCodec.parse(messageId), assistantBuf);
+    lastContentPersistedAt = now;
+  }
+
+  function persistReasoningSnapshot(
+    messageId: string,
+    segment: PendingReasoning,
+    force = false,
+  ): void {
+    const now = Date.now();
+    const lastPersistedAt = reasoningPersistedAt.get(segment.id) ?? 0;
+    if (!force && now - lastPersistedAt < STREAM_PERSIST_INTERVAL_MS) return;
+    messages.upsertReasoningBlock(msgCodec.parse(messageId), segment);
+    reasoningPersistedAt.set(segment.id, now);
   }
 
   function dispatch(ev: PortalEvent) {
@@ -285,11 +312,11 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
           pendingReasoning.set(ev.segmentId, seg);
         }
         seg.text += ev.text;
-        messages.upsertReasoningBlock(msgCodec.parse(persistedId), seg);
+        persistReasoningSnapshot(persistedId, seg);
         emit({ ...ev, messageId: persistedId });
       } else {
         assistantBuf += ev.text;
-        messages.updateContentOnly(msgCodec.parse(persistedId), assistantBuf);
+        persistContentSnapshot(persistedId);
         emit({ ...ev, messageId: persistedId });
       }
     } else if (ev.type === "message.reasoning") {
@@ -314,14 +341,14 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
         pendingReasoning.set(ev.segmentId, seg);
       }
       seg.text += ev.text;
-      messages.upsertReasoningBlock(msgCodec.parse(persistedId), seg);
+      persistReasoningSnapshot(persistedId, seg);
       emit({ ...ev, messageId: persistedId });
     } else if (ev.type === "message.reasoning.end") {
       const seg = pendingReasoning.get(ev.segmentId);
       const persistedId = ensurePersistedAssistant();
       if (seg) {
         seg.durationMs = ev.durationMs;
-        messages.upsertReasoningBlock(msgCodec.parse(persistedId), seg);
+        persistReasoningSnapshot(persistedId, seg, true);
       }
       emit({ ...ev, messageId: persistedId });
     } else if (ev.type === "message.end") {
@@ -660,6 +687,9 @@ export async function startTurn(opts: StartTurnOptions): Promise<Turn> {
             status,
             errorCode,
           );
+          for (const segment of pendingReasoning.values()) {
+            persistReasoningSnapshot(id, segment, true);
+          }
           for (const t of pendingTools.values()) {
             if (t.status === "pending") {
               t.status = "error";

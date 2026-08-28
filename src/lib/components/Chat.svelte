@@ -275,6 +275,7 @@
       closeStream();
       clearInteractiveRevealTimers();
       clearProgrammaticScrollGuard();
+      cancelScheduledScroll();
     };
   });
 
@@ -390,6 +391,9 @@
   let hasNewBelow = $state(false);
   let programmaticScrollGuardTimer: ReturnType<typeof setTimeout> | null = null;
   let programmaticScrollGuardUntil = 0;
+  let scrollFrame = 0;
+  let scrollForce = false;
+  let scrollWaiters: Array<() => void> = [];
   type TranscriptScrollBehavior = "auto" | "smooth";
 
   function scrollMetrics(el: HTMLElement): ScrollMetrics {
@@ -456,17 +460,39 @@
     hasNewBelow = false;
   }
 
-  async function scrollToBottom(opts: { force?: boolean } = {}) {
-    await tick();
-    const el = scrollEl;
-    if (!el) return;
-    const update = planStickyBottomContentUpdate(
-      { pinnedToBottom, hasNewBelow },
-      opts,
-    );
-    pinnedToBottom = update.state.pinnedToBottom;
-    hasNewBelow = update.state.hasNewBelow;
-    if (update.shouldScroll) setScrollToBottom();
+  function scrollToBottom(opts: { force?: boolean } = {}): Promise<void> {
+    scrollForce ||= opts.force ?? false;
+    const pending = new Promise<void>((resolve) => scrollWaiters.push(resolve));
+    if (scrollFrame) return pending;
+    scrollFrame = requestAnimationFrame(async () => {
+      await tick();
+      const force = scrollForce;
+      scrollForce = false;
+      const el = scrollEl;
+      if (el) {
+        const update = planStickyBottomContentUpdate(
+          { pinnedToBottom, hasNewBelow },
+          { force },
+        );
+        pinnedToBottom = update.state.pinnedToBottom;
+        hasNewBelow = update.state.hasNewBelow;
+        if (update.shouldScroll) setScrollToBottom();
+      }
+      scrollFrame = 0;
+      const waiters = scrollWaiters;
+      scrollWaiters = [];
+      for (const resolve of waiters) resolve();
+    });
+    return pending;
+  }
+
+  function cancelScheduledScroll() {
+    if (scrollFrame) cancelAnimationFrame(scrollFrame);
+    scrollFrame = 0;
+    scrollForce = false;
+    const waiters = scrollWaiters;
+    scrollWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
   function jumpToLatest() {
