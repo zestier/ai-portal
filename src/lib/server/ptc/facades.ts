@@ -105,7 +105,7 @@ interface NormalizedCommand {
   stdin?: string;
   timeoutMs: number;
 }
-const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
+const MAX_GIT_BLAME_OUTPUT_BYTES = 64 * 1024;
 
 export function buildProgramFacadeTools(
   workspaceRoot: string,
@@ -263,7 +263,7 @@ function buildGitBlameTool(workspaceRoot: string): PortalTool {
       args.push("--", target.rel);
       const result = await runGitRaw(args, {
         cwd: workspaceRoot,
-        maxBytes: MAX_COMMAND_OUTPUT_BYTES,
+        maxBytes: MAX_GIT_BLAME_OUTPUT_BYTES,
       });
       if (result.code !== 0) return err(result.stderr || "git blame failed");
       if (result.truncated) {
@@ -361,7 +361,6 @@ function runCommand(
     });
     let stdout = "";
     let stderr = "";
-    let outputBytes = 0;
     let settled = false;
     let timedOut = false;
     let aborted = false;
@@ -374,12 +373,6 @@ function runCommand(
       resolveResult(result);
     };
     const append = (kind: "stdout" | "stderr", chunk: Buffer) => {
-      outputBytes += chunk.length;
-      if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
-        child.kill("SIGKILL");
-        finish(err("Command output exceeded the 64KB limit."));
-        return;
-      }
       if (kind === "stdout") stdout += chunk.toString("utf8");
       else stderr += chunk.toString("utf8");
     };

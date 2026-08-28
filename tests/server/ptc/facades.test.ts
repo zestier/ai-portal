@@ -274,6 +274,24 @@ describe("program fs facade capabilities", () => {
     });
   });
 
+  it("returns command output larger than the direct tool limit", async () => {
+    const root = makeTmpDir("ptc-command-output-");
+    const command = buildProgramFacadeTools(root).get("__ptc_command_run")!;
+    const outputBytes = 96 * 1024;
+    const result = await command.handler({
+      executable: process.execPath,
+      args: ["-e", `process.stdout.write("x".repeat(${outputBytes}))`],
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      result: { status: 0, stderr: "" },
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    expect(
+      Buffer.byteLength((result.result as { stdout: string }).stdout),
+    ).toBe(outputBytes);
+  });
+
   it("parses one command-line string but rejects shell operators", async () => {
     const root = makeTmpDir("ptc-command-line-");
     const command = buildProgramFacadeTools(root).get("__ptc_command_run")!;
