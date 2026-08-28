@@ -424,6 +424,18 @@ export async function runProgramInline(
         });
       },
       grep(pattern, options = {}) {
+        if (pattern instanceof RegExp) {
+          if (pattern.flags !== "" && pattern.flags !== "i") {
+            throw new TypeError(
+              'fs.grep RegExp values support only the "i" flag. Pass a ripgrep-compatible pattern string instead.'
+            );
+          }
+          options = {
+            ...options,
+            ...(pattern.ignoreCase ? { caseInsensitive: true } : {})
+          };
+          pattern = pattern.source;
+        }
         return unwrapCall(__callFacadeCapability, "__ptc_fs_grep", {
           pattern,
           ...(options.path !== undefined ? { path: options.path } : {}),

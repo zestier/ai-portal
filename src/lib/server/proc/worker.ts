@@ -105,8 +105,8 @@ export function initialProcMessages(input: {
               "copyFile(from, to) // UTF8 text only",
               "rm(path, { recursive?, force? }) // reversible trash",
               "unlink(path) // reversible trash",
-              "glob(globPattern, { path?, maxDepth?, includeIgnored? }): string[] // workspace-relative; ripgrep rules",
-              "grep(regexPattern, { path?, glob?: string | string[], caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // workspace-relative; 1-based positions; ripgrep rules",
+              "glob(pattern: string | string[], { path?, maxDepth?, includeIgnored? }): string[] // workspace-relative; ripgrep rules",
+              "grep(pattern: string, { path?, glob?: string | string[], caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // workspace-relative; 1-based positions; ripgrep rules",
             ],
             path: [
               "join(...paths)",

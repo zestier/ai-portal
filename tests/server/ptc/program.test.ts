@@ -654,9 +654,10 @@ describe("program runtime", () => {
       source: `
         return {
           glob: fs.glob("**/*.ts", { path: "src", maxDepth: 2, includeIgnored: true }),
-          globSync: fs.globSync("**/*.test.ts", { path: "tests" }),
+          globSync: fs.globSync(["**/*.test.ts", "**/*.spec.ts"], { path: "tests" }),
           grep: fs.grep("needle", { path: "src", caseInsensitive: true, includeIgnored: true }),
           grepSync: fs.grepSync("other", { glob: "*.ts" }),
+          grepRegex: fs.grep(/needle|other/i),
           status: git.status(),
           diff: git.diff({ path: "src/a.ts" }),
           log: git.log({ limit: 2 }),
@@ -715,12 +716,26 @@ describe("program runtime", () => {
           },
         },
         {
+          name: "__ptc_fs_glob",
+          args: {
+            pattern: ["**/*.test.ts", "**/*.spec.ts"],
+            path: "tests",
+          },
+        },
+        {
           name: "__ptc_fs_grep",
           args: {
             pattern: "needle",
             path: "src",
             caseInsensitive: true,
             includeIgnored: true,
+          },
+        },
+        {
+          name: "__ptc_fs_grep",
+          args: {
+            pattern: "needle|other",
+            caseInsensitive: true,
           },
         },
         { name: "git_show_commit", args: { sha: "abc123" } },
@@ -730,6 +745,21 @@ describe("program runtime", () => {
           args: { path: "src/a.ts", startLine: 2, endLine: 4 },
         },
       ]),
+    );
+  });
+
+  it("rejects RegExp flags that fs.grep cannot preserve", async () => {
+    const grep = tool("__ptc_fs_grep");
+    const run = runProgram({
+      source: "return fs.grep(/needle/g);",
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[grep.name, grep]]),
+      execute: async () => ok([]),
+      signal: new AbortController().signal,
+    });
+
+    await expect(run).rejects.toThrow(
+      'fs.grep RegExp values support only the "i" flag',
     );
   });
 

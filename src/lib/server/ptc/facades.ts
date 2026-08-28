@@ -39,7 +39,10 @@ const RemoveArgs = z
   .strict();
 const GlobArgs = z
   .object({
-    pattern: z.string().min(1).max(4096),
+    pattern: z.union([
+      z.string().min(1).max(4096),
+      z.array(z.string().min(1).max(4096)).min(1).max(100),
+    ]),
     path: z.string().min(1).max(4096).optional(),
     maxDepth: z.number().int().min(0).max(100).optional(),
     includeIgnored: z.boolean().optional(),
@@ -129,33 +132,18 @@ function buildGlobTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_glob",
     description: "Internal ripgrep-backed adapter for fs.glob.",
-    parameters: {
-      type: "object",
-      properties: {
-        pattern: { type: "string" },
-        path: { type: "string" },
-        maxDepth: { type: "integer" },
-        includeIgnored: { type: "boolean" },
-      },
-      required: ["pattern"],
-      additionalProperties: false,
-    },
+    parameters: jsonSchema(GlobArgs),
     argsSchema: GlobArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
     async handler(raw) {
       const parsed = GlobArgs.parse(raw);
       const target = resolveGrantedTarget(workspaceRoot, parsed.path ?? ".");
       if (!target.ok) return err(target.message);
-      const args = [
-        "--files",
-        "--no-require-git",
-        "--glob",
-        parsed.pattern,
-        "--glob",
-        "!.git",
-        "--glob",
-        "!.git/**",
-      ];
+      const args = ["--files", "--no-require-git"];
+      const patterns = Array.isArray(parsed.pattern)
+        ? parsed.pattern
+        : [parsed.pattern];
+      for (const pattern of patterns) args.push("--glob", pattern);
       if (parsed.includeIgnored) args.push("--no-ignore");
       if (parsed.maxDepth !== undefined) {
         args.push("--max-depth", String(parsed.maxDepth));
@@ -187,23 +175,7 @@ function buildGrepTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_grep",
     description: "Internal ripgrep-backed adapter for fs.grep.",
-    parameters: {
-      type: "object",
-      properties: {
-        pattern: { type: "string" },
-        path: { type: "string" },
-        glob: {
-          oneOf: [
-            { type: "string" },
-            { type: "array", items: { type: "string" } },
-          ],
-        },
-        caseInsensitive: { type: "boolean" },
-        includeIgnored: { type: "boolean" },
-      },
-      required: ["pattern"],
-      additionalProperties: false,
-    },
+    parameters: jsonSchema(GrepArgs),
     argsSchema: GrepArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
     async handler(raw) {
@@ -277,16 +249,7 @@ function buildGitBlameTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_git_blame",
     description: "Internal audited adapter for bounded git.blame.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        startLine: { type: "integer" },
-        endLine: { type: "integer" },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
+    parameters: jsonSchema(GitBlameArgs),
     argsSchema: GitBlameArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
     async handler(raw) {
@@ -341,17 +304,7 @@ function buildRemoveTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_rm",
     description: "Internal audited adapter for reversible fs removal.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        recursive: { type: "boolean" },
-        force: { type: "boolean" },
-        unlink: { type: "boolean" },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
+    parameters: jsonSchema(RemoveArgs),
     argsSchema: RemoveArgs,
     derivePermissionRequest: (raw) => writePermission(workspaceRoot, raw),
     async handler(raw) {
@@ -380,19 +333,7 @@ function buildCommandRunTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_command_run",
     description: "Internal audited adapter for command.run.",
-    parameters: {
-      type: "object",
-      properties: {
-        command: { type: "string" },
-        executable: { type: "string" },
-        args: { type: "array", items: { type: "string" } },
-        cwd: { type: "string" },
-        stdin: { type: "string" },
-        timeoutMs: { type: "number" },
-      },
-      oneOf: [{ required: ["command"] }, { required: ["executable"] }],
-      additionalProperties: false,
-    },
+    parameters: jsonSchema(CommandArgs),
     argsSchema: CommandArgs,
     async handler(raw, ctx) {
       const parsed = CommandArgs.parse(raw);
@@ -513,7 +454,7 @@ function buildReaddirTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_readdir",
     description: "Internal audited adapter for fs.readdir.",
-    parameters: pathParameters(),
+    parameters: jsonSchema(ReaddirArgs),
     argsSchema: ReaddirArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
     async handler(raw) {
@@ -549,7 +490,7 @@ function buildStatTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_stat",
     description: "Internal audited adapter for fs.stat.",
-    parameters: pathParameters(),
+    parameters: jsonSchema(PathArgs),
     argsSchema: PathArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
     async handler(raw) {
@@ -574,13 +515,10 @@ function buildStatTool(workspaceRoot: string): PortalTool {
   };
 }
 
-function pathParameters(): Record<string, unknown> {
-  return {
-    type: "object",
-    properties: { path: { type: "string" } },
-    required: ["path"],
-    additionalProperties: false,
-  };
+function jsonSchema(schema: z.ZodType): Record<string, unknown> {
+  const parameters = z.toJSONSchema(schema, { io: "input" });
+  delete parameters.$schema;
+  return parameters;
 }
 
 function readPermission(

@@ -419,7 +419,12 @@ describe("proc worker", () => {
     expect(initial).not.toHaveProperty("output");
     expect(initial.environment.tools).toEqual(contracts);
     expect(initial.environment.globals.fs).toContainEqual(
-      expect.stringContaining("glob(globPattern"),
+      expect.stringContaining("glob(pattern: string | string[]"),
+    );
+    expect(initial.environment.globals.fs).toContainEqual(
+      expect.stringContaining(
+        "grep(pattern: string, { path?, glob?: string | string[]",
+      ),
     );
     expect(initial.environment.globals.fs).not.toContainEqual(
       expect.stringContaining("readdir"),

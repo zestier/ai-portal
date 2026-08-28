@@ -2,10 +2,21 @@ import { access, mkdir, symlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { makeTmpDir } from "../../helpers/tmp";
 import { buildProgramFacadeTools } from "../../../src/lib/server/ptc/facades";
 
 describe("program fs facade capabilities", () => {
+  it("derives advertised parameters from runtime schemas", () => {
+    for (const tool of buildProgramFacadeTools("/tmp").values()) {
+      const parameters = z.toJSONSchema(tool.argsSchema!, {
+        io: "input",
+      });
+      delete parameters.$schema;
+      expect(tool.parameters).toEqual(parameters);
+    }
+  });
+
   it("filters internal facades by their owning tool group", () => {
     expect([
       ...buildProgramFacadeTools("/tmp", ["filesystem", "git", "shell"]).keys(),
@@ -70,6 +81,7 @@ describe("program fs facade capabilities", () => {
     await mkdir(join(root, ".git", "objects"), { recursive: true });
     await writeFile(join(root, ".gitignore"), "node_modules/\n");
     await writeFile(join(root, "src", "top.ts"), "");
+    await writeFile(join(root, "src", "component.svelte"), "");
     await writeFile(join(root, "src", "nested", "deep.ts"), "");
     await writeFile(join(root, "node_modules", "pkg", "index.ts"), "");
     await writeFile(join(root, ".git", "objects", "ignored.ts"), "");
@@ -84,6 +96,12 @@ describe("program fs facade capabilities", () => {
     ).resolves.toMatchObject({
       ok: true,
       result: ["src/top.ts"],
+    });
+    await expect(
+      glob.handler({ pattern: ["*.ts", "*.svelte"], path: "src" }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: ["src/component.svelte", "src/nested/deep.ts", "src/top.ts"],
     });
     await expect(
       glob.handler({ pattern: "*.ts", includeIgnored: true }),
