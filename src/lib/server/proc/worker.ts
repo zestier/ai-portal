@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { toolCallId as toolCodec } from "$lib/ids";
 import type { PortalEvent } from "$lib/types";
+import { log } from "$lib/server/log";
 import { mintToolCallId } from "$lib/server/db/repos/messages";
 import { piChat, resolveModelSelection } from "$lib/server/pi/complete";
 import type {
@@ -27,6 +28,9 @@ const EXECUTE = "execute";
 const CANNOT_EXECUTE = "cannot_execute";
 const CHECKPOINT_SHAPE_BYTES = 2 * 1024;
 const INSPECTION_BYTES = 12 * 1024;
+const MAX_TRANSCRIPT_BYTES = 128 * 1024;
+const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
+const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
 
 const ExecuteArgs = z
   .object({
@@ -42,6 +46,7 @@ const CannotExecuteArgs = z
 
 export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changing it. Do not add goals, broaden scope, change selection criteria, choose another method, or make consequential decisions.
 Prefer one execute call with purpose final that implements the whole procedure in one JavaScript program. Keep mechanical intermediate values inside it.
+Reading complete files inside an execution does not add them to your context. It is often appropriate for mechanical filtering or transformation. Never return complete files through inspect, checkpoint, or final unless the output contract specifically requires that exact bounded value.
 If one reliable program is impractical, call execute with purpose checkpoint after a completed mechanical segment, then continue from getState(result_id). Use purpose inspect only for semantic judgment required by the procedure, after mechanically reducing to the smallest useful candidate set.
 Return a final value matching output.contract within output.max_bytes. Do not return unrequested raw source or other bulk data.
 Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
@@ -90,26 +95,40 @@ export function initialProcMessages(input: {
         environment: {
           tools: input.contracts,
           globals: {
-            getState: "getState(result_id) -> immutable checkpoint value",
+            getState: "getState(resultId) // immutable checkpoint value",
             fs: [
-              'readFile(path, "utf8") -> string',
-              "writeFile(path, text) -> void",
-              "readdir(path) -> string[]",
-              "stat(path) -> { size, mtimeMs, isFile(), isDirectory(), isSymbolicLink() }",
-              "mkdir(path) -> void",
-              "rename(from, to) -> void",
+              'readFile(path, "utf8")',
+              "writeFile(path, text)",
+              "stat(path): { size, mtimeMs, isFile(), isDirectory(), isSymbolicLink() }",
+              "exists(path)",
+              "readLines(path, { start?, end? }): { text, start, end, totalLines } // 1-based, inclusive",
+              "mkdir(path) // recursive and idempotent",
+              "rename(from, to) // overwrites files",
+              "copyFile(from, to) // UTF8 text only",
+              "rm(path, { recursive?, force? }) // reversible trash",
+              "unlink(path) // reversible trash",
+              "glob(globPattern, { path?, maxDepth?, includeIgnored? }): string[] // workspace-relative; ripgrep rules",
+              "grep(regexPattern, { path?, glob?: string | string[], caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // workspace-relative; 1-based positions; ripgrep rules",
             ],
             path: [
-              "join",
-              "dirname",
-              "basename",
-              "extname",
-              "normalize",
-              "relative",
-              "isAbsolute",
+              "join(...paths)",
+              "dirname(path)",
+              "basename(path, suffix?)",
+              "extname(path)",
+              "normalize(path)",
+              "relative(from, to)",
+              "isAbsolute(path)",
+            ],
+            git: [
+              "status(): { head, merge, changes: { path, previousPath, index, worktree }[] } // branch/upstream, active operation/conflicts, staged/worktree status",
+              "diff({ target?, sha?, path? }): { patch, files: { path, previousPath, status, added, removed, binary }[], truncated } // unified diff plus per-file line counts",
+              "log({ limit?, skip?, ref?, path? }): { sha, shortSha, author, email, timestamp, subject }[] // commit summaries",
+              "show(ref, { includePatch? }): { sha, shortSha, author, email, timestamp, subject, body, parents, files: { status, path, origPath }[], patch? } // commit details",
+              "show(ref, path): string // file contents at ref",
+              "blame(path, { startLine?, endLine? }): { sha, line, author, email, timestamp, summary, text }[]",
             ],
             command:
-              "command.run(executable, args?, options?) -> { status?, stdout, stderr }",
+              "command.run(executable, args?, { cwd?, stdin?, timeoutMs? }): { status, stdout, stderr }",
           },
         },
       }),
@@ -138,8 +157,24 @@ export async function runProcWorker(
   try {
     for (let iteration = 0; iteration < MAX_TURNS; iteration++) {
       if (opts.signal.aborted) throw new Error("Proc transaction aborted.");
+      const transcript = procTranscriptStats(transaction.messages);
+      if (transcript.bytes > MAX_TRANSCRIPT_BYTES) {
+        log.warn("proc.worker.transcript_limit", {
+          transactionId: transaction.id,
+          ...transcript,
+          limitBytes: MAX_TRANSCRIPT_BYTES,
+        });
+        throw new Error(
+          `Proc worker transcript reached ${transcript.bytes} bytes (limit ${MAX_TRANSCRIPT_BYTES}); largest message is ${transcript.largestMessageBytes} bytes at index ${transcript.largestMessageIndex}. Start a new, more tightly projected proc call.`,
+        );
+      }
       const turn = await piChat(
-        { model, runtime, timeoutMs: 120_000 },
+        {
+          model,
+          runtime,
+          timeoutMs: 120_000,
+          maxTokens: MAX_WORKER_OUTPUT_TOKENS,
+        },
         transaction.messages,
         workerToolSpecs(),
         undefined,
@@ -152,6 +187,20 @@ export async function runProcWorker(
         transaction.usage.cacheRead += turn.usage.cacheRead;
         transaction.usage.cacheWrite += turn.usage.cacheWrite;
         transaction.usage.cost += turn.usage.cost;
+      }
+      for (const call of turn.toolCalls) {
+        const argumentBytes = Buffer.byteLength(call.arguments);
+        if (argumentBytes > MAX_TOOL_ARGUMENT_BYTES) {
+          log.warn("proc.worker.tool_arguments_limit", {
+            transactionId: transaction.id,
+            tool: call.name,
+            argumentBytes,
+            limitBytes: MAX_TOOL_ARGUMENT_BYTES,
+          });
+          throw new Error(
+            `Proc worker produced ${argumentBytes} bytes of arguments for ${call.name} (limit ${MAX_TOOL_ARGUMENT_BYTES}); the call was not retained or executed.`,
+          );
+        }
       }
       transaction.messages.push({
         role: "assistant",
@@ -176,6 +225,7 @@ export async function runProcWorker(
         const protocolId = toolCodec.encode(mintToolCallId());
         const procId = toolCodec.encode(transaction.parentToolCallId);
         const effects: ExecutionEffect[] = [];
+        let retainedResult: { id: string; bytes: number } | null = null;
         opts.emit({
           type: "tool.call",
           toolCallId: protocolId,
@@ -281,16 +331,16 @@ export async function runProcWorker(
                     maxBytes: CHECKPOINT_SHAPE_BYTES,
                     store: true,
                   };
-            const projection = projectProcValue(result.value, policy);
-            const stored = createProcResult({
+            retainedResult = createProcResult({
               transactionId: transaction.id,
               conversationId: transaction.conversationId,
               value: result.value,
             });
+            const projection = projectProcValue(result.value, policy);
             const feedback = {
               purpose: args.purpose,
-              result_id: stored.id,
-              bytes: stored.bytes,
+              result_id: retainedResult.id,
+              bytes: retainedResult.bytes,
               ...(projection.projection !== undefined
                 ? { projection: projection.projection }
                 : {}),
@@ -338,10 +388,18 @@ export async function runProcWorker(
         } catch (error) {
           if (opts.signal.aborted) throw error;
           const retrySafe = effects.every((effect) => effect.effect === "read");
+          const effectSummary = summarizeExecutionEffects(effects);
           const feedback = {
             ok: false,
             error: error instanceof Error ? error.message : String(error),
-            effects,
+            ...(retainedResult
+              ? {
+                  result_id: retainedResult.id,
+                  bytes: retainedResult.bytes,
+                }
+              : {}),
+            effects: effectSummary,
+            effects_total: effects.length,
             retry_safe: retrySafe,
             instruction: retrySafe
               ? "Fix and retry, or checkpoint before the failing step. Use cannot_execute only if the procedure itself cannot be realized."
@@ -384,12 +442,56 @@ export async function runProcWorker(
   }
 }
 
+export function procTranscriptStats(messages: ExtractorChatMessage[]): {
+  bytes: number;
+  largestMessageBytes: number;
+  largestMessageIndex: number;
+} {
+  let largestMessageBytes = 0;
+  let largestMessageIndex = -1;
+  for (const [index, message] of messages.entries()) {
+    const bytes = Buffer.byteLength(JSON.stringify(message));
+    if (bytes > largestMessageBytes) {
+      largestMessageBytes = bytes;
+      largestMessageIndex = index;
+    }
+  }
+  return {
+    bytes: Buffer.byteLength(JSON.stringify(messages)),
+    largestMessageBytes,
+    largestMessageIndex,
+  };
+}
+
 type ExecutionEffectKind = "read" | "mutation" | "opaque";
 
 interface ExecutionEffect {
   tool: string;
   effect: ExecutionEffectKind;
   ok: boolean;
+}
+
+export interface ExecutionEffectSummary extends ExecutionEffect {
+  count: number;
+}
+
+export function summarizeExecutionEffects(
+  effects: ExecutionEffect[],
+): ExecutionEffectSummary[] {
+  const counts = new Map<string, ExecutionEffectSummary>();
+  for (const effect of effects) {
+    const key = `${effect.tool}\0${effect.effect}\0${effect.ok}`;
+    const existing = counts.get(key);
+    if (existing) existing.count++;
+    else counts.set(key, { ...effect, count: 1 });
+  }
+  return [...counts.values()].sort(
+    (left, right) =>
+      right.count - left.count ||
+      left.tool.localeCompare(right.tool) ||
+      left.effect.localeCompare(right.effect) ||
+      Number(left.ok) - Number(right.ok),
+  );
 }
 
 function executionEffect(

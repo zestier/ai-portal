@@ -188,6 +188,12 @@ async function runGitOk(args: string[], opts: RunOptions): Promise<string> {
       `git ${args[0]} exited ${r.code}: ${gitErrorStderrTail(r.stderr)}`,
       r,
     );
+  if (r.truncated) {
+    throw new GitError(
+      `git ${args[0]} output exceeded the ${opts.maxBytes ?? DEFAULT_MAX_BYTES} byte limit`,
+      r,
+    );
+  }
   return r.stdout;
 }
 

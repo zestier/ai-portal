@@ -4,6 +4,7 @@ import type { PortalEvent } from "$lib/types";
 import type { PiPermissionResolver } from "$lib/server/pi/session";
 import { err, ok, type PortalTool } from "$lib/server/tools/types";
 import {
+  PROGRAM_FACADE_TOOL_NAMES,
   programCapabilities,
   programToolManifest,
 } from "$lib/server/ptc/contracts";
@@ -40,7 +41,13 @@ export interface ProcToolOptions {
 
 export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
   const capabilities = programCapabilities(opts.capabilities);
-  const contracts = programToolManifest(capabilities);
+  const contracts = programToolManifest(
+    new Map(
+      [...capabilities].filter(
+        ([name]) => !PROGRAM_FACADE_TOOL_NAMES.has(name),
+      ),
+    ),
+  );
   return [
     {
       name: "proc",
@@ -49,8 +56,8 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
       promptSnippet: "Execute a bounded repository procedure.",
       promptGuidelines: [
         "Provide ordered, observable steps with selection, filtering, and stopping criteria. Define a derived result that fits output.max_bytes.",
-        "Request the smallest result that preserves your ability to decide or edit correctly, not context that is merely convenient. Do not sacrifice consequential detail or verifiability.",
-        "Choose an appropriate representation for the task. Consider summaries, structured facts, provenance, bounded excerpts, and exact source.",
+        "Files read inside proc stay inside its program and do not enter your context. Return only the smallest projection needed to decide or edit correctly; use bounded excerpts or exact source only when the task truly requires them.",
+        "Preserve consequential detail and verifiability with structured facts, paths, ranges, counts, and other provenance.",
         "Describe the result before where to find it. A path alone is not a result contract; request concrete evidence such as exported signatures or callers with ranges.",
         'Example: procedure "read src/index.ts; collect public exports; omit private helpers"; output.contract "exported names, types, and signatures". Do not request multiple full files.',
       ],

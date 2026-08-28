@@ -9,8 +9,10 @@ import {
 } from "../../../src/lib/server/proc/store";
 import {
   initialProcMessages,
+  procTranscriptStats,
   PROC_WORKER_SYSTEM,
   runProcWorker,
+  summarizeExecutionEffects,
 } from "../../../src/lib/server/proc/worker";
 
 const piChat = vi.fn();
@@ -24,6 +26,228 @@ describe("proc worker", () => {
   beforeEach(async () => {
     piChat.mockReset();
     await setupLocalEnv("proc-worker-");
+  });
+
+  it("measures retained transcript bytes and identifies the largest message", () => {
+    const messages = [
+      { role: "system" as const, content: "small" },
+      { role: "user" as const, content: "x".repeat(1_000) },
+    ];
+    expect(procTranscriptStats(messages)).toMatchObject({
+      bytes: expect.any(Number),
+      largestMessageIndex: 1,
+      largestMessageBytes: expect.any(Number),
+    });
+    expect(procTranscriptStats(messages).bytes).toBeGreaterThan(1_000);
+  });
+
+  it("aggregates a C276-sized effect ledger into bounded feedback", () => {
+    const effects = [
+      ...Array.from({ length: 25_898 }, () => ({
+        tool: "__ptc_fs_stat",
+        effect: "read" as const,
+        ok: true,
+      })),
+      ...Array.from({ length: 1_151 }, () => ({
+        tool: "__ptc_fs_readdir",
+        effect: "read" as const,
+        ok: true,
+      })),
+    ];
+    const summary = summarizeExecutionEffects(effects);
+
+    expect(summary).toEqual([
+      { tool: "__ptc_fs_stat", effect: "read", ok: true, count: 25_898 },
+      { tool: "__ptc_fs_readdir", effect: "read", ok: true, count: 1_151 },
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(300);
+  });
+
+  it("rejects an oversized retained transcript before calling the model", async () => {
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "oversized proc transcript",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 41,
+      workerModel: "pi-stub/stub-model",
+      summary: "Oversized proc",
+      contract: "Return one value",
+      procedure: "Return one value",
+      outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+      messages: [
+        { role: "system", content: "worker" },
+        { role: "user", content: "x".repeat(129 * 1_024) },
+      ],
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      summary: expect.stringContaining("transcript reached"),
+    });
+    expect(piChat).not.toHaveBeenCalled();
+  });
+
+  it("does not retain or replay oversized model-generated tool arguments", async () => {
+    piChat.mockResolvedValueOnce({
+      content: "",
+      usage: {
+        input: 10,
+        output: 20,
+        cacheRead: 30,
+        cacheWrite: 40,
+        cost: 0.5,
+      },
+      toolCalls: [
+        {
+          id: "oversized-call",
+          name: "execute",
+          arguments: "x".repeat(400 * 1_024),
+        },
+      ],
+    });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "oversized proc arguments",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const initialMessages = [
+      { role: "system" as const, content: "worker" },
+      { role: "user" as const, content: "return one value" },
+    ];
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 40,
+      workerModel: "pi-stub/stub-model",
+      summary: "Oversized proc arguments",
+      contract: "Return one value",
+      procedure: "Return one value",
+      outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+      messages: initialMessages,
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      summary: expect.stringContaining("arguments for execute"),
+    });
+    expect(piChat).toHaveBeenCalledTimes(1);
+    expect(transaction.messages).toEqual(initialMessages);
+    expect(outcome.usage).toMatchObject({
+      turns: 1,
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      cost: 0.5,
+    });
+  });
+
+  it("retains oversized inspection state for a reducing retry", async () => {
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "oversized inspection",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 1_024,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 39,
+      workerModel: "pi-stub/stub-model",
+      summary: "Inspect large value",
+      contract: "Return one value",
+      procedure: "Inspect then reduce",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Inspect large value",
+        contract: "Return one value",
+        procedure: "Inspect then reduce",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+    const largeValue = { text: "x".repeat(13 * 1_024) };
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "large-inspection",
+            name: "execute",
+            arguments: JSON.stringify({
+              summary: "Inspect candidates",
+              javascript: `return ${JSON.stringify(largeValue)};`,
+              purpose: "inspect",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          result_id: string;
+          bytes: number;
+          error: string;
+        };
+        expect(feedback.error).toContain("the limit is 12288");
+        expect(feedback.bytes).toBeGreaterThan(12 * 1_024);
+        expect(
+          getProcResult({
+            id: feedback.result_id,
+            transactionId: transaction.id,
+            conversationId,
+          })?.value,
+        ).toEqual(largeValue);
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "stop-after-overflow",
+              name: "cannot_execute",
+              arguments: JSON.stringify({ reason: "Test complete." }),
+            },
+          ],
+        };
+      });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome.status).toBe("cannot_execute");
   });
 
   it("is constrained to frontier-authored procedures and fused executions", () => {
@@ -167,6 +391,7 @@ describe("proc worker", () => {
       "execute",
       "cannot_execute",
     ]);
+    expect(piChat.mock.calls[0][0]).toMatchObject({ maxTokens: 32 * 1024 });
     expect(Buffer.byteLength(JSON.stringify(workerTools))).toBeLessThanOrEqual(
       2_500,
     );
@@ -174,9 +399,15 @@ describe("proc worker", () => {
       "max_bytes",
     );
     const initial = JSON.parse(transaction.messages[1].content as string) as {
-      environment: { tools: unknown[] };
+      environment: { tools: unknown[]; globals: { fs: string[] } };
     };
     expect(initial.environment.tools).toEqual(contracts);
+    expect(initial.environment.globals.fs).toContainEqual(
+      expect.stringContaining("glob(globPattern"),
+    );
+    expect(initial.environment.globals.fs).not.toContainEqual(
+      expect.stringContaining("readdir"),
+    );
   });
 
   it("returns execution failures to the worker instead of failing the transaction", async () => {
@@ -299,13 +530,25 @@ describe("proc worker", () => {
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
           retry_safe: boolean;
-          effects: Array<{ tool: string; effect: string; ok: boolean }>;
+          effects: Array<{
+            tool: string;
+            effect: string;
+            ok: boolean;
+            count: number;
+          }>;
+          effects_total: number;
           instruction: string;
         };
         expect(feedback.retry_safe).toBe(false);
         expect(feedback.effects).toEqual([
-          { tool: "write_fixture", effect: "mutation", ok: true },
+          {
+            tool: "write_fixture",
+            effect: "mutation",
+            ok: true,
+            count: 1,
+          },
         ]);
+        expect(feedback.effects_total).toBe(1);
         expect(feedback.instruction).toContain("Do not replay");
         return {
           content: "",

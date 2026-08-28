@@ -19,7 +19,13 @@ export interface ProcExecutionResult {
   projection?: unknown;
   projection_bytes?: number;
   operations?: number;
-  effects?: Array<{ tool: string; effect: string; ok: boolean }>;
+  effects?: Array<{
+    tool: string;
+    effect: string;
+    ok: boolean;
+    count?: number;
+  }>;
+  effects_total?: number;
   retry_safe?: boolean;
   error?: string;
 }

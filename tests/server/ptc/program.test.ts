@@ -233,7 +233,7 @@ describe("program runtime", () => {
     expect(dispatched).toBe(false);
   });
 
-  it("does not impose an operation-count budget on declared reads", async () => {
+  it("allows declared reads beyond the mutation budget", async () => {
     const readEcho: PortalTool = {
       ...echo,
       program: {
@@ -254,6 +254,28 @@ describe("program runtime", () => {
     expect(result.value).toBe(250);
     expect(result.operations).toBe(250);
     expect(result.trace.calls).toHaveLength(250);
+  });
+
+  it("bounds total read operations and recommends fused search", async () => {
+    const readEcho: PortalTool = {
+      ...echo,
+      program: {
+        catalogDescription: "read a value",
+        operationCategory: "read",
+        resultSchema: {},
+        example: "tools.echo({ value: 1 })",
+        contractVersion: "1",
+      },
+    };
+    await expect(
+      runProgram({
+        source:
+          "for (let index = 0; index < 10001; index++) tools.echo({ value: index }); return 'done';",
+        capabilities: new Map([[readEcho.name, readEcho]]),
+        execute: (_name, args) => readEcho.handler(args),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("total operation limit (10000)");
   });
 
   it("charges undeclared operations to the mutation budget", async () => {
@@ -345,7 +367,9 @@ describe("program runtime", () => {
       execute: async () => ok(),
       signal: new AbortController().signal,
     });
-    await expect(run).rejects.toThrow(/predeclared fs, path, command, tools/);
+    await expect(run).rejects.toThrow(
+      /predeclared fs, path, git, command, tools/,
+    );
     await expect(run).rejects.toThrow(/node:crypto/);
   });
 
@@ -392,6 +416,7 @@ describe("program runtime", () => {
         "write",
         "create_directory",
         "move",
+        "__ptc_fs_rm",
         "__ptc_fs_readdir",
         "__ptc_fs_stat",
       ].map((name) => [name, tool(name)]),
@@ -403,11 +428,25 @@ describe("program runtime", () => {
         fs.mkdir("src/generated");
         fs.rename("src/b.ts", "src/generated/b.ts");
         const entries = fs.readdir("src");
+        const dirents = fs.readdir("src", { withFileTypes: true });
         const stats = fs.stat("src/a.ts");
+        const exists = fs.exists("src/a.ts");
+        const lines = fs.readLines("src/a.ts", { start: 2, end: 4 });
+        fs.copyFile("src/a.ts", "src/copied.ts");
+        fs.unlink("src/copied.ts");
+        fs.rm("src/generated", { recursive: true });
         return {
           text,
           entries,
+          dirent: {
+            name: dirents[0].name,
+            file: dirents[0].isFile(),
+            directory: dirents[0].isDirectory(),
+            link: dirents[0].isSymbolicLink()
+          },
           size: stats.size,
+          exists,
+          lines,
           file: stats.isFile(),
           directory: stats.isDirectory(),
           link: stats.isSymbolicLink()
@@ -418,9 +457,34 @@ describe("program runtime", () => {
       execute: async (name, args) => {
         calls.push({ name, args });
         if (name === "read") {
-          return ok({ type: "text", file: { content: "hello" } });
+          const input = args as { offset?: number };
+          return ok({
+            type: "text",
+            file: input.offset
+              ? {
+                  content: "two\nthree\nfour",
+                  startLine: 2,
+                  numLines: 3,
+                  totalLines: 8,
+                }
+              : { content: "hello", startLine: 1, numLines: 1, totalLines: 1 },
+          });
         }
-        if (name === "__ptc_fs_readdir") return ok(["a.ts", "b.ts"]);
+        if (name === "__ptc_fs_readdir") {
+          const input = args as { withFileTypes?: boolean };
+          return ok(
+            input.withFileTypes
+              ? [
+                  {
+                    name: "a.ts",
+                    file: true,
+                    directory: false,
+                    symbolicLink: false,
+                  },
+                ]
+              : ["a.ts", "b.ts"],
+          );
+        }
         if (name === "__ptc_fs_stat") {
           return ok({
             size: 5,
@@ -437,7 +501,10 @@ describe("program runtime", () => {
     expect(result.value).toEqual({
       text: "hello",
       entries: ["a.ts", "b.ts"],
+      dirent: { name: "a.ts", file: true, directory: false, link: false },
       size: 5,
+      exists: true,
+      lines: { text: "two\nthree\nfour", start: 2, end: 4, totalLines: 8 },
       file: true,
       directory: false,
       link: false,
@@ -461,7 +528,29 @@ describe("program runtime", () => {
         },
       },
       { name: "__ptc_fs_readdir", args: { path: "src" } },
+      {
+        name: "__ptc_fs_readdir",
+        args: { path: "src", withFileTypes: true },
+      },
       { name: "__ptc_fs_stat", args: { path: "src/a.ts" } },
+      { name: "__ptc_fs_stat", args: { path: "src/a.ts" } },
+      {
+        name: "read",
+        args: { file_path: "src/a.ts", offset: 2, limit: 3, mode: "content" },
+      },
+      {
+        name: "read",
+        args: { file_path: "src/a.ts", mode: "content" },
+      },
+      {
+        name: "write",
+        args: { file_path: "src/copied.ts", content: "hello" },
+      },
+      { name: "__ptc_fs_rm", args: { path: "src/copied.ts", unlink: true } },
+      {
+        name: "__ptc_fs_rm",
+        args: { path: "src/generated", recursive: true },
+      },
     ]);
   });
 
@@ -473,6 +562,7 @@ describe("program runtime", () => {
         "write",
         "create_directory",
         "move",
+        "__ptc_fs_rm",
         "__ptc_fs_readdir",
         "__ptc_fs_stat",
       ].map((name) => [name, tool(name)]),
@@ -485,14 +575,27 @@ describe("program runtime", () => {
         fs.renameSync("src/b.ts", "src/generated/b.ts");
         const entries = fs.readdirSync("src");
         const stats = fs.statSync("src/a.ts");
-        return { text, entries, size: stats.size };
+        const exists = fs.existsSync("src/a.ts");
+        const lines = fs.readLines("src/a.ts", { start: 1, end: 1 });
+        fs.copyFileSync("src/a.ts", "src/copied.ts");
+        fs.unlinkSync("src/copied.ts");
+        fs.rmSync("src/generated", { recursive: true });
+        return { text, entries, size: stats.size, exists, lines };
       `,
       capabilities: new Map(),
       facadeCapabilities: facadeTools,
       execute: async (name, args) => {
         calls.push({ name, args });
         if (name === "read") {
-          return ok({ type: "text", file: { content: "hello" } });
+          return ok({
+            type: "text",
+            file: {
+              content: "hello",
+              startLine: 1,
+              numLines: 1,
+              totalLines: 1,
+            },
+          });
         }
         if (name === "__ptc_fs_readdir") return ok(["a.ts", "b.ts"]);
         if (name === "__ptc_fs_stat") {
@@ -512,6 +615,8 @@ describe("program runtime", () => {
       text: "hello",
       entries: ["a.ts", "b.ts"],
       size: 5,
+      exists: true,
+      lines: { text: "hello", start: 1, end: 1, totalLines: 1 },
     });
     expect(calls.map(({ name }) => name)).toEqual([
       "read",
@@ -520,7 +625,130 @@ describe("program runtime", () => {
       "move",
       "__ptc_fs_readdir",
       "__ptc_fs_stat",
+      "__ptc_fs_stat",
+      "read",
+      "read",
+      "write",
+      "__ptc_fs_rm",
+      "__ptc_fs_rm",
     ]);
+  });
+
+  it("exposes search and repository inspection through first-class facades", async () => {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const capabilities = new Map(
+      [
+        "find",
+        "grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show_commit",
+        "git_show_file",
+      ].map((name) => [name, tool(name)]),
+    );
+    const blame = tool("__ptc_git_blame");
+    const glob = tool("__ptc_fs_glob");
+    const grep = tool("__ptc_fs_grep");
+    const result = await runProgram({
+      source: `
+        return {
+          glob: fs.glob("**/*.ts", { path: "src", maxDepth: 2, includeIgnored: true }),
+          globSync: fs.globSync("**/*.test.ts", { path: "tests" }),
+          grep: fs.grep("needle", { path: "src", caseInsensitive: true, includeIgnored: true }),
+          grepSync: fs.grepSync("other", { glob: "*.ts" }),
+          status: git.status(),
+          diff: git.diff({ path: "src/a.ts" }),
+          log: git.log({ limit: 2 }),
+          commit: git.show("abc123"),
+          file: git.show("HEAD", "src/a.ts"),
+          blame: git.blame("src/a.ts", { startLine: 2, endLine: 4 })
+        };
+      `,
+      capabilities,
+      facadeCapabilities: new Map([
+        [blame.name, blame],
+        [glob.name, glob],
+        [grep.name, grep],
+      ]),
+      execute: async (name, args) => {
+        calls.push({ name, args });
+        if (name === "__ptc_fs_glob") return ok(["src/a.ts"]);
+        if (name === "__ptc_fs_grep") {
+          return ok([{ path: "src/a.ts", line: 1, column: 1, text: "needle" }]);
+        }
+        if (name === "find")
+          return ok({ paths: ["src/a.ts"], truncated: false });
+        if (name === "grep") return ok({ matches: [], truncated: false });
+        if (name === "git_status")
+          return ok({ head: {}, merge: {}, changes: [] });
+        if (name === "git_diff")
+          return ok({ patch: "", files: [], truncated: false });
+        if (name === "git_log") return ok({ commits: [{ sha: "abc123" }] });
+        if (name === "git_show_commit") return ok({ sha: "abc123" });
+        if (name === "git_show_file") return ok("source");
+        if (name === "__ptc_git_blame")
+          return ok([{ line: 2, text: "source" }]);
+        return ok();
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.value).toMatchObject({
+      glob: ["src/a.ts"],
+      globSync: ["src/a.ts"],
+      status: { changes: [] },
+      log: [{ sha: "abc123" }],
+      commit: { sha: "abc123" },
+      file: "source",
+      blame: [{ line: 2, text: "source" }],
+    });
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        {
+          name: "__ptc_fs_glob",
+          args: {
+            pattern: "**/*.ts",
+            path: "src",
+            maxDepth: 2,
+            includeIgnored: true,
+          },
+        },
+        {
+          name: "__ptc_fs_grep",
+          args: {
+            pattern: "needle",
+            path: "src",
+            caseInsensitive: true,
+            includeIgnored: true,
+          },
+        },
+        { name: "git_show_commit", args: { sha: "abc123" } },
+        { name: "git_show_file", args: { ref: "HEAD", path: "src/a.ts" } },
+        {
+          name: "__ptc_git_blame",
+          args: { path: "src/a.ts", startLine: 2, endLine: 4 },
+        },
+      ]),
+    );
+  });
+
+  it("loads capability results larger than 64 KiB into the VM", async () => {
+    const glob = tool("__ptc_fs_glob");
+    const paths = Array.from(
+      { length: 8_000 },
+      (_, index) => `src/generated/file-${index}.ts`,
+    );
+    const result = await runProgram({
+      source: 'const paths = fs.glob("**/*.ts"); return paths.length;',
+      capabilities: new Map(),
+      facadeCapabilities: new Map([[glob.name, glob]]),
+      execute: async () => ok(paths),
+      signal: new AbortController().signal,
+    });
+
+    expect(Buffer.byteLength(JSON.stringify(paths))).toBeGreaterThan(64 * 1024);
+    expect(result.value).toBe(8_000);
   });
 
   it("does not expose internal facade capabilities through tools", async () => {
@@ -667,14 +895,12 @@ describe("program runtime", () => {
     });
   });
 
-  it("rejects unsupported fs options before dispatch", async () => {
+  it("rejects unsupported fs encodings before dispatch", async () => {
     let dispatched = false;
     const result = await runProgram({
       source: `
         const failures = [];
         try { fs.readFile("a.bin", "base64"); }
-        catch (error) { failures.push(error.message); }
-        try { fs.readdir("src", { withFileTypes: true }); }
         catch (error) { failures.push(error.message); }
         return failures;
       `,
@@ -689,7 +915,6 @@ describe("program runtime", () => {
     expect(dispatched).toBe(false);
     expect(result.value).toEqual([
       'fs.readFile supports only "utf8" and "utf-8".',
-      "fs.readdir does not yet support withFileTypes: true.",
     ]);
   });
 });

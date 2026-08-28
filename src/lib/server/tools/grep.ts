@@ -46,6 +46,7 @@ const GrepArgs = z
     head_limit: z.number().int().min(0).optional().default(250),
     offset: z.number().int().min(0).optional().default(0),
     multiline: z.boolean().optional().default(false),
+    include_ignored: z.boolean().optional().default(false),
     worktree: WorktreeSelector,
   })
   .strict();
@@ -164,6 +165,7 @@ async function searchGrep(
   if (after > 0) rgArgs.push("--after-context", String(after));
   if (args.type) rgArgs.push("--type", args.type);
   if (args.glob) rgArgs.push("--glob", args.glob);
+  if (args.include_ignored) rgArgs.push("--no-ignore");
   rgArgs.push(args.pattern, target);
 
   const { code, stdout, stderr } = await ripgrep(rgArgs, {
@@ -423,6 +425,10 @@ export function buildGrepTools(
             type: "number",
           },
           multiline: { type: "boolean" },
+          include_ignored: {
+            type: "boolean",
+            description: "Bypass ripgrep ignore files.",
+          },
           worktree: WORKTREE_PARAM,
         },
         required: ["pattern"],

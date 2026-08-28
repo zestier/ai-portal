@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
 import { lstat, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
+import { ripgrep } from "ripgrep";
 import { z } from "zod";
 import { isolatedChildEnv } from "$lib/server/child-env";
+import { runGitRaw } from "$lib/server/git/run";
 import { parseShellCommand } from "$lib/server/permissions/shell-parser";
 import {
   err,
@@ -15,8 +17,61 @@ import {
   resolveContainedTarget,
   resolveGrantedTarget,
 } from "$lib/server/tools/filesystem/targets";
+import { trashInto } from "$lib/server/tools/filesystem/trash";
 
 const PathArgs = z.object({ path: z.string().min(1).max(4096) }).strict();
+const PermissionPathArgs = z.object({
+  path: z.string().min(1).max(4096).optional(),
+});
+const ReaddirArgs = z
+  .object({
+    path: z.string().min(1).max(4096),
+    withFileTypes: z.boolean().optional(),
+  })
+  .strict();
+const RemoveArgs = z
+  .object({
+    path: z.string().min(1).max(4096),
+    recursive: z.boolean().optional(),
+    force: z.boolean().optional(),
+    unlink: z.boolean().optional(),
+  })
+  .strict();
+const GlobArgs = z
+  .object({
+    pattern: z.string().min(1).max(4096),
+    path: z.string().min(1).max(4096).optional(),
+    maxDepth: z.number().int().min(0).max(100).optional(),
+    includeIgnored: z.boolean().optional(),
+  })
+  .strict();
+const GrepArgs = z
+  .object({
+    pattern: z.string().min(1).max(4096),
+    path: z.string().min(1).max(4096).optional(),
+    glob: z
+      .union([
+        z.string().max(512),
+        z.array(z.string().max(512)).min(1).max(100),
+      ])
+      .optional(),
+    caseInsensitive: z.boolean().optional(),
+    includeIgnored: z.boolean().optional(),
+  })
+  .strict();
+const GitBlameArgs = z
+  .object({
+    path: z.string().min(1).max(4096),
+    startLine: z.number().int().min(1).optional(),
+    endLine: z.number().int().min(1).optional(),
+  })
+  .strict()
+  .refine(
+    (args) =>
+      args.endLine === undefined ||
+      (args.startLine !== undefined && args.endLine >= args.startLine),
+    { message: "endLine requires startLine and must not precede it" },
+  );
 const CommandOptions = {
   cwd: z.string().min(1).max(4096).optional(),
   stdin: z
@@ -51,13 +106,274 @@ const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
 
 export function buildProgramFacadeTools(
   workspaceRoot: string,
+  disabledToolGroups: readonly string[] = [],
 ): Map<string, PortalTool> {
+  const disabled = new Set(disabledToolGroups);
   const tools = [
-    buildReaddirTool(workspaceRoot),
-    buildStatTool(workspaceRoot),
-    buildCommandRunTool(workspaceRoot),
+    ...(!disabled.has("filesystem")
+      ? [
+          buildGlobTool(workspaceRoot),
+          buildGrepTool(workspaceRoot),
+          buildReaddirTool(workspaceRoot),
+          buildStatTool(workspaceRoot),
+          buildRemoveTool(workspaceRoot),
+        ]
+      : []),
+    ...(!disabled.has("git") ? [buildGitBlameTool(workspaceRoot)] : []),
+    ...(!disabled.has("shell") ? [buildCommandRunTool(workspaceRoot)] : []),
   ];
   return new Map(tools.map((tool) => [tool.name, tool]));
+}
+
+function buildGlobTool(workspaceRoot: string): PortalTool {
+  return {
+    name: "__ptc_fs_glob",
+    description: "Internal ripgrep-backed adapter for fs.glob.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string" },
+        path: { type: "string" },
+        maxDepth: { type: "integer" },
+        includeIgnored: { type: "boolean" },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+    argsSchema: GlobArgs,
+    derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
+    async handler(raw) {
+      const parsed = GlobArgs.parse(raw);
+      const target = resolveGrantedTarget(workspaceRoot, parsed.path ?? ".");
+      if (!target.ok) return err(target.message);
+      const args = [
+        "--files",
+        "--no-require-git",
+        "--glob",
+        parsed.pattern,
+        "--glob",
+        "!.git",
+        "--glob",
+        "!.git/**",
+      ];
+      if (parsed.includeIgnored) args.push("--no-ignore");
+      if (parsed.maxDepth !== undefined) {
+        args.push("--max-depth", String(parsed.maxDepth));
+      }
+      args.push(target.abs);
+      try {
+        const result = await ripgrep(args, {
+          buffer: true,
+          nodeWasi: false,
+          preopens: { ".": target.abs },
+        });
+        if (result.code !== 0 && result.code !== 1) {
+          return err(result.stderr || result.stdout || "glob failed");
+        }
+        const paths = result.stdout
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((path) => relative(workspaceRoot, path).replaceAll("\\", "/"))
+          .sort();
+        return ok(paths);
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+}
+
+function buildGrepTool(workspaceRoot: string): PortalTool {
+  return {
+    name: "__ptc_fs_grep",
+    description: "Internal ripgrep-backed adapter for fs.grep.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string" },
+        path: { type: "string" },
+        glob: {
+          oneOf: [
+            { type: "string" },
+            { type: "array", items: { type: "string" } },
+          ],
+        },
+        caseInsensitive: { type: "boolean" },
+        includeIgnored: { type: "boolean" },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+    argsSchema: GrepArgs,
+    derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
+    async handler(raw) {
+      const parsed = GrepArgs.parse(raw);
+      const target = resolveGrantedTarget(workspaceRoot, parsed.path ?? ".");
+      if (!target.ok) return err(target.message);
+      const args = ["--json", "--no-require-git"];
+      if (parsed.caseInsensitive) args.push("--ignore-case");
+      if (parsed.includeIgnored) args.push("--no-ignore");
+      const globs = Array.isArray(parsed.glob)
+        ? parsed.glob
+        : parsed.glob !== undefined
+          ? [parsed.glob]
+          : [];
+      for (const glob of globs) args.push("--glob", glob);
+      args.push("--glob", "!.git", "--glob", "!.git/**");
+      args.push(parsed.pattern, target.abs);
+      try {
+        const result = await ripgrep(args, {
+          buffer: true,
+          nodeWasi: false,
+          preopens: { ".": target.abs },
+        });
+        if (result.code !== 0 && result.code !== 1) {
+          return err(result.stderr || result.stdout || "grep failed");
+        }
+        return ok(parseGrepMatches(workspaceRoot, result.stdout));
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+}
+
+function parseGrepMatches(
+  workspaceRoot: string,
+  output: string,
+): Array<{ path: string; line: number; column: number; text: string }> {
+  const matches: Array<{
+    path: string;
+    line: number;
+    column: number;
+    text: string;
+  }> = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (!line) continue;
+    const event = JSON.parse(line) as {
+      type?: string;
+      data?: {
+        path?: { text?: string };
+        lines?: { text?: string };
+        line_number?: number;
+        submatches?: Array<{ start?: number }>;
+      };
+    };
+    if (event.type !== "match" || !event.data) continue;
+    const path = event.data.path?.text;
+    const lineNumber = event.data.line_number;
+    if (path === undefined || lineNumber === undefined) continue;
+    matches.push({
+      path: relative(workspaceRoot, path).replaceAll("\\", "/"),
+      line: lineNumber,
+      column: (event.data.submatches?.[0]?.start ?? 0) + 1,
+      text: (event.data.lines?.text ?? "").replace(/\r?\n$/, ""),
+    });
+  }
+  return matches;
+}
+
+function buildGitBlameTool(workspaceRoot: string): PortalTool {
+  return {
+    name: "__ptc_git_blame",
+    description: "Internal audited adapter for bounded git.blame.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        startLine: { type: "integer" },
+        endLine: { type: "integer" },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    argsSchema: GitBlameArgs,
+    derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
+    async handler(raw) {
+      const { path, startLine, endLine } = GitBlameArgs.parse(raw);
+      const target = resolveGrantedTarget(workspaceRoot, path);
+      if (!target.ok) return err(target.message);
+      const args = ["blame", "--line-porcelain"];
+      if (startLine !== undefined) {
+        args.push("-L", `${startLine},${endLine ?? startLine}`);
+      }
+      args.push("--", target.rel);
+      const result = await runGitRaw(args, {
+        cwd: workspaceRoot,
+        maxBytes: MAX_COMMAND_OUTPUT_BYTES,
+      });
+      if (result.code !== 0) return err(result.stderr || "git blame failed");
+      if (result.truncated) {
+        return err("git blame exceeded the 64KB limit; request fewer lines.");
+      }
+      return ok(parseGitBlame(result.stdout));
+    },
+  };
+}
+
+function parseGitBlame(output: string): Array<Record<string, unknown>> {
+  const lines = output.split("\n");
+  const blamed: Array<Record<string, unknown>> = [];
+  let current: Record<string, unknown> | null = null;
+  for (const line of lines) {
+    const header = /^([0-9a-f^]{40})\s+\d+\s+(\d+)/.exec(line);
+    if (header) {
+      current = { sha: header[1]!.replace(/^\^/, ""), line: Number(header[2]) };
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith("author ")) current.author = line.slice(7);
+    else if (line.startsWith("author-mail ")) {
+      current.email = line.slice(12).replace(/^<|>$/g, "");
+    } else if (line.startsWith("author-time ")) {
+      current.timestamp = Number(line.slice(12)) * 1000;
+    } else if (line.startsWith("summary ")) current.summary = line.slice(8);
+    else if (line.startsWith("\t")) {
+      current.text = line.slice(1);
+      blamed.push(current);
+      current = null;
+    }
+  }
+  return blamed;
+}
+
+function buildRemoveTool(workspaceRoot: string): PortalTool {
+  return {
+    name: "__ptc_fs_rm",
+    description: "Internal audited adapter for reversible fs removal.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        recursive: { type: "boolean" },
+        force: { type: "boolean" },
+        unlink: { type: "boolean" },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    argsSchema: RemoveArgs,
+    derivePermissionRequest: (raw) => writePermission(workspaceRoot, raw),
+    async handler(raw) {
+      const { path, recursive, force, unlink } = RemoveArgs.parse(raw);
+      const target = resolveGrantedTarget(workspaceRoot, path);
+      if (!target.ok) return err(target.message);
+      try {
+        const value = await lstat(target.abs);
+        if (value.isDirectory() && unlink) {
+          return err("fs.unlink cannot remove a directory.");
+        }
+        if (value.isDirectory() && !recursive) {
+          return err("fs.rm requires recursive: true for directories.");
+        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" && force) return ok();
+        return err(error instanceof Error ? error.message : String(error));
+      }
+      return trashInto(workspaceRoot, path);
+    },
+  };
 }
 
 function buildCommandRunTool(workspaceRoot: string): PortalTool {
@@ -198,17 +514,30 @@ function buildReaddirTool(workspaceRoot: string): PortalTool {
     name: "__ptc_fs_readdir",
     description: "Internal audited adapter for fs.readdir.",
     parameters: pathParameters(),
-    argsSchema: PathArgs,
+    argsSchema: ReaddirArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
     async handler(raw) {
-      const { path } = PathArgs.parse(raw);
+      const { path, withFileTypes } = ReaddirArgs.parse(raw);
       const target = resolveGrantedTarget(workspaceRoot, path);
       if (!target.ok) return err(target.message);
       try {
-        const entries = (await readdir(target.abs)).sort((left, right) =>
+        if (withFileTypes) {
+          const entries = await readdir(target.abs, { withFileTypes: true });
+          return ok(
+            entries
+              .map((entry) => ({
+                name: entry.name,
+                file: entry.isFile(),
+                directory: entry.isDirectory(),
+                symbolicLink: entry.isSymbolicLink(),
+              }))
+              .sort((left, right) => left.name.localeCompare(right.name)),
+          );
+        }
+        const names = (await readdir(target.abs)).sort((left, right) =>
           left.localeCompare(right),
         );
-        return ok(entries);
+        return ok(names);
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error));
       }
@@ -257,9 +586,22 @@ function pathParameters(): Record<string, unknown> {
 function readPermission(
   workspaceRoot: string,
   raw: unknown,
+  defaultPath?: string,
 ): ToolPermissionRequest | null {
-  const parsed = PathArgs.safeParse(raw);
+  const parsed = PermissionPathArgs.safeParse(raw);
+  if (!parsed.success) return null;
+  const rawPath = parsed.data.path ?? defaultPath;
+  if (rawPath === undefined) return null;
+  const path = resolveAbsoluteTarget(workspaceRoot, rawPath);
+  return path ? { permissionKind: "read", path } : null;
+}
+
+function writePermission(
+  workspaceRoot: string,
+  raw: unknown,
+): ToolPermissionRequest | null {
+  const parsed = RemoveArgs.safeParse(raw);
   if (!parsed.success) return null;
   const path = resolveAbsoluteTarget(workspaceRoot, parsed.data.path);
-  return path ? { permissionKind: "read", path } : null;
+  return path ? { permissionKind: "write", path } : null;
 }

@@ -84,6 +84,17 @@ describe("isGitRepo / headInfo", () => {
   });
 });
 
+describe("runGitOk", () => {
+  it("rejects truncated stdout instead of returning incomplete data", async () => {
+    await expect(
+      git.runGitOk(["show", "HEAD:a.txt"], { cwd: repo, maxBytes: 2 }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("output exceeded the 2 byte limit"),
+      result: { truncated: true },
+    });
+  });
+});
+
 describe("status", () => {
   it("reports modified + untracked entries", async () => {
     const entries = await git.status(repo);

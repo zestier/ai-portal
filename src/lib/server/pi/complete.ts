@@ -85,6 +85,7 @@ export interface PiChatOptions {
   model: PiModel;
   runtime: ModelRuntime;
   timeoutMs: number;
+  maxTokens?: number | undefined;
   toolChoice?: "auto" | "required" | undefined;
 }
 
@@ -108,6 +109,7 @@ export async function piChat(
     {
       temperature: 0,
       timeoutMs: opts.timeoutMs,
+      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
       toolChoice: toolChoice ?? opts.toolChoice ?? "auto",
       ...(signal !== undefined ? { signal } : {}),
     },

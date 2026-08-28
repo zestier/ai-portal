@@ -23,6 +23,13 @@ tool execution remain in the SvelteKit server process. QuickJS guest programs
 run on one long-lived Node worker thread so CPU-bound guest code cannot block
 HTTP, SSE, timers, or unrelated conversations on the server event loop.
 
+Executions also have a 10,000-call total ceiling. This remains generous for
+read-heavy programs but stops accidental recursive `readdir`/`stat` loops;
+procedures that approach it should use fused `fs.glob` or `fs.grep` operations
+instead. Failed executions retain individual capability calls in the nested
+audit timeline, while worker-facing feedback groups effects by tool, category,
+and outcome with a count. Model context therefore cannot grow linearly with the
+number of audited calls.
 The worker pool accepts at most 32 active and queued programs and executes them
 in FIFO order. A single worker deliberately preserves serial execution and
 bounds the memory cost of QuickJS/WASM contexts. Each program still receives a
@@ -197,20 +204,46 @@ purpose, program-specific input and result schemas, one canonical JavaScript
 example, its read or mutation category, and any compatibility, permission, or
 result adapters required when script and direct-tool contracts differ.
 
-At proc start, the worker receives the complete manifest for every enabled program
-capability plus stable `fs`, `path`, and `command` facade signatures. This is
-not a discovery call and does not include disabled capabilities. Supplying it
-once with the procedure lets the worker generate valid source without guessing
-or spending turns loading schemas.
+At proc start, the worker receives stable `fs`, `path`, `git`, and `command`
+facade signatures plus the complete manifest for enabled capabilities that do
+not have a first-class facade. This is not a discovery call and does not include
+disabled capabilities. Supplying it once with the procedure lets the worker
+generate valid source without guessing or spending turns loading schemas.
 
 The initial program surface covers:
 
 - file reads, writes, traversal, metadata, creation, and rename through `fs`;
-- content and path search through `tools.grep` and `tools.find`;
-- structured repository inspection through `tools.git_status` and
-  `tools.git_diff`;
+- content and path search through `fs.grep` and `fs.glob`;
+- structured repository inspection through `git.status`, `git.diff`,
+  `git.log`, `git.show`, and `git.blame`;
 - validation and explicit argv execution through `command.run`;
 - immutable intermediate values through `getState(resultId)`.
+
+The `fs`, `git`, and `command` namespaces are the advertised interface. The
+generic `tools` proxy remains an undocumented compatibility path for programs
+generated against older manifests, but facade-backed capabilities are omitted
+from the worker's tool manifest so new programs do not have to choose between
+duplicate spellings. Filesystem methods are documented without Node's `Sync`
+suffix and accept the corresponding suffixed spelling as a tolerant alias.
+Raw `fs.readdir` remains available for compatibility but is not advertised;
+workers should use ripgrep-backed `fs.glob`, which follows ripgrep's ignore
+rules for repository traversal. Passing `includeIgnored: true` bypasses ignore
+files and can deliberately search ignored trees such as `node_modules`.
+
+Reading a complete file inside an execution keeps that value in the QuickJS
+context and does not add it to model context. Returning complete source from an
+`inspect`, `checkpoint`, or `final` execution does. Worker guidance therefore
+permits broad internal reads for mechanical filtering and transformation while
+requiring the returned projection to remain the smallest value needed by the
+supplied procedure and output contract.
+
+`fs.glob` returns all matching workspace-relative paths as `string[]`;
+`fs.grep` returns all matching lines as structured path, line, column, and text
+records. Neither silently truncates. Capability data may consume the QuickJS
+memory budget so the program can filter and aggregate it internally; only the
+value returned from the VM is subject to the program-result and proc projection
+limits. Grep accepts one glob or an array of ripgrep globs, each applied as a
+repeated `--glob` filter.
 
 Additional Git operations, tickets, memory, or other domains must not silently
 appear in executions. They require explicit metadata, contract tests, permission
@@ -258,7 +291,7 @@ unused checkpoints are never loaded into QuickJS.
 ```yaml
 summary: Locate and reduce foo definitions
 javascript: |
-  const matches = tools.grep({ pattern: "foo", path: "src" });
+  const matches = fs.grep("foo", { path: "src" });
   return groupAndSelect(matches);
 purpose: final
 ```

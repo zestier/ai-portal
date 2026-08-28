@@ -134,6 +134,7 @@ const GrepProgramArgs = z
     path: z.string().min(1).max(4096).optional(),
     glob: z.string().max(512).optional(),
     caseInsensitive: z.boolean().optional(),
+    includeIgnored: z.boolean().optional(),
   })
   .strict();
 
@@ -153,6 +154,36 @@ const GitDiffProgramArgs = z
     path: z.string().min(1).max(4096).optional(),
   })
   .strict();
+const GitLogProgramArgs = z
+  .object({
+    limit: z.number().int().min(1).max(50).optional(),
+    skip: z.number().int().min(0).max(1000).optional(),
+    ref: z.string().min(1).max(200).optional(),
+    path: z.string().min(1).max(4096).optional(),
+  })
+  .strict();
+const GitShowCommitProgramArgs = z
+  .object({
+    sha: z.string().min(4).max(64),
+    includePatch: z.boolean().optional(),
+  })
+  .strict();
+const GitShowFileProgramArgs = z
+  .object({
+    ref: z.string().min(1).max(200),
+    path: z.string().min(1).max(4096),
+  })
+  .strict();
+
+export const PROGRAM_FACADE_TOOL_NAMES = new Set([
+  "find",
+  "grep",
+  "git_status",
+  "git_diff",
+  "git_log",
+  "git_show_commit",
+  "git_show_file",
+]);
 
 const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
   find: metadata(
@@ -189,6 +220,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
           path: { type: "string" },
           glob: { type: "string" },
           caseInsensitive: { type: "boolean" },
+          includeIgnored: { type: "boolean" },
         },
         ["pattern"],
       ),
@@ -224,6 +256,53 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
       ),
       argsSchema: GitDiffProgramArgs,
       invoke: invokeGitDiff,
+    },
+  ),
+  git_log: metadata(
+    "inspect repository history",
+    { type: "object" },
+    "git.log({ limit: 20, path: 'src' })",
+    undefined,
+    {
+      parameters: objectParameters(
+        {
+          limit: { type: "integer" },
+          skip: { type: "integer" },
+          ref: { type: "string" },
+          path: { type: "string" },
+        },
+        [],
+      ),
+      argsSchema: GitLogProgramArgs,
+    },
+  ),
+  git_show_commit: metadata(
+    "inspect one commit",
+    { type: "object" },
+    "git.show('abc123', { includePatch: false })",
+    undefined,
+    {
+      parameters: objectParameters(
+        {
+          sha: { type: "string" },
+          includePatch: { type: "boolean" },
+        },
+        ["sha"],
+      ),
+      argsSchema: GitShowCommitProgramArgs,
+    },
+  ),
+  git_show_file: metadata(
+    "read one file at a Git ref",
+    { type: "string" },
+    "git.show('HEAD', 'src/index.ts')",
+    undefined,
+    {
+      parameters: objectParameters(
+        { ref: { type: "string" }, path: { type: "string" } },
+        ["ref", "path"],
+      ),
+      argsSchema: GitShowFileProgramArgs,
     },
   ),
 };
@@ -418,6 +497,7 @@ function grepDirectArgs(args: unknown): Record<string, unknown> {
     head_limit: 0,
     "-n": true,
     "-i": parsed.caseInsensitive ?? false,
+    include_ignored: parsed.includeIgnored ?? false,
   };
 }
 

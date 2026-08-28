@@ -326,7 +326,7 @@ export async function createPiProviderSession(
     permissionResolver(...args);
   const programFacadeTools =
     opts.agentArchitecture === "semantic"
-      ? buildProgramFacadeTools(opts.cwd)
+      ? buildProgramFacadeTools(opts.cwd, opts.disabledToolGroups)
       : new Map<string, PortalTool>();
   const exposedTools =
     opts.agentArchitecture === "semantic"

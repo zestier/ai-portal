@@ -16,7 +16,7 @@ const MAX_OPERATIONS_BY_CATEGORY = {
   mutation: 500,
   command: 20,
 } as const;
-const MAX_CAPABILITY_RESULT_BYTES = 64 * 1024;
+const MAX_TOTAL_OPERATIONS = 10_000;
 const MAX_PROGRAM_RESULT_BYTES = 5 * 1024 * 1024;
 const MAX_RUNTIME_MS = 120_000;
 const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
@@ -100,6 +100,11 @@ export async function runProgram(
     getState: (id) => opts.state?.get(id),
     execute: async (kind, name, args, signal) => {
       operations++;
+      if (operations > MAX_TOTAL_OPERATIONS) {
+        throw new Error(
+          `Execution exceeded the total operation limit (${MAX_TOTAL_OPERATIONS}). Use fs.glob/fs.grep or narrow the traversal instead of calling stat/read for every path.`,
+        );
+      }
       if (signal.aborted) throw new Error("Execution aborted.");
       const allowed =
         kind === "tool"
@@ -192,11 +197,6 @@ export async function runProgramInline(
         const args = argsHandle ? vm.dump(argsHandle) : {};
         const value = await execute(name, args, allowed);
         const encoded = JSON.stringify(value);
-        if (Buffer.byteLength(encoded) > MAX_CAPABILITY_RESULT_BYTES) {
-          throw new Error(
-            `Capability ${name} returned more than 64 KiB. Narrow or batch the call.`,
-          );
-        }
         return vm.newString(encoded);
       },
     );
@@ -297,6 +297,9 @@ export async function runProgramInline(
         return value.startsWith("/");
       }
     });
+    function callTool(name, args = {}) {
+      return unwrapCall(__callCapability, name, args);
+    }
     const fsMethods = {
       readFile(path, encoding) {
         const normalizedEncoding = typeof encoding === "string"
@@ -327,10 +330,18 @@ export async function runProgramInline(
         unwrapCall(__callFacadeCapability, "write", { file_path: path, content: data });
       },
       readdir(path, options) {
-        if (options?.withFileTypes === true) {
-          throw new Error("fs.readdir does not yet support withFileTypes: true.");
-        }
-        return unwrapCall(__callFacadeCapability, "__ptc_fs_readdir", { path });
+        const withFileTypes = options?.withFileTypes === true;
+        const entries = unwrapCall(__callFacadeCapability, "__ptc_fs_readdir", {
+          path,
+          ...(withFileTypes ? { withFileTypes: true } : {})
+        });
+        if (!withFileTypes) return entries;
+        return entries.map((entry) => Object.freeze({
+          name: entry.name,
+          isFile: () => entry.file,
+          isDirectory: () => entry.directory,
+          isSymbolicLink: () => entry.symbolicLink
+        }));
       },
       stat(path) {
         const value = unwrapCall(__callFacadeCapability, "__ptc_fs_stat", { path });
@@ -351,6 +362,79 @@ export async function runProgramInline(
           destination: newPath,
           overwrite: true
         });
+      },
+      exists(path) {
+        try {
+          unwrapCall(__callFacadeCapability, "__ptc_fs_stat", { path });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      readLines(path, options = {}) {
+        const start = options.start ?? 1;
+        const end = options.end;
+        if (!Number.isInteger(start) || start < 1) {
+          throw new Error("fs.readLines start must be a positive integer.");
+        }
+        if (end !== undefined && (!Number.isInteger(end) || end < start)) {
+          throw new Error("fs.readLines end must be an integer greater than or equal to start.");
+        }
+        const result = unwrapCall(__callFacadeCapability, "read", {
+          file_path: path,
+          offset: start,
+          ...(end !== undefined ? { limit: end - start + 1 } : {}),
+          mode: "content"
+        });
+        if (result?.type !== "text") {
+          throw new Error("fs.readLines supports only text files.");
+        }
+        return Object.freeze({
+          text: result.file.content,
+          start: result.file.startLine,
+          end: result.file.startLine + result.file.numLines - 1,
+          totalLines: result.file.totalLines
+        });
+      },
+      copyFile(source, destination) {
+        const content = fsMethods.readFile(source, "utf8");
+        fsMethods.writeFile(destination, content, "utf8");
+      },
+      rm(path, options = {}) {
+        unwrapCall(__callFacadeCapability, "__ptc_fs_rm", {
+          path,
+          ...(options?.recursive === true ? { recursive: true } : {}),
+          ...(options?.force === true ? { force: true } : {})
+        });
+      },
+      unlink(path) {
+        unwrapCall(__callFacadeCapability, "__ptc_fs_rm", {
+          path,
+          unlink: true
+        });
+      },
+      glob(pattern, options = {}) {
+        return unwrapCall(__callFacadeCapability, "__ptc_fs_glob", {
+          pattern,
+          ...(options.path !== undefined ? { path: options.path } : {}),
+          ...(options.maxDepth !== undefined ? { maxDepth: options.maxDepth } : {}),
+          ...(options.includeIgnored !== undefined
+            ? { includeIgnored: options.includeIgnored }
+            : {})
+        });
+      },
+      grep(pattern, options = {}) {
+        return unwrapCall(__callFacadeCapability, "__ptc_fs_grep", {
+          pattern,
+          ...(options.path !== undefined ? { path: options.path } : {}),
+          ...(options.glob !== undefined ? { glob: options.glob } : {}),
+          ...(options.caseInsensitive !== undefined
+            ? { caseInsensitive: options.caseInsensitive }
+            : {}),
+          ...(options.includeIgnored !== undefined
+            ? { includeIgnored: options.includeIgnored }
+            : {})
+        });
       }
     };
     const fsApi = Object.freeze({
@@ -360,7 +444,45 @@ export async function runProgramInline(
       readdirSync: fsMethods.readdir,
       statSync: fsMethods.stat,
       mkdirSync: fsMethods.mkdir,
-      renameSync: fsMethods.rename
+      renameSync: fsMethods.rename,
+      existsSync: fsMethods.exists,
+      readLines: fsMethods.readLines,
+      copyFileSync: fsMethods.copyFile,
+      rmSync: fsMethods.rm,
+      unlinkSync: fsMethods.unlink,
+      globSync: fsMethods.glob,
+      grepSync: fsMethods.grep
+    });
+    const gitApi = Object.freeze({
+      status(options = {}) {
+        return callTool("git_status", options);
+      },
+      diff(options = {}) {
+        return callTool("git_diff", options);
+      },
+      log(options = {}) {
+        return callTool("git_log", options).commits;
+      },
+      show(ref, pathOrOptions = {}) {
+        if (typeof pathOrOptions === "string") {
+          return callTool("git_show_file", { ref, path: pathOrOptions });
+        }
+        const commit = /^[0-9a-f]{4,64}$/.test(ref)
+          ? ref
+          : callTool("git_log", { ref, limit: 1 }).commits[0]?.sha;
+        if (!commit) throw new Error("git.show could not resolve ref " + ref + ".");
+        return callTool("git_show_commit", {
+          sha: commit,
+          ...(pathOrOptions.includePatch === true ? { includePatch: true } : {})
+        });
+      },
+      blame(path, options = {}) {
+        return unwrapCall(__callFacadeCapability, "__ptc_git_blame", {
+          path,
+          ...(options.startLine !== undefined ? { startLine: options.startLine } : {}),
+          ...(options.endLine !== undefined ? { endLine: options.endLine } : {})
+        });
+      }
     });
     function runCommand(executableOrArgv, argsOrOptions = [], maybeOptions = {}) {
         const argvForm = Array.isArray(executableOrArgv);
@@ -419,7 +541,7 @@ export async function runProgramInline(
       if (name === "fs" || name === "node:fs") return fsApi;
       if (name === "path" || name === "node:path") return pathApi;
       throw new Error(
-        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, command, tools, and getState globals."
+        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, git, command, tools, and getState globals."
       );
     };
     const unavailableConsole = () => {
@@ -437,6 +559,7 @@ export async function runProgramInline(
     Object.defineProperties(globalThis, {
       fs: { value: fsApi, writable: false, configurable: false },
       path: { value: pathApi, writable: false, configurable: false },
+      git: { value: gitApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
       getState: { value: getState, writable: false, configurable: false },
@@ -502,6 +625,11 @@ export async function runProgramInline(
     allowed: ReadonlyMap<string, PortalTool>,
   ): Promise<unknown> {
     operations++;
+    if (operations > MAX_TOTAL_OPERATIONS) {
+      throw new Error(
+        `Execution exceeded the total operation limit (${MAX_TOTAL_OPERATIONS}). Use fs.glob/fs.grep or narrow the traversal instead of calling stat/read for every path.`,
+      );
+    }
     if (opts.signal.aborted) throw new Error("Execution aborted.");
     if (Date.now() > deadline) {
       throw new Error("Execution exceeded the 120 second limit.");

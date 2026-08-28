@@ -72,6 +72,9 @@ describe("semantic tool surface", () => {
     const manifest = programToolManifest(capabilities.byName);
     expect(manifest.map((entry) => entry.name)).toEqual([
       "git_diff",
+      "git_log",
+      "git_show_commit",
+      "git_show_file",
       "git_status",
     ]);
     for (const contract of manifest) {
