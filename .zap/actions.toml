@@ -32,6 +32,13 @@ permission = "user"
 steps = [{ label = "lint", command = "pnpm", args = ["run", "lint"] }]
 
 [[actions]]
+id = "format"
+label = "Format"
+description = "Run the project formatter"
+permission = "user"
+steps = [{ label = "format", command = "pnpm", args = ["run", "format"] }]
+
+[[actions]]
 id = "check"
 label = "Check"
 description = "Run type-checking and static analysis"
