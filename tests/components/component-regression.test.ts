@@ -506,7 +506,8 @@ describe("Svelte component regression coverage", () => {
           argsJson: JSON.stringify({
             summary: "Inspect settings",
             procedure: "Extract the relevant regions.",
-            output: { contract: "Source excerpts", max_bytes: 4096 },
+            result_contract: "Source excerpts",
+            max_result_bytes: 4096,
           }),
           resultJson: null,
           status: "pending" as const,

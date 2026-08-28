@@ -48,7 +48,7 @@ export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changi
 Prefer one execute call with purpose final that implements the whole procedure in one JavaScript program. Keep mechanical intermediate values inside it.
 Reading complete files inside an execution does not add them to your context. It is often appropriate for mechanical filtering or transformation. Never return complete files through inspect, checkpoint, or final unless the output contract specifically requires that exact bounded value.
 If one reliable program is impractical, call execute with purpose checkpoint after a completed mechanical segment, then continue from getState(result_id). Use purpose inspect only for semantic judgment required by the procedure, after mechanically reducing to the smallest useful candidate set.
-Return a final value matching output.contract within output.max_bytes. Do not return unrequested raw source or other bulk data.
+Do not return unrequested raw source or other bulk data.
 Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
 Call exactly one tool per turn. Finish only by calling execute with purpose final, or cannot_execute. Use brief, user-facing summaries.`;
 
@@ -88,10 +88,8 @@ export function initialProcMessages(input: {
       content: JSON.stringify({
         summary: input.summary,
         procedure: input.procedure,
-        output: {
-          contract: input.contract,
-          max_bytes: input.outputPolicy.maxBytes,
-        },
+        result_contract: input.contract,
+        max_result_bytes: input.outputPolicy.maxBytes,
         environment: {
           tools: input.contracts,
           globals: {
@@ -525,7 +523,11 @@ function workerToolSpecs(): ExtractorToolSpec[] {
               type: "string",
               description: "Short label shown to the user.",
             },
-            javascript: { type: "string" },
+            javascript: {
+              type: "string",
+              description:
+                'JavaScript function body returning one JSON-compatible value matching result_contract within max_result_bytes. Example: const results = fs.grep("TODO", { path: "src" }); return { results };',
+            },
             purpose: {
               type: "string",
               enum: ["checkpoint", "inspect", "final"],

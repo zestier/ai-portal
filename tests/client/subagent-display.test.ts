@@ -87,14 +87,16 @@ describe("procWorkerPrompt", () => {
       procWorkerPrompt({
         summary: "Find owners",
         procedure: "grep, group, read context",
-        output: { contract: "Return paths and ranges", max_bytes: 4096 },
+        result_contract: "Return paths and ranges",
+        max_result_bytes: 4096,
       }),
     ).toBe(
       JSON.stringify(
         {
           summary: "Find owners",
           procedure: "grep, group, read context",
-          output: { contract: "Return paths and ranges", max_bytes: 4096 },
+          result_contract: "Return paths and ranges",
+          max_result_bytes: 4096,
         },
         null,
         2,

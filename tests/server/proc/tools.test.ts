@@ -1,5 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { validateProcRequest } from "../../../src/lib/server/proc/tools";
+import {
+  buildProcTools,
+  validateProcRequest,
+} from "../../../src/lib/server/proc/tools";
+
+describe("proc arguments", () => {
+  it("uses a flat result contract with an optional 8 KiB budget", () => {
+    const [proc] = buildProcTools({
+      conversationId: 1,
+      frontierModel: "test/model",
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+    });
+    const parameters = proc.parameters as { required: string[] };
+
+    expect(parameters.required).toEqual([
+      "summary",
+      "procedure",
+      "result_contract",
+    ]);
+    expect(
+      proc.argsSchema?.parse({
+        summary: "Find owners",
+        procedure: "Search and reduce the matches.",
+        result_contract: "Paths and line ranges.",
+      }),
+    ).toMatchObject({ max_result_bytes: 8192 });
+  });
+});
 
 describe("validateProcRequest", () => {
   it("rejects multi-file raw corpus return procedures", () => {

@@ -398,9 +398,25 @@ describe("proc worker", () => {
     expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
       "max_bytes",
     );
+    expect(
+      workerTools[0]?.function.parameters.properties.javascript,
+    ).toMatchObject({
+      description: expect.stringContaining("return { results };"),
+    });
+    expect(PROC_WORKER_SYSTEM).not.toContain(
+      "Return a final value matching output.contract",
+    );
     const initial = JSON.parse(transaction.messages[1].content as string) as {
+      result_contract: string;
+      max_result_bytes: number;
+      output?: unknown;
       environment: { tools: unknown[]; globals: { fs: string[] } };
     };
+    expect(initial).toMatchObject({
+      result_contract: "Return paths and ranges",
+      max_result_bytes: 4096,
+    });
+    expect(initial).not.toHaveProperty("output");
     expect(initial.environment.tools).toEqual(contracts);
     expect(initial.environment.globals.fs).toContainEqual(
       expect.stringContaining("glob(globPattern"),

@@ -80,18 +80,23 @@ export type SubagentArgs = {
   constraints?: string[];
   completion?: string[];
   procedure?: string;
+  result_contract?: string;
+  max_result_bytes?: number;
   source?: string;
   output?: unknown;
   transaction_id?: string;
 };
 
 export function procWorkerPrompt(args: SubagentArgs): string | null {
-  if (!args.procedure || args.output === undefined) return null;
+  if (!args.procedure || !args.result_contract) return null;
   return JSON.stringify(
     {
       ...(args.summary ? { summary: args.summary } : {}),
       procedure: args.procedure,
-      output: args.output,
+      result_contract: args.result_contract,
+      ...(args.max_result_bytes !== undefined
+        ? { max_result_bytes: args.max_result_bytes }
+        : {}),
     },
     null,
     2,

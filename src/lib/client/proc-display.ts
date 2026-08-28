@@ -3,7 +3,8 @@ import { parseEnvelopeJson } from "$lib/tool-result-views";
 export interface ProcArgs {
   summary: string;
   procedure: string;
-  output: { contract: string; max_bytes: number };
+  result_contract: string;
+  max_result_bytes?: number;
 }
 
 export interface ProcExecutionArgs {
@@ -60,9 +61,9 @@ function procArgsOf(value: unknown): ProcArgs | null {
     !isObject(value) ||
     typeof value.summary !== "string" ||
     typeof value.procedure !== "string" ||
-    !isObject(value.output) ||
-    typeof value.output.contract !== "string" ||
-    typeof value.output.max_bytes !== "number"
+    typeof value.result_contract !== "string" ||
+    (value.max_result_bytes !== undefined &&
+      typeof value.max_result_bytes !== "number")
   ) {
     return null;
   }

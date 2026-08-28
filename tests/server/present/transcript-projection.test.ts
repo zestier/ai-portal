@@ -65,6 +65,22 @@ async function seed(conversationTitle = "projection") {
       textOffset: 10,
       parentToolCallId: null,
     });
+    messages.insertToolCall(asst.id, {
+      id: i * 10 + 4,
+      tool: "proc",
+      argsJson: JSON.stringify({
+        summary: "map owners",
+        procedure: "search and reduce ".repeat(20),
+        result_contract: "paths and line ranges",
+        max_result_bytes: 4096,
+      }),
+      resultJson: null,
+      status: "pending",
+      startedAt: i * 1000 + 5,
+      endedAt: null,
+      textOffset: 12,
+      parentToolCallId: null,
+    });
     messages.insertFileEdit(
       asst.id,
       `src/turn-${i}.ts`,
@@ -160,6 +176,13 @@ describe("projectTranscript", () => {
       model: "some/model",
     });
     expect(task.summary).toBe("extract memory");
+
+    const proc = last.toolCalls![2];
+    expect(proc.argsJson).toBeNull();
+    expect(proc.meta).toMatchObject({
+      result_contract: "paths and line ranges",
+      max_result_bytes: 4096,
+    });
 
     const edit = last.fileEdits![0];
     expect(edit.summary).toBe("src/turn-7.ts (+1 −1)");

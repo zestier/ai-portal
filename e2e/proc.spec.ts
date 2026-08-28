@@ -29,10 +29,8 @@ test("semantic mode exposes proc and completes a fused execution", async ({
       args: {
         summary,
         procedure: `PI_TEST_PROC_RETURN ${JSON.stringify(expected)}`,
-        output: {
-          contract: "Return paths and line numbers",
-          max_bytes: 4096,
-        },
+        result_contract: "Return paths and line numbers",
+        max_result_bytes: 4096,
       },
     },
   ]);

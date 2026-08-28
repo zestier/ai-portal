@@ -97,10 +97,12 @@
         </section>
         <section>
           <div class="label">Return contract</div>
-          <p>{args.output.contract}</p>
-          <span class="budget"
-            >up to {formatFieldBytes(args.output.max_bytes)}</span
-          >
+          <p>{args.result_contract}</p>
+          {#if args.max_result_bytes !== undefined}
+            <span class="budget"
+              >up to {formatFieldBytes(args.max_result_bytes)}</span
+            >
+          {/if}
         </section>
       </div>
     {/if}

@@ -190,12 +190,16 @@ function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
         "name",
         "summary",
         "procedure",
+        "result_contract",
         "javascript",
         "purpose",
         "source",
       ] as const) {
         const v = args[key];
         if (typeof v === "string" && v.length > 0) meta[key] = v;
+      }
+      if (typeof args.max_result_bytes === "number") {
+        meta.max_result_bytes = args.max_result_bytes;
       }
       if (args.output !== undefined) meta.output = args.output;
     }

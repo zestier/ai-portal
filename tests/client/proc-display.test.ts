@@ -15,15 +15,16 @@ describe("proc display parsing", () => {
         JSON.stringify({
           summary: "Map routing",
           procedure: "Search then reduce",
-          output: { contract: "Paths and ranges", max_bytes: 4096 },
+          result_contract: "Paths and ranges",
+          max_result_bytes: 4096,
         }),
       ),
-    ).toMatchObject({ summary: "Map routing", output: { max_bytes: 4096 } });
+    ).toMatchObject({ summary: "Map routing", max_result_bytes: 4096 });
     expect(
       parseProcMeta({
         summary: "Map routing",
         procedure: "Search then reduce",
-        output: { contract: "Paths and ranges", max_bytes: 4096 },
+        result_contract: "Paths and ranges",
       }),
     ).toMatchObject({ procedure: "Search then reduce" });
     expect(
