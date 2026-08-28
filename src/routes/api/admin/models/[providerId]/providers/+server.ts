@@ -1,6 +1,6 @@
-// GET /api/admin/models/[providerId]/providers — provider names for the
+// GET /api/admin/models/[providerId]/providers — provider ids (slugs) for the
 // OpenRouter routing picker, derived on demand from a model's /endpoints
-// endpoint (the distinct endpoints[].provider_name values).
+// endpoint (the distinct endpoints[].provider_id values).
 
 import { error, json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";

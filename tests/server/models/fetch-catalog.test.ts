@@ -222,7 +222,7 @@ describe("fetchOpenRouterProviders", () => {
     delete process.env.ENCRYPTION_KEY;
   });
 
-  it("derives deduped, sorted provider names from a model's endpoints, dropping empties", async () => {
+  it("derives deduped, sorted provider ids (slugs) from a model's endpoints, dropping empties", async () => {
     const baseUrl = await startStub((req, res) => {
       expect(req.headers.authorization).toBe("Bearer sk-test-key");
       expect(req.url).toContain("/models/test-model/endpoints");
@@ -230,10 +230,11 @@ describe("fetchOpenRouterProviders", () => {
         data: {
           id: "test-model",
           endpoints: [
-            { provider_name: "Anthropic" },
-            { provider_name: "   " },
-            { provider_name: "Azure" },
-            { provider_name: "Anthropic" },
+            { provider_id: "anthropic", provider_name: "Anthropic" },
+            { provider_id: "   " },
+            { provider_id: "azure", provider_name: "Azure OpenAI" },
+            { provider_id: "anthropic", provider_name: "Anthropic" },
+            { provider_name: "Legacy" }, // no slug → discarded (no fallback)
           ],
         },
       });
@@ -243,7 +244,7 @@ describe("fetchOpenRouterProviders", () => {
       "sk-test-key",
       "test-model",
     );
-    expect(providers).toEqual(["Anthropic", "Azure"]);
+    expect(providers).toEqual(["anthropic", "azure"]);
   });
 
   it("rejects with a clear error when no API key is stored", async () => {

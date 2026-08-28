@@ -164,11 +164,14 @@ export async function fetchOpenRouterProviders(
     {
       authorization: `Bearer ${key}`,
     },
-  )) as { data?: { endpoints?: { provider_name?: string }[] } };
+  )) as { data?: { endpoints?: { provider_id?: string }[] } };
   const seen = new Set<string>();
   for (const ep of json.data?.endpoints ?? []) {
-    const name = ep.provider_name?.trim();
-    if (name) seen.add(name);
+    // openRouterRouting order/only/ignore take provider ids (slugs, e.g.
+    // "deepseek", "together"), not provider_name display names — surface only
+    // the slug; skip any endpoint that has no provider_id.
+    const slug = ep.provider_id?.trim();
+    if (slug) seen.add(slug);
   }
   return [...seen].sort();
 }
