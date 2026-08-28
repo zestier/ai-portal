@@ -48,7 +48,8 @@ function isPortInUse(port: number): boolean {
 }
 
 const willReuseServer = !process.env.CI && !isolated && isPortInUse(PORT);
-if (!willReuseServer) {
+const isPlaywrightWorker = process.env.TEST_WORKER_INDEX !== undefined;
+if (!willReuseServer && !isPlaywrightWorker) {
   rmSync(dataDir, { recursive: true, force: true });
   mkdirSync(dataDir, { recursive: true });
 }

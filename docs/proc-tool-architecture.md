@@ -16,6 +16,29 @@ The central hypothesis is:
 The feature remains experimental and is selected by the existing `semantic`
 conversation architecture value.
 
+## Execution isolation
+
+Proc model orchestration, permissions, persistence, event emission, and real
+tool execution remain in the SvelteKit server process. QuickJS guest programs
+run on one long-lived Node worker thread so CPU-bound guest code cannot block
+HTTP, SSE, timers, or unrelated conversations on the server event loop.
+
+The worker pool accepts at most 32 active and queued programs and executes them
+in FIFO order. A single worker deliberately preserves serial execution and
+bounds the memory cost of QuickJS/WASM contexts. Each program still receives a
+fresh QuickJS context with the existing memory, stack, operation, payload, and
+120-second runtime limits.
+
+Guest capability calls use correlated request/response messages back to the
+parent process. Only JSON-compatible arguments, tool results, checkpoint values,
+errors, and traces cross the thread boundary; live tool handlers, database
+readers, permission resolvers, and event callbacks never leave the parent.
+Cancellation uses a shared atomic flag so QuickJS can observe it even while the
+worker's JavaScript event loop is occupied. The pool also aborts in-flight host
+tool work and terminates the worker if it does not stop within the grace period.
+A hard timeout or worker crash rejects the active program, starts a replacement,
+and continues queued work.
+
 ## Motivation
 
 The existing semantic tools leave an awkward gap:

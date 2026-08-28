@@ -7,8 +7,10 @@ import type {
   PortalTool,
   ToolPermissionRequest,
   ToolResult,
-} from "$lib/server/tools/types";
-import { normalizeProgramToolArgs, suggestionsFor } from "./contracts";
+} from "../tools/types.ts";
+import { normalizeProgramToolArgs, suggestionsFor } from "./contracts.ts";
+import { runProgramInWorker } from "./program-worker-pool.ts";
+import type { CapabilityKind } from "./program-worker-protocol.ts";
 
 const MAX_OPERATIONS_BY_CATEGORY = {
   mutation: 500,
@@ -45,13 +47,21 @@ export interface ProgramRunOptions {
   source: string;
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities?: ReadonlyMap<string, PortalTool>;
-  state?: { get(id: string): unknown | undefined };
+  state?: { get(id: string): unknown | undefined | Promise<unknown> };
   execute(
     name: string,
     args: unknown,
     signal: AbortSignal,
   ): Promise<ToolResult>;
   signal: AbortSignal;
+}
+
+interface ProgramInlineOptions extends ProgramRunOptions {
+  hostManagedExecute?(
+    kind: CapabilityKind,
+    name: string,
+    args: unknown,
+  ): Promise<ToolResult>;
 }
 
 export interface ProgramRunResult {
@@ -73,6 +83,83 @@ type OperationCategory = keyof typeof MAX_OPERATIONS_BY_CATEGORY;
 
 export async function runProgram(
   opts: ProgramRunOptions,
+): Promise<ProgramRunResult> {
+  const startedAt = Date.now();
+  const calls: ProgramRunResult["trace"]["calls"] = [];
+  let operations = 0;
+  const categoryOperations: Record<OperationCategory, number> = {
+    mutation: 0,
+    command: 0,
+  };
+
+  const result = await runProgramInWorker({
+    source: opts.source,
+    capabilityNames: [...opts.capabilities.keys()],
+    facadeCapabilityNames: [...(opts.facadeCapabilities?.keys() ?? [])],
+    signal: opts.signal,
+    getState: (id) => opts.state?.get(id),
+    execute: async (kind, name, args, signal) => {
+      operations++;
+      if (signal.aborted) throw new Error("Execution aborted.");
+      const allowed =
+        kind === "tool"
+          ? opts.capabilities
+          : (opts.facadeCapabilities ?? new Map());
+      const tool = allowed.get(name);
+      if (!tool) {
+        const suggestions = suggestionsFor(name, [...allowed.keys()]);
+        const related = suggestions.length
+          ? ` Available related tools: ${suggestions.join(", ")}.`
+          : "";
+        calls.push({
+          name,
+          kind,
+          argsHash: hash(args),
+          ok: false,
+        });
+        return {
+          ok: false,
+          error: {
+            message: `Unknown program tool "${name}".${related} Use a contract from environment.tools.`,
+            details: { validTools: [...allowed.keys()].sort() },
+          },
+        };
+      }
+      const effective = normalizeProgramToolArgs(tool, args);
+      const category = operationCategory(name, effective, allowed);
+      if (category !== null) {
+        categoryOperations[category]++;
+        const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
+        if (categoryOperations[category] > categoryLimit) {
+          throw new Error(
+            `Execution exceeded the ${category} operation limit (${categoryLimit}).`,
+          );
+        }
+      }
+      const toolResult = await opts.execute(name, effective, signal);
+      calls.push({
+        name,
+        kind,
+        argsHash: hash(effective),
+        ok: toolResult.ok,
+      });
+      return toolResult;
+    },
+  });
+
+  return {
+    value: result.value,
+    operations,
+    trace: {
+      sourceHash: hash(opts.source),
+      calls,
+      durationMs: Date.now() - startedAt,
+    },
+  };
+}
+
+export async function runProgramInline(
+  opts: ProgramInlineOptions,
 ): Promise<ProgramRunResult> {
   // Asyncify lets guest code call async host capabilities synchronously. Each
   // program needs its own WASM module because one module may only suspend for
@@ -123,7 +210,7 @@ export async function runProgram(
     "__ptc_fetch_state",
     async (idHandle) => {
       const id = vm.getString(idHandle);
-      const value = opts.state?.get(id);
+      const value = await opts.state?.get(id);
       if (value === undefined) {
         throw new Error(`Unknown checkpoint: ${id}`);
       }
@@ -418,6 +505,19 @@ export async function runProgram(
     if (opts.signal.aborted) throw new Error("Execution aborted.");
     if (Date.now() > deadline) {
       throw new Error("Execution exceeded the 120 second limit.");
+    }
+    const kind = allowed === opts.capabilities ? "tool" : "facade";
+    if (opts.hostManagedExecute) {
+      const result = await opts.hostManagedExecute(kind, name, args);
+      calls.push({
+        name,
+        kind,
+        argsHash: hash(args),
+        ok: result.ok,
+      });
+      return result.ok
+        ? { ok: true, value: result.result }
+        : { ok: false, error: result.error };
     }
     const tool = allowed.get(name);
     if (!tool) {

@@ -12,6 +12,25 @@ const echo: PortalTool = {
 };
 
 describe("program runtime", () => {
+  it("does not block the main event loop during guest CPU work", async () => {
+    let timerFired = false;
+    const timer = setTimeout(() => {
+      timerFired = true;
+    }, 20);
+
+    const result = await runProgram({
+      source:
+        "const until = Date.now() + 150; while (Date.now() < until) {} return 'done';",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    clearTimeout(timer);
+    expect(result.value).toBe("done");
+    expect(timerFired).toBe(true);
+  });
+
   it("composes capability calls and returns JSON", async () => {
     const result = await runProgram({
       source: "const first = tools.echo({ value: 2 }); return first.value + 1;",

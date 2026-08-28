@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { ToolResult } from "$lib/tool-result-views";
+import type { ToolResult } from "../../tool-result-views.ts";
 
 // The envelope → views projection (ToolResult, ok/err, deriveToolResultViews,
 // serializeEnvelope, parseEnvelopeJson, …) lives in the shared, client-safe
@@ -19,7 +19,7 @@ export {
   type ToolResultView,
   type ToolResult,
   type ToolResultViews,
-} from "$lib/tool-result-views";
+} from "../../tool-result-views.ts";
 
 // Optional, opt-in streaming channel handed to a PortalTool handler so it can
 // surface incremental feedback while it runs. Both methods reuse the existing

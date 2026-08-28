@@ -17,6 +17,7 @@ import { startMemoryMaintenance } from "$lib/server/runtime/memory-maintenance";
 import { startTicketEventBridge } from "$lib/server/runtime/ticket-events";
 import { startAppEventReaper } from "$lib/server/runtime/app-events";
 import { startLeaseMaintenance } from "$lib/server/runtime/lease-maintenance";
+import { shutdownProgramWorkerPool } from "$lib/server/ptc/program-worker-pool";
 import * as messages from "$lib/server/db/repos/messages";
 import {
   faviconDataUri,
@@ -37,6 +38,9 @@ function boot() {
   startTicketEventBridge();
   startAppEventReaper();
   startLeaseMaintenance();
+  process.once("sveltekit:shutdown", () => {
+    void shutdownProgramWorkerPool();
+  });
   log.info("boot.ok");
 }
 boot();

@@ -5,7 +5,7 @@ import {
   type PortalTool,
   type ProgramToolMetadata,
   type ToolResult,
-} from "$lib/server/tools/types";
+} from "../tools/types.ts";
 
 const FIND_RESULT = {
   type: "object",
