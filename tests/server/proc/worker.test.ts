@@ -206,7 +206,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               summary: "Inspect candidates",
               javascript: "return { candidates: ['src/a.ts'] };",
-              purpose: "inspect",
+              result_for: "worker_context",
             }),
           },
         ],
@@ -217,10 +217,10 @@ describe("proc worker", () => {
           unknown
         >;
         expect(feedback).toMatchObject({
-          purpose: "inspect",
-          projection: { candidates: ["src/a.ts"] },
+          result_for: "worker_context",
+          bounded_value: { candidates: ["src/a.ts"] },
         });
-        expect(feedback).not.toHaveProperty("checkpoint_id");
+        expect(feedback).toHaveProperty("value_id");
         return {
           content: "",
           toolCalls: [
@@ -230,7 +230,7 @@ describe("proc worker", () => {
               arguments: JSON.stringify({
                 summary: "Inspect large candidate",
                 javascript: `return ${JSON.stringify(largeValue)};`,
-                purpose: "inspect",
+                result_for: "worker_context",
               }),
             },
           ],
@@ -238,15 +238,15 @@ describe("proc worker", () => {
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          checkpoint_id: string;
-          bytes: number;
+          value_id: string;
+          value_bytes: number;
           error: string;
         };
         expect(feedback.error).toContain("the limit is 12288");
-        expect(feedback.bytes).toBeGreaterThan(12 * 1_024);
+        expect(feedback.value_bytes).toBeGreaterThan(12 * 1_024);
         expect(
           getProcResult({
-            id: feedback.checkpoint_id,
+            id: feedback.value_id,
             transactionId: transaction.id,
             conversationId,
           })?.value,
@@ -321,7 +321,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               summary: "Apply action",
               javascript: "tools.record_action({});",
-              purpose: "action",
+              result_for: "no_one",
             }),
           },
         ],
@@ -332,15 +332,15 @@ describe("proc worker", () => {
           unknown
         >;
         expect(feedback).toMatchObject({
-          purpose: "action",
+          result_for: "no_one",
           operations: 1,
           effects: [
             { tool: "record_action", effect: "mutation", ok: true, count: 1 },
           ],
           effects_total: 1,
         });
-        expect(feedback).not.toHaveProperty("checkpoint_id");
-        expect(feedback).not.toHaveProperty("projection");
+        expect(feedback).not.toHaveProperty("value_id");
+        expect(feedback).not.toHaveProperty("bounded_value");
         return {
           content: "",
           toolCalls: [
@@ -350,7 +350,7 @@ describe("proc worker", () => {
               arguments: JSON.stringify({
                 summary: "Return action evidence",
                 javascript: "return { changed: ['src/a.ts'] };",
-                purpose: "final",
+                result_for: "proc_result",
               }),
             },
           ],
@@ -403,7 +403,7 @@ describe("proc worker", () => {
     expect(recordAction.handler).toHaveBeenCalledOnce();
   });
 
-  it("composes an exact checkpoint and completes with a fused final execution", async () => {
+  it("composes an exact saved value and completes with a fused final execution", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
@@ -414,14 +414,14 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               summary: "Create candidates",
               javascript: "return [{ path: 'src/a.ts', line: 10 }];",
-              purpose: "checkpoint",
+              result_for: "later_javascript",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const prior = JSON.parse(messages.at(-1).content) as {
-          checkpoint_id: string;
+          value_id: string;
         };
         return {
           content: "",
@@ -431,8 +431,8 @@ describe("proc worker", () => {
               name: "execute",
               arguments: JSON.stringify({
                 summary: "Add definition extents",
-                javascript: `return getCheckpoint(${JSON.stringify(prior.checkpoint_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
-                purpose: "final",
+                javascript: `return loadValue(${JSON.stringify(prior.value_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
+                result_for: "proc_result",
               }),
             },
           ],
@@ -518,18 +518,21 @@ describe("proc worker", () => {
         expect.objectContaining({
           type: "tool.result",
           parentToolCallId: "X42",
-          output: expect.stringContaining("projection"),
+          output: expect.stringContaining("structure"),
         }),
       ]),
     );
-    const checkpointFeedback = JSON.parse(
+    const savedValueFeedback = JSON.parse(
       transaction.messages[3].content as string,
-    ) as { checkpoint_id: string };
-    expect(checkpointFeedback.checkpoint_id).toBeTruthy();
+    ) as { value_id: string };
+    expect(savedValueFeedback.value_id).toBeTruthy();
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
-        parameters: { properties: Record<string, unknown> };
+        parameters: {
+          properties: Record<string, unknown>;
+          required: string[];
+        };
       };
     }>;
     expect(workerTools.map((tool) => tool.function.name)).toEqual([
@@ -546,15 +549,17 @@ describe("proc worker", () => {
     expect(
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
-      description: expect.stringContaining("action may omit return"),
+      description: expect.stringContaining("result_for is no_one"),
     });
     expect(
-      workerTools[0]?.function.parameters.properties.purpose,
+      workerTools[0]?.function.parameters.properties.result_for,
     ).toMatchObject({
-      description: expect.stringContaining(
-        "required semantic judgment cannot be expressed as data operations",
-      ),
+      enum: ["no_one", "later_javascript", "worker_context", "proc_result"],
+      description: expect.stringContaining("Who needs the returned value"),
     });
+    expect(workerTools[0]?.function.parameters.required).toContain(
+      "result_for",
+    );
     expect(PROC_WORKER_SYSTEM).not.toContain(
       "Return a final value matching output.contract",
     );
@@ -594,7 +599,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               summary: "Attempt unsupported operation",
               javascript: "throw new Error('bad atom');",
-              purpose: "final",
+              result_for: "proc_result",
             }),
           },
         ],
@@ -695,7 +700,7 @@ describe("proc worker", () => {
               summary: "Write then fail",
               javascript:
                 "tools.write_fixture({}); throw new Error('after write');",
-              purpose: "final",
+              result_for: "proc_result",
             }),
           },
         ],

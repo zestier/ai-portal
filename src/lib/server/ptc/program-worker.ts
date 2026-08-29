@@ -39,7 +39,7 @@ export function startProgramWorker(parentPort: MessagePort): void {
     if (!request) return;
     pending.delete(message.requestId);
     if (message.type === "capability.result") request.resolve(message.result);
-    else if (message.type === "checkpoint.result")
+    else if (message.type === "saved-value.result")
       request.resolve(message.value);
     else request.reject(deserializeError(message.error));
   });
@@ -59,9 +59,9 @@ async function run(
         : {}),
       capabilities: toolMap(message.capabilityNames),
       facadeCapabilities: toolMap(message.facadeCapabilityNames),
-      checkpoints: {
+      savedValues: {
         get(id) {
-          return request("checkpoint", { id });
+          return request("saved-value", { id });
         },
       },
       execute: async () => ok(),
@@ -89,9 +89,9 @@ function request(
   type: "capability",
   input: { kind: CapabilityKind; name: string; args: unknown },
 ): Promise<unknown>;
-function request(type: "checkpoint", input: { id: string }): Promise<unknown>;
+function request(type: "saved-value", input: { id: string }): Promise<unknown>;
 function request(
-  type: "capability" | "checkpoint",
+  type: "capability" | "saved-value",
   input: { kind: CapabilityKind; name: string; args: unknown } | { id: string },
 ): Promise<unknown> {
   if (!activeExecutionId) {
@@ -112,7 +112,7 @@ function request(
     });
   } else if ("id" in input) {
     post({
-      type: "checkpoint.get",
+      type: "saved-value.get",
       executionId: activeExecutionId,
       requestId,
       id: input.id,

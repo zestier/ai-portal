@@ -145,7 +145,7 @@ export function createProcResult(input: {
 }): { id: string; bytes: number } {
   const valueJson = JSON.stringify(input.value);
   if (valueJson === undefined)
-    throw new Error("Checkpoint must contain a JSON value.");
+    throw new Error("Saved value must be JSON-compatible.");
   const bytes = Buffer.byteLength(valueJson);
   const id = `RES_${ulid()}`;
   getDb()
@@ -180,7 +180,7 @@ export function getProcResult(input: {
   return row ? { value: JSON.parse(row.value_json), bytes: row.bytes } : null;
 }
 
-export function createProcCheckpointReader(
+export function createProcValueReader(
   transactionId: string,
   conversationId: number,
 ): { get(id: string): unknown | undefined } {

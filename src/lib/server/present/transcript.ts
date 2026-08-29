@@ -192,7 +192,7 @@ function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
         "procedure",
         "result_requirements",
         "javascript",
-        "purpose",
+        "result_for",
         "source",
       ] as const) {
         const v = args[key];

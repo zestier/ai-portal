@@ -4,6 +4,7 @@
     DisplayFileEdit,
     DisplayReasoningBlock,
   } from "$lib/client/display-message";
+  import type { ProcExecutionArgs } from "$lib/client/proc-display";
   import {
     parseProcArgs,
     parseProcExecutionArgs,
@@ -78,6 +79,23 @@
     details.open = nextOpen;
   }
 
+  function resultForLabel(
+    value: ProcExecutionArgs["result_for"] | undefined,
+  ): string {
+    switch (value) {
+      case "no_one":
+        return "no result";
+      case "later_javascript":
+        return "later code";
+      case "worker_context":
+        return "worker";
+      case "proc_result":
+        return "proc result";
+      default:
+        return "execute";
+    }
+  }
+
   $effect(() => {
     if (open && resultTruncated) {
       ensureLazyField(conversationId, "tool-result", toolCall.id);
@@ -142,8 +160,12 @@
                 <span class="stage-title"
                   >{executionArgs?.summary ?? "Execution"}</span
                 >
-                <Pill>{executionArgs?.purpose ?? "execute"}</Pill>
-                {#if executionResult?.bytes != null}
+                <Pill>{resultForLabel(executionArgs?.result_for)}</Pill>
+                {#if executionResult?.value_bytes != null}
+                  <span class="metric"
+                    >{formatFieldBytes(executionResult.value_bytes)}</span
+                  >
+                {:else if executionResult?.bytes != null}
                   <span class="metric"
                     >{formatFieldBytes(executionResult.bytes)}</span
                   >
@@ -164,19 +186,40 @@
                     <pre><code>{executionArgs.javascript}</code></pre>
                   </details>
                 {/if}
-                {#if executionResult?.projection !== undefined}
+                {#if executionResult?.structure !== undefined}
                   <div class="projection">
                     <div class="minor-label">
-                      Projection
-                      {#if executionResult.projection_bytes != null}
-                        · {formatFieldBytes(executionResult.projection_bytes)}
+                      Structure
+                      {#if executionResult.structure_bytes != null}
+                        · {formatFieldBytes(executionResult.structure_bytes)}
                       {/if}
                     </div>
                     <pre><code
-                        >{typeof executionResult.projection === "string"
-                          ? executionResult.projection
+                        >{typeof executionResult.structure === "string"
+                          ? executionResult.structure
                           : JSON.stringify(
-                              executionResult.projection,
+                              executionResult.structure,
+                              null,
+                              2,
+                            )}</code
+                      ></pre>
+                  </div>
+                {/if}
+                {#if executionResult?.bounded_value !== undefined}
+                  <div class="projection">
+                    <div class="minor-label">
+                      Bounded value
+                      {#if executionResult.bounded_value_bytes != null}
+                        · {formatFieldBytes(
+                          executionResult.bounded_value_bytes,
+                        )}
+                      {/if}
+                    </div>
+                    <pre><code
+                        >{typeof executionResult.bounded_value === "string"
+                          ? executionResult.bounded_value
+                          : JSON.stringify(
+                              executionResult.bounded_value,
                               null,
                               2,
                             )}</code

@@ -386,7 +386,7 @@ function parseProcWorkerDirective(
         args: JSON.stringify({
           summary: "Return deterministic proc fixture",
           javascript: `return ${JSON.stringify(value)};`,
-          purpose: "final",
+          result_for: "proc_result",
         }),
       };
     } catch {

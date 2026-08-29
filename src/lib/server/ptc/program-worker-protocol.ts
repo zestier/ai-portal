@@ -34,13 +34,13 @@ export type ProgramWorkerRequest =
       error: SerializedError;
     }
   | {
-      type: "checkpoint.result";
+      type: "saved-value.result";
       executionId: string;
       requestId: number;
       value: unknown;
     }
   | {
-      type: "checkpoint.error";
+      type: "saved-value.error";
       executionId: string;
       requestId: number;
       error: SerializedError;
@@ -59,7 +59,7 @@ export type ProgramWorkerResponse =
       args: unknown;
     }
   | {
-      type: "checkpoint.get";
+      type: "saved-value.get";
       executionId: string;
       requestId: number;
       id: string;

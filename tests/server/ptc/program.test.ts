@@ -152,7 +152,7 @@ describe("program runtime", () => {
     });
   });
 
-  it("lazily composes and caches immutable exact checkpoint values", async () => {
+  it("lazily composes and caches immutable saved values", async () => {
     const fetched: string[] = [];
     const values = new Map<string, unknown>([
       [
@@ -166,15 +166,15 @@ describe("program runtime", () => {
     ]);
     const result = await runProgram({
       source: `
-        const rows = getCheckpoint("RES_rows");
-        const sameRows = getCheckpoint("RES_rows");
+        const rows = loadValue("RES_rows");
+        const sameRows = loadValue("RES_rows");
         try { rows[0].line = 99; } catch {}
         return {
           same: rows === sameRows,
           rows: rows.map(({ path, line }) => ({ path, start: line - 2, end: line + 2 }))
         };
       `,
-      checkpoints: {
+      savedValues: {
         get(id) {
           fetched.push(id);
           return values.get(id);
@@ -194,23 +194,23 @@ describe("program runtime", () => {
     expect(fetched).toEqual(["RES_rows"]);
   });
 
-  it("reports unknown checkpoint ids", async () => {
+  it("reports unknown value ids", async () => {
     await expect(
       runProgram({
-        source: 'return getCheckpoint("RES_missing");',
-        checkpoints: new Map(),
+        source: 'return loadValue("RES_missing");',
+        savedValues: new Map(),
         capabilities: new Map(),
         execute: async () => ok(),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("Unknown checkpoint: RES_missing");
+    ).rejects.toThrow("Unknown saved value: RES_missing");
   });
 
-  it("loads checkpoints larger than the capability result limit", async () => {
+  it("loads saved values larger than the capability result limit", async () => {
     const text = "x".repeat(128 * 1024);
     const result = await runProgram({
-      source: 'return getCheckpoint("RES_large").text.length;',
-      checkpoints: new Map([["RES_large", { text }]]),
+      source: 'return loadValue("RES_large").text.length;',
+      savedValues: new Map([["RES_large", { text }]]),
       capabilities: new Map(),
       execute: async () => ok(),
       signal: new AbortController().signal,

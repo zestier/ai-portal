@@ -32,26 +32,34 @@ describe("proc display parsing", () => {
         JSON.stringify({
           summary: "Search and reduce",
           javascript: "return [];",
-          purpose: "final",
+          result_for: "proc_result",
         }),
       ),
-    ).toMatchObject({ purpose: "final" });
+    ).toMatchObject({ result_for: "proc_result" });
     expect(
       parseProcExecutionMeta({
         summary: "Search and reduce",
         javascript: "return [];",
-        purpose: "checkpoint",
+        result_for: "later_javascript",
       }),
-    ).toMatchObject({ purpose: "checkpoint" });
+    ).toMatchObject({ result_for: "later_javascript" });
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
           summary: "Apply edits",
           javascript: "tools.edit({});",
-          purpose: "action",
+          result_for: "no_one",
         }),
       ),
-    ).toMatchObject({ purpose: "action" });
+    ).toMatchObject({ result_for: "no_one" });
+    expect(
+      parseProcExecutionArgs(
+        JSON.stringify({
+          summary: "Avoid choosing a recipient",
+          javascript: "return [];",
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("unwraps protocol result strings and portal envelopes", () => {
@@ -59,15 +67,18 @@ describe("proc display parsing", () => {
       parseProcExecutionResult(
         JSON.stringify(
           JSON.stringify({
-            purpose: "checkpoint",
-            checkpoint_id: "RES_1",
-            bytes: 1200,
-            projection: "array(20)",
-            projection_bytes: 9,
+            result_for: "later_javascript",
+            value_id: "RES_1",
+            value_bytes: 1200,
+            structure: "array(20)",
+            structure_bytes: 9,
           }),
         ),
       ),
-    ).toMatchObject({ purpose: "checkpoint", checkpoint_id: "RES_1" });
+    ).toMatchObject({
+      result_for: "later_javascript",
+      value_id: "RES_1",
+    });
     expect(
       parseProcExecutionResult(JSON.stringify("readFile is not defined")),
     ).toEqual({ error: "readFile is not defined" });

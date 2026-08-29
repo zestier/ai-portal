@@ -7,7 +7,7 @@ import {
   createProcResult,
   createProcTransaction,
   getProcResult,
-  createProcCheckpointReader,
+  createProcValueReader,
   getProcTransaction,
   updateProcTransaction,
 } from "../../../src/lib/server/proc/store";
@@ -56,13 +56,10 @@ describe("proc store", () => {
       value: [{ path: "src/a.ts", line: 4 }],
       bytes: expect.any(Number),
     });
-    const checkpoints = createProcCheckpointReader(
-      transaction.id,
-      conversationId,
-    );
-    expect(checkpoints.get(first.id)).toEqual([{ path: "src/a.ts", line: 4 }]);
-    expect(checkpoints.get(second.id)).toEqual({ selected: [first.id] });
-    expect(checkpoints.get("RES_unknown")).toBeUndefined();
+    const savedValues = createProcValueReader(transaction.id, conversationId);
+    expect(savedValues.get(first.id)).toEqual([{ path: "src/a.ts", line: 4 }]);
+    expect(savedValues.get(second.id)).toEqual({ selected: [first.id] });
+    expect(savedValues.get("RES_unknown")).toBeUndefined();
     expect(
       getProcResult({
         id: first.id,

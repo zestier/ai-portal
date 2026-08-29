@@ -10,15 +10,18 @@ export interface ProcArgs {
 export interface ProcExecutionArgs {
   summary: string;
   javascript: string;
-  purpose: "action" | "checkpoint" | "inspect" | "final";
+  result_for: "no_one" | "later_javascript" | "worker_context" | "proc_result";
 }
 
 export interface ProcExecutionResult {
-  purpose?: "action" | "checkpoint" | "inspect" | "final";
-  checkpoint_id?: string;
+  result_for?: ProcExecutionArgs["result_for"];
+  value_id?: string;
+  value_bytes?: number;
+  structure?: unknown;
+  structure_bytes?: number;
+  bounded_value?: unknown;
+  bounded_value_bytes?: number;
   bytes?: number;
-  projection?: unknown;
-  projection_bytes?: number;
   operations?: number;
   effects?: Array<{
     tool: string;
@@ -87,8 +90,8 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
     !isObject(value) ||
     typeof value.summary !== "string" ||
     typeof value.javascript !== "string" ||
-    !["action", "checkpoint", "inspect", "final"].includes(
-      String(value.purpose),
+    !["no_one", "later_javascript", "worker_context", "proc_result"].includes(
+      String(value.result_for),
     )
   ) {
     return null;

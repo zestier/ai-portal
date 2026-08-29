@@ -37,7 +37,7 @@ fresh QuickJS context with the existing memory, stack, operation, payload, and
 120-second runtime limits.
 
 Guest capability calls use correlated request/response messages back to the
-parent process. Only JSON-compatible arguments, tool results, checkpoint values,
+parent process. Only JSON-compatible arguments, tool results, saved values,
 errors, and traces cross the thread boundary; live tool handlers, database
 readers, permission resolvers, and event callbacks never leave the parent.
 Cancellation uses a shared atomic flag so QuickJS can observe it even while the
@@ -72,7 +72,7 @@ The experimental frontier receives:
 - `ask_user`: preserve direct frontier-to-human interaction.
 
 `resolve`, `resume`, direct `program`, schema lookup, and artifact readers are
-not exposed. Program execution, checkpoint handles, projections, and traces are
+not exposed. Program execution, saved-value IDs, projections, and traces are
 implementation details behind `proc`. This intentionally forces the
 experiment to test the proc boundary instead of falling back to adjacent
 tools.
@@ -150,8 +150,7 @@ is no durable `resume` conversation hidden inside the tool.
 
 The proc worker receives only:
 
-- `execute`: run fused JavaScript as an action, checkpoint, bounded semantic
-  inspection, or final result;
+- `execute`: run fused JavaScript and choose who needs its returned value;
 - `cannot_execute`: stop with a precise unsupported or underspecified step.
 
 It does not receive repository tools directly. Repository operations occur
@@ -181,13 +180,15 @@ JavaScript values inside an execution and do not enter model context.
 
 The worker splits only at a concrete boundary:
 
-- `action` completes effectful work and ignores its return value.
-- `checkpoint` stores the exact value of a mechanically complete segment and
-  returns only its observed shape. A later execution accesses it through
-  `getCheckpoint(checkpointId)`.
-- `inspect` stores the exact value and returns a bounded projection for semantic
-  judgment that cannot be expressed mechanically from the supplied criteria.
-- `final` emits the completed result under the frontier's output budget.
+- `no_one`: discard the returned value;
+- `later_javascript`: save it for a later execution;
+- `worker_context`: return a bounded value to the worker and save the exact
+  value for later JavaScript;
+- `proc_result`: return it to the proc caller and finish.
+
+The required `result_for` field selects the destination. Saved values are read
+with `loadValue(valueId)`. `worker_context` specifically means the worker
+model's next turn; it does not mean JavaScript memory or the proc caller.
 
 This makes additional executions meaningful: they represent deliberate
 segmentation, semantic inspection, or repair rather than the default way to
@@ -214,7 +215,7 @@ The initial program surface covers:
 - structured repository inspection through `git.status`, `git.diff`,
   `git.log`, `git.show`, and `git.blame`;
 - validation and explicit argv execution through `command.run`;
-- immutable intermediate values through `getCheckpoint(checkpointId)`.
+- immutable intermediate values through `loadValue(valueId)`.
 
 The `fs`, `git`, and `command` namespaces are the advertised interface. The
 generic `tools` proxy remains an undocumented compatibility path for programs
@@ -228,9 +229,9 @@ rules for repository traversal. Passing `includeIgnored: true` bypasses ignore
 files and can deliberately search ignored trees such as `node_modules`.
 
 Reading a complete file inside an execution keeps that value in the QuickJS
-context and does not add it to model context. Returning complete source from an
-`inspect`, `checkpoint`, or `final` execution does; `action` return values are
-ignored. Worker guidance therefore
+context and does not add it to model context. `later_javascript` returns only
+its structure and value ID; `worker_context` returns a bounded representation;
+`proc_result` returns the final result; `no_one` ignores it. Worker guidance therefore
 permits broad internal reads for mechanical filtering and transformation while
 requiring the returned projection to remain the smallest value needed by the
 supplied procedure and result requirements.
@@ -267,12 +268,11 @@ functions often need different contracts. A tool is not program-capable merely
 because it is a `PortalTool`; missing metadata means unavailable, and unknown
 calls fail closed with available-name suggestions.
 
-There is no separate inspection tool. Inspection is an execution purpose; its
-program first reduces the value to the bounded candidates the worker needs, for
-example:
+There is no separate inspection tool. When the worker needs to see intermediate
+data, the program first reduces it to a bounded value, for example:
 
 ```js
-return getCheckpoint("RES_candidates").slice(0, 12);
+return loadValue("RES_candidates").slice(0, 12);
 ```
 
 This keeps one composition primitive while distinguishing why a value enters
@@ -282,34 +282,35 @@ worker context.
 
 An execution runs JavaScript in the existing resource-limited program runtime.
 In addition to audited filesystem and tool capabilities, it may lazily read
-immutable prior checkpoint values through `getCheckpoint(checkpointId)`. The first
+immutable saved values through `loadValue(valueId)`. The first
 access fetches, parses, caches, and freezes that value inside the execution;
-unused checkpoints are never loaded into QuickJS.
+unused values are never loaded into QuickJS.
 
 ```yaml
 summary: Locate and reduce foo definitions
 javascript: |
   const matches = fs.grep("foo", { path: "src" });
   return groupAndSelect(matches);
-purpose: final
+result_for: proc_result
 ```
 
-Persistence and projection follow from purpose rather than independent model
-choices. Action return values are ignored. Checkpoint and inspect require values
-and store them automatically. Checkpoints receive a bounded shape; inspections
-receive exact data under a fixed runtime budget. Final values are projected using
-the frontier's original result requirements and byte budget. Exact overflow rejects
-the execution; silent
+Storage and representation follow from the selected recipient rather than
+independent model choices. `no_one` ignores the return value.
+`later_javascript` stores the exact value and returns its ID and structure.
+`worker_context` additionally returns bounded data for the next worker turn.
+`proc_result` projects the final value using the frontier's original result
+requirements and byte budget. Exact overflow rejects the execution; silent
 truncation is not allowed.
 
-Checkpoint feedback is:
+Saved-value feedback is:
 
 ```json
 {
-  "checkpoint_id": "RES_01...",
-  "bytes": 284192,
-  "projection": "array(318) of object { path: string, line: integer }",
-  "projection_bytes": 58,
+  "result_for": "later_javascript",
+  "value_id": "RES_01...",
+  "value_bytes": 284192,
+  "structure": "array(318) of object { path: string, line: integer }",
+  "structure_bytes": 58,
   "truncated": false,
   "operations": 12,
   "effects": [],
@@ -317,21 +318,21 @@ Checkpoint feedback is:
 }
 ```
 
-`bytes` measures the exact serialized value. `projection_bytes` measures what
-entered worker context. `truncated` always describes the requested projection:
+`value_bytes` measures the exact serialized value. `structure_bytes` measures
+what entered worker context. `truncated` always describes the requested representation:
 it is true only when projection limits forced that mode to omit information.
 The stored value, when present, is exact regardless of projection mode.
 
 Every execution also requires a short user-visible `summary`. The dedicated
 proc card shows the frontier procedure and result requirements, each execution's
-purpose and JavaScript, exact and projection byte counts, operation count,
+result destination and JavaScript, exact and projection byte counts, operation count,
 nested capability activity, partial-effect warnings, final usage, and the
-bounded projection returned to the frontier model.
+bounded value returned to the worker model.
 
-Stored value ids are immutable, transaction- and conversation-scoped, inaccessible
+Stored value IDs are immutable, transaction- and conversation-scoped, inaccessible
 across users, auditable to their producing execution, and garbage-collected with the
-proc transaction. Ephemeral checkpoint values are deleted on completion,
-`cannot_execute`, or failure when no retained final value was requested. Checkpoint
+proc transaction. Ephemeral saved values are deleted on completion,
+`cannot_execute`, or failure when no retained final value was requested. Saved-value
 access does not grant new authority: every repository operation still crosses
 the normal capability and permission boundary.
 
@@ -417,7 +418,7 @@ properties are part of its contract:
    is visibly marked in the projection.
 9. **Safe for composition.** A rendered field is never presented as required
    when it was absent from an observed object included in that merged shape.
-10. **Cycle independent.** Checkpoint values are JSON-compatible and therefore
+10. **Cycle independent.** Saved values are JSON-compatible and therefore
     acyclic; the shape module rejects non-JSON input rather than inventing
     cycle semantics.
 
@@ -460,18 +461,17 @@ structurally so harmless formatting changes do not obscure regressions.
 frontier procedure
        |
        v
-proc worker -- execute(javascript, purpose) --> program runtime
+proc worker -- execute(javascript, result_for) --> program runtime
        ^                                      |
        |                                      v
-  +------ handle + bounded projection -- checkpoint store
+  +------ value ID or bounded value ----- saved-value store
                                                       |
-        later execution: getCheckpoint(checkpointId) <-+
+             later execution: loadValue(valueId) <----+
 ```
 
-The worker fuses adjacent mechanical steps where reliable. It uses action for
-effectful work without downstream dataflow, checkpoint for values required by a
-later execution, inspect for semantic access to a reduced candidate set, and
-final to emit the value satisfying the original result requirements.
+The worker fuses adjacent mechanical steps where reliable. It chooses who needs
+the returned value: no one, later JavaScript, the next worker turn, or the proc
+caller.
 
 Small language-agnostic helpers for line ranges, line numbering, contextual
 windows, indentation outlines, and common collection operations are suitable
@@ -483,12 +483,12 @@ the architecture to one language or LSP.
 
 1. Implement and thoroughly test JSON value validation and shape
    normalization/rendering as pure modules.
-2. Add transaction-scoped immutable checkpoint storage and lifecycle cleanup.
+2. Add transaction-scoped immutable saved-value storage and lifecycle cleanup.
 3. Extend the program runtime with lazy read-only
-  `getCheckpoint(checkpointId)` access.
-4. Add execution persistence and checkpoint/inspect/final projections with
+  `loadValue(valueId)` access.
+4. Add execution persistence and destination-specific projections with
   byte budgets and explicit `truncated` metadata.
-5. Expose the low-level execution protocol in tests and measure checkpoint composition
+5. Expose the low-level execution protocol in tests and measure saved-value composition
    before introducing another model.
 6. Add the constrained proc worker with only `execute` and `cannot_execute`.
 7. Replace the semantic frontier surface with `proc` and `ask_user` for the
@@ -501,7 +501,7 @@ the architecture to one language or LSP.
 - Exact minimum and maximum projection byte budgets.
 - Whether exact lossy projections are needed after real proc traces are
   available.
-- Checkpoint retention after a proc call completes, including whether a later
+- Saved-value retention after a proc call completes, including whether a later
   proc may explicitly consume an earlier stored value.
 - Which small source/text utilities most reduce retries without creating a
   language-specific query surface.
@@ -515,7 +515,7 @@ Evaluate a proc-only frontier on procedures that require:
 - broad search followed by grouped contextual reads;
 - mechanical filtering over large intermediate sets;
 - semantic inspection of bounded candidate batches;
-- multi-stage transformations using exact checkpoints without model reinjection;
+- multi-stage transformations using exact saved values without model reinjection;
 - an empty intermediate collection;
 - heterogeneous records that shape must compact;
 - a deliberately underspecified decision that must return `cannot_execute`.

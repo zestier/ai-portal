@@ -17,7 +17,7 @@ import { projectProcValue } from "./projection";
 import {
   createProcResult,
   deleteProcResults,
-  createProcCheckpointReader,
+  createProcValueReader,
   updateProcTransaction,
   type ProcOutputPolicy,
   type ProcTransaction,
@@ -36,7 +36,12 @@ const ExecuteArgs = z
   .object({
     summary: z.string().min(1).max(500),
     javascript: z.string().min(1).max(20_000),
-    purpose: z.enum(["action", "checkpoint", "inspect", "final"]),
+    result_for: z.enum([
+      "no_one",
+      "later_javascript",
+      "worker_context",
+      "proc_result",
+    ]),
   })
   .strict();
 
@@ -46,11 +51,11 @@ const CannotExecuteArgs = z
 
 export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changing it. Do not add goals, broaden scope, change selection criteria, choose another method, or make consequential decisions.
 Fuse adjacent mechanical steps into the largest reliable execute call; procedure steps are not turn boundaries. Keep mechanical intermediate values inside JavaScript.
-Keep data in JavaScript. Use model-visible data only when required semantic judgment cannot be expressed as data operations.
+Keep data in JavaScript. Use worker_context only when required semantic judgment cannot be expressed as data operations.
 Internal reads stay out of your context. Return only requested, bounded data; do not return complete files unless result_requirements requires that exact value.
-Treat result_requirements as the completion test. Use final only when the execution completes all remaining work and returns one value satisfying every requirement and max_result_bytes. A probe, candidate set, or partial result is not final.
+Treat result_requirements as the completion test. Use proc_result only when the returned value satisfies every requirement and max_result_bytes. A probe, candidate set, or partial result is not final.
 Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
-Call exactly one tool per turn. Finish only by calling execute with purpose final, or cannot_execute. Use brief, user-facing summaries.`;
+Call exactly one tool per turn. Finish only with proc_result or cannot_execute. Use brief, user-facing summaries.`;
 
 export interface ProcWorkerOptions {
   transaction: ProcTransaction;
@@ -93,7 +98,7 @@ export function initialProcMessages(input: {
         environment: {
           tools: input.contracts,
           globals: {
-            getCheckpoint: "getCheckpoint(checkpointId)",
+            loadValue: "loadValue(valueId): immutable saved JSON value",
             fs: [
               'readFile(path, "utf8")',
               "writeFile(path, text)",
@@ -237,12 +242,12 @@ export async function runProcWorker(
             transaction.usage.executions++;
             const result = await runProgram({
               source: args.javascript,
-              ...(args.purpose === "action"
+              ...(args.result_for === "no_one"
                 ? { resultMode: "discard" as const }
                 : {}),
               capabilities: opts.capabilities,
               facadeCapabilities: opts.facadeCapabilities,
-              checkpoints: createProcCheckpointReader(
+              savedValues: createProcValueReader(
                 transaction.id,
                 transaction.conversationId,
               ),
@@ -270,7 +275,7 @@ export async function runProcWorker(
               signal: opts.signal,
             });
             transaction.usage.operations += result.operations;
-            if (args.purpose === "final") {
+            if (args.result_for === "proc_result") {
               const projection = projectProcValue(
                 result.value,
                 transaction.outputPolicy,
@@ -294,7 +299,7 @@ export async function runProcWorker(
                 procId,
                 true,
                 JSON.stringify({
-                  purpose: "final",
+                  result_for: "proc_result",
                   status: "completed",
                   bytes:
                     stored?.bytes ??
@@ -321,7 +326,7 @@ export async function runProcWorker(
               };
             }
             const effectSummary = summarizeExecutionEffects(effects);
-            if (args.purpose === "action") {
+            if (args.result_for === "no_one") {
               recordExecutionFeedback(
                 opts.emit,
                 transaction,
@@ -330,7 +335,7 @@ export async function runProcWorker(
                 procId,
                 true,
                 {
-                  purpose: "action",
+                  result_for: "no_one",
                   operations: result.operations,
                   effects: effectSummary,
                   effects_total: effects.length,
@@ -339,7 +344,7 @@ export async function runProcWorker(
               continue;
             }
             const policy: ProcOutputPolicy =
-              args.purpose === "inspect"
+              args.result_for === "worker_context"
                 ? {
                     mode: "exact",
                     maxBytes: INSPECTION_BYTES,
@@ -357,15 +362,18 @@ export async function runProcWorker(
             });
             const projection = projectProcValue(result.value, policy);
             const feedback = {
-              purpose: args.purpose,
-              ...(args.purpose === "checkpoint"
-                ? { checkpoint_id: retainedResult.id }
-                : {}),
-              bytes: retainedResult.bytes,
-              ...(projection.projection !== undefined
-                ? { projection: projection.projection }
-                : {}),
-              projection_bytes: projection.projectionBytes,
+              result_for: args.result_for,
+              value_id: retainedResult.id,
+              value_bytes: retainedResult.bytes,
+              ...(args.result_for === "later_javascript"
+                ? {
+                    structure: projection.projection,
+                    structure_bytes: projection.projectionBytes,
+                  }
+                : {
+                    bounded_value: projection.projection,
+                    bounded_value_bytes: projection.projectionBytes,
+                  }),
               truncated: projection.truncated,
               operations: result.operations,
               effects: effectSummary,
@@ -413,8 +421,8 @@ export async function runProcWorker(
             error: error instanceof Error ? error.message : String(error),
             ...(retainedResult
               ? {
-                  checkpoint_id: retainedResult.id,
-                  bytes: retainedResult.bytes,
+                  value_id: retainedResult.id,
+                  value_bytes: retainedResult.bytes,
                 }
               : {}),
             effects: effectSummary,
@@ -544,16 +552,21 @@ function workerToolSpecs(): ExtractorToolSpec[] {
             javascript: {
               type: "string",
               description:
-                "JavaScript function body. checkpoint, inspect, and final must return one JSON-compatible value; action may omit return.",
+                "JavaScript function body. Must return one JSON-compatible value unless result_for is no_one.",
             },
-            purpose: {
+            result_for: {
               type: "string",
-              enum: ["action", "checkpoint", "inspect", "final"],
+              enum: [
+                "no_one",
+                "later_javascript",
+                "worker_context",
+                "proc_result",
+              ],
               description:
-                "action: complete effectful work; any return value is ignored; checkpoint: preserve a required value for getCheckpoint(checkpointId); inspect: reveal mechanically reduced data only when required semantic judgment cannot be expressed as data operations; final: emit the completed result and end proc.",
+                "Who needs the returned value. no_one discards it. later_javascript saves it as value_id for loadValue(value_id). worker_context puts a bounded representation in your next turn and also saves the exact value as value_id. proc_result returns it as the final proc result and ends proc.",
             },
           },
-          required: ["summary", "javascript", "purpose"],
+          required: ["summary", "javascript", "result_for"],
           additionalProperties: false,
         },
       },

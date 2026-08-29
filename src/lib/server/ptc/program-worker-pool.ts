@@ -55,7 +55,7 @@ export interface ProgramWorkerRunOptions {
     args: unknown,
     signal: AbortSignal,
   ): Promise<ToolResult>;
-  getCheckpoint(id: string): unknown | undefined;
+  loadValue(id: string): unknown | undefined;
 }
 
 interface QueueEntry {
@@ -262,17 +262,17 @@ export class ProgramWorkerPool {
         });
       return;
     }
-    if (message.type === "checkpoint.get") {
+    if (message.type === "saved-value.get") {
       try {
         this.post({
-          type: "checkpoint.result",
+          type: "saved-value.result",
           executionId: entry.executionId,
           requestId: message.requestId,
-          value: entry.options.getCheckpoint(message.id),
+          value: entry.options.loadValue(message.id),
         });
       } catch (error) {
         this.post({
-          type: "checkpoint.error",
+          type: "saved-value.error",
           executionId: entry.executionId,
           requestId: message.requestId,
           error: serializeError(error),

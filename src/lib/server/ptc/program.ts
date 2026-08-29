@@ -48,7 +48,7 @@ export interface ProgramRunOptions {
   resultMode?: "required" | "discard";
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities?: ReadonlyMap<string, PortalTool>;
-  checkpoints?: { get(id: string): unknown | undefined | Promise<unknown> };
+  savedValues?: { get(id: string): unknown | undefined | Promise<unknown> };
   execute(
     name: string,
     args: unknown,
@@ -99,7 +99,7 @@ export async function runProgram(
     capabilityNames: [...opts.capabilities.keys()],
     facadeCapabilityNames: [...(opts.facadeCapabilities?.keys() ?? [])],
     signal: opts.signal,
-    getCheckpoint: (id) => opts.checkpoints?.get(id),
+    loadValue: (id) => opts.savedValues?.get(id),
     execute: async (kind, name, args, signal) => {
       operations++;
       if (operations > MAX_TOTAL_OPERATIONS) {
@@ -208,26 +208,26 @@ export async function runProgramInline(
 
   installBridge("__callCapability", opts.capabilities);
   installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
-  const fetchCheckpointHandle = vm.newAsyncifiedFunction(
-    "__ptc_fetch_checkpoint",
+  const loadValueHandle = vm.newAsyncifiedFunction(
+    "__ptc_load_value",
     async (idHandle) => {
       const id = vm.getString(idHandle);
-      const value = await opts.checkpoints?.get(id);
+      const value = await opts.savedValues?.get(id);
       if (value === undefined) {
-        throw new Error(`Unknown checkpoint: ${id}`);
+        throw new Error(`Unknown saved value: ${id}`);
       }
       const encoded = JSON.stringify(value);
       if (encoded === undefined) {
-        throw new Error(`Checkpoint ${id} is not JSON-compatible.`);
+        throw new Error(`Saved value ${id} is not JSON-compatible.`);
       }
       if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
-        throw new Error(`Checkpoint ${id} exceeds the 5 MiB value limit.`);
+        throw new Error(`Saved value ${id} exceeds the 5 MiB value limit.`);
       }
       return vm.newString(encoded);
     },
   );
-  vm.setProp(vm.global, "__ptc_fetch_checkpoint", fetchCheckpointHandle);
-  fetchCheckpointHandle.dispose();
+  vm.setProp(vm.global, "__ptc_load_value", loadValueHandle);
+  loadValueHandle.dispose();
 
   const setup = `(() => {
     {
@@ -538,24 +538,24 @@ export async function runProgramInline(
         return (args = {}) => unwrapCall(__callCapability, name, args);
       }
     });
-    const checkpointCache = new Map();
-    function getCheckpoint(checkpointId) {
-      if (typeof checkpointId !== "string" || checkpointId.length === 0) {
-        throw new TypeError("getCheckpoint requires a non-empty checkpoint id string.");
+    const savedValueCache = new Map();
+    function loadValue(valueId) {
+      if (typeof valueId !== "string" || valueId.length === 0) {
+        throw new TypeError("loadValue requires a non-empty value id string.");
       }
-      if (!checkpointCache.has(checkpointId)) {
-        checkpointCache.set(
-          checkpointId,
-          deepFreeze(JSON.parse(__ptc_fetch_checkpoint(checkpointId)))
+      if (!savedValueCache.has(valueId)) {
+        savedValueCache.set(
+          valueId,
+          deepFreeze(JSON.parse(__ptc_load_value(valueId)))
         );
       }
-      return checkpointCache.get(checkpointId);
+      return savedValueCache.get(valueId);
     }
     const requireModule = (name) => {
       if (name === "fs" || name === "node:fs") return fsApi;
       if (name === "path" || name === "node:path") return pathApi;
       throw new Error(
-        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, git, command, tools, and getCheckpoint globals."
+        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, git, command, tools, and loadValue globals."
       );
     };
     const unavailableConsole = () => {
@@ -576,7 +576,7 @@ export async function runProgramInline(
       git: { value: gitApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
-      getCheckpoint: { value: getCheckpoint, writable: false, configurable: false },
+      loadValue: { value: loadValue, writable: false, configurable: false },
       require: { value: requireModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false }
     });
