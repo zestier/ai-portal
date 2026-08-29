@@ -365,7 +365,11 @@ function parseProcWorkerDirective(
   userText: string,
   completedToolCalls: number,
 ): { name: string; args: string } | null {
-  if (!system.includes("Execute the supplied procedure without changing it."))
+  if (
+    !system.includes(
+      "Realize the supplied procedure without changing its goals, method, criteria, or consequential decisions.",
+    )
+  )
     return null;
   let request: { procedure?: unknown };
   try {
@@ -384,7 +388,7 @@ function parseProcWorkerDirective(
       return {
         name: "execute",
         args: JSON.stringify({
-          summary: "Return deterministic proc fixture",
+          needed_for: "Returning the deterministic proc fixture",
           javascript: `return ${JSON.stringify(value)};`,
           result_for: "proc_result",
         }),

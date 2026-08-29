@@ -33,7 +33,7 @@ export function projectProcValue(
   const bytes = Buffer.byteLength(encoded);
   if (bytes > policy.maxBytes) {
     throw new Error(
-      `Execution returned ${bytes} bytes; the limit is ${policy.maxBytes}. Return a smaller value.`,
+      `Execution returned ${bytes} bytes, exceeding an emergency transport guard (${policy.maxBytes}). Derive only required fields or decision evidence in JavaScript; never paginate through model context.`,
     );
   }
   return { projection: value, projectionBytes: bytes, truncated: false };

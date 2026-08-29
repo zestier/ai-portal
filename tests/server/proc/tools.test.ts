@@ -5,7 +5,7 @@ import {
 } from "../../../src/lib/server/proc/tools";
 
 describe("proc arguments", () => {
-  it("uses flat result requirements with an optional 8 KiB budget", () => {
+  it("uses an exact result contract without advertising a byte target", () => {
     const [proc] = buildProcTools({
       conversationId: 1,
       frontierModel: "test/model",
@@ -14,7 +14,10 @@ describe("proc arguments", () => {
       permissionResolver: async () => ({ allow: true }),
       emit: () => {},
     });
-    const parameters = proc.parameters as { required: string[] };
+    const parameters = proc.parameters as {
+      required: string[];
+      properties: Record<string, unknown>;
+    };
 
     expect(parameters.required).toEqual([
       "summary",
@@ -27,7 +30,8 @@ describe("proc arguments", () => {
         procedure: "Search and reduce the matches.",
         result_requirements: "Paths and line ranges.",
       }),
-    ).toMatchObject({ max_result_bytes: 8192 });
+    ).not.toHaveProperty("max_result_bytes");
+    expect(proc.parameters.properties).not.toHaveProperty("max_result_bytes");
   });
 });
 
@@ -39,7 +43,7 @@ describe("validateProcRequest", () => {
         procedure:
           "Read src/a.ts fully. Read src/b.ts fully. Return raw file contents verbatim.",
       }),
-    ).toContain("bounded derived result");
+    ).toContain("exact derived result");
   });
 
   it("allows bounded evidence extraction and a single intentional full file", () => {
@@ -57,5 +61,20 @@ describe("validateProcRequest", () => {
         procedure: "Read src/generated.json fully and return it.",
       }),
     ).toBeNull();
+  });
+
+  it("rejects model-side browsing of matches and paged corpora", () => {
+    expect(
+      validateProcRequest({
+        requirements: "Return all relevant context from the search results.",
+        procedure: "Search the repository and return the matches.",
+      }),
+    ).toContain("reduce candidate corpora in JavaScript");
+    expect(
+      validateProcRequest({
+        requirements: "Show batches of candidates for review.",
+        procedure: "Return pages of candidate files until they are exhausted.",
+      }),
+    ).toContain("not page or return them");
   });
 });

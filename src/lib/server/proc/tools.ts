@@ -11,21 +11,13 @@ import {
 import { createProcTransaction, type ProcOutputPolicy } from "./store";
 import { initialProcMessages, runProcWorker } from "./worker";
 
-const MIN_RESULT_BYTES = 256;
-const MAX_RESULT_BYTES = 48 * 1024;
-const DEFAULT_RESULT_BYTES = 8 * 1024;
+const EMERGENCY_PROC_RESULT_BYTES = 64 * 1024;
 
 const ProcArgs = z
   .object({
     summary: z.string().min(1).max(500),
     procedure: z.string().min(1).max(30_000),
     result_requirements: z.string().min(1).max(10_000),
-    max_result_bytes: z
-      .number()
-      .int()
-      .min(MIN_RESULT_BYTES)
-      .max(MAX_RESULT_BYTES)
-      .default(DEFAULT_RESULT_BYTES),
   })
   .strict();
 
@@ -53,11 +45,12 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
       name: "proc",
       description:
         "Execute a specified repository procedure while keeping routine intermediate data out of context.",
-      promptSnippet: "Execute a bounded repository procedure.",
+      promptSnippet:
+        "Realize a repository procedure with code-first data reduction.",
       promptGuidelines: [
         "Specify ordered steps, selection and exclusion rules, and a stopping condition.",
-        "Specify the emitted shape, required fields, evidence, ordering, and completeness. A path alone is not a result requirement.",
-        "Use proc to derive a focused result from broad reads, not to return those reads wholesale. Request only the needed facts or excerpts, with paths and line ranges for verification.",
+        "Specify the exact emitted shape, allowed fields, required evidence, ordering, and completeness. result_requirements is an allowlist, not a minimum.",
+        "Request only the exact result needed after the procedure completes. Proc must reduce broad reads in JavaScript, not return raw responses, candidate corpora, paged context, or unrequested supporting detail.",
       ],
       argsSchema: ProcArgs,
       parameters: {
@@ -76,13 +69,6 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
             type: "string",
             description:
               "What the emitted result must contain: shape, fields, selection and exclusion rules, evidence, ordering, and completeness.",
-          },
-          max_result_bytes: {
-            type: "integer",
-            minimum: MIN_RESULT_BYTES,
-            maximum: MAX_RESULT_BYTES,
-            default: DEFAULT_RESULT_BYTES,
-            description: "Optional hard UTF-8 byte limit for the result.",
           },
         },
         required: ["summary", "procedure", "result_requirements"],
@@ -104,7 +90,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         }
         const outputPolicy: ProcOutputPolicy = {
           mode: "exact",
-          maxBytes: args.max_result_bytes,
+          maxBytes: EMERGENCY_PROC_RESULT_BYTES,
           store: false,
         };
         const messages = initialProcMessages({
@@ -166,6 +152,16 @@ export function validateProcRequest(input: {
     /\b(?:read|include|return)\b[^\n.]{0,80}\b(?:full|fully|entire)\b[^\n.]{0,40}\b(?:file|content|source)\b/i.test(
       text,
     );
+  const requestsModelSideCorpus =
+    /\b(?:return|emit|include|show)\b[^\n.]{0,80}\b(?:all|every)\b[^\n.]{0,40}\b(?:matches|candidates|search results|relevant context)\b/i.test(
+      text,
+    ) ||
+    /\b(?:return|emit|include|show)\b[^\n.]{0,80}\b(?:pages?|chunks?|batches?)\b[^\n.]{0,40}\b(?:matches|candidates|results|files|content|source)\b/i.test(
+      text,
+    );
+  if (requestsModelSideCorpus) {
+    return "Proc must reduce candidate corpora in JavaScript, not page or return them for model-side browsing. Require only the selected facts or targeted evidence needed by the next decision.";
+  }
   if (!requestsVerbatimCorpus) return null;
   const paths = new Set(
     [
@@ -175,5 +171,5 @@ export function validateProcRequest(input: {
   if (paths.size < 2 && !/\b(?:all|multiple|every)\s+files?\b/i.test(text)) {
     return null;
   }
-  return "Proc must emit a bounded derived result, not multiple full files. Require selected paths, ranges, purposes, or limited excerpts that fit max_result_bytes.";
+  return "Proc must emit an exact derived result, not full or paged source corpora. Require selected paths, ranges, purposes, or targeted excerpts and exclude everything not needed by the next decision.";
 }

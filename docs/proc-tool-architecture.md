@@ -87,31 +87,29 @@ procedure: |
   Read context around each match.
   Keep only enclosing class or function definitions.
   Return one entry per definition.
-output:
-  contract: File names, relevant line ranges, and a few-word purpose.
-  max_bytes: 12000
+result_requirements: File names, relevant line ranges, and a few-word purpose; no other fields.
 ```
 
-`summary` is the user-visible label. `output.contract` specifies the final data
+`summary` is the user-visible label. `result_requirements` specifies the final data
 contract, not an open-ended objective. `procedure` describes the algorithm and
 relevance criteria the worker must realize. The worker rejects requests that
 require it to invent those elements.
 
 `summary` stays intentionally short enough for a collapsed activity card;
-`output.contract` may be longer and precise. Frontier guidance includes paired
+`result_requirements` may be longer and precise. Frontier guidance includes paired
 examples so the model does not collapse the two fields into duplicate prose.
-The contract lives beside `max_bytes` so the shape and its budget are one
-atomic decision.
+The requirements are an allowlist: fields, records, and supporting material not
+required by the contract remain inside proc.
 
 Proc is a reduction boundary, not a context-smuggling mechanism. A valid
-`output.contract` derives bounded evidence from a potentially large corpus:
+`result_requirements` derives focused evidence from a potentially large corpus:
 paths, line
 ranges, purposes, counts, selected records, or limited excerpts. Requests to
 return multiple complete files or another raw corpus verbatim are rejected
 before a
-worker turn because they cannot satisfy the architecture's context objective or
-a credible exact output budget. A single deliberately bounded complete value
-remains valid.
+worker turn because they cannot satisfy the architecture's context objective.
+A single complete value remains valid when the caller explicitly requires that
+exact value.
 
 The frontier should request the smallest result that preserves its ability to
 decide or edit correctly, not the largest context that would be convenient. It
@@ -128,14 +126,14 @@ The frontier owns:
 - the procedure and meaningful branches;
 - relevance, filtering, and stopping criteria;
 - consequential product, design, and architecture decisions;
-- the final output projection and context budget.
+- the exact final output contract.
 
 The proc worker owns only tolerant realization:
 
 - translating procedure steps into executable JavaScript;
 - resolving exact tool names and argument contracts;
 - repairing syntax and equivalent mechanical failures;
-- batching, pagination, and intermediate data plumbing;
+- internal batching and intermediate data plumbing;
 - applying supplied semantic criteria to inspected data;
 - selecting equivalent implementation details that do not change the
   procedure or result.
@@ -182,13 +180,14 @@ The worker splits only at a concrete boundary:
 
 - `no_one`: discard the returned value;
 - `later_javascript`: save it for a later execution;
-- `worker_context`: return a bounded value to the worker and save the exact
-  value for later JavaScript;
+- `worker_decision`: return only the evidence needed for one irreducible
+  semantic question and save the exact value for later JavaScript;
 - `proc_result`: return it to the proc caller and finish.
 
 The required `result_for` field selects the destination. Saved values are read
-with `loadValue(valueId)`. `worker_context` specifically means the worker
-model's next turn; it does not mean JavaScript memory or the proc caller.
+with `loadValue(valueId)`. Every execution also declares `needed_for`: the
+outcome it establishes or why its returned value is necessary. For
+`worker_decision`, `needed_for` is one concrete semantic question.
 
 This makes additional executions meaningful: they represent deliberate
 segmentation, semantic inspection, or repair rather than the default way to
@@ -230,11 +229,11 @@ files and can deliberately search ignored trees such as `node_modules`.
 
 Reading a complete file inside an execution keeps that value in the QuickJS
 context and does not add it to model context. `later_javascript` returns only
-its structure and value ID; `worker_context` returns a bounded representation;
+its structure and value ID; `worker_decision` returns decision-specific evidence;
 `proc_result` returns the final result; `no_one` ignores it. Worker guidance therefore
 permits broad internal reads for mechanical filtering and transformation while
-requiring the returned projection to remain the smallest value needed by the
-supplied procedure and result requirements.
+requiring every model-bound value to contain only what its declared decision or
+the exact final contract needs.
 
 `fs.glob` returns all matching workspace-relative paths as `string[]`;
 `fs.grep` returns all matching lines as structured path, line, column, and text
@@ -268,8 +267,9 @@ functions often need different contracts. A tool is not program-capable merely
 because it is a `PortalTool`; missing metadata means unavailable, and unknown
 calls fail closed with available-name suggestions.
 
-There is no separate inspection tool. When the worker needs to see intermediate
-data, the program first reduces it to a bounded value, for example:
+There is no separate inspection tool. When the worker faces a semantic question
+that supplied rules cannot resolve mechanically, JavaScript first reduces the
+corpus to distinguishing evidence, for example:
 
 ```js
 return loadValue("RES_candidates").slice(0, 12);
@@ -287,7 +287,7 @@ access fetches, parses, caches, and freezes that value inside the execution;
 unused values are never loaded into QuickJS.
 
 ```yaml
-summary: Locate and reduce foo definitions
+needed_for: Returning exactly the requested foo definitions
 javascript: |
   const matches = fs.grep("foo", { path: "src" });
   return groupAndSelect(matches);
@@ -297,10 +297,29 @@ result_for: proc_result
 Storage and representation follow from the selected recipient rather than
 independent model choices. `no_one` ignores the return value.
 `later_javascript` stores the exact value and returns its ID and structure.
-`worker_context` additionally returns bounded data for the next worker turn.
-`proc_result` projects the final value using the frontier's original result
-requirements and byte budget. Exact overflow rejects the execution; silent
-truncation is not allowed.
+`worker_decision` returns minimal evidence for its `needed_for` question and
+stores the exact value. `proc_result` returns exactly the frontier's original
+result requirements. Generous internal limits remain only as safety fuses;
+they are not advertised as output targets. Overflow rejects the execution and
+directs the worker to reduce semantically in JavaScript, never to paginate.
+
+`worker_decision` separates what the model sees from what later code can use:
+
+```yaml
+needed_for: Which candidate owns retry classification?
+javascript: |
+  const candidates = findCandidates();
+  return {
+    decision_evidence: candidates.map(({ id, signature, retryBranch }) =>
+      ({ id, signature, retryBranch })),
+    saved_value: candidates
+  };
+result_for: worker_decision
+```
+
+Only `decision_evidence` enters the next worker turn. `saved_value` is stored
+exactly and returned only as `value_id`, so the next execution can apply the
+worker's decision with `loadValue(valueId)` without reinjecting the corpus.
 
 Saved-value feedback is:
 
@@ -323,11 +342,11 @@ what entered worker context. `truncated` always describes the requested represen
 it is true only when projection limits forced that mode to omit information.
 The stored value, when present, is exact regardless of projection mode.
 
-Every execution also requires a short user-visible `summary`. The dedicated
+Every execution requires a user-visible `needed_for`. The dedicated
 proc card shows the frontier procedure and result requirements, each execution's
-result destination and JavaScript, exact and projection byte counts, operation count,
+justification, result destination and JavaScript, operation count,
 nested capability activity, partial-effect warnings, final usage, and the
-bounded value returned to the worker model.
+decision evidence returned to the worker model.
 
 Stored value IDs are immutable, transaction- and conversation-scoped, inaccessible
 across users, auditable to their producing execution, and garbage-collected with the
@@ -461,17 +480,17 @@ structurally so harmless formatting changes do not obscure regressions.
 frontier procedure
        |
        v
-proc worker -- execute(javascript, result_for) --> program runtime
+proc worker -- execute(needed_for, javascript, result_for) --> program runtime
        ^                                      |
        |                                      v
-  +------ value ID or bounded value ----- saved-value store
+  +------ value ID or decision evidence -- saved-value store
                                                       |
              later execution: loadValue(valueId) <----+
 ```
 
-The worker fuses adjacent mechanical steps where reliable. It chooses who needs
-the returned value: no one, later JavaScript, the next worker turn, or the proc
-caller.
+The worker first attempts one fused execution. It splits only for repair, a
+saved value genuinely needed across model turns, or one irreducible semantic
+decision. Procedure steps alone never justify additional executions.
 
 Small language-agnostic helpers for line ranges, line numbering, contextual
 windows, indentation outlines, and common collection operations are suitable
@@ -486,8 +505,8 @@ the architecture to one language or LSP.
 2. Add transaction-scoped immutable saved-value storage and lifecycle cleanup.
 3. Extend the program runtime with lazy read-only
   `loadValue(valueId)` access.
-4. Add execution persistence and destination-specific projections with
-  byte budgets and explicit `truncated` metadata.
+4. Add execution persistence and destination-specific model feedback with
+  hidden emergency transport guards.
 5. Expose the low-level execution protocol in tests and measure saved-value composition
    before introducing another model.
 6. Add the constrained proc worker with only `execute` and `cannot_execute`.
@@ -498,9 +517,8 @@ the architecture to one language or LSP.
 
 ## Open Questions
 
-- Exact minimum and maximum projection byte budgets.
-- Whether exact lossy projections are needed after real proc traces are
-  available.
+- Whether real traces reveal semantic decisions that need a more structured
+  contract than `needed_for`.
 - Saved-value retention after a proc call completes, including whether a later
   proc may explicitly consume an earlier stored value.
 - Which small source/text utilities most reduce retries without creating a
@@ -514,14 +532,20 @@ Evaluate a proc-only frontier on procedures that require:
 
 - broad search followed by grouped contextual reads;
 - mechanical filtering over large intermediate sets;
-- semantic inspection of bounded candidate batches;
+- one semantic decision over mechanically reduced distinguishing evidence;
 - multi-stage transformations using exact saved values without model reinjection;
 - an empty intermediate collection;
 - heterogeneous records that shape must compact;
 - a deliberately underspecified decision that must return `cannot_execute`.
 
 Measure correctness, frontier and worker context growth, first-execution
-completion rate, execution count, exact inspection frequency, shape bytes
-versus stored bytes, retries, latency, partial-effect recoveries, and
-the frequency with which the worker attempts to broaden or rewrite the supplied
-procedure.
+completion rate, execution count, unnecessary `worker_decision` frequency,
+decision-evidence precision, attempts to page corpora through model turns,
+saved-value reuse, retries, latency, partial-effect recoveries, and the
+frequency with which the worker broadens or rewrites the supplied procedure.
+
+Use paired evaluations. A mechanically decidable corpus with hundreds of
+candidates must be reduced entirely in JavaScript. A genuinely semantic case
+must return only evidence that distinguishes a small candidate set, then use
+the saved exact value for subsequent code. Final-result cases must omit every
+field not allowed by `result_requirements`.

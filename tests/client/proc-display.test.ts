@@ -16,10 +16,9 @@ describe("proc display parsing", () => {
           summary: "Map routing",
           procedure: "Search then reduce",
           result_requirements: "Paths and ranges",
-          max_result_bytes: 4096,
         }),
       ),
-    ).toMatchObject({ summary: "Map routing", max_result_bytes: 4096 });
+    ).toMatchObject({ summary: "Map routing" });
     expect(
       parseProcMeta({
         summary: "Map routing",
@@ -30,7 +29,7 @@ describe("proc display parsing", () => {
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
-          summary: "Search and reduce",
+          needed_for: "Returning the requested routing map",
           javascript: "return [];",
           result_for: "proc_result",
         }),
@@ -38,7 +37,7 @@ describe("proc display parsing", () => {
     ).toMatchObject({ result_for: "proc_result" });
     expect(
       parseProcExecutionMeta({
-        summary: "Search and reduce",
+        needed_for: "Filtering the matches in later code",
         javascript: "return [];",
         result_for: "later_javascript",
       }),
@@ -46,7 +45,7 @@ describe("proc display parsing", () => {
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
-          summary: "Apply edits",
+          needed_for: "Applying the requested edits",
           javascript: "tools.edit({});",
           result_for: "no_one",
         }),
@@ -55,7 +54,19 @@ describe("proc display parsing", () => {
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
-          summary: "Avoid choosing a recipient",
+          needed_for: "Which candidate satisfies the ownership rule?",
+          javascript: "return { decision_evidence: [], saved_value: [] };",
+          result_for: "worker_decision",
+        }),
+      ),
+    ).toMatchObject({
+      needed_for: "Which candidate satisfies the ownership rule?",
+      result_for: "worker_decision",
+    });
+    expect(
+      parseProcExecutionArgs(
+        JSON.stringify({
+          needed_for: "Avoid choosing a recipient",
           javascript: "return [];",
         }),
       ),

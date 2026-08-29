@@ -4,13 +4,12 @@ export interface ProcArgs {
   summary: string;
   procedure: string;
   result_requirements: string;
-  max_result_bytes?: number;
 }
 
 export interface ProcExecutionArgs {
-  summary: string;
+  needed_for: string;
   javascript: string;
-  result_for: "no_one" | "later_javascript" | "worker_context" | "proc_result";
+  result_for: "no_one" | "later_javascript" | "worker_decision" | "proc_result";
 }
 
 export interface ProcExecutionResult {
@@ -19,8 +18,8 @@ export interface ProcExecutionResult {
   value_bytes?: number;
   structure?: unknown;
   structure_bytes?: number;
-  bounded_value?: unknown;
-  bounded_value_bytes?: number;
+  needed_for?: string;
+  decision_evidence?: unknown;
   bytes?: number;
   operations?: number;
   effects?: Array<{
@@ -64,9 +63,7 @@ function procArgsOf(value: unknown): ProcArgs | null {
     !isObject(value) ||
     typeof value.summary !== "string" ||
     typeof value.procedure !== "string" ||
-    typeof value.result_requirements !== "string" ||
-    (value.max_result_bytes !== undefined &&
-      typeof value.max_result_bytes !== "number")
+    typeof value.result_requirements !== "string"
   ) {
     return null;
   }
@@ -88,9 +85,9 @@ export function parseProcExecutionMeta(
 function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
   if (
     !isObject(value) ||
-    typeof value.summary !== "string" ||
+    typeof value.needed_for !== "string" ||
     typeof value.javascript !== "string" ||
-    !["no_one", "later_javascript", "worker_context", "proc_result"].includes(
+    !["no_one", "later_javascript", "worker_decision", "proc_result"].includes(
       String(value.result_for),
     )
   ) {

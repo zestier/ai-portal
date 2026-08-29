@@ -30,7 +30,6 @@ test("semantic mode exposes proc and completes a fused execution", async ({
         summary,
         procedure: `@trigger-slow-proc PI_TEST_PROC_RETURN ${JSON.stringify(expected)}`,
         result_requirements: "Return paths and line numbers",
-        max_result_bytes: 4096,
       },
     },
   ]);
@@ -90,7 +89,9 @@ test("semantic mode exposes proc and completes a fused execution", async ({
     '"path": "src/a.ts"',
   );
   await expect(
-    procCard.getByText("Return deterministic proc fixture", { exact: true }),
+    procCard.getByText("Returning the deterministic proc fixture", {
+      exact: true,
+    }),
   ).toBeVisible();
   await procCard.locator(":scope > summary").click();
   await expect(procCard).not.toHaveAttribute("open", "");

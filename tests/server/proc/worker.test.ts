@@ -171,7 +171,7 @@ describe("proc worker", () => {
     });
   });
 
-  it("retains oversized inspection state for a reducing retry", async () => {
+  it("separates decision evidence from saved state and retains it for a reducing retry", async () => {
     const user = users.ensureLocalUser();
     const conversation = conversations.create(user.id, {
       title: "oversized inspection",
@@ -200,7 +200,7 @@ describe("proc worker", () => {
         contracts: [],
       }),
     });
-    const largeValue = { text: "x".repeat(13 * 1_024) };
+    const largeValue = { text: "x".repeat(65 * 1_024) };
     piChat
       .mockResolvedValueOnce({
         content: "",
@@ -209,9 +209,11 @@ describe("proc worker", () => {
             id: "small-inspection",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Inspect candidates",
-              javascript: "return { candidates: ['src/a.ts'] };",
-              result_for: "worker_context",
+              needed_for:
+                "Choosing the candidate that satisfies the ownership rule",
+              javascript:
+                "return { decision_evidence: { candidates: ['src/a.ts'] }, saved_value: [{ path: 'src/a.ts', score: 1 }] };",
+              result_for: "worker_decision",
             }),
           },
         ],
@@ -222,10 +224,21 @@ describe("proc worker", () => {
           unknown
         >;
         expect(feedback).toMatchObject({
-          result_for: "worker_context",
-          bounded_value: { candidates: ["src/a.ts"] },
+          result_for: "worker_decision",
+          needed_for:
+            "Choosing the candidate that satisfies the ownership rule",
+          decision_evidence: { candidates: ["src/a.ts"] },
         });
         expect(feedback).toHaveProperty("value_id");
+        expect(feedback).not.toHaveProperty("value_bytes");
+        expect(feedback).not.toHaveProperty("decision_evidence_bytes");
+        expect(
+          getProcResult({
+            id: String(feedback.value_id),
+            transactionId: transaction.id,
+            conversationId,
+          })?.value,
+        ).toEqual([{ path: "src/a.ts", score: 1 }]);
         return {
           content: "",
           toolCalls: [
@@ -233,9 +246,11 @@ describe("proc worker", () => {
               id: "large-inspection",
               name: "execute",
               arguments: JSON.stringify({
-                summary: "Inspect large candidate",
-                javascript: `return ${JSON.stringify(largeValue)};`,
-                result_for: "worker_context",
+                needed_for:
+                  "Choosing the candidate that satisfies the ownership rule",
+                javascript:
+                  "return { decision_evidence: { text: 'x'.repeat(65 * 1024) }, saved_value: { text: 'x'.repeat(65 * 1024) } };",
+                result_for: "worker_decision",
               }),
             },
           ],
@@ -247,8 +262,8 @@ describe("proc worker", () => {
           value_bytes: number;
           error: string;
         };
-        expect(feedback.error).toContain("the limit is 12288");
-        expect(feedback.value_bytes).toBeGreaterThan(12 * 1_024);
+        expect(feedback.error).toContain("emergency transport guard (65536)");
+        expect(feedback.value_bytes).toBeGreaterThan(64 * 1_024);
         expect(
           getProcResult({
             id: feedback.value_id,
@@ -282,18 +297,22 @@ describe("proc worker", () => {
 
   it("is constrained to frontier-authored procedures and fused executions", () => {
     expect(Buffer.byteLength(PROC_WORKER_SYSTEM)).toBeLessThanOrEqual(2_000);
-    expect(PROC_WORKER_SYSTEM).toContain("without changing it");
-    expect(PROC_WORKER_SYSTEM).toContain("broaden scope");
-    expect(PROC_WORKER_SYSTEM).toContain("largest reliable execute call");
+    expect(PROC_WORKER_SYSTEM).toContain("without changing its goals");
     expect(PROC_WORKER_SYSTEM).toContain(
-      "procedure steps are not turn boundaries",
+      "Default to one execute ending in proc_result",
+    );
+    expect(PROC_WORKER_SYSTEM).toContain("Split only to repair");
+    expect(PROC_WORKER_SYSTEM).toContain(
+      "Procedure steps are not execution boundaries",
     );
     expect(PROC_WORKER_SYSTEM).toContain(
-      "Treat result_requirements as the completion test",
+      "keep intermediate data in local variables",
     );
+    expect(PROC_WORKER_SYSTEM).toContain("one concrete semantic question");
     expect(PROC_WORKER_SYSTEM).toContain(
-      "required semantic judgment cannot be expressed as data operations",
+      "Never copy the corpus into decision_evidence",
     );
+    expect(PROC_WORKER_SYSTEM).toContain("exact allowlist");
     expect(PROC_WORKER_SYSTEM).toContain("exactly one tool per turn");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
   });
@@ -324,7 +343,7 @@ describe("proc worker", () => {
             id: "action-with-implicit-value",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Apply action",
+              needed_for: "Applying the requested repository mutation",
               javascript: "tools.record_action({});",
               result_for: "no_one",
             }),
@@ -345,7 +364,7 @@ describe("proc worker", () => {
           effects_total: 1,
         });
         expect(feedback).not.toHaveProperty("value_id");
-        expect(feedback).not.toHaveProperty("bounded_value");
+        expect(feedback).not.toHaveProperty("decision_evidence");
         return {
           content: "",
           toolCalls: [
@@ -353,7 +372,7 @@ describe("proc worker", () => {
               id: "complete-actions",
               name: "execute",
               arguments: JSON.stringify({
-                summary: "Return action evidence",
+                needed_for: "Returning the requested changed paths",
                 javascript: "return { changed: ['src/a.ts'] };",
                 result_for: "proc_result",
               }),
@@ -417,7 +436,7 @@ describe("proc worker", () => {
             id: "atom-1",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Create candidates",
+              needed_for: "Filtering these candidates in later JavaScript",
               javascript: "return [{ path: 'src/a.ts', line: 10 }];",
               result_for: "later_javascript",
             }),
@@ -435,7 +454,7 @@ describe("proc worker", () => {
               id: "atom-2",
               name: "execute",
               arguments: JSON.stringify({
-                summary: "Add definition extents",
+                needed_for: "Returning the requested paths and ranges",
                 javascript: `return loadValue(${JSON.stringify(prior.value_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
                 result_for: "proc_result",
               }),
@@ -554,30 +573,44 @@ describe("proc worker", () => {
     expect(
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
-      description: expect.stringContaining("result_for is no_one"),
+      description: expect.stringContaining(
+        "worker_decision must return { decision_evidence, saved_value }",
+      ),
     });
     expect(
       workerTools[0]?.function.parameters.properties.result_for,
     ).toMatchObject({
-      enum: ["no_one", "later_javascript", "worker_context", "proc_result"],
-      description: expect.stringContaining("Who needs the returned value"),
+      enum: ["no_one", "later_javascript", "worker_decision", "proc_result"],
+      description: expect.stringContaining("Return destination"),
+    });
+    expect(
+      workerTools[0]?.function.parameters.properties.needed_for,
+    ).toMatchObject({
+      description: expect.stringContaining(
+        '"Choose the owning definition", not "Search definitions"',
+      ),
     });
     expect(workerTools[0]?.function.parameters.required).toContain(
       "result_for",
+    );
+    expect(workerTools[0]?.function.parameters.required).toContain(
+      "needed_for",
+    );
+    expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
+      "summary",
     );
     expect(PROC_WORKER_SYSTEM).not.toContain(
       "Return a final value matching output.contract",
     );
     const initial = JSON.parse(transaction.messages[1].content as string) as {
       result_requirements: string;
-      max_result_bytes: number;
       output?: unknown;
       environment: { tools: unknown[]; globals: { fs: string[] } };
     };
     expect(initial).toMatchObject({
       result_requirements: "Return paths and ranges",
-      max_result_bytes: 4096,
     });
+    expect(initial).not.toHaveProperty("max_result_bytes");
     expect(initial).not.toHaveProperty("output");
     expect(initial.environment.tools).toEqual(contracts);
     expect(initial.environment.globals.fs).toContainEqual(
@@ -602,7 +635,7 @@ describe("proc worker", () => {
             id: "bad-atom",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Attempt unsupported operation",
+              needed_for: "Returning the requested unsupported result",
               javascript: "throw new Error('bad atom');",
               result_for: "proc_result",
             }),
@@ -702,7 +735,7 @@ describe("proc worker", () => {
             id: "partial-mutation",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Write then fail",
+              needed_for: "Applying the requested write",
               javascript:
                 "tools.write_fixture({}); throw new Error('after write');",
               result_for: "proc_result",
@@ -812,7 +845,7 @@ describe("proc worker", () => {
             id: "do-commit",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Commit",
+              needed_for: "Returning the requested commit result",
               javascript:
                 "return git.commit({ paths: 'all', subject: 'Frontier subject' });",
               result_for: "proc_result",
@@ -902,7 +935,7 @@ describe("proc worker", () => {
             id: "denied-commit",
             name: "execute",
             arguments: JSON.stringify({
-              summary: "Commit",
+              needed_for: "Creating the requested commit",
               javascript: "return git.commit({ paths: 'all', subject: 'x' });",
               result_for: "proc_result",
             }),

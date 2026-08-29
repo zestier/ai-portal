@@ -26,20 +26,20 @@ import {
 const MAX_TURNS = 100;
 const EXECUTE = "execute";
 const CANNOT_EXECUTE = "cannot_execute";
-const CHECKPOINT_SHAPE_BYTES = 2 * 1024;
-const INSPECTION_BYTES = 12 * 1024;
+const SAVED_VALUE_SHAPE_BYTES = 2 * 1024;
+const EMERGENCY_WORKER_VALUE_BYTES = 64 * 1024;
 const MAX_TRANSCRIPT_BYTES = 128 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
 const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
 
 const ExecuteArgs = z
   .object({
-    summary: z.string().min(1).max(500),
+    needed_for: z.string().min(1).max(1_000),
     javascript: z.string().min(1).max(20_000),
     result_for: z.enum([
       "no_one",
       "later_javascript",
-      "worker_context",
+      "worker_decision",
       "proc_result",
     ]),
   })
@@ -49,13 +49,14 @@ const CannotExecuteArgs = z
   .object({ reason: z.string().min(1).max(4_000) })
   .strict();
 
-export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changing it. Do not add goals, broaden scope, change selection criteria, choose another method, or make consequential decisions.
-Fuse adjacent mechanical steps into the largest reliable execute call; procedure steps are not turn boundaries. Keep mechanical intermediate values inside JavaScript.
-Keep data in JavaScript. Use worker_context only when required semantic judgment cannot be expressed as data operations.
-Internal reads stay out of your context. Return only requested, bounded data; do not return complete files unless result_requirements requires that exact value.
-Treat result_requirements as the completion test. Use proc_result only when the returned value satisfies every requirement and max_result_bytes. A probe, candidate set, or partial result is not final.
+export const PROC_WORKER_SYSTEM = `Realize the supplied procedure without changing its goals, method, criteria, or consequential decisions.
+Default to one execute ending in proc_result. Split only to repair a failed execution, preserve a value across model turns, or answer one semantic question that the supplied rules cannot decide.
+Do all mechanically specified work in JavaScript: search, parse, filter, sort, group, deduplicate, compare, count, select excerpts, edit, and validate. Procedure steps are not execution boundaries; keep intermediate data in local variables.
+Every execute needs needed_for: state why its effect or returned value is necessary, not what the JavaScript does. Keep it concise and user-facing.
+Use worker_decision only for one concrete semantic question. Return { decision_evidence, saved_value }. decision_evidence contains only the distinguishing evidence required for that question; saved_value stays outside model context for later JavaScript. Never copy the corpus into decision_evidence or browse it through repeated calls.
+Treat result_requirements as an exact allowlist and completion test. proc_result must contain exactly the requested fields and evidence, without raw tool responses, intermediate candidates, or extra context.
 Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
-Call exactly one tool per turn. Finish only with proc_result or cannot_execute. Use brief, user-facing summaries.`;
+Call exactly one tool per turn. Finish only with proc_result or cannot_execute.`;
 
 export interface ProcWorkerOptions {
   transaction: ProcTransaction;
@@ -94,7 +95,6 @@ export function initialProcMessages(input: {
         summary: input.summary,
         procedure: input.procedure,
         result_requirements: input.requirements,
-        max_result_bytes: input.outputPolicy.maxBytes,
         environment: {
           tools: input.contracts,
           globals: {
@@ -345,18 +345,42 @@ export async function runProcWorker(
               );
               continue;
             }
-            const policy: ProcOutputPolicy =
-              args.result_for === "worker_context"
-                ? {
-                    mode: "exact",
-                    maxBytes: INSPECTION_BYTES,
-                    store: true,
-                  }
-                : {
-                    mode: "shape",
-                    maxBytes: CHECKPOINT_SHAPE_BYTES,
-                    store: true,
-                  };
+            if (args.result_for === "worker_decision") {
+              const decision = DecisionResult.parse(result.value);
+              retainedResult = createProcResult({
+                transactionId: transaction.id,
+                conversationId: transaction.conversationId,
+                value: decision.saved_value,
+              });
+              const evidence = projectProcValue(decision.decision_evidence, {
+                mode: "exact",
+                maxBytes: EMERGENCY_WORKER_VALUE_BYTES,
+                store: false,
+              });
+              recordExecutionFeedback(
+                opts.emit,
+                transaction,
+                call.id,
+                protocolId,
+                procId,
+                true,
+                {
+                  result_for: "worker_decision",
+                  needed_for: args.needed_for,
+                  value_id: retainedResult.id,
+                  decision_evidence: evidence.projection,
+                  operations: result.operations,
+                  effects: effectSummary,
+                  effects_total: effects.length,
+                },
+              );
+              continue;
+            }
+            const policy: ProcOutputPolicy = {
+              mode: "shape",
+              maxBytes: SAVED_VALUE_SHAPE_BYTES,
+              store: true,
+            };
             retainedResult = createProcResult({
               transactionId: transaction.id,
               conversationId: transaction.conversationId,
@@ -367,15 +391,8 @@ export async function runProcWorker(
               result_for: args.result_for,
               value_id: retainedResult.id,
               value_bytes: retainedResult.bytes,
-              ...(args.result_for === "later_javascript"
-                ? {
-                    structure: projection.projection,
-                    structure_bytes: projection.projectionBytes,
-                  }
-                : {
-                    bounded_value: projection.projection,
-                    bounded_value_bytes: projection.projectionBytes,
-                  }),
+              structure: projection.projection,
+              structure_bytes: projection.projectionBytes,
               truncated: projection.truncated,
               operations: result.operations,
               effects: effectSummary,
@@ -431,7 +448,9 @@ export async function runProcWorker(
             effects_total: effects.length,
             retry_safe: retrySafe,
             instruction: retrySafe
-              ? "Fix and retry, or checkpoint before the failing step. Use cannot_execute only if the procedure itself cannot be realized."
+              ? retainedResult
+                ? "Use loadValue(value_id) to derive a smaller or corrected value in JavaScript. Do not page the saved value through worker_decision."
+                : "Fix and retry, or save an intermediate value for later JavaScript. Use cannot_execute only if the procedure itself cannot be realized."
               : "Do not replay: effects may have occurred. Check current repository state and execute only unfinished work; otherwise call cannot_execute.",
           };
           recordExecutionFeedback(
@@ -542,33 +561,33 @@ function workerToolSpecs(): ExtractorToolSpec[] {
       type: "function",
       function: {
         name: EXECUTE,
-        description:
-          "Execute part or all of the procedure as one JavaScript program.",
+        description: "Run JavaScript for the stated needed_for.",
         parameters: {
           type: "object",
           properties: {
-            summary: {
+            needed_for: {
               type: "string",
-              description: "Short label shown to the user.",
+              description:
+                'Why this execution is necessary. State the outcome or question, not the operation: "Choose the owning definition", not "Search definitions".',
             },
             javascript: {
               type: "string",
               description:
-                "JavaScript function body. Must return one JSON-compatible value unless result_for is no_one.",
+                "JavaScript function body. no_one may omit return. worker_decision must return { decision_evidence, saved_value }; only decision_evidence enters your next turn and value_id refers to saved_value. Other modes return one JSON-compatible value.",
             },
             result_for: {
               type: "string",
               enum: [
                 "no_one",
                 "later_javascript",
-                "worker_context",
+                "worker_decision",
                 "proc_result",
               ],
               description:
-                "Who needs the returned value. no_one discards it. later_javascript saves it as value_id for loadValue(value_id). worker_context puts a bounded representation in your next turn and also saves the exact value as value_id. proc_result returns it as the final proc result and ends proc.",
+                "Return destination. no_one discards; later_javascript returns value_id and structure only; worker_decision returns decision_evidence and value_id; proc_result returns the final result and ends proc.",
             },
           },
-          required: ["summary", "javascript", "result_for"],
+          required: ["needed_for", "javascript", "result_for"],
           additionalProperties: false,
         },
       },
@@ -594,6 +613,13 @@ function workerToolSpecs(): ExtractorToolSpec[] {
     },
   ];
 }
+
+const DecisionResult = z
+  .object({
+    decision_evidence: z.unknown(),
+    saved_value: z.unknown(),
+  })
+  .strict();
 
 function parseArgs(raw: string): unknown {
   try {

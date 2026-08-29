@@ -87,8 +87,8 @@
         return "no result";
       case "later_javascript":
         return "later code";
-      case "worker_context":
-        return "worker";
+      case "worker_decision":
+        return "decision";
       case "proc_result":
         return "proc result";
       default:
@@ -127,11 +127,6 @@
         <section>
           <div class="label">Result requirements</div>
           <p>{args.result_requirements}</p>
-          {#if args.max_result_bytes !== undefined}
-            <span class="budget"
-              >up to {formatFieldBytes(args.max_result_bytes)}</span
-            >
-          {/if}
         </section>
       </div>
     {/if}
@@ -158,7 +153,7 @@
               <summary>
                 <span class="step">{index + 1}</span>
                 <span class="stage-title"
-                  >{executionArgs?.summary ?? "Execution"}</span
+                  >{executionArgs?.needed_for ?? "Execution"}</span
                 >
                 <Pill>{resultForLabel(executionArgs?.result_for)}</Pill>
                 {#if executionResult?.value_bytes != null}
@@ -205,21 +200,14 @@
                       ></pre>
                   </div>
                 {/if}
-                {#if executionResult?.bounded_value !== undefined}
+                {#if executionResult?.decision_evidence !== undefined}
                   <div class="projection">
-                    <div class="minor-label">
-                      Bounded value
-                      {#if executionResult.bounded_value_bytes != null}
-                        · {formatFieldBytes(
-                          executionResult.bounded_value_bytes,
-                        )}
-                      {/if}
-                    </div>
+                    <div class="minor-label">Decision evidence</div>
                     <pre><code
-                        >{typeof executionResult.bounded_value === "string"
-                          ? executionResult.bounded_value
+                        >{typeof executionResult.decision_evidence === "string"
+                          ? executionResult.decision_evidence
                           : JSON.stringify(
-                              executionResult.bounded_value,
+                              executionResult.decision_evidence,
                               null,
                               2,
                             )}</code
@@ -353,7 +341,6 @@
   }
   .status,
   .metric,
-  .budget,
   .metrics {
     color: var(--text-muted);
     font-size: var(--fs-xs);

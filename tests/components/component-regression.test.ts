@@ -507,7 +507,6 @@ describe("Svelte component regression coverage", () => {
             summary: "Inspect settings",
             procedure: "Extract the relevant regions.",
             result_requirements: "Source excerpts",
-            max_result_bytes: 4096,
           }),
           resultJson: null,
           status: "pending" as const,
@@ -522,7 +521,7 @@ describe("Svelte component regression coverage", () => {
             messageId: "M1",
             tool: "execute",
             argsJson: JSON.stringify({
-              summary: "Extract ModelsSettings regions",
+              needed_for: "Returning the requested ModelsSettings regions",
               javascript: "return content;",
               result_for: "proc_result",
             }),

@@ -72,7 +72,6 @@ async function seed(conversationTitle = "projection") {
         summary: "map owners",
         procedure: "search and reduce ".repeat(20),
         result_requirements: "paths and line ranges",
-        max_result_bytes: 4096,
       }),
       resultJson: null,
       status: "pending",
@@ -181,7 +180,6 @@ describe("projectTranscript", () => {
     expect(proc.argsJson).toBeNull();
     expect(proc.meta).toMatchObject({
       result_requirements: "paths and line ranges",
-      max_result_bytes: 4096,
     });
 
     const edit = last.fileEdits![0];
