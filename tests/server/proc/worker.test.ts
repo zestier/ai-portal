@@ -14,6 +14,11 @@ import {
   runProcWorker,
   summarizeExecutionEffects,
 } from "../../../src/lib/server/proc/worker";
+import {
+  attachProgramMetadata,
+  programCapabilities,
+} from "../../../src/lib/server/ptc/contracts";
+import { ok } from "../../../src/lib/server/tools/types";
 
 const piChat = vi.fn();
 
@@ -777,6 +782,196 @@ describe("proc worker", () => {
       emit: () => {},
       signal: new AbortController().signal,
     });
+    expect(outcome.status).toBe("cannot_execute");
+  });
+
+  it("runs a proc git commit through the delegated permission gate on approval", async () => {
+    const commitHandler = vi.fn(async (args: Record<string, unknown>) => {
+      // Only the realizer sees the raw args; the frontier sees the projection.
+      return ok({
+        sha: "abc123def456",
+        shortSha: "abc123de",
+        subject: String(args.subject),
+        body: "frontier body",
+        mergeCommit: false,
+        resolvedConflicts: [],
+      });
+    });
+    const commit = attachProgramMetadata({
+      name: "git_commit",
+      description: "Create a commit over path selections",
+      parameters: { type: "object" },
+      permissionBehavior: "always-prompt",
+      handler: commitHandler,
+    });
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "do-commit",
+            name: "execute",
+            arguments: JSON.stringify({
+              summary: "Commit",
+              javascript:
+                "return git.commit({ paths: 'all', subject: 'Frontier subject' });",
+              result_for: "proc_result",
+            }),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [],
+      });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc git commit",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 4096,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 45,
+      workerModel: "pi-stub/stub-model",
+      summary: "Commit",
+      requirements: "Return the commit result",
+      procedure: "Commit all changes with the frontier subject",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Commit",
+        requirements: "Return the commit result",
+        procedure: "Commit all changes with the frontier subject",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: programCapabilities(new Map([[commit.name, commit]])),
+      facadeCapabilities: new Map(),
+      permissionResolver: async (name, args) => {
+        calls.push([name, args]);
+        return { allow: true };
+      },
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+    expect(outcome.status).toBe("completed");
+    expect(outcome.projection).toMatchObject({
+      sha: "abc123def456",
+      shortSha: "abc123de",
+      subject: "Frontier subject",
+      mergeCommit: false,
+      resolvedConflicts: [],
+    });
+    // The always-prompt gate is routed through the shared resolver with the
+    // capability name + args (AC3), and the frontier-authored message reaches
+    // the tool runtime verbatim (D2).
+    expect(calls).toEqual([
+      ["git_commit", { paths: "all", subject: "Frontier subject" }],
+    ]);
+    expect(commitHandler).toHaveBeenCalledWith({
+      paths: "all",
+      subject: "Frontier subject",
+    });
+  });
+
+  it("returns a structured failure on permission denial of a proc git commit", async () => {
+    const commit = attachProgramMetadata({
+      name: "git_commit",
+      description: "Create a commit over path selections",
+      parameters: { type: "object" },
+      permissionBehavior: "always-prompt",
+      async handler() {
+        return ok({ sha: "unreached" });
+      },
+    });
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "denied-commit",
+            name: "execute",
+            arguments: JSON.stringify({
+              summary: "Commit",
+              javascript: "return git.commit({ paths: 'all', subject: 'x' });",
+              result_for: "proc_result",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          ok: boolean;
+          error: string;
+          retry_safe: boolean;
+        };
+        expect(feedback.ok).toBe(false);
+        expect(feedback.error).toContain("Permission denied");
+        expect(feedback.retry_safe).toBe(false);
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "abort-after-denial",
+              name: "cannot_execute",
+              arguments: JSON.stringify({
+                reason: "Commit was not approved.",
+              }),
+            },
+          ],
+        };
+      });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc git commit denied",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 1024,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 46,
+      workerModel: "pi-stub/stub-model",
+      summary: "Commit",
+      requirements: "Return the commit result",
+      procedure: "Commit all changes",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Commit",
+        requirements: "Return the commit result",
+        procedure: "Commit all changes",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: programCapabilities(new Map([[commit.name, commit]])),
+      facadeCapabilities: new Map(),
+      permissionResolver: async (name) => {
+        expect(name).toBe("git_commit");
+        return { allow: false, reason: "Permission denied by policy." };
+      },
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+    // A denial is not a dangling execution: the transaction completes cleanly
+    // as cannot_execute and the frontier can react.
     expect(outcome.status).toBe("cannot_execute");
   });
 });

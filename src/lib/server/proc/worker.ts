@@ -129,6 +129,8 @@ export function initialProcMessages(input: {
               "show(ref, { includePatch? }): { sha, shortSha, author, email, timestamp, subject, body, parents, files: { status, path, origPath }[], patch? } // commit details",
               "show(ref, path): string // file contents at ref",
               "blame(path, { startLine?, endLine? }): { sha, line, author, email, timestamp, summary, text }[]",
+              "commit({ paths, subject, body?, trailers?, allowConflictMarkers? }): { sha, shortSha, subject, mergeCommit, resolvedConflicts } // creates a commit; always-prompt",
+              "worktreeMerge({ direction: 'to-source'|'from-source', allowMergeCommit?, squash?, onConflict? }): { merged, into, from, fastForward, squashedCommits, headSha }",
             ],
             command:
               "command.run(executable, args?, { cwd?, stdin?, timeoutMs? }): { status, stdout, stderr }",

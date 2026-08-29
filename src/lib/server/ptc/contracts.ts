@@ -1,5 +1,11 @@
 import { z } from "zod";
 import {
+  CommitBody,
+  CommitSubject,
+  CommitTrailers,
+  SquashArg,
+} from "../tools/commit-message-args.ts";
+import {
   err,
   ok,
   type PortalTool,
@@ -121,6 +127,42 @@ const GIT_DIFF_RESULT = {
   additionalProperties: false,
 } as const;
 
+// Bounded projections of the mutating git facades, so the frontier sees a
+// stable, byte-cheap result instead of the verbose raw tool output (AC6/D3).
+const GIT_COMMIT_RESULT = {
+  type: "object",
+  properties: {
+    sha: { type: "string" },
+    shortSha: { type: "string" },
+    subject: { type: "string" },
+    mergeCommit: { type: "boolean" },
+    resolvedConflicts: { type: "array", items: { type: "string" } },
+  },
+  required: ["sha", "shortSha", "subject", "mergeCommit", "resolvedConflicts"],
+  additionalProperties: false,
+} as const;
+
+const GIT_MERGE_RESULT = {
+  type: "object",
+  properties: {
+    merged: { type: "boolean" },
+    into: { type: "string" },
+    from: { type: "string" },
+    fastForward: { type: "boolean" },
+    squashedCommits: { type: ["integer", "null"] },
+    headSha: { type: "string" },
+  },
+  required: [
+    "merged",
+    "into",
+    "from",
+    "fastForward",
+    "squashedCommits",
+    "headSha",
+  ],
+  additionalProperties: false,
+} as const;
+
 const FindProgramArgs = z
   .object({
     pattern: z.string().min(1).max(4096),
@@ -174,6 +216,31 @@ const GitShowFileProgramArgs = z
     path: z.string().min(1).max(4096),
   })
   .strict();
+// Mutating git facades reuse the shared commit-message validators so a subject
+// accepted through the proc path is accepted identically by the root tool
+// (AC5): the frontier authors the message, the worker merely realizes it.
+// The `worktree` lease selector of the root git_commit stays out of the proc
+// surface (D2/scope): a worker commits to its own workspace only.
+const GitCommitProgramArgs = z
+  .object({
+    paths: z.union([
+      z.literal("all"),
+      z.array(z.string().min(1).max(4096)).min(1),
+    ]),
+    subject: CommitSubject,
+    body: CommitBody,
+    trailers: CommitTrailers,
+    allowConflictMarkers: z.boolean().optional(),
+  })
+  .strict();
+const GitWorktreeMergeProgramArgs = z
+  .object({
+    direction: z.enum(["from-source", "to-source"]),
+    allowMergeCommit: z.boolean().optional().default(false),
+    squash: SquashArg,
+    onConflict: z.enum(["abort", "keep"]).optional().default("abort"),
+  })
+  .strict();
 
 export const PROGRAM_FACADE_TOOL_NAMES = new Set([
   "find",
@@ -183,6 +250,8 @@ export const PROGRAM_FACADE_TOOL_NAMES = new Set([
   "git_log",
   "git_show_commit",
   "git_show_file",
+  "git_commit",
+  "git_worktree_merge",
 ]);
 
 const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
@@ -305,6 +374,97 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
       argsSchema: GitShowFileProgramArgs,
     },
   ),
+  git_commit: metadata(
+    "create a commit over path selections",
+    GIT_COMMIT_RESULT,
+    "git.commit({ paths: 'all', subject: 'Frontier-authored subject' })",
+    undefined,
+    {
+      operationCategory: "mutation",
+      parameters: objectParameters(
+        {
+          paths: {
+            oneOf: [
+              { type: "string", enum: ["all"] },
+              { type: "array", items: { type: "string" }, minItems: 1 },
+            ],
+          },
+          subject: { type: "string" },
+          body: { type: "string" },
+          trailers: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                token: { type: "string" },
+                value: { type: "string" },
+              },
+              required: ["token", "value"],
+              additionalProperties: false,
+            },
+          },
+          allowConflictMarkers: { type: "boolean" },
+        },
+        ["paths", "subject"],
+      ),
+      argsSchema: GitCommitProgramArgs,
+      invoke: invokeGitCommit,
+    },
+  ),
+  git_worktree_merge: metadata(
+    "merge this linked worktree's branch with the main checkout's branch",
+    GIT_MERGE_RESULT,
+    "git.worktreeMerge({ direction: 'to-source', squash: { subject: 'Unit' } })",
+    undefined,
+    {
+      operationCategory: "mutation",
+      parameters: objectParameters(
+        {
+          direction: {
+            type: "string",
+            enum: ["from-source", "to-source"],
+            description:
+              "Flow of commits relative to this worktree. to-source: move this worktree's commits into the main checkout's branch (finish a unit of work upstream). from-source: pull the source branch's commits into this worktree to catch it up.",
+          },
+          allowMergeCommit: {
+            type: "boolean",
+            description:
+              "to-source only. Allow a merge commit instead of requiring a fast-forward. Default false.",
+          },
+          onConflict: {
+            type: "string",
+            enum: ["abort", "keep"],
+            description:
+              "from-source only. abort rolls a conflicted merge back; keep leaves the conflict in the worktree to resolve. to-source always rolls back. Default abort.",
+          },
+          squash: {
+            type: "object",
+            properties: {
+              subject: { type: "string" },
+              body: { type: "string" },
+              trailers: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    token: { type: "string" },
+                    value: { type: "string" },
+                  },
+                  required: ["token", "value"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["subject"],
+            additionalProperties: false,
+          },
+        },
+        ["direction"],
+      ),
+      argsSchema: GitWorktreeMergeProgramArgs,
+      invoke: invokeGitMerge,
+    },
+  ),
 };
 
 export function attachProgramMetadata(tool: PortalTool): PortalTool {
@@ -420,19 +580,26 @@ function metadata(
   resultSchema: Record<string, unknown>,
   example: string,
   normalizeArgs?: (args: unknown) => unknown,
-  extra: Pick<
-    ProgramToolMetadata,
-    "parameters" | "argsSchema" | "permissionArgs" | "invoke"
+  extra: Partial<
+    Pick<
+      ProgramToolMetadata,
+      | "parameters"
+      | "argsSchema"
+      | "permissionArgs"
+      | "invoke"
+      | "operationCategory"
+    >
   > = {},
 ): ProgramToolMetadata {
+  const { operationCategory, ...rest } = extra;
   return {
     catalogDescription,
-    operationCategory: "read",
+    operationCategory: operationCategory ?? "read",
     resultSchema,
     example,
     contractVersion: "1",
     ...(normalizeArgs ? { normalizeArgs } : {}),
-    ...extra,
+    ...rest,
   };
 }
 
@@ -584,6 +751,44 @@ async function invokeGitDiff(
     patch: patchResult.result === "(no diff)" ? "" : patchResult.result,
     files,
     truncated: false,
+  });
+}
+
+async function invokeGitCommit(
+  tool: PortalTool,
+  args: unknown,
+): Promise<ToolResult> {
+  const parsed = GitCommitProgramArgs.parse(args);
+  const result = await tool.handler(parsed);
+  if (!result.ok) return result;
+  const value = asRecord(result.result);
+  return ok({
+    sha: typeof value.sha === "string" ? value.sha : "",
+    shortSha: typeof value.shortSha === "string" ? value.shortSha : "",
+    subject: typeof value.subject === "string" ? value.subject : "",
+    mergeCommit: value.mergeCommit === true,
+    resolvedConflicts: Array.isArray(value.resolvedConflicts)
+      ? value.resolvedConflicts.map(String)
+      : [],
+  });
+}
+
+async function invokeGitMerge(
+  tool: PortalTool,
+  args: unknown,
+): Promise<ToolResult> {
+  const parsed = GitWorktreeMergeProgramArgs.parse(args);
+  const result = await tool.handler(parsed);
+  if (!result.ok) return result;
+  const value = asRecord(result.result);
+  return ok({
+    merged: value.merged === true,
+    into: typeof value.into === "string" ? value.into : "",
+    from: typeof value.from === "string" ? value.from : "",
+    fastForward: value.fastForward === true,
+    squashedCommits:
+      typeof value.squashedCommits === "number" ? value.squashedCommits : null,
+    headSha: typeof value.headSha === "string" ? value.headSha : "",
   });
 }
 

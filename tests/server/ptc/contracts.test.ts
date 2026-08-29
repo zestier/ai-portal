@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ok, type PortalTool } from "../../../src/lib/server/tools/types";
 import {
   attachProgramMetadata,
   normalizeProgramToolArgs,
-  programCatalog,
   programCapabilities,
+  programCatalog,
   programToolContracts,
 } from "../../../src/lib/server/ptc/contracts";
 
@@ -144,6 +144,184 @@ describe("program contracts", () => {
     ).resolves.toMatchObject({
       ok: false,
       error: { message: "Not a Git repository." },
+    });
+  });
+
+  it("exposes git commit and worktree merge as bounded mutating facades", async () => {
+    const commitHandler = vi.fn(async () =>
+      ok({
+        sha: "abc123def456",
+        shortSha: "abc123de",
+        subject: "frontier subject",
+        body: "frontier body",
+        mergeCommit: false,
+        resolvedConflicts: [] as string[],
+      }),
+    );
+    const commit = attachProgramMetadata({
+      ...tool("git_commit"),
+      permissionBehavior: "always-prompt",
+      handler: commitHandler,
+    });
+    const mergeHandler = vi.fn(async () =>
+      ok({
+        merged: true,
+        into: "main",
+        from: "fix/unit",
+        fastForward: false,
+        squashedCommits: 3,
+        headSha: "def456",
+      }),
+    );
+    const merge = attachProgramMetadata({
+      ...tool("git_worktree_merge"),
+      permissionBehavior: "always-prompt",
+      handler: mergeHandler,
+    });
+    const capabilities = programCapabilities(
+      new Map([
+        [commit.name, commit],
+        [merge.name, merge],
+      ]),
+    );
+    const commitTool = capabilities.get("git_commit")!;
+    const mergeTool = capabilities.get("git_worktree_merge")!;
+    expect(commitTool.program!.operationCategory).toBe("mutation");
+    expect(mergeTool.program!.operationCategory).toBe("mutation");
+    expect(commitTool.permissionBehavior).toBe("always-prompt");
+    expect(mergeTool.permissionBehavior).toBe("always-prompt");
+
+    await expect(
+      commitTool.handler({
+        paths: "all",
+        subject: "frontier subject",
+        trailers: [{ token: "Ticket", value: "T1" }],
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        sha: "abc123def456",
+        shortSha: "abc123de",
+        subject: "frontier subject",
+        mergeCommit: false,
+        resolvedConflicts: [],
+      },
+    });
+    // The frontier-authored message reaches the underlying tool runtime
+    // verbatim (D2) — the projection never authors or rewrites it.
+    expect(commitHandler).toHaveBeenCalledWith({
+      paths: "all",
+      subject: "frontier subject",
+      trailers: [{ token: "Ticket", value: "T1" }],
+    });
+
+    await expect(
+      mergeTool.handler({
+        direction: "to-source",
+        squash: { subject: "Unit" },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        merged: true,
+        into: "main",
+        from: "fix/unit",
+        fastForward: false,
+        squashedCommits: 3,
+        headSha: "def456",
+      },
+    });
+    expect(mergeHandler).toHaveBeenCalledWith({
+      direction: "to-source",
+      squash: { subject: "Unit" },
+      allowMergeCommit: false,
+      onConflict: "abort",
+    });
+  });
+
+  it("projects commit and merge facade results to the minimal bounded contract", async () => {
+    const commit = attachProgramMetadata({
+      ...tool("git_commit"),
+      async handler() {
+        return ok({
+          sha: "abc",
+          shortSha: "abc",
+          subject: "s",
+          body: "b",
+          trailers: [],
+          files: [], // verbose — must not leak into the projection
+          mergeCommit: false,
+          resolvedConflicts: [],
+        });
+      },
+    });
+    const merge = attachProgramMetadata({
+      ...tool("git_worktree_merge"),
+      async handler() {
+        return ok({
+          merged: true,
+          into: "main",
+          from: "fix",
+          fastForward: true,
+          headSha: "def",
+          status: {/* verbose — must not leak */},
+        });
+      },
+    });
+    const caps = programCapabilities(
+      new Map([
+        [commit.name, commit],
+        [merge.name, merge],
+      ]),
+    );
+    await expect(
+      caps.get("git_commit")!.handler({ paths: "all", subject: "s" }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        sha: "abc",
+        shortSha: "abc",
+        subject: "s",
+        mergeCommit: false,
+        resolvedConflicts: [],
+      },
+    });
+    await expect(
+      caps.get("git_worktree_merge")!.handler({ direction: "to-source" }),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        merged: true,
+        into: "main",
+        from: "fix",
+        fastForward: true,
+        squashedCommits: null,
+        headSha: "def",
+      },
+    });
+  });
+
+  it("propagates a from-source conflict as a structured error", async () => {
+    const merge = attachProgramMetadata({
+      ...tool("git_worktree_merge"),
+      async handler() {
+        return {
+          ok: false as const,
+          error: {
+            code: "merge_conflict",
+            message: "merge_conflict: conflicted",
+          },
+        };
+      },
+    });
+    const caps = programCapabilities(new Map([[merge.name, merge]]));
+    await expect(
+      caps
+        .get("git_worktree_merge")!
+        .handler({ direction: "from-source", onConflict: "keep" }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { code: "merge_conflict", message: "merge_conflict: conflicted" },
     });
   });
 });

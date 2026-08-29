@@ -496,6 +496,12 @@ export async function runProgramInline(
           ...(options.startLine !== undefined ? { startLine: options.startLine } : {}),
           ...(options.endLine !== undefined ? { endLine: options.endLine } : {})
         });
+      },
+      commit(options = {}) {
+        return callTool("git_commit", options);
+      },
+      worktreeMerge(options = {}) {
+        return callTool("git_worktree_merge", options);
       }
     });
     function runCommand(executableOrArgv, argsOrOptions = [], maybeOptions = {}) {
