@@ -46,6 +46,7 @@ const CannotExecuteArgs = z
 
 export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changing it. Do not add goals, broaden scope, change selection criteria, choose another method, or make consequential decisions.
 Fuse adjacent mechanical steps into the largest reliable execute call; procedure steps are not turn boundaries. Keep mechanical intermediate values inside JavaScript.
+Keep data in JavaScript. Use model-visible data only when required semantic judgment cannot be expressed as data operations.
 Internal reads stay out of your context. Return only requested, bounded data; do not return complete files unless result_requirements requires that exact value.
 Treat result_requirements as the completion test. Use final only when the execution completes all remaining work and returns one value satisfying every requirement and max_result_bytes. A probe, candidate set, or partial result is not final.
 Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
@@ -549,7 +550,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
               type: "string",
               enum: ["action", "checkpoint", "inspect", "final"],
               description:
-                "action: complete effectful work; any return value is ignored; checkpoint: preserve a required value for getCheckpoint(checkpointId); inspect: reveal reduced data for semantic judgment; final: emit the completed result and end proc.",
+                "action: complete effectful work; any return value is ignored; checkpoint: preserve a required value for getCheckpoint(checkpointId); inspect: reveal mechanically reduced data only when required semantic judgment cannot be expressed as data operations; final: emit the completed result and end proc.",
             },
           },
           required: ["summary", "javascript", "purpose"],

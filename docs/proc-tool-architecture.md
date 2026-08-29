@@ -136,7 +136,7 @@ The proc worker owns only tolerant realization:
 - resolving exact tool names and argument contracts;
 - repairing syntax and equivalent mechanical failures;
 - batching, pagination, and intermediate data plumbing;
-- applying supplied criteria to inspected data;
+- applying supplied semantic criteria to inspected data;
 - selecting equivalent implementation details that do not change the
   procedure or result.
 
@@ -150,7 +150,7 @@ is no durable `resume` conversation hidden inside the tool.
 
 The proc worker receives only:
 
-- `execute`: run fused JavaScript as a checkpoint, bounded semantic
+- `execute`: run fused JavaScript as an action, checkpoint, bounded semantic
   inspection, or final result;
 - `cannot_execute`: stop with a precise unsupported or underspecified step.
 

@@ -286,6 +286,9 @@ describe("proc worker", () => {
     expect(PROC_WORKER_SYSTEM).toContain(
       "Treat result_requirements as the completion test",
     );
+    expect(PROC_WORKER_SYSTEM).toContain(
+      "required semantic judgment cannot be expressed as data operations",
+    );
     expect(PROC_WORKER_SYSTEM).toContain("exactly one tool per turn");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
   });
@@ -544,6 +547,13 @@ describe("proc worker", () => {
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
       description: expect.stringContaining("action may omit return"),
+    });
+    expect(
+      workerTools[0]?.function.parameters.properties.purpose,
+    ).toMatchObject({
+      description: expect.stringContaining(
+        "required semantic judgment cannot be expressed as data operations",
+      ),
     });
     expect(PROC_WORKER_SYSTEM).not.toContain(
       "Return a final value matching output.contract",
