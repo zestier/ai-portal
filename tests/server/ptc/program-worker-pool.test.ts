@@ -279,6 +279,6 @@ function options(
     facadeCapabilityNames: [],
     signal: controller.signal,
     execute,
-    getState: () => undefined,
+    getCheckpoint: () => undefined,
   };
 }

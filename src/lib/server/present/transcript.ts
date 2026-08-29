@@ -190,7 +190,7 @@ function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
         "name",
         "summary",
         "procedure",
-        "result_contract",
+        "result_requirements",
         "javascript",
         "purpose",
         "source",

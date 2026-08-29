@@ -71,7 +71,7 @@ async function seed(conversationTitle = "projection") {
       argsJson: JSON.stringify({
         summary: "map owners",
         procedure: "search and reduce ".repeat(20),
-        result_contract: "paths and line ranges",
+        result_requirements: "paths and line ranges",
         max_result_bytes: 4096,
       }),
       resultJson: null,
@@ -180,7 +180,7 @@ describe("projectTranscript", () => {
     const proc = last.toolCalls![2];
     expect(proc.argsJson).toBeNull();
     expect(proc.meta).toMatchObject({
-      result_contract: "paths and line ranges",
+      result_requirements: "paths and line ranges",
       max_result_bytes: 4096,
     });
 

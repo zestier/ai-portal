@@ -7,7 +7,7 @@ import {
   createProcResult,
   createProcTransaction,
   getProcResult,
-  createProcStateReader,
+  createProcCheckpointReader,
   getProcTransaction,
   updateProcTransaction,
 } from "../../../src/lib/server/proc/store";
@@ -30,7 +30,7 @@ describe("proc store", () => {
       parentToolCallId: 9,
       workerModel: "pi-stub/stub-model",
       summary: "Find owners",
-      contract: "Return paths and line ranges",
+      requirements: "Return paths and line ranges",
       procedure: "grep, group, read context",
       outputPolicy: { mode: "shape", maxBytes: 4096, store: true },
       messages: [{ role: "system", content: "proc" }],
@@ -56,10 +56,13 @@ describe("proc store", () => {
       value: [{ path: "src/a.ts", line: 4 }],
       bytes: expect.any(Number),
     });
-    const state = createProcStateReader(transaction.id, conversationId);
-    expect(state.get(first.id)).toEqual([{ path: "src/a.ts", line: 4 }]);
-    expect(state.get(second.id)).toEqual({ selected: [first.id] });
-    expect(state.get("RES_unknown")).toBeUndefined();
+    const checkpoints = createProcCheckpointReader(
+      transaction.id,
+      conversationId,
+    );
+    expect(checkpoints.get(first.id)).toEqual([{ path: "src/a.ts", line: 4 }]);
+    expect(checkpoints.get(second.id)).toEqual({ selected: [first.id] });
+    expect(checkpoints.get("RES_unknown")).toBeUndefined();
     expect(
       getProcResult({
         id: first.id,
@@ -74,6 +77,7 @@ describe("proc store", () => {
     updateProcTransaction(transaction);
     expect(getProcTransaction(transaction.id, conversationId)).toMatchObject({
       status: "completed",
+      requirements: "Return paths and line ranges",
       resultId: second.id,
       usage: { executions: 2 },
     });

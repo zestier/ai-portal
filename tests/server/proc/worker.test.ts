@@ -76,7 +76,7 @@ describe("proc worker", () => {
       parentToolCallId: 41,
       workerModel: "pi-stub/stub-model",
       summary: "Oversized proc",
-      contract: "Return one value",
+      requirements: "Return one value",
       procedure: "Return one value",
       outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
       messages: [
@@ -135,7 +135,7 @@ describe("proc worker", () => {
       parentToolCallId: 40,
       workerModel: "pi-stub/stub-model",
       summary: "Oversized proc arguments",
-      contract: "Return one value",
+      requirements: "Return one value",
       procedure: "Return one value",
       outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
       messages: initialMessages,
@@ -184,12 +184,12 @@ describe("proc worker", () => {
       parentToolCallId: 39,
       workerModel: "pi-stub/stub-model",
       summary: "Inspect large value",
-      contract: "Return one value",
+      requirements: "Return one value",
       procedure: "Inspect then reduce",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Inspect large value",
-        contract: "Return one value",
+        requirements: "Return one value",
         procedure: "Inspect then reduce",
         outputPolicy,
         contracts: [],
@@ -201,19 +201,44 @@ describe("proc worker", () => {
         content: "",
         toolCalls: [
           {
-            id: "large-inspection",
+            id: "small-inspection",
             name: "execute",
             arguments: JSON.stringify({
               summary: "Inspect candidates",
-              javascript: `return ${JSON.stringify(largeValue)};`,
+              javascript: "return { candidates: ['src/a.ts'] };",
               purpose: "inspect",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as Record<
+          string,
+          unknown
+        >;
+        expect(feedback).toMatchObject({
+          purpose: "inspect",
+          projection: { candidates: ["src/a.ts"] },
+        });
+        expect(feedback).not.toHaveProperty("checkpoint_id");
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "large-inspection",
+              name: "execute",
+              arguments: JSON.stringify({
+                summary: "Inspect large candidate",
+                javascript: `return ${JSON.stringify(largeValue)};`,
+                purpose: "inspect",
+              }),
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          result_id: string;
+          checkpoint_id: string;
           bytes: number;
           error: string;
         };
@@ -221,7 +246,7 @@ describe("proc worker", () => {
         expect(feedback.bytes).toBeGreaterThan(12 * 1_024);
         expect(
           getProcResult({
-            id: feedback.result_id,
+            id: feedback.checkpoint_id,
             transactionId: transaction.id,
             conversationId,
           })?.value,
@@ -254,12 +279,125 @@ describe("proc worker", () => {
     expect(Buffer.byteLength(PROC_WORKER_SYSTEM)).toBeLessThanOrEqual(2_000);
     expect(PROC_WORKER_SYSTEM).toContain("without changing it");
     expect(PROC_WORKER_SYSTEM).toContain("broaden scope");
-    expect(PROC_WORKER_SYSTEM).toContain("whole procedure");
+    expect(PROC_WORKER_SYSTEM).toContain("largest reliable execute call");
     expect(PROC_WORKER_SYSTEM).toContain(
-      "If one reliable program is impractical",
+      "procedure steps are not turn boundaries",
+    );
+    expect(PROC_WORKER_SYSTEM).toContain(
+      "Treat result_requirements as the completion test",
     );
     expect(PROC_WORKER_SYSTEM).toContain("exactly one tool per turn");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
+  });
+
+  it("ignores action return values and continues without a checkpoint", async () => {
+    const recordAction = {
+      name: "record_action",
+      description: "Record an action",
+      parameters: { type: "object" },
+      program: {
+        catalogDescription: "record an action",
+        operationCategory: "mutation" as const,
+        resultSchema: { type: "object" },
+        example: "tools.record_action({})",
+        contractVersion: "1",
+      },
+      handler: vi.fn(async () => ({
+        ok: true as const,
+        summary: "recorded",
+        result: { ticket_id: "T1" },
+      })),
+    };
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "action-with-implicit-value",
+            name: "execute",
+            arguments: JSON.stringify({
+              summary: "Apply action",
+              javascript: "tools.record_action({});",
+              purpose: "action",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as Record<
+          string,
+          unknown
+        >;
+        expect(feedback).toMatchObject({
+          purpose: "action",
+          operations: 1,
+          effects: [
+            { tool: "record_action", effect: "mutation", ok: true, count: 1 },
+          ],
+          effects_total: 1,
+        });
+        expect(feedback).not.toHaveProperty("checkpoint_id");
+        expect(feedback).not.toHaveProperty("projection");
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "complete-actions",
+              name: "execute",
+              arguments: JSON.stringify({
+                summary: "Return action evidence",
+                javascript: "return { changed: ['src/a.ts'] };",
+                purpose: "final",
+              }),
+            },
+          ],
+        };
+      });
+
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc actions",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 4096,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 41,
+      workerModel: "pi-stub/stub-model",
+      summary: "Apply actions",
+      requirements: "Return changed paths",
+      procedure: "Apply actions and report changed paths",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Apply actions",
+        requirements: "Return changed paths",
+        procedure: "Apply actions and report changed paths",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map([[recordAction.name, recordAction]]),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      projection: { changed: ["src/a.ts"] },
+      usage: { turns: 2, executions: 2 },
+    });
+    expect(recordAction.handler).toHaveBeenCalledOnce();
   });
 
   it("composes an exact checkpoint and completes with a fused final execution", async () => {
@@ -280,7 +418,7 @@ describe("proc worker", () => {
       })
       .mockImplementationOnce(async (_config, messages) => {
         const prior = JSON.parse(messages.at(-1).content) as {
-          result_id: string;
+          checkpoint_id: string;
         };
         return {
           content: "",
@@ -290,7 +428,7 @@ describe("proc worker", () => {
               name: "execute",
               arguments: JSON.stringify({
                 summary: "Add definition extents",
-                javascript: `return getState(${JSON.stringify(prior.result_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
+                javascript: `return getCheckpoint(${JSON.stringify(prior.checkpoint_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
                 purpose: "final",
               }),
             },
@@ -323,12 +461,12 @@ describe("proc worker", () => {
       parentToolCallId: 42,
       workerModel: "pi-stub/stub-model",
       summary: "Find owner",
-      contract: "Return paths and ranges",
+      requirements: "Return paths and ranges",
       procedure: "Create candidates, then add extents",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Find owner",
-        contract: "Return paths and ranges",
+        requirements: "Return paths and ranges",
         procedure: "Create candidates, then add extents",
         outputPolicy,
         contracts,
@@ -381,6 +519,10 @@ describe("proc worker", () => {
         }),
       ]),
     );
+    const checkpointFeedback = JSON.parse(
+      transaction.messages[3].content as string,
+    ) as { checkpoint_id: string };
+    expect(checkpointFeedback.checkpoint_id).toBeTruthy();
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
@@ -401,19 +543,19 @@ describe("proc worker", () => {
     expect(
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
-      description: expect.stringContaining("return { results };"),
+      description: expect.stringContaining("action may omit return"),
     });
     expect(PROC_WORKER_SYSTEM).not.toContain(
       "Return a final value matching output.contract",
     );
     const initial = JSON.parse(transaction.messages[1].content as string) as {
-      result_contract: string;
+      result_requirements: string;
       max_result_bytes: number;
       output?: unknown;
       environment: { tools: unknown[]; globals: { fs: string[] } };
     };
     expect(initial).toMatchObject({
-      result_contract: "Return paths and ranges",
+      result_requirements: "Return paths and ranges",
       max_result_bytes: 4096,
     });
     expect(initial).not.toHaveProperty("output");
@@ -479,12 +621,12 @@ describe("proc worker", () => {
       parentToolCallId: 43,
       workerModel: "pi-stub/stub-model",
       summary: "Unsupported proc",
-      contract: "Return a result",
+      requirements: "Return a result",
       procedure: "Perform unsupported operation",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Unsupported proc",
-        contract: "Return a result",
+        requirements: "Return a result",
         procedure: "Perform unsupported operation",
         outputPolicy,
         contracts: [],
@@ -509,7 +651,7 @@ describe("proc worker", () => {
         type: "tool.result",
         ok: false,
         summary: "Failed",
-        output: "bad atom",
+        output: expect.stringContaining('"error":"bad atom"'),
       }),
     );
   });
@@ -601,12 +743,12 @@ describe("proc worker", () => {
       parentToolCallId: 44,
       workerModel: "pi-stub/stub-model",
       summary: "Mutating proc",
-      contract: "Return validation status",
+      requirements: "Return validation status",
       procedure: "Write a fixture and validate it",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Mutating proc",
-        contract: "Return validation status",
+        requirements: "Return validation status",
         procedure: "Write a fixture and validate it",
         outputPolicy,
         contracts: [],

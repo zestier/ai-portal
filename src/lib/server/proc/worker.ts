@@ -17,7 +17,7 @@ import { projectProcValue } from "./projection";
 import {
   createProcResult,
   deleteProcResults,
-  createProcStateReader,
+  createProcCheckpointReader,
   updateProcTransaction,
   type ProcOutputPolicy,
   type ProcTransaction,
@@ -36,7 +36,7 @@ const ExecuteArgs = z
   .object({
     summary: z.string().min(1).max(500),
     javascript: z.string().min(1).max(20_000),
-    purpose: z.enum(["checkpoint", "inspect", "final"]),
+    purpose: z.enum(["action", "checkpoint", "inspect", "final"]),
   })
   .strict();
 
@@ -45,10 +45,9 @@ const CannotExecuteArgs = z
   .strict();
 
 export const PROC_WORKER_SYSTEM = `Execute the supplied procedure without changing it. Do not add goals, broaden scope, change selection criteria, choose another method, or make consequential decisions.
-Prefer one execute call with purpose final that implements the whole procedure in one JavaScript program. Keep mechanical intermediate values inside it.
-Reading complete files inside an execution does not add them to your context. It is often appropriate for mechanical filtering or transformation. Never return complete files through inspect, checkpoint, or final unless the output contract specifically requires that exact bounded value.
-If one reliable program is impractical, call execute with purpose checkpoint after a completed mechanical segment, then continue from getState(result_id). Use purpose inspect only for semantic judgment required by the procedure, after mechanically reducing to the smallest useful candidate set.
-Do not return unrequested raw source or other bulk data.
+Fuse adjacent mechanical steps into the largest reliable execute call; procedure steps are not turn boundaries. Keep mechanical intermediate values inside JavaScript.
+Internal reads stay out of your context. Return only requested, bounded data; do not return complete files unless result_requirements requires that exact value.
+Treat result_requirements as the completion test. Use final only when the execution completes all remaining work and returns one value satisfying every requirement and max_result_bytes. A probe, candidate set, or partial result is not final.
 Repair syntax, capability arguments, batching, and other mechanical failures. If the procedure lacks a consequential instruction, call cannot_execute with the smallest missing instruction.
 Call exactly one tool per turn. Finish only by calling execute with purpose final, or cannot_execute. Use brief, user-facing summaries.`;
 
@@ -76,7 +75,7 @@ export interface ProcWorkerOutcome {
 
 export function initialProcMessages(input: {
   summary: string;
-  contract: string;
+  requirements: string;
   procedure: string;
   outputPolicy: ProcOutputPolicy;
   contracts: Array<Record<string, unknown>>;
@@ -88,12 +87,12 @@ export function initialProcMessages(input: {
       content: JSON.stringify({
         summary: input.summary,
         procedure: input.procedure,
-        result_contract: input.contract,
+        result_requirements: input.requirements,
         max_result_bytes: input.outputPolicy.maxBytes,
         environment: {
           tools: input.contracts,
           globals: {
-            getState: "getState(resultId) // immutable checkpoint value",
+            getCheckpoint: "getCheckpoint(checkpointId)",
             fs: [
               'readFile(path, "utf8")',
               "writeFile(path, text)",
@@ -237,9 +236,12 @@ export async function runProcWorker(
             transaction.usage.executions++;
             const result = await runProgram({
               source: args.javascript,
+              ...(args.purpose === "action"
+                ? { resultMode: "discard" as const }
+                : {}),
               capabilities: opts.capabilities,
               facadeCapabilities: opts.facadeCapabilities,
-              state: createProcStateReader(
+              checkpoints: createProcCheckpointReader(
                 transaction.id,
                 transaction.conversationId,
               ),
@@ -317,6 +319,24 @@ export async function runProcWorker(
                 usage: transaction.usage,
               };
             }
+            const effectSummary = summarizeExecutionEffects(effects);
+            if (args.purpose === "action") {
+              recordExecutionFeedback(
+                opts.emit,
+                transaction,
+                call.id,
+                protocolId,
+                procId,
+                true,
+                {
+                  purpose: "action",
+                  operations: result.operations,
+                  effects: effectSummary,
+                  effects_total: effects.length,
+                },
+              );
+              continue;
+            }
             const policy: ProcOutputPolicy =
               args.purpose === "inspect"
                 ? {
@@ -337,7 +357,9 @@ export async function runProcWorker(
             const projection = projectProcValue(result.value, policy);
             const feedback = {
               purpose: args.purpose,
-              result_id: retainedResult.id,
+              ...(args.purpose === "checkpoint"
+                ? { checkpoint_id: retainedResult.id }
+                : {}),
               bytes: retainedResult.bytes,
               ...(projection.projection !== undefined
                 ? { projection: projection.projection }
@@ -345,19 +367,17 @@ export async function runProcWorker(
               projection_bytes: projection.projectionBytes,
               truncated: projection.truncated,
               operations: result.operations,
+              effects: effectSummary,
+              effects_total: effects.length,
             };
-            const feedbackText = JSON.stringify(feedback);
-            transaction.messages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: feedbackText,
-            });
-            emitProtocolResult(
+            recordExecutionFeedback(
               opts.emit,
+              transaction,
+              call.id,
               protocolId,
               procId,
               true,
-              feedbackText,
+              feedback,
             );
             continue;
           }
@@ -392,7 +412,7 @@ export async function runProcWorker(
             error: error instanceof Error ? error.message : String(error),
             ...(retainedResult
               ? {
-                  result_id: retainedResult.id,
+                  checkpoint_id: retainedResult.id,
                   bytes: retainedResult.bytes,
                 }
               : {}),
@@ -403,17 +423,14 @@ export async function runProcWorker(
               ? "Fix and retry, or checkpoint before the failing step. Use cannot_execute only if the procedure itself cannot be realized."
               : "Do not replay: effects may have occurred. Check current repository state and execute only unfinished work; otherwise call cannot_execute.",
           };
-          transaction.messages.push({
-            role: "tool",
-            tool_call_id: call.id,
-            content: JSON.stringify(feedback),
-          });
-          emitProtocolResult(
+          recordExecutionFeedback(
             opts.emit,
+            transaction,
+            call.id,
             protocolId,
             procId,
             false,
-            feedback.error,
+            feedback,
           );
         }
       }
@@ -526,13 +543,13 @@ function workerToolSpecs(): ExtractorToolSpec[] {
             javascript: {
               type: "string",
               description:
-                'JavaScript function body returning one JSON-compatible value matching result_contract within max_result_bytes. Example: const results = fs.grep("TODO", { path: "src" }); return { results };',
+                "JavaScript function body. checkpoint, inspect, and final must return one JSON-compatible value; action may omit return.",
             },
             purpose: {
               type: "string",
-              enum: ["checkpoint", "inspect", "final"],
+              enum: ["action", "checkpoint", "inspect", "final"],
               description:
-                "final: return the result and end proc; checkpoint: store an intermediate value and return only its shape; inspect: store a value and return up to 12 KiB for semantic review.",
+                "action: complete effectful work; any return value is ignored; checkpoint: preserve a required value for getCheckpoint(checkpointId); inspect: reveal reduced data for semantic judgment; final: emit the completed result and end proc.",
             },
           },
           required: ["summary", "javascript", "purpose"],
@@ -597,4 +614,22 @@ function emitProtocolResult(
     output,
     parentToolCallId,
   });
+}
+
+function recordExecutionFeedback(
+  emit: (event: PortalEvent) => void,
+  transaction: ProcTransaction,
+  workerToolCallId: string,
+  protocolId: string,
+  procId: string,
+  ok: boolean,
+  feedback: unknown,
+): void {
+  const text = JSON.stringify(feedback);
+  transaction.messages.push({
+    role: "tool",
+    tool_call_id: workerToolCallId,
+    content: text,
+  });
+  emitProtocolResult(emit, protocolId, procId, ok, text);
 }

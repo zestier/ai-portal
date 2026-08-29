@@ -28,8 +28,8 @@ test("semantic mode exposes proc and completes a fused execution", async ({
       name: "proc",
       args: {
         summary,
-        procedure: `PI_TEST_PROC_RETURN ${JSON.stringify(expected)}`,
-        result_contract: "Return paths and line numbers",
+        procedure: `@trigger-slow-proc PI_TEST_PROC_RETURN ${JSON.stringify(expected)}`,
+        result_requirements: "Return paths and line numbers",
         max_result_bytes: 4096,
       },
     },
@@ -41,8 +41,37 @@ test("semantic mode exposes proc and completes a fused execution", async ({
       })
     ).ok(),
   ).toBeTruthy();
-  await waitForAssistantMessage(request, id, `Stubbed reply to: ${directive}`);
 
+  await expect
+    .poll(async () => {
+      const pending = await getConversation(request, id);
+      return pending.transcript.tail
+        .flatMap((message) =>
+          Array.isArray((message as MessageWithTools).toolCalls)
+            ? (message as MessageWithTools).toolCalls!
+            : [],
+        )
+        .find((call) => call.tool === "proc")?.status;
+    })
+    .toBe("pending");
+
+  await page.goto(`/conversations/${id}`);
+  await expect(page.getByText(summary, { exact: true })).toBeVisible();
+  const procCard = page
+    .locator("details.proc")
+    .filter({ has: page.getByText(summary, { exact: true }) })
+    .first();
+  await expect(procCard).toHaveAttribute("data-automatically-open", "true");
+  await expect(procCard).toHaveAttribute("open", "");
+  await expect(procCard.locator(":scope > .content")).toHaveCSS(
+    "overflow-y",
+    "auto",
+  );
+  await procCard.locator(":scope > summary").click();
+  await expect(procCard).toHaveAttribute("data-automatically-open", "false");
+  await expect(procCard).not.toHaveAttribute("open", "");
+
+  await waitForAssistantMessage(request, id, `Stubbed reply to: ${directive}`);
   const conversation = await getConversation(request, id);
   const calls = conversation.transcript.tail.flatMap((message) =>
     Array.isArray((message as MessageWithTools).toolCalls)
@@ -51,12 +80,8 @@ test("semantic mode exposes proc and completes a fused execution", async ({
   );
   expect(calls).toEqual(["proc", "execute"]);
 
-  await page.goto(`/conversations/${id}`);
-  await expect(page.getByText(summary, { exact: true })).toBeVisible();
-  const procCard = page
-    .locator("details.proc")
-    .filter({ has: page.getByText(summary, { exact: true }) })
-    .first();
+  await expect(procCard).toHaveAttribute("data-automatically-open", "false");
+  await expect(procCard).not.toHaveAttribute("open", "");
   await procCard.locator(":scope > summary").click();
   await expect(
     procCard.locator(":scope > .content .request-grid"),
@@ -67,10 +92,12 @@ test("semantic mode exposes proc and completes a fused execution", async ({
   await expect(
     procCard.getByText("Return deterministic proc fixture", { exact: true }),
   ).toBeVisible();
+  await procCard.locator(":scope > summary").click();
+  await expect(procCard).not.toHaveAttribute("open", "");
 });
 
 interface MessageWithTools {
-  toolCalls?: Array<{ tool: string }>;
+  toolCalls?: Array<{ tool: string; status: string }>;
 }
 
 function sequenceDirective(steps: Array<{ name: string; args: unknown }>) {

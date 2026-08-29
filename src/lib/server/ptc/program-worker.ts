@@ -39,7 +39,8 @@ export function startProgramWorker(parentPort: MessagePort): void {
     if (!request) return;
     pending.delete(message.requestId);
     if (message.type === "capability.result") request.resolve(message.result);
-    else if (message.type === "state.result") request.resolve(message.value);
+    else if (message.type === "checkpoint.result")
+      request.resolve(message.value);
     else request.reject(deserializeError(message.error));
   });
   post({ type: "ready" });
@@ -53,11 +54,14 @@ async function run(
   try {
     const result = await runProgramInline({
       source: message.source,
+      ...(message.resultMode !== undefined
+        ? { resultMode: message.resultMode }
+        : {}),
       capabilities: toolMap(message.capabilityNames),
       facadeCapabilities: toolMap(message.facadeCapabilityNames),
-      state: {
+      checkpoints: {
         get(id) {
-          return request("state", { id });
+          return request("checkpoint", { id });
         },
       },
       execute: async () => ok(),
@@ -85,9 +89,9 @@ function request(
   type: "capability",
   input: { kind: CapabilityKind; name: string; args: unknown },
 ): Promise<unknown>;
-function request(type: "state", input: { id: string }): Promise<unknown>;
+function request(type: "checkpoint", input: { id: string }): Promise<unknown>;
 function request(
-  type: "capability" | "state",
+  type: "capability" | "checkpoint",
   input: { kind: CapabilityKind; name: string; args: unknown } | { id: string },
 ): Promise<unknown> {
   if (!activeExecutionId) {
@@ -108,7 +112,7 @@ function request(
     });
   } else if ("id" in input) {
     post({
-      type: "state.get",
+      type: "checkpoint.get",
       executionId: activeExecutionId,
       requestId,
       id: input.id,

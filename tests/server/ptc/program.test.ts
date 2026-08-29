@@ -152,7 +152,7 @@ describe("program runtime", () => {
     });
   });
 
-  it("lazily composes and caches immutable exact values through getState", async () => {
+  it("lazily composes and caches immutable exact checkpoint values", async () => {
     const fetched: string[] = [];
     const values = new Map<string, unknown>([
       [
@@ -166,15 +166,15 @@ describe("program runtime", () => {
     ]);
     const result = await runProgram({
       source: `
-        const rows = getState("RES_rows");
-        const sameRows = getState("RES_rows");
+        const rows = getCheckpoint("RES_rows");
+        const sameRows = getCheckpoint("RES_rows");
         try { rows[0].line = 99; } catch {}
         return {
           same: rows === sameRows,
           rows: rows.map(({ path, line }) => ({ path, start: line - 2, end: line + 2 }))
         };
       `,
-      state: {
+      checkpoints: {
         get(id) {
           fetched.push(id);
           return values.get(id);
@@ -194,11 +194,11 @@ describe("program runtime", () => {
     expect(fetched).toEqual(["RES_rows"]);
   });
 
-  it("reports unknown lazy state ids", async () => {
+  it("reports unknown checkpoint ids", async () => {
     await expect(
       runProgram({
-        source: 'return getState("RES_missing");',
-        state: new Map(),
+        source: 'return getCheckpoint("RES_missing");',
+        checkpoints: new Map(),
         capabilities: new Map(),
         execute: async () => ok(),
         signal: new AbortController().signal,
@@ -206,11 +206,11 @@ describe("program runtime", () => {
     ).rejects.toThrow("Unknown checkpoint: RES_missing");
   });
 
-  it("loads lazy state values larger than the capability result limit", async () => {
+  it("loads checkpoints larger than the capability result limit", async () => {
     const text = "x".repeat(128 * 1024);
     const result = await runProgram({
-      source: 'return getState("RES_large").text.length;',
-      state: new Map([["RES_large", { text }]]),
+      source: 'return getCheckpoint("RES_large").text.length;',
+      checkpoints: new Map([["RES_large", { text }]]),
       capabilities: new Map(),
       execute: async () => ok(),
       signal: new AbortController().signal,
@@ -395,6 +395,16 @@ describe("program runtime", () => {
     ).rejects.toThrow(
       "Execution returned undefined. Return a JSON-compatible value, for example return { results }.",
     );
+
+    await expect(
+      runProgram({
+        source: 'return "x".repeat(6 * 1024 * 1024);',
+        resultMode: "discard",
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ value: undefined });
   });
 
   it("cannot escape to a host process through Function constructors", async () => {

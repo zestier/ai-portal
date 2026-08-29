@@ -506,7 +506,7 @@ describe("Svelte component regression coverage", () => {
           argsJson: JSON.stringify({
             summary: "Inspect settings",
             procedure: "Extract the relevant regions.",
-            result_contract: "Source excerpts",
+            result_requirements: "Source excerpts",
             max_result_bytes: 4096,
           }),
           resultJson: null,
@@ -526,7 +526,13 @@ describe("Svelte component regression coverage", () => {
               javascript: "return content;",
               purpose: "final",
             }),
-            resultJson: JSON.stringify("readFile is not defined"),
+            resultJson: JSON.stringify(
+              JSON.stringify({
+                ok: false,
+                error: "readFile is not defined",
+                retry_safe: true,
+              }),
+            ),
             status: "error" as const,
             startedAt: 0,
             endedAt: 1,
@@ -539,6 +545,7 @@ describe("Svelte component regression coverage", () => {
 
     expect(body).toMatch(/<details class="stage [^"]+" open=""/);
     expect(body).toContain("readFile is not defined");
+    expect(body).toContain('data-automatically-open="true"');
   });
 
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {

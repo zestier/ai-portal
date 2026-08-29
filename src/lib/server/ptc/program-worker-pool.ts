@@ -45,6 +45,7 @@ export interface ProgramWorkerPoolSnapshot {
 
 export interface ProgramWorkerRunOptions {
   source: string;
+  resultMode?: "required" | "discard";
   capabilityNames: string[];
   facadeCapabilityNames: string[];
   signal: AbortSignal;
@@ -54,7 +55,7 @@ export interface ProgramWorkerRunOptions {
     args: unknown,
     signal: AbortSignal,
   ): Promise<ToolResult>;
-  getState(id: string): unknown | undefined;
+  getCheckpoint(id: string): unknown | undefined;
 }
 
 interface QueueEntry {
@@ -212,6 +213,9 @@ export class ProgramWorkerPool {
       type: "run",
       executionId: entry.executionId,
       source: entry.options.source,
+      ...(entry.options.resultMode !== undefined
+        ? { resultMode: entry.options.resultMode }
+        : {}),
       capabilityNames: entry.options.capabilityNames,
       facadeCapabilityNames: entry.options.facadeCapabilityNames,
       abortBuffer: entry.abortBuffer,
@@ -258,17 +262,17 @@ export class ProgramWorkerPool {
         });
       return;
     }
-    if (message.type === "state.get") {
+    if (message.type === "checkpoint.get") {
       try {
         this.post({
-          type: "state.result",
+          type: "checkpoint.result",
           executionId: entry.executionId,
           requestId: message.requestId,
-          value: entry.options.getState(message.id),
+          value: entry.options.getCheckpoint(message.id),
         });
       } catch (error) {
         this.post({
-          type: "state.error",
+          type: "checkpoint.error",
           executionId: entry.executionId,
           requestId: message.requestId,
           error: serializeError(error),

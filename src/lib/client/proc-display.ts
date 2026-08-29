@@ -3,19 +3,19 @@ import { parseEnvelopeJson } from "$lib/tool-result-views";
 export interface ProcArgs {
   summary: string;
   procedure: string;
-  result_contract: string;
+  result_requirements: string;
   max_result_bytes?: number;
 }
 
 export interface ProcExecutionArgs {
   summary: string;
   javascript: string;
-  purpose: "checkpoint" | "inspect" | "final";
+  purpose: "action" | "checkpoint" | "inspect" | "final";
 }
 
 export interface ProcExecutionResult {
-  purpose?: "checkpoint" | "inspect" | "final";
-  result_id?: string;
+  purpose?: "action" | "checkpoint" | "inspect" | "final";
+  checkpoint_id?: string;
   bytes?: number;
   projection?: unknown;
   projection_bytes?: number;
@@ -61,7 +61,7 @@ function procArgsOf(value: unknown): ProcArgs | null {
     !isObject(value) ||
     typeof value.summary !== "string" ||
     typeof value.procedure !== "string" ||
-    typeof value.result_contract !== "string" ||
+    typeof value.result_requirements !== "string" ||
     (value.max_result_bytes !== undefined &&
       typeof value.max_result_bytes !== "number")
   ) {
@@ -87,7 +87,9 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
     !isObject(value) ||
     typeof value.summary !== "string" ||
     typeof value.javascript !== "string" ||
-    !["checkpoint", "inspect", "final"].includes(String(value.purpose))
+    !["action", "checkpoint", "inspect", "final"].includes(
+      String(value.purpose),
+    )
   ) {
     return null;
   }

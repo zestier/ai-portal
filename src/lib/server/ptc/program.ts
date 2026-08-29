@@ -45,9 +45,10 @@ function normalizeProgramErrorLocation(error: unknown): void {
 
 export interface ProgramRunOptions {
   source: string;
+  resultMode?: "required" | "discard";
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities?: ReadonlyMap<string, PortalTool>;
-  state?: { get(id: string): unknown | undefined | Promise<unknown> };
+  checkpoints?: { get(id: string): unknown | undefined | Promise<unknown> };
   execute(
     name: string,
     args: unknown,
@@ -94,10 +95,11 @@ export async function runProgram(
 
   const result = await runProgramInWorker({
     source: opts.source,
+    ...(opts.resultMode !== undefined ? { resultMode: opts.resultMode } : {}),
     capabilityNames: [...opts.capabilities.keys()],
     facadeCapabilityNames: [...(opts.facadeCapabilities?.keys() ?? [])],
     signal: opts.signal,
-    getState: (id) => opts.state?.get(id),
+    getCheckpoint: (id) => opts.checkpoints?.get(id),
     execute: async (kind, name, args, signal) => {
       operations++;
       if (operations > MAX_TOTAL_OPERATIONS) {
@@ -206,11 +208,11 @@ export async function runProgramInline(
 
   installBridge("__callCapability", opts.capabilities);
   installBridge("__callFacadeCapability", opts.facadeCapabilities ?? new Map());
-  const fetchStateHandle = vm.newAsyncifiedFunction(
-    "__ptc_fetch_state",
+  const fetchCheckpointHandle = vm.newAsyncifiedFunction(
+    "__ptc_fetch_checkpoint",
     async (idHandle) => {
       const id = vm.getString(idHandle);
-      const value = await opts.state?.get(id);
+      const value = await opts.checkpoints?.get(id);
       if (value === undefined) {
         throw new Error(`Unknown checkpoint: ${id}`);
       }
@@ -219,13 +221,13 @@ export async function runProgramInline(
         throw new Error(`Checkpoint ${id} is not JSON-compatible.`);
       }
       if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
-        throw new Error(`Checkpoint ${id} exceeds the 5 MiB state limit.`);
+        throw new Error(`Checkpoint ${id} exceeds the 5 MiB value limit.`);
       }
       return vm.newString(encoded);
     },
   );
-  vm.setProp(vm.global, "__ptc_fetch_state", fetchStateHandle);
-  fetchStateHandle.dispose();
+  vm.setProp(vm.global, "__ptc_fetch_checkpoint", fetchCheckpointHandle);
+  fetchCheckpointHandle.dispose();
 
   const setup = `(() => {
     {
@@ -536,24 +538,24 @@ export async function runProgramInline(
         return (args = {}) => unwrapCall(__callCapability, name, args);
       }
     });
-    const stateCache = new Map();
-    function getState(resultId) {
-      if (typeof resultId !== "string" || resultId.length === 0) {
-        throw new TypeError("getState requires a non-empty result id string.");
+    const checkpointCache = new Map();
+    function getCheckpoint(checkpointId) {
+      if (typeof checkpointId !== "string" || checkpointId.length === 0) {
+        throw new TypeError("getCheckpoint requires a non-empty checkpoint id string.");
       }
-      if (!stateCache.has(resultId)) {
-        stateCache.set(
-          resultId,
-          deepFreeze(JSON.parse(__ptc_fetch_state(resultId)))
+      if (!checkpointCache.has(checkpointId)) {
+        checkpointCache.set(
+          checkpointId,
+          deepFreeze(JSON.parse(__ptc_fetch_checkpoint(checkpointId)))
         );
       }
-      return stateCache.get(resultId);
+      return checkpointCache.get(checkpointId);
     }
     const requireModule = (name) => {
       if (name === "fs" || name === "node:fs") return fsApi;
       if (name === "path" || name === "node:path") return pathApi;
       throw new Error(
-        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, git, command, tools, and getState globals."
+        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, git, command, tools, and getCheckpoint globals."
       );
     };
     const unavailableConsole = () => {
@@ -574,7 +576,7 @@ export async function runProgramInline(
       git: { value: gitApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
-      getState: { value: getState, writable: false, configurable: false },
+      getCheckpoint: { value: getCheckpoint, writable: false, configurable: false },
       require: { value: requireModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false }
     });
@@ -605,6 +607,17 @@ export async function runProgramInline(
       throw error;
     }
     try {
+      if (opts.resultMode === "discard") {
+        return {
+          value: undefined,
+          operations,
+          trace: {
+            sourceHash: hash(opts.source),
+            calls,
+            durationMs: Date.now() - startedAt,
+          },
+        };
+      }
       const value = vm.dump(valueHandle);
       if (value === undefined) {
         throw new Error(

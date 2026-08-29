@@ -56,7 +56,7 @@ The existing semantic tools leave an awkward gap:
   which makes it structurally similar to a general-purpose subagent.
 
 `proc` occupies the space between them. The frontier supplies the procedure,
-selection rules, and output contract in tolerant natural-language pseudocode.
+selection rules, and result requirements in tolerant natural-language pseudocode.
 The proc worker may repair syntax, resolve capability contracts, choose batch
 sizes, and carry data between program fragments. It may not invent the
 procedure or choose a materially different result.
@@ -72,7 +72,7 @@ The experimental frontier receives:
 - `ask_user`: preserve direct frontier-to-human interaction.
 
 `resolve`, `resume`, direct `program`, schema lookup, and artifact readers are
-not exposed. Program execution, state handles, projections, and traces are
+not exposed. Program execution, checkpoint handles, projections, and traces are
 implementation details behind `proc`. This intentionally forces the
 experiment to test the proc boundary instead of falling back to adjacent
 tools.
@@ -175,22 +175,19 @@ execution trace, not additional model-visible worker tools.
 
 ### Fusion and segmentation
 
-The normal successful proc is one `execute` call with purpose `final`. Its
-JavaScript performs search, reads, grouping, filtering, and projection in one
-runtime invocation. Intermediate values are ordinary JavaScript values, so the
-worker can use normal control flow and collection methods without placing those
-values in model context.
+The worker fuses adjacent mechanical steps into the largest reliable execution;
+procedure steps are not turn boundaries. Intermediate values remain ordinary
+JavaScript values inside an execution and do not enter model context.
 
-Fusion is preferred, not mandatory. When one reliable program would be
-substantially harder, the worker may split at a concrete boundary:
+The worker splits only at a concrete boundary:
 
+- `action` completes effectful work and ignores its return value.
 - `checkpoint` stores the exact value of a mechanically complete segment and
   returns only its observed shape. A later execution accesses it through
-  `getState(resultId)`.
-- `inspect` stores the exact value and returns a bounded exact projection to
-  the worker. It is reserved for semantic judgment that cannot be expressed as
-  mechanical JavaScript over the supplied criteria.
-- `final` applies the frontier's output budget and completes proc immediately.
+  `getCheckpoint(checkpointId)`.
+- `inspect` stores the exact value and returns a bounded projection for semantic
+  judgment that cannot be expressed mechanically from the supplied criteria.
+- `final` emits the completed result under the frontier's output budget.
 
 This makes additional executions meaningful: they represent deliberate
 segmentation, semantic inspection, or repair rather than the default way to
@@ -217,7 +214,7 @@ The initial program surface covers:
 - structured repository inspection through `git.status`, `git.diff`,
   `git.log`, `git.show`, and `git.blame`;
 - validation and explicit argv execution through `command.run`;
-- immutable intermediate values through `getState(resultId)`.
+- immutable intermediate values through `getCheckpoint(checkpointId)`.
 
 The `fs`, `git`, and `command` namespaces are the advertised interface. The
 generic `tools` proxy remains an undocumented compatibility path for programs
@@ -232,10 +229,11 @@ files and can deliberately search ignored trees such as `node_modules`.
 
 Reading a complete file inside an execution keeps that value in the QuickJS
 context and does not add it to model context. Returning complete source from an
-`inspect`, `checkpoint`, or `final` execution does. Worker guidance therefore
+`inspect`, `checkpoint`, or `final` execution does; `action` return values are
+ignored. Worker guidance therefore
 permits broad internal reads for mechanical filtering and transformation while
 requiring the returned projection to remain the smallest value needed by the
-supplied procedure and output contract.
+supplied procedure and result requirements.
 
 `fs.glob` returns all matching workspace-relative paths as `string[]`;
 `fs.grep` returns all matching lines as structured path, line, column, and text
@@ -274,7 +272,7 @@ program first reduces the value to the bounded candidates the worker needs, for
 example:
 
 ```js
-return getState("RES_candidates").slice(0, 12);
+return getCheckpoint("RES_candidates").slice(0, 12);
 ```
 
 This keeps one composition primitive while distinguishing why a value enters
@@ -284,7 +282,7 @@ worker context.
 
 An execution runs JavaScript in the existing resource-limited program runtime.
 In addition to audited filesystem and tool capabilities, it may lazily read
-immutable prior checkpoint values through `getState(resultId)`. The first
+immutable prior checkpoint values through `getCheckpoint(checkpointId)`. The first
 access fetches, parses, caches, and freezes that value inside the execution;
 unused checkpoints are never loaded into QuickJS.
 
@@ -297,22 +295,25 @@ purpose: final
 ```
 
 Persistence and projection follow from purpose rather than independent model
-choices. Checkpoint and inspect values are stored automatically. Checkpoints
-receive a bounded shape; inspections receive exact data under a fixed runtime
-budget. Final values are projected using the frontier's original output
-contract and byte budget. Exact overflow rejects the execution; silent
+choices. Action return values are ignored. Checkpoint and inspect require values
+and store them automatically. Checkpoints receive a bounded shape; inspections
+receive exact data under a fixed runtime budget. Final values are projected using
+the frontier's original result requirements and byte budget. Exact overflow rejects
+the execution; silent
 truncation is not allowed.
 
-A result envelope is:
+Checkpoint feedback is:
 
 ```json
 {
-  "result_id": "RES_01...",
-  "stored": true,
+  "checkpoint_id": "RES_01...",
   "bytes": 284192,
   "projection": "array(318) of object { path: string, line: integer }",
   "projection_bytes": 58,
-  "truncated": false
+  "truncated": false,
+  "operations": 12,
+  "effects": [],
+  "effects_total": 0
 }
 ```
 
@@ -322,15 +323,15 @@ it is true only when projection limits forced that mode to omit information.
 The stored value, when present, is exact regardless of projection mode.
 
 Every execution also requires a short user-visible `summary`. The dedicated
-proc card shows the frontier procedure and return contract, each execution's
+proc card shows the frontier procedure and result requirements, each execution's
 purpose and JavaScript, exact and projection byte counts, operation count,
 nested capability activity, partial-effect warnings, final usage, and the
 bounded projection returned to the frontier model.
 
-Result ids are immutable, transaction- and conversation-scoped, inaccessible
+Stored value ids are immutable, transaction- and conversation-scoped, inaccessible
 across users, auditable to their producing execution, and garbage-collected with the
-proc transaction. Ephemeral checkpoint state is deleted on completion,
-`cannot_execute`, or failure when no retained final value was requested. State
+proc transaction. Ephemeral checkpoint values are deleted on completion,
+`cannot_execute`, or failure when no retained final value was requested. Checkpoint
 access does not grant new authority: every repository operation still crosses
 the normal capability and permission boundary.
 
@@ -353,7 +354,7 @@ practical.
 
 `shape` exists to let the worker write the next execution correctly without placing
 the intermediate value itself in model context. It is inferred solely from the
-actual JSON-compatible value in state. It does not speculate from a producing
+actual stored JSON-compatible value. It does not speculate from a producing
 tool schema or describe values that are not present.
 
 An empty array is therefore exactly:
@@ -462,16 +463,15 @@ frontier procedure
 proc worker -- execute(javascript, purpose) --> program runtime
        ^                                      |
        |                                      v
-       +------ handle + bounded projection -- state store
+  +------ handle + bounded projection -- checkpoint store
                                                       |
-                      later execution: getState(resultId) <-+
+        later execution: getCheckpoint(checkpointId) <-+
 ```
 
-The worker normally submits one fused final execution. It uses a checkpoint
-when a reliable mechanical segment should be completed independently, and an
-inspection only when applying a supplied criterion requires semantic access to
-a reduced candidate set. A final execution projects its return value according
-to the frontier's original proc output contract and completes immediately.
+The worker fuses adjacent mechanical steps where reliable. It uses action for
+effectful work without downstream dataflow, checkpoint for values required by a
+later execution, inspect for semantic access to a reduced candidate set, and
+final to emit the value satisfying the original result requirements.
 
 Small language-agnostic helpers for line ranges, line numbering, contextual
 windows, indentation outlines, and common collection operations are suitable
@@ -484,10 +484,11 @@ the architecture to one language or LSP.
 1. Implement and thoroughly test JSON value validation and shape
    normalization/rendering as pure modules.
 2. Add transaction-scoped immutable checkpoint storage and lifecycle cleanup.
-3. Extend the program runtime with lazy read-only `getState(resultId)` access.
+3. Extend the program runtime with lazy read-only
+  `getCheckpoint(checkpointId)` access.
 4. Add execution persistence and checkpoint/inspect/final projections with
   byte budgets and explicit `truncated` metadata.
-5. Expose the low-level execution protocol in tests and measure state composition
+5. Expose the low-level execution protocol in tests and measure checkpoint composition
    before introducing another model.
 6. Add the constrained proc worker with only `execute` and `cannot_execute`.
 7. Replace the semantic frontier surface with `proc` and `ask_user` for the
@@ -500,8 +501,8 @@ the architecture to one language or LSP.
 - Exact minimum and maximum projection byte budgets.
 - Whether exact lossy projections are needed after real proc traces are
   available.
-- State retention after a proc call completes, including whether a later proc
-  may explicitly consume an earlier result id.
+- Checkpoint retention after a proc call completes, including whether a later
+  proc may explicitly consume an earlier stored value.
 - Which small source/text utilities most reduce retries without creating a
   language-specific query surface.
 - How strict pre-execution procedure validation should be versus relying on
@@ -514,7 +515,7 @@ Evaluate a proc-only frontier on procedures that require:
 - broad search followed by grouped contextual reads;
 - mechanical filtering over large intermediate sets;
 - semantic inspection of bounded candidate batches;
-- multi-stage transformations using exact state without model reinjection;
+- multi-stage transformations using exact checkpoints without model reinjection;
 - an empty intermediate collection;
 - heterogeneous records that shape must compact;
 - a deliberately underspecified decision that must return `cannot_execute`.

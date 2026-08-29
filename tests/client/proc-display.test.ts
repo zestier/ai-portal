@@ -15,7 +15,7 @@ describe("proc display parsing", () => {
         JSON.stringify({
           summary: "Map routing",
           procedure: "Search then reduce",
-          result_contract: "Paths and ranges",
+          result_requirements: "Paths and ranges",
           max_result_bytes: 4096,
         }),
       ),
@@ -24,7 +24,7 @@ describe("proc display parsing", () => {
       parseProcMeta({
         summary: "Map routing",
         procedure: "Search then reduce",
-        result_contract: "Paths and ranges",
+        result_requirements: "Paths and ranges",
       }),
     ).toMatchObject({ procedure: "Search then reduce" });
     expect(
@@ -43,6 +43,15 @@ describe("proc display parsing", () => {
         purpose: "checkpoint",
       }),
     ).toMatchObject({ purpose: "checkpoint" });
+    expect(
+      parseProcExecutionArgs(
+        JSON.stringify({
+          summary: "Apply edits",
+          javascript: "tools.edit({});",
+          purpose: "action",
+        }),
+      ),
+    ).toMatchObject({ purpose: "action" });
   });
 
   it("unwraps protocol result strings and portal envelopes", () => {
@@ -51,14 +60,14 @@ describe("proc display parsing", () => {
         JSON.stringify(
           JSON.stringify({
             purpose: "checkpoint",
-            result_id: "RES_1",
+            checkpoint_id: "RES_1",
             bytes: 1200,
             projection: "array(20)",
             projection_bytes: 9,
           }),
         ),
       ),
-    ).toMatchObject({ purpose: "checkpoint", result_id: "RES_1" });
+    ).toMatchObject({ purpose: "checkpoint", checkpoint_id: "RES_1" });
     expect(
       parseProcExecutionResult(JSON.stringify("readFile is not defined")),
     ).toEqual({ error: "readFile is not defined" });

@@ -5,7 +5,7 @@ import {
 } from "../../../src/lib/server/proc/tools";
 
 describe("proc arguments", () => {
-  it("uses a flat result contract with an optional 8 KiB budget", () => {
+  it("uses flat result requirements with an optional 8 KiB budget", () => {
     const [proc] = buildProcTools({
       conversationId: 1,
       frontierModel: "test/model",
@@ -19,13 +19,13 @@ describe("proc arguments", () => {
     expect(parameters.required).toEqual([
       "summary",
       "procedure",
-      "result_contract",
+      "result_requirements",
     ]);
     expect(
       proc.argsSchema?.parse({
         summary: "Find owners",
         procedure: "Search and reduce the matches.",
-        result_contract: "Paths and line ranges.",
+        result_requirements: "Paths and line ranges.",
       }),
     ).toMatchObject({ max_result_bytes: 8192 });
   });
@@ -35,7 +35,7 @@ describe("validateProcRequest", () => {
   it("rejects multi-file raw corpus return procedures", () => {
     expect(
       validateProcRequest({
-        contract: "Return the full content of src/a.ts and src/b.ts.",
+        requirements: "Return the full content of src/a.ts and src/b.ts.",
         procedure:
           "Read src/a.ts fully. Read src/b.ts fully. Return raw file contents verbatim.",
       }),
@@ -45,14 +45,15 @@ describe("validateProcRequest", () => {
   it("allows bounded evidence extraction and a single intentional full file", () => {
     expect(
       validateProcRequest({
-        contract: "Return paths, line ranges, purposes, and bounded excerpts.",
+        requirements:
+          "Return paths, line ranges, purposes, and bounded excerpts.",
         procedure:
           "Search src/a.ts and src/b.ts, read enclosing definitions, and omit unrelated code.",
       }),
     ).toBeNull();
     expect(
       validateProcRequest({
-        contract: "Return the full content of src/generated.json.",
+        requirements: "Return the full content of src/generated.json.",
         procedure: "Read src/generated.json fully and return it.",
       }),
     ).toBeNull();

@@ -45,6 +45,7 @@
   let manualOpen = $state(false);
   const pending = $derived(toolCall.status === "pending");
   const open = $derived(userToggled ? manualOpen : pending);
+  const automaticallyOpen = $derived(pending && !userToggled);
   const resultTruncated = $derived(toolCall.resultTruncated === true);
   const lazyResult = $derived(
     lazyFieldState(conversationId, "tool-result", toolCall.id),
@@ -67,9 +68,14 @@
           : "failed",
   );
 
-  function onToggle(event: Event) {
+  function onSummaryClick(event: MouseEvent) {
+    event.preventDefault();
+    const details = (event.currentTarget as HTMLElement)
+      .parentElement as HTMLDetailsElement;
+    const nextOpen = !details.open;
     userToggled = true;
-    manualOpen = (event.currentTarget as HTMLDetailsElement).open;
+    manualOpen = nextOpen;
+    details.open = nextOpen;
   }
 
   $effect(() => {
@@ -79,8 +85,13 @@
   });
 </script>
 
-<details class="proc" data-status={toolCall.status} {open} ontoggle={onToggle}>
-  <summary>
+<details
+  class="proc"
+  data-status={toolCall.status}
+  data-automatically-open={automaticallyOpen}
+  {open}
+>
+  <summary onclick={onSummaryClick}>
     <span class="mark" aria-hidden="true">{executions.length || "·"}</span>
     <span class="title">{args?.summary ?? toolCall.summary ?? "Procedure"}</span
     >
@@ -96,8 +107,8 @@
           <pre><code>{args.procedure}</code></pre>
         </section>
         <section>
-          <div class="label">Return contract</div>
-          <p>{args.result_contract}</p>
+          <div class="label">Result requirements</div>
+          <p>{args.result_requirements}</p>
           {#if args.max_result_bytes !== undefined}
             <span class="budget"
               >up to {formatFieldBytes(args.max_result_bytes)}</span
@@ -312,6 +323,10 @@
     padding: var(--space-3);
     display: grid;
     gap: var(--space-3);
+  }
+  .proc[data-automatically-open="true"] > .content {
+    max-height: min(34rem, 60vh);
+    overflow: auto;
   }
   .request-grid {
     display: grid;

@@ -16,6 +16,7 @@ export type ProgramWorkerRequest =
       type: "run";
       executionId: string;
       source: string;
+      resultMode?: "required" | "discard";
       capabilityNames: string[];
       facadeCapabilityNames: string[];
       abortBuffer: SharedArrayBuffer;
@@ -33,13 +34,13 @@ export type ProgramWorkerRequest =
       error: SerializedError;
     }
   | {
-      type: "state.result";
+      type: "checkpoint.result";
       executionId: string;
       requestId: number;
       value: unknown;
     }
   | {
-      type: "state.error";
+      type: "checkpoint.error";
       executionId: string;
       requestId: number;
       error: SerializedError;
@@ -58,7 +59,7 @@ export type ProgramWorkerResponse =
       args: unknown;
     }
   | {
-      type: "state.get";
+      type: "checkpoint.get";
       executionId: string;
       requestId: number;
       id: string;

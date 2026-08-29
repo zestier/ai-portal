@@ -19,7 +19,7 @@ const ProcArgs = z
   .object({
     summary: z.string().min(1).max(500),
     procedure: z.string().min(1).max(30_000),
-    result_contract: z.string().min(1).max(10_000),
+    result_requirements: z.string().min(1).max(10_000),
     max_result_bytes: z
       .number()
       .int()
@@ -55,11 +55,9 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         "Execute a specified repository procedure while keeping routine intermediate data out of context.",
       promptSnippet: "Execute a bounded repository procedure.",
       promptGuidelines: [
-        "Provide ordered, observable steps with selection, filtering, and stopping criteria.",
-        "Files read inside proc stay inside its program and do not enter your context. Return only the smallest projection needed to decide or edit correctly; use bounded excerpts or exact source only when the task truly requires them.",
-        "Preserve consequential detail and verifiability with structured facts, paths, ranges, counts, and other provenance.",
-        "Describe the result before where to find it. A path alone is not a result contract; request concrete evidence such as exported signatures or callers with ranges.",
-        "Do not request multiple full files.",
+        "Specify ordered steps, selection and exclusion rules, and a stopping condition.",
+        "Specify the emitted shape, required fields, evidence, ordering, and completeness. A path alone is not a result requirement.",
+        "Use proc to derive a focused result from broad reads, not to return those reads wholesale. Request only the needed facts or excerpts, with paths and line ranges for verification.",
       ],
       argsSchema: ProcArgs,
       parameters: {
@@ -74,10 +72,10 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
             description:
               "Ordered steps, selection criteria, and stopping rule.",
           },
-          result_contract: {
+          result_requirements: {
             type: "string",
             description:
-              "Required result format, fields, selection criteria, and bounds.",
+              "What the emitted result must contain: shape, fields, selection and exclusion rules, evidence, ordering, and completeness.",
           },
           max_result_bytes: {
             type: "integer",
@@ -87,7 +85,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
             description: "Optional hard UTF-8 byte limit for the result.",
           },
         },
-        required: ["summary", "procedure", "result_contract"],
+        required: ["summary", "procedure", "result_requirements"],
         additionalProperties: false,
       },
       permissionBehavior: "never-prompt",
@@ -95,7 +93,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         const args = ProcArgs.parse(raw);
         if (!ctx?.toolCallId) return err("proc requires a mapped tool call id");
         const requestProblem = validateProcRequest({
-          contract: args.result_contract,
+          requirements: args.result_requirements,
           procedure: args.procedure,
         });
         if (requestProblem) {
@@ -111,7 +109,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         };
         const messages = initialProcMessages({
           summary: args.summary,
-          contract: args.result_contract,
+          requirements: args.result_requirements,
           procedure: args.procedure,
           outputPolicy,
           contracts,
@@ -121,7 +119,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           parentToolCallId: toolCodec.parse(ctx.toolCallId),
           workerModel: opts.workerModel ?? opts.frontierModel,
           summary: args.summary,
-          contract: args.result_contract,
+          requirements: args.result_requirements,
           procedure: args.procedure,
           outputPolicy,
           messages,
@@ -159,10 +157,10 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
 }
 
 export function validateProcRequest(input: {
-  contract: string;
+  requirements: string;
   procedure: string;
 }): string | null {
-  const text = `${input.contract}\n${input.procedure}`;
+  const text = `${input.requirements}\n${input.procedure}`;
   const requestsVerbatimCorpus =
     /\b(?:raw\s+)?(?:file\s+)?contents?\s+verbatim\b/i.test(text) ||
     /\b(?:read|include|return)\b[^\n.]{0,80}\b(?:full|fully|entire)\b[^\n.]{0,40}\b(?:file|content|source)\b/i.test(
@@ -177,5 +175,5 @@ export function validateProcRequest(input: {
   if (paths.size < 2 && !/\b(?:all|multiple|every)\s+files?\b/i.test(text)) {
     return null;
   }
-  return "Proc must return a bounded derived result, not multiple full files. Request selected paths, ranges, purposes, or limited excerpts that fit max_result_bytes.";
+  return "Proc must emit a bounded derived result, not multiple full files. Require selected paths, ranges, purposes, or limited excerpts that fit max_result_bytes.";
 }

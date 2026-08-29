@@ -29,7 +29,7 @@ export interface ProcTransaction {
   workerModel: string;
   status: ProcStatus;
   summary: string;
-  contract: string;
+  requirements: string;
   procedure: string;
   outputPolicy: ProcOutputPolicy;
   messages: ExtractorChatMessage[];
@@ -56,7 +56,7 @@ export function createProcTransaction(input: {
   parentToolCallId: number;
   workerModel: string;
   summary: string;
-  contract: string;
+  requirements: string;
   procedure: string;
   outputPolicy: ProcOutputPolicy;
   messages: ExtractorChatMessage[];
@@ -69,7 +69,7 @@ export function createProcTransaction(input: {
     workerModel: input.workerModel,
     status: "running",
     summary: input.summary,
-    contract: input.contract,
+    requirements: input.requirements,
     procedure: input.procedure,
     outputPolicy: input.outputPolicy,
     messages: input.messages,
@@ -94,7 +94,7 @@ export function createProcTransaction(input: {
       transaction.workerModel,
       transaction.status,
       transaction.summary,
-      transaction.contract,
+      transaction.requirements,
       transaction.procedure,
       JSON.stringify(transaction.outputPolicy),
       JSON.stringify(transaction.messages),
@@ -180,7 +180,7 @@ export function getProcResult(input: {
   return row ? { value: JSON.parse(row.value_json), bytes: row.bytes } : null;
 }
 
-export function createProcStateReader(
+export function createProcCheckpointReader(
   transactionId: string,
   conversationId: number,
 ): { get(id: string): unknown | undefined } {
@@ -251,7 +251,7 @@ function transactionOf(row: ProcTransactionRow): ProcTransaction {
     workerModel: row.worker_model,
     status: row.status,
     summary: row.summary,
-    contract: row.contract_text,
+    requirements: row.contract_text,
     procedure: row.procedure_text,
     outputPolicy: JSON.parse(row.output_json) as ProcOutputPolicy,
     messages: JSON.parse(row.messages_json) as ExtractorChatMessage[],

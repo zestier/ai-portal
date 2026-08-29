@@ -176,6 +176,11 @@ async function handleRequest(
   const model = typeof body.model === "string" ? body.model : STUB_MODEL_ID;
 
   if (toolCall) {
+    if (procToolCall && userText.includes("@trigger-slow-proc")) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, SLOW_PROC_TOOL_CALL_HOLD_MS),
+      );
+    }
     if (body.stream === true) {
       writeSseToolCallReply(res, { id, created, model, ...toolCall });
     } else {
@@ -243,6 +248,7 @@ async function handleRequest(
 // Stream the reply as OpenAI chat-completions SSE chunks so pi's
 // openai-completions provider parses real stream deltas (not one blob).
 const SLOW_START_HOLD_MS = 1200;
+const SLOW_PROC_TOOL_CALL_HOLD_MS = 3000;
 const SLOW_STREAM_INTERVAL_MS = 120;
 function writeSseReply(
   res: ServerResponse,

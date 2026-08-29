@@ -82,12 +82,12 @@ describe("isSubagentToolCall", () => {
 });
 
 describe("procWorkerPrompt", () => {
-  it("shows the exact return contract and procedure supplied to proc", () => {
+  it("shows the exact result requirements and procedure supplied to proc", () => {
     expect(
       procWorkerPrompt({
         summary: "Find owners",
         procedure: "grep, group, read context",
-        result_contract: "Return paths and ranges",
+        result_requirements: "Return paths and ranges",
         max_result_bytes: 4096,
       }),
     ).toBe(
@@ -95,7 +95,7 @@ describe("procWorkerPrompt", () => {
         {
           summary: "Find owners",
           procedure: "grep, group, read context",
-          result_contract: "Return paths and ranges",
+          result_requirements: "Return paths and ranges",
           max_result_bytes: 4096,
         },
         null,
