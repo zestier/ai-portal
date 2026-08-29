@@ -371,18 +371,23 @@ function parseProcWorkerDirective(
     )
   )
     return null;
-  let request: { procedure?: unknown };
+  let procedure: string;
   try {
-    request = JSON.parse(userText) as { procedure?: unknown };
+    const request = JSON.parse(userText) as { procedure?: unknown };
+    if (typeof request.procedure !== "string") return null;
+    procedure = request.procedure;
   } catch {
-    return null;
+    const match = userText.match(
+      /(?:^|\n)Instructions\n([\s\S]*?)\n\nResult requirements(?:\n|$)/,
+    );
+    if (!match) return null;
+    procedure = match[1];
   }
-  if (typeof request.procedure !== "string") return null;
   const marker = "PI_TEST_PROC_RETURN ";
-  const markerIndex = request.procedure.indexOf(marker);
+  const markerIndex = procedure.indexOf(marker);
   if (markerIndex < 0) return null;
   if (completedToolCalls === 0) {
-    const raw = request.procedure.slice(markerIndex + marker.length).trim();
+    const raw = procedure.slice(markerIndex + marker.length).trim();
     try {
       const value = JSON.parse(raw) as unknown;
       return {

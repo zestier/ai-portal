@@ -443,8 +443,8 @@ describe("program runtime", () => {
         const exists = fs.exists("src/a.ts");
         const lines = fs.readLines("src/a.ts", { start: 2, end: 4 });
         fs.copyFile("src/a.ts", "src/copied.ts");
-        fs.unlink("src/copied.ts");
-        fs.rm("src/generated", { recursive: true });
+        const unlinked = fs.unlink("src/copied.ts");
+        const removed = fs.rm("src/generated", { recursive: true });
         return {
           text,
           entries,
@@ -457,6 +457,8 @@ describe("program runtime", () => {
           size: stats.size,
           exists,
           lines,
+          unlinked,
+          removed,
           file: stats.isFile(),
           directory: stats.isDirectory(),
           link: stats.isSymbolicLink()
@@ -504,6 +506,14 @@ describe("program runtime", () => {
             symbolicLink: false,
           });
         }
+        if (name === "__ptc_fs_rm") {
+          const input = args as { path: string };
+          return ok({
+            originalPath: input.path,
+            entryId: `trash-${input.path}`,
+            trashPath: `.zap/trash/trash-${input.path}`,
+          });
+        }
         return ok();
       },
       signal: new AbortController().signal,
@@ -515,6 +525,8 @@ describe("program runtime", () => {
       size: 5,
       exists: true,
       lines: { text: "two\nthree\nfour", start: 2, end: 4, totalLines: 8 },
+      unlinked: ".zap/trash/trash-src/copied.ts",
+      removed: ".zap/trash/trash-src/generated",
       file: true,
       directory: false,
       link: false,

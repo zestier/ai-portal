@@ -80,6 +80,38 @@ export interface ProcWorkerOutcome {
   usage: ProcTransaction["usage"];
 }
 
+// Minimal guessable TS: fully qualify calls, show only non-obvious result
+// shapes or behavior, and omit primitive returns the name already implies.
+const PROC_GLOBAL_CONTRACTS = [
+  "command.run(executable, args?, { cwd?, stdin?, timeoutMs? }): { status, stdout, stderr }",
+  "fs.copyFile(from, to) // UTF8 text only",
+  "fs.exists(path)",
+  "fs.glob(pattern, { path?, maxDepth?, includeIgnored? }): string[] // workspace-relative; ripgrep rules",
+  "fs.grep(pattern, { path?, glob?, caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // workspace-relative; 1-based positions; ripgrep rules",
+  "fs.mkdir(path) // recursive and idempotent",
+  'fs.readFile(path, "utf8")',
+  "fs.readLines(path, { start?, end? }): { text, start, end, totalLines } // 1-based, inclusive",
+  "fs.rename(from, to) // overwrites files",
+  "fs.rm(path, { recursive?, force? }): trashPath? // reversible",
+  "fs.stat(path): { size, mtimeMs, isFile(), isDirectory(), isSymbolicLink() }",
+  "git.blame(path, { startLine?, endLine? }): { sha, line, author, email, timestamp, summary, text }[]",
+  "git.commit({ paths, subject, body?, trailers?, allowConflictMarkers? }): { sha, shortSha, subject, mergeCommit, resolvedConflicts } // always-prompt",
+  "git.diff({ target?, sha?, path? }): { patch, files, truncated } // unified diff plus per-file line counts",
+  "git.log({ limit?, skip?, ref?, path? }): { sha, shortSha, author, email, timestamp, subject }[]",
+  "git.show(ref, { includePatch? }): { sha, shortSha, author, email, timestamp, subject, body, parents, files, patch? }",
+  "git.show(ref, path) // file contents at ref",
+  "git.status(): { head, merge, changes } // branch/upstream, active operation/conflicts, staged/worktree status",
+  "git.worktreeMerge({ direction: 'to-source'|'from-source', allowMergeCommit?, squash?, onConflict? }): { merged, into, from, fastForward, squashedCommits, headSha }",
+  "loadValue(valueId) // immutable saved value",
+  "path.basename(path, suffix?)",
+  "path.dirname(path)",
+  "path.extname(path)",
+  "path.isAbsolute(path)",
+  "path.join(...paths)",
+  "path.normalize(path)",
+  "path.relative(from, to)",
+];
+
 export function initialProcMessages(input: {
   summary: string;
   requirements: string;
@@ -88,57 +120,74 @@ export function initialProcMessages(input: {
   contracts: Array<Record<string, unknown>>;
 }): ExtractorChatMessage[] {
   return [
-    { role: "system", content: PROC_WORKER_SYSTEM },
+    {
+      role: "system",
+      content: `${PROC_WORKER_SYSTEM}\n\n${procEnvironmentPrompt(input.contracts)}`,
+    },
     {
       role: "user",
-      content: JSON.stringify({
-        summary: input.summary,
-        procedure: input.procedure,
-        result_requirements: input.requirements,
-        environment: {
-          tools: input.contracts,
-          globals: {
-            loadValue: "loadValue(valueId): immutable saved JSON value",
-            fs: [
-              'readFile(path, "utf8")',
-              "writeFile(path, text)",
-              "stat(path): { size, mtimeMs, isFile(), isDirectory(), isSymbolicLink() }",
-              "exists(path)",
-              "readLines(path, { start?, end? }): { text, start, end, totalLines } // 1-based, inclusive",
-              "mkdir(path) // recursive and idempotent",
-              "rename(from, to) // overwrites files",
-              "copyFile(from, to) // UTF8 text only",
-              "rm(path, { recursive?, force? }) // reversible trash",
-              "unlink(path) // reversible trash",
-              "glob(pattern: string | string[], { path?, maxDepth?, includeIgnored? }): string[] // workspace-relative; ripgrep rules",
-              "grep(pattern: string, { path?, glob?: string | string[], caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // workspace-relative; 1-based positions; ripgrep rules",
-            ],
-            path: [
-              "join(...paths)",
-              "dirname(path)",
-              "basename(path, suffix?)",
-              "extname(path)",
-              "normalize(path)",
-              "relative(from, to)",
-              "isAbsolute(path)",
-            ],
-            git: [
-              "status(): { head, merge, changes: { path, previousPath, index, worktree }[] } // branch/upstream, active operation/conflicts, staged/worktree status",
-              "diff({ target?, sha?, path? }): { patch, files: { path, previousPath, status, added, removed, binary }[], truncated } // unified diff plus per-file line counts",
-              "log({ limit?, skip?, ref?, path? }): { sha, shortSha, author, email, timestamp, subject }[] // commit summaries",
-              "show(ref, { includePatch? }): { sha, shortSha, author, email, timestamp, subject, body, parents, files: { status, path, origPath }[], patch? } // commit details",
-              "show(ref, path): string // file contents at ref",
-              "blame(path, { startLine?, endLine? }): { sha, line, author, email, timestamp, summary, text }[]",
-              "commit({ paths, subject, body?, trailers?, allowConflictMarkers? }): { sha, shortSha, subject, mergeCommit, resolvedConflicts } // creates a commit; always-prompt",
-              "worktreeMerge({ direction: 'to-source'|'from-source', allowMergeCommit?, squash?, onConflict? }): { merged, into, from, fastForward, squashedCommits, headSha }",
-            ],
-            command:
-              "command.run(executable, args?, { cwd?, stdin?, timeoutMs? }): { status, stdout, stderr }",
-          },
-        },
-      }),
+      content: `Procedure\n\nSummary\n${input.summary}\n\nInstructions\n${input.procedure}\n\nResult requirements\n${input.requirements}`,
     },
   ];
+}
+
+function procEnvironmentPrompt(
+  contracts: Array<Record<string, unknown>>,
+): string {
+  const capabilities = [
+    ...PROC_GLOBAL_CONTRACTS,
+    ...contracts.map(formatProgramContract),
+  ].sort((left, right) => left.localeCompare(right));
+  return `Available JavaScript capabilities\n\n${capabilities.join("\n")}`;
+}
+
+function formatProgramContract(contract: Record<string, unknown>): string {
+  const name = typeof contract.name === "string" ? contract.name : "unknown";
+  const description =
+    typeof contract.description === "string" ? contract.description : "";
+  const accepts = formatContractSchema(contract.parameters);
+  const returns = formatContractSchema(contract.result);
+  return `tools.${name}(${accepts}): ${returns}${description ? ` // ${description}` : ""}`;
+}
+
+function formatContractSchema(schema: unknown): string {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return "value";
+  }
+  const record = schema as Record<string, unknown>;
+  if (Array.isArray(record.enum)) {
+    return record.enum.map((value) => JSON.stringify(value)).join(" | ");
+  }
+  for (const union of [record.oneOf, record.anyOf]) {
+    if (Array.isArray(union)) {
+      return union.map(formatContractSchema).join(" | ");
+    }
+  }
+  if (record.type === "array") {
+    return `${formatContractSchema(record.items)}[]`;
+  }
+  if (record.type === "object" || record.properties) {
+    const properties =
+      record.properties && typeof record.properties === "object"
+        ? (record.properties as Record<string, unknown>)
+        : {};
+    const required = new Set(
+      Array.isArray(record.required)
+        ? record.required.filter(
+            (value): value is string => typeof value === "string",
+          )
+        : [],
+    );
+    const fields = Object.entries(properties)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(
+        ([key, value]) =>
+          `${key}${required.has(key) ? "" : "?"}: ${formatContractSchema(value)}`,
+      );
+    return fields.length ? `{ ${fields.join(", ")} }` : "{}";
+  }
+  if (Array.isArray(record.type)) return record.type.join(" | ");
+  return typeof record.type === "string" ? record.type : "value";
 }
 
 export async function runProcWorker(
@@ -573,7 +622,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
             javascript: {
               type: "string",
               description:
-                "JavaScript function body. no_one may omit return. worker_decision must return { decision_evidence, saved_value }; only decision_evidence enters your next turn and value_id refers to saved_value. Other modes return one JSON-compatible value.",
+                "JavaScript function body. no_one may omit return. worker_decision must return { decision_evidence, saved_value }; only decision_evidence enters your next turn and value_id refers to saved_value. Other modes return one serializable JavaScript value.",
             },
             result_for: {
               type: "string",

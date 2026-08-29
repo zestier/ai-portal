@@ -403,17 +403,23 @@ export async function runProgramInline(
         fsMethods.writeFile(destination, content, "utf8");
       },
       rm(path, options = {}) {
-        unwrapCall(__callFacadeCapability, "__ptc_fs_rm", {
+        const result = unwrapCall(__callFacadeCapability, "__ptc_fs_rm", {
           path,
           ...(options?.recursive === true ? { recursive: true } : {}),
           ...(options?.force === true ? { force: true } : {})
         });
+        return result === undefined
+          ? undefined
+          : result.trashPath;
       },
       unlink(path) {
-        unwrapCall(__callFacadeCapability, "__ptc_fs_rm", {
+        const result = unwrapCall(__callFacadeCapability, "__ptc_fs_rm", {
           path,
           unlink: true
         });
+        return result === undefined
+          ? undefined
+          : result.trashPath;
       },
       glob(pattern, options = {}) {
         return unwrapCall(__callFacadeCapability, "__ptc_fs_glob", {

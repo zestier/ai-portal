@@ -547,7 +547,8 @@ describe("proc worker", () => {
       ]),
     );
     const savedValueFeedback = JSON.parse(
-      transaction.messages[3].content as string,
+      transaction.messages.find((message) => message.role === "tool")
+        ?.content as string,
     ) as { value_id: string };
     expect(savedValueFeedback.value_id).toBeTruthy();
     const workerTools = piChat.mock.calls[0][2] as Array<{
@@ -602,28 +603,34 @@ describe("proc worker", () => {
     expect(PROC_WORKER_SYSTEM).not.toContain(
       "Return a final value matching output.contract",
     );
-    const initial = JSON.parse(transaction.messages[1].content as string) as {
-      result_requirements: string;
-      output?: unknown;
-      environment: { tools: unknown[]; globals: { fs: string[] } };
-    };
-    expect(initial).toMatchObject({
-      result_requirements: "Return paths and ranges",
-    });
-    expect(initial).not.toHaveProperty("max_result_bytes");
-    expect(initial).not.toHaveProperty("output");
-    expect(initial.environment.tools).toEqual(contracts);
-    expect(initial.environment.globals.fs).toContainEqual(
-      expect.stringContaining("glob(pattern: string | string[]"),
+    expect(
+      transaction.messages.slice(0, 2).map((message) => message.role),
+    ).toEqual(["system", "user"]);
+    const environment = transaction.messages[0].content as string;
+    const request = transaction.messages[1].content as string;
+    expect(environment).toContain("Available JavaScript capabilities");
+    expect(environment).toContain("fs.glob(pattern,");
+    expect(environment).toContain("fs.grep(pattern,");
+    expect(environment).not.toContain("fs.readdir");
+    expect(environment).toContain("tools.grep({}): {}");
+    expect(environment).not.toContain(" -> ");
+    expect(environment).not.toContain("; accepts ");
+    expect(environment).toContain("path.isAbsolute(path)");
+    expect(environment).not.toContain("path.isAbsolute(path): boolean");
+    expect(environment).toContain(
+      "fs.rm(path, { recursive?, force? }): trashPath? // reversible",
     );
-    expect(initial.environment.globals.fs).toContainEqual(
-      expect.stringContaining(
-        "grep(pattern: string, { path?, glob?: string | string[]",
-      ),
+    expect(environment).not.toContain("fs.unlink");
+    const capabilityLines = environment
+      .split("\n\nAvailable JavaScript capabilities\n\n")[1]
+      .split("\n");
+    expect(capabilityLines).toEqual(
+      [...capabilityLines].sort((left, right) => left.localeCompare(right)),
     );
-    expect(initial.environment.globals.fs).not.toContainEqual(
-      expect.stringContaining("readdir"),
+    expect(request).toBe(
+      "Procedure\n\nSummary\nFind owner\n\nInstructions\nCreate candidates, then add extents\n\nResult requirements\nReturn paths and ranges",
     );
+    expect(request).not.toContain("max_result_bytes");
   });
 
   it("returns execution failures to the worker instead of failing the transaction", async () => {
