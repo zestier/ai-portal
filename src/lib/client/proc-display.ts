@@ -9,13 +9,25 @@ export interface ProcArgs {
 export interface ProcExecutionArgs {
   javascript: string;
   needed_for?: string;
+  store_into?: string | null;
+  /** Legacy streamed metadata retained for older conversations. */
   save_as?: string | null;
+  worker_view?: "none" | "shape" | "value";
+  worker_view_max_bytes?: number;
+  /** Legacy worker view retained for older conversations. */
   view?: "shape" | "value";
 }
 
 export interface ProcExecutionResult {
   save_as?: string | null;
   value_bytes?: number;
+  worker_view?: "none" | "shape" | "value";
+  worker_view_kind?: "none" | "shape" | "value";
+  worker_view_max_bytes?: number;
+  worker_view_bytes?: number;
+  worker_view_truncated?: boolean;
+  reason?: "value_exceeded_limit";
+  /** Legacy worker view fields retained for older conversations. */
   view?: "shape" | "value";
   shape?: unknown;
   value?: unknown;
@@ -90,16 +102,49 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
   if (!isObject(value) || typeof value.javascript !== "string") {
     return null;
   }
-  if (value.needed_for === undefined && value.save_as === undefined) {
-    return value as unknown as ProcExecutionArgs;
-  }
+  const hasExecutionMetadata =
+    value.needed_for !== undefined ||
+    value.store_into !== undefined ||
+    value.save_as !== undefined ||
+    value.worker_view !== undefined ||
+    value.worker_view_max_bytes !== undefined ||
+    value.view !== undefined;
+  const hasStorageTarget =
+    value.store_into !== undefined || value.save_as !== undefined;
   if (
-    typeof value.needed_for !== "string" ||
-    (value.save_as !== null && typeof value.save_as !== "string")
+    (hasExecutionMetadata &&
+      (typeof value.needed_for !== "string" || !hasStorageTarget)) ||
+    (value.needed_for !== undefined && typeof value.needed_for !== "string") ||
+    (value.store_into !== undefined &&
+      value.store_into !== null &&
+      typeof value.store_into !== "string") ||
+    (value.save_as !== undefined &&
+      value.save_as !== null &&
+      typeof value.save_as !== "string") ||
+    (value.worker_view !== undefined &&
+      value.worker_view !== "none" &&
+      value.worker_view !== "shape" &&
+      value.worker_view !== "value") ||
+    (value.worker_view_max_bytes !== undefined &&
+      typeof value.worker_view_max_bytes !== "number") ||
+    (value.view !== undefined &&
+      value.view !== "shape" &&
+      value.view !== "value")
   ) {
     return null;
   }
   return value as unknown as ProcExecutionArgs;
+}
+
+/** The byte-for-byte JSON text returned to the proc worker. */
+export function procExecutionFeedbackText(json: string | null): string | null {
+  if (json === null) return null;
+  try {
+    const value: unknown = JSON.parse(json);
+    return typeof value === "string" ? value : json;
+  } catch {
+    return json;
+  }
 }
 
 export function parseProcExecutionResult(

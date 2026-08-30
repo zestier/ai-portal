@@ -4,6 +4,7 @@ import {
   parseProcExecutionArgs,
   parseProcExecutionMeta,
   parseProcExecutionResult,
+  procExecutionFeedbackText,
   parseProcMeta,
   parseProcOutcome,
 } from "../../src/lib/client/proc-display";
@@ -31,10 +32,16 @@ describe("proc display parsing", () => {
         JSON.stringify({
           needed_for: "Routing map",
           javascript: "return [];",
-          save_as: "routing",
+          store_into: "store.routing",
+          worker_view: "value",
+          worker_view_max_bytes: 256,
         }),
       ),
-    ).toMatchObject({ save_as: "routing" });
+    ).toMatchObject({
+      store_into: "store.routing",
+      worker_view: "value",
+      worker_view_max_bytes: 256,
+    });
     expect(
       parseProcExecutionMeta({
         needed_for: "Filtered matches",
@@ -65,6 +72,12 @@ describe("proc display parsing", () => {
         }),
       ),
     ).toBeNull();
+  });
+
+  it("preserves the exact feedback text sent to the worker", () => {
+    const feedback = '{"store_into":"store.routing","view":"value"}';
+    expect(procExecutionFeedbackText(JSON.stringify(feedback))).toBe(feedback);
+    expect(procExecutionFeedbackText(feedback)).toBe(feedback);
   });
 
   it("unwraps protocol result strings and portal envelopes", () => {

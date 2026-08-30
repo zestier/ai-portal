@@ -30,8 +30,8 @@ export function projectShape(
   value: unknown,
   maxBytes: number,
 ): ShapeProjection {
-  if (!Number.isInteger(maxBytes) || maxBytes < 32) {
-    throw new Error("Shape maxBytes: integer >= 32 required.");
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+    throw new Error("Shape maxBytes: non-negative integer required.");
   }
   assertJsonValue(value);
   const inferred = inferShape(value, 0);

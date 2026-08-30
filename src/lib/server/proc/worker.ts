@@ -13,7 +13,7 @@ import type { PortalTool } from "$lib/server/tools/types";
 import { executeDelegatedTool } from "$lib/server/semantic/delegated-tool";
 import { runProgram } from "$lib/server/ptc/program";
 import { normalizeProgramToolArgs } from "$lib/server/ptc/contracts";
-import { projectProcValue } from "./projection";
+import { projectProcValue, projectProcWorkerValue } from "./projection";
 import {
   createNamedProcResult,
   createProcResult,
@@ -29,8 +29,7 @@ const MAX_TURNS = 100;
 const EXECUTE = "execute";
 const FINISH = "finish";
 const CANNOT_EXECUTE = "cannot_execute";
-const SAVED_VALUE_SHAPE_BYTES = 2 * 1024;
-const WORKER_VALUE_BYTES = 64 * 1024;
+const MAX_WORKER_VIEW_BYTES = 64 * 1024;
 const MAX_TRANSCRIPT_BYTES = 128 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
 const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
@@ -56,10 +55,18 @@ const ExecuteArgs = z
       .describe(
         "Save full result for later execute calls as store.<key> if result may help later. Use null if not.",
       ),
-    view: z
-      .enum(["shape", "value"])
+    worker_view: z
+      .enum(["none", "shape", "value"])
       .describe(
-        "Choose worker feedback. shape shows result form with little data. value shows result data; reduce to small, selected data first.",
+        "Worker feedback only; never changes the complete stored value. Use none when no returned data is needed, shape to learn structure for later code, and value only when the next decision needs exact data that cannot be reduced in JavaScript. Oversized value becomes shape.",
+      ),
+    worker_view_max_bytes: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_WORKER_VIEW_BYTES)
+      .describe(
+        "Required maximum bytes copied into worker context. Use the lowest useful budget.",
       ),
   })
   .strict();
@@ -87,6 +94,7 @@ Rules:
 - Fuse adjacent mechanical work. Use fewest reliable executions. Procedure steps are not execution boundaries.
 - Calls in one turn run sequentially; first failure cancels the rest.
 - execute continues. finish returns the final result and stops. cannot_execute stops when a missing instruction or decision blocks work.
+- Use worker_view none when no feedback is needed, shape for structure, and value only for irreducible exact evidence. Use the lowest useful worker_view_max_bytes.
 - result_requirements is the exact final allowlist and completion test.
 - Repair mechanical errors. Do not invent missing instructions or decisions.`;
 
@@ -343,7 +351,7 @@ export async function runProcWorker(
             transaction.usage.executions++;
             const result = await runProgram({
               source: args.javascript,
-              ...(args.store_into === null && args.view === "shape"
+              ...(args.store_into === null && args.worker_view === "none"
                 ? { resultMode: "discard" as const }
                 : {}),
               capabilities: opts.capabilities,
@@ -383,15 +391,12 @@ export async function runProcWorker(
               result.operations >= OPERATION_WARNING_THRESHOLD
                 ? `${result.operations} operations. Use search.glob/search.grep or batch work; avoid path-by-path traversal.`
                 : undefined;
+            const projection = projectProcWorkerValue(
+              result.value,
+              args.worker_view,
+              args.worker_view_max_bytes,
+            );
             if (args.store_into === null) {
-              const projection =
-                args.view === "value"
-                  ? projectProcValue(result.value, {
-                      mode: "exact",
-                      maxBytes: WORKER_VALUE_BYTES,
-                      store: false,
-                    })
-                  : undefined;
               recordExecutionFeedback(
                 opts.emit,
                 transaction,
@@ -401,9 +406,16 @@ export async function runProcWorker(
                 true,
                 {
                   store_into: null,
-                  view: args.view,
+                  worker_view: args.worker_view,
+                  worker_view_kind: projection.kind,
+                  worker_view_max_bytes: args.worker_view_max_bytes,
+                  worker_view_bytes: projection.projectionBytes,
+                  worker_view_truncated: projection.truncated,
+                  ...(projection.reason ? { reason: projection.reason } : {}),
                   ...(projection?.projection !== undefined
-                    ? { value: projection.projection }
+                    ? projection.kind === "value"
+                      ? { value: projection.projection }
+                      : { shape: projection.projection }
                     : {}),
                   ...(operationWarning || result.consoleAttempts > 0
                     ? {
@@ -422,14 +434,6 @@ export async function runProcWorker(
               );
               continue;
             }
-            const policy: ProcOutputPolicy = {
-              mode: args.view === "shape" ? "shape" : "exact",
-              maxBytes:
-                args.view === "shape"
-                  ? SAVED_VALUE_SHAPE_BYTES
-                  : WORKER_VALUE_BYTES,
-              store: true,
-            };
             retainedResult = createNamedProcResult({
               transactionId: transaction.id,
               conversationId: transaction.conversationId,
@@ -450,7 +454,6 @@ export async function runProcWorker(
             } else {
               consecutiveNonProgress = 0;
             }
-            const projection = projectProcValue(result.value, policy);
             const warnings = [
               operationWarning,
               consecutiveNonProgress >= 2
@@ -461,12 +464,17 @@ export async function runProcWorker(
             const feedback = {
               store_into: args.store_into,
               value_bytes: retainedResult.bytes,
-              view: args.view,
-              ...(args.view === "shape"
-                ? { shape: projection.projection }
-                : { value: projection.projection }),
-              view_bytes: projection.projectionBytes,
-              truncated: projection.truncated,
+              worker_view: args.worker_view,
+              worker_view_kind: projection.kind,
+              worker_view_max_bytes: args.worker_view_max_bytes,
+              worker_view_bytes: projection.projectionBytes,
+              worker_view_truncated: projection.truncated,
+              ...(projection.reason ? { reason: projection.reason } : {}),
+              ...(projection.projection !== undefined
+                ? projection.kind === "value"
+                  ? { value: projection.projection }
+                  : { shape: projection.projection }
+                : {}),
               ...(warnings.length > 0 ? { warnings } : {}),
               operations: result.operations,
               effects: effectSummary,
@@ -761,7 +769,7 @@ function jsonSchema(schema: z.ZodType): Record<string, unknown> {
 
 function consoleWarning(attempts: number): string | undefined {
   return attempts > 0
-    ? `console is unsupported; discarded arguments from ${attempts} call(s). Return required data and choose view instead.`
+    ? `console is unsupported; discarded arguments from ${attempts} call(s). Return required data and choose worker_view instead.`
     : undefined;
 }
 

@@ -7,6 +7,64 @@ export interface ProcProjection {
   truncated: boolean;
 }
 
+export type ProcWorkerView = "none" | "shape" | "value";
+
+export interface ProcWorkerProjection extends ProcProjection {
+  kind: ProcWorkerView;
+  reason?: "value_exceeded_limit";
+}
+
+export function projectProcWorkerValue(
+  value: unknown,
+  view: ProcWorkerView,
+  maxBytes: number,
+): ProcWorkerProjection {
+  if (view === "none") {
+    return {
+      kind: "none",
+      projectionBytes: 0,
+      truncated: false,
+    };
+  }
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+    throw new Error(
+      `${view} worker view requires integer worker_view_max_bytes >= 0.`,
+    );
+  }
+  if (view === "shape") {
+    const shape = projectShape(value, maxBytes);
+    return {
+      kind: "shape",
+      projection: shape.text,
+      projectionBytes: shape.bytes,
+      truncated: shape.truncated,
+    };
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) {
+    throw new Error(
+      "Non-JSON result. Return string, finite number, boolean, null, array, or object.",
+    );
+  }
+  const bytes = Buffer.byteLength(encoded);
+  if (bytes <= maxBytes) {
+    return {
+      kind: "value",
+      projection: value,
+      projectionBytes: bytes,
+      truncated: false,
+    };
+  }
+  const shape = projectShape(value, maxBytes);
+  return {
+    kind: "shape",
+    reason: "value_exceeded_limit",
+    projection: shape.text,
+    projectionBytes: shape.bytes,
+    truncated: true,
+  };
+}
+
 export function projectProcValue(
   value: unknown,
   policy: ProcOutputPolicy,

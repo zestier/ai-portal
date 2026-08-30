@@ -575,16 +575,21 @@ describe("Svelte component regression coverage", () => {
             argsJson: JSON.stringify({
               needed_for: "Reading the contributing guidance",
               javascript: "return fs.readFile('CONTRIBUTING.md', 'utf8');",
-              save_as: "contributing",
-              view: "value",
+              store_into: "store.contributing",
+              worker_view: "value",
+              worker_view_max_bytes: 32,
             }),
             resultJson: JSON.stringify(
               JSON.stringify({
                 save_as: "contributing",
-                view: "value",
-                value: "Run pnpm run verify before opening a PR.",
-                view_bytes: 42,
-                truncated: false,
+                store_into: "store.contributing",
+                worker_view: "value",
+                worker_view_kind: "shape",
+                worker_view_max_bytes: 32,
+                worker_view_bytes: 27,
+                worker_view_truncated: true,
+                reason: "value_exceeded_limit",
+                shape: "string",
                 operations: 1,
               }),
             ),
@@ -598,9 +603,17 @@ describe("Svelte component regression coverage", () => {
       },
     }).body;
 
-    expect(body).toContain("value view");
-    expect(body).toContain("Sent to worker · value");
-    expect(body).toContain("Run pnpm run verify before opening a PR.");
+    expect(body).toContain("value → shape view");
+    expect(body).toContain("Formatted input");
+    expect(body).toContain("store.contributing");
+    expect(body).toContain("return fs.readFile('CONTRIBUTING.md', 'utf8');");
+    expect(body).toContain("Raw input payload");
+    expect(body).toContain("View budget");
+    expect(body).toContain("Worker view · shape");
+    expect(body).toContain("value exceeded budget");
+    expect(body).toContain("Exact text sent to worker");
+    expect(body).toContain("Raw output payload");
+    expect(body).toContain("string");
   });
 
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {

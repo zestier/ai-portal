@@ -169,10 +169,13 @@ procedure steps are not turn boundaries. Intermediate values remain ordinary
 JavaScript values inside an execution and do not enter model context.
 
 `execute` continues the procedure. Its required nullable `store_into` field
-names a value as `store.<key>` for later JavaScript; `null` discards the return
-value. Keys are unique within a transaction and read through `store.<key>`.
-`finish` returns the final value to the proc caller and ends the procedure. Every execution also declares
-`needed_for`: one short phrase stating the required outcome.
+names a value as `store.<key>` for later JavaScript; `null` does not retain the
+return value. Storage is always exact. The independent required `worker_view`
+and `worker_view_max_bytes` fields control only the bounded feedback copied into
+the worker's context. Keys are unique within a transaction and read through
+`store.<key>`. `finish` returns the final value to the proc caller and ends the
+procedure. Every execution also declares `needed_for`: one short phrase stating
+the required outcome.
 
 Calls emitted in one model turn execute sequentially, so later calls may read
 names saved by earlier calls. The first failure cancels every remaining call in
@@ -219,16 +222,15 @@ ignore rules. Passing
 trees such as `node_modules`.
 
 Reading a complete file inside an execution keeps that value in the QuickJS
-runtime and does not add it to model context. A stored value returns only its
-structure unless the program explicitly logs small structured evidence.
+runtime and does not add it to model context unless the returned value is
+explicitly included by `worker_view`. A stored value remains complete regardless
+of its worker view.
 `console.log`, `info`, `warn`, `error`, and `debug` capture immutable,
 JSON-compatible argument snapshots rather than writing process output. Their
 combined projection has a 64 KiB guard; overflow preserves the returned saved
-value so a reducing retry can use `store.<key>`. `finish` returns the final result,
-while `store_into: null` ignores an execute return value. Worker guidance therefore permits broad
-internal reads for mechanical filtering and transformation while requiring
-every model-bound value to contain only distinguishing evidence or the exact
-final contract.
+value so a reducing retry can use `store.<key>`. `finish` returns the final result.
+Worker guidance therefore permits broad internal reads for mechanical filtering
+and transformation while requiring the smallest useful worker-view budget.
 
 Repeated zero-operation executions that load and re-save hidden values without
 console evidence are counted as non-progress. After two consecutive occurrences,
@@ -298,8 +300,12 @@ javascript: |
 ```
 
 `execute` stores its exact return value when `store_into` is a store key. Its
-feedback contains that name, the value's structure, and any bounded console
-evidence. `finish` returns exactly the primary agent's original result requirements.
+feedback contains that name and the explicitly requested bounded worker view.
+`worker_view: none` returns metadata only and emits zero view bytes.
+`worker_view: shape` returns the compact type-like shape described below.
+`worker_view: value` returns exact data when it fits; when it does not, feedback
+is a bounded shape with `worker_view_kind: shape` and
+`reason: value_exceeded_limit`. `finish` returns exactly the primary agent's original result requirements.
 Generous internal limits remain only as safety fuses; they are not advertised
 as output targets. Console overflow retains the returned value and directs the
 worker to reduce semantically with `store`, never to paginate.
@@ -314,12 +320,13 @@ javascript: |
     ({ id, signature, retryBranch })));
   return candidates;
 store_into: store.candidates
+worker_view: shape
+worker_view_max_bytes: 256
 ```
 
-Only the logged evidence enters the next worker turn. The returned value is
-stored exactly and represented only by `store_into`, so the next execution can
-apply the worker's decision with `store.candidates` without reinjecting the
-corpus.
+Only the requested shape and bounded console evidence enter the next worker
+turn. The returned value is stored exactly, so the next execution can apply the
+worker's decision with `store.candidates` without reinjecting the corpus.
 
 Store feedback is:
 
@@ -327,19 +334,23 @@ Store feedback is:
 {
   "store_into": "store.candidates",
   "value_bytes": 284192,
-  "structure": "array(318) of object { path: string, line: integer }",
-  "structure_bytes": 58,
-  "truncated": false,
+  "worker_view": "shape",
+  "worker_view_kind": "shape",
+  "worker_view_max_bytes": 256,
+  "worker_view_bytes": 58,
+  "worker_view_truncated": false,
+  "shape": "array(318) of object { path: string, line: integer }",
   "operations": 12,
   "effects": [],
   "effects_total": 0
 }
 ```
 
-`value_bytes` measures the exact serialized value. `structure_bytes` measures
-what entered worker context. `truncated` always describes the requested representation:
-it is true only when projection limits forced that mode to omit information.
-The stored value, when present, is exact regardless of projection mode.
+`value_bytes` measures the exact serialized value. `worker_view_bytes` measures
+the selected representation that entered worker context.
+`worker_view_truncated` is true when the requested representation omitted
+information, including an oversized `value` falling back to shape. The stored
+value, when present, is exact regardless of worker-view mode or budget.
 
 Every execution requires a user-visible `needed_for`. The dedicated
 proc card shows the primary-agent procedure and result requirements, each execution's
@@ -478,7 +489,8 @@ structurally so harmless formatting changes do not obscure regressions.
 primary-agent procedure
        |
        v
-proc worker -- execute(needed_for, javascript, store_into) --> program runtime
+proc worker -- execute(needed_for, javascript, store_into,
+                       worker_view, worker_view_max_bytes) --> program runtime
             -- finish(javascript) -----------------------> program runtime
        ^                                      |
        |                                      v

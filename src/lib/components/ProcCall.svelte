@@ -7,6 +7,7 @@
   import {
     parseProcArgs,
     parseProcExecutionArgs,
+    procExecutionFeedbackText,
     parseProcExecutionMeta,
     parseProcExecutionResult,
     parseProcMeta,
@@ -82,10 +83,10 @@
 
   function executionLabel(
     tool: string,
-    saveAs: string | null | undefined,
+    storeInto: string | null | undefined,
   ): string {
     if (tool === "finish") return "final result";
-    return saveAs ? `save: ${saveAs}` : "no save";
+    return storeInto ? `store: ${storeInto}` : "not stored";
   }
 
   $effect(() => {
@@ -137,9 +138,23 @@
             {@const executionResult = parseProcExecutionResult(
               execution.resultJson,
             )}
+            {@const workerFeedback = procExecutionFeedbackText(
+              execution.resultJson,
+            )}
+            {@const storeInto =
+              executionArgs?.store_into ?? executionArgs?.save_as}
+            {@const requestedWorkerView =
+              executionArgs?.worker_view ?? executionArgs?.view}
+            {@const actualWorkerView =
+              executionResult?.worker_view_kind ?? executionResult?.view}
+            {@const workerViewBytes =
+              executionResult?.worker_view_bytes ?? executionResult?.view_bytes}
+            {@const workerViewTruncated =
+              executionResult?.worker_view_truncated ??
+              executionResult?.truncated}
             {@const workerProjection =
-              executionResult?.view === "value"
-                ? executionResult.value
+              actualWorkerView === "value"
+                ? executionResult?.value
                 : executionResult?.shape}
             {@const nested = selectSubagentChildren(
               { tools: allTools, reasoning: allReasoning, edits: allEdits },
@@ -154,14 +169,14 @@
                       ? "Final result"
                       : "Execution")}</span
                 >
-                <Pill
-                  >{executionLabel(
-                    execution.tool,
-                    executionArgs?.save_as,
-                  )}</Pill
-                >
-                {#if executionArgs?.view}
-                  <Pill>{executionArgs.view} view</Pill>
+                <Pill>{executionLabel(execution.tool, storeInto)}</Pill>
+                {#if requestedWorkerView}
+                  <Pill
+                    >{requestedWorkerView}{actualWorkerView &&
+                    actualWorkerView !== requestedWorkerView
+                      ? ` → ${actualWorkerView}`
+                      : ""} view</Pill
+                  >
                 {/if}
                 {#if executionResult?.value_bytes != null}
                   <span class="metric"
@@ -183,9 +198,35 @@
                   <p class="execution-error">{executionResult.error}</p>
                 {/if}
                 {#if executionArgs}
-                  <details>
-                    <summary class="minor-label">JavaScript</summary>
+                  <div class="formatted-input">
+                    <div class="minor-label">Formatted input</div>
+                    <dl>
+                      <div>
+                        <dt>Store id</dt>
+                        <dd>{storeInto ?? "none"}</dd>
+                      </div>
+                      <div>
+                        <dt>Worker view</dt>
+                        <dd>{requestedWorkerView ?? "unknown"}</dd>
+                      </div>
+                      {#if executionArgs.worker_view_max_bytes !== undefined}
+                        <div>
+                          <dt>View budget</dt>
+                          <dd>
+                            {formatFieldBytes(
+                              executionArgs.worker_view_max_bytes,
+                            )}
+                          </dd>
+                        </div>
+                      {/if}
+                    </dl>
                     <pre><code>{executionArgs.javascript}</code></pre>
+                  </div>
+                {/if}
+                {#if execution.argsJson !== null}
+                  <details>
+                    <summary class="minor-label">Raw input payload</summary>
+                    <pre><code>{execution.argsJson}</code></pre>
                   </details>
                 {/if}
                 {#if executionResult?.structure !== undefined}
@@ -210,12 +251,14 @@
                 {#if workerProjection !== undefined}
                   <div class="projection">
                     <div class="minor-label">
-                      Sent to worker · {executionResult?.view}
-                      {#if executionResult?.view_bytes != null}
-                        · {formatFieldBytes(executionResult.view_bytes)}
+                      Worker view · {actualWorkerView}
+                      {#if workerViewBytes != null}
+                        · {formatFieldBytes(workerViewBytes)}
                       {/if}
-                      {#if executionResult?.truncated}
+                      {#if workerViewTruncated}
                         · truncated{/if}
+                      {#if executionResult?.reason === "value_exceeded_limit"}
+                        · value exceeded budget{/if}
                     </div>
                     <pre><code
                         >{typeof workerProjection === "string"
@@ -223,6 +266,20 @@
                           : JSON.stringify(workerProjection, null, 2)}</code
                       ></pre>
                   </div>
+                {/if}
+                {#if workerFeedback !== null}
+                  <details>
+                    <summary class="minor-label">
+                      Exact text sent to worker
+                    </summary>
+                    <pre><code>{workerFeedback}</code></pre>
+                  </details>
+                {/if}
+                {#if execution.resultJson !== null}
+                  <details>
+                    <summary class="minor-label">Raw output payload</summary>
+                    <pre><code>{execution.resultJson}</code></pre>
+                  </details>
                 {/if}
                 {#if executionResult?.retry_safe === false}
                   <div class="effect-warning">
@@ -439,6 +496,27 @@
     gap: var(--space-2);
     padding: var(--space-3);
     background: var(--surface-2);
+  }
+  .formatted-input {
+    display: grid;
+    gap: var(--space-2);
+  }
+  dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+  }
+  dl > div {
+    display: flex;
+    gap: var(--space-1);
+  }
+  dt {
+    color: var(--text-muted);
+  }
+  dd {
+    margin: 0;
+    font-family: var(--mono);
   }
   .effect-warning {
     padding: var(--space-2);
