@@ -30,7 +30,7 @@ const EXECUTE = "execute";
 const FINISH = "finish";
 const CANNOT_EXECUTE = "cannot_execute";
 const SAVED_VALUE_SHAPE_BYTES = 2 * 1024;
-const EMERGENCY_WORKER_VALUE_BYTES = 64 * 1024;
+const WORKER_VALUE_BYTES = 64 * 1024;
 const MAX_TRANSCRIPT_BYTES = 128 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
 const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
@@ -44,6 +44,7 @@ const ExecuteArgs = z
       .string()
       .regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)
       .nullable(),
+    view: z.enum(["shape", "value"]).optional().default("shape"),
   })
   .strict();
 
@@ -60,7 +61,7 @@ export const PROC_WORKER_SYSTEM = `Execute the supplied procedure exactly. Do no
 Rules:
 - Fuse adjacent work only when confident and safe. Use the fewest executions preserving correctness, recoverability, and clear data flow. Procedure steps are not execution boundaries.
 - JavaScript decides everything deterministic. Search, parse, transform, compare, aggregate, edit, and validate there.
-- Use console.log only when supplied rules cannot compute a required semantic judgment. Logs are parsed into your next turn and consume context. Log minimum evidence. Never log a corpus or split it across calls.
+- Strongly prefer view: shape. Exception: request value only for reasoning JavaScript cannot perform, after reducing the result to the minimum evidence needed.
 - needed_for: one short phrase naming the required outcome, not the operation.
 - execute continues. Set save_as to a unique name unless the result will not be needed later. Saved contents stay out of model context; read with loadValue(name).
 - Calls in one turn run sequentially. First failure cancels the rest.
@@ -321,7 +322,7 @@ export async function runProcWorker(
             transaction.usage.executions++;
             const result = await runProgram({
               source: args.javascript,
-              ...(args.save_as === null
+              ...(args.save_as === null && args.view === "shape"
                 ? { resultMode: "discard" as const }
                 : {}),
               capabilities: opts.capabilities,
@@ -355,19 +356,21 @@ export async function runProcWorker(
             });
             transaction.usage.operations += result.operations;
             transaction.usage.savedValuesLoaded += result.trace.savedValueLoads;
-            transaction.usage.consoleAttempts += result.consoleOutput.length;
+            transaction.usage.consoleAttempts += result.consoleAttempts;
             const effectSummary = summarizeExecutionEffects(effects);
             const operationWarning =
               result.operations >= OPERATION_WARNING_THRESHOLD
                 ? `${result.operations} operations. Use fs.glob/fs.grep or batch work; avoid path-by-path traversal.`
                 : undefined;
             if (args.save_as === null) {
-              const workerOutput = projectWorkerOutput(
-                transaction.id,
-                result.consoleOutput,
-              );
-              transaction.usage.workerVisibleOutputs +=
-                result.consoleOutput.length;
+              const projection =
+                args.view === "value"
+                  ? projectProcValue(result.value, {
+                      mode: "exact",
+                      maxBytes: WORKER_VALUE_BYTES,
+                      store: false,
+                    })
+                  : undefined;
               recordExecutionFeedback(
                 opts.emit,
                 transaction,
@@ -377,10 +380,20 @@ export async function runProcWorker(
                 true,
                 {
                   save_as: null,
-                  ...(workerOutput !== undefined
-                    ? { worker_output: workerOutput }
+                  view: args.view,
+                  ...(projection?.projection !== undefined
+                    ? { value: projection.projection }
                     : {}),
-                  ...(operationWarning ? { warnings: [operationWarning] } : {}),
+                  ...(operationWarning || result.consoleAttempts > 0
+                    ? {
+                        warnings: [
+                          operationWarning,
+                          consoleWarning(result.consoleAttempts),
+                        ].filter(
+                          (warning): warning is string => warning !== undefined,
+                        ),
+                      }
+                    : {}),
                   operations: result.operations,
                   effects: effectSummary,
                   effects_total: effects.length,
@@ -389,8 +402,11 @@ export async function runProcWorker(
               continue;
             }
             const policy: ProcOutputPolicy = {
-              mode: "shape",
-              maxBytes: SAVED_VALUE_SHAPE_BYTES,
+              mode: args.view === "shape" ? "shape" : "exact",
+              maxBytes:
+                args.view === "shape"
+                  ? SAVED_VALUE_SHAPE_BYTES
+                  : WORKER_VALUE_BYTES,
               store: true,
             };
             retainedResult = createNamedProcResult({
@@ -400,16 +416,8 @@ export async function runProcWorker(
               value: result.value,
             });
             transaction.usage.savedValuesCreated++;
-            const workerOutput = projectWorkerOutput(
-              transaction.id,
-              result.consoleOutput,
-            );
-            transaction.usage.workerVisibleOutputs +=
-              result.consoleOutput.length;
             const madeNoProgress =
-              result.operations === 0 &&
-              result.trace.savedValueLoads > 0 &&
-              result.consoleOutput.length === 0;
+              result.operations === 0 && result.trace.savedValueLoads > 0;
             if (madeNoProgress) {
               consecutiveNonProgress++;
               transaction.usage.nonProgressExecutions++;
@@ -427,16 +435,17 @@ export async function runProcWorker(
               consecutiveNonProgress >= 2
                 ? `${consecutiveNonProgress} unchanged load-resave cycles. Stop resaving unchanged data.`
                 : undefined,
+              consoleWarning(result.consoleAttempts),
             ].filter((warning): warning is string => warning !== undefined);
             const feedback = {
               save_as: args.save_as,
               value_bytes: retainedResult.bytes,
-              structure: projection.projection,
-              structure_bytes: projection.projectionBytes,
+              view: args.view,
+              ...(args.view === "shape"
+                ? { shape: projection.projection }
+                : { value: projection.projection }),
+              view_bytes: projection.projectionBytes,
               truncated: projection.truncated,
-              ...(workerOutput !== undefined
-                ? { worker_output: workerOutput }
-                : {}),
               ...(warnings.length > 0 ? { warnings } : {}),
               operations: result.operations,
               effects: effectSummary,
@@ -489,7 +498,7 @@ export async function runProcWorker(
             });
             transaction.usage.operations += result.operations;
             transaction.usage.savedValuesLoaded += result.trace.savedValueLoads;
-            transaction.usage.consoleAttempts += result.consoleOutput.length;
+            transaction.usage.consoleAttempts += result.consoleAttempts;
             const projection = projectProcValue(
               result.value,
               transaction.outputPolicy,
@@ -524,6 +533,9 @@ export async function runProcWorker(
                   stored?.bytes ??
                   Buffer.byteLength(JSON.stringify(result.value)),
                 operations: result.operations,
+                ...(result.consoleAttempts > 0
+                  ? { warnings: [consoleWarning(result.consoleAttempts)] }
+                  : {}),
               }),
             );
             emitCompleted(opts, transaction);
@@ -715,6 +727,13 @@ function workerToolSpecs(): ExtractorToolSpec[] {
               pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
               description: "Unique loadValue(name) key; null causes discard",
             },
+            view: {
+              type: "string",
+              enum: ["shape", "value"],
+              description:
+                "Strongly prefer shape. Exception: request value only for reasoning JavaScript cannot perform, after reducing the result to the minimum evidence needed.",
+              default: "shape",
+            },
           },
           required: ["needed_for", "javascript", "save_as"],
           additionalProperties: false,
@@ -761,31 +780,10 @@ function workerToolSpecs(): ExtractorToolSpec[] {
   ];
 }
 
-function projectWorkerOutput(
-  transactionId: string,
-  output: Array<{ level: string; values: unknown[] }>,
-): unknown | undefined {
-  if (output.length === 0) return undefined;
-  try {
-    const projection = projectProcValue(output, {
-      mode: "exact",
-      maxBytes: EMERGENCY_WORKER_VALUE_BYTES,
-      store: false,
-    });
-    log.info("proc.worker.console_captured", {
-      transactionId,
-      entries: output.length,
-      bytes: projection.projectionBytes,
-    });
-    return projection.projection;
-  } catch (error) {
-    log.warn("proc.worker.console_overflow", {
-      transactionId,
-      entries: output.length,
-      limitBytes: EMERGENCY_WORKER_VALUE_BYTES,
-    });
-    throw error;
-  }
+function consoleWarning(attempts: number): string | undefined {
+  return attempts > 0
+    ? `console is unsupported; discarded arguments from ${attempts} call(s). Return required data and choose view instead.`
+    : undefined;
 }
 
 function parseArgs(raw: string): unknown {

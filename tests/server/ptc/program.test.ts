@@ -404,11 +404,12 @@ describe("program runtime", () => {
           ]);
         }
         if (name === stat.name) {
+          const path = (args as { path: string }).path;
           return ok({
-            directory: args.path.endsWith("/dir"),
-            file: !args.path.endsWith("/dir"),
+            directory: path.endsWith("/dir"),
+            file: !path.endsWith("/dir"),
             symbolicLink: false,
-            size: args.path.endsWith("/dir") ? 0 : 2,
+            size: path.endsWith("/dir") ? 0 : 2,
             mtimeMs: 0,
           });
         }
@@ -432,7 +433,7 @@ describe("program runtime", () => {
     await expect(run).rejects.toThrow(/node:crypto/);
   });
 
-  it("captures structured console output without changing the completion value", async () => {
+  it("counts unsupported console calls without retaining their arguments", async () => {
     const result = await runProgram({
       source: `
         const evidence = { answer: 42 };
@@ -450,25 +451,19 @@ describe("program runtime", () => {
     });
 
     expect(result.value).toBe("complete");
-    expect(result.consoleOutput).toEqual([
-      { level: "log", values: ["candidate", { answer: 42 }] },
-      { level: "info", values: [{ phase: "inspect" }] },
-      { level: "warn", values: [["check"]] },
-      { level: "error", values: [null] },
-      { level: "debug", values: [true] },
-    ]);
+    expect(result.consoleAttempts).toBe(5);
   });
 
-  it("rejects circular console values with actionable guidance", async () => {
-    await expect(
-      runProgram({
-        source:
-          "const circular = {}; circular.self = circular; console.log(circular); return 'done';",
-        capabilities: new Map(),
-        execute: async () => ok(),
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Console args: not JSON-compatible");
+  it("does not inspect unsupported console arguments", async () => {
+    const result = await runProgram({
+      source:
+        "const circular = {}; circular.self = circular; console.log(circular); return 'done';",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({ value: "done", consoleAttempts: 1 });
   });
 
   it("rejects programs without a completion value", async () => {

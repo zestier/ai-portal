@@ -67,10 +67,7 @@ interface ProgramInlineOptions extends ProgramRunOptions {
 
 export interface ProgramRunResult {
   value: unknown;
-  consoleOutput: Array<{
-    level: "log" | "info" | "warn" | "error" | "debug";
-    values: unknown[];
-  }>;
+  consoleAttempts: number;
   operations: number;
   trace: {
     sourceHash: string;
@@ -163,7 +160,7 @@ export async function runProgram(
 
   return {
     value: result.value,
-    consoleOutput: result.consoleOutput,
+    consoleAttempts: result.consoleAttempts,
     operations,
     trace: {
       sourceHash: hash(opts.source),
@@ -581,24 +578,14 @@ export async function runProgramInline(
         "Module unavailable: " + String(name) + ". Use predeclared fs, path, git, command, tools, or loadValue."
       );
     };
-    const consoleOutput = [];
-    const captureConsole = (level, ...values) => {
-      let snapshot;
-      try {
-        snapshot = JSON.parse(JSON.stringify(values));
-      } catch (error) {
-        throw new TypeError(
-          "Console args: not JSON-compatible: " + String(error?.message ?? error)
-        );
-      }
-      consoleOutput.push(Object.freeze({ level, values: deepFreeze(snapshot) }));
-    };
+    let consoleAttempts = 0;
+    const unsupportedConsole = () => { consoleAttempts++; };
     const consoleApi = Object.freeze({
-      log: (...values) => captureConsole("log", ...values),
-      info: (...values) => captureConsole("info", ...values),
-      warn: (...values) => captureConsole("warn", ...values),
-      error: (...values) => captureConsole("error", ...values),
-      debug: (...values) => captureConsole("debug", ...values)
+      log: unsupportedConsole,
+      info: unsupportedConsole,
+      warn: unsupportedConsole,
+      error: unsupportedConsole,
+      debug: unsupportedConsole
     });
     Object.defineProperties(globalThis, {
       fs: { value: fsApi, writable: false, configurable: false },
@@ -609,9 +596,8 @@ export async function runProgramInline(
       loadValue: { value: loadValue, writable: false, configurable: false },
       require: { value: requireModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false },
-      __ptcConsoleOutput: {
-        value: consoleOutput,
-        writable: false,
+      __ptcConsoleAttempts: {
+        get: () => consoleAttempts,
         configurable: false,
         enumerable: false
       }
@@ -644,10 +630,10 @@ export async function runProgramInline(
     }
     try {
       if (opts.resultMode === "discard") {
-        const consoleOutput = await dumpConsoleOutput();
+        const consoleAttempts = await readConsoleAttempts();
         return {
           value: undefined,
-          consoleOutput,
+          consoleAttempts,
           operations,
           trace: {
             sourceHash: hash(opts.source),
@@ -667,10 +653,10 @@ export async function runProgramInline(
       if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
         throw new Error("Result exceeds 5 MiB.");
       }
-      const consoleOutput = await dumpConsoleOutput();
+      const consoleAttempts = await readConsoleAttempts();
       return {
         value,
-        consoleOutput,
+        consoleAttempts,
         operations,
         trace: {
           sourceHash: hash(opts.source),
@@ -686,16 +672,14 @@ export async function runProgramInline(
     vm.dispose();
   }
 
-  async function dumpConsoleOutput(): Promise<
-    ProgramRunResult["consoleOutput"]
-  > {
+  async function readConsoleAttempts(): Promise<number> {
     const evaluation = await vm.evalCodeAsync(
-      "globalThis.__ptcConsoleOutput",
+      "globalThis.__ptcConsoleAttempts",
       "sandbox.js",
     );
     const handle = vm.unwrapResult(evaluation);
     try {
-      return vm.dump(handle) as ProgramRunResult["consoleOutput"];
+      return vm.dump(handle) as number;
     } finally {
       handle.dispose();
     }

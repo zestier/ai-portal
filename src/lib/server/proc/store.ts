@@ -23,7 +23,6 @@ export interface ProcUsage {
   savedValuesCreated: number;
   savedValuesLoaded: number;
   consoleAttempts: number;
-  workerVisibleOutputs: number;
   nonProgressExecutions: number;
 }
 
@@ -57,7 +56,6 @@ const EMPTY_USAGE: ProcUsage = {
   savedValuesCreated: 0,
   savedValuesLoaded: 0,
   consoleAttempts: 0,
-  workerVisibleOutputs: 0,
   nonProgressExecutions: 0,
 };
 

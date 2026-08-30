@@ -181,10 +181,11 @@ describe("proc worker", () => {
     expect(PROC_WORKER_SYSTEM).toContain(
       "Procedure steps are not execution boundaries",
     );
+    expect(PROC_WORKER_SYSTEM).toContain("Strongly prefer view: shape");
     expect(PROC_WORKER_SYSTEM).toContain(
-      "Logs are parsed into your next turn and consume context",
+      "Exception: request value only for reasoning JavaScript cannot perform",
     );
-    expect(PROC_WORKER_SYSTEM).toContain("Log minimum evidence");
+    expect(PROC_WORKER_SYSTEM).toContain("minimum evidence needed");
     expect(PROC_WORKER_SYSTEM).toContain("exact allowlist");
     expect(PROC_WORKER_SYSTEM).toContain("run sequentially");
     expect(PROC_WORKER_SYSTEM).toContain("finish returns the final result");
@@ -405,7 +406,7 @@ describe("proc worker", () => {
         expect.objectContaining({
           type: "tool.result",
           parentToolCallId: "X42",
-          output: expect.stringContaining("structure"),
+          output: expect.stringContaining("shape"),
         }),
       ]),
     );
@@ -435,6 +436,13 @@ describe("proc worker", () => {
     expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
       "max_bytes",
     );
+    expect(workerTools[0]?.function.parameters.properties.view).toMatchObject({
+      enum: ["shape", "value"],
+      default: "shape",
+      description: expect.stringContaining(
+        "reasoning JavaScript cannot perform",
+      ),
+    });
     expect(
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
@@ -586,7 +594,7 @@ describe("proc worker", () => {
     );
   });
 
-  it("shows bounded console evidence while preserving the full returned value", async () => {
+  it("defaults to shape feedback and warns without exposing console arguments", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
@@ -605,14 +613,17 @@ describe("proc worker", () => {
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          worker_output: unknown;
+          view: string;
+          shape: string;
+          warnings: string[];
         };
-        expect(feedback.worker_output).toEqual([
-          {
-            level: "log",
-            values: [{ candidates: ["src/a.ts"] }],
-          },
+        expect(feedback.view).toBe("shape");
+        expect(feedback.shape).toContain("path: string");
+        expect(feedback.warnings).toEqual([
+          "console is unsupported; discarded arguments from 1 call(s). Return required data and choose view instead.",
         ]);
+        expect(feedback).not.toHaveProperty("worker_output");
+        expect(feedback).not.toHaveProperty("value");
         return {
           content: "",
           toolCalls: [
@@ -673,13 +684,12 @@ describe("proc worker", () => {
         savedValuesCreated: 1,
         savedValuesLoaded: 1,
         consoleAttempts: 1,
-        workerVisibleOutputs: 1,
         nonProgressExecutions: 0,
       },
     });
   });
 
-  it("retains the returned value when console evidence exceeds its guard", async () => {
+  it("returns the full value on request and discards circular console arguments", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
@@ -688,23 +698,26 @@ describe("proc worker", () => {
             id: "oversized-console",
             name: "execute",
             arguments: JSON.stringify({
-              needed_for: "Preserving results while inspecting evidence",
+              needed_for: "Inspecting the exact selected result",
               javascript:
-                "const full = { selected: 'src/a.ts' }; console.log('x'.repeat(65 * 1024)); return full;",
+                "const full = { selected: 'src/a.ts' }; const circular = {}; circular.self = circular; console.log(circular); return full;",
               save_as: "full_result",
+              view: "value",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
+          view: string;
+          value: unknown;
           value_bytes: number;
-          error: string;
-          instruction: string;
+          warnings: string[];
         };
-        expect(feedback.error).toContain("transport limit 65536B");
+        expect(feedback.view).toBe("value");
+        expect(feedback.value).toEqual({ selected: "src/a.ts" });
         expect(feedback.value_bytes).toBeGreaterThan(0);
-        expect(feedback.instruction).toContain('loadValue("full_result")');
+        expect(feedback.warnings[0]).toContain("console is unsupported");
         return {
           content: "",
           toolCalls: [
@@ -764,7 +777,6 @@ describe("proc worker", () => {
         savedValuesCreated: 1,
         savedValuesLoaded: 1,
         consoleAttempts: 1,
-        workerVisibleOutputs: 0,
       },
     });
   });
