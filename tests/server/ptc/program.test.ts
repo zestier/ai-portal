@@ -370,6 +370,31 @@ describe("program runtime", () => {
     expect(result.value).toEqual({ fs: true, path: true, joined: "tests" });
   });
 
+  it("reads retained values through the read-only store proxy", async () => {
+    const result = await runProgram({
+      source: `
+        const { rows } = store;
+        return { first: rows[0], same: store.rows === rows };
+      `,
+      capabilities: new Map(),
+      savedValues: {
+        get: (name) => (name === "rows" ? [{ id: 1 }] : undefined),
+      },
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual({ first: { id: 1 }, same: true });
+    await expect(
+      runProgram({
+        source: "store.rows = [];",
+        capabilities: new Map(),
+        savedValues: { get: () => [] },
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("proc store is read-only");
+  });
+
   it("allows programs to shadow predeclared globals", async () => {
     const readdir = tool("__ptc_fs_readdir");
     const stat = tool("__ptc_fs_stat");
@@ -428,7 +453,7 @@ describe("program runtime", () => {
       signal: new AbortController().signal,
     });
     await expect(run).rejects.toThrow(
-      /predeclared fs, path, git, command, tools/,
+      /predeclared search, fs, path, git, command, tools/,
     );
     await expect(run).rejects.toThrow(/node:crypto/);
   });
@@ -757,9 +782,9 @@ describe("program runtime", () => {
     const result = await runProgram({
       source: `
         return {
-          glob: fs.glob("**/*.ts", { path: "src", maxDepth: 2, includeIgnored: true }),
+          glob: search.glob("**/*.ts", { path: "src", maxDepth: 2, includeIgnored: true }),
           globSync: fs.globSync(["**/*.test.ts", "**/*.spec.ts"], { path: "tests" }),
-          grep: fs.grep("needle", { path: "src", caseInsensitive: true, includeIgnored: true }),
+          grep: search.grep("needle", { path: "src", caseInsensitive: true, includeIgnored: true }),
           grepSync: fs.grepSync("other", { glob: "*.ts" }),
           grepRegex: fs.grep(/needle|other/i),
           status: git.status(),

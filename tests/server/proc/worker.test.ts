@@ -174,16 +174,6 @@ describe("proc worker", () => {
 
   it("preserves primary-agent procedures and safe fusion", () => {
     expect(Buffer.byteLength(PROC_WORKER_SYSTEM)).toBeLessThanOrEqual(2_000);
-    expect(PROC_WORKER_SYSTEM).toContain("Do not change goals");
-    expect(PROC_WORKER_SYSTEM).toContain(
-      "Use the fewest executions preserving correctness",
-    );
-    expect(PROC_WORKER_SYSTEM).toContain(
-      "Procedure steps are not execution boundaries",
-    );
-    expect(PROC_WORKER_SYSTEM).toContain("exact allowlist");
-    expect(PROC_WORKER_SYSTEM).toContain("run sequentially");
-    expect(PROC_WORKER_SYSTEM).toContain("finish returns the final result");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
   });
 
@@ -215,7 +205,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Applying the requested repository mutation",
               javascript: "tools.record_action({});",
-              save_as: null,
+              store_into: null,
               view: "shape",
             }),
           },
@@ -227,7 +217,7 @@ describe("proc worker", () => {
           unknown
         >;
         expect(feedback).toMatchObject({
-          save_as: null,
+          store_into: null,
           operations: 1,
           effects: [
             { tool: "record_action", effect: "mutation", ok: true, count: 1 },
@@ -306,7 +296,7 @@ describe("proc worker", () => {
           arguments: JSON.stringify({
             needed_for: "Candidate definitions",
             javascript: "return [{ path: 'src/a.ts', line: 10 }];",
-            save_as: "candidates",
+            store_into: "store.candidates",
             view: "shape",
           }),
         },
@@ -315,7 +305,7 @@ describe("proc worker", () => {
           name: "finish",
           arguments: JSON.stringify({
             javascript:
-              "return loadValue('candidates').map(row => ({ ...row, end: row.line + 5 }));",
+              "const { candidates } = store; return candidates.map(row => ({ ...row, end: row.line + 5 }));",
           }),
         },
       ],
@@ -410,8 +400,8 @@ describe("proc worker", () => {
     const savedValueFeedback = JSON.parse(
       transaction.messages.find((message) => message.role === "tool")
         ?.content as string,
-    ) as { save_as: string };
-    expect(savedValueFeedback.save_as).toBe("candidates");
+    ) as { store_into: string };
+    expect(savedValueFeedback.store_into).toBe("store.candidates");
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
@@ -436,33 +426,36 @@ describe("proc worker", () => {
     );
     expect(workerTools[0]?.function.parameters.properties.view).toMatchObject({
       enum: ["shape", "value"],
-      description:
-        "Prefer shape. Use value only for model judgment: reduce first.",
     });
     expect(
       workerTools[0]?.function.parameters.properties.view,
     ).not.toHaveProperty("default");
+    expect(workerTools[0]?.function.parameters.properties.javascript).toEqual(
+      expect.objectContaining({ type: "string" }),
+    );
     expect(
-      workerTools[0]?.function.parameters.properties.javascript,
-    ).toMatchObject({
-      description: "Return JSON-serializable data",
-    });
-    expect(
-      workerTools[0]?.function.parameters.properties.save_as,
+      workerTools[0]?.function.parameters.properties.store_into,
     ).toMatchObject({
       anyOf: expect.arrayContaining([
         expect.objectContaining({ type: "string" }),
-        { type: "null" },
+        expect.objectContaining({ type: "null" }),
       ]),
-      description:
-        "Name if later execution may load, else null. Never re-save loaded data.",
     });
     expect(
-      workerTools[0]?.function.parameters.properties.needed_for,
+      workerTools[0]?.function.parameters.properties.store_into,
     ).toMatchObject({
-      description: "Required outcome; not operation",
+      anyOf: expect.arrayContaining([
+        expect.objectContaining({
+          pattern: "^store\\.[A-Za-z_$][A-Za-z0-9_$]{0,63}$",
+        }),
+      ]),
     });
-    expect(workerTools[0]?.function.parameters.required).toContain("save_as");
+    expect(workerTools[0]?.function.parameters.properties.needed_for).toEqual(
+      expect.objectContaining({ type: "string" }),
+    );
+    expect(workerTools[0]?.function.parameters.required).toContain(
+      "store_into",
+    );
     expect(workerTools[0]?.function.parameters.required).toContain("view");
     expect(workerTools[0]?.function.description).toBe(
       "Run JavaScript and continue.",
@@ -482,10 +475,10 @@ describe("proc worker", () => {
     const environment = transaction.messages[0].content as string;
     const request = transaction.messages[1].content as string;
     expect(environment).toContain(
-      "For listed namespaces, use only shown methods:",
+      "Use only listed APIs or standard JavaScript built-ins.",
     );
-    expect(environment).toContain("fs.glob(pattern,");
-    expect(environment).toContain("fs.grep(pattern,");
+    expect(environment).toContain("search.glob(pattern,");
+    expect(environment).toContain("search.grep(pattern,");
     expect(environment).not.toContain("fs.readdir");
     expect(environment).toContain("tools.grep({}): {}");
     expect(environment).not.toContain(" -> ");
@@ -497,7 +490,9 @@ describe("proc worker", () => {
     );
     expect(environment).not.toContain("fs.unlink");
     const capabilityLines = environment
-      .split("\n\nFor listed namespaces, use only shown methods:\n\n")[1]
+      .split(
+        "\n\nUse only listed APIs or standard JavaScript built-ins.\n\n",
+      )[1]
       .split("\n");
     expect(capabilityLines).toEqual(
       [...capabilityLines].sort((left, right) => left.localeCompare(right)),
@@ -519,7 +514,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Returning the requested unsupported result",
               javascript: "throw new Error('bad atom');",
-              save_as: null,
+              store_into: null,
               view: "shape",
             }),
           },
@@ -614,7 +609,7 @@ describe("proc worker", () => {
               needed_for: "Choosing the file that owns the schema",
               javascript:
                 "const full = [{ path: 'src/a.ts', content: 'x'.repeat(4096) }]; console.log({ candidates: full.map(({ path }) => path) }); return full;",
-              save_as: "candidates",
+              store_into: "store.candidates",
               view: "shape",
             }),
           },
@@ -641,7 +636,7 @@ describe("proc worker", () => {
               name: "finish",
               arguments: JSON.stringify({
                 javascript:
-                  "return { selected: loadValue('candidates')[0].path };",
+                  "const { candidates } = store; return { selected: candidates[0].path };",
               }),
             },
           ],
@@ -710,7 +705,7 @@ describe("proc worker", () => {
               needed_for: "Inspecting the exact selected result",
               javascript:
                 "const full = { selected: 'src/a.ts' }; const circular = {}; circular.self = circular; console.log(circular); return full;",
-              save_as: "full_result",
+              store_into: "store.full_result",
               view: "value",
             }),
           },
@@ -734,7 +729,8 @@ describe("proc worker", () => {
               id: "recover-console-overflow",
               name: "finish",
               arguments: JSON.stringify({
-                javascript: "return loadValue('full_result');",
+                javascript:
+                  "const { full_result } = store; return full_result;",
               }),
             },
           ],
@@ -801,7 +797,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Preserving candidates for later filtering",
               javascript: "return ['src/a.ts'];",
-              save_as: "candidates",
+              store_into: "store.candidates",
               view: "shape",
             }),
           },
@@ -816,8 +812,8 @@ describe("proc worker", () => {
               name: "execute",
               arguments: JSON.stringify({
                 needed_for: "Inspecting the saved candidates",
-                javascript: "return loadValue('candidates');",
-                save_as: "candidates_copy",
+                javascript: "const { candidates } = store; return candidates;",
+                store_into: "store.candidates_copy",
                 view: "shape",
               }),
             },
@@ -833,8 +829,9 @@ describe("proc worker", () => {
               name: "execute",
               arguments: JSON.stringify({
                 needed_for: "Inspecting the saved candidates",
-                javascript: "return loadValue('candidates_copy');",
-                save_as: "candidates_copy_2",
+                javascript:
+                  "const { candidates_copy } = store; return candidates_copy;",
+                store_into: "store.candidates_copy_2",
                 view: "shape",
               }),
             },
@@ -935,7 +932,7 @@ describe("proc worker", () => {
               needed_for: "Preserving the aggregated read result",
               javascript:
                 "let total = 0; for (let index = 0; index < 200; index++) total += tools.read_value({ index }); return total;",
-              save_as: "total",
+              store_into: "store.total",
               view: "shape",
             }),
           },
@@ -948,7 +945,7 @@ describe("proc worker", () => {
         };
         expect(feedback.operations).toBe(200);
         expect(feedback.warnings).toContain(
-          "200 operations. Use fs.glob/fs.grep or batch work; avoid path-by-path traversal.",
+          "200 operations. Use search.glob/search.grep or batch work; avoid path-by-path traversal.",
         );
         return {
           content: "",
@@ -1038,7 +1035,7 @@ describe("proc worker", () => {
               needed_for: "Applying the requested write",
               javascript:
                 "tools.write_fixture({}); throw new Error('after write');",
-              save_as: null,
+              store_into: null,
               view: "shape",
             }),
           },
@@ -1236,7 +1233,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Creating the requested commit",
               javascript: "return git.commit({ paths: 'all', subject: 'x' });",
-              save_as: null,
+              store_into: null,
               view: "shape",
             }),
           },

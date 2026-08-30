@@ -110,7 +110,7 @@ export async function runProgram(
       operations++;
       if (operations > MAX_TOTAL_OPERATIONS) {
         throw new Error(
-          `${MAX_TOTAL_OPERATIONS} operations max. Use fs.glob/fs.grep, not stat/read per path.`,
+          `${MAX_TOTAL_OPERATIONS} operations max. Use search.glob/search.grep, not stat/read per path.`,
         );
       }
       if (signal.aborted) throw new Error("Execution aborted.");
@@ -481,6 +481,10 @@ export async function runProgramInline(
       globSync: fsMethods.glob,
       grepSync: fsMethods.grep
     });
+    const searchApi = Object.freeze({
+      glob: fsMethods.glob,
+      grep: fsMethods.grep
+    });
     const gitApi = Object.freeze({
       status(options = {}) {
         return callTool("git_status", options);
@@ -575,7 +579,7 @@ export async function runProgramInline(
       if (name === "fs" || name === "node:fs") return fsApi;
       if (name === "path" || name === "node:path") return pathApi;
       throw new Error(
-        "Module unavailable: " + String(name) + ". Use predeclared fs, path, git, command, tools, or loadValue."
+        "Module unavailable: " + String(name) + ". Use predeclared search, fs, path, git, command, tools, store, or loadValue."
       );
     };
     let consoleAttempts = 0;
@@ -589,11 +593,28 @@ export async function runProgramInline(
     });
     Object.defineProperties(globalThis, {
       fs: { value: fsApi, writable: false, configurable: false },
+      search: { value: searchApi, writable: false, configurable: false },
       path: { value: pathApi, writable: false, configurable: false },
       git: { value: gitApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },
       loadValue: { value: loadValue, writable: false, configurable: false },
+      store: {
+        value: new Proxy(Object.create(null), {
+          get(_target, property) {
+            if (typeof property !== "string") return undefined;
+            return loadValue(property);
+          },
+          set() {
+            throw new TypeError("proc store is read-only.");
+          },
+          deleteProperty() {
+            throw new TypeError("proc store is read-only.");
+          }
+        }),
+        writable: false,
+        configurable: false
+      },
       require: { value: requireModule, writable: false, configurable: false },
       console: { value: consoleApi, writable: false, configurable: false },
       __ptcConsoleAttempts: {
@@ -693,7 +714,7 @@ export async function runProgramInline(
     operations++;
     if (operations > MAX_TOTAL_OPERATIONS) {
       throw new Error(
-        `${MAX_TOTAL_OPERATIONS} operations max. Use fs.glob/fs.grep, not stat/read per path.`,
+        `${MAX_TOTAL_OPERATIONS} operations max. Use search.glob/search.grep, not stat/read per path.`,
       );
     }
     if (opts.signal.aborted) throw new Error("Execution aborted.");

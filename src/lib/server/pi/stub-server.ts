@@ -149,11 +149,7 @@ async function handleRequest(
   // with plain text — the directive isn't re-triggered, so the loop ends.
   const sequence = parseToolSequenceDirective(userText);
   const completedToolCalls = countAssistantToolCalls(body.messages);
-  const procToolCall = parseProcWorkerDirective(
-    lastSystemPrompt,
-    userText,
-    completedToolCalls,
-  );
+  const procToolCall = parseProcWorkerDirective(userText, completedToolCalls);
   const toolCall =
     procToolCall ??
     (sequence
@@ -361,15 +357,9 @@ function parseToolSequenceDirective(
 }
 
 function parseProcWorkerDirective(
-  system: string,
   userText: string,
   completedToolCalls: number,
 ): { name: string; args: string } | null {
-  if (
-    !system.includes("Execute the supplied procedure exactly.") ||
-    !system.includes("finish returns the final result")
-  )
-    return null;
   let procedure: string;
   try {
     const request = JSON.parse(userText) as { procedure?: unknown };

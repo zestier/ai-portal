@@ -44,13 +44,13 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
     {
       name: "proc",
       description:
-        "Execute a specified repository procedure; keep routine intermediates out of context.",
+        "Execute a specified repository procedure; keep routine intermediates in proc store.",
       promptSnippet:
         "Execute a specified procedure with JavaScript data reduction.",
       promptGuidelines: [
-        "Provide ordered steps, selection/exclusion rules, and a stop condition.",
-        "Define exact result shape, fields, evidence, order, and completeness. result_requirements is an allowlist, not a minimum.",
-        "Request the final needed result only. Reduce broad reads in JavaScript; no raw responses, candidate corpora, paging, or unrequested detail.",
+        "Give ordered steps, selection rules, exclusions, and stop condition.",
+        "Define exact final shape, fields, evidence, order, and completeness. result_requirements is an allowlist.",
+        "Request focused facts or evidence. Reduce broad reads in JavaScript; do not return raw corpora, pages, or unrequested detail.",
       ],
       argsSchema: ProcArgs,
       parameters: {

@@ -35,6 +35,7 @@ const MAX_TRANSCRIPT_BYTES = 128 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
 const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
 const OPERATION_WARNING_THRESHOLD = 200;
+const STORE_DESTINATION = /^store\.[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 
 const ExecuteArgs = z
   .object({
@@ -42,23 +43,23 @@ const ExecuteArgs = z
       .string()
       .min(1)
       .max(1_000)
-      .describe("Required outcome; not operation"),
+      .describe("Why this execution is needed; not what it does"),
     javascript: z
       .string()
       .min(1)
       .max(20_000)
       .describe("Return JSON-serializable data"),
-    save_as: z
+    store_into: z
       .string()
-      .regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)
+      .regex(STORE_DESTINATION)
       .nullable()
       .describe(
-        "Name if later execution may load, else null. Never re-save loaded data.",
+        "Save full result for later execute calls as store.<key> if result may help later. Use null if not.",
       ),
     view: z
       .enum(["shape", "value"])
       .describe(
-        "Prefer shape. Use value only for model judgment: reduce first.",
+        "Choose worker feedback. shape shows result form with little data. value shows result data; reduce to small, selected data first.",
       ),
   })
   .strict();
@@ -79,16 +80,15 @@ const CannotExecuteArgs = z
   })
   .strict();
 
-export const PROC_WORKER_SYSTEM = `Execute the supplied procedure exactly. Do not change goals, method, criteria, or consequential decisions.
+export const PROC_WORKER_SYSTEM = `Realize the supplied procedure exactly. Do not change its goal, method, criteria, or consequential decisions.
 
 Rules:
-- Fuse adjacent work only when confident and safe. Use the fewest executions preserving correctness, recoverability, and clear data flow. Procedure steps are not execution boundaries.
-- JavaScript decides everything deterministic. Search, parse, transform, compare, aggregate, edit, and validate there.
-- execute continues. Saved contents stay out of model context; read with loadValue(name).
-- Calls in one turn run sequentially. First failure cancels the rest.
-- finish returns the final result and stops.
-- result_requirements is the exact allowlist and completion test. No raw tool responses, intermediate candidates, or extra context.
-- Fix mechanical errors. If continuing requires an invented consequential instruction or decision, call cannot_execute and name what is missing.`;
+- Use JavaScript for deterministic search, parsing, transformation, comparison, aggregation, edits, and validation.
+- Fuse adjacent mechanical work. Use fewest reliable executions. Procedure steps are not execution boundaries.
+- Calls in one turn run sequentially; first failure cancels the rest.
+- execute continues. finish returns the final result and stops. cannot_execute stops when a missing instruction or decision blocks work.
+- result_requirements is the exact final allowlist and completion test.
+- Repair mechanical errors. Do not invent missing instructions or decisions.`;
 
 export interface ProcWorkerOptions {
   transaction: ProcTransaction;
@@ -118,8 +118,8 @@ const PROC_GLOBAL_CONTRACTS = [
   "command.run(executable, args?, { cwd?, stdin?, timeoutMs? }): { status, stdout, stderr }",
   "fs.copyFile(from, to) // UTF8 text only",
   "fs.exists(path)",
-  "fs.glob(pattern, { path?, maxDepth?, includeIgnored? }): string[] // workspace-relative; ripgrep rules",
-  "fs.grep(pattern, { path?, glob?, caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // workspace-relative; 1-based positions; ripgrep rules",
+  "search.glob(pattern, { path?, maxDepth?, includeIgnored? }): string[] // find repository paths; ripgrep rules",
+  "search.grep(pattern, { path?, glob?, caseInsensitive?, includeIgnored? }): { path, line, column, text }[] // find repository content; ripgrep rules",
   "fs.mkdir(path) // recursive and idempotent",
   'fs.readFile(path, "utf8")',
   "fs.readLines(path, { start?, end? }): { text, start, end, totalLines } // 1-based, inclusive",
@@ -134,7 +134,7 @@ const PROC_GLOBAL_CONTRACTS = [
   "git.show(ref, path) // file contents at ref",
   "git.status(): { head, merge, changes } // branch/upstream, active operation/conflicts, staged/worktree status",
   "git.worktreeMerge({ direction: 'to-source'|'from-source', allowMergeCommit?, squash?, onConflict? }): { merged, into, from, fastForward, squashedCommits, headSha }",
-  "loadValue(name) // immutable value saved by an earlier execute",
+  "store.<key> // read result stored by earlier execute",
   "path.basename(path, suffix?)",
   "path.dirname(path)",
   "path.extname(path)",
@@ -170,7 +170,7 @@ function procEnvironmentPrompt(
     ...PROC_GLOBAL_CONTRACTS,
     ...contracts.map(formatProgramContract),
   ].sort((left, right) => left.localeCompare(right));
-  return `For listed namespaces, use only shown methods:\n\n${capabilities.join("\n")}`;
+  return `Use only listed APIs or standard JavaScript built-ins.\n\n${capabilities.join("\n")}`;
 }
 
 function formatProgramContract(contract: Record<string, unknown>): string {
@@ -343,7 +343,7 @@ export async function runProcWorker(
             transaction.usage.executions++;
             const result = await runProgram({
               source: args.javascript,
-              ...(args.save_as === null && args.view === "shape"
+              ...(args.store_into === null && args.view === "shape"
                 ? { resultMode: "discard" as const }
                 : {}),
               capabilities: opts.capabilities,
@@ -381,9 +381,9 @@ export async function runProcWorker(
             const effectSummary = summarizeExecutionEffects(effects);
             const operationWarning =
               result.operations >= OPERATION_WARNING_THRESHOLD
-                ? `${result.operations} operations. Use fs.glob/fs.grep or batch work; avoid path-by-path traversal.`
+                ? `${result.operations} operations. Use search.glob/search.grep or batch work; avoid path-by-path traversal.`
                 : undefined;
-            if (args.save_as === null) {
+            if (args.store_into === null) {
               const projection =
                 args.view === "value"
                   ? projectProcValue(result.value, {
@@ -400,7 +400,7 @@ export async function runProcWorker(
                 procId,
                 true,
                 {
-                  save_as: null,
+                  store_into: null,
                   view: args.view,
                   ...(projection?.projection !== undefined
                     ? { value: projection.projection }
@@ -433,7 +433,7 @@ export async function runProcWorker(
             retainedResult = createNamedProcResult({
               transactionId: transaction.id,
               conversationId: transaction.conversationId,
-              name: args.save_as,
+              name: storeKeyName(args.store_into),
               value: result.value,
             });
             transaction.usage.savedValuesCreated++;
@@ -459,7 +459,7 @@ export async function runProcWorker(
               consoleWarning(result.consoleAttempts),
             ].filter((warning): warning is string => warning !== undefined);
             const feedback = {
-              save_as: args.save_as,
+              store_into: args.store_into,
               value_bytes: retainedResult.bytes,
               view: args.view,
               ...(args.view === "shape"
@@ -608,7 +608,7 @@ export async function runProcWorker(
             error: error instanceof Error ? error.message : String(error),
             ...(retainedResult
               ? {
-                  save_as: retainedResult.id,
+                  store_into: `store.${retainedResult.id}`,
                   value_bytes: retainedResult.bytes,
                 }
               : {}),
@@ -617,7 +617,7 @@ export async function runProcWorker(
             retry_safe: retrySafe,
             instruction: retrySafe
               ? retainedResult
-                ? `Use loadValue(${JSON.stringify(retainedResult.id)}) to derive a smaller or corrected value. Log minimum judgment evidence.`
+                ? `Use store.${retainedResult.id} to derive a smaller or corrected value. Log minimum judgment evidence.`
                 : "Fix and retry. Save an intermediate if needed. Use cannot_execute only if the procedure cannot be executed."
               : "Do not replay: effects may exist. Inspect repository state; execute unfinished work only, or call cannot_execute.",
           };
@@ -771,6 +771,10 @@ function parseArgs(raw: string): unknown {
   } catch {
     return { _invalidJson: raw };
   }
+}
+
+function storeKeyName(value: string): string {
+  return value.slice("store.".length);
 }
 
 function emitCompleted(

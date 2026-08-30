@@ -8,10 +8,8 @@ only `proc` plus direct human interaction. It replaces the experimental
 
 The central hypothesis is:
 
-> A strong primary model can retain diagnosis, procedure, and decision
-> ownership while a weaker worker tolerantly realizes a supplied procedure,
-> keeps large intermediate values outside model context, and returns only
-> intentional projections.
+> Primary model owns diagnosis, procedure, and decisions. Worker realizes the
+> procedure, keeps large intermediates in proc store, and returns projections.
 
 The feature remains experimental and is selected by the existing `semantic`
 conversation architecture value.
@@ -26,7 +24,7 @@ HTTP, SSE, timers, or unrelated conversations on the server event loop.
 Executions have a 1,000-call hard ceiling and worker feedback warns at 200
 operations. This permits substantial fused reads while surfacing accidental
 recursive `readdir`/`stat` loops early; procedures that approach either limit
-should use fused `fs.glob` or `fs.grep` operations instead. Failed executions
+should use fused `search.glob` or `search.grep` operations instead. Failed executions
 retain individual capability calls in the nested
 audit timeline, while worker-facing feedback groups effects by tool, category,
 and outcome with a count. Model context therefore cannot grow linearly with the
@@ -38,7 +36,7 @@ fresh QuickJS context with the existing memory, stack, operation, payload, and
 120-second runtime limits.
 
 Guest capability calls use correlated request/response messages back to the
-parent process. Only JSON-compatible arguments, tool results, saved values,
+parent process. Only JSON-compatible arguments, tool results, stored values,
 errors, and traces cross the thread boundary; live tool handlers, database
 readers, permission resolvers, and event callbacks never leave the parent.
 Cancellation uses a shared atomic flag so QuickJS can observe it even while the
@@ -73,7 +71,7 @@ The primary agent receives:
 - `ask_user`: preserve direct primary-agent-to-human interaction.
 
 `resolve`, `resume`, direct `program`, schema lookup, and artifact readers are
-not exposed. Program execution, saved-value IDs, projections, and traces are
+not exposed. Program execution, store keys, projections, and traces are
 implementation details behind `proc`. This intentionally forces the
 experiment to test the proc boundary instead of falling back to adjacent
 tools.
@@ -96,11 +94,8 @@ contract, not an open-ended objective. `procedure` describes the algorithm and
 relevance criteria the worker must realize. The worker rejects requests that
 require it to invent those elements.
 
-`summary` stays intentionally short enough for a collapsed activity card;
-`result_requirements` may be longer and precise. Primary-agent guidance includes paired
-examples so the model does not collapse the two fields into duplicate prose.
-The requirements are an allowlist: fields, records, and supporting material not
-required by the contract remain inside proc.
+The requirements are an allowlist: unrequested fields, records, and supporting
+material stay inside proc.
 
 Proc is a reduction boundary, not a context-smuggling mechanism. A valid
 `result_requirements` derives focused evidence from a potentially large corpus:
@@ -112,12 +107,8 @@ worker turn because they cannot satisfy the architecture's context objective.
 A single complete value remains valid when the caller explicitly requires that
 exact value.
 
-The primary agent should request the smallest result that preserves its ability to
-decide or edit correctly, not the largest context that would be convenient. It
-must not sacrifice consequential detail or independent verifiability. The
-appropriate representation depends on the task; summaries, structured facts,
-provenance, bounded excerpts, and exact source are options to consider rather
-than a fixed preference order.
+Request enough detail for correct decisions and verification. Do not request
+convenient bulk context.
 
 ## Decision Boundary
 
@@ -177,10 +168,10 @@ The worker fuses adjacent mechanical steps into the largest reliable execution;
 procedure steps are not turn boundaries. Intermediate values remain ordinary
 JavaScript values inside an execution and do not enter model context.
 
-`execute` continues the procedure. Its nullable `save_as` field names a value
-needed by later JavaScript; `null` discards the return value. Names are unique
-within a transaction and read with `loadValue(name)`. `finish` returns the final
-value to the proc caller and ends the procedure. Every execution also declares
+`execute` continues the procedure. Its required nullable `store_into` field
+names a value as `store.<key>` for later JavaScript; `null` discards the return
+value. Keys are unique within a transaction and read through `store.<key>`.
+`finish` returns the final value to the proc caller and ends the procedure. Every execution also declares
 `needed_for`: one short phrase stating the required outcome.
 
 Calls emitted in one model turn execute sequentially, so later calls may read
@@ -199,7 +190,7 @@ purpose, program-specific input and result schemas, one canonical JavaScript
 example, its read or mutation category, and any compatibility, permission, or
 result adapters required when script and direct-tool contracts differ.
 
-At proc start, the worker receives stable `fs`, `path`, `git`, and `command`
+At proc start, the worker receives stable `search`, `fs`, `path`, `git`, and `command`
 facade signatures plus the complete manifest for enabled capabilities that do
 not have a first-class facade. This is not a discovery call and does not include
 disabled capabilities. Supplying it once with the procedure lets the worker
@@ -208,32 +199,33 @@ generate valid source without guessing or spending turns loading schemas.
 The initial program surface covers:
 
 - file reads, writes, traversal, metadata, creation, and rename through `fs`;
-- content and path search through `fs.grep` and `fs.glob`;
+- content and path search through `search.grep` and `search.glob`;
 - structured repository inspection through `git.status`, `git.diff`,
   `git.log`, `git.show`, and `git.blame`;
 - validation and explicit argv execution through `command.run`;
-- immutable intermediate values through `loadValue(name)`.
+- immutable intermediate values through the read-only `store` object.
 
-The `fs`, `git`, and `command` namespaces are the advertised interface. The
+The `search`, `fs`, `git`, and `command` namespaces are the advertised interface. The
 generic `tools` proxy remains an undocumented compatibility path for programs
 generated against older manifests, but facade-backed capabilities are omitted
 from the worker's tool manifest so new programs do not have to choose between
 duplicate spellings. Filesystem methods are documented without Node's `Sync`
 suffix and accept the corresponding suffixed spelling as a tolerant alias.
-Non-recursive `fs.readdir` is advertised for listing one directory and rejects
-directories above 1,000 entries. Repository traversal should use the
-ripgrep-backed `fs.glob`, which follows ripgrep's ignore rules. Passing
+Non-recursive `fs.readdir` remains available as a compatibility escape hatch for
+listing one directory and rejects directories above 1,000 entries. Repository
+traversal should use the ripgrep-backed `search.glob`, which follows ripgrep's
+ignore rules. Passing
 `includeIgnored: true` bypasses ignore files and can deliberately search ignored
 trees such as `node_modules`.
 
 Reading a complete file inside an execution keeps that value in the QuickJS
-context and does not add it to model context. A named save returns only its
+runtime and does not add it to model context. A stored value returns only its
 structure unless the program explicitly logs small structured evidence.
 `console.log`, `info`, `warn`, `error`, and `debug` capture immutable,
 JSON-compatible argument snapshots rather than writing process output. Their
 combined projection has a 64 KiB guard; overflow preserves the returned saved
-value so a reducing retry can use `loadValue`. `finish` returns the final result,
-while `save_as: null` ignores an execute return value. Worker guidance therefore permits broad
+value so a reducing retry can use `store.<key>`. `finish` returns the final result,
+while `store_into: null` ignores an execute return value. Worker guidance therefore permits broad
 internal reads for mechanical filtering and transformation while requiring
 every model-bound value to contain only distinguishing evidence or the exact
 final contract.
@@ -243,8 +235,8 @@ console evidence are counted as non-progress. After two consecutive occurrences,
 feedback explicitly tells the worker to stop re-saving the value and either log
 a small derived projection or call `finish`.
 
-`fs.glob` returns all matching workspace-relative paths as `string[]`;
-`fs.grep` returns all matching lines as structured path, line, column, and text
+`search.glob` returns all matching workspace-relative paths as `string[]`;
+`search.grep` returns all matching lines as structured path, line, column, and text
 records. Neither silently truncates. Capability data may consume the QuickJS
 memory budget so the program can filter and aggregate it internally; only the
 value returned from the VM is subject to the program-result and proc projection
@@ -280,7 +272,7 @@ that supplied rules cannot resolve mechanically, JavaScript first reduces the
 corpus to distinguishing evidence, for example:
 
 ```js
-const candidates = loadValue("RES_candidates");
+const { candidates } = store;
 console.log(
   candidates.slice(0, 12).map(({ id, signature }) => ({ id, signature })),
 );
@@ -288,29 +280,29 @@ return candidates;
 ```
 
 The logged projection enters worker context while the returned candidates remain
-available only through its declared saved name.
+available only through its declared store key.
 
 ## Execution Contract
 
 An execution runs JavaScript in the existing resource-limited program runtime.
 In addition to audited filesystem and tool capabilities, it may lazily read
-immutable saved values through `loadValue(name)`. The first
+immutable stored values through `store.<key>`. The first
 access fetches, parses, caches, and freezes that value inside the execution;
 unused values are never loaded into QuickJS.
 
 ```yaml
 tool: finish
 javascript: |
-  const matches = fs.grep("foo", { path: "src" });
+  const matches = search.grep("foo", { path: "src" });
   return groupAndSelect(matches);
 ```
 
-`execute` stores its exact return value only when `save_as` is a name. Its
+`execute` stores its exact return value when `store_into` is a store key. Its
 feedback contains that name, the value's structure, and any bounded console
 evidence. `finish` returns exactly the primary agent's original result requirements.
 Generous internal limits remain only as safety fuses; they are not advertised
 as output targets. Console overflow retains the returned value and directs the
-worker to reduce semantically with `loadValue`, never to paginate.
+worker to reduce semantically with `store`, never to paginate.
 
 Console evidence separates what the model sees from what later code can use:
 
@@ -321,19 +313,19 @@ javascript: |
   console.log(candidates.map(({ id, signature, retryBranch }) =>
     ({ id, signature, retryBranch })));
   return candidates;
-save_as: candidates
+store_into: store.candidates
 ```
 
 Only the logged evidence enters the next worker turn. The returned value is
-stored exactly and represented only by `save_as`, so the next execution can
-apply the worker's decision with `loadValue("candidates")` without reinjecting the
+stored exactly and represented only by `store_into`, so the next execution can
+apply the worker's decision with `store.candidates` without reinjecting the
 corpus.
 
-Saved-value feedback is:
+Store feedback is:
 
 ```json
 {
-  "save_as": "candidates",
+  "store_into": "store.candidates",
   "value_bytes": 284192,
   "structure": "array(318) of object { path: string, line: integer }",
   "structure_bytes": 58,
@@ -351,7 +343,7 @@ The stored value, when present, is exact regardless of projection mode.
 
 Every execution requires a user-visible `needed_for`. The dedicated
 proc card shows the primary-agent procedure and result requirements, each execution's
-justification, saved name and JavaScript, operation count,
+justification, store destination and JavaScript, operation count,
 nested capability activity, partial-effect warnings, final usage, and the
 console evidence returned to the worker model.
 
@@ -486,13 +478,13 @@ structurally so harmless formatting changes do not obscure regressions.
 primary-agent procedure
        |
        v
-proc worker -- execute(needed_for, javascript, save_as) --> program runtime
+proc worker -- execute(needed_for, javascript, store_into) --> program runtime
             -- finish(javascript) -----------------------> program runtime
        ^                                      |
        |                                      v
-  +------ saved name or console evidence -- saved-value store
+  +------ store key or console evidence -- stored-value store
                                                       |
-             later execution: loadValue(name) <--------+
+             later execution: store.<key> <-------------+
 ```
 
 The worker uses the fewest executions that preserve correctness, recoverability,
@@ -508,9 +500,9 @@ the architecture to one language or LSP.
 
 1. Implement and thoroughly test JSON value validation and shape
    normalization/rendering as pure modules.
-2. Add transaction-scoped immutable saved-value storage and lifecycle cleanup.
+2. Add transaction-scoped immutable stored-value storage and lifecycle cleanup.
 3. Extend the program runtime with lazy read-only
-  `loadValue(name)` access.
+  `store.<key>` access.
 4. Add execution persistence and bounded model feedback with
   hidden emergency transport guards.
 5. Expose the low-level execution protocol in tests and measure saved-value composition
@@ -538,14 +530,14 @@ Evaluate a proc-only primary agent on procedures that require:
 - broad search followed by grouped contextual reads;
 - mechanical filtering over large intermediate sets;
 - one semantic decision over mechanically reduced distinguishing evidence;
-- multi-stage transformations using exact saved values without model reinjection;
+- multi-stage transformations using exact stored values without model reinjection;
 - an empty intermediate collection;
 - heterogeneous records that shape must compact;
 - a deliberately underspecified decision that must return `cannot_execute`.
 
 Measure correctness, primary-agent and worker context growth, first-execution
 completion rate, execution count, console-evidence precision, attempts to page corpora through model turns,
-saved-value reuse, retries, latency, partial-effect recoveries, and the
+stored-value reuse, retries, latency, partial-effect recoveries, and the
 frequency with which the worker broadens or rewrites the supplied procedure.
 
 Use paired evaluations. A mechanically decidable corpus with hundreds of

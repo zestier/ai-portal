@@ -132,7 +132,8 @@ export function buildProgramFacadeTools(
 function buildGlobTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_glob",
-    description: "ripgrep-backed fs.glob.",
+    description:
+      "ripgrep-backed search.glob; preferred for repository path discovery.",
     parameters: jsonSchema(GlobArgs),
     argsSchema: GlobArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
@@ -175,7 +176,8 @@ function buildGlobTool(workspaceRoot: string): PortalTool {
 function buildGrepTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_grep",
-    description: "ripgrep-backed fs.grep.",
+    description:
+      "ripgrep-backed search.grep; preferred for repository content discovery.",
     parameters: jsonSchema(GrepArgs),
     argsSchema: GrepArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
