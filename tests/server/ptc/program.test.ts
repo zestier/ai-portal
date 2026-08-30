@@ -85,6 +85,16 @@ describe("program runtime", () => {
     expect(result.value).toBe("function object");
   });
 
+  it("returns the completion value of a bare expression", async () => {
+    const result = await runProgram({
+      source: "2 + 2;",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toBe(4);
+  });
+
   it("reports explicit-return runtime errors at user source locations", async () => {
     const run = runProgram({
       source: "return (\nmissingValue\n);",
@@ -358,6 +368,55 @@ describe("program runtime", () => {
       signal: new AbortController().signal,
     });
     expect(result.value).toEqual({ fs: true, path: true, joined: "tests" });
+  });
+
+  it("allows programs to shadow predeclared globals", async () => {
+    const readdir = tool("__ptc_fs_readdir");
+    const stat = tool("__ptc_fs_stat");
+    const result = await runProgram({
+      source: `const fs = require("fs");
+        const path = require("path");
+        const root = "/workspace";
+        const entries = fs.readdirSync(root, { withFileTypes: true });
+        const result = entries.map((entry) => {
+          const filePath = path.join(root, entry.name);
+          let extra = "";
+          try {
+            const stat = fs.statSync(filePath);
+            extra = stat.isDirectory() ? "[dir]" : \`[file \${stat.size}b]\`;
+          } catch {
+            extra = "[?]";
+          }
+          return \`\${entry.name} \${extra}\`;
+        });
+        result.sort();
+        result;`,
+      capabilities: new Map(),
+      facadeCapabilities: new Map([
+        [readdir.name, readdir],
+        [stat.name, stat],
+      ]),
+      execute: async (name, args) => {
+        if (name === readdir.name) {
+          return ok([
+            { name: "dir", directory: true, file: false, symbolicLink: false },
+            { name: "a", directory: false, file: true, symbolicLink: false },
+          ]);
+        }
+        if (name === stat.name) {
+          return ok({
+            directory: args.path.endsWith("/dir"),
+            file: !args.path.endsWith("/dir"),
+            symbolicLink: false,
+            size: args.path.endsWith("/dir") ? 0 : 2,
+            mtimeMs: 0,
+          });
+        }
+        return ok();
+      },
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toEqual(["a [file 2b]", "dir [dir]"]);
   });
 
   it("reports actionable errors for unsupported modules", async () => {

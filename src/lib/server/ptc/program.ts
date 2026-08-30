@@ -632,7 +632,7 @@ export async function runProgramInline(
     else compiled.error.dispose();
 
     const executable = scriptCompatible
-      ? shiftedSource
+      ? `{${shiftedSource}\n}`
       : `(() => {${shiftedSource}\n})()`;
     const evaluation = await vm.evalCodeAsync(executable, "program.js");
     let valueHandle;
