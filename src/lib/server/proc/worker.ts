@@ -62,7 +62,7 @@ Rules:
 - JavaScript decides everything deterministic. Search, parse, transform, compare, aggregate, edit, and validate there.
 - Use console.log only when supplied rules cannot compute a required semantic judgment. Logs are parsed into your next turn and consume context. Log minimum evidence. Never log a corpus or split it across calls.
 - needed_for: one short phrase naming the required outcome, not the operation.
-- execute continues. Set save_as to a unique name only when later JavaScript needs the return; otherwise null. Saved contents stay out of model context; read with loadValue(name).
+- execute continues. Set save_as to a unique name unless the result will not be needed later. Saved contents stay out of model context; read with loadValue(name).
 - Calls in one turn run sequentially. First failure cancels the rest.
 - finish returns the final result and stops.
 - result_requirements is the exact allowlist and completion test. No raw tool responses, intermediate candidates, or extra context.
@@ -708,13 +708,12 @@ function workerToolSpecs(): ExtractorToolSpec[] {
             javascript: {
               type: "string",
               description:
-                "JavaScript body. Return a serializable value only when save_as is named.",
+                "Return a serializable value; name save_as unless the result should discard",
             },
             save_as: {
               type: ["string", "null"],
               pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
-              description:
-                "Unique loadValue(name) key; null discards the return.",
+              description: "Unique loadValue(name) key; null causes discard",
             },
           },
           required: ["needed_for", "javascript", "save_as"],
