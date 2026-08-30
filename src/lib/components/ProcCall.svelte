@@ -4,7 +4,6 @@
     DisplayFileEdit,
     DisplayReasoningBlock,
   } from "$lib/client/display-message";
-  import type { ProcExecutionArgs } from "$lib/client/proc-display";
   import {
     parseProcArgs,
     parseProcExecutionArgs,
@@ -57,7 +56,9 @@
   );
   const outcome = $derived(parseProcOutcome(resultJson));
   const executions = $derived(
-    childTools.filter((child) => child.tool === "execute"),
+    childTools.filter(
+      (child) => child.tool === "execute" || child.tool === "finish",
+    ),
   );
   const status = $derived(
     pending
@@ -79,21 +80,12 @@
     details.open = nextOpen;
   }
 
-  function resultForLabel(
-    value: ProcExecutionArgs["result_for"] | undefined,
+  function executionLabel(
+    tool: string,
+    saveAs: string | null | undefined,
   ): string {
-    switch (value) {
-      case "no_one":
-        return "no result";
-      case "later_javascript":
-        return "later code";
-      case "worker_decision":
-        return "decision";
-      case "proc_result":
-        return "proc result";
-      default:
-        return "execute";
-    }
+    if (tool === "finish") return "final result";
+    return saveAs ? `save: ${saveAs}` : "no save";
   }
 
   $effect(() => {
@@ -153,9 +145,17 @@
               <summary>
                 <span class="step">{index + 1}</span>
                 <span class="stage-title"
-                  >{executionArgs?.needed_for ?? "Execution"}</span
+                  >{executionArgs?.needed_for ??
+                    (execution.tool === "finish"
+                      ? "Final result"
+                      : "Execution")}</span
                 >
-                <Pill>{resultForLabel(executionArgs?.result_for)}</Pill>
+                <Pill
+                  >{executionLabel(
+                    execution.tool,
+                    executionArgs?.save_as,
+                  )}</Pill
+                >
                 {#if executionResult?.value_bytes != null}
                   <span class="metric"
                     >{formatFieldBytes(executionResult.value_bytes)}</span
@@ -194,20 +194,6 @@
                           ? executionResult.structure
                           : JSON.stringify(
                               executionResult.structure,
-                              null,
-                              2,
-                            )}</code
-                      ></pre>
-                  </div>
-                {/if}
-                {#if executionResult?.decision_evidence !== undefined}
-                  <div class="projection">
-                    <div class="minor-label">Decision evidence</div>
-                    <pre><code
-                        >{typeof executionResult.decision_evidence === "string"
-                          ? executionResult.decision_evidence
-                          : JSON.stringify(
-                              executionResult.decision_evidence,
                               null,
                               2,
                             )}</code

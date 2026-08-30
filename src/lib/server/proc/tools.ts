@@ -23,7 +23,7 @@ const ProcArgs = z
 
 export interface ProcToolOptions {
   conversationId: number;
-  frontierModel: string;
+  primaryModel: string;
   workerModel?: string | null;
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities: ReadonlyMap<string, PortalTool>;
@@ -44,13 +44,13 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
     {
       name: "proc",
       description:
-        "Execute a specified repository procedure while keeping routine intermediate data out of context.",
+        "Execute a specified repository procedure; keep routine intermediates out of context.",
       promptSnippet:
-        "Realize a repository procedure with code-first data reduction.",
+        "Execute a specified procedure with JavaScript data reduction.",
       promptGuidelines: [
-        "Specify ordered steps, selection and exclusion rules, and a stopping condition.",
-        "Specify the exact emitted shape, allowed fields, required evidence, ordering, and completeness. result_requirements is an allowlist, not a minimum.",
-        "Request only the exact result needed after the procedure completes. Proc must reduce broad reads in JavaScript, not return raw responses, candidate corpora, paged context, or unrequested supporting detail.",
+        "Provide ordered steps, selection/exclusion rules, and a stop condition.",
+        "Define exact result shape, fields, evidence, order, and completeness. result_requirements is an allowlist, not a minimum.",
+        "Request the final needed result only. Reduce broad reads in JavaScript; no raw responses, candidate corpora, paging, or unrequested detail.",
       ],
       argsSchema: ProcArgs,
       parameters: {
@@ -58,17 +58,17 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         properties: {
           summary: {
             type: "string",
-            description: "Short label shown to the user.",
+            description: "Short user-visible label.",
           },
           procedure: {
             type: "string",
             description:
-              "Ordered steps, selection criteria, and stopping rule.",
+              "Ordered steps, selection/exclusion rules, and stop condition.",
           },
           result_requirements: {
             type: "string",
             description:
-              "What the emitted result must contain: shape, fields, selection and exclusion rules, evidence, ordering, and completeness.",
+              "Exact output shape, fields, selection/exclusion rules, evidence, order, and completeness.",
           },
         },
         required: ["summary", "procedure", "result_requirements"],
@@ -77,7 +77,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
       permissionBehavior: "never-prompt",
       async handler(raw, ctx) {
         const args = ProcArgs.parse(raw);
-        if (!ctx?.toolCallId) return err("proc requires a mapped tool call id");
+        if (!ctx?.toolCallId) return err("proc: mapped tool call id required");
         const requestProblem = validateProcRequest({
           requirements: args.result_requirements,
           procedure: args.procedure,
@@ -103,7 +103,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         const transaction = createProcTransaction({
           conversationId: opts.conversationId,
           parentToolCallId: toolCodec.parse(ctx.toolCallId),
-          workerModel: opts.workerModel ?? opts.frontierModel,
+          workerModel: opts.workerModel ?? opts.primaryModel,
           summary: args.summary,
           requirements: args.result_requirements,
           procedure: args.procedure,
@@ -160,7 +160,7 @@ export function validateProcRequest(input: {
       text,
     );
   if (requestsModelSideCorpus) {
-    return "Proc must reduce candidate corpora in JavaScript, not page or return them for model-side browsing. Require only the selected facts or targeted evidence needed by the next decision.";
+    return "Proc reduces candidate corpora in JavaScript; never page them for model browsing. Require only selected facts or targeted evidence needed by the next decision.";
   }
   if (!requestsVerbatimCorpus) return null;
   const paths = new Set(
@@ -171,5 +171,5 @@ export function validateProcRequest(input: {
   if (paths.size < 2 && !/\b(?:all|multiple|every)\s+files?\b/i.test(text)) {
     return null;
   }
-  return "Proc must emit an exact derived result, not full or paged source corpora. Require selected paths, ranges, purposes, or targeted excerpts and exclude everything not needed by the next decision.";
+  return "Proc returns an exact derived result, not full or paged source corpora. Require selected paths, ranges, purposes, or targeted excerpts; exclude everything not needed by the next decision.";
 }

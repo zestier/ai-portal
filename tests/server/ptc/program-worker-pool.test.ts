@@ -166,9 +166,7 @@ describe("ProgramWorkerPool", () => {
       options("return 'after restart';", async () => ok()),
     );
 
-    await expect(stuck).rejects.toThrow(
-      "Execution exceeded the 120 second limit",
-    );
+    await expect(stuck).rejects.toThrow("Execution exceeded 120s");
     await expect(queued).resolves.toMatchObject({ value: "after restart" });
     expect(hostAborted).toBe(true);
     expect(pool.snapshot()).toMatchObject({
@@ -198,7 +196,7 @@ describe("ProgramWorkerPool", () => {
     await started;
     const next = pool.run(options("return 'next';", async () => ok()));
 
-    await expect(timedOut).rejects.toThrow("120 second limit");
+    await expect(timedOut).rejects.toThrow("exceeded 120s");
     finishHost();
     await expect(next).resolves.toMatchObject({ value: "next" });
     expect(pool.snapshot()).toMatchObject({ completed: 1, failed: 1 });

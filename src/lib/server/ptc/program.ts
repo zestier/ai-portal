@@ -16,7 +16,7 @@ const MAX_OPERATIONS_BY_CATEGORY = {
   mutation: 500,
   command: 20,
 } as const;
-const MAX_TOTAL_OPERATIONS = 10_000;
+const MAX_TOTAL_OPERATIONS = 1_000;
 const MAX_PROGRAM_RESULT_BYTES = 5 * 1024 * 1024;
 const MAX_RUNTIME_MS = 120_000;
 const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
@@ -67,9 +67,14 @@ interface ProgramInlineOptions extends ProgramRunOptions {
 
 export interface ProgramRunResult {
   value: unknown;
+  consoleOutput: Array<{
+    level: "log" | "info" | "warn" | "error" | "debug";
+    values: unknown[];
+  }>;
   operations: number;
   trace: {
     sourceHash: string;
+    savedValueLoads: number;
     calls: Array<{
       name: string;
       kind: "tool" | "facade";
@@ -88,6 +93,7 @@ export async function runProgram(
   const startedAt = Date.now();
   const calls: ProgramRunResult["trace"]["calls"] = [];
   let operations = 0;
+  let savedValueLoads = 0;
   const categoryOperations: Record<OperationCategory, number> = {
     mutation: 0,
     command: 0,
@@ -99,12 +105,15 @@ export async function runProgram(
     capabilityNames: [...opts.capabilities.keys()],
     facadeCapabilityNames: [...(opts.facadeCapabilities?.keys() ?? [])],
     signal: opts.signal,
-    loadValue: (id) => opts.savedValues?.get(id),
+    loadValue: (id) => {
+      savedValueLoads++;
+      return opts.savedValues?.get(id);
+    },
     execute: async (kind, name, args, signal) => {
       operations++;
       if (operations > MAX_TOTAL_OPERATIONS) {
         throw new Error(
-          `Execution exceeded the total operation limit (${MAX_TOTAL_OPERATIONS}). Use fs.glob/fs.grep or narrow the traversal instead of calling stat/read for every path.`,
+          `${MAX_TOTAL_OPERATIONS} operations max. Use fs.glob/fs.grep, not stat/read per path.`,
         );
       }
       if (signal.aborted) throw new Error("Execution aborted.");
@@ -116,7 +125,7 @@ export async function runProgram(
       if (!tool) {
         const suggestions = suggestionsFor(name, [...allowed.keys()]);
         const related = suggestions.length
-          ? ` Available related tools: ${suggestions.join(", ")}.`
+          ? ` Similar: ${suggestions.join(", ")}.`
           : "";
         calls.push({
           name,
@@ -127,7 +136,7 @@ export async function runProgram(
         return {
           ok: false,
           error: {
-            message: `Unknown program tool "${name}".${related} Use a contract from environment.tools.`,
+            message: `Unknown tool "${name}".${related} Use listed API.`,
             details: { validTools: [...allowed.keys()].sort() },
           },
         };
@@ -138,9 +147,7 @@ export async function runProgram(
         categoryOperations[category]++;
         const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
         if (categoryOperations[category] > categoryLimit) {
-          throw new Error(
-            `Execution exceeded the ${category} operation limit (${categoryLimit}).`,
-          );
+          throw new Error(`${category} operations: limit ${categoryLimit}.`);
         }
       }
       const toolResult = await opts.execute(name, effective, signal);
@@ -156,9 +163,11 @@ export async function runProgram(
 
   return {
     value: result.value,
+    consoleOutput: result.consoleOutput,
     operations,
     trace: {
       sourceHash: hash(opts.source),
+      savedValueLoads,
       calls,
       durationMs: Date.now() - startedAt,
     },
@@ -183,6 +192,7 @@ export async function runProgramInline(
   const startedAt = Date.now();
   const calls: ProgramRunResult["trace"]["calls"] = [];
   let operations = 0;
+  let savedValueLoads = 0;
   const categoryOperations: Record<OperationCategory, number> = {
     mutation: 0,
     command: 0,
@@ -212,16 +222,17 @@ export async function runProgramInline(
     "__ptc_load_value",
     async (idHandle) => {
       const id = vm.getString(idHandle);
+      savedValueLoads++;
       const value = await opts.savedValues?.get(id);
       if (value === undefined) {
         throw new Error(`Unknown saved value: ${id}`);
       }
       const encoded = JSON.stringify(value);
       if (encoded === undefined) {
-        throw new Error(`Saved value ${id} is not JSON-compatible.`);
+        throw new Error(`Saved value ${id}: not JSON-compatible.`);
       }
       if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
-        throw new Error(`Saved value ${id} exceeds the 5 MiB value limit.`);
+        throw new Error(`Saved value ${id}: exceeds 5 MiB.`);
       }
       return vm.newString(encoded);
     },
@@ -308,14 +319,14 @@ export async function runProgramInline(
           ? encoding
           : encoding?.encoding;
         if (normalizedEncoding !== "utf8" && normalizedEncoding !== "utf-8") {
-          throw new Error('fs.readFile supports only "utf8" and "utf-8".');
+          throw new Error('fs.readFile encoding: "utf8" or "utf-8" only.');
         }
         const result = unwrapCall(__callFacadeCapability, "read", {
           file_path: path,
           mode: "content"
         });
         if (result?.type !== "text") {
-          throw new Error("fs.readFile supports only text files.");
+          throw new Error("fs.readFile: text files only.");
         }
         return result.file.content;
       },
@@ -324,10 +335,10 @@ export async function runProgramInline(
           ? options
           : options?.encoding ?? "utf8";
         if (encoding !== "utf8" && encoding !== "utf-8") {
-          throw new Error('fs.writeFile supports only "utf8" and "utf-8".');
+          throw new Error('fs.writeFile encoding: "utf8" or "utf-8" only.');
         }
         if (typeof data !== "string") {
-          throw new Error("fs.writeFile supports only string data.");
+          throw new Error("fs.writeFile data: string only.");
         }
         unwrapCall(__callFacadeCapability, "write", { file_path: path, content: data });
       },
@@ -377,10 +388,10 @@ export async function runProgramInline(
         const start = options.start ?? 1;
         const end = options.end;
         if (!Number.isInteger(start) || start < 1) {
-          throw new Error("fs.readLines start must be a positive integer.");
+          throw new Error("fs.readLines start: positive integer required.");
         }
         if (end !== undefined && (!Number.isInteger(end) || end < start)) {
-          throw new Error("fs.readLines end must be an integer greater than or equal to start.");
+          throw new Error("fs.readLines end: must be at least start.");
         }
         const result = unwrapCall(__callFacadeCapability, "read", {
           file_path: path,
@@ -389,7 +400,7 @@ export async function runProgramInline(
           mode: "content"
         });
         if (result?.type !== "text") {
-          throw new Error("fs.readLines supports only text files.");
+          throw new Error("fs.readLines: text files only.");
         }
         return Object.freeze({
           text: result.file.content,
@@ -435,7 +446,7 @@ export async function runProgramInline(
         if (pattern instanceof RegExp) {
           if (pattern.flags !== "" && pattern.flags !== "i") {
             throw new TypeError(
-              'fs.grep RegExp values support only the "i" flag. Pass a ripgrep-compatible pattern string instead.'
+              'fs.grep RegExp: "i" flag only; otherwise use a ripgrep-compatible pattern string.'
             );
           }
           options = {
@@ -490,7 +501,7 @@ export async function runProgramInline(
         const commit = /^[0-9a-f]{4,64}$/.test(ref)
           ? ref
           : callTool("git_log", { ref, limit: 1 }).commits[0]?.sha;
-        if (!commit) throw new Error("git.show could not resolve ref " + ref + ".");
+        if (!commit) throw new Error("git.show: ref not found: " + ref);
         return callTool("git_show_commit", {
           sha: commit,
           ...(pathOrOptions.includePatch === true ? { includePatch: true } : {})
@@ -525,13 +536,13 @@ export async function runProgramInline(
             ? maybeOptions
             : argsOrOptions ?? {};
         if (typeof executable !== "string" || executable.length === 0) {
-          throw new Error("command.run requires an executable string or a non-empty argv array.");
+          throw new Error("command.run: executable string or non-empty argv required.");
         }
         if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
-          throw new Error("command.run args must be an array of strings.");
+          throw new Error("command.run args: string[] required.");
         }
         if (options === null || typeof options !== "object" || Array.isArray(options)) {
-          throw new Error("command.run options must be an object.");
+          throw new Error("command.run options: object required.");
         }
         return unwrapCall(__callFacadeCapability, "__ptc_command_run", {
           ...(!argvForm && !secondIsArgs
@@ -551,36 +562,43 @@ export async function runProgramInline(
       }
     });
     const savedValueCache = new Map();
-    function loadValue(valueId) {
-      if (typeof valueId !== "string" || valueId.length === 0) {
-        throw new TypeError("loadValue requires a non-empty value id string.");
+    function loadValue(name) {
+      if (typeof name !== "string" || name.length === 0) {
+        throw new TypeError("loadValue: non-empty name required.");
       }
-      if (!savedValueCache.has(valueId)) {
+      if (!savedValueCache.has(name)) {
         savedValueCache.set(
-          valueId,
-          deepFreeze(JSON.parse(__ptc_load_value(valueId)))
+          name,
+          deepFreeze(JSON.parse(__ptc_load_value(name)))
         );
       }
-      return savedValueCache.get(valueId);
+      return savedValueCache.get(name);
     }
     const requireModule = (name) => {
       if (name === "fs" || name === "node:fs") return fsApi;
       if (name === "path" || name === "node:path") return pathApi;
       throw new Error(
-        "Module loading is unavailable for " + String(name) + ". Use the predeclared fs, path, git, command, tools, and loadValue globals."
+        "Module unavailable: " + String(name) + ". Use predeclared fs, path, git, command, tools, or loadValue."
       );
     };
-    const unavailableConsole = () => {
-      throw new Error(
-        "Console output is unavailable. Return the value directly; do not JSON.stringify it."
-      );
+    const consoleOutput = [];
+    const captureConsole = (level, ...values) => {
+      let snapshot;
+      try {
+        snapshot = JSON.parse(JSON.stringify(values));
+      } catch (error) {
+        throw new TypeError(
+          "Console args: not JSON-compatible: " + String(error?.message ?? error)
+        );
+      }
+      consoleOutput.push(Object.freeze({ level, values: deepFreeze(snapshot) }));
     };
     const consoleApi = Object.freeze({
-      log: unavailableConsole,
-      info: unavailableConsole,
-      warn: unavailableConsole,
-      error: unavailableConsole,
-      debug: unavailableConsole
+      log: (...values) => captureConsole("log", ...values),
+      info: (...values) => captureConsole("info", ...values),
+      warn: (...values) => captureConsole("warn", ...values),
+      error: (...values) => captureConsole("error", ...values),
+      debug: (...values) => captureConsole("debug", ...values)
     });
     Object.defineProperties(globalThis, {
       fs: { value: fsApi, writable: false, configurable: false },
@@ -590,7 +608,13 @@ export async function runProgramInline(
       tools: { value: toolsApi, writable: false, configurable: false },
       loadValue: { value: loadValue, writable: false, configurable: false },
       require: { value: requireModule, writable: false, configurable: false },
-      console: { value: consoleApi, writable: false, configurable: false }
+      console: { value: consoleApi, writable: false, configurable: false },
+      __ptcConsoleOutput: {
+        value: consoleOutput,
+        writable: false,
+        configurable: false,
+        enumerable: false
+      }
     });
     }
   })()`;
@@ -620,11 +644,14 @@ export async function runProgramInline(
     }
     try {
       if (opts.resultMode === "discard") {
+        const consoleOutput = await dumpConsoleOutput();
         return {
           value: undefined,
+          consoleOutput,
           operations,
           trace: {
             sourceHash: hash(opts.source),
+            savedValueLoads,
             calls,
             durationMs: Date.now() - startedAt,
           },
@@ -633,18 +660,21 @@ export async function runProgramInline(
       const value = vm.dump(valueHandle);
       if (value === undefined) {
         throw new Error(
-          "Execution returned undefined. Return a JSON-compatible value, for example return { results }.",
+          "Execution returned undefined. Return a JSON-compatible value, e.g. { results }.",
         );
       }
       const encoded = JSON.stringify(value ?? null);
       if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
-        throw new Error("Execution result exceeds the 5 MiB limit.");
+        throw new Error("Result exceeds 5 MiB.");
       }
+      const consoleOutput = await dumpConsoleOutput();
       return {
         value,
+        consoleOutput,
         operations,
         trace: {
           sourceHash: hash(opts.source),
+          savedValueLoads,
           calls,
           durationMs: Date.now() - startedAt,
         },
@@ -656,6 +686,21 @@ export async function runProgramInline(
     vm.dispose();
   }
 
+  async function dumpConsoleOutput(): Promise<
+    ProgramRunResult["consoleOutput"]
+  > {
+    const evaluation = await vm.evalCodeAsync(
+      "globalThis.__ptcConsoleOutput",
+      "sandbox.js",
+    );
+    const handle = vm.unwrapResult(evaluation);
+    try {
+      return vm.dump(handle) as ProgramRunResult["consoleOutput"];
+    } finally {
+      handle.dispose();
+    }
+  }
+
   async function execute(
     name: string,
     args: unknown,
@@ -664,12 +709,12 @@ export async function runProgramInline(
     operations++;
     if (operations > MAX_TOTAL_OPERATIONS) {
       throw new Error(
-        `Execution exceeded the total operation limit (${MAX_TOTAL_OPERATIONS}). Use fs.glob/fs.grep or narrow the traversal instead of calling stat/read for every path.`,
+        `${MAX_TOTAL_OPERATIONS} operations max. Use fs.glob/fs.grep, not stat/read per path.`,
       );
     }
     if (opts.signal.aborted) throw new Error("Execution aborted.");
     if (Date.now() > deadline) {
-      throw new Error("Execution exceeded the 120 second limit.");
+      throw new Error("Execution exceeded 120s.");
     }
     const kind = allowed === opts.capabilities ? "tool" : "facade";
     if (opts.hostManagedExecute) {
@@ -688,12 +733,12 @@ export async function runProgramInline(
     if (!tool) {
       const suggestions = suggestionsFor(name, [...allowed.keys()]);
       const related = suggestions.length
-        ? ` Available related tools: ${suggestions.join(", ")}.`
+        ? ` Similar: ${suggestions.join(", ")}.`
         : "";
       const failure = {
         ok: false,
         error: {
-          message: `Unknown program tool "${name}".${related} Use a contract from environment.tools.`,
+          message: `Unknown tool "${name}".${related} Use listed API.`,
           details: { validTools: [...allowed.keys()].sort() },
         },
       };
@@ -717,9 +762,7 @@ export async function runProgramInline(
       categoryOperations[category]++;
       const categoryLimit = MAX_OPERATIONS_BY_CATEGORY[category];
       if (categoryOperations[category] > categoryLimit) {
-        throw new Error(
-          `Execution exceeded the ${category} operation limit (${categoryLimit}).`,
-        );
+        throw new Error(`${category} operations: limit ${categoryLimit}.`);
       }
     }
     const result = await opts.execute(name, effective, opts.signal);

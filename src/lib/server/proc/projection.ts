@@ -28,12 +28,12 @@ export function projectProcValue(
   const encoded = JSON.stringify(value);
   if (encoded === undefined)
     throw new Error(
-      "Execution returned a non-JSON value. Return strings, finite numbers, booleans, null, arrays, or objects.",
+      "Non-JSON result. Return string, finite number, boolean, null, array, or object.",
     );
   const bytes = Buffer.byteLength(encoded);
   if (bytes > policy.maxBytes) {
     throw new Error(
-      `Execution returned ${bytes} bytes, exceeding an emergency transport guard (${policy.maxBytes}). Derive only required fields or decision evidence in JavaScript; never paginate through model context.`,
+      `Result ${bytes}B; transport limit ${policy.maxBytes}B. Derive required fields or judgment evidence in JavaScript; never paginate through model context.`,
     );
   }
   return { projection: value, projectionBytes: bytes, truncated: false };

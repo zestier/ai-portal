@@ -29,40 +29,34 @@ describe("proc display parsing", () => {
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
-          needed_for: "Returning the requested routing map",
+          needed_for: "Routing map",
           javascript: "return [];",
-          result_for: "proc_result",
+          save_as: "routing",
         }),
       ),
-    ).toMatchObject({ result_for: "proc_result" });
+    ).toMatchObject({ save_as: "routing" });
     expect(
       parseProcExecutionMeta({
-        needed_for: "Filtering the matches in later code",
+        needed_for: "Filtered matches",
         javascript: "return [];",
-        result_for: "later_javascript",
+        save_as: null,
       }),
-    ).toMatchObject({ result_for: "later_javascript" });
+    ).toMatchObject({ save_as: null });
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
-          needed_for: "Applying the requested edits",
-          javascript: "tools.edit({});",
-          result_for: "no_one",
+          javascript: "return [];",
         }),
       ),
-    ).toMatchObject({ result_for: "no_one" });
+    ).toMatchObject({ javascript: "return [];" });
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
           needed_for: "Which candidate satisfies the ownership rule?",
-          javascript: "return { decision_evidence: [], saved_value: [] };",
-          result_for: "worker_decision",
+          javascript: "return [];",
         }),
       ),
-    ).toMatchObject({
-      needed_for: "Which candidate satisfies the ownership rule?",
-      result_for: "worker_decision",
-    });
+    ).toBeNull();
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
@@ -78,8 +72,7 @@ describe("proc display parsing", () => {
       parseProcExecutionResult(
         JSON.stringify(
           JSON.stringify({
-            result_for: "later_javascript",
-            value_id: "RES_1",
+            save_as: "matches",
             value_bytes: 1200,
             structure: "array(20)",
             structure_bytes: 9,
@@ -87,8 +80,7 @@ describe("proc display parsing", () => {
         ),
       ),
     ).toMatchObject({
-      result_for: "later_javascript",
-      value_id: "RES_1",
+      save_as: "matches",
     });
     expect(
       parseProcExecutionResult(JSON.stringify("readFile is not defined")),

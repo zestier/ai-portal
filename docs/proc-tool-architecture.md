@@ -2,13 +2,13 @@
 
 ## Status
 
-Implemented experimental semantic architecture whose frontier surface contains
+Implemented experimental semantic architecture whose primary-agent surface contains
 only `proc` plus direct human interaction. It replaces the experimental
 `resolve` boundary rather than becoming another general-purpose subagent.
 
 The central hypothesis is:
 
-> A strong frontier model can retain diagnosis, procedure, and decision
+> A strong primary model can retain diagnosis, procedure, and decision
 > ownership while a weaker worker tolerantly realizes a supplied procedure,
 > keeps large intermediate values outside model context, and returns only
 > intentional projections.
@@ -23,10 +23,11 @@ tool execution remain in the SvelteKit server process. QuickJS guest programs
 run on one long-lived Node worker thread so CPU-bound guest code cannot block
 HTTP, SSE, timers, or unrelated conversations on the server event loop.
 
-Executions also have a 10,000-call total ceiling. This remains generous for
-read-heavy programs but stops accidental recursive `readdir`/`stat` loops;
-procedures that approach it should use fused `fs.glob` or `fs.grep` operations
-instead. Failed executions retain individual capability calls in the nested
+Executions have a 1,000-call hard ceiling and worker feedback warns at 200
+operations. This permits substantial fused reads while surfacing accidental
+recursive `readdir`/`stat` loops early; procedures that approach either limit
+should use fused `fs.glob` or `fs.grep` operations instead. Failed executions
+retain individual capability calls in the nested
 audit timeline, while worker-facing feedback groups effects by tool, category,
 and outcome with a count. Model context therefore cannot grow linearly with the
 number of audited calls.
@@ -55,7 +56,7 @@ The existing semantic tools leave an awkward gap:
 - `resolve` accepts an outcome and lets another model determine the method,
   which makes it structurally similar to a general-purpose subagent.
 
-`proc` occupies the space between them. The frontier supplies the procedure,
+`proc` occupies the space between them. The primary agent supplies the procedure,
 selection rules, and result requirements in tolerant natural-language pseudocode.
 The proc worker may repair syntax, resolve capability contracts, choose batch
 sizes, and carry data between program fragments. It may not invent the
@@ -64,12 +65,12 @@ procedure or choose a materially different result.
 Proper goal-owning subagents, if added later, should be a separate feature with
 an explicit user-facing identity and lifecycle.
 
-## Frontier Surface
+## Primary-Agent Surface
 
-The experimental frontier receives:
+The primary agent receives:
 
 - `proc`: realize one supplied procedure and return its requested projection;
-- `ask_user`: preserve direct frontier-to-human interaction.
+- `ask_user`: preserve direct primary-agent-to-human interaction.
 
 `resolve`, `resume`, direct `program`, schema lookup, and artifact readers are
 not exposed. Program execution, saved-value IDs, projections, and traces are
@@ -96,7 +97,7 @@ relevance criteria the worker must realize. The worker rejects requests that
 require it to invent those elements.
 
 `summary` stays intentionally short enough for a collapsed activity card;
-`result_requirements` may be longer and precise. Frontier guidance includes paired
+`result_requirements` may be longer and precise. Primary-agent guidance includes paired
 examples so the model does not collapse the two fields into duplicate prose.
 The requirements are an allowlist: fields, records, and supporting material not
 required by the contract remain inside proc.
@@ -111,7 +112,7 @@ worker turn because they cannot satisfy the architecture's context objective.
 A single complete value remains valid when the caller explicitly requires that
 exact value.
 
-The frontier should request the smallest result that preserves its ability to
+The primary agent should request the smallest result that preserves its ability to
 decide or edit correctly, not the largest context that would be convenient. It
 must not sacrifice consequential detail or independent verifiability. The
 appropriate representation depends on the task; summaries, structured facts,
@@ -120,7 +121,7 @@ than a fixed preference order.
 
 ## Decision Boundary
 
-The frontier owns:
+The primary agent owns:
 
 - the problem diagnosis and desired result;
 - the procedure and meaningful branches;
@@ -141,7 +142,7 @@ The proc worker owns only tolerant realization:
 The worker must not broaden the investigation, add goals, reinterpret
 relevance, choose a different algorithm, or continue through missing
 consequential instructions. It returns `cannot_execute` with the smallest
-missing instruction instead. The frontier then issues a new `proc` call; there
+missing instruction instead. The primary agent then issues a new `proc` call; there
 is no durable `resume` conversation hidden inside the tool.
 
 ## Worker Surface
@@ -161,12 +162,12 @@ caused them:
 
 ```text
 proc: Map model routing
-  execute (final): Locate and select routing definitions
+  finish: Return selected routing definitions
     grep
     read
 ```
 
-The worker model still receives only `execute` and `cannot_execute`. Nested
+The worker model receives `execute`, `finish`, and `cannot_execute`. Nested
 `grep`, `read`, Git, filesystem, and command rows are
 execution trace, not additional model-visible worker tools.
 
@@ -176,18 +177,15 @@ The worker fuses adjacent mechanical steps into the largest reliable execution;
 procedure steps are not turn boundaries. Intermediate values remain ordinary
 JavaScript values inside an execution and do not enter model context.
 
-The worker splits only at a concrete boundary:
+`execute` continues the procedure. Its nullable `save_as` field names a value
+needed by later JavaScript; `null` discards the return value. Names are unique
+within a transaction and read with `loadValue(name)`. `finish` returns the final
+value to the proc caller and ends the procedure. Every execution also declares
+`needed_for`: one short phrase stating the required outcome.
 
-- `no_one`: discard the returned value;
-- `later_javascript`: save it for a later execution;
-- `worker_decision`: return only the evidence needed for one irreducible
-  semantic question and save the exact value for later JavaScript;
-- `proc_result`: return it to the proc caller and finish.
-
-The required `result_for` field selects the destination. Saved values are read
-with `loadValue(valueId)`. Every execution also declares `needed_for`: the
-outcome it establishes or why its returned value is necessary. For
-`worker_decision`, `needed_for` is one concrete semantic question.
+Calls emitted in one model turn execute sequentially, so later calls may read
+names saved by earlier calls. The first failure cancels every remaining call in
+that batch instead of producing a chain of dependent failures.
 
 This makes additional executions meaningful: they represent deliberate
 segmentation, semantic inspection, or repair rather than the default way to
@@ -214,7 +212,7 @@ The initial program surface covers:
 - structured repository inspection through `git.status`, `git.diff`,
   `git.log`, `git.show`, and `git.blame`;
 - validation and explicit argv execution through `command.run`;
-- immutable intermediate values through `loadValue(valueId)`.
+- immutable intermediate values through `loadValue(name)`.
 
 The `fs`, `git`, and `command` namespaces are the advertised interface. The
 generic `tools` proxy remains an undocumented compatibility path for programs
@@ -222,18 +220,28 @@ generated against older manifests, but facade-backed capabilities are omitted
 from the worker's tool manifest so new programs do not have to choose between
 duplicate spellings. Filesystem methods are documented without Node's `Sync`
 suffix and accept the corresponding suffixed spelling as a tolerant alias.
-Raw `fs.readdir` remains available for compatibility but is not advertised;
-workers should use ripgrep-backed `fs.glob`, which follows ripgrep's ignore
-rules for repository traversal. Passing `includeIgnored: true` bypasses ignore
-files and can deliberately search ignored trees such as `node_modules`.
+Non-recursive `fs.readdir` is advertised for listing one directory and rejects
+directories above 1,000 entries. Repository traversal should use the
+ripgrep-backed `fs.glob`, which follows ripgrep's ignore rules. Passing
+`includeIgnored: true` bypasses ignore files and can deliberately search ignored
+trees such as `node_modules`.
 
 Reading a complete file inside an execution keeps that value in the QuickJS
-context and does not add it to model context. `later_javascript` returns only
-its structure and value ID; `worker_decision` returns decision-specific evidence;
-`proc_result` returns the final result; `no_one` ignores it. Worker guidance therefore
-permits broad internal reads for mechanical filtering and transformation while
-requiring every model-bound value to contain only what its declared decision or
-the exact final contract needs.
+context and does not add it to model context. A named save returns only its
+structure unless the program explicitly logs small structured evidence.
+`console.log`, `info`, `warn`, `error`, and `debug` capture immutable,
+JSON-compatible argument snapshots rather than writing process output. Their
+combined projection has a 64 KiB guard; overflow preserves the returned saved
+value so a reducing retry can use `loadValue`. `finish` returns the final result,
+while `save_as: null` ignores an execute return value. Worker guidance therefore permits broad
+internal reads for mechanical filtering and transformation while requiring
+every model-bound value to contain only distinguishing evidence or the exact
+final contract.
+
+Repeated zero-operation executions that load and re-save hidden values without
+console evidence are counted as non-progress. After two consecutive occurrences,
+feedback explicitly tells the worker to stop re-saving the value and either log
+a small derived projection or call `finish`.
 
 `fs.glob` returns all matching workspace-relative paths as `string[]`;
 `fs.grep` returns all matching lines as structured path, line, column, and text
@@ -247,7 +255,7 @@ Additional Git operations, tickets, memory, or other domains must not silently
 appear in executions. They require explicit metadata, contract tests, permission
 tests, and an update to the capability audit. Human interaction is deliberately
 not a program capability: when the supplied procedure requires a human decision,
-the worker calls `cannot_execute`; the frontier retains `ask_user` ownership
+the worker calls `cannot_execute`; the primary agent retains `ask_user` ownership
 and may issue a new proc with the answer.
 
 ### Capability validation
@@ -272,61 +280,60 @@ that supplied rules cannot resolve mechanically, JavaScript first reduces the
 corpus to distinguishing evidence, for example:
 
 ```js
-return loadValue("RES_candidates").slice(0, 12);
+const candidates = loadValue("RES_candidates");
+console.log(
+  candidates.slice(0, 12).map(({ id, signature }) => ({ id, signature })),
+);
+return candidates;
 ```
 
-This keeps one composition primitive while distinguishing why a value enters
-worker context.
+The logged projection enters worker context while the returned candidates remain
+available only through its declared saved name.
 
 ## Execution Contract
 
 An execution runs JavaScript in the existing resource-limited program runtime.
 In addition to audited filesystem and tool capabilities, it may lazily read
-immutable saved values through `loadValue(valueId)`. The first
+immutable saved values through `loadValue(name)`. The first
 access fetches, parses, caches, and freezes that value inside the execution;
 unused values are never loaded into QuickJS.
 
 ```yaml
-needed_for: Returning exactly the requested foo definitions
+tool: finish
 javascript: |
   const matches = fs.grep("foo", { path: "src" });
   return groupAndSelect(matches);
-result_for: proc_result
 ```
 
-Storage and representation follow from the selected recipient rather than
-independent model choices. `no_one` ignores the return value.
-`later_javascript` stores the exact value and returns its ID and structure.
-`worker_decision` returns minimal evidence for its `needed_for` question and
-stores the exact value. `proc_result` returns exactly the frontier's original
-result requirements. Generous internal limits remain only as safety fuses;
-they are not advertised as output targets. Overflow rejects the execution and
-directs the worker to reduce semantically in JavaScript, never to paginate.
+`execute` stores its exact return value only when `save_as` is a name. Its
+feedback contains that name, the value's structure, and any bounded console
+evidence. `finish` returns exactly the primary agent's original result requirements.
+Generous internal limits remain only as safety fuses; they are not advertised
+as output targets. Console overflow retains the returned value and directs the
+worker to reduce semantically with `loadValue`, never to paginate.
 
-`worker_decision` separates what the model sees from what later code can use:
+Console evidence separates what the model sees from what later code can use:
 
 ```yaml
 needed_for: Which candidate owns retry classification?
 javascript: |
   const candidates = findCandidates();
-  return {
-    decision_evidence: candidates.map(({ id, signature, retryBranch }) =>
-      ({ id, signature, retryBranch })),
-    saved_value: candidates
-  };
-result_for: worker_decision
+  console.log(candidates.map(({ id, signature, retryBranch }) =>
+    ({ id, signature, retryBranch })));
+  return candidates;
+save_as: candidates
 ```
 
-Only `decision_evidence` enters the next worker turn. `saved_value` is stored
-exactly and returned only as `value_id`, so the next execution can apply the
-worker's decision with `loadValue(valueId)` without reinjecting the corpus.
+Only the logged evidence enters the next worker turn. The returned value is
+stored exactly and represented only by `save_as`, so the next execution can
+apply the worker's decision with `loadValue("candidates")` without reinjecting the
+corpus.
 
 Saved-value feedback is:
 
 ```json
 {
-  "result_for": "later_javascript",
-  "value_id": "RES_01...",
+  "save_as": "candidates",
   "value_bytes": 284192,
   "structure": "array(318) of object { path: string, line: integer }",
   "structure_bytes": 58,
@@ -343,17 +350,16 @@ it is true only when projection limits forced that mode to omit information.
 The stored value, when present, is exact regardless of projection mode.
 
 Every execution requires a user-visible `needed_for`. The dedicated
-proc card shows the frontier procedure and result requirements, each execution's
-justification, result destination and JavaScript, operation count,
+proc card shows the primary-agent procedure and result requirements, each execution's
+justification, saved name and JavaScript, operation count,
 nested capability activity, partial-effect warnings, final usage, and the
-decision evidence returned to the worker model.
+console evidence returned to the worker model.
 
-Stored value IDs are immutable, transaction- and conversation-scoped, inaccessible
-across users, auditable to their producing execution, and garbage-collected with the
-proc transaction. Ephemeral saved values are deleted on completion,
-`cannot_execute`, or failure when no retained final value was requested. Saved-value
-access does not grant new authority: every repository operation still crosses
-the normal capability and permission boundary.
+Saved names are immutable and transaction- and conversation-scoped. Named
+intermediates are deleted whenever the proc terminates. A successful proc keeps
+only its final result when the caller requested storage; `cannot_execute` and
+failure keep no values. Saved-value access does not grant new authority: every
+repository operation still crosses the normal capability and permission boundary.
 
 ### Failure and effects
 
@@ -477,20 +483,20 @@ structurally so harmless formatting changes do not obscure regressions.
 ## Execution Flow
 
 ```text
-frontier procedure
+primary-agent procedure
        |
        v
-proc worker -- execute(needed_for, javascript, result_for) --> program runtime
+proc worker -- execute(needed_for, javascript, save_as) --> program runtime
+            -- finish(javascript) -----------------------> program runtime
        ^                                      |
        |                                      v
-  +------ value ID or decision evidence -- saved-value store
+  +------ saved name or console evidence -- saved-value store
                                                       |
-             later execution: loadValue(valueId) <----+
+             later execution: loadValue(name) <--------+
 ```
 
-The worker first attempts one fused execution. It splits only for repair, a
-saved value genuinely needed across model turns, or one irreducible semantic
-decision. Procedure steps alone never justify additional executions.
+The worker uses the fewest executions that preserve correctness, recoverability,
+and clear data flow. Procedure steps alone never justify additional executions.
 
 Small language-agnostic helpers for line ranges, line numbering, contextual
 windows, indentation outlines, and common collection operations are suitable
@@ -504,13 +510,14 @@ the architecture to one language or LSP.
    normalization/rendering as pure modules.
 2. Add transaction-scoped immutable saved-value storage and lifecycle cleanup.
 3. Extend the program runtime with lazy read-only
-  `loadValue(valueId)` access.
-4. Add execution persistence and destination-specific model feedback with
+  `loadValue(name)` access.
+4. Add execution persistence and bounded model feedback with
   hidden emergency transport guards.
 5. Expose the low-level execution protocol in tests and measure saved-value composition
    before introducing another model.
-6. Add the constrained proc worker with only `execute` and `cannot_execute`.
-7. Replace the semantic frontier surface with `proc` and `ask_user` for the
+6. Add the constrained proc worker with `execute`, `finish`, and
+  `cannot_execute`.
+7. Replace the semantic primary-agent surface with `proc` and `ask_user` for the
    experiment; remove `resolve` and its resume/artifact-reader surface.
 8. Add deterministic stub scenarios and paired evaluations against standard
    mode.
@@ -519,8 +526,6 @@ the architecture to one language or LSP.
 
 - Whether real traces reveal semantic decisions that need a more structured
   contract than `needed_for`.
-- Saved-value retention after a proc call completes, including whether a later
-  proc may explicitly consume an earlier stored value.
 - Which small source/text utilities most reduce retries without creating a
   language-specific query surface.
 - How strict pre-execution procedure validation should be versus relying on
@@ -528,7 +533,7 @@ the architecture to one language or LSP.
 
 ## Evaluation
 
-Evaluate a proc-only frontier on procedures that require:
+Evaluate a proc-only primary agent on procedures that require:
 
 - broad search followed by grouped contextual reads;
 - mechanical filtering over large intermediate sets;
@@ -538,9 +543,8 @@ Evaluate a proc-only frontier on procedures that require:
 - heterogeneous records that shape must compact;
 - a deliberately underspecified decision that must return `cannot_execute`.
 
-Measure correctness, frontier and worker context growth, first-execution
-completion rate, execution count, unnecessary `worker_decision` frequency,
-decision-evidence precision, attempts to page corpora through model turns,
+Measure correctness, primary-agent and worker context growth, first-execution
+completion rate, execution count, console-evidence precision, attempts to page corpora through model turns,
 saved-value reuse, retries, latency, partial-effect recoveries, and the
 frequency with which the worker broadens or rewrites the supplied procedure.
 

@@ -55,7 +55,7 @@ export interface ProviderOpenOptions {
   /** Stable logical repository identity used to scope tickets across worktrees. */
   workspaceKey?: string;
   model: string;
-  /** Tool architecture exposed to the frontier model. */
+  /** Tool architecture exposed to the primary model. */
   agentArchitecture?: AgentArchitecture;
   /** Optional semantic worker model; absent inherits `model`. */
   semanticWorkerModel?: string | null;

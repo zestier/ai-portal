@@ -77,7 +77,7 @@ test("semantic mode exposes proc and completes a fused execution", async ({
       ? (message as MessageWithTools).toolCalls!.map((call) => call.tool)
       : [],
   );
-  expect(calls).toEqual(["proc", "execute"]);
+  expect(calls).toEqual(["proc", "finish"]);
 
   await expect(procCard).toHaveAttribute("data-automatically-open", "false");
   await expect(procCard).not.toHaveAttribute("open", "");
@@ -89,9 +89,7 @@ test("semantic mode exposes proc and completes a fused execution", async ({
     '"path": "src/a.ts"',
   );
   await expect(
-    procCard.getByText("Returning the deterministic proc fixture", {
-      exact: true,
-    }),
+    procCard.getByText("Final result", { exact: true }),
   ).toBeVisible();
   await procCard.locator(":scope > summary").click();
   await expect(procCard).not.toHaveAttribute("open", "");

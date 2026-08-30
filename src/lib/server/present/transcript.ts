@@ -170,6 +170,7 @@ function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
     tool !== "task" &&
     tool !== "proc" &&
     tool !== "execute" &&
+    tool !== "finish" &&
     tool !== "atom"
   )
     return undefined;
@@ -193,11 +194,12 @@ function subagentMeta(tc: ToolCallRecord): Record<string, unknown> | undefined {
         "result_requirements",
         "javascript",
         "needed_for",
-        "result_for",
+        "save_as",
         "source",
       ] as const) {
         const v = args[key];
-        if (typeof v === "string" && v.length > 0) meta[key] = v;
+        if ((typeof v === "string" && v.length > 0) || v === null)
+          meta[key] = v;
       }
       if (args.output !== undefined) meta.output = args.output;
     }
@@ -249,6 +251,7 @@ function projectTool(t: ToolCallRecord, rules: TrimRules): ToolCallRecord {
     t.tool.toLowerCase() === "task" ||
     t.tool.toLowerCase() === "proc" ||
     t.tool.toLowerCase() === "execute" ||
+    t.tool.toLowerCase() === "finish" ||
     t.tool.toLowerCase() === "atom";
   const argsInline = rules.taskArgs === null && subagentArgs;
   const args = trimmed(t.argsJson, rules.args, argsInline);

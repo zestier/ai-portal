@@ -16,8 +16,8 @@ describe("projectProcValue", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("emergency transport guard (12288)");
-    expect(message).toContain("Derive only required fields");
+    expect(message).toContain("transport limit 12288B");
+    expect(message).toContain("Derive required fields");
     expect(message).toContain("never paginate");
     expect(message).not.toContain("context-spike-marker");
     expect(Buffer.byteLength(message)).toBeLessThan(200);

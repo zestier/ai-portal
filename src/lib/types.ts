@@ -26,9 +26,9 @@ export interface Conversation {
   title: string;
   workdir: string;
   model: string | null;
-  /** Tool architecture exposed to the frontier model for this conversation. */
+  /** Tool architecture exposed to the primary model for this conversation. */
   agentArchitecture: AgentArchitecture;
-  /** Optional model override for semantic workers; null inherits the frontier model. */
+  /** Optional model override for semantic workers; null inherits the primary model. */
   semanticWorkerModel: string | null;
   /**
    * Absolute path to this conversation's durable pi session file

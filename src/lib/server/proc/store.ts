@@ -20,6 +20,11 @@ export interface ProcUsage {
   turns: number;
   executions: number;
   operations: number;
+  savedValuesCreated: number;
+  savedValuesLoaded: number;
+  consoleAttempts: number;
+  workerVisibleOutputs: number;
+  nonProgressExecutions: number;
 }
 
 export interface ProcTransaction {
@@ -49,6 +54,11 @@ const EMPTY_USAGE: ProcUsage = {
   turns: 0,
   executions: 0,
   operations: 0,
+  savedValuesCreated: 0,
+  savedValuesLoaded: 0,
+  consoleAttempts: 0,
+  workerVisibleOutputs: 0,
+  nonProgressExecutions: 0,
 };
 
 export function createProcTransaction(input: {
@@ -145,7 +155,7 @@ export function createProcResult(input: {
 }): { id: string; bytes: number } {
   const valueJson = JSON.stringify(input.value);
   if (valueJson === undefined)
-    throw new Error("Saved value must be JSON-compatible.");
+    throw new Error("Saved value: JSON-compatible data required.");
   const bytes = Buffer.byteLength(valueJson);
   const id = `RES_${ulid()}`;
   getDb()
@@ -163,6 +173,43 @@ export function createProcResult(input: {
       Date.now(),
     );
   return { id, bytes };
+}
+
+export function createNamedProcResult(input: {
+  transactionId: string;
+  conversationId: number;
+  name: string;
+  value: unknown;
+}): { id: string; bytes: number } {
+  const valueJson = JSON.stringify(input.value);
+  if (valueJson === undefined)
+    throw new Error("Saved value: JSON-compatible data required.");
+  const bytes = Buffer.byteLength(valueJson);
+  const id = namedResultId(input.transactionId, input.name);
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO proc_results(
+           id, transaction_id, conversation_id, value_json, bytes, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.transactionId,
+        input.conversationId,
+        valueJson,
+        bytes,
+        Date.now(),
+      );
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("UNIQUE constraint")) {
+      throw new Error(`Saved value name already exists: ${input.name}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  return { id: input.name, bytes };
 }
 
 export function getProcResult(input: {
@@ -190,11 +237,24 @@ export function createProcValueReader(
   );
   return {
     get(id: string): unknown | undefined {
-      const row = query.get(id, transactionId, conversationId) as
-        { value_json: string } | undefined;
+      const namedRow = query.get(
+        namedResultId(transactionId, id),
+        transactionId,
+        conversationId,
+      ) as { value_json: string } | undefined;
+      const row =
+        namedRow ??
+        (id.startsWith("RES_")
+          ? (query.get(id, transactionId, conversationId) as
+              { value_json: string } | undefined)
+          : undefined);
       return row ? JSON.parse(row.value_json) : undefined;
     },
   };
+}
+
+function namedResultId(transactionId: string, name: string): string {
+  return `${transactionId}:${name}`;
 }
 
 export function deleteProcResult(input: {
@@ -220,6 +280,19 @@ export function deleteProcResults(
         WHERE transaction_id = ? AND conversation_id = ?`,
     )
     .run(transactionId, conversationId);
+}
+
+export function deleteProcResultsExcept(
+  transactionId: string,
+  conversationId: number,
+  retainedId: string,
+): void {
+  getDb()
+    .prepare(
+      `DELETE FROM proc_results
+        WHERE transaction_id = ? AND conversation_id = ? AND id <> ?`,
+    )
+    .run(transactionId, conversationId, retainedId);
 }
 
 interface ProcTransactionRow {

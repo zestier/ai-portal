@@ -25,7 +25,7 @@ describe("semantic tool surface", () => {
     });
     const proc = buildProcTools({
       conversationId: 1,
-      frontierModel: "pi-stub/stub-model",
+      primaryModel: "pi-stub/stub-model",
       capabilities: capabilities.byName,
       facadeCapabilities: buildProgramFacadeTools("/"),
       permissionResolver: async () => ({ allow: true }),
@@ -47,10 +47,8 @@ describe("semantic tool surface", () => {
     expect(Buffer.byteLength(SEMANTIC_SYSTEM_GUIDANCE)).toBeLessThanOrEqual(
       6 * 1024,
     );
-    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain(
-      "does not investigate an open-ended goal",
-    );
-    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("retain diagnosis");
+    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("not open-ended investigations");
+    expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("You own diagnosis");
     expect(SEMANTIC_SYSTEM_GUIDANCE).toContain("consequential decisions");
     expect(exposed.some((tool) => tool.name === "bash")).toBe(false);
     expect(exposed.some((tool) => tool.name === "edit")).toBe(false);

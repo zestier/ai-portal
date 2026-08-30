@@ -523,7 +523,7 @@ describe("Svelte component regression coverage", () => {
             argsJson: JSON.stringify({
               needed_for: "Returning the requested ModelsSettings regions",
               javascript: "return content;",
-              result_for: "proc_result",
+              save_as: null,
             }),
             resultJson: JSON.stringify(
               JSON.stringify({

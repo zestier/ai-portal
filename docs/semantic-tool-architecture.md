@@ -2,7 +2,7 @@
 
 > **Historical design:** [Proc Tool Architecture](proc-tool-architecture.md)
 > describes the implemented proc-only replacement for this experimental
-> `resolve`/`program` frontier. This document is retained as the record of the
+> `resolve`/`program` primary-agent surface. This document is retained as the record of the
 > superseded design.
 
 ## Status
@@ -11,7 +11,7 @@ Implementation plan for an experimental, per-conversation agent architecture.
 The existing architecture remains the default and must remain behaviorally
 unchanged. The experiment is selected with `agentArchitecture`:
 
-- `standard`: expose the portal's normal tools directly to the frontier model.
+- `standard`: expose the portal's normal tools directly to the primary model.
 - `semantic`: expose a compact semantic and programmatic surface; delegate
   primitive workspace operations to an isolated worker or capability runtime.
 
@@ -22,17 +22,17 @@ constructing edits, and processing verbose tool output.
 ## Goals
 
 1. Make standard and semantic conversations directly comparable.
-2. Keep consequential decisions with the frontier model.
+2. Keep consequential decisions with the primary model.
 3. Collapse adaptive mechanical tool loops into semantically bounded
    transactions. A transaction may still require many turns, primitive calls,
    or touched files.
-4. Let the frontier batch deterministic operations with programmatic tool
+4. Let the primary agent batch deterministic operations with programmatic tool
    calling (PTC) without exposing host APIs to generated programs.
 5. Preserve permission prompts, auditability, cancellation, and nested activity.
 6. Keep all raw evidence, changes, traces, and command output available without
-   injecting them into frontier context by default.
+   injecting them into primary-agent context by default.
 7. Measure total cost, token use, latency, retries, and validation outcomes for
-   the frontier and workers independently.
+   the primary agent and workers independently.
 
 ## Non-goals
 
@@ -44,24 +44,24 @@ constructing edits, and processing verbose tool output.
   or permission behavior.
 - Treating `node:vm` as a security boundary for generated programs.
 
-## Frontier Surface
+## Primary-Agent Surface
 
 Semantic conversations expose these tools:
 
 | Tool | Purpose |
 | --- | --- |
 | `resolve` | Start one bounded semantic transaction. It may inspect, modify, and validate, but must escalate consequential ambiguity. |
-| `resume` | Continue a suspended transaction with a frontier decision. |
+| `resume` | Continue a suspended transaction with a primary-agent decision. |
 | `program` | Execute a bounded JavaScript program against audited portal capabilities. |
 | `get_program_tool_schemas` | Retrieve full contracts for selected program capabilities when names and compact descriptions are insufficient. |
 | `read_evidence` | Retrieve selected grounding captured by a transaction. |
 | `read_changeset` | Retrieve selected changes or a diff captured by a transaction. |
 | `read_trace` | Retrieve worker actions, primarily for failure diagnosis. |
 | `read_output` | Retrieve selected command or validation output. |
-| `ask_user` | Preserve direct frontier-to-human interaction. |
+| `ask_user` | Preserve direct primary-agent-to-human interaction. |
 
 The tools use separate, shallow schemas. They do not use tagged unions. Tool
-results include compact previews and opaque handles so the frontier only reads
+results include compact previews and opaque handles so the primary agent only reads
 large artifacts when they could change its next decision.
 `get_program_tool_schemas` replaces `describe_capabilities`; semantic mode does
 not expose both. There is no list mode or compatibility alias. Available names
@@ -72,7 +72,7 @@ for execution.
 constraints and completion conditions. `program` likewise requires a brief
 user-visible summary. These summaries label the calls in the transcript, while
 the resolve card also exposes the exact dynamic request sent to its worker.
-`resolve` does not require the frontier to predict whether the transaction will
+`resolve` does not require the primary agent to predict whether the transaction will
 need read, write, or execute authority. Each delegated primitive operation is
 permission-checked normally.
 
@@ -97,7 +97,7 @@ wide mechanical transformation can be a valid resolve task even when it takes
 many rounds of searching, contextual reads, edits, and validation. Conversely,
 a one-file task is too broad when the worker must diagnose the problem, choose
 the desired behavior, design the solution, or decide how to decompose the work.
-The frontier must specify the desired repository state or requested evidence;
+The primary agent must specify the desired repository state or requested evidence;
 the worker owns only the adaptive mechanics needed to produce it.
 
 Valid intents include:
@@ -118,7 +118,7 @@ Invalid intents include:
 Workers reject broad intents before execution when possible. If consequential
 ambiguity appears during execution, the transaction enters `decision_required`
 and returns a compact question, options, and evidence handle. `resume` continues
-the same durable worker context after the frontier answers.
+the same durable worker context after the primary agent answers.
 
 ## Runtime Shape
 
@@ -148,7 +148,7 @@ runtime state or expose experimental tool definitions.
 
 Semantic mode has a per-conversation optional worker model. When unset, the
 server chooses a configured cheap model; if no worker model is configured, the
-frontier model is used so the architecture remains testable without a second
+primary model is used so the architecture remains testable without a second
 provider.
 
 The worker receives:
@@ -175,16 +175,16 @@ Primitive descriptions remain compact and factual.
 The outer semantic tools do not request blanket workspace permission. Every
 worker primitive call uses the existing portal permission resolver with the
 same user, conversation, policy, approval mode, grants, and workspace roots as
-the frontier. A write prompt therefore names the actual write operation and
+the primary agent. A write prompt therefore names the actual write operation and
 target rather than `resolve`.
 
-Worker events are parented to the frontier semantic tool call and use the
+Worker events are parented to the primary-agent semantic tool call and use the
 existing nested tool/reasoning/edit persistence model. Permission requests are
 emitted into the active parent turn queue. Cancellation of the parent turn
 aborts the worker and any active primitive operation.
 
 The transaction trace retains all primitive calls and permission outcomes.
-Normal frontier results contain only counts, material findings, validation
+Normal primary-agent results contain only counts, material findings, validation
 summaries, and artifact handles.
 
 ## Transactions And Artifacts
@@ -522,7 +522,7 @@ interactive tools are excluded.
    Mark the initial programmable tools and keep interaction, permission-control,
    semantic, artifact-reader, and recursive program tools excluded.
 2. Replace `describe_capabilities` with `get_program_tool_schemas` in the semantic
-   frontier. Remove the old tool definition, guidance, tests, and summaries;
+   primary agent. Remove the old tool definition, guidance, tests, and summaries;
    do not retain an alias. Generate the compact catalog from program metadata
    and return exact contracts only for requested names.
 3. Install every enabled programmable capability in each `program` call. Route
@@ -543,7 +543,7 @@ The implementation should introduce focused modules under
 `src/lib/server/ptc/`: `contracts.ts` for program metadata and schema lookup,
 `normalize.ts` for compatibility forms, `facades.ts` for host adapters, and
 `bootstrap.ts` for isolate-local polyfills. `program.ts` remains responsible
-for budgets and QuickJS lifecycle. Semantic frontier definitions stay in
+for budgets and QuickJS lifecycle. Semantic primary-agent definitions stay in
 `src/lib/server/semantic/tools.ts`. No new persistence or cryptographic state is
 required.
 
@@ -553,7 +553,7 @@ Unit tests must cover:
 
 - catalog filtering by enabled tool groups and program eligibility;
 - unknown, duplicate, excluded, and mixed-validity schema requests;
-- absence of `describe_capabilities` from semantic frontier tools and guidance;
+- absence of `describe_capabilities` from semantic primary-agent tools and guidance;
 - availability of obvious tools without a prior schema request;
 - direct and computed-property unknown calls before handler dispatch;
 - compatibility-form equivalence and ambiguous-form rejection;
@@ -595,15 +595,15 @@ manual testing but is not treated as a controlled comparison.
 
 ## Token And Cost Budgets
 
-The semantic frontier definitions and their prompt guidance have regression
+The semantic primary-agent definitions and their prompt guidance have regression
 budgets. Initial targets are:
 
-- at most nine frontier tools in semantic mode;
-- at most 8 KiB serialized definitions for the semantic frontier surface;
-- at most 6 KiB of semantic frontier system guidance;
+- at most nine primary-agent tools in semantic mode;
+- at most 8 KiB serialized definitions for the semantic primary-agent surface;
+- at most 6 KiB of semantic primary-agent system guidance;
 - at most 24 KiB serialized primitive definitions for workers;
 - no artifact body returned by default above 4 KiB;
-- no worker trace returned to the frontier unless requested or failed.
+- no worker trace returned to the primary agent unless requested or failed.
 
 These byte budgets are stable proxies, not token estimates. Tests report both
 bytes and approximate tokens for review. Descriptions are expanded only when a
@@ -613,7 +613,7 @@ needed.
 Record per turn and per semantic transaction:
 
 - model, architecture, input/output/cache-read/cache-write tokens, and cost;
-- frontier turns, worker turns, primitive operations, and PTC operations;
+- primary-agent turns, worker turns, primitive operations, and PTC operations;
 - elapsed time, permission prompts, retries, suspensions, and artifact reads;
 - validation commands and outcomes.
 
@@ -646,7 +646,7 @@ schema size in isolation.
 - PTC cannot directly read files, environment variables, network resources, or
   spawn processes, and every capability operation is permission checked.
 - Token-size regression tests enforce the stated budgets.
-- Usage records distinguish frontier, worker, and PTC costs.
+- Usage records distinguish primary-agent, worker, and PTC costs.
 - `pnpm run verify` passes.
 
 ## Evaluation
@@ -660,8 +660,8 @@ Use a fixed suite of local repository tasks in paired forks:
 - adaptive wrapper traversal;
 - one deliberately ambiguous task that must suspend.
 
-Compare correctness, human interventions, total cost, wall time, frontier turns,
+Compare correctness, human interventions, total cost, wall time, primary-agent turns,
 context growth, cache effectiveness, retries, and artifact expansion frequency.
 The semantic architecture is successful only if quality remains comparable and
-the total task economics improve; reducing visible frontier tokens alone is not
+the total task economics improve; reducing visible primary-agent tokens alone is not
 sufficient.

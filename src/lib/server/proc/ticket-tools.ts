@@ -81,11 +81,11 @@ export function buildProcTicketTools(opts: {
 }): PortalTool[] {
   const create: PortalTool = {
     name: "ticket_add",
-    description: "Create a workspace ticket.",
+    description: "Create workspace ticket.",
     parameters: parameters(CreateArgs),
     argsSchema: CreateArgs,
     program: {
-      catalogDescription: "create a durable workspace ticket",
+      catalogDescription: "create durable workspace ticket",
       operationCategory: "mutation",
       resultSchema: { type: "string", description: "Assigned ticket id." },
       example: 'tools.ticket_add({ title: "Follow-up", body: "Details" })',
@@ -117,11 +117,11 @@ export function buildProcTicketTools(opts: {
 
   const get: PortalTool = {
     name: "ticket_get",
-    description: "Get one workspace ticket.",
+    description: "Get workspace ticket.",
     parameters: parameters(GetArgs),
     argsSchema: GetArgs,
     program: {
-      catalogDescription: "read one complete workspace ticket",
+      catalogDescription: "read complete workspace ticket",
       operationCategory: "read",
       resultSchema: TicketResult,
       example: 'tools.ticket_get({ id: "T12" })',
@@ -138,12 +138,12 @@ export function buildProcTicketTools(opts: {
 
   const update: PortalTool = {
     name: "ticket_update",
-    description: "Patch workspace ticket properties.",
+    description: "Patch workspace ticket.",
     parameters: parameters(UpdateArgs),
     argsSchema: UpdateArgs,
     program: {
       catalogDescription:
-        "patch ticket properties; blockedBy and blocks replace the complete array",
+        "patch ticket; blockedBy and blocks replace complete arrays",
       operationCategory: "mutation",
       resultSchema: TicketResult,
       example: 'tools.ticket_update({ id: "T12", patch: { status: "done" } })',
@@ -184,7 +184,7 @@ export function buildProcTicketTools(opts: {
     parameters: parameters(ListArgs),
     argsSchema: ListArgs,
     program: {
-      catalogDescription: "list complete workspace tickets, defaulting to open",
+      catalogDescription: "list complete tickets; default open",
       operationCategory: "read",
       resultSchema: { type: "array", items: TicketResult },
       example: 'tools.ticket_list({ status: "open" })',

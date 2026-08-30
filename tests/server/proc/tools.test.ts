@@ -8,7 +8,7 @@ describe("proc arguments", () => {
   it("uses an exact result contract without advertising a byte target", () => {
     const [proc] = buildProcTools({
       conversationId: 1,
-      frontierModel: "test/model",
+      primaryModel: "test/model",
       capabilities: new Map(),
       facadeCapabilities: new Map(),
       permissionResolver: async () => ({ allow: true }),
@@ -69,12 +69,12 @@ describe("validateProcRequest", () => {
         requirements: "Return all relevant context from the search results.",
         procedure: "Search the repository and return the matches.",
       }),
-    ).toContain("reduce candidate corpora in JavaScript");
+    ).toContain("reduces candidate corpora in JavaScript");
     expect(
       validateProcRequest({
         requirements: "Show batches of candidates for review.",
         procedure: "Return pages of candidate files until they are exhausted.",
       }),
-    ).toContain("not page or return them");
+    ).toContain("never page them for model browsing");
   });
 });

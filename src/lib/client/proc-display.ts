@@ -7,19 +7,17 @@ export interface ProcArgs {
 }
 
 export interface ProcExecutionArgs {
-  needed_for: string;
   javascript: string;
-  result_for: "no_one" | "later_javascript" | "worker_decision" | "proc_result";
+  needed_for?: string;
+  save_as?: string | null;
 }
 
 export interface ProcExecutionResult {
-  result_for?: ProcExecutionArgs["result_for"];
-  value_id?: string;
+  save_as?: string | null;
   value_bytes?: number;
   structure?: unknown;
   structure_bytes?: number;
   needed_for?: string;
-  decision_evidence?: unknown;
   bytes?: number;
   operations?: number;
   effects?: Array<{
@@ -83,13 +81,15 @@ export function parseProcExecutionMeta(
 }
 
 function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
+  if (!isObject(value) || typeof value.javascript !== "string") {
+    return null;
+  }
+  if (value.needed_for === undefined && value.save_as === undefined) {
+    return value as unknown as ProcExecutionArgs;
+  }
   if (
-    !isObject(value) ||
     typeof value.needed_for !== "string" ||
-    typeof value.javascript !== "string" ||
-    !["no_one", "later_javascript", "worker_decision", "proc_result"].includes(
-      String(value.result_for),
-    )
+    (value.save_as !== null && typeof value.save_as !== "string")
   ) {
     return null;
   }

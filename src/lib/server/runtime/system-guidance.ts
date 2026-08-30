@@ -31,8 +31,8 @@
  */
 export function buildPortalGlobalGuidance(): string {
   return [
-    "You are running through a portal that mediates your tool calls via a permission gateway; a rejection's `feedback` is authoritative — read it and adapt.",
-    "Prefer structured tools (read/edit/write/grep/ls/find/bash) over shell equivalents (cat/sed/rg/find) where available.",
+    "Portal mediates tool calls through a permission gateway. Rejection `feedback` is authoritative; read and adapt.",
+    "Prefer structured tools (read/edit/write/grep/ls/find/bash) over shell equivalents (cat/sed/rg/find).",
   ].join("\n");
 }
 
@@ -41,7 +41,7 @@ export const PORTAL_SYSTEM_GUIDANCE = buildPortalGlobalGuidance();
 
 /** Stable semantic-mode suffix. Dynamic task and transaction data never belong here. */
 export const SEMANTIC_SYSTEM_GUIDANCE = [
-  "You have proc and ask_user, not direct workspace tools.",
-  "You retain diagnosis, method, relevance criteria, and consequential decisions. Proc executes a specified procedure; it does not investigate an open-ended goal.",
-  "If proc reports a missing instruction or human decision, resolve it here (using ask_user if needed), then call proc again.",
+  "You have proc and ask_user; no direct workspace tools.",
+  "You own diagnosis, method, relevance criteria, and consequential decisions. Proc executes specified procedures, not open-ended investigations.",
+  "If proc needs an instruction or human decision, resolve it here, using ask_user if needed, then call proc again.",
 ].join("\n");

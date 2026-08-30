@@ -88,7 +88,7 @@ describe("db migrations + repos", () => {
     const conversation = convs.create(user.id, {
       title: "semantic",
       workdir: "/tmp",
-      model: "provider/frontier",
+      model: "provider/primary",
       agentArchitecture: "semantic",
       semanticWorkerModel: "provider/worker",
     });

@@ -32,7 +32,7 @@ describe("program contracts", () => {
       ).keys(),
     ]).toEqual(["grep"]);
     expect(programCatalog(new Map([[grep.name, grep]]))).toBe(
-      "grep - search workspace file contents",
+      "grep - search file contents",
     );
   });
 
@@ -76,7 +76,7 @@ describe("program contracts", () => {
     ).toEqual({ pattern: "needle", path: "src", glob: "*.ts" });
     expect(() =>
       normalizeProgramToolArgs(grep, { pattern: "one", query: "two" }),
-    ).toThrow(/Ambiguous program arguments/);
+    ).toThrow(/Ambiguous arguments/);
   });
 
   it("omits bash from program capabilities", () => {
@@ -152,8 +152,8 @@ describe("program contracts", () => {
       ok({
         sha: "abc123def456",
         shortSha: "abc123de",
-        subject: "frontier subject",
-        body: "frontier body",
+        subject: "primary subject",
+        body: "primary body",
         mergeCommit: false,
         resolvedConflicts: [] as string[],
       }),
@@ -194,7 +194,7 @@ describe("program contracts", () => {
     await expect(
       commitTool.handler({
         paths: "all",
-        subject: "frontier subject",
+        subject: "primary subject",
         trailers: [{ token: "Ticket", value: "T1" }],
       }),
     ).resolves.toEqual({
@@ -202,16 +202,16 @@ describe("program contracts", () => {
       result: {
         sha: "abc123def456",
         shortSha: "abc123de",
-        subject: "frontier subject",
+        subject: "primary subject",
         mergeCommit: false,
         resolvedConflicts: [],
       },
     });
-    // The frontier-authored message reaches the underlying tool runtime
+    // The primary-agent message reaches the underlying tool runtime
     // verbatim (D2) — the projection never authors or rewrites it.
     expect(commitHandler).toHaveBeenCalledWith({
       paths: "all",
-      subject: "frontier subject",
+      subject: "primary subject",
       trailers: [{ token: "Ticket", value: "T1" }],
     });
 

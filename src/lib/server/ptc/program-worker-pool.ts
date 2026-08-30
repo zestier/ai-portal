@@ -204,10 +204,7 @@ export class ProgramWorkerPool {
     this.totalQueueWaitMs += entry.startedAt - entry.enqueuedAt;
     this.worker.ref();
     entry.hardTimer = setTimeout(() => {
-      this.replaceWorker(
-        this.worker,
-        new Error("Execution exceeded the 120 second limit."),
-      );
+      this.replaceWorker(this.worker, new Error("Execution exceeded 120s."));
     }, this.hardTimeoutMs);
     this.post({
       type: "run",

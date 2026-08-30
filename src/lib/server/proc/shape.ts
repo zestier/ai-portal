@@ -31,7 +31,7 @@ export function projectShape(
   maxBytes: number,
 ): ShapeProjection {
   if (!Number.isInteger(maxBytes) || maxBytes < 32) {
-    throw new Error("Shape maxBytes must be an integer of at least 32.");
+    throw new Error("Shape maxBytes: integer >= 32 required.");
   }
   assertJsonValue(value);
   const inferred = inferShape(value, 0);
@@ -221,18 +221,15 @@ function assertJsonValue(value: unknown, seen = new Set<object>()): void {
     return;
   if (typeof value === "number") {
     if (!Number.isFinite(value))
-      throw new Error(
-        "Execution returned NaN or Infinity. Return finite numbers only.",
-      );
+      throw new Error("NaN/Infinity invalid. Return finite numbers.");
     return;
   }
   if (typeof value !== "object") {
     throw new Error(
-      "Execution returned a non-JSON value. Return strings, finite numbers, booleans, null, arrays, or objects.",
+      "Non-JSON result. Return string, finite number, boolean, null, array, or object.",
     );
   }
-  if (seen.has(value))
-    throw new Error("Execution value must not contain cycles.");
+  if (seen.has(value)) throw new Error("Result must not contain cycles.");
   seen.add(value);
   if (Array.isArray(value)) {
     for (const entry of value) assertJsonValue(entry, seen);

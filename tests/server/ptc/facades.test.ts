@@ -74,6 +74,31 @@ describe("program fs facade capabilities", () => {
     });
   });
 
+  it("rejects oversized directory listings with glob guidance", async () => {
+    const root = makeTmpDir("ptc-fs-large-dir-");
+    const directory = join(root, "large");
+    await mkdir(directory);
+    await Promise.all(
+      Array.from({ length: 1_001 }, (_, index) =>
+        writeFile(join(directory, `${index}.txt`), ""),
+      ),
+    );
+
+    const result = await buildProgramFacadeTools(root)
+      .get("__ptc_fs_readdir")!
+      .handler({ path: directory });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        message: expect.stringContaining("limit 1000"),
+      },
+    });
+    expect(result).toMatchObject({
+      error: { message: expect.stringContaining("Use fs.glob") },
+    });
+  });
+
   it("supports ripgrep ignores, explicit ignored trees, and bounded depth", async () => {
     const root = makeTmpDir("ptc-fs-glob-");
     await mkdir(join(root, "src", "nested"), { recursive: true });
@@ -307,7 +332,7 @@ describe("program fs facade capabilities", () => {
       await command.handler({ command: "printf hi | sort" }),
     ).toMatchObject({
       ok: false,
-      error: { message: expect.stringContaining("without shell operators") },
+      error: { message: expect.stringContaining("no shell operators") },
     });
   });
 });

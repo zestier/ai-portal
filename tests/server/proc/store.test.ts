@@ -4,10 +4,12 @@ import { setupLocalEnv } from "../../helpers/env";
 import * as users from "../../../src/lib/server/db/repos/users";
 import * as conversations from "../../../src/lib/server/db/repos/conversations";
 import {
+  createNamedProcResult,
   createProcResult,
   createProcTransaction,
   getProcResult,
   createProcValueReader,
+  deleteProcResultsExcept,
   getProcTransaction,
   updateProcTransaction,
 } from "../../../src/lib/server/proc/store";
@@ -78,5 +80,73 @@ describe("proc store", () => {
       resultId: second.id,
       usage: { executions: 2 },
     });
+  });
+
+  it("stores caller-named values within a transaction and rejects duplicates", () => {
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "named proc values",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 10,
+      workerModel: "pi-stub/stub-model",
+      summary: "Save candidates",
+      requirements: "Return candidates",
+      procedure: "Collect candidates",
+      outputPolicy: { mode: "shape", maxBytes: 4096, store: true },
+      messages: [{ role: "system", content: "proc" }],
+    });
+
+    expect(
+      createNamedProcResult({
+        transactionId: transaction.id,
+        conversationId,
+        name: "candidates",
+        value: ["src/a.ts"],
+      }),
+    ).toEqual({ id: "candidates", bytes: expect.any(Number) });
+    expect(
+      createProcValueReader(transaction.id, conversationId).get("candidates"),
+    ).toEqual(["src/a.ts"]);
+    createNamedProcResult({
+      transactionId: transaction.id,
+      conversationId,
+      name: "RES_candidates",
+      value: ["src/b.ts"],
+    });
+    expect(
+      createProcValueReader(transaction.id, conversationId).get(
+        "RES_candidates",
+      ),
+    ).toEqual(["src/b.ts"]);
+    expect(() =>
+      createNamedProcResult({
+        transactionId: transaction.id,
+        conversationId,
+        name: "candidates",
+        value: [],
+      }),
+    ).toThrow("Saved value name already exists: candidates");
+
+    const finalResult = createProcResult({
+      transactionId: transaction.id,
+      conversationId,
+      value: { selected: "src/a.ts" },
+    });
+    deleteProcResultsExcept(transaction.id, conversationId, finalResult.id);
+    expect(
+      createProcValueReader(transaction.id, conversationId).get("candidates"),
+    ).toBeUndefined();
+    expect(
+      getProcResult({
+        id: finalResult.id,
+        transactionId: transaction.id,
+        conversationId,
+      })?.value,
+    ).toEqual({ selected: "src/a.ts" });
   });
 });

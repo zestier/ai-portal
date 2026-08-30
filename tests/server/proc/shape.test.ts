@@ -64,7 +64,7 @@ describe("projectShape", () => {
 
   it("rejects non-JSON values and cycles", () => {
     expect(() => projectShape({ value: undefined }, 1024)).toThrow(
-      "non-JSON value",
+      "Non-JSON result",
     );
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;

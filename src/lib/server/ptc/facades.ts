@@ -73,7 +73,7 @@ const GitBlameArgs = z
     (args) =>
       args.endLine === undefined ||
       (args.startLine !== undefined && args.endLine >= args.startLine),
-    { message: "endLine requires startLine and must not precede it" },
+    { message: "endLine requires startLine; endLine >= startLine" },
   );
 const CommandOptions = {
   cwd: z.string().min(1).max(4096).optional(),
@@ -106,6 +106,7 @@ interface NormalizedCommand {
   timeoutMs: number;
 }
 const MAX_GIT_BLAME_OUTPUT_BYTES = 64 * 1024;
+const MAX_READDIR_ENTRIES = 1_000;
 
 export function buildProgramFacadeTools(
   workspaceRoot: string,
@@ -131,7 +132,7 @@ export function buildProgramFacadeTools(
 function buildGlobTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_glob",
-    description: "Internal ripgrep-backed adapter for fs.glob.",
+    description: "ripgrep-backed fs.glob.",
     parameters: jsonSchema(GlobArgs),
     argsSchema: GlobArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
@@ -174,7 +175,7 @@ function buildGlobTool(workspaceRoot: string): PortalTool {
 function buildGrepTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_grep",
-    description: "Internal ripgrep-backed adapter for fs.grep.",
+    description: "ripgrep-backed fs.grep.",
     parameters: jsonSchema(GrepArgs),
     argsSchema: GrepArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw, "."),
@@ -248,7 +249,7 @@ function parseGrepMatches(
 function buildGitBlameTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_git_blame",
-    description: "Internal audited adapter for bounded git.blame.",
+    description: "Audited bounded git.blame.",
     parameters: jsonSchema(GitBlameArgs),
     argsSchema: GitBlameArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
@@ -267,7 +268,7 @@ function buildGitBlameTool(workspaceRoot: string): PortalTool {
       });
       if (result.code !== 0) return err(result.stderr || "git blame failed");
       if (result.truncated) {
-        return err("git blame exceeded the 64KB limit; request fewer lines.");
+        return err("git.blame: 64KB limit; request fewer lines.");
       }
       return ok(parseGitBlame(result.stdout));
     },
@@ -303,7 +304,7 @@ function parseGitBlame(output: string): Array<Record<string, unknown>> {
 function buildRemoveTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_rm",
-    description: "Internal audited adapter for reversible fs removal.",
+    description: "Audited reversible fs removal.",
     parameters: jsonSchema(RemoveArgs),
     argsSchema: RemoveArgs,
     derivePermissionRequest: (raw) => writePermission(workspaceRoot, raw),
@@ -314,10 +315,10 @@ function buildRemoveTool(workspaceRoot: string): PortalTool {
       try {
         const value = await lstat(target.abs);
         if (value.isDirectory() && unlink) {
-          return err("fs.unlink cannot remove a directory.");
+          return err("fs.unlink: directories unsupported.");
         }
         if (value.isDirectory() && !recursive) {
-          return err("fs.rm requires recursive: true for directories.");
+          return err("fs.rm directory: recursive: true required.");
         }
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
@@ -332,7 +333,7 @@ function buildRemoveTool(workspaceRoot: string): PortalTool {
 function buildCommandRunTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_command_run",
-    description: "Internal audited adapter for command.run.",
+    description: "Audited command.run.",
     parameters: jsonSchema(CommandArgs),
     argsSchema: CommandArgs,
     async handler(raw, ctx) {
@@ -382,7 +383,7 @@ function runCommand(
     child.on("close", (code) => {
       if (settled) return;
       if (timedOut)
-        return finish(err(`Command timed out after ${command.timeoutMs}ms.`));
+        return finish(err(`Command timeout: ${command.timeoutMs}ms.`));
       if (aborted) return finish(err("Command aborted."));
       finish(ok({ status: code, stdout, stderr }));
     });
@@ -425,12 +426,11 @@ function normalizeCommand(
     return {
       ok: false,
       message:
-        "command.run accepts one command line without shell operators; use argv and JavaScript composition for pipelines.",
+        "command.run: one command, no shell operators. Use argv and JavaScript for pipelines.",
     };
   }
   const [executable, ...args] = parsed.segments[0].argv;
-  if (!executable)
-    return { ok: false, message: "command.run command is empty." };
+  if (!executable) return { ok: false, message: "command.run: empty command." };
   return {
     ok: true,
     command: {
@@ -446,7 +446,7 @@ function normalizeCommand(
 function buildReaddirTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_readdir",
-    description: "Internal audited adapter for fs.readdir.",
+    description: "Audited fs.readdir.",
     parameters: jsonSchema(ReaddirArgs),
     argsSchema: ReaddirArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),
@@ -457,6 +457,11 @@ function buildReaddirTool(workspaceRoot: string): PortalTool {
       try {
         if (withFileTypes) {
           const entries = await readdir(target.abs, { withFileTypes: true });
+          if (entries.length > MAX_READDIR_ENTRIES) {
+            return err(
+              `fs.readdir: ${entries.length} entries; limit ${MAX_READDIR_ENTRIES}. Use fs.glob with narrow pattern.`,
+            );
+          }
           return ok(
             entries
               .map((entry) => ({
@@ -468,9 +473,13 @@ function buildReaddirTool(workspaceRoot: string): PortalTool {
               .sort((left, right) => left.name.localeCompare(right.name)),
           );
         }
-        const names = (await readdir(target.abs)).sort((left, right) =>
-          left.localeCompare(right),
-        );
+        const entries = await readdir(target.abs);
+        if (entries.length > MAX_READDIR_ENTRIES) {
+          return err(
+            `fs.readdir: ${entries.length} entries; limit ${MAX_READDIR_ENTRIES}. Use fs.glob with narrow pattern.`,
+          );
+        }
+        const names = entries.sort((left, right) => left.localeCompare(right));
         return ok(names);
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error));
@@ -482,7 +491,7 @@ function buildReaddirTool(workspaceRoot: string): PortalTool {
 function buildStatTool(workspaceRoot: string): PortalTool {
   return {
     name: "__ptc_fs_stat",
-    description: "Internal audited adapter for fs.stat.",
+    description: "Audited fs.stat.",
     parameters: jsonSchema(PathArgs),
     argsSchema: PathArgs,
     derivePermissionRequest: (raw) => readPermission(workspaceRoot, raw),

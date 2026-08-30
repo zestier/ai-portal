@@ -229,7 +229,7 @@ describe("program runtime", () => {
       },
       signal: new AbortController().signal,
     });
-    await expect(run).rejects.toThrow(/Available related tools: echo/);
+    await expect(run).rejects.toThrow(/Similar: echo/);
     expect(dispatched).toBe(false);
   });
 
@@ -270,12 +270,12 @@ describe("program runtime", () => {
     await expect(
       runProgram({
         source:
-          "for (let index = 0; index < 10001; index++) tools.echo({ value: index }); return 'done';",
+          "for (let index = 0; index < 1001; index++) tools.echo({ value: index }); return 'done';",
         capabilities: new Map([[readEcho.name, readEcho]]),
         execute: (_name, args) => readEcho.handler(args),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("total operation limit (10000)");
+    ).rejects.toThrow("1000 operations max");
   });
 
   it("charges undeclared operations to the mutation budget", async () => {
@@ -287,7 +287,7 @@ describe("program runtime", () => {
         execute: (_name, args) => echo.handler(args),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("mutation operation limit (500)");
+    ).rejects.toThrow("mutation operations: limit 500");
   });
 
   it("bounds command operations independently from reads", async () => {
@@ -301,7 +301,7 @@ describe("program runtime", () => {
         execute: (_name, args) => command.handler(args),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("command operation limit (20)");
+    ).rejects.toThrow("command operations: limit 20");
   });
 
   it("does not expose ambient process APIs", async () => {
@@ -373,18 +373,46 @@ describe("program runtime", () => {
     await expect(run).rejects.toThrow(/node:crypto/);
   });
 
-  it("rejects console output and programs without a completion value", async () => {
+  it("captures structured console output without changing the completion value", async () => {
+    const result = await runProgram({
+      source: `
+        const evidence = { answer: 42 };
+        console.log("candidate", evidence);
+        console.info({ phase: "inspect" });
+        console.warn(["check"]);
+        console.error(null);
+        console.debug(true);
+        evidence.answer = 0;
+        return "complete";
+      `,
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.value).toBe("complete");
+    expect(result.consoleOutput).toEqual([
+      { level: "log", values: ["candidate", { answer: 42 }] },
+      { level: "info", values: [{ phase: "inspect" }] },
+      { level: "warn", values: [["check"]] },
+      { level: "error", values: [null] },
+      { level: "debug", values: [true] },
+    ]);
+  });
+
+  it("rejects circular console values with actionable guidance", async () => {
     await expect(
       runProgram({
-        source: 'console.log({ answer: 42 }); return "unreachable";',
+        source:
+          "const circular = {}; circular.self = circular; console.log(circular); return 'done';",
         capabilities: new Map(),
         execute: async () => ok(),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow(
-      "Console output is unavailable. Return the value directly; do not JSON.stringify it.",
-    );
+    ).rejects.toThrow("Console args: not JSON-compatible");
+  });
 
+  it("rejects programs without a completion value", async () => {
     await expect(
       runProgram({
         source: "const answer = 42;",
@@ -393,7 +421,7 @@ describe("program runtime", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(
-      "Execution returned undefined. Return a JSON-compatible value, for example return { results }.",
+      "Execution returned undefined. Return a JSON-compatible value, e.g. { results }.",
     );
 
     await expect(
@@ -780,9 +808,7 @@ describe("program runtime", () => {
       signal: new AbortController().signal,
     });
 
-    await expect(run).rejects.toThrow(
-      'fs.grep RegExp values support only the "i" flag',
-    );
+    await expect(run).rejects.toThrow('fs.grep RegExp: "i" flag only');
   });
 
   it("loads capability results larger than 64 KiB into the VM", async () => {
@@ -812,7 +838,7 @@ describe("program runtime", () => {
       execute: (_name, args) => internal.handler(args),
       signal: new AbortController().signal,
     });
-    await expect(run).rejects.toThrow(/Unknown program tool/);
+    await expect(run).rejects.toThrow(/Unknown tool/);
   });
 
   it("exposes command.run over its audited facade", async () => {
@@ -966,7 +992,7 @@ describe("program runtime", () => {
     });
     expect(dispatched).toBe(false);
     expect(result.value).toEqual([
-      'fs.readFile supports only "utf8" and "utf-8".',
+      'fs.readFile encoding: "utf8" or "utf-8" only.',
     ]);
   });
 });

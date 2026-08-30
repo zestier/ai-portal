@@ -5,6 +5,7 @@ import * as users from "../../../src/lib/server/db/repos/users";
 import * as conversations from "../../../src/lib/server/db/repos/conversations";
 import {
   createProcTransaction,
+  createProcValueReader,
   getProcResult,
 } from "../../../src/lib/server/proc/store";
 import {
@@ -101,7 +102,7 @@ describe("proc worker", () => {
 
     expect(outcome).toMatchObject({
       status: "failed",
-      summary: expect.stringContaining("transcript reached"),
+      summary: expect.stringContaining("Transcript 132163B"),
     });
     expect(piChat).not.toHaveBeenCalled();
   });
@@ -157,7 +158,7 @@ describe("proc worker", () => {
 
     expect(outcome).toMatchObject({
       status: "failed",
-      summary: expect.stringContaining("arguments for execute"),
+      summary: expect.stringContaining("execute: 409600B arguments"),
     });
     expect(piChat).toHaveBeenCalledTimes(1);
     expect(transaction.messages).toEqual(initialMessages);
@@ -171,149 +172,22 @@ describe("proc worker", () => {
     });
   });
 
-  it("separates decision evidence from saved state and retains it for a reducing retry", async () => {
-    const user = users.ensureLocalUser();
-    const conversation = conversations.create(user.id, {
-      title: "oversized inspection",
-      workdir: "/tmp",
-      model: "pi-stub/stub-model",
-    });
-    const conversationId = convCodec.parse(conversation.id);
-    const outputPolicy = {
-      mode: "exact" as const,
-      maxBytes: 1_024,
-      store: false,
-    };
-    const transaction = createProcTransaction({
-      conversationId,
-      parentToolCallId: 39,
-      workerModel: "pi-stub/stub-model",
-      summary: "Inspect large value",
-      requirements: "Return one value",
-      procedure: "Inspect then reduce",
-      outputPolicy,
-      messages: initialProcMessages({
-        summary: "Inspect large value",
-        requirements: "Return one value",
-        procedure: "Inspect then reduce",
-        outputPolicy,
-        contracts: [],
-      }),
-    });
-    const largeValue = { text: "x".repeat(65 * 1_024) };
-    piChat
-      .mockResolvedValueOnce({
-        content: "",
-        toolCalls: [
-          {
-            id: "small-inspection",
-            name: "execute",
-            arguments: JSON.stringify({
-              needed_for:
-                "Choosing the candidate that satisfies the ownership rule",
-              javascript:
-                "return { decision_evidence: { candidates: ['src/a.ts'] }, saved_value: [{ path: 'src/a.ts', score: 1 }] };",
-              result_for: "worker_decision",
-            }),
-          },
-        ],
-      })
-      .mockImplementationOnce(async (_config, messages) => {
-        const feedback = JSON.parse(messages.at(-1).content) as Record<
-          string,
-          unknown
-        >;
-        expect(feedback).toMatchObject({
-          result_for: "worker_decision",
-          needed_for:
-            "Choosing the candidate that satisfies the ownership rule",
-          decision_evidence: { candidates: ["src/a.ts"] },
-        });
-        expect(feedback).toHaveProperty("value_id");
-        expect(feedback).not.toHaveProperty("value_bytes");
-        expect(feedback).not.toHaveProperty("decision_evidence_bytes");
-        expect(
-          getProcResult({
-            id: String(feedback.value_id),
-            transactionId: transaction.id,
-            conversationId,
-          })?.value,
-        ).toEqual([{ path: "src/a.ts", score: 1 }]);
-        return {
-          content: "",
-          toolCalls: [
-            {
-              id: "large-inspection",
-              name: "execute",
-              arguments: JSON.stringify({
-                needed_for:
-                  "Choosing the candidate that satisfies the ownership rule",
-                javascript:
-                  "return { decision_evidence: { text: 'x'.repeat(65 * 1024) }, saved_value: { text: 'x'.repeat(65 * 1024) } };",
-                result_for: "worker_decision",
-              }),
-            },
-          ],
-        };
-      })
-      .mockImplementationOnce(async (_config, messages) => {
-        const feedback = JSON.parse(messages.at(-1).content) as {
-          value_id: string;
-          value_bytes: number;
-          error: string;
-        };
-        expect(feedback.error).toContain("emergency transport guard (65536)");
-        expect(feedback.value_bytes).toBeGreaterThan(64 * 1_024);
-        expect(
-          getProcResult({
-            id: feedback.value_id,
-            transactionId: transaction.id,
-            conversationId,
-          })?.value,
-        ).toEqual(largeValue);
-        return {
-          content: "",
-          toolCalls: [
-            {
-              id: "stop-after-overflow",
-              name: "cannot_execute",
-              arguments: JSON.stringify({ reason: "Test complete." }),
-            },
-          ],
-        };
-      });
-
-    const outcome = await runProcWorker({
-      transaction,
-      capabilities: new Map(),
-      facadeCapabilities: new Map(),
-      permissionResolver: async () => ({ allow: true }),
-      emit: () => {},
-      signal: new AbortController().signal,
-    });
-
-    expect(outcome.status).toBe("cannot_execute");
-  });
-
-  it("is constrained to frontier-authored procedures and fused executions", () => {
+  it("preserves primary-agent procedures and safe fusion", () => {
     expect(Buffer.byteLength(PROC_WORKER_SYSTEM)).toBeLessThanOrEqual(2_000);
-    expect(PROC_WORKER_SYSTEM).toContain("without changing its goals");
+    expect(PROC_WORKER_SYSTEM).toContain("Do not change goals");
     expect(PROC_WORKER_SYSTEM).toContain(
-      "Default to one execute ending in proc_result",
+      "Use the fewest executions preserving correctness",
     );
-    expect(PROC_WORKER_SYSTEM).toContain("Split only to repair");
     expect(PROC_WORKER_SYSTEM).toContain(
       "Procedure steps are not execution boundaries",
     );
     expect(PROC_WORKER_SYSTEM).toContain(
-      "keep intermediate data in local variables",
+      "Logs are parsed into your next turn and consume context",
     );
-    expect(PROC_WORKER_SYSTEM).toContain("one concrete semantic question");
-    expect(PROC_WORKER_SYSTEM).toContain(
-      "Never copy the corpus into decision_evidence",
-    );
+    expect(PROC_WORKER_SYSTEM).toContain("Log minimum evidence");
     expect(PROC_WORKER_SYSTEM).toContain("exact allowlist");
-    expect(PROC_WORKER_SYSTEM).toContain("exactly one tool per turn");
+    expect(PROC_WORKER_SYSTEM).toContain("run sequentially");
+    expect(PROC_WORKER_SYSTEM).toContain("finish returns the final result");
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
   });
 
@@ -345,7 +219,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Applying the requested repository mutation",
               javascript: "tools.record_action({});",
-              result_for: "no_one",
+              save_as: null,
             }),
           },
         ],
@@ -356,7 +230,7 @@ describe("proc worker", () => {
           unknown
         >;
         expect(feedback).toMatchObject({
-          result_for: "no_one",
+          save_as: null,
           operations: 1,
           effects: [
             { tool: "record_action", effect: "mutation", ok: true, count: 1 },
@@ -370,11 +244,9 @@ describe("proc worker", () => {
           toolCalls: [
             {
               id: "complete-actions",
-              name: "execute",
+              name: "finish",
               arguments: JSON.stringify({
-                needed_for: "Returning the requested changed paths",
                 javascript: "return { changed: ['src/a.ts'] };",
-                result_for: "proc_result",
               }),
             },
           ],
@@ -428,40 +300,28 @@ describe("proc worker", () => {
   });
 
   it("composes an exact saved value and completes with a fused final execution", async () => {
-    piChat
-      .mockResolvedValueOnce({
-        content: "",
-        toolCalls: [
-          {
-            id: "atom-1",
-            name: "execute",
-            arguments: JSON.stringify({
-              needed_for: "Filtering these candidates in later JavaScript",
-              javascript: "return [{ path: 'src/a.ts', line: 10 }];",
-              result_for: "later_javascript",
-            }),
-          },
-        ],
-      })
-      .mockImplementationOnce(async (_config, messages) => {
-        const prior = JSON.parse(messages.at(-1).content) as {
-          value_id: string;
-        };
-        return {
-          content: "",
-          toolCalls: [
-            {
-              id: "atom-2",
-              name: "execute",
-              arguments: JSON.stringify({
-                needed_for: "Returning the requested paths and ranges",
-                javascript: `return loadValue(${JSON.stringify(prior.value_id)}).map(row => ({ ...row, end: row.line + 5 }));`,
-                result_for: "proc_result",
-              }),
-            },
-          ],
-        };
-      });
+    piChat.mockResolvedValueOnce({
+      content: "",
+      toolCalls: [
+        {
+          id: "atom-1",
+          name: "execute",
+          arguments: JSON.stringify({
+            needed_for: "Candidate definitions",
+            javascript: "return [{ path: 'src/a.ts', line: 10 }];",
+            save_as: "candidates",
+          }),
+        },
+        {
+          id: "atom-2",
+          name: "finish",
+          arguments: JSON.stringify({
+            javascript:
+              "return loadValue('candidates').map(row => ({ ...row, end: row.line + 5 }));",
+          }),
+        },
+      ],
+    });
 
     const user = users.ensureLocalUser();
     const conversation = conversations.create(user.id, {
@@ -514,7 +374,7 @@ describe("proc worker", () => {
       stored: true,
       projection: [{ path: "src/a.ts", line: 10, end: 15 }],
       truncated: false,
-      usage: { turns: 2, executions: 2, operations: 0 },
+      usage: { turns: 1, executions: 2, operations: 0 },
     });
     expect(outcome.resultId).toBeTruthy();
     expect(
@@ -524,6 +384,9 @@ describe("proc worker", () => {
         conversationId,
       })?.value,
     ).toEqual([{ path: "src/a.ts", line: 10, end: 15 }]);
+    expect(
+      createProcValueReader(transaction.id, conversationId).get("candidates"),
+    ).toBeUndefined();
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -549,8 +412,8 @@ describe("proc worker", () => {
     const savedValueFeedback = JSON.parse(
       transaction.messages.find((message) => message.role === "tool")
         ?.content as string,
-    ) as { value_id: string };
-    expect(savedValueFeedback.value_id).toBeTruthy();
+    ) as { save_as: string };
+    expect(savedValueFeedback.save_as).toBe("candidates");
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
@@ -562,6 +425,7 @@ describe("proc worker", () => {
     }>;
     expect(workerTools.map((tool) => tool.function.name)).toEqual([
       "execute",
+      "finish",
       "cannot_execute",
     ]);
     expect(piChat.mock.calls[0][0]).toMatchObject({ maxTokens: 32 * 1024 });
@@ -574,26 +438,20 @@ describe("proc worker", () => {
     expect(
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
-      description: expect.stringContaining(
-        "worker_decision must return { decision_evidence, saved_value }",
-      ),
+      description: expect.stringContaining("Return a serializable value"),
     });
     expect(
-      workerTools[0]?.function.parameters.properties.result_for,
+      workerTools[0]?.function.parameters.properties.save_as,
     ).toMatchObject({
-      enum: ["no_one", "later_javascript", "worker_decision", "proc_result"],
-      description: expect.stringContaining("Return destination"),
+      type: ["string", "null"],
+      description: expect.stringContaining("Unique loadValue(name) key"),
     });
     expect(
       workerTools[0]?.function.parameters.properties.needed_for,
     ).toMatchObject({
-      description: expect.stringContaining(
-        '"Choose the owning definition", not "Search definitions"',
-      ),
+      description: "Short required outcome; not the operation.",
     });
-    expect(workerTools[0]?.function.parameters.required).toContain(
-      "result_for",
-    );
+    expect(workerTools[0]?.function.parameters.required).toContain("save_as");
     expect(workerTools[0]?.function.parameters.required).toContain(
       "needed_for",
     );
@@ -608,7 +466,9 @@ describe("proc worker", () => {
     ).toEqual(["system", "user"]);
     const environment = transaction.messages[0].content as string;
     const request = transaction.messages[1].content as string;
-    expect(environment).toContain("Available JavaScript capabilities");
+    expect(environment).toContain(
+      "For listed namespaces, use only shown methods:",
+    );
     expect(environment).toContain("fs.glob(pattern,");
     expect(environment).toContain("fs.grep(pattern,");
     expect(environment).not.toContain("fs.readdir");
@@ -622,7 +482,7 @@ describe("proc worker", () => {
     );
     expect(environment).not.toContain("fs.unlink");
     const capabilityLines = environment
-      .split("\n\nAvailable JavaScript capabilities\n\n")[1]
+      .split("\n\nFor listed namespaces, use only shown methods:\n\n")[1]
       .split("\n");
     expect(capabilityLines).toEqual(
       [...capabilityLines].sort((left, right) => left.localeCompare(right)),
@@ -644,13 +504,23 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Returning the requested unsupported result",
               javascript: "throw new Error('bad atom');",
-              result_for: "proc_result",
+              save_as: null,
+            }),
+          },
+          {
+            id: "cancelled-finish",
+            name: "finish",
+            arguments: JSON.stringify({
+              javascript: "throw new Error('must not execute');",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
-        expect(messages.at(-1).content).toContain("bad atom");
+        expect(messages.at(-2).content).toContain("bad atom");
+        expect(messages.at(-1).content).toContain(
+          "Cancelled because an earlier call in this batch failed",
+        );
         return {
           content: "",
           toolCalls: [
@@ -716,6 +586,404 @@ describe("proc worker", () => {
     );
   });
 
+  it("shows bounded console evidence while preserving the full returned value", async () => {
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "capture-evidence",
+            name: "execute",
+            arguments: JSON.stringify({
+              needed_for: "Choosing the file that owns the schema",
+              javascript:
+                "const full = [{ path: 'src/a.ts', content: 'x'.repeat(4096) }]; console.log({ candidates: full.map(({ path }) => path) }); return full;",
+              save_as: "candidates",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          worker_output: unknown;
+        };
+        expect(feedback.worker_output).toEqual([
+          {
+            level: "log",
+            values: [{ candidates: ["src/a.ts"] }],
+          },
+        ]);
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "complete-from-saved",
+              name: "finish",
+              arguments: JSON.stringify({
+                javascript:
+                  "return { selected: loadValue('candidates')[0].path };",
+              }),
+            },
+          ],
+        };
+      });
+
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "console evidence",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 4096,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 43,
+      workerModel: "pi-stub/stub-model",
+      summary: "Choose schema owner",
+      requirements: "Return selected path",
+      procedure: "Inspect candidates and select their owner",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Choose schema owner",
+        requirements: "Return selected path",
+        procedure: "Inspect candidates and select their owner",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      projection: { selected: "src/a.ts" },
+      usage: {
+        savedValuesCreated: 1,
+        savedValuesLoaded: 1,
+        consoleAttempts: 1,
+        workerVisibleOutputs: 1,
+        nonProgressExecutions: 0,
+      },
+    });
+  });
+
+  it("retains the returned value when console evidence exceeds its guard", async () => {
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "oversized-console",
+            name: "execute",
+            arguments: JSON.stringify({
+              needed_for: "Preserving results while inspecting evidence",
+              javascript:
+                "const full = { selected: 'src/a.ts' }; console.log('x'.repeat(65 * 1024)); return full;",
+              save_as: "full_result",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          value_bytes: number;
+          error: string;
+          instruction: string;
+        };
+        expect(feedback.error).toContain("transport limit 65536B");
+        expect(feedback.value_bytes).toBeGreaterThan(0);
+        expect(feedback.instruction).toContain('loadValue("full_result")');
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "recover-console-overflow",
+              name: "finish",
+              arguments: JSON.stringify({
+                javascript: "return loadValue('full_result');",
+              }),
+            },
+          ],
+        };
+      });
+
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "console overflow",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 4096,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 45,
+      workerModel: "pi-stub/stub-model",
+      summary: "Recover console overflow",
+      requirements: "Return selected path",
+      procedure: "Inspect and return selected path",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Recover console overflow",
+        requirements: "Return selected path",
+        procedure: "Inspect and return selected path",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      projection: { selected: "src/a.ts" },
+      usage: {
+        savedValuesCreated: 1,
+        savedValuesLoaded: 1,
+        consoleAttempts: 1,
+        workerVisibleOutputs: 0,
+      },
+    });
+  });
+
+  it("warns after consecutive shape-only saved-value resaves", async () => {
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "initial-save",
+            name: "execute",
+            arguments: JSON.stringify({
+              needed_for: "Preserving candidates for later filtering",
+              javascript: "return ['src/a.ts'];",
+              save_as: "candidates",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async () => {
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "resave-one",
+              name: "execute",
+              arguments: JSON.stringify({
+                needed_for: "Inspecting the saved candidates",
+                javascript: "return loadValue('candidates');",
+                save_as: "candidates_copy",
+              }),
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async () => {
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "resave-two",
+              name: "execute",
+              arguments: JSON.stringify({
+                needed_for: "Inspecting the saved candidates",
+                javascript: "return loadValue('candidates_copy');",
+                save_as: "candidates_copy_2",
+              }),
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          warnings: string[];
+        };
+        expect(feedback.warnings).toContain(
+          "2 unchanged load-resave cycles. Stop resaving unchanged data.",
+        );
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "finish-resaves",
+              name: "finish",
+              arguments: JSON.stringify({
+                javascript: "return ['src/a.ts'];",
+              }),
+            },
+          ],
+        };
+      });
+
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "resave warning",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 4096,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 44,
+      workerModel: "pi-stub/stub-model",
+      summary: "Inspect candidates",
+      requirements: "Return candidates",
+      procedure: "Inspect and return candidates",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Inspect candidates",
+        requirements: "Return candidates",
+        procedure: "Inspect and return candidates",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      usage: {
+        savedValuesCreated: 3,
+        savedValuesLoaded: 2,
+        nonProgressExecutions: 2,
+      },
+    });
+  });
+
+  it("warns about read-heavy traversal before the hard operation limit", async () => {
+    const readValue = {
+      name: "read_value",
+      description: "Read one value",
+      parameters: { type: "object" },
+      program: {
+        catalogDescription: "read one value",
+        operationCategory: "read" as const,
+        resultSchema: { type: "number" },
+        example: "tools.read_value({ index: 1 })",
+        contractVersion: "1",
+      },
+      handler: vi.fn(async () => ok(1)),
+    };
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "read-heavy",
+            name: "execute",
+            arguments: JSON.stringify({
+              needed_for: "Preserving the aggregated read result",
+              javascript:
+                "let total = 0; for (let index = 0; index < 200; index++) total += tools.read_value({ index }); return total;",
+              save_as: "total",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          warnings: string[];
+          operations: number;
+        };
+        expect(feedback.operations).toBe(200);
+        expect(feedback.warnings).toContain(
+          "200 operations. Use fs.glob/fs.grep or batch work; avoid path-by-path traversal.",
+        );
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "finish-heavy-read",
+              name: "finish",
+              arguments: JSON.stringify({
+                javascript: "return { total: 200 };",
+              }),
+            },
+          ],
+        };
+      });
+
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "operation warning",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 4096,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 46,
+      workerModel: "pi-stub/stub-model",
+      summary: "Aggregate reads",
+      requirements: "Return total",
+      procedure: "Read and aggregate values",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Aggregate reads",
+        requirements: "Return total",
+        procedure: "Read and aggregate values",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map([[readValue.name, readValue]]),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      projection: { total: 200 },
+      usage: { operations: 200 },
+    });
+  });
+
   it("reports whether a failed execution is safe to retry", async () => {
     const mutation = {
       name: "write_fixture",
@@ -745,7 +1013,7 @@ describe("proc worker", () => {
               needed_for: "Applying the requested write",
               javascript:
                 "tools.write_fixture({}); throw new Error('after write');",
-              result_for: "proc_result",
+              save_as: null,
             }),
           },
         ],
@@ -827,12 +1095,12 @@ describe("proc worker", () => {
 
   it("runs a proc git commit through the delegated permission gate on approval", async () => {
     const commitHandler = vi.fn(async (args: Record<string, unknown>) => {
-      // Only the realizer sees the raw args; the frontier sees the projection.
+      // Only the realizer sees raw args; the primary agent sees the projection.
       return ok({
         sha: "abc123def456",
         shortSha: "abc123de",
         subject: String(args.subject),
-        body: "frontier body",
+        body: "primary body",
         mergeCommit: false,
         resolvedConflicts: [],
       });
@@ -850,12 +1118,10 @@ describe("proc worker", () => {
         toolCalls: [
           {
             id: "do-commit",
-            name: "execute",
+            name: "finish",
             arguments: JSON.stringify({
-              needed_for: "Returning the requested commit result",
               javascript:
-                "return git.commit({ paths: 'all', subject: 'Frontier subject' });",
-              result_for: "proc_result",
+                "return git.commit({ paths: 'all', subject: 'Primary subject' });",
             }),
           },
         ],
@@ -882,12 +1148,12 @@ describe("proc worker", () => {
       workerModel: "pi-stub/stub-model",
       summary: "Commit",
       requirements: "Return the commit result",
-      procedure: "Commit all changes with the frontier subject",
+      procedure: "Commit all changes with the primary-agent subject",
       outputPolicy,
       messages: initialProcMessages({
         summary: "Commit",
         requirements: "Return the commit result",
-        procedure: "Commit all changes with the frontier subject",
+        procedure: "Commit all changes with the primary-agent subject",
         outputPolicy,
         contracts: [],
       }),
@@ -908,19 +1174,19 @@ describe("proc worker", () => {
     expect(outcome.projection).toMatchObject({
       sha: "abc123def456",
       shortSha: "abc123de",
-      subject: "Frontier subject",
+      subject: "Primary subject",
       mergeCommit: false,
       resolvedConflicts: [],
     });
     // The always-prompt gate is routed through the shared resolver with the
-    // capability name + args (AC3), and the frontier-authored message reaches
+    // capability name + args (AC3), and the primary-agent message reaches
     // the tool runtime verbatim (D2).
     expect(calls).toEqual([
-      ["git_commit", { paths: "all", subject: "Frontier subject" }],
+      ["git_commit", { paths: "all", subject: "Primary subject" }],
     ]);
     expect(commitHandler).toHaveBeenCalledWith({
       paths: "all",
-      subject: "Frontier subject",
+      subject: "Primary subject",
     });
   });
 
@@ -944,7 +1210,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Creating the requested commit",
               javascript: "return git.commit({ paths: 'all', subject: 'x' });",
-              result_for: "proc_result",
+              save_as: null,
             }),
           },
         ],
@@ -1011,7 +1277,7 @@ describe("proc worker", () => {
       signal: new AbortController().signal,
     });
     // A denial is not a dangling execution: the transaction completes cleanly
-    // as cannot_execute and the frontier can react.
+    // as cannot_execute and the primary agent can react.
     expect(outcome.status).toBe("cannot_execute");
   });
 });

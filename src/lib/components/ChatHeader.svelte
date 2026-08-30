@@ -113,7 +113,7 @@
     {
       value: "semantic",
       label: "Semantic",
-      hint: "Expose proc only; keep frontier-authored procedures and large intermediate values behind bounded projections.",
+      hint: "Expose proc only; keep primary-agent procedures and large intermediate values behind bounded projections.",
     },
   ];
   const APPROVAL_MODE_OPTIONS: {

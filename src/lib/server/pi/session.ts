@@ -345,7 +345,7 @@ export async function createPiProviderSession(
       ? [
           ...buildProcTools({
             conversationId: opts.conversationId,
-            frontierModel: opts.providerLabel,
+            primaryModel: opts.providerLabel,
             ...(opts.semanticWorkerModel !== undefined
               ? { workerModel: opts.semanticWorkerModel }
               : {}),

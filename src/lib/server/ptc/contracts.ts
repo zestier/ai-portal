@@ -127,7 +127,7 @@ const GIT_DIFF_RESULT = {
   additionalProperties: false,
 } as const;
 
-// Bounded projections of the mutating git facades, so the frontier sees a
+// Bounded projections of the mutating git facades, so the primary agent sees a
 // stable, byte-cheap result instead of the verbose raw tool output (AC6/D3).
 const GIT_COMMIT_RESULT = {
   type: "object",
@@ -218,7 +218,7 @@ const GitShowFileProgramArgs = z
   .strict();
 // Mutating git facades reuse the shared commit-message validators so a subject
 // accepted through the proc path is accepted identically by the root tool
-// (AC5): the frontier authors the message, the worker merely realizes it.
+// (AC5): the primary agent authors the message; the worker only realizes it.
 // The `worktree` lease selector of the root git_commit stays out of the proc
 // surface (D2/scope): a worker commits to its own workspace only.
 const GitCommitProgramArgs = z
@@ -256,7 +256,7 @@ export const PROGRAM_FACADE_TOOL_NAMES = new Set([
 
 const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
   find: metadata(
-    "find workspace paths by glob",
+    "find paths by glob",
     FIND_RESULT,
     'tools.find({ pattern: "**/*.test.ts", path: "tests" })',
     normalizeAliases({ pattern: ["query"], path: ["cwd"] }),
@@ -274,7 +274,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   grep: metadata(
-    "search workspace file contents",
+    "search file contents",
     GREP_RESULT,
     'tools.grep({ pattern: "ProgramArgs", path: "src", glob: "*.ts" })',
     normalizeAliases({
@@ -299,7 +299,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   git_status: metadata(
-    "inspect repository working-tree status",
+    "inspect worktree status",
     GIT_STATUS_RESULT,
     "tools.git_status({})",
     undefined,
@@ -310,7 +310,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   git_diff: metadata(
-    "inspect repository changes",
+    "inspect changes",
     GIT_DIFF_RESULT,
     'tools.git_diff({ target: "worktree-vs-head" })',
     undefined,
@@ -328,7 +328,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   git_log: metadata(
-    "inspect repository history",
+    "inspect history",
     { type: "object" },
     "git.log({ limit: 20, path: 'src' })",
     undefined,
@@ -362,7 +362,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   git_show_file: metadata(
-    "read one file at a Git ref",
+    "read file at Git ref",
     { type: "string" },
     "git.show('HEAD', 'src/index.ts')",
     undefined,
@@ -375,9 +375,9 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   git_commit: metadata(
-    "create a commit over path selections",
+    "create commit for selected paths",
     GIT_COMMIT_RESULT,
-    "git.commit({ paths: 'all', subject: 'Frontier-authored subject' })",
+    "git.commit({ paths: 'all', subject: 'Primary-agent subject' })",
     undefined,
     {
       operationCategory: "mutation",
@@ -412,7 +412,7 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
     },
   ),
   git_worktree_merge: metadata(
-    "merge this linked worktree's branch with the main checkout's branch",
+    "merge worktree with source branch",
     GIT_MERGE_RESULT,
     "git.worktreeMerge({ direction: 'to-source', squash: { subject: 'Unit' } })",
     undefined,
@@ -424,18 +424,18 @@ const PROGRAM_METADATA: Readonly<Record<string, ProgramToolMetadata>> = {
             type: "string",
             enum: ["from-source", "to-source"],
             description:
-              "Flow of commits relative to this worktree. to-source: move this worktree's commits into the main checkout's branch (finish a unit of work upstream). from-source: pull the source branch's commits into this worktree to catch it up.",
+              "Commit flow. to-source: move worktree commits to source (finish unit). from-source: pull source commits into worktree (catch up).",
           },
           allowMergeCommit: {
             type: "boolean",
             description:
-              "to-source only. Allow a merge commit instead of requiring a fast-forward. Default false.",
+              "to-source only. Allow merge commit instead of fast-forward. Default false.",
           },
           onConflict: {
             type: "string",
             enum: ["abort", "keep"],
             description:
-              "from-source only. abort rolls a conflicted merge back; keep leaves the conflict in the worktree to resolve. to-source always rolls back. Default abort.",
+              "from-source only. abort: roll back conflict; keep: leave conflict in worktree. to-source always rolls back. Default abort.",
           },
           squash: {
             type: "object",
@@ -638,7 +638,7 @@ async function invokeGrep(
     .filter(Boolean)
     .map((line) => {
       const match = /^(.*):(\d+):(.*)$/.exec(line);
-      if (!match) throw new Error(`Unexpected grep result line: ${line}`);
+      if (!match) throw new Error(`Invalid grep result line: ${line}`);
       return {
         path: match[1],
         line: Number.parseInt(match[2], 10),
@@ -824,7 +824,7 @@ function normalizeAliases(
       );
       if (supplied.length > 1) {
         throw new Error(
-          `Ambiguous program arguments: use only "${canonical}". Call get_program_tool_schemas for the canonical contract.`,
+          `Ambiguous arguments: use only canonical key "${canonical}".`,
         );
       }
       const alias = alternatives.find((name) => normalized[name] !== undefined);
