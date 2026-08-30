@@ -181,11 +181,6 @@ describe("proc worker", () => {
     expect(PROC_WORKER_SYSTEM).toContain(
       "Procedure steps are not execution boundaries",
     );
-    expect(PROC_WORKER_SYSTEM).toContain("Strongly prefer view: shape");
-    expect(PROC_WORKER_SYSTEM).toContain(
-      "Exception: request value only for reasoning JavaScript cannot perform",
-    );
-    expect(PROC_WORKER_SYSTEM).toContain("minimum evidence needed");
     expect(PROC_WORKER_SYSTEM).toContain("exact allowlist");
     expect(PROC_WORKER_SYSTEM).toContain("run sequentially");
     expect(PROC_WORKER_SYSTEM).toContain("finish returns the final result");
@@ -221,6 +216,7 @@ describe("proc worker", () => {
               needed_for: "Applying the requested repository mutation",
               javascript: "tools.record_action({});",
               save_as: null,
+              view: "shape",
             }),
           },
         ],
@@ -311,6 +307,7 @@ describe("proc worker", () => {
             needed_for: "Candidate definitions",
             javascript: "return [{ path: 'src/a.ts', line: 10 }];",
             save_as: "candidates",
+            view: "shape",
           }),
         },
         {
@@ -418,6 +415,7 @@ describe("proc worker", () => {
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
+        description: string;
         parameters: {
           properties: Record<string, unknown>;
           required: string[];
@@ -438,28 +436,37 @@ describe("proc worker", () => {
     );
     expect(workerTools[0]?.function.parameters.properties.view).toMatchObject({
       enum: ["shape", "value"],
-      default: "shape",
-      description: expect.stringContaining(
-        "reasoning JavaScript cannot perform",
-      ),
+      description:
+        "Prefer shape. Use value only for model judgment: reduce first.",
     });
+    expect(
+      workerTools[0]?.function.parameters.properties.view,
+    ).not.toHaveProperty("default");
     expect(
       workerTools[0]?.function.parameters.properties.javascript,
     ).toMatchObject({
-      description: expect.stringContaining("Return a serializable value"),
+      description: "Return JSON-serializable data",
     });
     expect(
       workerTools[0]?.function.parameters.properties.save_as,
     ).toMatchObject({
-      type: ["string", "null"],
-      description: expect.stringContaining("Unique loadValue(name) key"),
+      anyOf: expect.arrayContaining([
+        expect.objectContaining({ type: "string" }),
+        { type: "null" },
+      ]),
+      description:
+        "Name if later execution may load, else null. Never re-save loaded data.",
     });
     expect(
       workerTools[0]?.function.parameters.properties.needed_for,
     ).toMatchObject({
-      description: "Short required outcome; not the operation.",
+      description: "Required outcome; not operation",
     });
     expect(workerTools[0]?.function.parameters.required).toContain("save_as");
+    expect(workerTools[0]?.function.parameters.required).toContain("view");
+    expect(workerTools[0]?.function.description).toBe(
+      "Run JavaScript and continue.",
+    );
     expect(workerTools[0]?.function.parameters.required).toContain(
       "needed_for",
     );
@@ -513,6 +520,7 @@ describe("proc worker", () => {
               needed_for: "Returning the requested unsupported result",
               javascript: "throw new Error('bad atom');",
               save_as: null,
+              view: "shape",
             }),
           },
           {
@@ -594,7 +602,7 @@ describe("proc worker", () => {
     );
   });
 
-  it("defaults to shape feedback and warns without exposing console arguments", async () => {
+  it("returns explicit shape feedback and warns without exposing console arguments", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
@@ -607,6 +615,7 @@ describe("proc worker", () => {
               javascript:
                 "const full = [{ path: 'src/a.ts', content: 'x'.repeat(4096) }]; console.log({ candidates: full.map(({ path }) => path) }); return full;",
               save_as: "candidates",
+              view: "shape",
             }),
           },
         ],
@@ -793,6 +802,7 @@ describe("proc worker", () => {
               needed_for: "Preserving candidates for later filtering",
               javascript: "return ['src/a.ts'];",
               save_as: "candidates",
+              view: "shape",
             }),
           },
         ],
@@ -808,6 +818,7 @@ describe("proc worker", () => {
                 needed_for: "Inspecting the saved candidates",
                 javascript: "return loadValue('candidates');",
                 save_as: "candidates_copy",
+                view: "shape",
               }),
             },
           ],
@@ -824,6 +835,7 @@ describe("proc worker", () => {
                 needed_for: "Inspecting the saved candidates",
                 javascript: "return loadValue('candidates_copy');",
                 save_as: "candidates_copy_2",
+                view: "shape",
               }),
             },
           ],
@@ -924,6 +936,7 @@ describe("proc worker", () => {
               javascript:
                 "let total = 0; for (let index = 0; index < 200; index++) total += tools.read_value({ index }); return total;",
               save_as: "total",
+              view: "shape",
             }),
           },
         ],
@@ -1026,6 +1039,7 @@ describe("proc worker", () => {
               javascript:
                 "tools.write_fixture({}); throw new Error('after write');",
               save_as: null,
+              view: "shape",
             }),
           },
         ],
@@ -1223,6 +1237,7 @@ describe("proc worker", () => {
               needed_for: "Creating the requested commit",
               javascript: "return git.commit({ paths: 'all', subject: 'x' });",
               save_as: null,
+              view: "shape",
             }),
           },
         ],

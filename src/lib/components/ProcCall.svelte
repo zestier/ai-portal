@@ -137,6 +137,10 @@
             {@const executionResult = parseProcExecutionResult(
               execution.resultJson,
             )}
+            {@const workerProjection =
+              executionResult?.view === "value"
+                ? executionResult.value
+                : executionResult?.shape}
             {@const nested = selectSubagentChildren(
               { tools: allTools, reasoning: allReasoning, edits: allEdits },
               execution.id,
@@ -156,6 +160,9 @@
                     executionArgs?.save_as,
                   )}</Pill
                 >
+                {#if executionArgs?.view}
+                  <Pill>{executionArgs.view} view</Pill>
+                {/if}
                 {#if executionResult?.value_bytes != null}
                   <span class="metric"
                     >{formatFieldBytes(executionResult.value_bytes)}</span
@@ -197,6 +204,23 @@
                               null,
                               2,
                             )}</code
+                      ></pre>
+                  </div>
+                {/if}
+                {#if workerProjection !== undefined}
+                  <div class="projection">
+                    <div class="minor-label">
+                      Sent to worker · {executionResult?.view}
+                      {#if executionResult?.view_bytes != null}
+                        · {formatFieldBytes(executionResult.view_bytes)}
+                      {/if}
+                      {#if executionResult?.truncated}
+                        · truncated{/if}
+                    </div>
+                    <pre><code
+                        >{typeof workerProjection === "string"
+                          ? workerProjection
+                          : JSON.stringify(workerProjection, null, 2)}</code
                       ></pre>
                   </div>
                 {/if}

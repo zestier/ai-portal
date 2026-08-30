@@ -367,7 +367,6 @@ function parseProcWorkerDirective(
 ): { name: string; args: string } | null {
   if (
     !system.includes("Execute the supplied procedure exactly.") ||
-    !system.includes("save_as") ||
     !system.includes("finish returns the final result")
   )
     return null;

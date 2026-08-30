@@ -38,22 +38,45 @@ const OPERATION_WARNING_THRESHOLD = 200;
 
 const ExecuteArgs = z
   .object({
-    needed_for: z.string().min(1).max(1_000),
-    javascript: z.string().min(1).max(20_000),
+    needed_for: z
+      .string()
+      .min(1)
+      .max(1_000)
+      .describe("Required outcome; not operation"),
+    javascript: z
+      .string()
+      .min(1)
+      .max(20_000)
+      .describe("Return JSON-serializable data"),
     save_as: z
       .string()
       .regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/)
-      .nullable(),
-    view: z.enum(["shape", "value"]).optional().default("shape"),
+      .nullable()
+      .describe(
+        "Name if later execution may load, else null. Never re-save loaded data.",
+      ),
+    view: z
+      .enum(["shape", "value"])
+      .describe(
+        "Prefer shape. Use value only for model judgment: reduce first.",
+      ),
   })
   .strict();
 
 const FinishArgs = z
-  .object({ javascript: z.string().min(1).max(20_000) })
+  .object({
+    javascript: z.string().min(1).max(20_000).describe("Return final result"),
+  })
   .strict();
 
 const CannotExecuteArgs = z
-  .object({ reason: z.string().min(1).max(4_000) })
+  .object({
+    reason: z
+      .string()
+      .min(1)
+      .max(4_000)
+      .describe("Missing instruction or decision"),
+  })
   .strict();
 
 export const PROC_WORKER_SYSTEM = `Execute the supplied procedure exactly. Do not change goals, method, criteria, or consequential decisions.
@@ -61,9 +84,7 @@ export const PROC_WORKER_SYSTEM = `Execute the supplied procedure exactly. Do no
 Rules:
 - Fuse adjacent work only when confident and safe. Use the fewest executions preserving correctness, recoverability, and clear data flow. Procedure steps are not execution boundaries.
 - JavaScript decides everything deterministic. Search, parse, transform, compare, aggregate, edit, and validate there.
-- Strongly prefer view: shape. Exception: request value only for reasoning JavaScript cannot perform, after reducing the result to the minimum evidence needed.
-- needed_for: one short phrase naming the required outcome, not the operation.
-- execute continues. Set save_as to a unique name unless the result will not be needed later. Saved contents stay out of model context; read with loadValue(name).
+- execute continues. Saved contents stay out of model context; read with loadValue(name).
 - Calls in one turn run sequentially. First failure cancels the rest.
 - finish returns the final result and stops.
 - result_requirements is the exact allowlist and completion test. No raw tool responses, intermediate candidates, or extra context.
@@ -709,75 +730,33 @@ function workerToolSpecs(): ExtractorToolSpec[] {
       type: "function",
       function: {
         name: EXECUTE,
-        description: "Run JavaScript; continue the procedure.",
-        parameters: {
-          type: "object",
-          properties: {
-            needed_for: {
-              type: "string",
-              description: "Short required outcome; not the operation.",
-            },
-            javascript: {
-              type: "string",
-              description:
-                "Return a serializable value; name save_as unless the result should discard",
-            },
-            save_as: {
-              type: ["string", "null"],
-              pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
-              description: "Unique loadValue(name) key; null causes discard",
-            },
-            view: {
-              type: "string",
-              enum: ["shape", "value"],
-              description:
-                "Strongly prefer shape. Exception: request value only for reasoning JavaScript cannot perform, after reducing the result to the minimum evidence needed.",
-              default: "shape",
-            },
-          },
-          required: ["needed_for", "javascript", "save_as"],
-          additionalProperties: false,
-        },
+        description: "Run JavaScript and continue.",
+        parameters: jsonSchema(ExecuteArgs),
       },
     },
     {
       type: "function",
       function: {
         name: FINISH,
-        description: "Run JavaScript; return the final result; stop.",
-        parameters: {
-          type: "object",
-          properties: {
-            javascript: {
-              type: "string",
-              description: "JavaScript body returning the exact final result.",
-            },
-          },
-          required: ["javascript"],
-          additionalProperties: false,
-        },
+        description: "Return the final result and stop.",
+        parameters: jsonSchema(FinishArgs),
       },
     },
     {
       type: "function",
       function: {
         name: CANNOT_EXECUTE,
-        description:
-          "Stop: a consequential instruction or decision is missing.",
-        parameters: {
-          type: "object",
-          properties: {
-            reason: {
-              type: "string",
-              description: "Exact missing instruction or decision.",
-            },
-          },
-          required: ["reason"],
-          additionalProperties: false,
-        },
+        description: "Stop because an instruction or decision is missing.",
+        parameters: jsonSchema(CannotExecuteArgs),
       },
     },
   ];
+}
+
+function jsonSchema(schema: z.ZodType): Record<string, unknown> {
+  const parameters = z.toJSONSchema(schema, { io: "input" });
+  delete parameters.$schema;
+  return parameters;
 }
 
 function consoleWarning(attempts: number): string | undefined {

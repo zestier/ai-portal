@@ -524,6 +524,7 @@ describe("Svelte component regression coverage", () => {
               needed_for: "Returning the requested ModelsSettings regions",
               javascript: "return content;",
               save_as: null,
+              view: "shape",
             }),
             resultJson: JSON.stringify(
               JSON.stringify({
@@ -545,6 +546,61 @@ describe("Svelte component regression coverage", () => {
     expect(body).toMatch(/<details class="stage [^"]+" open=""/);
     expect(body).toContain("readFile is not defined");
     expect(body).toContain('data-automatically-open="true"');
+  });
+
+  test("ProcCall shows the execute view and exact feedback sent to the worker", () => {
+    const body = render(ProcCall, {
+      props: {
+        toolCall: {
+          id: "P1",
+          messageId: "M1",
+          tool: "proc",
+          argsJson: JSON.stringify({
+            summary: "Inspect contributing guidance",
+            procedure: "Read the contributing guide.",
+            result_requirements: "Relevant guidance",
+          }),
+          resultJson: null,
+          status: "pending" as const,
+          startedAt: 0,
+          endedAt: null,
+          textOffset: null,
+          parentToolCallId: null,
+        },
+        childTools: [
+          {
+            id: "E1",
+            messageId: "M1",
+            tool: "execute",
+            argsJson: JSON.stringify({
+              needed_for: "Reading the contributing guidance",
+              javascript: "return fs.readFile('CONTRIBUTING.md', 'utf8');",
+              save_as: "contributing",
+              view: "value",
+            }),
+            resultJson: JSON.stringify(
+              JSON.stringify({
+                save_as: "contributing",
+                view: "value",
+                value: "Run pnpm run verify before opening a PR.",
+                view_bytes: 42,
+                truncated: false,
+                operations: 1,
+              }),
+            ),
+            status: "ok" as const,
+            startedAt: 0,
+            endedAt: 1,
+            textOffset: null,
+            parentToolCallId: "P1",
+          },
+        ],
+      },
+    }).body;
+
+    expect(body).toContain("value view");
+    expect(body).toContain("Sent to worker · value");
+    expect(body).toContain("Run pnpm run verify before opening a PR.");
   });
 
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {

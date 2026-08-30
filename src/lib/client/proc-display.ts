@@ -10,11 +10,17 @@ export interface ProcExecutionArgs {
   javascript: string;
   needed_for?: string;
   save_as?: string | null;
+  view?: "shape" | "value";
 }
 
 export interface ProcExecutionResult {
   save_as?: string | null;
   value_bytes?: number;
+  view?: "shape" | "value";
+  shape?: unknown;
+  value?: unknown;
+  view_bytes?: number;
+  truncated?: boolean;
   structure?: unknown;
   structure_bytes?: number;
   needed_for?: string;
