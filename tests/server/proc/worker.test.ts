@@ -6,6 +6,7 @@ import * as conversations from "../../../src/lib/server/db/repos/conversations";
 import {
   createProcTransaction,
   createProcValueReader,
+  getNamedProcResult,
   getProcResult,
 } from "../../../src/lib/server/proc/store";
 import {
@@ -87,7 +88,7 @@ describe("proc worker", () => {
       outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
       messages: [
         { role: "system", content: "worker" },
-        { role: "user", content: "x".repeat(129 * 1_024) },
+        { role: "user", content: "x".repeat(257 * 1_024) },
       ],
     });
 
@@ -102,7 +103,7 @@ describe("proc worker", () => {
 
     expect(outcome).toMatchObject({
       status: "failed",
-      summary: expect.stringContaining("Transcript 132163B"),
+      summary: expect.stringContaining("Transcript 263235B"),
     });
     expect(piChat).not.toHaveBeenCalled();
   });
@@ -204,10 +205,8 @@ describe("proc worker", () => {
             name: "execute",
             arguments: JSON.stringify({
               needed_for: "Applying the requested repository mutation",
-              javascript: "tools.record_action({});",
+              javascript: "return tools.record_action({});",
               store_into: null,
-              worker_view: "none",
-              worker_view_max_bytes: 0,
             }),
           },
         ],
@@ -219,6 +218,7 @@ describe("proc worker", () => {
         >;
         expect(feedback).toMatchObject({
           store_into: null,
+          shape: "object { ticket_id: string }",
           operations: 1,
           effects: [
             { tool: "record_action", effect: "mutation", ok: true, count: 1 },
@@ -298,8 +298,6 @@ describe("proc worker", () => {
             needed_for: "Candidate definitions",
             javascript: "return [{ path: 'src/a.ts', line: 10 }];",
             store_into: "store.candidates",
-            worker_view: "shape",
-            worker_view_max_bytes: 128,
           }),
         },
         {
@@ -375,6 +373,13 @@ describe("proc worker", () => {
       })?.value,
     ).toEqual([{ path: "src/a.ts", line: 10, end: 15 }]);
     expect(
+      getNamedProcResult({
+        name: "candidates",
+        transactionId: transaction.id,
+        conversationId,
+      })?.value,
+    ).toEqual([{ path: "src/a.ts", line: 10 }]);
+    expect(
       createProcValueReader(transaction.id, conversationId).get("candidates"),
     ).toBeUndefined();
     expect(events).toEqual(
@@ -416,6 +421,7 @@ describe("proc worker", () => {
     }>;
     expect(workerTools.map((tool) => tool.function.name)).toEqual([
       "execute",
+      "view",
       "finish",
       "cannot_execute",
     ]);
@@ -423,20 +429,15 @@ describe("proc worker", () => {
     expect(Buffer.byteLength(JSON.stringify(workerTools))).toBeLessThanOrEqual(
       2_500,
     );
+    expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
+      "worker_view",
+    );
+    expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
+      "worker_view_max_bytes",
+    );
     expect(
-      workerTools[0]?.function.parameters.properties.worker_view,
-    ).toMatchObject({ enum: ["none", "shape", "value"] });
-    expect(
-      JSON.stringify(
-        workerTools[0]?.function.parameters.properties.worker_view,
-      ),
-    ).toContain("value only when the next decision needs exact data");
-    expect(
-      workerTools[0]?.function.parameters.properties.worker_view,
-    ).not.toHaveProperty("default");
-    expect(
-      workerTools[0]?.function.parameters.properties.worker_view_max_bytes,
-    ).toMatchObject({ type: "integer", minimum: 0, maximum: 64 * 1024 });
+      workerTools[1]?.function.parameters.properties.max_bytes,
+    ).toMatchObject({ type: "integer", minimum: 1, maximum: 64 * 1024 });
     expect(workerTools[0]?.function.parameters.properties.javascript).toEqual(
       expect.objectContaining({ type: "string" }),
     );
@@ -463,14 +464,8 @@ describe("proc worker", () => {
     expect(workerTools[0]?.function.parameters.required).toContain(
       "store_into",
     );
-    expect(workerTools[0]?.function.parameters.required).toContain(
-      "worker_view",
-    );
-    expect(workerTools[0]?.function.parameters.required).toContain(
-      "worker_view_max_bytes",
-    );
     expect(workerTools[0]?.function.description).toBe(
-      "Run JavaScript and continue.",
+      "Run JavaScript; optionally store exact result; return shape; continue.",
     );
     expect(workerTools[0]?.function.parameters.required).toContain(
       "needed_for",
@@ -480,9 +475,6 @@ describe("proc worker", () => {
     );
     expect(PROC_WORKER_SYSTEM).not.toContain(
       "Return a final value matching output.contract",
-    );
-    expect(PROC_WORKER_SYSTEM).toContain(
-      "value only for irreducible exact evidence",
     );
     expect(
       transaction.messages.slice(0, 2).map((message) => message.role),
@@ -530,8 +522,6 @@ describe("proc worker", () => {
               needed_for: "Returning the requested unsupported result",
               javascript: "throw new Error('bad atom');",
               store_into: null,
-              worker_view: "none",
-              worker_view_max_bytes: 0,
             }),
           },
           {
@@ -626,24 +616,18 @@ describe("proc worker", () => {
               javascript:
                 "const full = [{ path: 'src/a.ts', content: 'x'.repeat(4096) }]; console.log({ candidates: full.map(({ path }) => path) }); return full;",
               store_into: "store.candidates",
-              worker_view: "shape",
-              worker_view_max_bytes: 128,
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          worker_view: string;
-          worker_view_kind: string;
           shape: string;
           warnings: string[];
         };
-        expect(feedback.worker_view).toBe("shape");
-        expect(feedback.worker_view_kind).toBe("shape");
         expect(feedback.shape).toContain("path: string");
         expect(feedback.warnings).toEqual([
-          "console is unsupported; discarded arguments from 1 call(s). Return required data and choose worker_view instead.",
+          "console is unsupported; discarded arguments from 1 call(s). Return required data instead.",
         ]);
         expect(feedback).not.toHaveProperty("worker_output");
         expect(feedback).not.toHaveProperty("value");
@@ -712,38 +696,52 @@ describe("proc worker", () => {
     });
   });
 
-  it("returns the full value on request and discards circular console arguments", async () => {
+  it("requires a deliberate byte budget for exact view evidence", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
         toolCalls: [
           {
-            id: "oversized-console",
-            name: "execute",
+            id: "undersized-evidence",
+            name: "view",
             arguments: JSON.stringify({
               needed_for: "Inspecting the exact selected result",
               javascript:
-                "const full = { selected: 'src/a.ts' }; const circular = {}; circular.self = circular; console.log(circular); return full;",
-              store_into: "store.full_result",
-              worker_view: "value",
-              worker_view_max_bytes: 128,
+                "return { selected: path.basename('/tmp/src/a.ts') };",
+              max_bytes: 8,
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          worker_view: string;
-          worker_view_kind: string;
-          value: unknown;
-          value_bytes: number;
-          warnings: string[];
+          error: string;
         };
-        expect(feedback.worker_view).toBe("value");
-        expect(feedback.worker_view_kind).toBe("value");
-        expect(feedback.value).toEqual({ selected: "src/a.ts" });
-        expect(feedback.value_bytes).toBeGreaterThan(0);
-        expect(feedback.warnings[0]).toContain("console is unsupported");
+        expect(feedback.error).toContain("View 19B; current limit 8B");
+        expect(feedback.error).toContain("Reduce or select ranges");
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "exact-evidence",
+              name: "view",
+              arguments: JSON.stringify({
+                needed_for: "Inspecting the exact selected result",
+                javascript:
+                  "return { selected: path.basename('/tmp/src/a.ts') };",
+                max_bytes: 128,
+              }),
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          value: unknown;
+          view_bytes: number;
+        };
+        expect(feedback.value).toEqual({ selected: "a.ts" });
+        expect(feedback.view_bytes).toBeGreaterThan(0);
         return {
           content: "",
           toolCalls: [
@@ -751,8 +749,7 @@ describe("proc worker", () => {
               id: "recover-console-overflow",
               name: "finish",
               arguments: JSON.stringify({
-                javascript:
-                  "const { full_result } = store; return full_result;",
+                javascript: "return { selected: 'a.ts' };",
               }),
             },
           ],
@@ -799,11 +796,10 @@ describe("proc worker", () => {
 
     expect(outcome).toMatchObject({
       status: "completed",
-      projection: { selected: "src/a.ts" },
+      projection: { selected: "a.ts" },
       usage: {
-        savedValuesCreated: 1,
-        savedValuesLoaded: 1,
-        consoleAttempts: 1,
+        views: 2,
+        viewBytes: 19,
       },
     });
   });
@@ -820,31 +816,19 @@ describe("proc worker", () => {
               needed_for: "Retaining source while inspecting its result form",
               javascript: "return { content: 'x'.repeat(4096) };",
               store_into: "store.source",
-              worker_view: "value",
-              worker_view_max_bytes: 64,
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          worker_view: string;
-          worker_view_kind: string;
-          worker_view_bytes: number;
-          worker_view_truncated: boolean;
-          reason: string;
           shape: string;
           value_bytes: number;
           value?: unknown;
         };
         expect(feedback).toMatchObject({
-          worker_view: "value",
-          worker_view_kind: "shape",
-          worker_view_truncated: true,
-          reason: "value_exceeded_limit",
           shape: "object { content: string }",
         });
-        expect(feedback.worker_view_bytes).toBeLessThanOrEqual(64);
         expect(feedback.value_bytes).toBeGreaterThan(4096);
         expect(feedback).not.toHaveProperty("value");
         return {
@@ -919,8 +903,6 @@ describe("proc worker", () => {
               needed_for: "Preserving candidates for later filtering",
               javascript: "return ['src/a.ts'];",
               store_into: "store.candidates",
-              worker_view: "shape",
-              worker_view_max_bytes: 64,
             }),
           },
         ],
@@ -936,8 +918,6 @@ describe("proc worker", () => {
                 needed_for: "Inspecting the saved candidates",
                 javascript: "const { candidates } = store; return candidates;",
                 store_into: "store.candidates_copy",
-                worker_view: "shape",
-                worker_view_max_bytes: 64,
               }),
             },
           ],
@@ -955,8 +935,6 @@ describe("proc worker", () => {
                 javascript:
                   "const { candidates_copy } = store; return candidates_copy;",
                 store_into: "store.candidates_copy_2",
-                worker_view: "shape",
-                worker_view_max_bytes: 64,
               }),
             },
           ],
@@ -968,6 +946,29 @@ describe("proc worker", () => {
         };
         expect(feedback.warnings).toContain(
           "2 unchanged load-resave cycles. Stop resaving unchanged data.",
+        );
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "resave-three",
+              name: "execute",
+              arguments: JSON.stringify({
+                needed_for: "Inspecting the saved candidates again",
+                javascript:
+                  "const { candidates_copy_2 } = store; return candidates_copy_2;",
+                store_into: "store.candidates_copy_3",
+              }),
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          error: string;
+        };
+        expect(feedback.error).toContain(
+          "Use view for exact evidence or finish",
         );
         return {
           content: "",
@@ -1025,8 +1026,8 @@ describe("proc worker", () => {
       status: "completed",
       usage: {
         savedValuesCreated: 3,
-        savedValuesLoaded: 2,
-        nonProgressExecutions: 2,
+        savedValuesLoaded: 3,
+        nonProgressExecutions: 3,
       },
     });
   });
@@ -1057,8 +1058,6 @@ describe("proc worker", () => {
               javascript:
                 "let total = 0; for (let index = 0; index < 200; index++) total += tools.read_value({ index }); return total;",
               store_into: "store.total",
-              worker_view: "shape",
-              worker_view_max_bytes: 64,
             }),
           },
         ],
@@ -1161,8 +1160,6 @@ describe("proc worker", () => {
               javascript:
                 "tools.write_fixture({}); throw new Error('after write');",
               store_into: null,
-              worker_view: "none",
-              worker_view_max_bytes: 0,
             }),
           },
         ],
@@ -1360,8 +1357,6 @@ describe("proc worker", () => {
               needed_for: "Creating the requested commit",
               javascript: "return git.commit({ paths: 'all', subject: 'x' });",
               store_into: null,
-              worker_view: "none",
-              worker_view_max_bytes: 0,
             }),
           },
         ],

@@ -7,9 +7,9 @@ import {
   createNamedProcResult,
   createProcResult,
   createProcTransaction,
+  getNamedProcResult,
   getProcResult,
   createProcValueReader,
-  deleteProcResultsExcept,
   getProcTransaction,
   updateProcTransaction,
 } from "../../../src/lib/server/proc/store";
@@ -82,7 +82,7 @@ describe("proc store", () => {
     });
   });
 
-  it("stores caller-named values within a transaction and rejects duplicates", () => {
+  it("retains named values for audit after closing execution access", () => {
     const user = users.ensureLocalUser();
     const conversation = conversations.create(user.id, {
       title: "named proc values",
@@ -137,7 +137,23 @@ describe("proc store", () => {
       conversationId,
       value: { selected: "src/a.ts" },
     });
-    deleteProcResultsExcept(transaction.id, conversationId, finalResult.id);
+    transaction.status = "completed";
+    transaction.resultId = finalResult.id;
+    updateProcTransaction(transaction);
+    expect(
+      getNamedProcResult({
+        name: "candidates",
+        transactionId: transaction.id,
+        conversationId,
+      })?.value,
+    ).toEqual(["src/a.ts"]);
+    expect(
+      getNamedProcResult({
+        name: "RES_candidates",
+        transactionId: transaction.id,
+        conversationId,
+      })?.value,
+    ).toEqual(["src/b.ts"]);
     expect(
       createProcValueReader(transaction.id, conversationId).get("candidates"),
     ).toBeUndefined();

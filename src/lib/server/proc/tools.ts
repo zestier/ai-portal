@@ -46,11 +46,11 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
       description:
         "Execute a specified repository procedure; keep routine intermediates in proc store.",
       promptSnippet:
-        "Execute a specified procedure with JavaScript data reduction.",
+        "Realize an intent-driven repository procedure with JavaScript reduction.",
       promptGuidelines: [
-        "Give ordered steps, selection rules, exclusions, and stop condition.",
-        "Define exact final shape, fields, evidence, order, and completeness. result_requirements is an allowlist.",
-        "Request focused facts or evidence. Reduce broad reads in JavaScript; do not return raw corpora, pages, or unrequested detail.",
+        "Specify algorithm, predicates, exclusions, judgment points, stop condition.",
+        "Use for intent-driven operations, not delegated diagnosis or open-ended research.",
+        "Define final fields, evidence, order, completeness. Exclude raw corpora and unrequested detail.",
       ],
       argsSchema: ProcArgs,
       parameters: {
@@ -63,7 +63,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
           procedure: {
             type: "string",
             description:
-              "Ordered steps, selection/exclusion rules, and stop condition.",
+              "Natural-language pseudocode: algorithm, predicates, judgment points, stop condition.",
           },
           result_requirements: {
             type: "string",

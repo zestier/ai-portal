@@ -24,6 +24,8 @@ export interface ProcUsage {
   savedValuesLoaded: number;
   consoleAttempts: number;
   nonProgressExecutions: number;
+  views: number;
+  viewBytes: number;
 }
 
 export interface ProcTransaction {
@@ -57,6 +59,8 @@ const EMPTY_USAGE: ProcUsage = {
   savedValuesLoaded: 0,
   consoleAttempts: 0,
   nonProgressExecutions: 0,
+  views: 0,
+  viewBytes: 0,
 };
 
 export function createProcTransaction(input: {
@@ -215,12 +219,32 @@ export function getProcResult(input: {
   transactionId: string;
   conversationId: number;
 }): { value: unknown; bytes: number } | null {
+  return findProcResult(input.id, input.transactionId, input.conversationId);
+}
+
+export function getNamedProcResult(input: {
+  name: string;
+  transactionId: string;
+  conversationId: number;
+}): { value: unknown; bytes: number } | null {
+  return findProcResult(
+    namedResultId(input.transactionId, input.name),
+    input.transactionId,
+    input.conversationId,
+  );
+}
+
+function findProcResult(
+  id: string,
+  transactionId: string,
+  conversationId: number,
+): { value: unknown; bytes: number } | null {
   const row = getDb()
     .prepare(
       `SELECT value_json, bytes FROM proc_results
         WHERE id = ? AND transaction_id = ? AND conversation_id = ?`,
     )
-    .get(input.id, input.transactionId, input.conversationId) as
+    .get(id, transactionId, conversationId) as
     { value_json: string; bytes: number } | undefined;
   return row ? { value: JSON.parse(row.value_json), bytes: row.bytes } : null;
 }
@@ -230,8 +254,10 @@ export function createProcValueReader(
   conversationId: number,
 ): { get(id: string): unknown | undefined } {
   const query = getDb().prepare(
-    `SELECT value_json FROM proc_results
-      WHERE id = ? AND transaction_id = ? AND conversation_id = ?`,
+    `SELECT r.value_json FROM proc_results r
+       JOIN proc_transactions t ON t.id = r.transaction_id
+      WHERE r.id = ? AND r.transaction_id = ? AND r.conversation_id = ?
+        AND t.status = 'running'`,
   );
   return {
     get(id: string): unknown | undefined {
@@ -253,44 +279,6 @@ export function createProcValueReader(
 
 function namedResultId(transactionId: string, name: string): string {
   return `${transactionId}:${name}`;
-}
-
-export function deleteProcResult(input: {
-  id: string;
-  transactionId: string;
-  conversationId: number;
-}): void {
-  getDb()
-    .prepare(
-      `DELETE FROM proc_results
-        WHERE id = ? AND transaction_id = ? AND conversation_id = ?`,
-    )
-    .run(input.id, input.transactionId, input.conversationId);
-}
-
-export function deleteProcResults(
-  transactionId: string,
-  conversationId: number,
-): void {
-  getDb()
-    .prepare(
-      `DELETE FROM proc_results
-        WHERE transaction_id = ? AND conversation_id = ?`,
-    )
-    .run(transactionId, conversationId);
-}
-
-export function deleteProcResultsExcept(
-  transactionId: string,
-  conversationId: number,
-  retainedId: string,
-): void {
-  getDb()
-    .prepare(
-      `DELETE FROM proc_results
-        WHERE transaction_id = ? AND conversation_id = ? AND id <> ?`,
-    )
-    .run(transactionId, conversationId, retainedId);
 }
 
 interface ProcTransactionRow {

@@ -17,8 +17,6 @@ import { projectProcValue, projectProcWorkerValue } from "./projection";
 import {
   createNamedProcResult,
   createProcResult,
-  deleteProcResults,
-  deleteProcResultsExcept,
   createProcValueReader,
   updateProcTransaction,
   type ProcOutputPolicy,
@@ -27,10 +25,13 @@ import {
 
 const MAX_TURNS = 100;
 const EXECUTE = "execute";
+const VIEW = "view";
 const FINISH = "finish";
 const CANNOT_EXECUTE = "cannot_execute";
 const MAX_WORKER_VIEW_BYTES = 64 * 1024;
-const MAX_TRANSCRIPT_BYTES = 128 * 1024;
+const EXECUTE_SHAPE_BYTES = 2 * 1024;
+const MAX_TRANSCRIPT_BYTES = 256 * 1024;
+const TRANSCRIPT_RESERVE_BYTES = 32 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
 const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
 const OPERATION_WARNING_THRESHOLD = 200;
@@ -55,19 +56,27 @@ const ExecuteArgs = z
       .describe(
         "Save full result for later execute calls as store.<key> if result may help later. Use null if not.",
       ),
-    worker_view: z
-      .enum(["none", "shape", "value"])
-      .describe(
-        "Worker feedback only; never changes the complete stored value. Use none when no returned data is needed, shape to learn structure for later code, and value only when the next decision needs exact data that cannot be reduced in JavaScript. Oversized value becomes shape.",
-      ),
-    worker_view_max_bytes: z
+  })
+  .strict();
+
+const ViewArgs = z
+  .object({
+    needed_for: z
+      .string()
+      .min(1)
+      .max(1_000)
+      .describe("Why worker must see exact value"),
+    javascript: z
+      .string()
+      .min(1)
+      .max(20_000)
+      .describe("Return only exact evidence needed now"),
+    max_bytes: z
       .number()
       .int()
-      .min(0)
+      .min(1)
       .max(MAX_WORKER_VIEW_BYTES)
-      .describe(
-        "Required maximum bytes copied into worker context. Use the lowest useful budget.",
-      ),
+      .describe("Smallest sufficient exact-result ceiling"),
   })
   .strict();
 
@@ -93,8 +102,6 @@ Rules:
 - Use JavaScript for deterministic search, parsing, transformation, comparison, aggregation, edits, and validation.
 - Fuse adjacent mechanical work. Use fewest reliable executions. Procedure steps are not execution boundaries.
 - Calls in one turn run sequentially; first failure cancels the rest.
-- execute continues. finish returns the final result and stops. cannot_execute stops when a missing instruction or decision blocks work.
-- Use worker_view none when no feedback is needed, shape for structure, and value only for irreducible exact evidence. Use the lowest useful worker_view_max_bytes.
 - result_requirements is the exact final allowlist and completion test.
 - Repair mechanical errors. Do not invent missing instructions or decisions.`;
 
@@ -238,6 +245,48 @@ export async function runProcWorker(
     ...opts.capabilities,
     ...opts.facadeCapabilities,
   ]);
+  const runWorkerExecution = async (
+    source: string,
+    protocolId: string,
+    effects: ExecutionEffect[],
+  ) => {
+    transaction.usage.executions++;
+    const result = await runProgram({
+      source,
+      capabilities: opts.capabilities,
+      facadeCapabilities: opts.facadeCapabilities,
+      savedValues: createProcValueReader(
+        transaction.id,
+        transaction.conversationId,
+      ),
+      execute: (name, callArgs, signal) => {
+        const tool = executableCapabilities.get(name);
+        const normalized = tool
+          ? normalizeProgramToolArgs(tool, callArgs)
+          : callArgs;
+        const effect = executionEffect(name, normalized, tool);
+        return executeDelegatedTool(
+          {
+            parentToolCallId: toolCodec.parse(protocolId),
+            capabilities: executableCapabilities,
+            permissionResolver: opts.permissionResolver,
+            emit: opts.emit,
+            signal,
+          },
+          name,
+          normalized,
+        ).then((result) => {
+          effects.push({ tool: name, effect, ok: result.ok });
+          return result;
+        });
+      },
+      signal: opts.signal,
+    });
+    transaction.usage.operations += result.operations;
+    transaction.usage.savedValuesLoaded += result.trace.savedValueLoads;
+    transaction.usage.consoleAttempts += result.consoleAttempts;
+    return result;
+  };
   const { model, runtime } = await resolveModelSelection(
     transaction.workerModel,
   );
@@ -348,44 +397,11 @@ export async function runProcWorker(
         try {
           if (call.name === EXECUTE) {
             const args = ExecuteArgs.parse(raw);
-            transaction.usage.executions++;
-            const result = await runProgram({
-              source: args.javascript,
-              ...(args.store_into === null && args.worker_view === "none"
-                ? { resultMode: "discard" as const }
-                : {}),
-              capabilities: opts.capabilities,
-              facadeCapabilities: opts.facadeCapabilities,
-              savedValues: createProcValueReader(
-                transaction.id,
-                transaction.conversationId,
-              ),
-              execute: (name, callArgs, signal) => {
-                const tool = executableCapabilities.get(name);
-                const normalized = tool
-                  ? normalizeProgramToolArgs(tool, callArgs)
-                  : callArgs;
-                const effect = executionEffect(name, normalized, tool);
-                return executeDelegatedTool(
-                  {
-                    parentToolCallId: toolCodec.parse(protocolId),
-                    capabilities: executableCapabilities,
-                    permissionResolver: opts.permissionResolver,
-                    emit: opts.emit,
-                    signal,
-                  },
-                  name,
-                  normalized,
-                ).then((result) => {
-                  effects.push({ tool: name, effect, ok: result.ok });
-                  return result;
-                });
-              },
-              signal: opts.signal,
-            });
-            transaction.usage.operations += result.operations;
-            transaction.usage.savedValuesLoaded += result.trace.savedValueLoads;
-            transaction.usage.consoleAttempts += result.consoleAttempts;
+            const result = await runWorkerExecution(
+              args.javascript,
+              protocolId,
+              effects,
+            );
             const effectSummary = summarizeExecutionEffects(effects);
             const operationWarning =
               result.operations >= OPERATION_WARNING_THRESHOLD
@@ -393,8 +409,8 @@ export async function runProcWorker(
                 : undefined;
             const projection = projectProcWorkerValue(
               result.value,
-              args.worker_view,
-              args.worker_view_max_bytes,
+              "shape",
+              EXECUTE_SHAPE_BYTES,
             );
             if (args.store_into === null) {
               recordExecutionFeedback(
@@ -406,17 +422,9 @@ export async function runProcWorker(
                 true,
                 {
                   store_into: null,
-                  worker_view: args.worker_view,
-                  worker_view_kind: projection.kind,
-                  worker_view_max_bytes: args.worker_view_max_bytes,
-                  worker_view_bytes: projection.projectionBytes,
-                  worker_view_truncated: projection.truncated,
-                  ...(projection.reason ? { reason: projection.reason } : {}),
-                  ...(projection?.projection !== undefined
-                    ? projection.kind === "value"
-                      ? { value: projection.projection }
-                      : { shape: projection.projection }
-                    : {}),
+                  shape: projection.projection,
+                  shape_bytes: projection.projectionBytes,
+                  shape_truncated: projection.truncated,
                   ...(operationWarning || result.consoleAttempts > 0
                     ? {
                         warnings: [
@@ -434,18 +442,16 @@ export async function runProcWorker(
               );
               continue;
             }
-            retainedResult = createNamedProcResult({
-              transactionId: transaction.id,
-              conversationId: transaction.conversationId,
-              name: storeKeyName(args.store_into),
-              value: result.value,
-            });
-            transaction.usage.savedValuesCreated++;
             const madeNoProgress =
               result.operations === 0 && result.trace.savedValueLoads > 0;
             if (madeNoProgress) {
-              consecutiveNonProgress++;
               transaction.usage.nonProgressExecutions++;
+              if (consecutiveNonProgress >= 2) {
+                throw new Error(
+                  "Repeated unchanged load-resave cycle. Use view for exact evidence or finish.",
+                );
+              }
+              consecutiveNonProgress++;
               log.warn("proc.worker.non_progress", {
                 transactionId: transaction.id,
                 consecutiveExecutions: consecutiveNonProgress,
@@ -454,6 +460,13 @@ export async function runProcWorker(
             } else {
               consecutiveNonProgress = 0;
             }
+            retainedResult = createNamedProcResult({
+              transactionId: transaction.id,
+              conversationId: transaction.conversationId,
+              name: storeKeyName(args.store_into),
+              value: result.value,
+            });
+            transaction.usage.savedValuesCreated++;
             const warnings = [
               operationWarning,
               consecutiveNonProgress >= 2
@@ -464,17 +477,9 @@ export async function runProcWorker(
             const feedback = {
               store_into: args.store_into,
               value_bytes: retainedResult.bytes,
-              worker_view: args.worker_view,
-              worker_view_kind: projection.kind,
-              worker_view_max_bytes: args.worker_view_max_bytes,
-              worker_view_bytes: projection.projectionBytes,
-              worker_view_truncated: projection.truncated,
-              ...(projection.reason ? { reason: projection.reason } : {}),
-              ...(projection.projection !== undefined
-                ? projection.kind === "value"
-                  ? { value: projection.projection }
-                  : { shape: projection.projection }
-                : {}),
+              shape: projection.projection,
+              shape_bytes: projection.projectionBytes,
+              shape_truncated: projection.truncated,
               ...(warnings.length > 0 ? { warnings } : {}),
               operations: result.operations,
               effects: effectSummary,
@@ -491,43 +496,59 @@ export async function runProcWorker(
             );
             continue;
           }
+          if (call.name === VIEW) {
+            const args = ViewArgs.parse(raw);
+            transaction.usage.views++;
+            const result = await runWorkerExecution(
+              args.javascript,
+              protocolId,
+              effects,
+            );
+            const effectSummary = summarizeExecutionEffects(effects);
+            const encoded = JSON.stringify(result.value);
+            const viewBytes = Buffer.byteLength(encoded);
+            const transcriptBytes = procTranscriptStats(
+              transaction.messages,
+            ).bytes;
+            const availableBytes = Math.max(
+              0,
+              MAX_TRANSCRIPT_BYTES - TRANSCRIPT_RESERVE_BYTES - transcriptBytes,
+            );
+            const limit = Math.min(args.max_bytes, availableBytes);
+            if (viewBytes > limit) {
+              throw new Error(
+                `View ${viewBytes}B; current limit ${limit}B (${availableBytes}B transcript headroom). Reduce or select ranges.`,
+              );
+            }
+            transaction.usage.viewBytes += viewBytes;
+            recordExecutionFeedback(
+              opts.emit,
+              transaction,
+              call.id,
+              protocolId,
+              procId,
+              true,
+              {
+                value: result.value,
+                view_bytes: viewBytes,
+                max_bytes: args.max_bytes,
+                operations: result.operations,
+                effects: effectSummary,
+                effects_total: effects.length,
+                ...(result.consoleAttempts > 0
+                  ? { warnings: [consoleWarning(result.consoleAttempts)] }
+                  : {}),
+              },
+            );
+            continue;
+          }
           if (call.name === FINISH) {
             const args = FinishArgs.parse(raw);
-            transaction.usage.executions++;
-            const result = await runProgram({
-              source: args.javascript,
-              capabilities: opts.capabilities,
-              facadeCapabilities: opts.facadeCapabilities,
-              savedValues: createProcValueReader(
-                transaction.id,
-                transaction.conversationId,
-              ),
-              execute: (name, callArgs, signal) => {
-                const tool = executableCapabilities.get(name);
-                const normalized = tool
-                  ? normalizeProgramToolArgs(tool, callArgs)
-                  : callArgs;
-                const effect = executionEffect(name, normalized, tool);
-                return executeDelegatedTool(
-                  {
-                    parentToolCallId: toolCodec.parse(protocolId),
-                    capabilities: executableCapabilities,
-                    permissionResolver: opts.permissionResolver,
-                    emit: opts.emit,
-                    signal,
-                  },
-                  name,
-                  normalized,
-                ).then((result) => {
-                  effects.push({ tool: name, effect, ok: result.ok });
-                  return result;
-                });
-              },
-              signal: opts.signal,
-            });
-            transaction.usage.operations += result.operations;
-            transaction.usage.savedValuesLoaded += result.trace.savedValueLoads;
-            transaction.usage.consoleAttempts += result.consoleAttempts;
+            const result = await runWorkerExecution(
+              args.javascript,
+              protocolId,
+              effects,
+            );
             const projection = projectProcValue(
               result.value,
               transaction.outputPolicy,
@@ -541,15 +562,6 @@ export async function runProcWorker(
               : null;
             transaction.status = "completed";
             transaction.resultId = stored?.id ?? null;
-            if (stored) {
-              deleteProcResultsExcept(
-                transaction.id,
-                transaction.conversationId,
-                stored.id,
-              );
-            } else {
-              deleteProcResults(transaction.id, transaction.conversationId);
-            }
             updateProcTransaction(transaction);
             emitProtocolResult(
               opts.emit,
@@ -589,7 +601,6 @@ export async function runProcWorker(
             const args = CannotExecuteArgs.parse(raw);
             transaction.status = "cannot_execute";
             transaction.error = args.reason;
-            deleteProcResults(transaction.id, transaction.conversationId);
             updateProcTransaction(transaction);
             emitProtocolResult(
               opts.emit,
@@ -647,7 +658,6 @@ export async function runProcWorker(
   } catch (error) {
     transaction.status = "failed";
     transaction.error = error instanceof Error ? error.message : String(error);
-    deleteProcResults(transaction.id, transaction.conversationId);
     updateProcTransaction(transaction);
     opts.emit({
       type: "subagent.lifecycle",
@@ -738,15 +748,25 @@ function workerToolSpecs(): ExtractorToolSpec[] {
       type: "function",
       function: {
         name: EXECUTE,
-        description: "Run JavaScript and continue.",
+        description:
+          "Run JavaScript; optionally store exact result; return shape; continue.",
         parameters: jsonSchema(ExecuteArgs),
       },
     },
     {
       type: "function",
       function: {
+        name: VIEW,
+        description:
+          "Run JavaScript; return exact evidence to worker; continue.",
+        parameters: jsonSchema(ViewArgs),
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: FINISH,
-        description: "Return the final result and stop.",
+        description: "Run JavaScript; return final result; stop.",
         parameters: jsonSchema(FinishArgs),
       },
     },
@@ -754,7 +774,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
       type: "function",
       function: {
         name: CANNOT_EXECUTE,
-        description: "Stop because an instruction or decision is missing.",
+        description: "Report missing instruction or decision; stop.",
         parameters: jsonSchema(CannotExecuteArgs),
       },
     },
@@ -769,7 +789,7 @@ function jsonSchema(schema: z.ZodType): Record<string, unknown> {
 
 function consoleWarning(attempts: number): string | undefined {
   return attempts > 0
-    ? `console is unsupported; discarded arguments from ${attempts} call(s). Return required data and choose worker_view instead.`
+    ? `console is unsupported; discarded arguments from ${attempts} call(s). Return required data instead.`
     : undefined;
 }
 

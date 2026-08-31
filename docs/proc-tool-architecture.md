@@ -158,7 +158,7 @@ proc: Map model routing
     read
 ```
 
-The worker model receives `execute`, `finish`, and `cannot_execute`. Nested
+The worker model receives `execute`, `view`, `finish`, and `cannot_execute`. Nested
 `grep`, `read`, Git, filesystem, and command rows are
 execution trace, not additional model-visible worker tools.
 
@@ -170,12 +170,11 @@ JavaScript values inside an execution and do not enter model context.
 
 `execute` continues the procedure. Its required nullable `store_into` field
 names a value as `store.<key>` for later JavaScript; `null` does not retain the
-return value. Storage is always exact. The independent required `worker_view`
-and `worker_view_max_bytes` fields control only the bounded feedback copied into
-the worker's context. Keys are unique within a transaction and read through
-`store.<key>`. `finish` returns the final value to the proc caller and ends the
-procedure. Every execution also declares `needed_for`: one short phrase stating
-the required outcome.
+return value. Storage is exact; feedback is a fixed bounded shape. `view`
+returns exact worker evidence under an explicit byte ceiling and continues.
+`finish` returns the final value to the proc caller and ends the procedure.
+All three use the same JavaScript APIs. Every continuing call declares
+`needed_for`: one short phrase stating the required outcome or decision.
 
 Calls emitted in one model turn execute sequentially, so later calls may read
 names saved by earlier calls. The first failure cancels every remaining call in
@@ -221,21 +220,15 @@ ignore rules. Passing
 `includeIgnored: true` bypasses ignore files and can deliberately search ignored
 trees such as `node_modules`.
 
-Reading a complete file inside an execution keeps that value in the QuickJS
-runtime and does not add it to model context unless the returned value is
-explicitly included by `worker_view`. A stored value remains complete regardless
-of its worker view.
-`console.log`, `info`, `warn`, `error`, and `debug` capture immutable,
-JSON-compatible argument snapshots rather than writing process output. Their
-combined projection has a 64 KiB guard; overflow preserves the returned saved
-value so a reducing retry can use `store.<key>`. `finish` returns the final result.
-Worker guidance therefore permits broad internal reads for mechanical filtering
-and transformation while requiring the smallest useful worker-view budget.
+Reading a complete file inside an execution keeps it outside model context.
+Stored values remain complete; only their bounded shape enters feedback.
+`view` admits exact evidence when JavaScript cannot resolve the next semantic
+decision. Its caller chooses the smallest sufficient byte ceiling up to the
+hard guard. `console` methods are unsupported and their arguments are discarded.
 
-Repeated zero-operation executions that load and re-save hidden values without
-console evidence are counted as non-progress. After two consecutive occurrences,
-feedback explicitly tells the worker to stop re-saving the value and either log
-a small derived projection or call `finish`.
+Repeated zero-operation executions that load and re-save hidden values are
+counted as non-progress. After two consecutive occurrences,
+feedback tells the worker to stop re-saving and use `view` or `finish`.
 
 `search.glob` returns all matching workspace-relative paths as `string[]`;
 `search.grep` returns all matching lines as structured path, line, column, and text
@@ -269,20 +262,13 @@ functions often need different contracts. A tool is not program-capable merely
 because it is a `PortalTool`; missing metadata means unavailable, and unknown
 calls fail closed with available-name suggestions.
 
-There is no separate inspection tool. When the worker faces a semantic question
-that supplied rules cannot resolve mechanically, JavaScript first reduces the
-corpus to distinguishing evidence, for example:
+When supplied rules cannot resolve a semantic question, `view` reduces the
+corpus to distinguishing evidence:
 
 ```js
 const { candidates } = store;
-console.log(
-  candidates.slice(0, 12).map(({ id, signature }) => ({ id, signature })),
-);
-return candidates;
+return candidates.slice(0, 12).map(({ id, signature }) => ({ id, signature }));
 ```
-
-The logged projection enters worker context while the returned candidates remain
-available only through its declared store key.
 
 ## Execution Contract
 
@@ -299,34 +285,31 @@ javascript: |
   return groupAndSelect(matches);
 ```
 
-`execute` stores its exact return value when `store_into` is a store key. Its
-feedback contains that name and the explicitly requested bounded worker view.
-`worker_view: none` returns metadata only and emits zero view bytes.
-`worker_view: shape` returns the compact type-like shape described below.
-`worker_view: value` returns exact data when it fits; when it does not, feedback
-is a bounded shape with `worker_view_kind: shape` and
-`reason: value_exceeded_limit`. `finish` returns exactly the primary agent's original result requirements.
-Generous internal limits remain only as safety fuses; they are not advertised
-as output targets. Console overflow retains the returned value and directs the
-worker to reduce semantically with `store`, never to paginate.
+`execute` stores its exact return value when `store_into` is a store key and
+returns a server-bounded shape. `view` returns exact data when it fits both its
+requested ceiling and remaining transcript headroom; overflow rejects the call
+without truncation. `finish` returns exactly the primary agent's result
+requirements.
 
-Console evidence separates what the model sees from what later code can use:
+Exact evidence remains separate from stored data:
 
 ```yaml
+tool: execute
+needed_for: Preserve complete candidates
+javascript: |
+  return findCandidates();
+store_into: store.candidates
+---
+tool: view
 needed_for: Which candidate owns retry classification?
 javascript: |
-  const candidates = findCandidates();
-  console.log(candidates.map(({ id, signature, retryBranch }) =>
-    ({ id, signature, retryBranch })));
-  return candidates;
-store_into: store.candidates
-worker_view: shape
-worker_view_max_bytes: 256
+  return store.candidates.map(({ id, signature, retryBranch }) =>
+    ({ id, signature, retryBranch }));
+max_bytes: 12000
 ```
 
-Only the requested shape and bounded console evidence enter the next worker
-turn. The returned value is stored exactly, so the next execution can apply the
-worker's decision with `store.candidates` without reinjecting the corpus.
+Only the `view` result enters the next worker turn. The complete candidates stay
+in `store.candidates` for later JavaScript.
 
 Store feedback is:
 
@@ -334,35 +317,29 @@ Store feedback is:
 {
   "store_into": "store.candidates",
   "value_bytes": 284192,
-  "worker_view": "shape",
-  "worker_view_kind": "shape",
-  "worker_view_max_bytes": 256,
-  "worker_view_bytes": 58,
-  "worker_view_truncated": false,
   "shape": "array(318) of object { path: string, line: integer }",
+  "shape_bytes": 58,
+  "shape_truncated": false,
   "operations": 12,
   "effects": [],
   "effects_total": 0
 }
 ```
 
-`value_bytes` measures the exact serialized value. `worker_view_bytes` measures
-the selected representation that entered worker context.
-`worker_view_truncated` is true when the requested representation omitted
-information, including an oversized `value` falling back to shape. The stored
-value, when present, is exact regardless of worker-view mode or budget.
+`value_bytes` measures exact serialized storage. `shape_bytes` measures execute
+feedback. `view_bytes` measures exact evidence entering worker context.
 
 Every execution requires a user-visible `needed_for`. The dedicated
 proc card shows the primary-agent procedure and result requirements, each execution's
 justification, store destination and JavaScript, operation count,
 nested capability activity, partial-effect warnings, final usage, and the
-console evidence returned to the worker model.
+exact evidence returned to the worker model.
 
-Saved names are immutable and transaction- and conversation-scoped. Named
-intermediates are deleted whenever the proc terminates. A successful proc keeps
-only its final result when the caller requested storage; `cannot_execute` and
-failure keep no values. Saved-value access does not grant new authority: every
-repository operation still crosses the normal capability and permission boundary.
+Saved names are immutable and transaction- and conversation-scoped. Results
+survive completion, failure, and `cannot_execute` for audit. Finished values are
+not executable store inputs. Conversation deletion removes them by foreign-key
+cascade. Saved-value access grants no new authority: repository operations still
+cross normal capability and permission boundaries.
 
 ### Failure and effects
 
@@ -489,12 +466,12 @@ structurally so harmless formatting changes do not obscure regressions.
 primary-agent procedure
        |
        v
-proc worker -- execute(needed_for, javascript, store_into,
-                       worker_view, worker_view_max_bytes) --> program runtime
-            -- finish(javascript) -----------------------> program runtime
+proc worker -- execute(needed_for, javascript, store_into) --> program runtime
+            -- view(needed_for, javascript, max_bytes) ---> program runtime
+            -- finish(javascript) ------------------------> program runtime
        ^                                      |
        |                                      v
-  +------ store key or console evidence -- stored-value store
+  +------ store key, shape, or exact view -- stored-value store
                                                       |
              later execution: store.<key> <-------------+
 ```

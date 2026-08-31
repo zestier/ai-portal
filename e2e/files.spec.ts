@@ -92,7 +92,7 @@ test("Files tab lists workspace contents and reads a file", async ({
 // A minimal valid PNG (1x1) — written to the workspace so the file browser can
 // detect it as an image and render it inline instead of "Binary file".
 const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
   "base64",
 );
 

@@ -58,7 +58,10 @@
   const outcome = $derived(parseProcOutcome(resultJson));
   const executions = $derived(
     childTools.filter(
-      (child) => child.tool === "execute" || child.tool === "finish",
+      (child) =>
+        child.tool === "execute" ||
+        child.tool === "view" ||
+        child.tool === "finish",
     ),
   );
   const status = $derived(
@@ -144,14 +147,26 @@
             {@const storeInto =
               executionArgs?.store_into ?? executionArgs?.save_as}
             {@const requestedWorkerView =
-              executionArgs?.worker_view ?? executionArgs?.view}
+              execution.tool === "view"
+                ? "value"
+                : (executionArgs?.worker_view ?? executionArgs?.view)}
             {@const actualWorkerView =
-              executionResult?.worker_view_kind ?? executionResult?.view}
+              executionResult?.worker_view_kind ??
+              executionResult?.view ??
+              (execution.tool === "view"
+                ? "value"
+                : execution.tool === "execute" &&
+                    executionResult?.shape !== undefined
+                  ? "shape"
+                  : undefined)}
             {@const workerViewBytes =
-              executionResult?.worker_view_bytes ?? executionResult?.view_bytes}
+              executionResult?.worker_view_bytes ??
+              executionResult?.view_bytes ??
+              executionResult?.shape_bytes}
             {@const workerViewTruncated =
               executionResult?.worker_view_truncated ??
-              executionResult?.truncated}
+              executionResult?.truncated ??
+              executionResult?.shape_truncated}
             {@const workerProjection =
               actualWorkerView === "value"
                 ? executionResult?.value
@@ -207,7 +222,10 @@
                       </div>
                       <div>
                         <dt>Worker view</dt>
-                        <dd>{requestedWorkerView ?? "unknown"}</dd>
+                        <dd>
+                          {requestedWorkerView ??
+                            (execution.tool === "execute" ? "shape" : "none")}
+                        </dd>
                       </div>
                       {#if executionArgs.worker_view_max_bytes !== undefined}
                         <div>
@@ -217,6 +235,12 @@
                               executionArgs.worker_view_max_bytes,
                             )}
                           </dd>
+                        </div>
+                      {/if}
+                      {#if executionArgs.max_bytes !== undefined}
+                        <div>
+                          <dt>View budget</dt>
+                          <dd>{formatFieldBytes(executionArgs.max_bytes)}</dd>
                         </div>
                       {/if}
                     </dl>

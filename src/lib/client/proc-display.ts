@@ -10,6 +10,7 @@ export interface ProcExecutionArgs {
   javascript: string;
   needed_for?: string;
   store_into?: string | null;
+  max_bytes?: number;
   /** Legacy streamed metadata retained for older conversations. */
   save_as?: string | null;
   worker_view?: "none" | "shape" | "value";
@@ -35,6 +36,9 @@ export interface ProcExecutionResult {
   truncated?: boolean;
   structure?: unknown;
   structure_bytes?: number;
+  shape_bytes?: number;
+  shape_truncated?: boolean;
+  max_bytes?: number;
   needed_for?: string;
   bytes?: number;
   operations?: number;
@@ -105,15 +109,18 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
   const hasExecutionMetadata =
     value.needed_for !== undefined ||
     value.store_into !== undefined ||
+    value.max_bytes !== undefined ||
     value.save_as !== undefined ||
     value.worker_view !== undefined ||
     value.worker_view_max_bytes !== undefined ||
     value.view !== undefined;
-  const hasStorageTarget =
-    value.store_into !== undefined || value.save_as !== undefined;
+  const hasDestination =
+    value.store_into !== undefined ||
+    value.save_as !== undefined ||
+    value.max_bytes !== undefined;
   if (
     (hasExecutionMetadata &&
-      (typeof value.needed_for !== "string" || !hasStorageTarget)) ||
+      (typeof value.needed_for !== "string" || !hasDestination)) ||
     (value.needed_for !== undefined && typeof value.needed_for !== "string") ||
     (value.store_into !== undefined &&
       value.store_into !== null &&
@@ -121,6 +128,7 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
     (value.save_as !== undefined &&
       value.save_as !== null &&
       typeof value.save_as !== "string") ||
+    (value.max_bytes !== undefined && typeof value.max_bytes !== "number") ||
     (value.worker_view !== undefined &&
       value.worker_view !== "none" &&
       value.worker_view !== "shape" &&

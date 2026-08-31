@@ -52,6 +52,15 @@ describe("proc display parsing", () => {
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
+          needed_for: "Choose owner from exact signatures",
+          javascript: "return store.candidates.slice(0, 3);",
+          max_bytes: 4096,
+        }),
+      ),
+    ).toMatchObject({ max_bytes: 4096 });
+    expect(
+      parseProcExecutionArgs(
+        JSON.stringify({
           javascript: "return [];",
         }),
       ),

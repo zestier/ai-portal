@@ -548,7 +548,7 @@ describe("Svelte component regression coverage", () => {
     expect(body).toContain('data-automatically-open="true"');
   });
 
-  test("ProcCall shows the execute view and exact feedback sent to the worker", () => {
+  test("ProcCall shows exact view feedback sent to the worker", () => {
     const body = render(ProcCall, {
       props: {
         toolCall: {
@@ -571,25 +571,17 @@ describe("Svelte component regression coverage", () => {
           {
             id: "E1",
             messageId: "M1",
-            tool: "execute",
+            tool: "view",
             argsJson: JSON.stringify({
               needed_for: "Reading the contributing guidance",
               javascript: "return fs.readFile('CONTRIBUTING.md', 'utf8');",
-              store_into: "store.contributing",
-              worker_view: "value",
-              worker_view_max_bytes: 32,
+              max_bytes: 32,
             }),
             resultJson: JSON.stringify(
               JSON.stringify({
-                save_as: "contributing",
-                store_into: "store.contributing",
-                worker_view: "value",
-                worker_view_kind: "shape",
-                worker_view_max_bytes: 32,
-                worker_view_bytes: 27,
-                worker_view_truncated: true,
-                reason: "value_exceeded_limit",
-                shape: "string",
+                value: "Contributing guidance",
+                view_bytes: 23,
+                max_bytes: 32,
                 operations: 1,
               }),
             ),
@@ -603,17 +595,16 @@ describe("Svelte component regression coverage", () => {
       },
     }).body;
 
-    expect(body).toContain("value → shape view");
+    expect(body).toContain("value view");
     expect(body).toContain("Formatted input");
-    expect(body).toContain("store.contributing");
+    expect(body).toContain("32 B");
     expect(body).toContain("return fs.readFile('CONTRIBUTING.md', 'utf8');");
     expect(body).toContain("Raw input payload");
     expect(body).toContain("View budget");
-    expect(body).toContain("Worker view · shape");
-    expect(body).toContain("value exceeded budget");
     expect(body).toContain("Exact text sent to worker");
     expect(body).toContain("Raw output payload");
-    expect(body).toContain("string");
+    expect(body).toContain("Contributing guidance");
+    expect(body).toContain("view_bytes");
   });
 
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {
