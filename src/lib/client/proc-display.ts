@@ -175,6 +175,19 @@ export function parseProcExecutionResult(
         return { error: text };
       }
     }
+    if (isObject(value) && value.ok === true && "result" in value) {
+      value = value.result;
+    } else if (isObject(value) && value.ok === false) {
+      const error = value.error;
+      return {
+        error:
+          isObject(error) && typeof error.message === "string"
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : "Execution failed.",
+      };
+    }
     return isObject(value) ? (value as ProcExecutionResult) : null;
   } catch {
     return null;

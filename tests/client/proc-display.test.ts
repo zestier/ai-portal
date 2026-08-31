@@ -128,6 +128,33 @@ describe("proc display parsing", () => {
     ).toMatchObject({ status: "completed", usage: { turns: 1 } });
   });
 
+  it("unwraps portal envelopes around worker execution feedback", () => {
+    expect(
+      parseProcExecutionResult(
+        JSON.stringify({
+          ok: true,
+          result: {
+            worker_view_kind: "value",
+            value: { path: "src/a.ts" },
+            worker_view_bytes: 18,
+          },
+        }),
+      ),
+    ).toEqual({
+      worker_view_kind: "value",
+      value: { path: "src/a.ts" },
+      worker_view_bytes: 18,
+    });
+    expect(
+      parseProcExecutionResult(
+        JSON.stringify({
+          ok: false,
+          error: { message: "worker failed" },
+        }),
+      ),
+    ).toEqual({ error: "worker failed" });
+  });
+
   it("surfaces cannot-execute envelopes", () => {
     expect(
       parseProcOutcome(
