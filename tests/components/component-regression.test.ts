@@ -605,6 +605,8 @@ describe("Svelte component regression coverage", () => {
     expect(body).toContain("Raw output payload");
     expect(body).toContain("Contributing guidance");
     expect(body).toContain("view_bytes");
+    expect(body).not.toContain("not stored");
+    expect(body).not.toContain("Store id");
   });
 
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {

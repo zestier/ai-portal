@@ -444,24 +444,13 @@ describe("proc worker", () => {
     expect(
       workerTools[0]?.function.parameters.properties.store_into,
     ).toMatchObject({
-      anyOf: expect.arrayContaining([
-        expect.objectContaining({ type: "string" }),
-        expect.objectContaining({ type: "null" }),
-      ]),
-    });
-    expect(
-      workerTools[0]?.function.parameters.properties.store_into,
-    ).toMatchObject({
-      anyOf: expect.arrayContaining([
-        expect.objectContaining({
-          pattern: "^store\\.[A-Za-z_$][A-Za-z0-9_$]{0,63}$",
-        }),
-      ]),
+      type: "string",
+      pattern: "^store\\.[A-Za-z_$][A-Za-z0-9_$]{0,63}$",
     });
     expect(workerTools[0]?.function.parameters.properties.needed_for).toEqual(
       expect.objectContaining({ type: "string" }),
     );
-    expect(workerTools[0]?.function.parameters.required).toContain(
+    expect(workerTools[0]?.function.parameters.required).not.toContain(
       "store_into",
     );
     expect(workerTools[0]?.function.description).toBe(
@@ -601,6 +590,144 @@ describe("proc worker", () => {
         output: expect.stringContaining('"error":"bad atom"'),
       }),
     );
+  });
+
+  it("continues independent calls after a retry-safe batch failure", async () => {
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "failed-read",
+            name: "view",
+            arguments: JSON.stringify({
+              needed_for: "A missing value",
+              javascript: "throw new Error('missing');",
+              max_bytes: 100,
+            }),
+          },
+          {
+            id: "independent-read",
+            name: "execute",
+            arguments: JSON.stringify({
+              needed_for: "An independent value",
+              javascript: "return 42;",
+              store_into: null,
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        expect(messages.at(-2).content).toContain("missing");
+        expect(messages.at(-1).content).toContain('"shape":"integer"');
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "finish-after-recovery",
+              name: "finish",
+              arguments: JSON.stringify({ javascript: "return 42;" }),
+            },
+          ],
+        };
+      });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc retry-safe batch",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const transaction = createProcTransaction({
+      conversationId: convCodec.parse(conversation.id),
+      parentToolCallId: 41,
+      workerModel: "pi-stub/stub-model",
+      summary: "Recover a batch",
+      requirements: "Return 42",
+      procedure: "Read independent values and return 42",
+      outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+      messages: initialProcMessages({
+        summary: "Recover a batch",
+        requirements: "Return 42",
+        procedure: "Read independent values and return 42",
+        outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", projection: 42 });
+  });
+
+  it("accepts omitted and legacy quoted-null execute destinations", async () => {
+    piChat.mockResolvedValueOnce({
+      content: "",
+      toolCalls: [
+        {
+          id: "quoted-null",
+          name: "execute",
+          arguments: JSON.stringify({
+            needed_for: "A transient value",
+            javascript: "return 42;",
+          }),
+        },
+        {
+          id: "quoted-null",
+          name: "execute",
+          arguments: JSON.stringify({
+            needed_for: "Another transient value",
+            javascript: "return 42;",
+            store_into: "null",
+          }),
+        },
+        {
+          id: "finish-quoted-null",
+          name: "finish",
+          arguments: JSON.stringify({ javascript: "return 42;" }),
+        },
+      ],
+    });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc quoted null",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const transaction = createProcTransaction({
+      conversationId: convCodec.parse(conversation.id),
+      parentToolCallId: 42,
+      workerModel: "pi-stub/stub-model",
+      summary: "Accept quoted null",
+      requirements: "Return 42",
+      procedure: "Return 42",
+      outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+      messages: initialProcMessages({
+        summary: "Accept quoted null",
+        requirements: "Return 42",
+        procedure: "Return 42",
+        outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(outcome.usage.executions).toBe(3);
   });
 
   it("returns explicit shape feedback and warns without exposing console arguments", async () => {

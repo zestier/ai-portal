@@ -87,8 +87,9 @@
   function executionLabel(
     tool: string,
     storeInto: string | null | undefined,
-  ): string {
+  ): string | null {
     if (tool === "finish") return "final result";
+    if (tool === "view") return null;
     return storeInto ? `store: ${storeInto}` : "not stored";
   }
 
@@ -146,6 +147,7 @@
             )}
             {@const storeInto =
               executionArgs?.store_into ?? executionArgs?.save_as}
+            {@const storageLabel = executionLabel(execution.tool, storeInto)}
             {@const requestedWorkerView =
               execution.tool === "view"
                 ? "value"
@@ -184,7 +186,7 @@
                       ? "Final result"
                       : "Execution")}</span
                 >
-                <Pill>{executionLabel(execution.tool, storeInto)}</Pill>
+                {#if storageLabel}<Pill>{storageLabel}</Pill>{/if}
                 {#if requestedWorkerView}
                   <Pill
                     >{requestedWorkerView}{actualWorkerView &&
@@ -216,10 +218,12 @@
                   <div class="formatted-input">
                     <div class="minor-label">Formatted input</div>
                     <dl>
-                      <div>
-                        <dt>Store id</dt>
-                        <dd>{storeInto ?? "none"}</dd>
-                      </div>
+                      {#if execution.tool !== "view"}
+                        <div>
+                          <dt>Store id</dt>
+                          <dd>{storeInto ?? "none"}</dd>
+                        </div>
+                      {/if}
                       <div>
                         <dt>Worker view</dt>
                         <dd>

@@ -114,13 +114,8 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
     value.worker_view !== undefined ||
     value.worker_view_max_bytes !== undefined ||
     value.view !== undefined;
-  const hasDestination =
-    value.store_into !== undefined ||
-    value.save_as !== undefined ||
-    value.max_bytes !== undefined;
   if (
-    (hasExecutionMetadata &&
-      (typeof value.needed_for !== "string" || !hasDestination)) ||
+    (hasExecutionMetadata && typeof value.needed_for !== "string") ||
     (value.needed_for !== undefined && typeof value.needed_for !== "string") ||
     (value.store_into !== undefined &&
       value.store_into !== null &&

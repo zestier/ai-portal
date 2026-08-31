@@ -72,7 +72,10 @@ describe("proc display parsing", () => {
           javascript: "return [];",
         }),
       ),
-    ).toBeNull();
+    ).toMatchObject({
+      needed_for: "Which candidate satisfies the ownership rule?",
+      javascript: "return [];",
+    });
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
@@ -80,7 +83,10 @@ describe("proc display parsing", () => {
           javascript: "return [];",
         }),
       ),
-    ).toBeNull();
+    ).toMatchObject({
+      needed_for: "Avoid choosing a recipient",
+      javascript: "return [];",
+    });
   });
 
   it("preserves the exact feedback text sent to the worker", () => {

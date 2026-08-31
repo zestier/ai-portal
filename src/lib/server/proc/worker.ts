@@ -52,9 +52,9 @@ const ExecuteArgs = z
     store_into: z
       .string()
       .regex(STORE_DESTINATION)
-      .nullable()
+      .optional()
       .describe(
-        "Save full result for later execute calls as store.<key> if result may help later. Use null if not.",
+        "Save as store.<key> whenever a later call will use this result; omit only for transient results.",
       ),
   })
   .strict();
@@ -101,7 +101,7 @@ export const PROC_WORKER_SYSTEM = `Realize the supplied procedure exactly. Do no
 Rules:
 - Use JavaScript for deterministic search, parsing, transformation, comparison, aggregation, edits, and validation.
 - Fuse adjacent mechanical work. Use fewest reliable executions. Procedure steps are not execution boundaries.
-- Calls in one turn run sequentially; first failure cancels the rest.
+- Non-terminal calls in one turn run sequentially and continue until the first unsafe failure.
 - result_requirements is the exact final allowlist and completion test.
 - Repair mechanical errors. Do not invent missing instructions or decisions.`;
 
@@ -365,6 +365,7 @@ export async function runProcWorker(
       }
 
       let batchFailed = false;
+      let batchMustStop = false;
       for (const call of turn.toolCalls) {
         const raw = parseArgs(call.arguments);
         const protocolId = toolCodec.encode(mintToolCallId());
@@ -378,7 +379,11 @@ export async function runProcWorker(
           args: raw,
           parentToolCallId: procId,
         });
-        if (batchFailed) {
+        if (
+          batchMustStop ||
+          (batchFailed &&
+            (call.name === FINISH || call.name === CANNOT_EXECUTE))
+        ) {
           recordExecutionFeedback(
             opts.emit,
             transaction,
@@ -396,7 +401,7 @@ export async function runProcWorker(
         }
         try {
           if (call.name === EXECUTE) {
-            const args = ExecuteArgs.parse(raw);
+            const args = ExecuteArgs.parse(normalizeExecuteArgs(raw));
             const result = await runWorkerExecution(
               args.javascript,
               protocolId,
@@ -412,7 +417,7 @@ export async function runProcWorker(
               "shape",
               EXECUTE_SHAPE_BYTES,
             );
-            if (args.store_into === null) {
+            if (args.store_into === undefined) {
               recordExecutionFeedback(
                 opts.emit,
                 transaction,
@@ -650,6 +655,7 @@ export async function runProcWorker(
             feedback,
           );
           batchFailed = true;
+          batchMustStop = !retrySafe;
         }
       }
       updateProcTransaction(transaction);
@@ -799,6 +805,18 @@ function parseArgs(raw: string): unknown {
   } catch {
     return { _invalidJson: raw };
   }
+}
+
+function normalizeExecuteArgs(value: unknown): unknown {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    if (record.store_into === null || record.store_into === "null") {
+      const normalized = { ...record };
+      delete normalized.store_into;
+      return normalized;
+    }
+  }
+  return value;
 }
 
 function storeKeyName(value: string): string {
