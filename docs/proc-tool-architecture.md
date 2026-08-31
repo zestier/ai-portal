@@ -168,17 +168,18 @@ The worker fuses adjacent mechanical steps into the largest reliable execution;
 procedure steps are not turn boundaries. Intermediate values remain ordinary
 JavaScript values inside an execution and do not enter model context.
 
-`execute` continues the procedure. Its required nullable `store_into` field
-names a value as `store.<key>` for later JavaScript; `null` does not retain the
-return value. Storage is exact; feedback is a fixed bounded shape. `view`
+`execute` continues the procedure and ignores its completion value. JavaScript
+assigns later-needed intermediates directly with `store.<key> = value`;
+executions with no assignments retain nothing. Storage is exact; feedback
+contains bounded shapes for written keys. `view`
 returns exact worker evidence under an explicit byte ceiling and continues.
 `finish` returns the final value to the proc caller and ends the procedure.
 All three use the same JavaScript APIs. Every continuing call declares
 `needed_for`: one short phrase stating the required outcome or decision.
 
 Calls emitted in one model turn execute sequentially, so later calls may read
-names saved by earlier calls. The first failure cancels every remaining call in
-that batch instead of producing a chain of dependent failures.
+names saved by earlier calls. Non-terminal calls continue until the first unsafe
+failure.
 
 This makes additional executions meaningful: they represent deliberate
 segmentation, semantic inspection, or repair rather than the default way to
@@ -205,7 +206,8 @@ The initial program surface covers:
 - structured repository inspection through `git.status`, `git.diff`,
   `git.log`, `git.show`, and `git.blame`;
 - validation and explicit argv execution through `command.run`;
-- immutable intermediate values through the read-only `store` object.
+- versioned intermediate values through the mutable `store` object in
+  `execute`; `view` and `finish` receive a read-only view.
 
 The `search`, `fs`, `git`, and `command` namespaces are the advertised interface. The
 generic `tools` proxy remains an undocumented compatibility path for programs
@@ -226,9 +228,12 @@ Stored values remain complete; only their bounded shape enters feedback.
 decision. Its caller chooses the smallest sufficient byte ceiling up to the
 hard guard. `console` methods are unsupported and their arguments are discarded.
 
-Repeated zero-operation executions that load and re-save hidden values are
-counted as non-progress. After two consecutive occurrences,
-feedback tells the worker to stop re-saving and use `view` or `finish`.
+Each successful assignment replaces the current binding for its key while the
+previous immutable value remains available to the audit trail. Multiple
+assignments to one key inside an execution collapse to its final value.
+Stored values remain inert JSON: `Date`, `Map`, `Set`, `BigInt`, functions,
+cycles, and other rich values must be converted explicitly rather than persisted
+as executable JavaScript source.
 
 `search.glob` returns all matching workspace-relative paths as `string[]`;
 `search.grep` returns all matching lines as structured path, line, column, and text
@@ -274,7 +279,7 @@ return candidates.slice(0, 12).map(({ id, signature }) => ({ id, signature }));
 
 An execution runs JavaScript in the existing resource-limited program runtime.
 In addition to audited filesystem and tool capabilities, it may lazily read
-immutable stored values through `store.<key>`. The first
+stored values through `store.<key>`. The first
 access fetches, parses, caches, and freezes that value inside the execution;
 unused values are never loaded into QuickJS.
 
@@ -285,8 +290,8 @@ javascript: |
   return groupAndSelect(matches);
 ```
 
-`execute` stores its exact return value when `store_into` is a store key and
-returns a server-bounded shape. `view` returns exact data when it fits both its
+`execute` ignores its return value and persists the final values assigned to
+`store`. `view` returns exact data when it fits both its
 requested ceiling and remaining transcript headroom; overflow rejects the call
 without truncation. `finish` returns exactly the primary agent's result
 requirements.
@@ -297,8 +302,7 @@ Exact evidence remains separate from stored data:
 tool: execute
 needed_for: Preserve complete candidates
 javascript: |
-  return findCandidates();
-store_into: store.candidates
+  store.candidates = findCandidates();
 ---
 tool: view
 needed_for: Which candidate owns retry classification?
@@ -315,11 +319,19 @@ Store feedback is:
 
 ```json
 {
-  "store_into": "store.candidates",
-  "value_bytes": 284192,
-  "shape": "array(318) of object { path: string, line: integer }",
-  "shape_bytes": 58,
-  "shape_truncated": false,
+  "store_revision": "X4812",
+  "store_writes": [{
+    "name": "candidates",
+    "version": "X4812",
+    "result_id": "RES_...",
+    "value_bytes": 284192,
+    "shape": "array(318) of object { path: string, line: integer }",
+    "shape_bytes": 58,
+    "shape_truncated": false
+  }],
+  "store_snapshot": {
+    "candidates": { "toolCallId": 4812, "resultId": "RES_..." }
+  },
   "operations": 12,
   "effects": [],
   "effects_total": 0
@@ -327,7 +339,13 @@ Store feedback is:
 ```
 
 `value_bytes` measures exact serialized storage. `shape_bytes` measures execute
-feedback. `view_bytes` measures exact evidence entering worker context.
+feedback. The child tool-call ID is the store revision: each binding written by
+that execution points to a new immutable `proc_results` row, and historical
+state is reconstructed from the latest binding per key at or before a tool-call
+ID. Failed executions persist their final buffered assignments after ordinary
+exceptions, matching capability side effects; forced worker or process loss may
+lose unreported buffered assignments. `view_bytes` measures exact evidence
+entering worker context.
 
 Every execution requires a user-visible `needed_for`. The dedicated
 proc card shows the primary-agent procedure and result requirements, each execution's
@@ -466,12 +484,12 @@ structurally so harmless formatting changes do not obscure regressions.
 primary-agent procedure
        |
        v
-proc worker -- execute(needed_for, javascript, store_into) --> program runtime
+proc worker -- execute(needed_for, javascript) ------------> program runtime
             -- view(needed_for, javascript, max_bytes) ---> program runtime
             -- finish(javascript) ------------------------> program runtime
        ^                                      |
        |                                      v
-  +------ store key, shape, or exact view -- stored-value store
+  +------ store writes, shapes, or exact view -- stored-value store
                                                       |
              later execution: store.<key> <-------------+
 ```

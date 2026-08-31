@@ -57,6 +57,9 @@ async function run(
       ...(message.resultMode !== undefined
         ? { resultMode: message.resultMode }
         : {}),
+      ...(message.storeMode !== undefined
+        ? { storeMode: message.storeMode }
+        : {}),
       capabilities: toolMap(message.capabilityNames),
       facadeCapabilities: toolMap(message.facadeCapabilityNames),
       savedValues: {

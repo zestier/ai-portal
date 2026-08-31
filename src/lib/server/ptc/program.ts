@@ -46,6 +46,7 @@ function normalizeProgramErrorLocation(error: unknown): void {
 export interface ProgramRunOptions {
   source: string;
   resultMode?: "required" | "discard";
+  storeMode?: "read-only" | "mutable";
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities?: ReadonlyMap<string, PortalTool>;
   savedValues?: { get(id: string): unknown | undefined | Promise<unknown> };
@@ -67,6 +68,7 @@ interface ProgramInlineOptions extends ProgramRunOptions {
 
 export interface ProgramRunResult {
   value: unknown;
+  storeWrites: Record<string, unknown>;
   consoleAttempts: number;
   operations: number;
   trace: {
@@ -99,6 +101,7 @@ export async function runProgram(
   const result = await runProgramInWorker({
     source: opts.source,
     ...(opts.resultMode !== undefined ? { resultMode: opts.resultMode } : {}),
+    ...(opts.storeMode !== undefined ? { storeMode: opts.storeMode } : {}),
     capabilityNames: [...opts.capabilities.keys()],
     facadeCapabilityNames: [...(opts.facadeCapabilities?.keys() ?? [])],
     signal: opts.signal,
@@ -160,6 +163,7 @@ export async function runProgram(
 
   return {
     value: result.value,
+    storeWrites: result.storeWrites,
     consoleAttempts: result.consoleAttempts,
     operations,
     trace: {
@@ -563,6 +567,30 @@ export async function runProgramInline(
       }
     });
     const savedValueCache = new Map();
+    const storeWrites = Object.create(null);
+    function assertJsonValue(value, path = "store value", ancestors = new Set()) {
+      if (value === null || typeof value === "string" || typeof value === "boolean") return;
+      if (typeof value === "number") {
+        if (Number.isFinite(value)) return;
+        throw new TypeError(path + " must contain only finite numbers.");
+      }
+      if (typeof value !== "object") {
+        throw new TypeError(path + " must be JSON-compatible; convert " + typeof value + " explicitly.");
+      }
+      if (ancestors.has(value)) {
+        throw new TypeError(path + " must not contain cycles.");
+      }
+      const prototype = Object.getPrototypeOf(value);
+      if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+        const kind = Object.prototype.toString.call(value).slice(8, -1);
+        throw new TypeError(path + " contains " + kind + "; convert it to a plain object, array, or scalar.");
+      }
+      ancestors.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        assertJsonValue(child, path + "." + key, ancestors);
+      }
+      ancestors.delete(value);
+    }
     function loadValue(name) {
       if (typeof name !== "string" || name.length === 0) {
         throw new TypeError("loadValue: non-empty name required.");
@@ -603,10 +631,24 @@ export async function runProgramInline(
         value: new Proxy(Object.create(null), {
           get(_target, property) {
             if (typeof property !== "string") return undefined;
+            if (Object.prototype.hasOwnProperty.call(storeWrites, property)) {
+              return storeWrites[property];
+            }
             return loadValue(property);
           },
-          set() {
-            throw new TypeError("proc store is read-only.");
+          set(_target, property, value) {
+            if (${opts.storeMode === "mutable" ? "false" : "true"}) {
+              throw new TypeError("proc store is read-only.");
+            }
+            if (typeof property !== "string" || !/^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/.test(property)) {
+              throw new TypeError("store key must be a JavaScript identifier up to 64 characters.");
+            }
+            if (value === undefined) {
+              throw new TypeError("stored value must be JSON-compatible.");
+            }
+            assertJsonValue(value, "store." + property);
+            storeWrites[property] = value;
+            return true;
           },
           deleteProperty() {
             throw new TypeError("proc store is read-only.");
@@ -619,6 +661,11 @@ export async function runProgramInline(
       console: { value: consoleApi, writable: false, configurable: false },
       __ptcConsoleAttempts: {
         get: () => consoleAttempts,
+        configurable: false,
+        enumerable: false
+      },
+      __ptcStoreWrites: {
+        get: () => storeWrites,
         configurable: false,
         enumerable: false
       }
@@ -647,13 +694,20 @@ export async function runProgramInline(
       valueHandle = vm.unwrapResult(evaluation);
     } catch (error) {
       normalizeProgramErrorLocation(error);
+      if (opts.storeMode === "mutable" && error instanceof Error) {
+        (
+          error as Error & { storeWrites?: Record<string, unknown> }
+        ).storeWrites = await readStoreWrites();
+      }
       throw error;
     }
     try {
+      const storeWrites = await readStoreWrites();
       if (opts.resultMode === "discard") {
         const consoleAttempts = await readConsoleAttempts();
         return {
           value: undefined,
+          storeWrites,
           consoleAttempts,
           operations,
           trace: {
@@ -677,6 +731,7 @@ export async function runProgramInline(
       const consoleAttempts = await readConsoleAttempts();
       return {
         value,
+        storeWrites,
         consoleAttempts,
         operations,
         trace: {
@@ -701,6 +756,27 @@ export async function runProgramInline(
     const handle = vm.unwrapResult(evaluation);
     try {
       return vm.dump(handle) as number;
+    } finally {
+      handle.dispose();
+    }
+  }
+
+  async function readStoreWrites(): Promise<Record<string, unknown>> {
+    const evaluation = await vm.evalCodeAsync(
+      "globalThis.__ptcStoreWrites",
+      "sandbox.js",
+    );
+    const handle = vm.unwrapResult(evaluation);
+    try {
+      const value = vm.dump(handle) as Record<string, unknown>;
+      const encoded = JSON.stringify(value);
+      if (encoded === undefined) {
+        throw new Error("Stored values must be JSON-compatible.");
+      }
+      if (Buffer.byteLength(encoded) > MAX_PROGRAM_RESULT_BYTES) {
+        throw new Error("Stored values exceed 5 MiB.");
+      }
+      return value;
     } finally {
       handle.dispose();
     }
@@ -781,6 +857,16 @@ export async function runProgramInline(
       ? { ok: true, value: result.result }
       : { ok: false, error: result.error };
   }
+}
+
+export function programErrorStoreWrites(
+  error: unknown,
+): Record<string, unknown> {
+  if (!(error instanceof Error)) return {};
+  return (
+    (error as Error & { storeWrites?: Record<string, unknown> }).storeWrites ??
+    {}
+  );
 }
 
 function operationCategory(

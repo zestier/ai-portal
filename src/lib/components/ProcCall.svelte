@@ -86,11 +86,14 @@
 
   function executionLabel(
     tool: string,
+    result: ReturnType<typeof parseProcExecutionResult>,
     storeInto: string | null | undefined,
   ): string | null {
     if (tool === "finish") return "final result";
     if (tool === "view") return null;
-    return storeInto ? `store: ${storeInto}` : "not stored";
+    const names = result?.store_writes?.map((write) => write.name) ?? [];
+    if (names.length > 0) return `stored: ${names.join(", ")}`;
+    return storeInto ? `store: ${storeInto}` : null;
   }
 
   $effect(() => {
@@ -147,7 +150,11 @@
             )}
             {@const storeInto =
               executionArgs?.store_into ?? executionArgs?.save_as}
-            {@const storageLabel = executionLabel(execution.tool, storeInto)}
+            {@const storageLabel = executionLabel(
+              execution.tool,
+              executionResult,
+              storeInto,
+            )}
             {@const requestedWorkerView =
               execution.tool === "view"
                 ? "value"
@@ -218,10 +225,16 @@
                   <div class="formatted-input">
                     <div class="minor-label">Formatted input</div>
                     <dl>
-                      {#if execution.tool !== "view"}
+                      {#if storeInto !== undefined}
                         <div>
                           <dt>Store id</dt>
                           <dd>{storeInto ?? "none"}</dd>
+                        </div>
+                      {/if}
+                      {#if executionResult?.store_revision}
+                        <div>
+                          <dt>Store revision</dt>
+                          <dd>{executionResult.store_revision}</dd>
                         </div>
                       {/if}
                       <div>

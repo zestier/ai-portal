@@ -20,6 +20,17 @@ export interface ProcExecutionArgs {
 }
 
 export interface ProcExecutionResult {
+  store_revision?: string;
+  store_writes?: Array<{
+    name: string;
+    version: string;
+    result_id: string;
+    value_bytes: number;
+    shape?: unknown;
+    shape_bytes?: number;
+    shape_truncated?: boolean;
+  }>;
+  store_snapshot?: Record<string, { toolCallId: number; resultId: string }>;
   save_as?: string | null;
   value_bytes?: number;
   worker_view?: "none" | "shape" | "value";

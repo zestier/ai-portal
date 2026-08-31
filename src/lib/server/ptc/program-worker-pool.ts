@@ -46,6 +46,7 @@ export interface ProgramWorkerPoolSnapshot {
 export interface ProgramWorkerRunOptions {
   source: string;
   resultMode?: "required" | "discard";
+  storeMode?: "read-only" | "mutable";
   capabilityNames: string[];
   facadeCapabilityNames: string[];
   signal: AbortSignal;
@@ -212,6 +213,9 @@ export class ProgramWorkerPool {
       source: entry.options.source,
       ...(entry.options.resultMode !== undefined
         ? { resultMode: entry.options.resultMode }
+        : {}),
+      ...(entry.options.storeMode !== undefined
+        ? { storeMode: entry.options.storeMode }
         : {}),
       capabilityNames: entry.options.capabilityNames,
       facadeCapabilityNames: entry.options.facadeCapabilityNames,

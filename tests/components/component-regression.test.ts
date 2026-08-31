@@ -609,6 +609,68 @@ describe("Svelte component regression coverage", () => {
     expect(body).not.toContain("Store id");
   });
 
+  test("ProcCall labels mutable store writes and their revision", () => {
+    const body = render(ProcCall, {
+      props: {
+        toolCall: {
+          id: "P1",
+          messageId: "M1",
+          tool: "proc",
+          argsJson: JSON.stringify({
+            summary: "Collect candidates",
+            procedure: "Collect candidate files.",
+            result_requirements: "Candidate paths",
+          }),
+          resultJson: null,
+          status: "pending" as const,
+          startedAt: 0,
+          endedAt: null,
+          textOffset: null,
+          parentToolCallId: null,
+        },
+        childTools: [
+          {
+            id: "E12",
+            messageId: "M1",
+            tool: "execute",
+            argsJson: JSON.stringify({
+              needed_for: "Candidates for later filtering",
+              javascript: "store.candidates = search.glob('**/*.ts');",
+            }),
+            resultJson: JSON.stringify(
+              JSON.stringify({
+                store_revision: "E12",
+                store_writes: [
+                  {
+                    name: "candidates",
+                    version: "E12",
+                    result_id: "RES_1",
+                    value_bytes: 24,
+                    shape: "array(2) of string",
+                  },
+                ],
+                store_snapshot: {
+                  candidates: { toolCallId: 12, resultId: "RES_1" },
+                },
+                operations: 1,
+              }),
+            ),
+            status: "ok" as const,
+            startedAt: 0,
+            endedAt: 1,
+            textOffset: null,
+            parentToolCallId: "P1",
+          },
+        ],
+      },
+    }).body;
+
+    expect(body).toContain("stored: candidates");
+    expect(body).toContain("Store revision");
+    expect(body).toContain("E12");
+    expect(body).not.toContain("not stored");
+  });
+
   test("ToolCall renders a read text envelope via its tool-provided view, not JSON", () => {
     const toolCall = {
       id: "X1",

@@ -46,6 +46,18 @@ export interface ProcTransaction {
   updatedAt: number;
 }
 
+export interface ProcStoreBinding {
+  name: string;
+  toolCallId: number;
+  resultId: string;
+  bytes: number;
+}
+
+export interface ProcStoreSnapshotEntry {
+  toolCallId: number;
+  resultId: string;
+}
+
 const EMPTY_USAGE: ProcUsage = {
   input: 0,
   output: 0,
@@ -214,6 +226,111 @@ export function createNamedProcResult(input: {
   return { id: input.name, bytes };
 }
 
+export function commitProcStoreWrites(input: {
+  transactionId: string;
+  conversationId: number;
+  toolCallId: number;
+  writes: Record<string, unknown>;
+}): {
+  toolCallId: number;
+  bindings: ProcStoreBinding[];
+  snapshot: Record<string, ProcStoreSnapshotEntry>;
+} {
+  return getDb().transaction(() => {
+    const entries = Object.entries(input.writes).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    if (entries.length === 0) {
+      return {
+        toolCallId: input.toolCallId,
+        bindings: [],
+        snapshot: getProcStoreSnapshot({
+          transactionId: input.transactionId,
+          conversationId: input.conversationId,
+          atToolCallId: input.toolCallId,
+        }),
+      };
+    }
+
+    const now = Date.now();
+    const insertResult = getDb().prepare(
+      `INSERT INTO proc_results(
+         id, transaction_id, conversation_id, value_json, bytes, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const insertBinding = getDb().prepare(
+      `INSERT INTO proc_store_bindings(
+         transaction_id, tool_call_id, name, result_id, created_at
+       ) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const bindings = entries.map(([name, value]) => {
+      const valueJson = JSON.stringify(value);
+      if (valueJson === undefined) {
+        throw new Error(`store.${name}: JSON-compatible data required.`);
+      }
+      const bytes = Buffer.byteLength(valueJson);
+      const resultId = `RES_${ulid()}`;
+      insertResult.run(
+        resultId,
+        input.transactionId,
+        input.conversationId,
+        valueJson,
+        bytes,
+        now,
+      );
+      insertBinding.run(
+        input.transactionId,
+        input.toolCallId,
+        name,
+        resultId,
+        now,
+      );
+      return { name, toolCallId: input.toolCallId, resultId, bytes };
+    });
+    return {
+      toolCallId: input.toolCallId,
+      bindings,
+      snapshot: getProcStoreSnapshot({
+        transactionId: input.transactionId,
+        conversationId: input.conversationId,
+        atToolCallId: input.toolCallId,
+      }),
+    };
+  })();
+}
+
+export function getProcStoreSnapshot(input: {
+  transactionId: string;
+  conversationId: number;
+  atToolCallId?: number;
+}): Record<string, ProcStoreSnapshotEntry> {
+  const atToolCallId = input.atToolCallId ?? Number.MAX_SAFE_INTEGER;
+  const rows = getDb()
+    .prepare(
+      `SELECT b.name, b.tool_call_id, b.result_id
+         FROM proc_store_bindings b
+         JOIN proc_results r ON r.id = b.result_id
+        WHERE b.transaction_id = ? AND b.tool_call_id <= ?
+          AND r.conversation_id = ?
+        ORDER BY b.name, b.tool_call_id DESC`,
+    )
+    .all(input.transactionId, atToolCallId, input.conversationId) as Array<{
+    name: string;
+    tool_call_id: number;
+    result_id: string;
+  }>;
+  const snapshot: Record<string, ProcStoreSnapshotEntry> = {};
+  for (const row of rows) {
+    if (snapshot[row.name] === undefined) {
+      snapshot[row.name] = {
+        toolCallId: row.tool_call_id,
+        resultId: row.result_id,
+      };
+    }
+  }
+  return snapshot;
+}
+
 export function getProcResult(input: {
   id: string;
   transactionId: string;
@@ -259,13 +376,25 @@ export function createProcValueReader(
       WHERE r.id = ? AND r.transaction_id = ? AND r.conversation_id = ?
         AND t.status = 'running'`,
   );
+  const latestBinding = getDb().prepare(
+    `SELECT r.value_json FROM proc_store_bindings b
+       JOIN proc_results r ON r.id = b.result_id
+       JOIN proc_transactions t ON t.id = b.transaction_id
+      WHERE b.transaction_id = ? AND b.name = ?
+        AND r.conversation_id = ? AND t.status = 'running'
+      ORDER BY b.tool_call_id DESC LIMIT 1`,
+  );
   return {
     get(id: string): unknown | undefined {
-      const namedRow = query.get(
-        namedResultId(transactionId, id),
-        transactionId,
-        conversationId,
-      ) as { value_json: string } | undefined;
+      const boundRow = latestBinding.get(transactionId, id, conversationId) as
+        { value_json: string } | undefined;
+      const namedRow =
+        boundRow ??
+        (query.get(
+          namedResultId(transactionId, id),
+          transactionId,
+          conversationId,
+        ) as { value_json: string } | undefined);
       const row =
         namedRow ??
         (id.startsWith("RES_")

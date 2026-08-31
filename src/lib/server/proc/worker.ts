@@ -11,11 +11,11 @@ import type {
 import type { PiPermissionResolver } from "$lib/server/pi/session";
 import type { PortalTool } from "$lib/server/tools/types";
 import { executeDelegatedTool } from "$lib/server/semantic/delegated-tool";
-import { runProgram } from "$lib/server/ptc/program";
+import { programErrorStoreWrites, runProgram } from "$lib/server/ptc/program";
 import { normalizeProgramToolArgs } from "$lib/server/ptc/contracts";
 import { projectProcValue, projectProcWorkerValue } from "./projection";
 import {
-  createNamedProcResult,
+  commitProcStoreWrites,
   createProcResult,
   createProcValueReader,
   updateProcTransaction,
@@ -35,7 +35,6 @@ const TRANSCRIPT_RESERVE_BYTES = 32 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 96 * 1024;
 const MAX_WORKER_OUTPUT_TOKENS = 32 * 1024;
 const OPERATION_WARNING_THRESHOLD = 200;
-const STORE_DESTINATION = /^store\.[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 
 const ExecuteArgs = z
   .object({
@@ -48,13 +47,8 @@ const ExecuteArgs = z
       .string()
       .min(1)
       .max(20_000)
-      .describe("Return JSON-serializable data"),
-    store_into: z
-      .string()
-      .regex(STORE_DESTINATION)
-      .optional()
       .describe(
-        "Save as store.<key> whenever a later call will use this result; omit only for transient results.",
+        "Perform work; persist later-needed values with store.<key> = value. Return value is ignored",
       ),
   })
   .strict();
@@ -149,7 +143,7 @@ const PROC_GLOBAL_CONTRACTS = [
   "git.show(ref, path) // file contents at ref",
   "git.status(): { head, merge, changes } // branch/upstream, active operation/conflicts, staged/worktree status",
   "git.worktreeMerge({ direction: 'to-source'|'from-source', allowMergeCommit?, squash?, onConflict? }): { merged, into, from, fastForward, squashedCommits, headSha }",
-  "store.<key> // read result stored by earlier execute",
+  "store.<key> // read or assign JSON scalars, arrays, and plain objects in execute; read-only in view/finish",
   "path.basename(path, suffix?)",
   "path.dirname(path)",
   "path.extname(path)",
@@ -249,10 +243,14 @@ export async function runProcWorker(
     source: string,
     protocolId: string,
     effects: ExecutionEffect[],
+    executionMode?: "mutable-store",
   ) => {
     transaction.usage.executions++;
     const result = await runProgram({
       source,
+      ...(executionMode === "mutable-store"
+        ? { resultMode: "discard" as const, storeMode: "mutable" as const }
+        : {}),
       capabilities: opts.capabilities,
       facadeCapabilities: opts.facadeCapabilities,
       savedValues: createProcValueReader(
@@ -296,8 +294,6 @@ export async function runProcWorker(
     agentId: transaction.id,
     status: "running",
   });
-  let consecutiveNonProgress = 0;
-
   try {
     for (let iteration = 0; iteration < MAX_TURNS; iteration++) {
       if (opts.signal.aborted) throw new Error("Proc transaction aborted.");
@@ -371,7 +367,6 @@ export async function runProcWorker(
         const protocolId = toolCodec.encode(mintToolCallId());
         const procId = toolCodec.encode(transaction.parentToolCallId);
         const effects: ExecutionEffect[] = [];
-        let retainedResult: { id: string; bytes: number } | null = null;
         opts.emit({
           type: "tool.call",
           toolCallId: protocolId,
@@ -401,90 +396,48 @@ export async function runProcWorker(
         }
         try {
           if (call.name === EXECUTE) {
-            const args = ExecuteArgs.parse(normalizeExecuteArgs(raw));
+            const args = ExecuteArgs.parse(normalizeLegacyExecuteArgs(raw));
             const result = await runWorkerExecution(
               args.javascript,
               protocolId,
               effects,
+              "mutable-store",
             );
             const effectSummary = summarizeExecutionEffects(effects);
             const operationWarning =
               result.operations >= OPERATION_WARNING_THRESHOLD
                 ? `${result.operations} operations. Use search.glob/search.grep or batch work; avoid path-by-path traversal.`
                 : undefined;
-            const projection = projectProcWorkerValue(
-              result.value,
-              "shape",
-              EXECUTE_SHAPE_BYTES,
-            );
-            if (args.store_into === undefined) {
-              recordExecutionFeedback(
-                opts.emit,
-                transaction,
-                call.id,
-                protocolId,
-                procId,
-                true,
-                {
-                  store_into: null,
-                  shape: projection.projection,
-                  shape_bytes: projection.projectionBytes,
-                  shape_truncated: projection.truncated,
-                  ...(operationWarning || result.consoleAttempts > 0
-                    ? {
-                        warnings: [
-                          operationWarning,
-                          consoleWarning(result.consoleAttempts),
-                        ].filter(
-                          (warning): warning is string => warning !== undefined,
-                        ),
-                      }
-                    : {}),
-                  operations: result.operations,
-                  effects: effectSummary,
-                  effects_total: effects.length,
-                },
-              );
-              continue;
-            }
-            const madeNoProgress =
-              result.operations === 0 && result.trace.savedValueLoads > 0;
-            if (madeNoProgress) {
-              transaction.usage.nonProgressExecutions++;
-              if (consecutiveNonProgress >= 2) {
-                throw new Error(
-                  "Repeated unchanged load-resave cycle. Use view for exact evidence or finish.",
-                );
-              }
-              consecutiveNonProgress++;
-              log.warn("proc.worker.non_progress", {
-                transactionId: transaction.id,
-                consecutiveExecutions: consecutiveNonProgress,
-                savedValueLoads: result.trace.savedValueLoads,
-              });
-            } else {
-              consecutiveNonProgress = 0;
-            }
-            retainedResult = createNamedProcResult({
+            const committed = commitProcStoreWrites({
               transactionId: transaction.id,
               conversationId: transaction.conversationId,
-              name: storeKeyName(args.store_into),
-              value: result.value,
+              toolCallId: toolCodec.parse(protocolId),
+              writes: result.storeWrites,
             });
-            transaction.usage.savedValuesCreated++;
+            transaction.usage.savedValuesCreated += committed.bindings.length;
             const warnings = [
               operationWarning,
-              consecutiveNonProgress >= 2
-                ? `${consecutiveNonProgress} unchanged load-resave cycles. Stop resaving unchanged data.`
-                : undefined,
               consoleWarning(result.consoleAttempts),
             ].filter((warning): warning is string => warning !== undefined);
             const feedback = {
-              store_into: args.store_into,
-              value_bytes: retainedResult.bytes,
-              shape: projection.projection,
-              shape_bytes: projection.projectionBytes,
-              shape_truncated: projection.truncated,
+              store_revision: protocolId,
+              store_writes: committed.bindings.map((binding) => {
+                const projection = projectProcWorkerValue(
+                  result.storeWrites[binding.name],
+                  "shape",
+                  EXECUTE_SHAPE_BYTES,
+                );
+                return {
+                  name: binding.name,
+                  version: protocolId,
+                  result_id: binding.resultId,
+                  value_bytes: binding.bytes,
+                  shape: projection.projection,
+                  shape_bytes: projection.projectionBytes,
+                  shape_truncated: projection.truncated,
+                };
+              }),
+              store_snapshot: committed.snapshot,
               ...(warnings.length > 0 ? { warnings } : {}),
               operations: result.operations,
               effects: effectSummary,
@@ -625,24 +578,36 @@ export async function runProcWorker(
           throw new Error(`Unknown proc worker tool: ${call.name}`);
         } catch (error) {
           if (opts.signal.aborted) throw error;
+          const failedWrites = programErrorStoreWrites(error);
+          const failedCommit = commitProcStoreWrites({
+            transactionId: transaction.id,
+            conversationId: transaction.conversationId,
+            toolCallId: toolCodec.parse(protocolId),
+            writes: failedWrites,
+          });
+          transaction.usage.savedValuesCreated += failedCommit.bindings.length;
           const retrySafe = effects.every((effect) => effect.effect === "read");
           const effectSummary = summarizeExecutionEffects(effects);
           const feedback = {
             ok: false,
             error: error instanceof Error ? error.message : String(error),
-            ...(retainedResult
+            ...(failedCommit.bindings.length > 0
               ? {
-                  store_into: `store.${retainedResult.id}`,
-                  value_bytes: retainedResult.bytes,
+                  store_revision: protocolId,
+                  store_writes: failedCommit.bindings.map((binding) => ({
+                    name: binding.name,
+                    version: protocolId,
+                    result_id: binding.resultId,
+                    value_bytes: binding.bytes,
+                  })),
+                  store_snapshot: failedCommit.snapshot,
                 }
               : {}),
             effects: effectSummary,
             effects_total: effects.length,
             retry_safe: retrySafe,
             instruction: retrySafe
-              ? retainedResult
-                ? `Use store.${retainedResult.id} to derive a smaller or corrected value. Log minimum judgment evidence.`
-                : "Fix and retry. Save an intermediate if needed. Use cannot_execute only if the procedure cannot be executed."
+              ? "Fix and retry. Assign later-needed intermediates to store. Use cannot_execute only if the procedure cannot be executed."
               : "Do not replay: effects may exist. Inspect repository state; execute unfinished work only, or call cannot_execute.",
           };
           recordExecutionFeedback(
@@ -754,8 +719,7 @@ function workerToolSpecs(): ExtractorToolSpec[] {
       type: "function",
       function: {
         name: EXECUTE,
-        description:
-          "Run JavaScript; optionally store exact result; return shape; continue.",
+        description: "Run JavaScript; persist store assignments; continue.",
         parameters: jsonSchema(ExecuteArgs),
       },
     },
@@ -807,20 +771,23 @@ function parseArgs(raw: string): unknown {
   }
 }
 
-function normalizeExecuteArgs(value: unknown): unknown {
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    if (record.store_into === null || record.store_into === "null") {
-      const normalized = { ...record };
-      delete normalized.store_into;
-      return normalized;
-    }
+function normalizeLegacyExecuteArgs(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
   }
-  return value;
-}
-
-function storeKeyName(value: string): string {
-  return value.slice("store.".length);
+  const record = value as Record<string, unknown>;
+  if (!("store_into" in record)) return value;
+  const normalized = { ...record };
+  delete normalized.store_into;
+  if (
+    typeof record.javascript === "string" &&
+    typeof record.store_into === "string" &&
+    record.store_into.startsWith("store.")
+  ) {
+    const name = record.store_into.slice("store.".length);
+    normalized.javascript = `store.${name} = (() => {\n${record.javascript}\n})();`;
+  }
+  return normalized;
 }
 
 function emitCompleted(

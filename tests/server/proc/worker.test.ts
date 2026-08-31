@@ -6,7 +6,7 @@ import * as conversations from "../../../src/lib/server/db/repos/conversations";
 import {
   createProcTransaction,
   createProcValueReader,
-  getNamedProcResult,
+  getProcStoreSnapshot,
   getProcResult,
 } from "../../../src/lib/server/proc/store";
 import {
@@ -217,8 +217,8 @@ describe("proc worker", () => {
           unknown
         >;
         expect(feedback).toMatchObject({
-          store_into: null,
-          shape: "object { ticket_id: string }",
+          store_writes: [],
+          store_snapshot: {},
           operations: 1,
           effects: [
             { tool: "record_action", effect: "mutation", ok: true, count: 1 },
@@ -296,8 +296,7 @@ describe("proc worker", () => {
           name: "execute",
           arguments: JSON.stringify({
             needed_for: "Candidate definitions",
-            javascript: "return [{ path: 'src/a.ts', line: 10 }];",
-            store_into: "store.candidates",
+            javascript: "store.candidates = [{ path: 'src/a.ts', line: 10 }];",
           }),
         },
         {
@@ -373,8 +372,13 @@ describe("proc worker", () => {
       })?.value,
     ).toEqual([{ path: "src/a.ts", line: 10, end: 15 }]);
     expect(
-      getNamedProcResult({
-        name: "candidates",
+      getProcResult({
+        id: Object.values(
+          getProcStoreSnapshot({
+            transactionId: transaction.id,
+            conversationId,
+          }),
+        )[0]!.resultId,
         transactionId: transaction.id,
         conversationId,
       })?.value,
@@ -407,14 +411,23 @@ describe("proc worker", () => {
     const savedValueFeedback = JSON.parse(
       transaction.messages.find((message) => message.role === "tool")
         ?.content as string,
-    ) as { store_into: string };
-    expect(savedValueFeedback.store_into).toBe("store.candidates");
+    ) as {
+      store_writes: Array<{ name: string; shape: string }>;
+      store_snapshot: Record<string, { resultId: string }>;
+    };
+    expect(savedValueFeedback.store_writes).toMatchObject([
+      {
+        name: "candidates",
+        shape: "array(1) of object { line: integer, path: string }",
+      },
+    ]);
+    expect(savedValueFeedback.store_snapshot).toHaveProperty("candidates");
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
         description: string;
         parameters: {
-          properties: Record<string, unknown>;
+          properties: Record<string, Record<string, unknown>>;
           required: string[];
         };
       };
@@ -441,20 +454,14 @@ describe("proc worker", () => {
     expect(workerTools[0]?.function.parameters.properties.javascript).toEqual(
       expect.objectContaining({ type: "string" }),
     );
-    expect(
-      workerTools[0]?.function.parameters.properties.store_into,
-    ).toMatchObject({
-      type: "string",
-      pattern: "^store\\.[A-Za-z_$][A-Za-z0-9_$]{0,63}$",
-    });
+    expect(workerTools[0]?.function.parameters.properties).not.toHaveProperty(
+      "store_into",
+    );
     expect(workerTools[0]?.function.parameters.properties.needed_for).toEqual(
       expect.objectContaining({ type: "string" }),
     );
-    expect(workerTools[0]?.function.parameters.required).not.toContain(
-      "store_into",
-    );
     expect(workerTools[0]?.function.description).toBe(
-      "Run JavaScript; optionally store exact result; return shape; continue.",
+      "Run JavaScript; persist store assignments; continue.",
     );
     expect(workerTools[0]?.function.parameters.required).toContain(
       "needed_for",
@@ -611,15 +618,14 @@ describe("proc worker", () => {
             name: "execute",
             arguments: JSON.stringify({
               needed_for: "An independent value",
-              javascript: "return 42;",
-              store_into: null,
+              javascript: "const answer = 42;",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         expect(messages.at(-2).content).toContain("missing");
-        expect(messages.at(-1).content).toContain('"shape":"integer"');
+        expect(messages.at(-1).content).toContain('"store_writes":[]');
         return {
           content: "",
           toolCalls: [
@@ -666,7 +672,7 @@ describe("proc worker", () => {
     expect(outcome).toMatchObject({ status: "completed", projection: 42 });
   });
 
-  it("accepts omitted and legacy quoted-null execute destinations", async () => {
+  it("accepts legacy execute destinations as transient", async () => {
     piChat.mockResolvedValueOnce({
       content: "",
       toolCalls: [
@@ -676,6 +682,7 @@ describe("proc worker", () => {
           arguments: JSON.stringify({
             needed_for: "A transient value",
             javascript: "return 42;",
+            store_into: "",
           }),
         },
         {
@@ -741,18 +748,17 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Choosing the file that owns the schema",
               javascript:
-                "const full = [{ path: 'src/a.ts', content: 'x'.repeat(4096) }]; console.log({ candidates: full.map(({ path }) => path) }); return full;",
-              store_into: "store.candidates",
+                "const full = [{ path: 'src/a.ts', content: 'x'.repeat(4096) }]; console.log({ candidates: full.map(({ path }) => path) }); store.candidates = full;",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          shape: string;
+          store_writes: Array<{ shape: string }>;
           warnings: string[];
         };
-        expect(feedback.shape).toContain("path: string");
+        expect(feedback.store_writes[0]?.shape).toContain("path: string");
         expect(feedback.warnings).toEqual([
           "console is unsupported; discarded arguments from 1 call(s). Return required data instead.",
         ]);
@@ -941,22 +947,20 @@ describe("proc worker", () => {
             name: "execute",
             arguments: JSON.stringify({
               needed_for: "Retaining source while inspecting its result form",
-              javascript: "return { content: 'x'.repeat(4096) };",
-              store_into: "store.source",
+              javascript: "store.source = { content: 'x'.repeat(4096) };",
             }),
           },
         ],
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          shape: string;
-          value_bytes: number;
+          store_writes: Array<{ shape: string; value_bytes: number }>;
           value?: unknown;
         };
-        expect(feedback).toMatchObject({
+        expect(feedback.store_writes[0]).toMatchObject({
           shape: "object { content: string }",
         });
-        expect(feedback.value_bytes).toBeGreaterThan(4096);
+        expect(feedback.store_writes[0]!.value_bytes).toBeGreaterThan(4096);
         expect(feedback).not.toHaveProperty("value");
         return {
           content: "",
@@ -1018,7 +1022,7 @@ describe("proc worker", () => {
     });
   });
 
-  it("warns after consecutive shape-only saved-value resaves", async () => {
+  it("allows intentional same-key store overwrites", async () => {
     piChat
       .mockResolvedValueOnce({
         content: "",
@@ -1028,8 +1032,7 @@ describe("proc worker", () => {
             name: "execute",
             arguments: JSON.stringify({
               needed_for: "Preserving candidates for later filtering",
-              javascript: "return ['src/a.ts'];",
-              store_into: "store.candidates",
+              javascript: "store.candidates = ['src/a.ts'];",
             }),
           },
         ],
@@ -1039,29 +1042,12 @@ describe("proc worker", () => {
           content: "",
           toolCalls: [
             {
-              id: "resave-one",
+              id: "overwrite-candidates",
               name: "execute",
               arguments: JSON.stringify({
-                needed_for: "Inspecting the saved candidates",
-                javascript: "const { candidates } = store; return candidates;",
-                store_into: "store.candidates_copy",
-              }),
-            },
-          ],
-        };
-      })
-      .mockImplementationOnce(async () => {
-        return {
-          content: "",
-          toolCalls: [
-            {
-              id: "resave-two",
-              name: "execute",
-              arguments: JSON.stringify({
-                needed_for: "Inspecting the saved candidates",
+                needed_for: "Adding the second candidate",
                 javascript:
-                  "const { candidates_copy } = store; return candidates_copy;",
-                store_into: "store.candidates_copy_2",
+                  "store.candidates = [...store.candidates, 'src/b.ts'];",
               }),
             },
           ],
@@ -1069,34 +1055,9 @@ describe("proc worker", () => {
       })
       .mockImplementationOnce(async (_config, messages) => {
         const feedback = JSON.parse(messages.at(-1).content) as {
-          warnings: string[];
+          store_writes: Array<{ name: string }>;
         };
-        expect(feedback.warnings).toContain(
-          "2 unchanged load-resave cycles. Stop resaving unchanged data.",
-        );
-        return {
-          content: "",
-          toolCalls: [
-            {
-              id: "resave-three",
-              name: "execute",
-              arguments: JSON.stringify({
-                needed_for: "Inspecting the saved candidates again",
-                javascript:
-                  "const { candidates_copy_2 } = store; return candidates_copy_2;",
-                store_into: "store.candidates_copy_3",
-              }),
-            },
-          ],
-        };
-      })
-      .mockImplementationOnce(async (_config, messages) => {
-        const feedback = JSON.parse(messages.at(-1).content) as {
-          error: string;
-        };
-        expect(feedback.error).toContain(
-          "Use view for exact evidence or finish",
-        );
+        expect(feedback.store_writes).toMatchObject([{ name: "candidates" }]);
         return {
           content: "",
           toolCalls: [
@@ -1104,7 +1065,7 @@ describe("proc worker", () => {
               id: "finish-resaves",
               name: "finish",
               arguments: JSON.stringify({
-                javascript: "return ['src/a.ts'];",
+                javascript: "return store.candidates;",
               }),
             },
           ],
@@ -1151,10 +1112,11 @@ describe("proc worker", () => {
 
     expect(outcome).toMatchObject({
       status: "completed",
+      projection: ["src/a.ts", "src/b.ts"],
       usage: {
-        savedValuesCreated: 3,
-        savedValuesLoaded: 3,
-        nonProgressExecutions: 3,
+        savedValuesCreated: 2,
+        savedValuesLoaded: 2,
+        nonProgressExecutions: 0,
       },
     });
   });
@@ -1258,6 +1220,7 @@ describe("proc worker", () => {
   });
 
   it("reports whether a failed execution is safe to retry", async () => {
+    let storedResultId = "";
     const mutation = {
       name: "write_fixture",
       description: "Write a fixture",
@@ -1285,8 +1248,7 @@ describe("proc worker", () => {
             arguments: JSON.stringify({
               needed_for: "Applying the requested write",
               javascript:
-                "tools.write_fixture({}); throw new Error('after write');",
-              store_into: null,
+                "tools.write_fixture({}); store.fileWritten = true; throw new Error('after write');",
             }),
           },
         ],
@@ -1302,6 +1264,8 @@ describe("proc worker", () => {
           }>;
           effects_total: number;
           instruction: string;
+          store_revision: string;
+          store_writes: Array<{ name: string; result_id: string }>;
         };
         expect(feedback.retry_safe).toBe(false);
         expect(feedback.effects).toEqual([
@@ -1314,6 +1278,9 @@ describe("proc worker", () => {
         ]);
         expect(feedback.effects_total).toBe(1);
         expect(feedback.instruction).toContain("Do not replay");
+        expect(feedback.store_revision).toMatch(/^X\d+$/);
+        expect(feedback.store_writes).toMatchObject([{ name: "fileWritten" }]);
+        storedResultId = feedback.store_writes[0]!.result_id;
         return {
           content: "",
           toolCalls: [
@@ -1364,6 +1331,21 @@ describe("proc worker", () => {
       signal: new AbortController().signal,
     });
     expect(outcome.status).toBe("cannot_execute");
+    expect(
+      getProcResult({
+        id: storedResultId,
+        transactionId: transaction.id,
+        conversationId,
+      }),
+    ).toMatchObject({ value: true });
+    expect(
+      getProcStoreSnapshot({
+        transactionId: transaction.id,
+        conversationId,
+      }),
+    ).toMatchObject({
+      fileWritten: { resultId: storedResultId },
+    });
   });
 
   it("runs a proc git commit through the delegated permission gate on approval", async () => {

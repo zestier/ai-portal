@@ -9,6 +9,7 @@ export interface SerializedError {
   fileName?: string;
   lineNumber?: number;
   cause?: SerializedError;
+  storeWrites?: Record<string, unknown>;
 }
 
 export type ProgramWorkerRequest =
@@ -17,6 +18,7 @@ export type ProgramWorkerRequest =
       executionId: string;
       source: string;
       resultMode?: "required" | "discard";
+      storeMode?: "read-only" | "mutable";
       capabilityNames: string[];
       facadeCapabilityNames: string[];
       abortBuffer: SharedArrayBuffer;
@@ -82,6 +84,7 @@ export function serializeError(error: unknown): SerializedError {
   const located = error as Error & {
     fileName?: string;
     lineNumber?: number;
+    storeWrites?: Record<string, unknown>;
   };
   return {
     name: error.name,
@@ -92,6 +95,7 @@ export function serializeError(error: unknown): SerializedError {
       ? { lineNumber: located.lineNumber }
       : {}),
     ...(error.cause ? { cause: serializeError(error.cause) } : {}),
+    ...(located.storeWrites ? { storeWrites: located.storeWrites } : {}),
   };
 }
 
@@ -104,10 +108,12 @@ export function deserializeError(serialized: SerializedError): Error {
   const located = error as Error & {
     fileName?: string;
     lineNumber?: number;
+    storeWrites?: Record<string, unknown>;
   };
   if (serialized.fileName) located.fileName = serialized.fileName;
   if (typeof serialized.lineNumber === "number") {
     located.lineNumber = serialized.lineNumber;
   }
+  if (serialized.storeWrites) located.storeWrites = serialized.storeWrites;
   return error;
 }

@@ -370,7 +370,7 @@ describe("program runtime", () => {
     expect(result.value).toEqual({ fs: true, path: true, joined: "tests" });
   });
 
-  it("reads retained values through the read-only store proxy", async () => {
+  it("reads retained values through the store proxy", async () => {
     const result = await runProgram({
       source: `
         const { rows } = store;
@@ -393,6 +393,84 @@ describe("program runtime", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("proc store is read-only");
+  });
+
+  it("buffers mutable store assignments and shadows prior values", async () => {
+    const result = await runProgram({
+      source: `
+        store.rows = [...store.rows, { id: 2 }];
+        store.summary = { count: 1 };
+        store.summary = { count: store.rows.length };
+      `,
+      resultMode: "discard",
+      storeMode: "mutable",
+      capabilities: new Map(),
+      savedValues: {
+        get: (name) => (name === "rows" ? [{ id: 1 }] : undefined),
+      },
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.value).toBeUndefined();
+    expect(result.storeWrites).toEqual({
+      rows: [{ id: 1 }, { id: 2 }],
+      summary: { count: 2 },
+    });
+  });
+
+  it("rejects rich store values instead of silently degrading them", async () => {
+    await expect(
+      runProgram({
+        source: `store.lookup = new Map([["answer", 42]]);`,
+        resultMode: "discard",
+        storeMode: "mutable",
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      "store.lookup contains Map; convert it to a plain object, array, or scalar.",
+    );
+
+    await expect(
+      runProgram({
+        source: `store.when = new Date("2026-08-31T00:00:00Z");`,
+        resultMode: "discard",
+        storeMode: "mutable",
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      "store.when contains Date; convert it to a plain object, array, or scalar.",
+    );
+
+    await expect(
+      runProgram({
+        source: `store.lookup = Object.fromEntries(new Map([["answer", 42]]));`,
+        resultMode: "discard",
+        storeMode: "mutable",
+        capabilities: new Map(),
+        execute: async () => ok(),
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ storeWrites: { lookup: { answer: 42 } } });
+  });
+
+  it("exposes final buffered store assignments from failed programs", async () => {
+    const run = runProgram({
+      source: `store.rows = [{ id: 1 }]; throw new Error("stop");`,
+      resultMode: "discard",
+      storeMode: "mutable",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    await expect(run).rejects.toThrow("stop");
+    await expect(run).rejects.toMatchObject({
+      storeWrites: { rows: [{ id: 1 }] },
+    });
   });
 
   it("allows programs to shadow predeclared globals", async () => {

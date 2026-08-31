@@ -4,6 +4,7 @@ import { setupLocalEnv } from "../../helpers/env";
 import * as users from "../../../src/lib/server/db/repos/users";
 import * as conversations from "../../../src/lib/server/db/repos/conversations";
 import {
+  commitProcStoreWrites,
   createNamedProcResult,
   createProcResult,
   createProcTransaction,
@@ -11,6 +12,7 @@ import {
   getProcResult,
   createProcValueReader,
   getProcTransaction,
+  getProcStoreSnapshot,
   updateProcTransaction,
 } from "../../../src/lib/server/proc/store";
 
@@ -164,5 +166,72 @@ describe("proc store", () => {
         conversationId,
       })?.value,
     ).toEqual({ selected: "src/a.ts" });
+  });
+
+  it("versions mutable store writes and reconstructs historical snapshots", () => {
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "versioned proc store",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 11,
+      workerModel: "pi-stub/stub-model",
+      summary: "Version values",
+      requirements: "Return latest values",
+      procedure: "Write and replace values",
+      outputPolicy: { mode: "shape", maxBytes: 4096, store: true },
+      messages: [{ role: "system", content: "proc" }],
+    });
+
+    const first = commitProcStoreWrites({
+      transactionId: transaction.id,
+      conversationId,
+      toolCallId: 101,
+      writes: { foo: { value: 1 } },
+    });
+    const second = commitProcStoreWrites({
+      transactionId: transaction.id,
+      conversationId,
+      toolCallId: 102,
+      writes: { bar: [2], foo: { value: 3 } },
+    });
+
+    expect(first).toMatchObject({
+      toolCallId: 101,
+      bindings: [{ name: "foo", toolCallId: 101 }],
+      snapshot: { foo: { toolCallId: 101 } },
+    });
+    expect(second).toMatchObject({
+      toolCallId: 102,
+      bindings: [
+        { name: "bar", toolCallId: 102 },
+        { name: "foo", toolCallId: 102 },
+      ],
+      snapshot: {
+        bar: { toolCallId: 102 },
+        foo: { toolCallId: 102 },
+      },
+    });
+    expect(
+      getProcStoreSnapshot({
+        transactionId: transaction.id,
+        conversationId,
+        atToolCallId: 101,
+      }),
+    ).toEqual(first.snapshot);
+    const reader = createProcValueReader(transaction.id, conversationId);
+    expect(reader.get("foo")).toEqual({ value: 3 });
+    expect(reader.get("bar")).toEqual([2]);
+    expect(
+      getProcResult({
+        id: first.bindings[0]!.resultId,
+        transactionId: transaction.id,
+        conversationId,
+      }),
+    ).toMatchObject({ value: { value: 1 } });
   });
 });
