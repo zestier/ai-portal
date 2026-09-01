@@ -1,4 +1,5 @@
 import { parseEnvelopeJson } from "$lib/tool-result-views";
+import type { ToolCallRecord } from "$lib/types";
 
 export interface ProcArgs {
   summary: string;
@@ -81,6 +82,130 @@ export interface ProcOutcome {
   error?: string;
 }
 
+export interface ProcExecutionDisplay {
+  kind: "execute" | "view" | "finish";
+  title: string;
+  storageLabel: string | null;
+  requestedView: "shape" | "value" | "none" | null;
+  actualView: "shape" | "value" | "none" | null;
+  bytes: number | null;
+  operations: number | null;
+  error: string | null;
+  retrySafe: boolean | null;
+  input: {
+    javascript: string;
+    storeId: string | null | undefined;
+    workerView: "shape" | "value" | "none";
+    viewBudget: number | null;
+  } | null;
+  output: {
+    label: "Structure" | "Worker view";
+    value: unknown;
+    bytes: number | null;
+    truncated: boolean;
+    reason: string | null;
+  } | null;
+  rawInput: string | null;
+  workerFeedback: string | null;
+  rawOutput: string | null;
+  storeRevision: string | null;
+}
+
+export function normalizeProcExecution(
+  execution: ToolCallRecord,
+): ProcExecutionDisplay {
+  const kind =
+    execution.tool === "view" || execution.tool === "finish"
+      ? execution.tool
+      : "execute";
+  const args =
+    parseProcExecutionArgs(execution.argsJson) ??
+    parseProcExecutionMeta(execution.meta);
+  const result = parseProcExecutionResult(execution.resultJson);
+  const storeId = args?.store_into ?? args?.save_as;
+  const requestedView =
+    kind === "view" ? "value" : (args?.worker_view ?? args?.view ?? null);
+  const actualView =
+    result?.worker_view_kind ??
+    result?.view ??
+    (kind === "view"
+      ? "value"
+      : kind === "execute" && result?.shape !== undefined
+        ? "shape"
+        : null);
+  const viewValue = actualView === "value" ? result?.value : result?.shape;
+  const output =
+    result?.structure !== undefined
+      ? {
+          label: "Structure" as const,
+          value: result.structure,
+          bytes: result.structure_bytes ?? null,
+          truncated: result.shape_truncated ?? false,
+          reason: null,
+        }
+      : viewValue !== undefined
+        ? {
+            label: "Worker view" as const,
+            value: viewValue,
+            bytes:
+              result?.worker_view_bytes ??
+              result?.view_bytes ??
+              result?.shape_bytes ??
+              null,
+            truncated:
+              result?.worker_view_truncated ??
+              result?.truncated ??
+              result?.shape_truncated ??
+              false,
+            reason:
+              result?.reason === "value_exceeded_limit"
+                ? "value exceeded budget"
+                : null,
+          }
+        : null;
+  const storageLabel =
+    kind === "finish"
+      ? "final result"
+      : kind === "view"
+        ? null
+        : result?.store_writes?.length
+          ? `stored: ${result.store_writes.map((write) => write.name).join(", ")}`
+          : storeId
+            ? `store: ${storeId}`
+            : null;
+
+  return {
+    kind,
+    title:
+      args?.needed_for ??
+      (execution.tool === "finish"
+        ? "Final result"
+        : kind === "view"
+          ? "View"
+          : "Execution"),
+    storageLabel,
+    requestedView,
+    actualView,
+    bytes: result?.value_bytes ?? result?.bytes ?? null,
+    operations: result?.operations ?? null,
+    error: result?.error ?? null,
+    retrySafe: result?.retry_safe ?? null,
+    input: args
+      ? {
+          javascript: args.javascript,
+          storeId,
+          workerView: requestedView ?? (kind === "execute" ? "shape" : "none"),
+          viewBudget: args.worker_view_max_bytes ?? args.max_bytes ?? null,
+        }
+      : null,
+    output,
+    rawInput: execution.argsJson,
+    workerFeedback: procExecutionFeedbackText(execution.resultJson),
+    rawOutput: execution.resultJson,
+    storeRevision: result?.store_revision ?? null,
+  };
+}
+
 export function parseProcArgs(json: string | null): ProcArgs | null {
   return procArgsOf(parseObject(json));
 }
@@ -117,16 +242,7 @@ function procExecutionArgsOf(value: unknown): ProcExecutionArgs | null {
   if (!isObject(value) || typeof value.javascript !== "string") {
     return null;
   }
-  const hasExecutionMetadata =
-    value.needed_for !== undefined ||
-    value.store_into !== undefined ||
-    value.max_bytes !== undefined ||
-    value.save_as !== undefined ||
-    value.worker_view !== undefined ||
-    value.worker_view_max_bytes !== undefined ||
-    value.view !== undefined;
   if (
-    (hasExecutionMetadata && typeof value.needed_for !== "string") ||
     (value.needed_for !== undefined && typeof value.needed_for !== "string") ||
     (value.store_into !== undefined &&
       value.store_into !== null &&

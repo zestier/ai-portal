@@ -543,7 +543,7 @@ describe("Svelte component regression coverage", () => {
       },
     }).body;
 
-    expect(body).toMatch(/<details class="stage [^"]+" open=""/);
+    expect(body).toMatch(/<details class="stage[^"]*"[^>]*open=""/);
     expect(body).toContain("readFile is not defined");
     expect(body).toContain('data-automatically-open="true"');
   });
@@ -573,7 +573,6 @@ describe("Svelte component regression coverage", () => {
             messageId: "M1",
             tool: "view",
             argsJson: JSON.stringify({
-              needed_for: "Reading the contributing guidance",
               javascript: "return fs.readFile('CONTRIBUTING.md', 'utf8');",
               max_bytes: 32,
             }),
@@ -596,7 +595,11 @@ describe("Svelte component regression coverage", () => {
     }).body;
 
     expect(body).toContain("value view");
-    expect(body).toContain("Formatted input");
+    expect(body).toMatch(/class="stage-title[^>]*>View<\/span>/);
+    expect(body).toMatch(/data-kind="view"[^>]*open=""/);
+    expect(body).toContain("Worker view");
+    expect(body).toContain("value");
+    expect(body).toContain("Execution details");
     expect(body).toContain("32 B");
     expect(body).toContain("return fs.readFile('CONTRIBUTING.md', 'utf8');");
     expect(body).toContain("Raw input payload");

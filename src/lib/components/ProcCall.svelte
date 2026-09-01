@@ -6,10 +6,7 @@
   } from "$lib/client/display-message";
   import {
     parseProcArgs,
-    parseProcExecutionArgs,
-    procExecutionFeedbackText,
-    parseProcExecutionMeta,
-    parseProcExecutionResult,
+    normalizeProcExecution,
     parseProcMeta,
     parseProcOutcome,
   } from "$lib/client/proc-display";
@@ -84,18 +81,6 @@
     details.open = nextOpen;
   }
 
-  function executionLabel(
-    tool: string,
-    result: ReturnType<typeof parseProcExecutionResult>,
-    storeInto: string | null | undefined,
-  ): string | null {
-    if (tool === "finish") return "final result";
-    if (tool === "view") return null;
-    const names = result?.store_writes?.map((write) => write.name) ?? [];
-    if (names.length > 0) return `stored: ${names.join(", ")}`;
-    return storeInto ? `store: ${storeInto}` : null;
-  }
-
   $effect(() => {
     if (open && resultTruncated) {
       ensureLazyField(conversationId, "tool-result", toolCall.id);
@@ -139,190 +124,118 @@
         </div>
         <div class="stage-list">
           {#each executions as execution, index (execution.id)}
-            {@const executionArgs =
-              parseProcExecutionArgs(execution.argsJson) ??
-              parseProcExecutionMeta(execution.meta)}
-            {@const executionResult = parseProcExecutionResult(
-              execution.resultJson,
-            )}
-            {@const workerFeedback = procExecutionFeedbackText(
-              execution.resultJson,
-            )}
-            {@const storeInto =
-              executionArgs?.store_into ?? executionArgs?.save_as}
-            {@const storageLabel = executionLabel(
-              execution.tool,
-              executionResult,
-              storeInto,
-            )}
-            {@const requestedWorkerView =
-              execution.tool === "view"
-                ? "value"
-                : (executionArgs?.worker_view ?? executionArgs?.view)}
-            {@const actualWorkerView =
-              executionResult?.worker_view_kind ??
-              executionResult?.view ??
-              (execution.tool === "view"
-                ? "value"
-                : execution.tool === "execute" &&
-                    executionResult?.shape !== undefined
-                  ? "shape"
-                  : undefined)}
-            {@const workerViewBytes =
-              executionResult?.worker_view_bytes ??
-              executionResult?.view_bytes ??
-              executionResult?.shape_bytes}
-            {@const workerViewTruncated =
-              executionResult?.worker_view_truncated ??
-              executionResult?.truncated ??
-              executionResult?.shape_truncated}
-            {@const workerProjection =
-              actualWorkerView === "value"
-                ? executionResult?.value
-                : executionResult?.shape}
+            {@const stage = normalizeProcExecution(execution)}
             {@const nested = selectSubagentChildren(
               { tools: allTools, reasoning: allReasoning, edits: allEdits },
               execution.id,
             )}
-            <details class="stage" open={execution.status === "error"}>
+            {@const stageHasUsefulOutput =
+              stage.error !== null ||
+              stage.output !== null ||
+              nested.tools.length > 0 ||
+              nested.edits.length > 0}
+            <details
+              class="stage"
+              data-kind={stage.kind}
+              open={stageHasUsefulOutput}
+            >
               <summary>
                 <span class="step">{index + 1}</span>
-                <span class="stage-title"
-                  >{executionArgs?.needed_for ??
-                    (execution.tool === "finish"
-                      ? "Final result"
-                      : "Execution")}</span
-                >
-                {#if storageLabel}<Pill>{storageLabel}</Pill>{/if}
-                {#if requestedWorkerView}
+                <span class="stage-title">{stage.title}</span>
+                {#if stage.storageLabel}<Pill>{stage.storageLabel}</Pill>{/if}
+                {#if stage.requestedView}
                   <Pill
-                    >{requestedWorkerView}{actualWorkerView &&
-                    actualWorkerView !== requestedWorkerView
-                      ? ` → ${actualWorkerView}`
+                    >{stage.requestedView}{stage.actualView &&
+                    stage.actualView !== stage.requestedView
+                      ? ` → ${stage.actualView}`
                       : ""} view</Pill
                   >
                 {/if}
-                {#if executionResult?.value_bytes != null}
-                  <span class="metric"
-                    >{formatFieldBytes(executionResult.value_bytes)}</span
-                  >
-                {:else if executionResult?.bytes != null}
-                  <span class="metric"
-                    >{formatFieldBytes(executionResult.bytes)}</span
-                  >
+                {#if stage.bytes != null}
+                  <span class="metric">{formatFieldBytes(stage.bytes)}</span>
                 {/if}
-                {#if executionResult?.operations != null}
-                  <span class="metric">{executionResult.operations} ops</span>
+                {#if stage.operations != null}
+                  <span class="metric">{stage.operations} ops</span>
                 {/if}
                 <span class="stage-status" data-status={execution.status}
                 ></span>
               </summary>
               <div class="stage-body">
-                {#if executionResult?.error}
-                  <p class="execution-error">{executionResult.error}</p>
+                {#if stage.error}
+                  <p class="execution-error">{stage.error}</p>
                 {/if}
-                {#if executionArgs}
+                {#if stage.output}
+                  <div class="projection primary-projection">
+                    <div class="minor-label">
+                      {stage.output.label}
+                      {#if stage.output.bytes != null}
+                        · {formatFieldBytes(stage.output.bytes)}
+                      {/if}
+                      {#if stage.output.truncated}
+                        · truncated{/if}
+                      {#if stage.output.reason}
+                        · {stage.output.reason}{/if}
+                    </div>
+                    <pre><code
+                        >{typeof stage.output.value === "string"
+                          ? stage.output.value
+                          : JSON.stringify(stage.output.value, null, 2)}</code
+                      ></pre>
+                  </div>
+                {/if}
+                {#if stage.input}
                   <div class="formatted-input">
-                    <div class="minor-label">Formatted input</div>
+                    <div class="minor-label">Execution details</div>
                     <dl>
-                      {#if storeInto !== undefined}
+                      {#if stage.input.storeId !== undefined}
                         <div>
                           <dt>Store id</dt>
-                          <dd>{storeInto ?? "none"}</dd>
+                          <dd>{stage.input.storeId ?? "none"}</dd>
                         </div>
                       {/if}
-                      {#if executionResult?.store_revision}
+                      {#if stage.storeRevision}
                         <div>
                           <dt>Store revision</dt>
-                          <dd>{executionResult.store_revision}</dd>
+                          <dd>{stage.storeRevision}</dd>
                         </div>
                       {/if}
                       <div>
                         <dt>Worker view</dt>
                         <dd>
-                          {requestedWorkerView ??
-                            (execution.tool === "execute" ? "shape" : "none")}
+                          {stage.input.workerView}
                         </dd>
                       </div>
-                      {#if executionArgs.worker_view_max_bytes !== undefined}
+                      {#if stage.input.viewBudget != null}
                         <div>
                           <dt>View budget</dt>
-                          <dd>
-                            {formatFieldBytes(
-                              executionArgs.worker_view_max_bytes,
-                            )}
-                          </dd>
-                        </div>
-                      {/if}
-                      {#if executionArgs.max_bytes !== undefined}
-                        <div>
-                          <dt>View budget</dt>
-                          <dd>{formatFieldBytes(executionArgs.max_bytes)}</dd>
+                          <dd>{formatFieldBytes(stage.input.viewBudget)}</dd>
                         </div>
                       {/if}
                     </dl>
-                    <pre><code>{executionArgs.javascript}</code></pre>
+                    <pre><code>{stage.input.javascript}</code></pre>
                   </div>
                 {/if}
-                {#if execution.argsJson !== null}
+                {#if stage.rawInput !== null}
                   <details>
                     <summary class="minor-label">Raw input payload</summary>
-                    <pre><code>{execution.argsJson}</code></pre>
+                    <pre><code>{stage.rawInput}</code></pre>
                   </details>
                 {/if}
-                {#if executionResult?.structure !== undefined}
-                  <div class="projection">
-                    <div class="minor-label">
-                      Structure
-                      {#if executionResult.structure_bytes != null}
-                        · {formatFieldBytes(executionResult.structure_bytes)}
-                      {/if}
-                    </div>
-                    <pre><code
-                        >{typeof executionResult.structure === "string"
-                          ? executionResult.structure
-                          : JSON.stringify(
-                              executionResult.structure,
-                              null,
-                              2,
-                            )}</code
-                      ></pre>
-                  </div>
-                {/if}
-                {#if workerProjection !== undefined}
-                  <div class="projection">
-                    <div class="minor-label">
-                      Worker view · {actualWorkerView}
-                      {#if workerViewBytes != null}
-                        · {formatFieldBytes(workerViewBytes)}
-                      {/if}
-                      {#if workerViewTruncated}
-                        · truncated{/if}
-                      {#if executionResult?.reason === "value_exceeded_limit"}
-                        · value exceeded budget{/if}
-                    </div>
-                    <pre><code
-                        >{typeof workerProjection === "string"
-                          ? workerProjection
-                          : JSON.stringify(workerProjection, null, 2)}</code
-                      ></pre>
-                  </div>
-                {/if}
-                {#if workerFeedback !== null}
+                {#if stage.workerFeedback !== null}
                   <details>
                     <summary class="minor-label">
                       Exact text sent to worker
                     </summary>
-                    <pre><code>{workerFeedback}</code></pre>
+                    <pre><code>{stage.workerFeedback}</code></pre>
                   </details>
                 {/if}
-                {#if execution.resultJson !== null}
+                {#if stage.rawOutput !== null}
                   <details>
                     <summary class="minor-label">Raw output payload</summary>
-                    <pre><code>{execution.resultJson}</code></pre>
+                    <pre><code>{stage.rawOutput}</code></pre>
                   </details>
                 {/if}
-                {#if executionResult?.retry_safe === false}
+                {#if stage.retrySafe === false}
                   <div class="effect-warning">
                     Partial effects may have occurred. This execution is not
                     safe to replay blindly.
@@ -520,7 +433,15 @@
     padding: var(--space-2);
     background: var(--surface);
   }
+  .stage[data-kind="view"] > summary {
+    background: color-mix(in srgb, var(--accent-bg) 42%, var(--surface));
+  }
+  .stage[data-kind="view"] .step {
+    background: var(--accent);
+    color: var(--surface);
+  }
   .stage-status {
+    flex: 0 0 auto;
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
@@ -537,6 +458,9 @@
     gap: var(--space-2);
     padding: var(--space-3);
     background: var(--surface-2);
+  }
+  .stage-title {
+    overflow-wrap: anywhere;
   }
   .formatted-input {
     display: grid;

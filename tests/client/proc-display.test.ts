@@ -68,6 +68,14 @@ describe("proc display parsing", () => {
     expect(
       parseProcExecutionArgs(
         JSON.stringify({
+          javascript: "return fs.readFile('CONTRIBUTING.md', 'utf8');",
+          max_bytes: 32,
+        }),
+      ),
+    ).toMatchObject({ max_bytes: 32 });
+    expect(
+      parseProcExecutionArgs(
+        JSON.stringify({
           needed_for: "Which candidate satisfies the ownership rule?",
           javascript: "return [];",
         }),
