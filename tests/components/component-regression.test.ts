@@ -96,6 +96,63 @@ describe("Svelte component regression coverage", () => {
     expect(body).not.toContain('role="table"');
   });
 
+  test("ProcCall renders execution audit fields", () => {
+    const body = render(ProcCall, {
+      props: {
+        conversationId: "C1",
+        toolCall: {
+          id: "10",
+          messageId: "20",
+          tool: "proc",
+          argsJson: JSON.stringify({
+            summary: "Inspect files",
+            procedure: "Read the relevant files",
+            result_requirements: "Paths and contents",
+          }),
+          resultJson: JSON.stringify({
+            status: "completed",
+            projection: ["src/lib/components/ProcCall.svelte"],
+          }),
+          status: "ok",
+          startedAt: 1,
+          endedAt: 2,
+          textOffset: 0,
+          parentToolCallId: null,
+        },
+        childTools: [
+          {
+            id: "11",
+            messageId: "20",
+            tool: "execute",
+            argsJson: JSON.stringify({
+              needed_for: "Find the owning component",
+              javascript:
+                "return fs.readFile('src/lib/components/ProcCall.svelte', 'utf8');",
+              worker_view: "value",
+            }),
+            resultJson: JSON.stringify({
+              worker_view_kind: "value",
+              value: "component source",
+              worker_view_bytes: 16,
+            }),
+            status: "ok",
+            startedAt: 1,
+            endedAt: 2,
+            textOffset: null,
+            parentToolCallId: "10",
+          },
+        ],
+      },
+    }).body;
+
+    expect(body).toContain("Find the owning component");
+    expect(body).toContain("return fs.readFile");
+    expect(body).toContain("Raw input payload");
+    expect(body).toContain("Exact text sent to worker");
+    expect(body).toContain("Raw output payload");
+    expect(body).toContain("component source");
+  });
+
   test("InteractiveRequestDialog renders narrow filesystem grant choices and raw args", () => {
     const request: InteractiveRequestView = {
       requestId: "perm-1",

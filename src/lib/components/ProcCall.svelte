@@ -85,6 +85,16 @@
     if (open && resultTruncated) {
       ensureLazyField(conversationId, "tool-result", toolCall.id);
     }
+    if (open) {
+      for (const execution of executions) {
+        if (execution.argsTruncated) {
+          ensureLazyField(conversationId, "tool-args", execution.id);
+        }
+        if (execution.resultTruncated) {
+          ensureLazyField(conversationId, "tool-result", execution.id);
+        }
+      }
+    }
   });
 </script>
 
@@ -124,7 +134,21 @@
         </div>
         <div class="stage-list">
           {#each executions as execution, index (execution.id)}
-            {@const stage = normalizeProcExecution(execution)}
+            {@const lazyArgs = lazyFieldState(
+              conversationId,
+              "tool-args",
+              execution.id,
+            )}
+            {@const lazyExecutionResult = lazyFieldState(
+              conversationId,
+              "tool-result",
+              execution.id,
+            )}
+            {@const stage = normalizeProcExecution({
+              ...execution,
+              argsJson: execution.argsJson ?? lazyArgs.value,
+              resultJson: execution.resultJson ?? lazyExecutionResult.value,
+            })}
             {@const nested = selectSubagentChildren(
               { tools: allTools, reasoning: allReasoning, edits: allEdits },
               execution.id,
