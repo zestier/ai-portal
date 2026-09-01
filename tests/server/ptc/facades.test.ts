@@ -104,17 +104,29 @@ describe("program fs facade capabilities", () => {
     await mkdir(join(root, "src", "nested"), { recursive: true });
     await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
     await mkdir(join(root, ".git", "objects"), { recursive: true });
-    await writeFile(join(root, ".gitignore"), "node_modules/\n");
+    await mkdir(join(root, ".generated", "fixture", ".git"), {
+      recursive: true,
+    });
+    await writeFile(join(root, ".gitignore"), "node_modules/\n.generated/\n");
     await writeFile(join(root, "src", "top.ts"), "");
     await writeFile(join(root, "src", "component.svelte"), "");
     await writeFile(join(root, "src", "nested", "deep.ts"), "");
     await writeFile(join(root, "node_modules", "pkg", "index.ts"), "");
     await writeFile(join(root, ".git", "objects", "ignored.ts"), "");
+    await writeFile(join(root, ".generated", "fixture", "generated.ts"), "");
+    await writeFile(join(root, ".generated", "fixture", ".git", "HEAD"), "");
     const glob = buildProgramFacadeTools(root).get("__ptc_fs_glob")!;
 
     await expect(glob.handler({ pattern: "*.ts" })).resolves.toMatchObject({
       ok: true,
       result: ["src/nested/deep.ts", "src/top.ts"],
+    });
+    await expect(glob.handler({ pattern: "**/*" })).resolves.toMatchObject({
+      ok: true,
+      result: expect.not.arrayContaining([
+        ".generated/fixture/.git/HEAD",
+        ".generated/fixture/generated.ts",
+      ]),
     });
     await expect(
       glob.handler({ pattern: "*.ts", path: "src", maxDepth: 1 }),

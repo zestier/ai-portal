@@ -141,28 +141,41 @@ function buildGlobTool(workspaceRoot: string): PortalTool {
       const parsed = GlobArgs.parse(raw);
       const target = resolveGrantedTarget(workspaceRoot, parsed.path ?? ".");
       if (!target.ok) return err(target.message);
-      const args = ["--files", "--no-require-git"];
+      const commonArgs = ["--files", "--no-require-git"];
+      if (parsed.maxDepth !== undefined) {
+        commonArgs.push("--max-depth", String(parsed.maxDepth));
+      }
+      const eligibleArgs = [...commonArgs, "--hidden"];
+      if (parsed.includeIgnored) eligibleArgs.push("--no-ignore");
+      eligibleArgs.push(target.abs);
+
+      const matchingArgs = [...commonArgs, "--no-ignore"];
       const patterns = Array.isArray(parsed.pattern)
         ? parsed.pattern
         : [parsed.pattern];
-      for (const pattern of patterns) args.push("--glob", pattern);
-      if (parsed.includeIgnored) args.push("--no-ignore");
-      if (parsed.maxDepth !== undefined) {
-        args.push("--max-depth", String(parsed.maxDepth));
-      }
-      args.push(target.abs);
+      for (const pattern of patterns) matchingArgs.push("--glob", pattern);
+      matchingArgs.push(target.abs);
       try {
-        const result = await ripgrep(args, {
-          buffer: true,
+        const options = {
+          buffer: true as const,
           nodeWasi: false,
           preopens: { ".": target.abs },
-        });
-        if (result.code !== 0 && result.code !== 1) {
-          return err(result.stderr || result.stdout || "glob failed");
+        };
+        const [eligibleResult, matchingResult] = await Promise.all([
+          ripgrep(eligibleArgs, options),
+          ripgrep(matchingArgs, options),
+        ]);
+        for (const result of [eligibleResult, matchingResult]) {
+          if (result.code !== 0 && result.code !== 1) {
+            return err(result.stderr || result.stdout || "glob failed");
+          }
         }
-        const paths = result.stdout
+        const eligiblePaths = new Set(
+          eligibleResult.stdout.split(/\r?\n/).filter(Boolean),
+        );
+        const paths = matchingResult.stdout
           .split(/\r?\n/)
-          .filter(Boolean)
+          .filter((path) => path && eligiblePaths.has(path))
           .map((path) => relative(workspaceRoot, path).replaceAll("\\", "/"))
           .sort();
         return ok(paths);

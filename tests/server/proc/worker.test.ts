@@ -662,7 +662,9 @@ describe("proc worker", () => {
         type: "tool.result",
         ok: false,
         summary: "Failed",
-        output: expect.stringContaining('"error":"bad atom"'),
+        output: expect.stringMatching(
+          /"error":"Error at program\.js:1:\d+: bad atom"/,
+        ),
       }),
     );
   });
@@ -1414,6 +1416,82 @@ describe("proc worker", () => {
     ).toMatchObject({
       fileWritten: { resultId: storedResultId },
     });
+  });
+
+  it("reports failed execution source locations to the worker", async () => {
+    let errorFeedback = "";
+    piChat
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [
+          {
+            id: "syntax-error",
+            name: "execute",
+            arguments: JSON.stringify({
+              needed_for: "Returning a result",
+              javascript: "return {;",
+            }),
+          },
+        ],
+      })
+      .mockImplementationOnce(async (_config, messages) => {
+        const feedback = JSON.parse(messages.at(-1).content) as {
+          error: string;
+        };
+        errorFeedback = feedback.error;
+        return {
+          content: "",
+          toolCalls: [
+            {
+              id: "finish-after-syntax-error",
+              name: "finish",
+              arguments: JSON.stringify({ javascript: "return null;" }),
+            },
+          ],
+        };
+      });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc syntax location",
+      workdir: "/tmp",
+      model: "pi-stub/stub-model",
+    });
+    const conversationId = convCodec.parse(conversation.id);
+    const outputPolicy = {
+      mode: "exact" as const,
+      maxBytes: 1024,
+      store: false,
+    };
+    const transaction = createProcTransaction({
+      conversationId,
+      parentToolCallId: 45,
+      workerModel: "pi-stub/stub-model",
+      summary: "Located proc error",
+      requirements: "Return null",
+      procedure: "Return null",
+      outputPolicy,
+      messages: initialProcMessages({
+        summary: "Located proc error",
+        requirements: "Return null",
+        procedure: "Return null",
+        outputPolicy,
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(errorFeedback).toBe(
+      "SyntaxError at program.js:1:9: invalid property name",
+    );
   });
 
   it("runs a proc git commit through the delegated permission gate on approval", async () => {

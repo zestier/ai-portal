@@ -612,9 +612,10 @@ export async function runProcWorker(
           transaction.usage.savedValuesCreated += failedCommit.bindings.length;
           const retrySafe = effects.every((effect) => effect.effect === "read");
           const effectSummary = summarizeExecutionEffects(effects);
+          const errorDescription = describeWorkerError(error);
           const feedback = {
             ok: false,
-            error: error instanceof Error ? error.message : String(error),
+            error: errorDescription,
             ...(failedCommit.bindings.length > 0
               ? {
                   store_revision: protocolId,
@@ -684,6 +685,22 @@ export async function runProcWorker(
       usage: transaction.usage,
     };
   }
+}
+
+function describeWorkerError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const located = error as Error & { fileName?: string; lineNumber?: number };
+  const stackLocation = error.stack?.match(/\b(program\.js):(\d+):(\d+)\b/);
+  const fileName = located.fileName ?? stackLocation?.[1];
+  const lineNumber = located.lineNumber ?? Number(stackLocation?.[2]);
+  const columnNumber = stackLocation?.[3];
+  const location =
+    fileName && Number.isFinite(lineNumber)
+      ? `${fileName}:${lineNumber}${columnNumber ? `:${columnNumber}` : ""}`
+      : null;
+  return location
+    ? `${error.name || "Error"} at ${location}: ${error.message}`
+    : error.message;
 }
 
 export function procTranscriptStats(messages: ExtractorChatMessage[]): {
