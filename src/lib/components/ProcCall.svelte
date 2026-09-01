@@ -153,16 +153,7 @@
               { tools: allTools, reasoning: allReasoning, edits: allEdits },
               execution.id,
             )}
-            {@const stageHasUsefulOutput =
-              stage.error !== null ||
-              stage.output !== null ||
-              nested.tools.length > 0 ||
-              nested.edits.length > 0}
-            <details
-              class="stage"
-              data-kind={stage.kind}
-              open={stageHasUsefulOutput}
-            >
+            <details class="stage" data-kind={stage.kind}>
               <summary>
                 <span class="step">{index + 1}</span>
                 <span class="stage-title">{stage.title}</span>
@@ -288,37 +279,38 @@
       </section>
     {/if}
 
-    {#if outcome}
-      <section class="outcome">
-        <div class="section-heading">
+    {#if outcome || resultTruncated}
+      <details class="outcome">
+        <summary>
           <span class="label">Result</span>
-          <span class="metrics">
-            {#if outcome.bytes != null}{formatFieldBytes(outcome.bytes)}{/if}
-            {#if outcome.usage?.turns != null}
-              · {outcome.usage.turns} turns{/if}
-            {#if outcome.usage?.operations != null}
-              · {outcome.usage.operations} ops{/if}
-          </span>
-        </div>
-        {#if outcome.error}
-          <p class="error">{outcome.error}</p>
-        {:else if outcome.projection !== undefined}
-          <pre><code
-              >{typeof outcome.projection === "string"
-                ? outcome.projection
-                : JSON.stringify(outcome.projection, null, 2)}</code
-            ></pre>
+          {#if outcome}
+            <span class="metrics">
+              {#if outcome.bytes != null}{formatFieldBytes(outcome.bytes)}{/if}
+              {#if outcome.usage?.turns != null}
+                · {outcome.usage.turns} turns{/if}
+              {#if outcome.usage?.operations != null}
+                · {outcome.usage.operations} ops{/if}
+            </span>
+          {/if}
+        </summary>
+        {#if outcome}
+          {#if outcome.error}
+            <p class="error">{outcome.error}</p>
+          {:else if outcome.projection !== undefined}
+            <pre><code
+                >{typeof outcome.projection === "string"
+                  ? outcome.projection
+                  : JSON.stringify(outcome.projection, null, 2)}</code
+              ></pre>
+          {/if}
+        {:else}
+          <p class="status">
+            {lazyResult.loading
+              ? `Loading ${formatFieldBytes(toolCall.resultBytes)} result...`
+              : (lazyResult.error ?? "Result is available on expansion.")}
+          </p>
         {/if}
-      </section>
-    {:else if resultTruncated}
-      <section class="outcome">
-        <div class="label">Result</div>
-        <p class="status">
-          {lazyResult.loading
-            ? `Loading ${formatFieldBytes(toolCall.resultBytes)} result...`
-            : (lazyResult.error ?? "Result is available on expansion.")}
-        </p>
-      </section>
+      </details>
     {/if}
 
     {#each childEdits as edit (edit.id)}
@@ -340,7 +332,8 @@
     border-left-color: var(--danger);
   }
   .proc > summary,
-  .stage > summary {
+  .stage > summary,
+  .outcome > summary {
     display: flex;
     align-items: center;
     gap: var(--space-2);
@@ -417,6 +410,9 @@
     border-radius: var(--radius-sm);
     padding: var(--space-3);
     background: var(--surface);
+  }
+  .outcome > summary {
+    justify-content: space-between;
   }
   .label,
   .minor-label {

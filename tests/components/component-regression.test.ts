@@ -151,6 +151,8 @@ describe("Svelte component regression coverage", () => {
     expect(body).toContain("Exact text sent to worker");
     expect(body).toContain("Raw output payload");
     expect(body).toContain("component source");
+    expect(body).toMatch(/<details class="outcome[^"]*"[^>]*>/);
+    expect(body).not.toMatch(/<details class="outcome[^"]*"[^>]*open=""/);
   });
 
   test("InteractiveRequestDialog renders narrow filesystem grant choices and raw args", () => {
@@ -600,7 +602,8 @@ describe("Svelte component regression coverage", () => {
       },
     }).body;
 
-    expect(body).toMatch(/<details class="stage[^"]*"[^>]*open=""/);
+    expect(body).toMatch(/<details class="stage[^"]*"[^>]*>/);
+    expect(body).not.toMatch(/<details class="stage[^"]*"[^>]*open=""/);
     expect(body).toContain("readFile is not defined");
     expect(body).toContain('data-automatically-open="true"');
   });
@@ -653,7 +656,8 @@ describe("Svelte component regression coverage", () => {
 
     expect(body).toContain("value view");
     expect(body).toMatch(/class="stage-title[^>]*>View<\/span>/);
-    expect(body).toMatch(/data-kind="view"[^>]*open=""/);
+    expect(body).toMatch(/data-kind="view"[^>]*>/);
+    expect(body).not.toMatch(/data-kind="view"[^>]*open=""/);
     expect(body).toContain("Worker view");
     expect(body).toContain("value");
     expect(body).toContain("Execution details");
