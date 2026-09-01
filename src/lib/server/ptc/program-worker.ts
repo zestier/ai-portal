@@ -54,6 +54,7 @@ async function run(
   try {
     const result = await runProgramInline({
       source: message.source,
+      cwd: message.cwd,
       ...(message.resultMode !== undefined
         ? { resultMode: message.resultMode }
         : {}),

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ok, type PortalTool } from "../../../src/lib/server/tools/types";
-import { runProgram } from "../../../src/lib/server/ptc/program";
+import { runProgram as runProgramImpl } from "../../../src/lib/server/ptc/program";
+
+type TestProgramOptions = Omit<Parameters<typeof runProgramImpl>[0], "cwd"> & {
+  cwd?: string;
+};
+const runProgram = (options: TestProgramOptions) =>
+  runProgramImpl({ cwd: process.cwd(), ...options });
 
 const echo: PortalTool = {
   name: "echo",
@@ -83,6 +89,17 @@ describe("program runtime", () => {
       signal: new AbortController().signal,
     });
     expect(result.value).toBe("function object");
+  });
+
+  it("exposes the configured working directory through process.cwd", async () => {
+    const result = await runProgram({
+      source: "return process.cwd();",
+      cwd: "/workspace/session",
+      capabilities: new Map(),
+      execute: async () => ok(),
+      signal: new AbortController().signal,
+    });
+    expect(result.value).toBe("/workspace/session");
   });
 
   it("returns the completion value of a bare expression", async () => {
@@ -314,16 +331,17 @@ describe("program runtime", () => {
     ).rejects.toThrow("command operations: limit 20");
   });
 
-  it("does not expose ambient process APIs", async () => {
+  it("exposes only the configured process cwd", async () => {
     const result = await runProgram({
       source:
-        "return { processType: typeof process, requireType: typeof require };",
+        "return { processType: typeof process, cwdType: typeof process.cwd, requireType: typeof require };",
       capabilities: new Map([[echo.name, echo]]),
       execute: (_name, args) => echo.handler(args),
       signal: new AbortController().signal,
     });
     expect(result.value).toEqual({
-      processType: "undefined",
+      processType: "object",
+      cwdType: "function",
       requireType: "function",
     });
   });
@@ -595,7 +613,7 @@ describe("program runtime", () => {
   it("cannot escape to a host process through Function constructors", async () => {
     const result = await runProgram({
       source:
-        'let escaped; try { escaped = globalThis.constructor.constructor("return typeof process")(); } catch { escaped = "blocked"; } return escaped;',
+        'let escaped; try { escaped = globalThis.constructor.constructor("return typeof process.exit")(); } catch { escaped = "blocked"; } return escaped;',
       capabilities: new Map([[echo.name, echo]]),
       execute: (_name, args) => echo.handler(args),
       signal: new AbortController().signal,

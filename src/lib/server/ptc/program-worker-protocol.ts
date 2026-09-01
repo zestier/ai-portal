@@ -17,6 +17,7 @@ export type ProgramWorkerRequest =
       type: "run";
       executionId: string;
       source: string;
+      cwd: string;
       resultMode?: "required" | "discard";
       storeMode?: "read-only" | "mutable";
       capabilityNames: string[];

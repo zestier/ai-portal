@@ -45,6 +45,7 @@ export interface ProgramWorkerPoolSnapshot {
 
 export interface ProgramWorkerRunOptions {
   source: string;
+  cwd: string;
   resultMode?: "required" | "discard";
   storeMode?: "read-only" | "mutable";
   capabilityNames: string[];
@@ -211,6 +212,7 @@ export class ProgramWorkerPool {
       type: "run",
       executionId: entry.executionId,
       source: entry.options.source,
+      cwd: entry.options.cwd,
       ...(entry.options.resultMode !== undefined
         ? { resultMode: entry.options.resultMode }
         : {}),

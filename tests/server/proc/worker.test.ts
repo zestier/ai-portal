@@ -13,9 +13,16 @@ import {
   initialProcMessages,
   procTranscriptStats,
   PROC_WORKER_SYSTEM,
-  runProcWorker,
+  runProcWorker as runProcWorkerImpl,
   summarizeExecutionEffects,
 } from "../../../src/lib/server/proc/worker";
+
+type TestProcWorkerOptions = Omit<
+  Parameters<typeof runProcWorkerImpl>[0],
+  "cwd"
+> & { cwd?: string };
+const runProcWorker = (options: TestProcWorkerOptions) =>
+  runProcWorkerImpl({ cwd: process.cwd(), ...options });
 import {
   attachProgramMetadata,
   programCapabilities,
@@ -176,6 +183,58 @@ describe("proc worker", () => {
   it("preserves primary-agent procedures and safe fusion", () => {
     expect(Buffer.byteLength(PROC_WORKER_SYSTEM)).toBeLessThanOrEqual(2_000);
     expect(PROC_WORKER_SYSTEM).not.toContain("ask_user");
+  });
+
+  it("runs worker JavaScript with the session working directory", async () => {
+    piChat.mockResolvedValueOnce({
+      content: "",
+      toolCalls: [
+        {
+          id: "finish-cwd",
+          name: "finish",
+          arguments: JSON.stringify({
+            javascript: "return process.cwd();",
+          }),
+        },
+      ],
+    });
+    const user = users.ensureLocalUser();
+    const conversation = conversations.create(user.id, {
+      title: "proc cwd",
+      workdir: "/tmp/session-workdir",
+      model: "pi-stub/stub-model",
+    });
+    const transaction = createProcTransaction({
+      conversationId: convCodec.parse(conversation.id),
+      parentToolCallId: 43,
+      workerModel: "pi-stub/stub-model",
+      summary: "Read cwd",
+      requirements: "Return the session cwd",
+      procedure: "Return process.cwd()",
+      outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+      messages: initialProcMessages({
+        summary: "Read cwd",
+        requirements: "Return the session cwd",
+        procedure: "Return process.cwd()",
+        outputPolicy: { mode: "exact", maxBytes: 1_024, store: false },
+        contracts: [],
+      }),
+    });
+
+    const outcome = await runProcWorker({
+      transaction,
+      cwd: conversation.workdir,
+      capabilities: new Map(),
+      facadeCapabilities: new Map(),
+      permissionResolver: async () => ({ allow: true }),
+      emit: () => {},
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      projection: "/tmp/session-workdir",
+    });
   });
 
   it("ignores action return values and continues without a checkpoint", async () => {

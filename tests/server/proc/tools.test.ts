@@ -8,6 +8,7 @@ describe("proc arguments", () => {
   it("uses an exact result contract without advertising a byte target", () => {
     const [proc] = buildProcTools({
       conversationId: 1,
+      cwd: process.cwd(),
       primaryModel: "test/model",
       capabilities: new Map(),
       facadeCapabilities: new Map(),

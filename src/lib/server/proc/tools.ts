@@ -23,6 +23,7 @@ const ProcArgs = z
 
 export interface ProcToolOptions {
   conversationId: number;
+  cwd: string;
   primaryModel: string;
   workerModel?: string | null;
   capabilities: ReadonlyMap<string, PortalTool>;
@@ -112,6 +113,7 @@ export function buildProcTools(opts: ProcToolOptions): PortalTool[] {
         });
         const outcome = await runProcWorker({
           transaction,
+          cwd: opts.cwd,
           capabilities,
           facadeCapabilities: opts.facadeCapabilities,
           permissionResolver: opts.permissionResolver,

@@ -101,6 +101,7 @@ Rules:
 
 export interface ProcWorkerOptions {
   transaction: ProcTransaction;
+  cwd: string;
   capabilities: ReadonlyMap<string, PortalTool>;
   facadeCapabilities: ReadonlyMap<string, PortalTool>;
   permissionResolver: PiPermissionResolver;
@@ -248,6 +249,7 @@ export async function runProcWorker(
     transaction.usage.executions++;
     const result = await runProgram({
       source,
+      cwd: opts.cwd,
       ...(executionMode === "mutable-store"
         ? { resultMode: "discard" as const, storeMode: "mutable" as const }
         : {}),

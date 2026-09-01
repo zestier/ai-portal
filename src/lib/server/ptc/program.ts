@@ -45,6 +45,7 @@ function normalizeProgramErrorLocation(error: unknown): void {
 
 export interface ProgramRunOptions {
   source: string;
+  cwd: string;
   resultMode?: "required" | "discard";
   storeMode?: "read-only" | "mutable";
   capabilities: ReadonlyMap<string, PortalTool>;
@@ -100,6 +101,7 @@ export async function runProgram(
 
   const result = await runProgramInWorker({
     source: opts.source,
+    cwd: opts.cwd,
     ...(opts.resultMode !== undefined ? { resultMode: opts.resultMode } : {}),
     ...(opts.storeMode !== undefined ? { storeMode: opts.storeMode } : {}),
     capabilityNames: [...opts.capabilities.keys()],
@@ -279,6 +281,11 @@ export async function runProgramInline(
       }
       return base;
     }
+    const processApi = Object.freeze({
+      cwd() {
+        return ${JSON.stringify(opts.cwd)};
+      }
+    });
     const pathApi = Object.freeze({
       join(...parts) {
         if (parts.some((part) => typeof part !== "string")) {
@@ -623,6 +630,7 @@ export async function runProgramInline(
       fs: { value: fsApi, writable: false, configurable: false },
       search: { value: searchApi, writable: false, configurable: false },
       path: { value: pathApi, writable: false, configurable: false },
+      process: { value: processApi, writable: false, configurable: false },
       git: { value: gitApi, writable: false, configurable: false },
       command: { value: commandApi, writable: false, configurable: false },
       tools: { value: toolsApi, writable: false, configurable: false },

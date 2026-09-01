@@ -273,6 +273,7 @@ function options(
 ): ProgramWorkerRunOptions {
   return {
     source,
+    cwd: process.cwd(),
     capabilityNames: ["pause", "fail"],
     facadeCapabilityNames: [],
     signal: controller.signal,

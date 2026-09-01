@@ -25,6 +25,7 @@ describe("semantic tool surface", () => {
     });
     const proc = buildProcTools({
       conversationId: 1,
+      cwd: "/",
       primaryModel: "pi-stub/stub-model",
       capabilities: capabilities.byName,
       facadeCapabilities: buildProgramFacadeTools("/"),
