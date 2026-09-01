@@ -277,7 +277,6 @@ describe("proc worker", () => {
         >;
         expect(feedback).toMatchObject({
           store_writes: [],
-          store_snapshot: {},
           operations: 1,
           effects: [
             { tool: "record_action", effect: "mutation", ok: true, count: 1 },
@@ -480,7 +479,17 @@ describe("proc worker", () => {
         shape: "array(1) of object { line: integer, path: string }",
       },
     ]);
-    expect(savedValueFeedback.store_snapshot).toHaveProperty("candidates");
+    expect(savedValueFeedback).not.toHaveProperty("store_revision");
+    expect(savedValueFeedback).not.toHaveProperty("store_snapshot");
+    expect(savedValueFeedback.store_writes[0]).not.toHaveProperty("result_id");
+    expect(savedValueFeedback.store_writes[0]).not.toHaveProperty("version");
+    const executeAuditOutput = events.find(
+      (event) =>
+        event.type === "tool.result" &&
+        typeof event.output === "string" &&
+        event.output.includes("store_snapshot"),
+    );
+    expect(executeAuditOutput?.output).toContain('"result_id"');
     const workerTools = piChat.mock.calls[0][2] as Array<{
       function: {
         name: string;
@@ -1279,7 +1288,6 @@ describe("proc worker", () => {
   });
 
   it("reports whether a failed execution is safe to retry", async () => {
-    let storedResultId = "";
     const mutation = {
       name: "write_fixture",
       description: "Write a fixture",
@@ -1323,8 +1331,7 @@ describe("proc worker", () => {
           }>;
           effects_total: number;
           instruction: string;
-          store_revision: string;
-          store_writes: Array<{ name: string; result_id: string }>;
+          store_writes: Array<{ name: string }>;
         };
         expect(feedback.retry_safe).toBe(false);
         expect(feedback.effects).toEqual([
@@ -1337,9 +1344,7 @@ describe("proc worker", () => {
         ]);
         expect(feedback.effects_total).toBe(1);
         expect(feedback.instruction).toContain("Do not replay");
-        expect(feedback.store_revision).toMatch(/^X\d+$/);
         expect(feedback.store_writes).toMatchObject([{ name: "fileWritten" }]);
-        storedResultId = feedback.store_writes[0]!.result_id;
         return {
           content: "",
           toolCalls: [
@@ -1390,6 +1395,10 @@ describe("proc worker", () => {
       signal: new AbortController().signal,
     });
     expect(outcome.status).toBe("cannot_execute");
+    const storedResultId = getProcStoreSnapshot({
+      transactionId: transaction.id,
+      conversationId,
+    }).fileWritten!.resultId;
     expect(
       getProcResult({
         id: storedResultId,

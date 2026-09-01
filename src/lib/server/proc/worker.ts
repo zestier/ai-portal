@@ -445,6 +445,27 @@ export async function runProcWorker(
               effects: effectSummary,
               effects_total: effects.length,
             };
+            const workerFeedback = {
+              store_writes: feedback.store_writes.map(
+                ({
+                  name,
+                  value_bytes,
+                  shape,
+                  shape_bytes,
+                  shape_truncated,
+                }) => ({
+                  name,
+                  value_bytes,
+                  shape,
+                  shape_bytes,
+                  shape_truncated,
+                }),
+              ),
+              ...(warnings.length > 0 ? { warnings } : {}),
+              operations: result.operations,
+              effects: effectSummary,
+              effects_total: effects.length,
+            };
             recordExecutionFeedback(
               opts.emit,
               transaction,
@@ -453,6 +474,7 @@ export async function runProcWorker(
               procId,
               true,
               feedback,
+              workerFeedback,
             );
             continue;
           }
@@ -612,6 +634,22 @@ export async function runProcWorker(
               ? "Fix and retry. Assign later-needed intermediates to store. Use cannot_execute only if the procedure cannot be executed."
               : "Do not replay: effects may exist. Inspect repository state; execute unfinished work only, or call cannot_execute.",
           };
+          const workerFeedback = {
+            ok: false,
+            error: feedback.error,
+            ...(failedCommit.bindings.length > 0
+              ? {
+                  store_writes: failedCommit.bindings.map((binding) => ({
+                    name: binding.name,
+                    value_bytes: binding.bytes,
+                  })),
+                }
+              : {}),
+            effects: effectSummary,
+            effects_total: effects.length,
+            retry_safe: retrySafe,
+            instruction: feedback.instruction,
+          };
           recordExecutionFeedback(
             opts.emit,
             transaction,
@@ -620,6 +658,7 @@ export async function runProcWorker(
             procId,
             false,
             feedback,
+            workerFeedback,
           );
           batchFailed = true;
           batchMustStop = !retrySafe;
@@ -829,12 +868,14 @@ function recordExecutionFeedback(
   procId: string,
   ok: boolean,
   feedback: unknown,
+  workerFeedback: unknown = feedback,
 ): void {
   const text = JSON.stringify(feedback);
+  const workerText = JSON.stringify(workerFeedback);
   transaction.messages.push({
     role: "tool",
     tool_call_id: workerToolCallId,
-    content: text,
+    content: workerText,
   });
   emitProtocolResult(emit, protocolId, procId, ok, text);
 }
